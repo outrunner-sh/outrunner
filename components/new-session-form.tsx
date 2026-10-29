@@ -62,7 +62,8 @@ export function NewSessionForm({
   /** Focuses the composer: as the form mounts, or as it turns true. */
   focusComposer?: boolean;
   /** What the session starts on until another is picked in the composer (the
-   *  agent picked in onboarding), as though picked there. */
+   *  agent picked in onboarding), as though picked there. Read once, as the
+   *  form mounts: the route drops it from the URL straight after. */
   initialPick?: StartingPick;
   /** The triage item to start from (Start session): its prompt fills the
    *  composer, and the session is linked to it. */
@@ -81,8 +82,9 @@ export function NewSessionForm({
   // loadout's for its default model shows, else DEFAULT_EFFORT.
   const [pickedEffort, setPickedEffort] = useState<Effort | null | undefined>(initialPick ? initialPick.effort : undefined);
   // The agent asked for (Codex on Outrunner's models), kept across model
-  // picks: it runs those it can (agentOf), and a cloud session only.
-  const askedAgent = initialPick?.agent;
+  // picks: it runs those it can (agentOf), and a cloud session only. Kept
+  // from the mount, as the pick is: the route drops `?start=` straight after.
+  const [askedAgent] = useState(initialPick?.agent);
   // Asked to open the picker, until it has been shut once: the cloud picker
   // can give way to the Mac's as this Mac's agent answers, and that one opens
   // in its place.
