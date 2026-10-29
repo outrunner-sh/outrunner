@@ -326,6 +326,40 @@ type SetAgentConfigRequest struct {
 // FeatureAgentConfig is POST /config.
 const FeatureAgentConfig = "agent-config"
 
+// SetSkillsRequest is a project's skills for this computer (POST /skills):
+// the GitHub repositories they install from, each downloaded as it is now.
+// None removes the ones installed before.
+type SetSkillsRequest struct {
+	Sources []SkillSource `json:"sources"`
+}
+
+// SkillSource is a repository skills install from: Skills names the ones
+// to install (a SKILL.md's name, or its folder's), none every one it holds.
+// Ref is a branch, empty its default; Token reads a private repository.
+type SkillSource struct {
+	Repo   string   `json:"repo"`
+	Ref    string   `json:"ref,omitempty"`
+	Token  string   `json:"token,omitempty"`
+	Skills []string `json:"skills,omitempty"`
+}
+
+// SetSkillsResponse is what POST /skills installed, by name, and what it
+// couldn't, said for each repository or skill.
+type SetSkillsResponse struct {
+	Installed []string       `json:"installed"`
+	Failed    []SkillFailure `json:"failed,omitempty"`
+}
+
+// SkillFailure is a repository, or one skill of it, not installed.
+type SkillFailure struct {
+	Repo  string `json:"repo"`
+	Skill string `json:"skill,omitempty"`
+	Error string `json:"error"`
+}
+
+// FeatureSkills is POST /skills.
+const FeatureSkills = "environment-skills"
+
 // FeatureEnvironment is POST /workspaces/{id}/environment.
 const FeatureEnvironment = "session-environment"
 

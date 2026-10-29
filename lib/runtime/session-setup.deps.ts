@@ -1,16 +1,21 @@
 /**
  * Real wiring for session-setup: reads the user's setup and the session's
- * project (lib/db/environments.ts), and mints the archive's download URL. Kept apart from
+ * project (lib/db/environments.ts) and its skills, and mints the archive's
+ * download URL and its private registries' tokens. Kept apart from
  * `session-setup.ts` so that stays free of the database and unit-testable.
  */
 
 import { getAgentConfig } from "@/lib/db/agent-config";
 import { getGithubIdentity } from "@/lib/db/credentials";
 import { defaultEnvironmentId, environmentSetup, type EnvironmentSetup } from "@/lib/db/environments";
+import { listEnvironmentSkills } from "@/lib/db/environment-skills";
 import { getProjectEnvironment } from "@/lib/db/project-environment";
+import { skillSources } from "@/lib/environments/skills";
+import { repositorySource } from "@/lib/github/repository-source";
 import { withMissionEnvironment, withMissionServer } from "@/lib/missions/setup";
 import { missionBoxSetup } from "@/lib/missions/setup.deps";
 import type { AgentClient, WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import type { SkillSource } from "@/lib/runtime/agent-protocol";
 import { deliverSessionSetup } from "@/lib/runtime/session-setup";
 import { mintSnapshotDownloadUrl } from "@/lib/runtime/storage";
 import { syncEnvironmentSecrets } from "@/lib/secret-sync/sync.deps";
@@ -30,8 +35,10 @@ export async function setUpSession(
    *  (an automation's review). */
   override?: { appIdentity?: boolean },
 ): Promise<void> {
-  const [environment, agentConfig, githubIdentity, mission] = await Promise.all([
-    sessionEnvironment(ownerId, projectId, environmentId),
+  const id = environmentId ?? (await defaultEnvironmentId(ownerId, projectId));
+  const [environment, skills, agentConfig, githubIdentity, mission] = await Promise.all([
+    sessionEnvironment(ownerId, projectId, id),
+    id ? sessionSkills(ownerId, id) : undefined,
     getAgentConfig(ownerId),
     getGithubIdentity(ownerId),
     // A Mission's box also gets its tools, notes and instructions.
@@ -43,10 +50,12 @@ export async function setUpSession(
       upgrade,
       setEnvironment: (req) => agent.setEnvironment(identity, req),
       setAgentConfig: (req) => agent.setAgentConfig(identity, req),
+      setSkills: (req) => agent.setSkills(identity, req),
     },
     {
       environment: mission ? withMissionEnvironment(environment, mission) : environment,
       agentConfig: mission ? withMissionServer(agentConfig, mission) : agentConfig,
+      skills,
       appIdentity: override?.appIdentity || githubIdentity === "app",
       downloadUrl: (path) => mintSnapshotDownloadUrl(supabaseSnapshotStorage(), path, ownerId),
     },
@@ -62,9 +71,8 @@ export async function setUpSession(
 async function sessionEnvironment(
   ownerId: string,
   projectId: string,
-  environmentId: string | null,
+  id: string | null,
 ): Promise<EnvironmentSetup | null> {
-  const id = environmentId ?? (await defaultEnvironmentId(ownerId, projectId));
   if (id) {
     const setup = await environmentSetup(ownerId, id);
     if (!setup) return null;
@@ -73,4 +81,37 @@ async function sessionEnvironment(
   }
   const kept = await getProjectEnvironment(ownerId, projectId);
   return kept && { ...kept, instructions: null };
+}
+
+/**
+ * The repositories the project's skills install from, a private registry's
+ * with a token that reads it alone: the org's GitHub App's where it has one,
+ * else the session's user's own sign-in, as its repositories are listed
+ * (lib/github/repository-source.ts). A registry no token reaches is still
+ * sent, without one: the box says it couldn't read it, and the session
+ * starts with the rest. Skills unread start the session without any.
+ */
+async function sessionSkills(ownerId: string, environmentId: string): Promise<SkillSource[] | undefined> {
+  try {
+    const listed = await listEnvironmentSkills(ownerId, environmentId);
+    if (!listed || (listed.skills.length === 0 && listed.registries.length === 0)) return undefined;
+    const privateOnes = listed.registries.filter((r) => r.private);
+    const source = privateOnes.length > 0 ? await repositorySource(ownerId, listed.orgId).catch(noToken) : null;
+    const registries = await Promise.all(
+      listed.registries.map(async (r) => ({
+        fullName: r.fullName,
+        branch: r.defaultBranch,
+        token: (r.private && (await source?.readToken(r.fullName).catch(noToken))) || undefined,
+      })),
+    );
+    return skillSources(listed.skills, registries);
+  } catch (error) {
+    console.warn(`Project ${environmentId}'s skills couldn't be read; the session starts without them.`, error);
+    return undefined;
+  }
+}
+
+function noToken(error: unknown): null {
+  console.warn("No GitHub token for a project's skill registry", error instanceof Error ? error.message : error);
+  return null;
 }

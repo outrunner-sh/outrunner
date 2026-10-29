@@ -136,6 +136,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
 	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
 	mux.HandleFunc("POST /config", s.authed(s.setAgentConfig))
+	mux.HandleFunc("POST /skills", s.authed(s.setSkills))
 	mux.HandleFunc("POST /warm", s.authed(s.startWarm))
 	mux.HandleFunc("GET /warm", s.authed(s.warmStatus))
 	mux.HandleFunc("GET /pty", s.pty)
@@ -162,7 +163,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills},
 	})
 }
 
@@ -1069,6 +1070,33 @@ func (s *Server) setAgentConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, "set", err)
+}
+
+// setSkills installs a project's skills on this computer. Any session's
+// token may, as for the user's own setup: the computer is that session's.
+func (s *Server) setSkills(w http.ResponseWriter, r *http.Request) {
+	var req protocol.SetSkillsRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	sources := make([]workspace.SkillSource, 0, len(req.Sources))
+	for _, source := range req.Sources {
+		sources = append(sources, workspace.SkillSource{Repo: source.Repo, Ref: source.Ref, Token: source.Token, Skills: source.Skills})
+	}
+	result, err := s.ws.SetSkills(r.Context(), sources)
+	if errors.Is(err, workspace.ErrInvalidSkills) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if err != nil {
+		respond(w, "set", err)
+		return
+	}
+	failed := make([]protocol.SkillFailure, 0, len(result.Failed))
+	for _, f := range result.Failed {
+		failed = append(failed, protocol.SkillFailure{Repo: f.Repo, Skill: f.Skill, Error: f.Error})
+	}
+	writeJSON(w, http.StatusOK, protocol.SetSkillsResponse{Installed: result.Installed, Failed: failed})
 }
 
 // validAuth checks a session credential as set or restored: a known kind, and

@@ -495,6 +495,35 @@ type EnvironmentRepoRow = {
   created_at: string;
 };
 
+/** A skills.sh catalog skill enabled on a project
+ *  (20261103130000_environment_skills.sql). */
+type EnvironmentSkillRow = {
+  id: string;
+  /** Its project's org, set from the project. */
+  org_id: string;
+  environment_id: string;
+  slug: string;
+  name: string;
+  source: string;
+  skill: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** A GitHub repository whose skills a project's sessions get. */
+type EnvironmentSkillRegistryRow = {
+  id: string;
+  org_id: string;
+  environment_id: string;
+  full_name: string;
+  default_branch: string;
+  private: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type UserAgentConfigRow = {
   user_id: string;
   archive_path: string | null;
@@ -1408,6 +1437,18 @@ export type Database = {
         Row: EnvironmentRepoRow;
         Insert: Insert<EnvironmentRepoRow, "owner_id" | "environment_id" | "project_id" | "checkout_name">;
         Update: Partial<EnvironmentRepoRow>;
+        Relationships: [];
+      };
+      environment_skills: {
+        Row: EnvironmentSkillRow;
+        Insert: Insert<EnvironmentSkillRow, "environment_id" | "slug" | "name" | "source" | "skill">;
+        Update: Partial<EnvironmentSkillRow>;
+        Relationships: [];
+      };
+      environment_skill_registries: {
+        Row: EnvironmentSkillRegistryRow;
+        Insert: Insert<EnvironmentSkillRegistryRow, "environment_id" | "full_name" | "default_branch">;
+        Update: Partial<EnvironmentSkillRegistryRow>;
         Relationships: [];
       };
       project_environment: {

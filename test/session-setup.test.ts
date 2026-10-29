@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { AgentConfig } from "@/lib/db/agent-config";
+import type { SetSkillsResponse } from "@/lib/runtime/agent-protocol";
 import { deliverSessionSetup } from "@/lib/runtime/session-setup";
 
-function box(features: string[]) {
+function box(features: string[], skills: SetSkillsResponse = { installed: [] }) {
   const sent: Array<[string, unknown]> = [];
   return {
     sent,
@@ -12,6 +13,10 @@ function box(features: string[]) {
       features: async () => features,
       setEnvironment: async (req: unknown) => void sent.push(["environment", req]),
       setAgentConfig: async (req: unknown) => void sent.push(["config", req]),
+      setSkills: async (req: unknown) => {
+        sent.push(["skills", req]);
+        return skills;
+      },
     },
   };
 }
@@ -126,4 +131,32 @@ test("a box of a user who works as the App is upgraded first when its agent can'
     { environment, agentConfig: null, appIdentity: false, downloadUrl },
   );
   assert.equal(upgraded, false);
+});
+
+test("a project's skills reach a box that installs them, before its environment", async () => {
+  const skills = [{ repo: "anthropics/skills", skills: ["pdf"] }, { repo: "acme/registry", ref: "main", token: "ghs_x" }];
+  const current = box([...all, "environment-skills"], { installed: ["pdf"], failed: [{ repo: "acme/registry", error: "gone" }] });
+  await deliverSessionSetup(current.client, { environment, agentConfig: null, skills, downloadUrl });
+  assert.deepEqual(current.sent.map(([kind]) => kind), ["skills", "environment"]);
+  assert.deepEqual(current.sent[0][1], { sources: skills });
+
+  // An older box starts without them; none sends nothing.
+  const old = box(all);
+  await deliverSessionSetup(old.client, { environment, agentConfig: null, skills, downloadUrl });
+  assert.deepEqual(old.sent.map(([kind]) => kind), ["environment"]);
+  const none = box([...all, "environment-skills"]);
+  await deliverSessionSetup(none.client, { environment, agentConfig: null, skills: [], downloadUrl });
+  assert.deepEqual(none.sent.map(([kind]) => kind), ["environment"]);
+});
+
+test("skills the box couldn't install don't stop the session starting", async () => {
+  const b = box([...all, "environment-skills"]);
+  const client = {
+    ...b.client,
+    setSkills: async (): Promise<SetSkillsResponse> => {
+      throw new Error("the box refused");
+    },
+  };
+  await deliverSessionSetup(client, { environment, agentConfig: null, skills: [{ repo: "acme/skills" }], downloadUrl });
+  assert.deepEqual(b.sent.map(([kind]) => kind), ["environment"]);
 });

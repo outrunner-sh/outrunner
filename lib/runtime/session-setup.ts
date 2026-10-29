@@ -3,7 +3,8 @@
  * GitHub tokens, for a user who works as the Outrunner App
  * (lib/github/identity.ts); the user's own agent setup on its computer
  * (lib/db/agent-config.ts) and its project's environment
- * (lib/db/environments.ts): variables, files, setup script, instructions. A box whose agent is too old for either is
+ * (lib/db/environments.ts): variables, files, setup script, instructions, and
+ * its skills (lib/db/environment-skills.ts). A box whose agent is too old for either is
  * upgraded in place first; one that can't be launches the session without
  * it, rather than not at all.
  */
@@ -15,9 +16,13 @@ import {
   AGENT_FEATURE_ENVIRONMENT,
   AGENT_FEATURE_GIT_CREDENTIAL,
   AGENT_FEATURE_INSTRUCTIONS,
+  AGENT_FEATURE_SKILLS,
   AGENT_FEATURE_WARM_HOOKS,
   type SetAgentConfigRequest,
   type SetEnvironmentRequest,
+  type SetSkillsRequest,
+  type SetSkillsResponse,
+  type SkillSource,
 } from "@/lib/runtime/agent-protocol";
 import { requireFeature, type FeatureClient } from "@/lib/runtime/box-features";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
@@ -25,11 +30,16 @@ import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 export type SetupClient = FeatureClient & {
   setEnvironment(req: SetEnvironmentRequest): Promise<unknown>;
   setAgentConfig(req: SetAgentConfigRequest): Promise<unknown>;
+  setSkills(req: SetSkillsRequest): Promise<SetSkillsResponse>;
 };
 
 export type SessionSetup = {
   environment: EnvironmentSetup | null;
   agentConfig: AgentConfig | null;
+  /** The repositories its project's skills install from
+   *  (lib/environments/skills.ts skillSources); none for a project with no
+   *  skills. */
+  skills?: SkillSource[];
   /** Its user works on GitHub as the Outrunner App, whose tokens the box
    *  must ask for as it goes (lib/github/identity.ts). */
   appIdentity?: boolean;
@@ -54,6 +64,21 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
         mcpServers: config.mcpServers,
         settings: config.settings,
       });
+    }
+  }
+
+  // Before the environment, whose launch is next: the skills are on the box
+  // when the agent starts and lists them. A repository the box couldn't
+  // read is said in the log and the session starts without its skills,
+  // rather than not at all.
+  if (setup.skills?.length && (await supports(client, AGENT_FEATURE_SKILLS, "install a project's skills"))) {
+    try {
+      const result = await client.setSkills({ sources: setup.skills });
+      for (const failure of result.failed ?? []) {
+        console.warn(`A project skill wasn't installed (${failure.repo}${failure.skill ? ` ${failure.skill}` : ""}): ${failure.error}`);
+      }
+    } catch (error) {
+      console.warn("The project's skills couldn't be installed; the session starts without them.", error);
     }
   }
 

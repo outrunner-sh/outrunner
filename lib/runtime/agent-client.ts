@@ -33,6 +33,8 @@ import {
   SetAgentConfigRequest,
   SetAuthRequest,
   SetEnvironmentRequest,
+  SetSkillsRequest,
+  SetSkillsResponse,
   WorkspaceSummary,
 } from "@/lib/runtime/agent-protocol";
 import { mintRuntimeToken } from "@/lib/runtime/runtime-token";
@@ -241,6 +243,12 @@ export class AgentClient {
   /** Install the user's own agent setup on the computer. */
   setAgentConfig(identity: WorkspaceIdentity, req: SetAgentConfigRequest): Promise<unknown> {
     return this.post("/config", identity, SetAgentConfigRequest.parse(req), AGENT_LIFECYCLE_TIMEOUT_MS);
+  }
+
+  /** Install the project's skills on the computer: what it installed, and
+   *  what it couldn't. */
+  async setSkills(identity: WorkspaceIdentity, req: SetSkillsRequest): Promise<SetSkillsResponse> {
+    return SetSkillsResponse.parse(await this.post("/skills", identity, SetSkillsRequest.parse(req), AGENT_LIFECYCLE_TIMEOUT_MS));
   }
 
   /** Give the session its project's environment, before it launches. */

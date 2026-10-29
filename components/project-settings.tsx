@@ -1,17 +1,18 @@
 "use client";
 
-import { FileText, KeyRound, Plus, Settings2, SquareTerminal, Trash2, X } from "lucide-react";
+import { FileText, KeyRound, Plus, Settings2, Sparkles, SquareTerminal, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { GitHubIcon } from "@/components/brand-icons";
 import { failedLinks, SecretSyncPanel } from "@/components/secret-sync-panel";
+import { DeleteButton, Panel, SectionTitle, useSave } from "@/components/project-section";
+import { SkillsSection } from "@/components/project-skills";
 import { SectionHeader } from "@/components/settings-details";
 import { Button } from "@/components/ui/button";
-import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
 import { Input } from "@/components/ui/input";
-import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
+import { LoadingButton } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
 import { SELECT_OPTIONS } from "@/components/ui/select-options";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,6 +29,7 @@ const SECTIONS = [
   { id: "variables", label: "Environment variables", icon: KeyRound },
   { id: "setup", label: "Setup scripts", icon: SquareTerminal },
   { id: "files", label: "Files", icon: FileText },
+  { id: "skills", label: "Skills", icon: Sparkles },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
 
@@ -140,27 +142,13 @@ export function ProjectSettings({
               {section === "files" && (
                 <FilesSection environment={environment} onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))} />
               )}
+              {section === "skills" && <SkillsSection environment={environment} />}
             </fieldset>
           </main>
         </div>
       </div>
     </div>
   );
-}
-
-/** A section's title and what it holds, as the settings pages head theirs. */
-function SectionTitle({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div className="space-y-1">
-      <h2 className="text-base font-semibold text-foreground">{title}</h2>
-      <p className="text-[13px] text-muted-foreground">{detail}</p>
-    </div>
-  );
-}
-
-/** A bordered panel of rows, as Replicas' sections are. */
-function Panel({ children }: { children: React.ReactNode }) {
-  return <div className="divide-y divide-border/60 rounded-lg border border-border/60">{children}</div>;
 }
 
 /** A connected repository that can be added to the project. */
@@ -269,54 +257,6 @@ function RepositoriesEditor({ environment, onSaved }: { environment: Environment
       {save.error && <InlineMessage>{save.error}</InlineMessage>}
     </>
   );
-}
-
-/** Delete a variable or a file: a trash button that turns into a hold, since
- *  a value deleted can't be had back. */
-function DeleteButton({ what, onDelete }: { what: string; onDelete: () => void }) {
-  const [confirming, setConfirming] = useState(false);
-  if (!confirming) {
-    return (
-      <Button
-        size="icon-sm"
-        variant="ghost"
-        aria-label={`Delete ${what}`}
-        title={`Delete ${what}`}
-        className="text-muted-foreground"
-        onClick={() => setConfirming(true)}
-      >
-        <Trash2 />
-      </Button>
-    );
-  }
-  return (
-    <span className="flex items-center gap-1.5">
-      <HoldToConfirm label="Delete" onConfirm={onDelete} className="h-7 px-2.5 text-xs" />
-      <Button size="xs" variant="ghost" onClick={() => setConfirming(false)}>
-        Cancel
-      </Button>
-    </span>
-  );
-}
-
-/** A save's state: its button's, and why it failed. */
-function useSave() {
-  const [status, setStatus] = useState<ActionStatus>("idle");
-  const [error, setError] = useState<string | null>(null);
-  async function run<T>(send: () => Promise<T>): Promise<T | null> {
-    setStatus("pending");
-    setError(null);
-    try {
-      const result = await send();
-      setStatus("success");
-      return result;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't save that.");
-      setStatus("error");
-      return null;
-    }
-  }
-  return { status, error, run };
 }
 
 function patchEnvironment(id: string, body: object): Promise<Environment> {
