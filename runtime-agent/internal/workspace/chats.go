@@ -573,6 +573,11 @@ func (s *Service) snapshotChats(workspaceID string, asked []protocol.ArchiveChat
 		}
 		key := ChatKey(workspaceID, chat.ChatID)
 		f, _ := s.getFacts(key)
+		// A pending fork handoff lives outside the conversation log. Until
+		// snapshots carry that artifact, refuse to discard its source context.
+		if f.Handoff != "" {
+			return nil, fmt.Errorf("chat %s has an unspent fork handoff; send its first prompt or delete the chat before archiving", chat.ChatID)
+		}
 		chat.Agent = agentOrClaude(f.Agent)
 		chats = append(chats, snapshot.ChatInput{
 			ArchiveChat:      chat,
@@ -634,7 +639,6 @@ func (s *Service) restoreChat(ctx context.Context, workspaceID string, chat prot
 	f, _ := s.getFacts(key)
 	if sideOf != "" {
 		s.updateFacts(key, func(f *workspaceFacts) { f.SideOf = sideOf })
-		f.SideOf = sideOf
 	}
 	if f.Agent == AgentCodex {
 		dest := conversationPath(s.Root, key)

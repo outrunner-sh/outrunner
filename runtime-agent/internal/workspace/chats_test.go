@@ -12,6 +12,7 @@ import (
 	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/media"
 	"runtime-agent/internal/preview"
+	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/sessiontools"
 	"slices"
 	"strings"
@@ -665,5 +666,25 @@ func TestLifecycleLockWaitersKeepTheSameMutexUntilAllFinish(t *testing.T) {
 	s.lifeMu.Unlock()
 	if kept {
 		t.Fatal("finished lifecycle key remained in map")
+	}
+}
+
+func TestSnapshotRefusesToLoseAnUnspentForkHandoff(t *testing.T) {
+	for _, side := range []bool{false, true} {
+		t.Run(fmt.Sprint(side), func(t *testing.T) {
+			s, id, key := chatSession(t, ChatInput{From: MainChat, Side: side})
+			asked := []protocol.ArchiveChat{{ChatID: "c1"}}
+			if _, err := s.snapshotChats(id, asked); err == nil || !strings.Contains(err.Error(), "unspent fork handoff") {
+				t.Fatalf("snapshot pending fork: %v", err)
+			}
+			f, _ := s.getFacts(key)
+			if f.Handoff == "" || !s.HasChat(id, "c1") {
+				t.Fatal("archive rejection lost the pending handoff or chat")
+			}
+			s.handedOff(key)
+			if chats, err := s.snapshotChats(id, asked); err != nil || len(chats) != 1 {
+				t.Fatalf("snapshot spent fork: %v, %v", chats, err)
+			}
+		})
 	}
 }
