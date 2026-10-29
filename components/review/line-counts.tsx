@@ -4,8 +4,8 @@ import type { LineDelta, LineCounts, LineKind } from "@/lib/review/line-kinds";
 import { cn } from "@/lib/utils";
 
 const KIND = {
-  code: { label: "Code", Icon: Code2, tint: "text-sky-500" },
-  test: { label: "Tests", Icon: FlaskConical, tint: "text-violet-400" },
+  code: { label: "Code", Icon: Code2, tint: "text-muted-foreground" },
+  test: { label: "Tests", Icon: FlaskConical, tint: "text-muted-foreground" },
   generated: { label: "Generated", Icon: PackageOpen, tint: "text-muted-foreground" },
 } satisfies Record<LineKind, { label: string; Icon: typeof Code2; tint: string }>;
 

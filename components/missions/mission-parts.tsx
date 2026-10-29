@@ -142,39 +142,47 @@ export function PullRequestChip({
   pr,
   showTitle = false,
   link = true,
+  compact = false,
 }: {
   pr: RunnerPullView;
   showTitle?: boolean;
   /** A link to it; off inside a row that's a link itself (a link can't hold
    *  another), where it's only a chip. */
   link?: boolean;
+  /** The sidebar only needs an icon once a PR has merged. */
+  compact?: boolean;
 }) {
   const tone = checksTone(pr);
   const merged = pr.state === "merged";
   const closed = pr.state === "closed";
+  const iconOnly = compact && merged;
+  const label = `${merged ? "Merged pull request" : closed ? "Closed pull request" : "Pull request"} ${pr.repo}#${pr.number}${pr.title ? `: ${pr.title}` : ""}`;
   return (
     <span className="group/pr relative inline-flex min-w-0 items-center">
       <Chip
         {...(link ? { href: pr.url, target: "_blank", rel: "noreferrer", onClick: (e: React.MouseEvent) => e.stopPropagation() } : {})}
         className={cn(
-          "inline-flex h-[18px] min-w-0 items-center gap-1 rounded-[4px] border px-1.5 text-[11px] tabular-nums transition-colors",
+          "inline-flex h-[18px] min-w-0 items-center gap-1 text-[11px] tabular-nums transition-colors",
+          iconOnly ? "justify-center px-0.5" : "rounded-[4px] border px-1.5",
           merged
-            ? "border-[#a78bfa]/30 text-[#c4b5fd]"
+            ? "border-merged/30 text-merged"
             : closed
               ? "border-white/10 text-[#7a7a7a] line-through"
               : "border-white/10 text-[#cfcfcf] hover:border-white/25 hover:text-white",
         )}
-        aria-label={`Pull request #${pr.number}${pr.title ? `: ${pr.title}` : ""}, checks ${tone === "none" ? "not reported" : tone === "pass" ? "passing" : tone === "fail" ? "failing" : "running"}`}
+        role={iconOnly && !link ? "img" : undefined}
+        title={label}
+        aria-label={`${label}, checks ${tone === "none" ? "not reported" : tone === "pass" ? "passing" : tone === "fail" ? "failing" : "running"}`}
       >
-        {merged ? <GitMerge className="size-3" /> : <GitPullRequest className="size-3 text-[#8f8f8f]" />}
-        <span>#{pr.number}</span>
+        {merged ? <GitMerge aria-hidden className="size-3.5" /> : <GitPullRequest aria-hidden className="size-3 text-muted-foreground" />}
+        {!iconOnly && <span>#{pr.number}</span>}
         {showTitle && pr.title && <span className="min-w-0 truncate text-[#9a9a9a]">{pr.title}</span>}
         {!merged && !closed && <CheckIcon tone={tone} />}
       </Chip>
       {pr.checks.length > 0 && (
         <span
           role="tooltip"
-          className="pointer-events-none invisible absolute top-[calc(100%+6px)] left-0 z-50 w-64 translate-y-1 rounded-md border border-white/10 bg-[#1b1b1b] p-2 opacity-0 shadow-xl shadow-black/40 transition-all duration-150 group-focus-within/pr:visible group-focus-within/pr:translate-y-0 group-focus-within/pr:opacity-100 group-hover/pr:visible group-hover/pr:translate-y-0 group-hover/pr:opacity-100"
+          className="pointer-events-none invisible absolute top-[calc(100%+6px)] left-0 z-50 w-64 translate-y-1 rounded-md border border-border bg-popover p-2 opacity-0 shadow-xl shadow-black/40 transition-all duration-150 group-focus-within/pr:visible group-focus-within/pr:translate-y-0 group-focus-within/pr:opacity-100 group-hover/pr:visible group-hover/pr:translate-y-0 group-hover/pr:opacity-100"
         >
           <span className="mb-1.5 flex items-center justify-between px-1 text-[11px] text-[#8f8f8f]">
             <span>Checks</span>

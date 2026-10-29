@@ -4,6 +4,7 @@ import { ChevronRight, MessageSquare, Wand2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Delta, KindIcon, LineCountsSummary } from "@/components/review/line-counts";
+import { useReviewPanelVisible } from "@/components/review/panel-visibility";
 import { pickQuote, type QuoteIntent, usePickedQuote } from "@/components/review/quote-store";
 import { StartTourButton, TourCard, useTour } from "@/components/review/review-tour";
 import type { DiffLine } from "@/lib/runtime/diff";
@@ -56,11 +57,12 @@ const pickable = (line: DiffLine) =>
   (line.type === "add" || line.type === "context" || line.type === "del") && (line.oldNumber !== undefined || line.newNumber !== undefined);
 
 function HunkView({ hunk, focused, picking }: { hunk: Hunk; focused: boolean; picking: Picking }) {
+  const visible = useReviewPanelVisible();
   const ref = useRef<HTMLDivElement>(null);
   // The tour's current hunk is brought into view, below the tour's card.
   useEffect(() => {
-    if (focused) ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [focused]);
+    if (focused && visible) ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [focused, visible]);
   // A drag down the gutter picks a range, until the button is let go.
   const dragging = useRef(false);
   useEffect(() => {
@@ -78,7 +80,7 @@ function HunkView({ hunk, focused, picking }: { hunk: Hunk; focused: boolean; pi
     <div
       ref={ref}
       data-hunk={hunk.id}
-      className={cn("scroll-mt-60 transition-shadow", focused && "relative z-[1] ring-2 ring-sky-500/70 ring-inset")}
+      className={cn("scroll-mt-60 transition-shadow", focused && "relative z-[1] ring-2 ring-foreground/70 ring-inset")}
     >
       <div className="bg-muted/60 px-2 py-0.5 text-muted-foreground">{hunk.header}</div>
       {hunk.lines.map((line, i) => {
@@ -97,7 +99,7 @@ function HunkView({ hunk, focused, picking }: { hunk: Hunk; focused: boolean; pi
         return (
           <div key={i}>
             <div
-              className={cn("flex", rowClass(line.type), selection && i >= from && i <= to && "bg-sky-500/20")}
+              className={cn("flex", rowClass(line.type), selection && i >= from && i <= to && "bg-foreground/20")}
               onPointerEnter={canPick ? () => dragging.current && picking.pick(hunk, i, true) : undefined}
               // Shift-click extends the pick, not the page's text selection.
               onMouseDown={canPick ? (event) => event.shiftKey && event.preventDefault() : undefined}
@@ -117,7 +119,7 @@ function HunkView({ hunk, focused, picking }: { hunk: Hunk; focused: boolean; pi
               <span className="flex-1 whitespace-pre-wrap break-all pr-2">{line.text}</span>
             </div>
             {selection && i === to && (
-              <div className="flex items-center gap-2 border-y border-sky-500/30 bg-sky-500/5 px-3 py-1.5 font-sans text-[12px]">
+              <div className="flex items-center gap-2 border-y border-foreground/30 bg-foreground/5 px-3 py-1.5 font-sans text-[12px]">
                 <span className="text-muted-foreground">
                   {selection.side === "old" ? "Removed " : ""}
                   {selection.startLine === selection.endLine ? `line ${selection.startLine}` : `lines ${selection.startLine}–${selection.endLine}`}
@@ -134,7 +136,7 @@ function HunkView({ hunk, focused, picking }: { hunk: Hunk; focused: boolean; pi
                   <button
                     type="button"
                     onClick={() => picking.quote(hunk, "change")}
-                    className="inline-flex items-center gap-1 rounded-md bg-foreground px-2 py-0.5 text-background hover:opacity-90"
+                    className="inline-flex items-center gap-1 rounded-md bg-primary px-2 py-0.5 text-primary-foreground hover:opacity-90"
                   >
                     <Wand2 className="size-3.5" />
                     Ask for a change
