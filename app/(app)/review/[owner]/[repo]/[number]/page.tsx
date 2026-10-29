@@ -172,7 +172,15 @@ async function Pull({ params }: { params: Params }) {
             {pr.body.trim() ? <Markdown>{pr.body}</Markdown> : <p className="text-muted-foreground">No description.</p>}
           </div>
 
-          <PullFiles files={pr.files} complete={pr.filesComplete} lines={pr.lines} changedFiles={pr.changedFiles} />
+          <PullFiles
+            repo={pr.repo}
+            number={pr.number}
+            headSha={pr.headSha}
+            files={pr.files}
+            complete={pr.filesComplete}
+            lines={pr.lines}
+            changedFiles={pr.changedFiles}
+          />
         </div>
       </div>
       <div className="hidden min-h-0 lg:block">
