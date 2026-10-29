@@ -7,6 +7,24 @@ import { RouteLoading } from "@/components/route-states";
 import { listOpenPulls, type PullSummary } from "@/lib/review/pulls";
 import { reviewViewer } from "@/lib/review/viewer";
 
+/** Opening Review never waits on the server: the build checks it. The cookies
+ *  are the app layout's (lib/nav/sidebar.ts), named here rather than imported
+ *  because a segment config is read by static analysis. */
+export const unstable_instant = {
+  prefetch: "static",
+  samples: [
+    {
+      cookies: [
+        { name: "sidebar-collapsed", value: null },
+        { name: "sidebar-folded", value: null },
+        { name: "sidebar-grouping", value: null },
+        { name: "get-started-skipped", value: null },
+        { name: "outrunner_org", value: null },
+      ],
+    },
+  ],
+};
+
 /**
  * Review: every open pull request in the org's repositories the viewer may
  * read, by repository, with its checks, its author, and the Outrunner

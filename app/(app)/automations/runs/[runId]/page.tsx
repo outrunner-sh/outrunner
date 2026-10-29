@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 
+import { RunSessionLoading } from "@/components/automations-loading";
 import { ReviewSessionView } from "@/components/review-session-view";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getRun } from "@/lib/db/automation-runs";
@@ -9,11 +10,31 @@ import { getOrgContext } from "@/lib/orgs/server";
 
 type Params = Promise<{ runId: string }>;
 
+/** Opening a run never waits on the server: the build checks it, on a sample
+ *  run opened from the automations list. The cookies are the app layout's
+ *  (lib/nav/sidebar.ts), named here rather than imported because a segment
+ *  config is read by static analysis. */
+export const unstable_instant = {
+  prefetch: "static",
+  samples: [
+    {
+      params: { runId: "00000000-0000-0000-0000-000000000000" },
+      cookies: [
+        { name: "sidebar-collapsed", value: null },
+        { name: "sidebar-folded", value: null },
+        { name: "sidebar-grouping", value: null },
+        { name: "get-started-skipped", value: null },
+        { name: "outrunner_org", value: null },
+      ],
+    },
+  ],
+};
+
 /** A run's review session, read-only, for the org's admins: what the org's
  *  connector's session did, which no member could open as theirs. */
 export default function RunSessionPage({ params }: { params: Params }) {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<RunSessionLoading />}>
       <RunSessionSection params={params} />
     </Suspense>
   );

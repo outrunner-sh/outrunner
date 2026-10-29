@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { AutomationEditor } from "@/components/automation-editor";
+import { AutomationLoading } from "@/components/automations-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { orgAppCoverage } from "@/lib/automations/coverage";
 import type { AppCoverage } from "@/lib/automations/rules";
@@ -11,11 +12,41 @@ import { getOrgContext } from "@/lib/orgs/server";
 
 type SearchParams = Promise<{ template?: string }>;
 
+/** Opening the new-automation form never waits on the server: the build checks
+ *  it, blank and from a template. The cookies are the app layout's
+ *  (lib/nav/sidebar.ts), named here rather than imported because a segment
+ *  config is read by static analysis. */
+export const unstable_instant = {
+  prefetch: "static",
+  samples: [
+    {
+      searchParams: { template: null },
+      cookies: [
+        { name: "sidebar-collapsed", value: null },
+        { name: "sidebar-folded", value: null },
+        { name: "sidebar-grouping", value: null },
+        { name: "get-started-skipped", value: null },
+        { name: "outrunner_org", value: null },
+      ],
+    },
+    {
+      searchParams: { template: "code-review" },
+      cookies: [
+        { name: "sidebar-collapsed", value: null },
+        { name: "sidebar-folded", value: null },
+        { name: "sidebar-grouping", value: null },
+        { name: "get-started-skipped", value: null },
+        { name: "outrunner_org", value: null },
+      ],
+    },
+  ],
+};
+
 /** A new automation of the org the app is showing: blank, or from a template
  *  (`?template=code-review`). Its admins make them. */
 export default function NewAutomationPage({ searchParams }: { searchParams: SearchParams }) {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<AutomationLoading />}>
       <NewAutomation searchParams={searchParams} />
     </Suspense>
   );

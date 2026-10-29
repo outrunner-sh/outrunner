@@ -21,12 +21,19 @@ import {
   type SessionModel,
   takesEffort,
 } from "@/lib/runtime/session-models";
-import type { Project } from "@/lib/runtime/types";
+import type { Project, Workspace } from "@/lib/runtime/types";
 import { firstPromptQuery, newFirstPrompt, rememberFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
+import { rememberPendingSession } from "@/lib/session/pending-sessions";
 import { rememberEffort } from "@/lib/session/picked-effort";
 
-type CreateResponse = { workspace?: { id: string }; error?: string; settingsHref?: string; sessionHref?: string };
+type CreateResponse = {
+  /** The new session's row, whole, so its page opens on it at once. */
+  workspace?: Workspace;
+  error?: string;
+  settingsHref?: string;
+  sessionHref?: string;
+};
 
 /** The effort a new session starts at: the one picked, where its model takes
  *  one; else none, the model's own. */
@@ -130,6 +137,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         return;
       }
       const first = newFirstPrompt(prompt, attachmentIds);
+      // Before the push: its page opens on this row, rather than on the
+      // server's read of the same one (lib/session/pending-sessions.ts).
+      rememberPendingSession(result.workspace);
       rememberFirstPrompt(tabStorage(), result.workspace.id, first);
       // None picked: the server's default, which on the user's Claude runs at
       // DEFAULT_EFFORT (a model that takes none doesn't show it).

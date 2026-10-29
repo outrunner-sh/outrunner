@@ -461,7 +461,16 @@ export async function createCloudSession(
     });
   if (options.inline) await provision();
   else after(provision);
-  return NextResponse.json({ workspace: { id: workspace.id } }, { status: 202 });
+  // The whole row, not only its id: the caller opens the session on it at once
+  // (lib/session/pending-sessions.ts), rather than waiting for the layout's
+  // data to be read again. Read back rather than sent as it was inserted,
+  // because it has been titled since — a row without its title would show the
+  // session as its branch until the server's own read caught up.
+  const answered = (await getWorkspace(workspace.id).catch((error: unknown) => {
+    console.error(`Workspace ${workspace.id}: could not read its row back`, error);
+    return null;
+  })) ?? workspace;
+  return NextResponse.json({ workspace: answered }, { status: 202 });
 }
 
 /**

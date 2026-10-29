@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
-import { newerSessionView, resolveSessionView, type AppData, type SessionView } from "@/lib/session/session-view";
+import {
+  newerSessionView,
+  resolveSessionView,
+  sessionViewOf,
+  type AppData,
+  type SessionView,
+} from "@/lib/session/session-view";
 
 function workspace(id: string, over: Partial<Workspace> = {}): Workspace {
   return {
@@ -136,4 +142,21 @@ test("the editor is offered only where a box's port opens in the browser", async
   assert.equal(opensInBrowser("daytona"), true);
   assert.equal(opensInBrowser("user-daytona"), true);
   for (const provider of ["neev", "modal", "user-modal", "local"] as const) assert.equal(opensInBrowser(provider), false, provider);
+});
+
+test("a row from the create call opens the session before the sidebar lists it", () => {
+  // Nothing of the sidebar's yet: the session shows, its repository and pull
+  // request are simply not named until the layout is read again.
+  const w = workspace("w-new", { status: "creating", title: "Fix the flaky test" });
+  assert.deepEqual(sessionViewOf(w, data([workspace("w1")])), {
+    workspace: w,
+    projectName: "o/r",
+    pullRequest: null,
+  });
+  assert.deepEqual(sessionViewOf(w, null), { workspace: w, projectName: undefined, pullRequest: null });
+});
+
+test("the create call's row is described by the sidebar's data where it has it", () => {
+  const w = workspace("w1", { title: "Fix" });
+  assert.deepEqual(sessionViewOf(w, data([], { w1: pr })), { workspace: w, projectName: "o/r", pullRequest: pr });
 });

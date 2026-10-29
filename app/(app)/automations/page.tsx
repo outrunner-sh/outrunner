@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { Automations } from "@/components/automations";
+import { AutomationsLoading } from "@/components/automations-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { TRIGGER_KINDS, type TriggerKind } from "@/lib/automations/rules";
 import { AUTOMATION_TEMPLATES } from "@/lib/automations/templates";
@@ -10,6 +11,25 @@ import { listAutomations } from "@/lib/db/automations";
 import { listOrgInstallations } from "@/lib/db/github-installations";
 import { appSlug, githubAppConfig } from "@/lib/github/app";
 import { getOrgContext } from "@/lib/orgs/server";
+
+/** Opening Automations never waits on the server: the build checks it. The
+ *  cookies are the app layout's (lib/nav/sidebar.ts), named here rather than
+ *  imported because a segment config is read by static analysis. */
+export const unstable_instant = {
+  prefetch: "static",
+  samples: [
+    {
+      searchParams: { trigger: null },
+      cookies: [
+        { name: "sidebar-collapsed", value: null },
+        { name: "sidebar-folded", value: null },
+        { name: "sidebar-grouping", value: null },
+        { name: "get-started-skipped", value: null },
+        { name: "outrunner_org", value: null },
+      ],
+    },
+  ],
+};
 
 /**
  * Automations for the org the app is showing: shared workflows that start a
@@ -21,7 +41,7 @@ type SearchParams = Promise<{ trigger?: string }>;
 
 export default function AutomationsPage({ searchParams }: { searchParams: SearchParams }) {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<AutomationsLoading />}>
       <AutomationsSection searchParams={searchParams} />
     </Suspense>
   );

@@ -15,6 +15,26 @@ import { cn } from "@/lib/utils";
 
 type Params = Promise<{ owner: string; repo: string; number: string }>;
 
+/** Opening a pull request never waits on the server: the build checks it, on a
+ *  sample pull request opened from the list. The cookies are the app layout's
+ *  (lib/nav/sidebar.ts), named here rather than imported because a segment
+ *  config is read by static analysis. */
+export const unstable_instant = {
+  prefetch: "static",
+  samples: [
+    {
+      params: { owner: "sample", repo: "sample", number: "1" },
+      cookies: [
+        { name: "sidebar-collapsed", value: null },
+        { name: "sidebar-folded", value: null },
+        { name: "sidebar-grouping", value: null },
+        { name: "get-started-skipped", value: null },
+        { name: "outrunner_org", value: null },
+      ],
+    },
+  ],
+};
+
 /**
  * One pull request: what it is and how it stands (checks, reviews, the review
  * bot's score and the validator's verdict), where it came from in Outrunner,
