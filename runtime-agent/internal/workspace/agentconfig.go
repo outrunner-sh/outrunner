@@ -105,6 +105,9 @@ func (s *Service) SetAgentConfig(ctx context.Context, req AgentConfigRequest) er
 		return err
 	}
 
+	// The box's own servers are added by the box, last (desktop.go): one of
+	// theirs by the same name is dropped here, so it can't shadow them.
+	req.MCPServers = withoutOwnServers(req.MCPServers)
 	if len(req.MCPServers) > 0 {
 		if err := writeJSONFile(mcpConfigPath(home), map[string]any{"mcpServers": req.MCPServers}, 0o600); err != nil {
 			return err
