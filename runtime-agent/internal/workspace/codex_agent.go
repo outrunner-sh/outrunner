@@ -43,6 +43,7 @@ func (a codexAgent) command(workspaceID, worktree string, _ bool) []string {
 	s := a.s
 	f, _ := s.getFacts(workspaceID)
 	argv := codex.Command(s.permissionMode(workspaceID), f.CodexSessionID, f.Model, f.Effort, s.orientation(workspaceID, worktree))
+	argv = append(argv, s.codexDesktopArgs(workspaceID, worktree)...)
 	return append(s.codexLaunchEnv(workspaceID), argv...)
 }
 
