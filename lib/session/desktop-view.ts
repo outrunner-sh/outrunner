@@ -119,13 +119,14 @@ export async function openDesktop(
   workspaceId: string,
   fetchImpl: typeof fetch = fetch,
   timeoutMs = OPEN_TIMEOUT_MS,
+  timeoutSignal: (milliseconds: number) => AbortSignal = (milliseconds) => AbortSignal.timeout(milliseconds),
 ): Promise<{ url: string } | Extract<DesktopEvent, { type: "refused" }>> {
   let res: Response;
   try {
     res = await fetchImpl(`/api/workspaces/${workspaceId}/desktop`, {
       method: "POST",
       cache: "no-store",
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: timeoutSignal(timeoutMs),
     });
   } catch (error) {
     const timedOut = error instanceof DOMException && error.name === "TimeoutError";

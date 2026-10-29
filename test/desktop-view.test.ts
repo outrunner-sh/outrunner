@@ -112,12 +112,25 @@ test("openDesktop hands back the route's refusal, or that it couldn't reach it",
 });
 
 test("a request that hangs is given up, as a refusal that says so", async () => {
-  // Answers only when its request is aborted, as a hung route would.
+  // A test timeout signal aborts predictably; AbortSignal.timeout uses an
+  // unreferenced timer, which lets Node's test runner exit before it fires.
+  const timeoutSignal = (milliseconds: number) => {
+    assert.equal(milliseconds, 20);
+    const controller = new AbortController();
+    queueMicrotask(() => controller.abort(new DOMException("timed out", "TimeoutError")));
+    return controller.signal;
+  };
   const hung = ((_: string, init?: RequestInit) =>
     new Promise((_resolve, reject) => {
-      init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+      const signal = init?.signal;
+      if (signal?.aborted) reject(signal.reason);
+      else signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
     })) as unknown as typeof fetch;
-  assert.deepEqual(await openDesktop("ws-1", hung, 20), { type: "refused", httpStatus: 0, error: DESKTOP_TIMED_OUT });
+  assert.deepEqual(await openDesktop("ws-1", hung, 20, timeoutSignal), {
+    type: "refused",
+    httpStatus: 0,
+    error: DESKTOP_TIMED_OUT,
+  });
   assert.deepEqual(run({ type: "refused", httpStatus: 0, error: DESKTOP_TIMED_OUT }), {
     status: "error",
     attempt: 0,
