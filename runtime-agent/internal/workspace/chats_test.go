@@ -76,6 +76,13 @@ func TestMakingAChatNamesTheMainConversationByID(t *testing.T) {
 	if got := filepath.Base(s.SessionLog(key)); got != f.ClaudeSessionID+".jsonl" {
 		t.Errorf("the chat's log = %s, want its own", got)
 	}
+	if _, err := s.Resume(context.Background(), id, ""); err != nil {
+		t.Fatal(err)
+	}
+	argv := s.tmux.(*fakeSessions).lastLaunch()
+	if !slices.Contains(argv, "--resume") || !slices.Contains(argv, "main-session") || slices.Contains(argv, f.ClaudeSessionID) {
+		t.Fatalf("main chat did not resume its own conversation: %q", argv)
+	}
 }
 
 func TestAMainChatWithNoConversationYetDoesNotTakeAChatsForItsOwn(t *testing.T) {
@@ -91,6 +98,13 @@ func TestAMainChatWithNoConversationYetDoesNotTakeAChatsForItsOwn(t *testing.T) 
 	}
 	if got := s.userTurns("ws-fresh"); got != 0 {
 		t.Errorf("main chat counts %d prompts, want 0: the chat's aren't its own", got)
+	}
+	if _, err := s.Resume(context.Background(), "ws-fresh", ""); err != nil {
+		t.Fatal(err)
+	}
+	argv := s.tmux.(*fakeSessions).lastLaunch()
+	if slices.Contains(argv, "--continue") || slices.Contains(argv, "--resume") || slices.Contains(argv, f.ClaudeSessionID) {
+		t.Fatalf("empty main chat resumed another conversation: %q", argv)
 	}
 }
 

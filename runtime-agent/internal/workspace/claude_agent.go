@@ -275,6 +275,9 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 		// one of the session's other chats'.
 		s.pinClaudeSession(workspaceID)
 		f, _ = s.getFacts(workspaceID)
+		// A main chat with no log of its own must start afresh. Folder-wide
+		// --continue could select one of the other chats' conversations.
+		resume = f.ClaudeSessionID != ""
 	}
 	var argv []string
 	switch {
