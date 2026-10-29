@@ -103,6 +103,9 @@ export function conversationNodes(
     // A record of a slash command Claude ran itself is a step of the turn
     // too (/compact's), not one of its own.
     const continuation = turn !== null && continuations.has(ei);
+    const internalRecord = event.role === "user" && event.content.some(
+      (block) => block.type === "text" && metaLabel(event.meta === true, block.text) !== null,
+    );
     const visiblePrompt = event.role === "user" && event.content.some(
       (block) => block.type === "text" && metaLabel(event.meta === true, block.text) === null,
     );
@@ -129,7 +132,7 @@ export function conversationNodes(
       previousAt = event.timestamp;
       return;
     }
-    if (isLocalCommand(event)) {
+    if (isLocalCommand(event) && !internalRecord) {
       // What a command printed stays out, and /compact is its compaction's row.
       const line = localCommandLine(messageText(event));
       if (line && !/^\/compact\b/.test(line)) nodes.push({ kind: "command", key: `${event.uuid}-${ei}`, text: line });
