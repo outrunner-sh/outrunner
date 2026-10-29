@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 
 import type { Sandbox } from "@daytonaio/sdk";
 
@@ -65,4 +65,22 @@ test("only Daytona sessions offer a desktop", () => {
   assert.equal(hasDesktop("daytona"), true);
   assert.equal(hasDesktop("user-daytona"), true);
   for (const provider of ["neev", "modal", "user-modal", "local"] as const) assert.equal(hasDesktop(provider), false);
+});
+
+test("a desktop start that hangs is given up after 30 seconds, not the SDK's five minutes", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const sandbox = { id: "box-1", computerUse: { start: () => new Promise(() => {}) } } as unknown as Sandbox;
+    const started = box(sandbox).desktop!.start();
+    const outcome = started.then(
+      () => "started",
+      (error: Error) => error.message,
+    );
+    mock.timers.tick(29_999);
+    await Promise.resolve();
+    mock.timers.tick(1);
+    assert.equal(await outcome, "Daytona's desktop didn't start in time (30 s)");
+  } finally {
+    mock.timers.reset();
+  }
 });

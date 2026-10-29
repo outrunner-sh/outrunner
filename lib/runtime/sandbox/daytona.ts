@@ -39,6 +39,29 @@ const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
  */
 export const DESKTOP_RESOLUTION = "1280x800";
 
+/**
+ * How long starting the desktop may take before it's given up: a cold start
+ * takes a second or two, so one that hasn't answered in this is stuck, and
+ * the Desktop tab should say so and offer a retry, not wait out the SDK's
+ * five minutes.
+ */
+const DESKTOP_START_TIMEOUT_MS = 30_000;
+
+/** `promise`, or a rejection saying `message` once `ms` have gone by. */
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${message} (${ms / 1000} s)`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Monotonic suffix so each detached launch gets its own Daytona session. */
 let launchSeq = 0;
 
@@ -254,9 +277,7 @@ export function box(sandbox: Sandbox): SandboxBox {
     desktop: {
       // Starts what isn't running (the display, its window manager, the VNC
       // server and noVNC) and leaves what is: a second start is a no-op.
-      start: async () => {
-        await sandbox.computerUse.start();
-      },
+      start: () => withTimeout(sandbox.computerUse.start(), DESKTOP_START_TIMEOUT_MS, "Daytona's desktop didn't start in time"),
       // A signed preview link is good for its one port alone (checked on a
       // real box: the token in it is refused on any other), and noVNC's
       // proxy there forwards to the VNC server alone, a target fixed at its

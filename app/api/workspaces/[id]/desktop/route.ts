@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { hasDesktop } from "@/lib/runtime/types";
-import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { reachWorkspaceComputer } from "@/lib/runtime/workspace-agent";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -33,21 +33,25 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
-  const reach = await reachWorkspaceAgent(id, owner.id, {
-    label: "Desktop",
+  // The box, not its agent: the desktop is Daytona's own, so it opens even
+  // when the agent is wedged. Who may see it, and whether the provider has
+  // one, are checked as soon as the session is read, before its box is.
+  const reach = await reachWorkspaceComputer(id, {
     needsComputer: "The desktop runs on Outrunner's cloud computers.",
+    admit: (workspace) => {
+      // The session's own owner alone, whoever else can read the session:
+      // the link is a key to the box's desktop.
+      if (workspace.ownerId !== owner.id) {
+        return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
+      }
+      if (!hasDesktop(workspace.provider)) {
+        return NextResponse.json({ error: "The desktop runs on Outrunner's Daytona sandboxes only." }, { status: 409 });
+      }
+      return null;
+    },
   });
   if (!reach.ok) return reach.response;
   const { workspace, provider, sandboxId } = reach.reached;
-  // The session's own owner alone, whoever else can read the session: the
-  // link is a key to the box's desktop.
-  if (workspace.ownerId !== owner.id) {
-    return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
-  }
-  // Before the box is asked: where there is no desktop, nothing is started.
-  if (!hasDesktop(workspace.provider)) {
-    return NextResponse.json({ error: "The desktop runs on Outrunner's Daytona sandboxes only." }, { status: 409 });
-  }
 
   try {
     const url = await provider.openDesktop(sandboxId, DESKTOP_LINK_TTL_SECONDS);
