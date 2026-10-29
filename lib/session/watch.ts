@@ -89,18 +89,13 @@ export async function readSession(workspaceId: string): Promise<ActivityChange |
   const before = activity ? rowToTurn(activity) : null;
 
   // Paused, archived or gone: it's doing nothing, whatever it last did.
-  if (!(LIVE as readonly string[]).includes(workspace.status)) {
-    if (!activity || (activity.turn === "idle" && !activity.waiting)) return null;
-    const after: TurnState = { ...before!, turn: "idle", waiting: null, waitingToolId: null, waitingSince: null };
-    const { error: idleError } = await db()
-      .from("session_activity")
-      .update({ ...turnToRow(after), updated_at: new Date().toISOString() })
-      .eq("workspace_id", workspaceId);
-    if (idleError) throw idleError;
-    return { workspaceId, ownerId: workspace.ownerId, before, after };
-  }
+  if (!(LIVE as readonly string[]).includes(workspace.status)) return settle(workspace, activity);
 
   const box = await upBox(workspace);
+  // Its box stopped under it (lost, or paused for a turn stuck too long):
+  // nothing runs there, so a turn it was in the middle of is over. Kept
+  // "working", the sidebar would spin, and its queue wait, until it's opened.
+  if (box === "down") return settle(workspace, activity);
   if (!box) return null;
   // A session restored onto another box has a log of its own there.
   const sameBox = activity?.stream_box === box.sandboxId;
@@ -139,8 +134,26 @@ export async function readSession(workspaceId: string): Promise<ActivityChange |
   return { workspaceId, ownerId: workspace.ownerId, before, after };
 }
 
-/** The session's box, when it's up, and how to reach its agent; null when
- *  it isn't (reading never starts one). */
+/** A session that's doing nothing, whatever it last did: its activity, if
+ *  it shows it working or waiting, set idle. */
+async function settle(
+  workspace: ReturnType<typeof toWorkspace>,
+  activity: ActivityRow | null,
+): Promise<ActivityChange | null> {
+  if (!activity || (activity.turn === "idle" && !activity.waiting)) return null;
+  const before = rowToTurn(activity);
+  const after: TurnState = { ...before, turn: "idle", waiting: null, waitingToolId: null, waitingSince: null };
+  const { error } = await db()
+    .from("session_activity")
+    .update({ ...turnToRow(after), updated_at: new Date().toISOString() })
+    .eq("workspace_id", workspace.id);
+  if (error) throw error;
+  return { workspaceId: workspace.id, ownerId: workspace.ownerId, before, after };
+}
+
+/** The session's box, when it's up, and how to reach its agent; "down" when
+ *  it's stopped (so is the agent); null when it can't be told, one still
+ *  provisioning (reading never starts one). */
 async function upBox(workspace: ReturnType<typeof toWorkspace>) {
   const filter = workspace.computerId
     ? `workspace_id.eq.${workspace.id},id.eq.${workspace.computerId}`
@@ -149,6 +162,7 @@ async function upBox(workspace: ReturnType<typeof toWorkspace>) {
   if (error) throw error;
   const rows = data ?? [];
   const row = rows.find((r) => r.workspace_id === workspace.id) ?? rows[0];
+  if (row && (row.status === "stopped" || row.status === "error")) return "down" as const;
   if (!row || row.status !== "ready" || !row.daytona_sandbox_id || !row.agent_secret) return null;
   const computer = toRuntimeComputer(row);
   const resolution = resolveProvider(workspace);
@@ -206,8 +220,9 @@ export async function watchAfterSend(
   }
 }
 
-/** The sessions the tick reads: every one whose box is up, and those sent
- *  something lately, most recently active first. */
+/** The sessions the tick reads: every one whose box is up, those sent
+ *  something lately, and those still shown working or waiting (so one whose
+ *  box stopped mid-turn is settled), most recently active first. */
 export async function watchedSessions(limit = 150): Promise<string[]> {
   const { data: live, error } = await db()
     .from("workspaces")
@@ -219,19 +234,22 @@ export async function watchedSessions(limit = 150): Promise<string[]> {
   if (error) throw error;
   const ids = (live ?? []).map((w) => w.id);
   const computerIds = [...new Set((live ?? []).map((w) => w.computer_id).filter((id): id is string => Boolean(id)))];
-  const [byWorkspace, byId, watched] = await Promise.all([
+  const [byWorkspace, byId, watched, busy] = await Promise.all([
     ids.length ? db().from("runtime_computers").select("workspace_id").eq("status", "ready").in("workspace_id", ids) : { data: [], error: null },
     computerIds.length ? db().from("runtime_computers").select("id").eq("status", "ready").in("id", computerIds) : { data: [], error: null },
     db().from("session_activity").select("workspace_id").gt("watch_until", new Date().toISOString()),
+    db().from("session_activity").select("workspace_id").or("turn.eq.working,waiting.not.is.null").limit(limit),
   ]);
   // A query that failed here would otherwise read as "nothing to read".
   if (byWorkspace.error) throw byWorkspace.error;
   if (byId.error) throw byId.error;
   if (watched.error) throw watched.error;
+  if (busy.error) throw busy.error;
   const upOwn = new Set((byWorkspace.data ?? []).map((c) => c.workspace_id));
   const upShared = new Set((byId.data ?? []).map((c) => c.id));
   const up = (live ?? []).filter((w) => upOwn.has(w.id) || (w.computer_id && upShared.has(w.computer_id))).map((w) => w.id);
-  return [...new Set([...up, ...(watched.data ?? []).map((a) => a.workspace_id)])].slice(0, limit);
+  const rest = [...(watched.data ?? []), ...(busy.data ?? [])].map((a) => a.workspace_id);
+  return [...new Set([...up, ...rest])].slice(0, limit);
 }
 
 /** watchAfterSend for a route's after(), telling the user what it sees

@@ -3,6 +3,7 @@
   "lines": [
     "{\"type\":\"assistant\",\"uuid\":\"u1\",\"parentUuid\":null,\"timestamp\":\"t1\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}",
     "{\"type\":\"user\",\"uuid\":\"u-meta\",\"parentUuid\":\"u1\",\"timestamp\":\"t-meta\",\"isMeta\":true,\"message\":{\"role\":\"user\",\"content\":\"Base directory for this skill: /work/skill\"}}",
+    "{\"type\":\"user\",\"uuid\":\"u-transcript-only\",\"parentUuid\":\"u1\",\"timestamp\":\"t-transcript-only\",\"origin\":{\"kind\":\"task-notification\"},\"promptSource\":\"system\",\"queueTranscriptOnly\":true,\"message\":{\"role\":\"user\",\"content\":\"<task-notification>\\n<task-id>b1</task-id>\\n<status>stopped</status>\\n<summary>Background shell command didn't finish before the previous session ended</summary>\\n</task-notification>\"}}",
     "{\"type\":\"user\",\"uuid\":\"u2\",\"parentUuid\":\"u1\",\"timestamp\":\"t2\",\"message\":{\"role\":\"user\",\"content\":[{\"tool_use_id\":\"tr1\",\"type\":\"tool_result\",\"content\":\"done\",\"is_error\":false}]}}",
     "{\"type\":\"assistant\",\"uuid\":\"u3\",\"parentUuid\":\"u2\",\"timestamp\":\"t3\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\"},{\"type\":\"tool_use\",\"id\":\"tu1\",\"name\":\"Bash\",\"input\":{\"cmd\":\"ls\"}}]}}",
     "{\"type\":\"queue-operation\",\"uuid\":\"x\",\"message\":{\"role\":\"user\",\"content\":[]}}",

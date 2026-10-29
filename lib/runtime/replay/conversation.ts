@@ -82,6 +82,10 @@ function decodeLine(line: string): AgentEvent | null {
   if (!isObject(message)) return null;
   // The summary Claude goes on from after compacting: no prompt of the user's.
   if (rec.isCompactSummary === true) return null;
+  // Written down but never sent to Claude (on resume, the notice for a
+  // background task the previous process left running): no reply follows, so
+  // it is no prompt (the Go watcher's QueueTranscriptOnly).
+  if (rec.queueTranscriptOnly === true) return null;
 
   const content = contentOf(message.content);
   if (!content) return null;

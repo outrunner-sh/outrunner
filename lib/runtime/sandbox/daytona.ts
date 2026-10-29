@@ -7,6 +7,7 @@ import type { ListedBox } from "@/lib/runtime/orphan-boxes";
 import {
   homeOf,
   type AgentEndpoint,
+  type BoxResources,
   type SandboxBackend,
   type SandboxBox,
 } from "@/lib/runtime/sandbox/backend";
@@ -61,14 +62,16 @@ export class DaytonaBackend implements SandboxBackend {
     return this.client;
   }
 
-  // No size: Daytona's base box has a fixed one, and sizing a box means
-  // building it from a full image, which makes its first start slow.
-  async create(labels: Record<string, string>): Promise<SandboxBox> {
+  // Sized by Daytona's own snapshot of its base image at that size (claude
+  // + node ship with it), which starts as fast as the base box: sizing one
+  // any other way means building it from a full image, slow to first start.
+  async create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox> {
+    const snapshot = size && daytonaSnapshotFor(size);
     const sandbox = await (await this.daytona()).create(
       // Never auto-stopped or auto-deleted by Daytona: Outrunner stops an
       // idle box itself (lib/billing/reconcile.ts), by what its sessions are
-      // doing. Base image (no snapshot): claude + node ship with it.
-      { autoStopInterval: 0, autoDeleteInterval: -1, labels },
+      // doing.
+      { autoStopInterval: 0, autoDeleteInterval: -1, labels, ...(snapshot && { snapshot }) },
       { timeout: CREATE_TIMEOUT_SECONDS },
     );
     return box(sandbox);
@@ -152,6 +155,23 @@ export async function relabel(sandbox: Sandbox, labels: Record<string, string>):
   await sandbox
     .setLabels({ ...current, ...labels })
     .catch((error: unknown) => console.warn(`Could not label Daytona box ${sandbox.id}`, error));
+}
+
+/**
+ * Daytona's sizes of its base image, largest first. The base box, with no
+ * snapshot, is the smallest: 1 vCPU and 1 GiB, which a large install and a
+ * test run at once can run out of.
+ */
+const DAYTONA_SNAPSHOTS = [
+  { name: "daytona-large", cpu: 4, memoryGb: 8 },
+  { name: "daytona-medium", cpu: 2, memoryGb: 4 },
+] as const;
+
+/** The largest of Daytona's sizes within `size`'s vCPUs (what the box is
+ *  billed by, lib/billing/hours.ts); none, the base box, below them all.
+ *  Exported for tests. */
+export function daytonaSnapshotFor(size: BoxResources): string | undefined {
+  return DAYTONA_SNAPSHOTS.find((s) => s.cpu <= size.cpu)?.name;
 }
 
 /** States a box is started again from, and ones it's on its way up in. */

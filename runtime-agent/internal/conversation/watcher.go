@@ -44,8 +44,12 @@ type rawRecord struct {
 	// Claude's own injected record (a skill's instructions, a system reminder,
 	// …): shown tucked behind a disclosure, not inline, so it stays out of the
 	// conversation's flow.
-	IsMeta  bool `json:"isMeta"`
-	Message *struct {
+	IsMeta bool `json:"isMeta"`
+	// QueueTranscriptOnly marks a record Claude only wrote down and never
+	// sent the model: on resume, the notice for a background task the
+	// previous process left running. No reply follows it, so it is no prompt.
+	QueueTranscriptOnly bool `json:"queueTranscriptOnly"`
+	Message             *struct {
 		Role       string                      `json:"role"`
 		Model      string                      `json:"model"`
 		StopReason string                      `json:"stop_reason"`
@@ -219,6 +223,11 @@ func decode(line []byte) (Event, bool) {
 	if rec.Message == nil || rec.IsCompactSummary {
 		// The summary is Claude's own record of the conversation so far,
 		// shown as the compaction it follows rather than as a prompt.
+		return Event{}, false
+	}
+	if rec.QueueTranscriptOnly {
+		// Never sent to Claude: shown as a prompt, it would start a turn no
+		// reply ever ends, and hold every queued message behind it.
 		return Event{}, false
 	}
 	content, ok := parseContent(rec.Message.Content)
