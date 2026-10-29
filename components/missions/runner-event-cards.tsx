@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * A message of `<runner_event>` blocks to a Mission (lib/missions/events.ts),
- * shown as what it is: news from its Runners, one compact card each, labelled
+ * A message of `<runner_event>` blocks in a Runner's conversation (lib/missions/events.ts),
+ * shown as what it is: news from its Ships, one compact card each, labelled
  * with where it came from, rather than the raw markup. A card with more to
- * say (a Runner's whole response) opens.
+ * say (a Ship's whole response) opens.
  */
 
 import { AlertTriangle, Archive, CheckCircle2, ChevronRight, GitMerge, GitPullRequest, GitPullRequestClosed } from "lucide-react";

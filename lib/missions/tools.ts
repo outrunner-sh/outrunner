@@ -152,7 +152,7 @@ export const MISSION_TOOLS: ToolDefinition[] = [
   },
 ];
 
-const NO_SUCH_RUNNER: ToolResult = { text: "This Mission has no Runner with that id. list_runners shows its Runners.", isError: true };
+const NO_SUCH_RUNNER: ToolResult = { text: "This Runner has no Ship with that id. list_runners shows its Ships.", isError: true };
 
 function refuse(text: string): ToolResult {
   return { text, isError: true };
@@ -218,7 +218,7 @@ export async function callMissionTool(
   deps: MissionToolDeps,
 ): Promise<ToolResult> {
   const mission = await missionOf(scope, deps);
-  if (!mission) return refuse("This Mission is gone, so its tools no longer work.");
+  if (!mission) return refuse("This Runner is gone, so its tools no longer work.");
   // Rechecked each call: access taken away since the box started counts now.
   const denied = await deps.access(mission);
   if (denied) return refuse(denied);
@@ -251,12 +251,12 @@ export async function callMissionTool(
 
 async function spawnRunner(mission: Workspace, args: Record<string, unknown>, deps: MissionToolDeps): Promise<ToolResult> {
   const prompt = textArg(args, "prompt");
-  if (!prompt) return refuse("prompt is required: the Runner's brief.");
+  if (!prompt) return refuse("prompt is required: the Ship's brief.");
   const notReady = await deps.environmentReady(mission);
-  if (notReady) return refuse(`The Runner didn't start: ${notReady}`);
+  if (notReady) return refuse(`The Ship didn't start: ${notReady}`);
   const places = runnerPlacesLeft(await deps.runners(mission.id));
   if (places === 0) {
-    return refuse(`This Mission already has ${MAX_RUNNERS} Runners that aren't archived. Archive a finished one (archive_runner) first.`);
+    return refuse(`This Runner already has ${MAX_RUNNERS} Ships that aren't archived. Archive a finished one (archive_runner) first.`);
   }
   const started = await deps.startRunner(mission, {
     brief: prompt,
@@ -266,7 +266,7 @@ async function spawnRunner(mission: Workspace, args: Record<string, unknown>, de
     agent: textArg(args, "agent"),
     effort: textArg(args, "effort"),
   });
-  if ("error" in started) return refuse(`The Runner didn't start: ${started.error}`);
+  if ("error" in started) return refuse(`The Ship didn't start: ${started.error}`);
   return json({
     runner_id: started.runnerId,
     note: "It's setting up its box and starts on the brief once ready. You hear when its turn ends; there is no need to poll.",
@@ -278,29 +278,29 @@ async function messageRunner(mission: Workspace, args: Record<string, unknown>, 
   if (!runner) return NO_SUCH_RUNNER;
   const message = textArg(args, "message");
   if (!message) return refuse("message is required.");
-  if (runner.status === "failed") return refuse("That Runner failed to start, so it can't take messages. Spawn another.");
+  if (runner.status === "failed") return refuse("That Ship failed to start, so it can't take messages. Spawn another.");
   if (runner.status === "creating" || runner.status === "provisioning") {
     await deps.queue(mission.id, runner.id, message);
-    return { text: "The Runner is still setting up: your message waits, and goes once its first turn ends." };
+    return { text: "The Ship is still setting up: your message waits, and goes once its first turn ends." };
   }
   const working = await deps.working(runner).catch(() => false);
   if (working && boolArg(args, "queue")) {
     await deps.queue(mission.id, runner.id, message);
-    return { text: "Queued: it goes when the Runner's current turn ends." };
+    return { text: "Queued: it goes when the Ship's current turn ends." };
   }
   if (!(await deps.send(runner, message))) {
     return refuse(
       runner.status === "archived" && runnerPlacesLeft(await deps.runners(mission.id)) === 0
-        ? `That Runner is archived, and restoring it would put this Mission over ${MAX_RUNNERS} Runners. Archive another first.`
-        : "The Runner couldn't take the message (its box didn't answer). Try again shortly.",
+        ? `That Ship is archived, and restoring it would put this Runner over ${MAX_RUNNERS} Ships. Archive another first.`
+        : "The Ship couldn't take the message (its box didn't answer). Try again shortly.",
     );
   }
   return {
     text: working
-      ? "Sent: it steers the Runner's current turn."
+      ? "Sent: it steers the Ship's current turn."
       : runner.status === "archived"
-        ? "Sent: the Runner is being restored, and starts a new turn on it."
-        : "Sent: the Runner starts a new turn on it.",
+        ? "Sent: the Ship is being restored, and starts a new turn on it."
+        : "Sent: the Ship starts a new turn on it.",
   };
 }
 
@@ -326,19 +326,19 @@ async function readRunner(mission: Workspace, args: Record<string, unknown>, dep
 async function archiveRunner(mission: Workspace, args: Record<string, unknown>, deps: MissionToolDeps): Promise<ToolResult> {
   const runner = await ownRunner(mission, args.runner_id, deps);
   if (!runner) return NO_SUCH_RUNNER;
-  if (runner.status === "archived" || runner.status === "archiving") return { text: "That Runner is archived already." };
+  if (runner.status === "archived" || runner.status === "archiving") return { text: "That Ship is archived already." };
   const force = boolArg(args, "force");
   if (!force) {
     if (await deps.working(runner).catch(() => false)) {
-      return refuse("That Runner is working. Wait for its turn to end, or set force to archive it anyway.");
+      return refuse("That Ship is working. Wait for its turn to end, or set force to archive it anyway.");
     }
     const open = (await deps.pullRequests(runner).catch(() => [])).filter((p) => p.status === null || p.status.state === "open");
     if (open.length > 0) {
       return refuse(
-        `That Runner has an open pull request (${open.map((p) => p.url).join(", ")}). It's archived on its own once they're merged or closed; set force to archive it now.`,
+        `That Ship has an open pull request (${open.map((p) => p.url).join(", ")}). It's archived on its own once they're merged or closed; set force to archive it now.`,
       );
     }
   }
-  if (!(await deps.archive(runner))) return refuse("The Runner couldn't be archived just now. Try again shortly.");
+  if (!(await deps.archive(runner))) return refuse("The Ship couldn't be archived just now. Try again shortly.");
   return { text: "Archived. Messaging it restores it." };
 }

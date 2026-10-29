@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * A Mission's page header: its icon (click to pick another), its name (click
- * to rename), its project, and how many Runners it has out of how many.
+ * A Runner's page header: its icon (click to pick another), its name (click
+ * to rename), its project, and how many Ships it has out of how many.
  */
 
 import { FolderGit2, Users } from "lucide-react";
@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 /** The icon picker's columns, as its grid-cols-5 lays them out. */
 const GRID_COLUMNS = 5;
 
-/** Save a change to the Mission; the reason it wasn't saved, or null. */
+/** Save a change to the Runner; the reason it wasn't saved, or null. */
 async function patch(id: string, body: { title?: string; icon?: string }): Promise<string | null> {
   try {
     const response = await fetch(`/api/missions/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -45,7 +45,7 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
   const input = useRef<HTMLInputElement>(null);
   const shownIcon = icon ?? mission?.icon ?? null;
   const current = missionIcon(missionId, shownIcon);
-  // Runners with work open, archived ones whose pull request is still open too.
+  // Ships with work open, archived ones whose pull request is still open too.
   const active = mission?.runners.filter((r) => r.group !== "done").length ?? 0;
 
   useEffect(() => {

@@ -74,7 +74,7 @@ export function WorkspaceStudio({
   const archive = isLocal ? null : archiveOffer(workspace);
   const [archiving, setArchiving] = useState(false);
   const router = useRouter();
-  // A Mission's page: its header, and its Runners where a session's
+  // A Runner's page: its header, and its Ships where a session's
   // Environment is (components/missions).
   const isMission = workspace.kind === "mission";
 

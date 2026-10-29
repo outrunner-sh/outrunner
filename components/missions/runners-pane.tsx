@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * A Mission's Runners, in the right pane of its page (docs/missions.md):
- * grouped as Needs you, Ready to merge, Ready to review, Runners working and
+ * A Runner's Ships, in the right pane of its page (docs/missions.md):
+ * grouped as Needs you, Ready to merge, Ready to review, Working and
  * Shipping, each with its task in a line, its pull request, its size and its
- * checks (listed on hover). A Runner clicked opens here, with its latest
+ * checks (listed on hover). A Ship clicked opens here, with its latest
  * response and a box to message it; Escape or Back returns to the list.
  */
 
@@ -143,7 +143,7 @@ export function RunnersPane({ missionId, onClose }: { missionId: string; onClose
 function RunnerRow({ runner, onOpen }: { runner: RunnerView; onOpen: () => void }) {
   const pr = runner.pulls.find((p) => p.state === "open") ?? runner.pulls[runner.pulls.length - 1];
   return (
-    // A row that opens the Runner, holding its pull request's link: a link
+    // A row that opens the Ship, holding its pull request's link: a link
     // can't sit inside a button, so the row is a focusable div that answers
     // Enter and Space as one would.
     <div
@@ -180,7 +180,7 @@ function RunnerRow({ runner, onOpen }: { runner: RunnerView; onOpen: () => void 
 
 type Detail = { brief: string | null; latestResponse: string | null; live: boolean; status: string };
 
-/** One Runner, opened in the pane: its latest response, its pull requests,
+/** One Ship, opened in the pane: its latest response, its pull requests,
  *  its brief, and a box to message it. */
 function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner: RunnerView; onBack: () => void }) {
   const [detail, setDetail] = useState<Detail | null>(null);

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Starting a Mission: pick its project, say what it owns. The Mission is
+ * Starting a Runner: pick its project, say what it owns. The Runner is
  * made at once and opens; what was typed is its first message, which names
  * it (as a session's first prompt does), sent once its box is ready.
  */
@@ -47,7 +47,7 @@ export function NewMissionDialog({
 
   const start = async () => {
     if (!chosen || !prompt.trim() || busy) return;
-    // So a ready pull request, or a Mission needing them, can reach them
+    // So a ready pull request, or a Runner needing them, can reach them
     // while they're elsewhere (lib/notifications): asked while this click is
     // still the gesture browsers want, before anything is awaited.
     if (typeof Notification !== "undefined" && Notification.permission === "default") void askPermission();

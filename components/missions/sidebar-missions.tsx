@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * The sidebar's Missions (docs/missions.md): each Mission with its icon, a
+ * The sidebar's Runners (docs/missions.md): each Runner with its icon, a
  * live status (needs you, working, ready, idle) and how many pull requests
- * are ready, its Runners with open work nested under it. Dragged to reorder;
- * arrow keys move between rows. `+` starts a Mission.
+ * are ready, its Ships with open work nested under it. Dragged to reorder;
+ * arrow keys move between rows. `+` starts a Runner.
  */
 
 import Link from "next/link";
@@ -19,10 +19,10 @@ import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import { MISSION_STATUS_LABEL, type MissionView, type RunnerView } from "@/lib/missions/view";
 import { cn } from "@/lib/utils";
 
-/** Runners shown under a Mission before "more". */
+/** Ships shown under a Runner before "more". */
 const SHOWN_RUNNERS = 5;
 
-/** Runners with open work (an archived one's pull request still open is),
+/** Ships with open work (an archived one's pull request still open is),
  *  the ones that need someone first. */
 function nestedRunners(mission: MissionView): RunnerView[] {
   const order = { needs_you: 0, ready_to_merge: 1, ready_to_review: 2, working: 3, shipping: 4, done: 5 } as const;
