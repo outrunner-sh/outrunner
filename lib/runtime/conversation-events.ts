@@ -13,7 +13,9 @@ import { parseRunnerEvents } from "@/lib/missions/events";
  * docs/architecture/session-contract.md:
  *
  *   - state events are not resumable; each fresh connect re-emits state, so
- *     we collapse to at-most-one state entry (the newest).
+ *     we collapse to at-most-one state entry (the newest). Running again (a
+ *     reconnect, a reload) or running at last (after starting) is no news:
+ *     the entry stays where it was rather than show up mid-conversation.
  *   - message events UPSERT by their `uuid`: the agent streams a turn as the
  *     same message re-emitted as it grows (a new SSE id each time), so we
  *     replace the existing entry in place rather than append every partial.
@@ -27,6 +29,13 @@ export function appendEvent(
   seenIds: Set<string>,
 ): AgentEvent[] {
   if (event.t === "state") {
+    const at = prev.findIndex((e) => e.t === "state");
+    const prior = at >= 0 ? prev[at] : null;
+    if (prior?.t === "state" && event.state === "running" && (prior.state === "running" || prior.state === "starting")) {
+      const next = [...prev];
+      next[at] = event;
+      return next;
+    }
     const withoutState = prev.filter((e) => e.t !== "state");
     return [...withoutState, event];
   }
@@ -55,6 +64,31 @@ export function messageText(event: AgentEvent): string {
     .map((b) => b.text ?? "")
     .join("")
     .trim();
+}
+
+/** The model Claude Code names on a reply it wrote itself rather than a
+ *  model: an API error ("API Error: 400 …"), a usage limit, and the like. */
+export const SYNTHETIC_MODEL = "<synthetic>";
+
+/** The one reply of its own Claude Code writes that is no failure. */
+const NO_RESPONSE = "No response requested.";
+
+/** The model a reply came from, if a model wrote it: none for Claude Code's
+ *  own stand-ins, whose `<synthetic>` is no model to show. */
+export function replyModel(event: AgentEvent): string | undefined {
+  if (event.t !== "message" || event.role !== "assistant") return undefined;
+  return event.model && event.model !== SYNTHETIC_MODEL ? event.model : undefined;
+}
+
+/** Whether a reply is Claude Code's word that the turn failed (an API error,
+ *  a usage limit, a prompt too long) rather than the model's answer. */
+export function isErrorReply(event: AgentEvent): boolean {
+  return (
+    event.t === "message" &&
+    event.role === "assistant" &&
+    event.model === SYNTHETIC_MODEL &&
+    messageText(event) !== NO_RESPONSE
+  );
 }
 
 /** How Claude Code records a turn stopped by Escape: a user message of this

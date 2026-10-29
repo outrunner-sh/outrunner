@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ASK_TOOL } from "@/lib/runtime/pending-question";
 import { SECRETS_TOOL } from "@/lib/runtime/pending-secrets";
-import { foldEvents, IDLE, preview } from "@/lib/session/turn-state";
+import { foldEvents, IDLE, isErrorPreview, preview } from "@/lib/session/turn-state";
 
 let n = 0;
 const at = (minute: number) => `2026-10-28T10:${String(minute).padStart(2, "0")}:00Z`;
@@ -131,4 +131,20 @@ test("a custom command or skill is answered: its record starts a turn, as a prom
     content: [{ type: "text", text: "<command-message>review is running…</command-message>\n<command-name>/review</command-name>" }],
   } as AgentEvent;
   assert.equal(foldEvents(IDLE, [review]).turn, "working");
+});
+
+test("a turn that ends in an API error is kept as one: a reply whose preview says so", () => {
+  const synthetic = (text: string, minute: number): AgentEvent =>
+    ({ ...reply(text, minute, "stop_sequence"), model: "<synthetic>" }) as AgentEvent;
+  const failed = foldEvents(IDLE, [user("Describe the image", 1), synthetic("API Error: 400 image input is not supported", 2)]);
+  assert.equal(failed.turn, "idle");
+  assert.equal(failed.repliedAt, at(2));
+  assert.equal(failed.replyPreview, "API Error: 400 image input is not supported");
+  assert.equal(isErrorPreview(failed.replyPreview), true);
+  // Claude Code's other failures are marked as errors too.
+  const limited = foldEvents(IDLE, [user("Go on", 1), synthetic("Claude AI usage limit reached", 2)]);
+  assert.equal(limited.replyPreview, "API Error: Claude AI usage limit reached");
+  // Its "No response requested." is no failure, and a model's reply is none.
+  assert.equal(isErrorPreview(foldEvents(IDLE, [user("hi", 1), synthetic("No response requested.", 2)]).replyPreview), false);
+  assert.equal(isErrorPreview(foldEvents(IDLE, [user("hi", 1), reply("Done.", 2)]).replyPreview), false);
 });

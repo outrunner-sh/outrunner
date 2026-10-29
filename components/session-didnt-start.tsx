@@ -13,7 +13,7 @@ import { deleteSession } from "@/lib/session/delete-session";
 import {
   dropFirstPromptFromAddressBar,
   firstPromptFromUrl,
-  firstPromptQuery,
+  firstPromptSearch,
   handOverFirstPrompt,
   tabStorage,
 } from "@/lib/session/first-prompt";
@@ -69,7 +69,7 @@ export function useStartOver(workspace: Workspace) {
       // Its URL too: Back to this session, once its setup finishes after all,
       // would otherwise send the prompt the fresh one already has.
       dropFirstPromptFromAddressBar();
-      router.push(`/workspaces/${body.workspace.id}${first ? firstPromptQuery(first) : ""}`);
+      router.push(`/workspaces/${body.workspace.id}${first ? firstPromptSearch(tabStorage(), body.workspace.id, first) : ""}`);
       router.refresh();
       // The replaced session goes: left alone, its box would keep setting up
       // (and could come up, costing a computer) beside the fresh one.

@@ -22,7 +22,7 @@ import {
   takesEffort,
 } from "@/lib/runtime/session-models";
 import type { Project, Workspace } from "@/lib/runtime/types";
-import { firstPromptQuery, newFirstPrompt, rememberFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
+import { firstPromptQuery, firstPromptSearch, newFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
 import { rememberPendingSession } from "@/lib/session/pending-sessions";
 import { rememberEffort } from "@/lib/session/picked-effort";
@@ -140,11 +140,11 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       // Before the push: its page opens on this row, rather than on the
       // server's read of the same one (lib/session/pending-sessions.ts).
       rememberPendingSession(result.workspace);
-      rememberFirstPrompt(tabStorage(), result.workspace.id, first);
       // None picked: the server's default, which on the user's Claude runs at
       // DEFAULT_EFFORT (a model that takes none doesn't show it).
       rememberEffort(result.workspace.id, model ? effort : DEFAULT_EFFORT);
-      router.push(`/workspaces/${result.workspace.id}${firstPromptQuery(first)}`);
+      // The prompt waits for it in this tab, not in the URL.
+      router.push(`/workspaces/${result.workspace.id}${firstPromptSearch(tabStorage(), result.workspace.id, first)}`);
       router.refresh();
       resolve(true);
     }));

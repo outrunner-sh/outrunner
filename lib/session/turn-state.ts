@@ -12,7 +12,7 @@
  */
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
-import { isInterruption, isLocalCommandOutput, messageText } from "@/lib/runtime/conversation-events";
+import { isErrorReply, isInterruption, isLocalCommandOutput, messageText } from "@/lib/runtime/conversation-events";
 import { ASK_TOOL } from "@/lib/runtime/pending-question";
 import { SECRETS_TOOL } from "@/lib/runtime/pending-secrets";
 
@@ -54,6 +54,18 @@ const WAITS_FOR: Record<string, Waiting> = {
 
 /** A reply's opening words, as a notification or a row's tooltip shows them. */
 const PREVIEW_CHARS = 280;
+
+/** How a turn that failed is told from one answered: its reply's preview
+ *  starts so. Claude Code's API errors already do ("API Error: 400 …"); its
+ *  other failures (a usage limit) are given it. The standing reads it back
+ *  from what is kept (lib/session/standing.ts), so it needs no column of its
+ *  own. */
+export const ERROR_PREVIEW = "API Error";
+
+/** Whether a kept reply preview is a failed turn's. */
+export function isErrorPreview(text: string | null | undefined): boolean {
+  return !!text && text.startsWith(ERROR_PREVIEW);
+}
 
 export function preview(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim();
@@ -119,7 +131,8 @@ function foldEvent(state: TurnState, event: AgentEvent): TurnState {
   // tool call (claudeIsWorking's rule).
   if (last?.type === "text" && event.stopReason !== "tool_use") {
     const text = messageText(event);
-    return { ...next, turn: "idle", repliedAt: at, replyPreview: text ? preview(text) : next.replyPreview };
+    const words = isErrorReply(event) && !isErrorPreview(text) ? `${ERROR_PREVIEW}: ${text}` : text;
+    return { ...next, turn: "idle", repliedAt: at, replyPreview: words ? preview(words) : next.replyPreview };
   }
   return {
     ...next,

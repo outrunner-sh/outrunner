@@ -1,11 +1,13 @@
 /**
  * A new cloud session's first prompt, from the new-session screen. It opens the
- * session before its box is ready, so the prompt waits for it twice over: in
- * the URL (?prompt=, ?attachment=), and in this tab's sessionStorage, so it
- * still goes if the user leaves the session while it sets up and comes back to
- * it from the sidebar. The session page moves the URL's copy into the kept one
- * as it opens, where storage allows, so the URL never carries it into a
- * reload; it sends whichever it finds, then forgets both. The kept copy is
+ * session before its box is ready, so the prompt waits for it in this tab's
+ * sessionStorage, and still goes if the user leaves the session while it sets
+ * up and comes back to it from the sidebar. Only where storage refuses it
+ * does the URL carry it (?prompt=, ?attachment=: firstPromptSearch), so a
+ * prompt isn't left in the address bar, the history and the server's logs.
+ * The session page moves a URL's copy (that, or a link from before) into the
+ * kept one as it opens, where storage allows, so the URL never carries it into
+ * a reload; it sends whichever it finds, then forgets both. The kept copy is
  * marked as its send leaves, so a reload mid-send doesn't send it twice.
  *
  * Each carries its idempotency key (?promptKey=, and in the kept copy), made
@@ -86,6 +88,17 @@ export function firstPromptQuery(first: FirstPrompt): string {
   for (const id of first.attachmentIds) params.append("attachment", id);
   if (params.size > 0 && first.key) params.set("promptKey", first.key);
   return params.size > 0 ? `?${params}` : "";
+}
+
+/**
+ * The session page's query for `first`, once kept for the session: empty
+ * where this tab keeps it, as it mostly does, so the prompt stays out of the
+ * URL; the prompt itself where storage refuses it, the URL then its only
+ * carrier to the page.
+ */
+export function firstPromptSearch(storage: PromptStorage | null, workspaceId: string, first: FirstPrompt): string {
+  rememberFirstPrompt(storage, workspaceId, first);
+  return rememberedFirstPrompt(storage, workspaceId) ? "" : firstPromptQuery(first);
 }
 
 /** The first prompt `url` carries, if any (the session page's ?prompt=, ?attachment=). */

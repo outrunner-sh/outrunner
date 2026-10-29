@@ -6,7 +6,7 @@ import type {
   ConversationMessage,
   WorkspaceStateChanged,
 } from "@/lib/runtime/agent-protocol";
-import { appendEvent } from "@/lib/runtime/conversation-events";
+import { appendEvent, isErrorReply, replyModel } from "@/lib/runtime/conversation-events";
 
 const state = (s: WorkspaceStateChanged["state"]): AgentEvent => ({
   t: "state",
@@ -68,4 +68,35 @@ test("appendEvent tolerates missing id", () => {
   const seen = new Set<string>();
   const events = appendEvent([], message("m1", "hi"), "", seen);
   assert.equal(events.length, 1);
+});
+
+test("appendEvent keeps a reconnect's running state where the last one was", () => {
+  const seen = new Set<string>();
+  let events: AgentEvent[] = [];
+  events = appendEvent(events, state("running"), "0", seen);
+  events = appendEvent(events, message("m1", "hi"), "10", seen);
+  events = appendEvent(events, message("m2", "done"), "20", seen);
+  // A reconnect re-emits running: no divider mid-conversation.
+  events = appendEvent(events, state("running"), "0", seen);
+  assert.deepEqual(events.map((e) => e.t), ["state", "message", "message"]);
+  // Starting, then running at last: also where it was.
+  let fresh: AgentEvent[] = appendEvent([], state("starting"), "0", seen);
+  fresh = appendEvent(fresh, message("m3", "hello"), "30", seen);
+  fresh = appendEvent(fresh, state("running"), "0", seen);
+  assert.deepEqual(fresh.map((e) => (e.t === "state" ? e.state : e.t)), ["running", "message"]);
+  // A real change shows where it happened.
+  events = appendEvent(events, state("exited"), "0", seen);
+  assert.deepEqual(events.map((e) => (e.t === "state" ? e.state : e.t)), ["message", "message", "exited"]);
+  events = appendEvent(events, state("running"), "0", seen);
+  assert.deepEqual(events.map((e) => (e.t === "state" ? e.state : e.t)), ["message", "message", "running"]);
+});
+
+test("a reply Claude Code wrote itself names no model, and an API error is one that failed", () => {
+  const synthetic = { ...message("s1", "API Error: 400 bad request"), model: "<synthetic>" };
+  assert.equal(replyModel(synthetic), undefined);
+  assert.equal(isErrorReply(synthetic), true);
+  assert.equal(isErrorReply({ ...synthetic, content: [{ type: "text", text: "No response requested." }] }), false);
+  const real = { ...message("r1", "Done."), model: "claude-opus-5-5" };
+  assert.equal(replyModel(real), "claude-opus-5-5");
+  assert.equal(isErrorReply(real), false);
 });

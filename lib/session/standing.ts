@@ -4,7 +4,8 @@
  *
  *   needs_you  the agent asked a question, waits for a plan's approval or for
  *              secrets, finished a turn the owner hasn't read (with no pull
- *              request open), the session errored, or it is stuck
+ *              request open), the session or its last turn errored (an API
+ *              error), or it is stuck
  *   working    the agent is mid-turn (or the session is setting up)
  *   in_review  its pull request is open
  *   done       its pull request merged, or it is idle with nothing pending
@@ -19,7 +20,7 @@
  */
 
 import type { WorkspacePullRequest, WorkspaceStatus } from "@/lib/runtime/types";
-import type { TurnState, Waiting } from "@/lib/session/turn-state";
+import { isErrorPreview, type TurnState, type Waiting } from "@/lib/session/turn-state";
 import { isSettingUp, SETUP_STALLS_AFTER_MS } from "@/lib/session/provisioning";
 
 export const STANDINGS = ["needs_you", "working", "in_review", "done", "backlog"] as const;
@@ -163,6 +164,11 @@ function automatic({
     const last = latest(live.eventAt, live.turnStartedAt);
     if (last && now - Date.parse(last) >= STUCK_AFTER_MS) return needsYou("stuck", last);
     return { standing: "working", reason: null, since: null };
+  }
+  // Its last turn failed (an API error, a usage limit): it waits on the user
+  // to try again, read or not, until it's as quiet as backlog.
+  if (live?.repliedAt && isErrorPreview(live.replyPreview) && now - Date.parse(live.repliedAt) < BACKLOG_AFTER_MS) {
+    return needsYou("error", live.repliedAt);
   }
   // Coming back: worked on again in a moment.
   if (workspace.status === "resuming" || workspace.status === "restoring") {

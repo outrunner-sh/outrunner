@@ -6,6 +6,7 @@
  */
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
+import { isErrorReply } from "@/lib/runtime/conversation-events";
 
 /** Claude's context, which its log never says: a million tokens on a model
  *  run with it ("claude-opus-4-6[1m]"), else 200k. */
@@ -28,7 +29,8 @@ export function contextUsage(events: AgentEvent[], model?: string): ContextUsage
       // Out of the window the replies before it ran in.
       return { used: left, window: contextUsage(events.slice(0, i), model)?.window ?? contextWindowFor(model) };
     }
-    if (event.role !== "assistant" || !event.usage) continue;
+    // A failed turn's stand-in reply counts no tokens: the call before it says.
+    if (event.role !== "assistant" || !event.usage || isErrorReply(event)) continue;
     const u = event.usage;
     // The call's own, where the log says it apart from usage (Codex's, whose
     // usage can carry a late call's too); else usage is the call's alone.

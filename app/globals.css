@@ -448,7 +448,13 @@
 .md-body .hljs-deletion { color: #ffdcd7; background: #67060c; }
 .md-body .hljs-addition { color: #aff5b4; background: #033a16; }
 
-@media (max-width: 1100px) { .studio-shell { grid-template-columns: minmax(0,1fr); }.studio-inspector { position: fixed; z-index: 20; top: 0; right: 0; width: min(440px, 92vw); height:100vh; box-shadow: -20px 0 50px rgba(0,0,0,.6); } }
+/* Narrow windows: the panel is a drawer over the chat, above a backdrop that
+   closes it (components/workspace-studio.tsx). Until the page knows the width
+   it is no overlay, and stays out of sight rather than cover the chat. */
+.studio-inspector-backdrop { position: fixed; inset: 0; z-index: 19; background: rgba(0,0,0,.55); animation: placeholder-in .2s ease-out both; }
+@media (max-width: 1100px) { .studio-shell { grid-template-columns: minmax(0,1fr); }.studio-inspector { position: fixed; z-index: 20; top: 0; right: 0; width: min(440px, 92vw); height:100dvh; box-shadow: -20px 0 50px rgba(0,0,0,.6); }.studio-inspector:not(.is-overlay) { display: none; } }
+/* A full-page state inside the studio: its header has the phone's menu button. */
+.studio-shell .railless-menu { display: none; }
 
 @media (max-width: 720px) { .studio-shell { grid-template-columns: minmax(0,1fr); }.studio-header { padding:0 12px; }.studio-empty-chat { margin-top:12vh; }.studio-composer, .studio-question { margin:0 15px 16px; } }
 

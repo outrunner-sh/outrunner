@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { CollapsedSidebarButtons } from "@/components/app-frame";
+import { CollapsedSidebarButtons, MobileNavButton } from "@/components/app-frame";
 import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
 import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
 import { MissionHeader } from "@/components/missions/mission-header";
@@ -19,7 +19,9 @@ import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { WorkspaceEnvironment } from "@/components/workspace-environment";
 import { type SessionSender, WorkspaceSession } from "@/components/workspace-session";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { useMission } from "@/hooks/use-missions";
+import { useModalPanel } from "@/hooks/use-modal-panel";
 import { useQueuedFirstPrompt } from "@/hooks/use-queued-first-prompt";
 import { useRestoreOnOpen } from "@/hooks/use-restore-on-open";
 import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
@@ -59,7 +61,16 @@ export function WorkspaceStudio({
   /** Attachment ids staged on the home composer, sent with the first prompt. */
   initialAttachmentIds?: string[];
 }) {
-  const [rightOpen, setRightOpen] = useState(true);
+  // Where the window is narrow, the panel covers the chat (globals.css), so
+  // it starts closed there, and open beside the chat where there's room. A
+  // choice holds until the window crosses that width.
+  const narrow = useMediaQuery("(max-width: 1100px)");
+  const [rightChoice, setRightChoice] = useState<{ narrow: boolean; open: boolean } | null>(null);
+  const rightOpen = rightChoice?.narrow === narrow ? rightChoice.open : !narrow;
+  const setRightOpen = (open: boolean) => setRightChoice({ narrow, open });
+  // Covering the chat, it is a dialog: a backdrop, Esc, and focus kept in it.
+  const overlay = narrow && rightOpen;
+  const inspector = useModalPanel<HTMLElement>(overlay, () => setRightOpen(false));
   // How the Environment panel's Create PR sends into the session, while it can.
   const [sender, setSender] = useState<SessionSender | null>(null);
   const isLocal = local !== undefined;
@@ -92,6 +103,7 @@ export function WorkspaceStudio({
     <div className={cn("studio-shell", !rightOpen && "no-inspector", isMission && "is-mission")}>
       <header className="studio-header">
         <div className="studio-title">
+          <MobileNavButton className="-ml-2" />
           <CollapsedSidebarButtons className="mr-1 flex shrink-0 items-center gap-0.5" />
           {isMission ? (
             <MissionHeader missionId={workspace.id} fallbackTitle={workspaceLabel(workspace)} />
@@ -130,7 +142,7 @@ export function WorkspaceStudio({
           )}
           <button
             className="studio-icon-button"
-            onClick={() => setRightOpen((open) => !open)}
+            onClick={() => setRightOpen(!rightOpen)}
             title={isMission ? (rightOpen ? "Hide Ships" : "Show Ships") : rightOpen ? "Hide environment" : "Show environment"}
             aria-pressed={rightOpen}
           >
@@ -249,10 +261,14 @@ export function WorkspaceStudio({
         )}
       </section>
 
+      {overlay && <div aria-hidden className="studio-inspector-backdrop" onClick={() => setRightOpen(false)} />}
       {/* The rows poll for changes, so they mount only while it is open. */}
       <aside
-        className={cn("studio-inspector", isMission ? "studio-runners" : "studio-env")}
+        ref={inspector}
+        className={cn("studio-inspector", isMission ? "studio-runners" : "studio-env", overlay && "is-overlay")}
         hidden={!rightOpen}
+        role={overlay ? "dialog" : undefined}
+        aria-modal={overlay || undefined}
         aria-label={isMission ? "Ships" : "Environment"}
       >
         {rightOpen && isMission && <RunnersPane missionId={workspace.id} onClose={() => setRightOpen(false)} />}
