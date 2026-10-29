@@ -8,6 +8,7 @@
  * archived session is revivable, not destroyed.
  */
 
+import { randomUUID } from "node:crypto";
 import { after } from "next/server";
 
 import type { Owner } from "@/lib/auth/owner";
@@ -29,7 +30,7 @@ import { mintSnapshotUpload } from "@/lib/runtime/storage";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { ARCHIVED_UNSAVED, type ArchiveSave, saveForArchive } from "@/lib/session/archive-save";
-import { archiveFailure, ArchivePreparationError, type ArchiveStage } from "@/lib/session/archive-failure";
+import { archiveFailureReport, ArchivePreparationError, type ArchiveStage } from "@/lib/session/archive-failure";
 import { bringBack } from "@/lib/session/bring-back-box";
 import { archiveChat, chatUploadPaths } from "@/lib/session/chat-snapshots";
 
@@ -74,7 +75,7 @@ export type ArchiveResult =
   | { ok: true; unsaved?: false }
   | { ok: true; unsaved: true; note: string }
   | { ok: false; reason: "conflict" | "reconcile" }
-  | { ok: false; reason: "failed"; status: number; error: string };
+  | { ok: false; reason: "failed"; status: number; error: string; diagnostic?: ReturnType<typeof archiveFailureReport>["diagnostic"] };
 
 /** The statuses a session is archived from: running, or asleep (the agent
  *  stops a session before capturing it, so nothing need relaunch it). */
@@ -200,10 +201,12 @@ export async function archiveCloudSession(
       console.warn(`Workspace ${workspace.id}: its box couldn't be reached, so it's archived without its files`, save.cause);
     }
   } catch (error) {
-    console.error(`Workspace ${workspace.id} archive failed during ${stage}`, error);
     // A box that can't archive it, or a plan that won't start its box, says
     // so; the session stays as it was.
-    const said = archiveFailure(error, stage);
+    const said = archiveFailureReport(error, stage, randomUUID());
+    // Enum/number diagnostics and a reference are safe to share with an
+    // operator. Raw agent errors can contain signed URLs or private files.
+    console.error("archive_failed", { workspaceId: workspace.id, ...said.diagnostic });
     await transitionWorkspace({
       id: workspace.id,
       from: ["archiving"],

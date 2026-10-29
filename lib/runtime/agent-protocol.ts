@@ -699,8 +699,25 @@ export const ErrorCode = z.enum([
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
+/** Safe archive diagnostics: enum values and numbers only, never file paths,
+ * signed URLs, command output or conversation content. Optional on old agents. */
+export const SnapshotFailure = z.object({
+  stage: z.enum(["capture", "upload", "chats", "stop"]),
+  artifact: z.enum(["conversation", "cast", "bundle", "patch", "summary", "manifest", "rollout", "tree", "chat", "staging"]).optional(),
+  cause: z.enum(["storage_http", "network", "missing_file", "permission_denied", "command_failed", "other"]),
+  httpStatus: z.number().int().min(400).max(599).optional(),
+  exitCode: z.number().int().min(0).max(255).optional(),
+});
+export type SnapshotFailure = z.infer<typeof SnapshotFailure>;
+
 export const ErrorResponse = z.object({
-  error: z.object({ code: ErrorCode, message: z.string() }),
+  error: z.object({
+    code: ErrorCode,
+    message: z.string(),
+    // Bad optional metadata must not turn an agent's real application
+    // refusal into an unstructured proxy/availability error.
+    snapshot: SnapshotFailure.optional().catch(undefined),
+  }),
 });
 export type ErrorResponse = z.infer<typeof ErrorResponse>;
 

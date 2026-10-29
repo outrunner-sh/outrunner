@@ -35,6 +35,7 @@ import (
 	"runtime-agent/internal/ptyx"
 	"runtime-agent/internal/redact"
 	"runtime-agent/internal/sessiontools"
+	"runtime-agent/internal/snapshot"
 	"runtime-agent/internal/workspace"
 )
 
@@ -302,7 +303,10 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	manifest, err := s.ws.Archive(r.Context(), r.PathValue("id"), req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		var body protocol.ErrorResponse
+		body.Error.Code, body.Error.Message = "INTERNAL", err.Error()
+		body.Error.Snapshot = snapshot.DiagnosticOf(err)
+		writeJSON(w, http.StatusInternalServerError, body)
 		return
 	}
 	writeJSON(w, http.StatusOK, manifest)

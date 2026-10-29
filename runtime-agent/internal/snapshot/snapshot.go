@@ -181,7 +181,9 @@ type Input struct {
 // Produce captures the Snapshot artifacts, assembles the manifest, and uploads
 // every artifact through the provided signed URLs — manifest LAST. It returns
 // the manifest so Next can cache it on the workspace_snapshots row.
-func Produce(ctx context.Context, in Input) (*Manifest, error) {
+func Produce(ctx context.Context, in Input) (manifest *Manifest, err error) {
+	artifact := "staging"
+	defer func() { err = FailureAt("capture", artifact, err) }()
 	staging, err := os.MkdirTemp("", "snapshot-")
 	if err != nil {
 		return nil, fmt.Errorf("snapshot staging dir: %w", err)
@@ -192,10 +194,12 @@ func Produce(ctx context.Context, in Input) (*Manifest, error) {
 	// we generate; reusing the cast/JSONL in place when they already exist).
 	paths := map[string]string{}
 
+	artifact = "conversation"
 	paths["conversation"], err = stageConversation(staging, in.ConversationPath)
 	if err != nil {
 		return nil, err
 	}
+	artifact = "cast"
 	paths["cast"], err = stageCast(staging, in.CastPath)
 	if err != nil {
 		return nil, err
@@ -203,6 +207,7 @@ func Produce(ctx context.Context, in Input) (*Manifest, error) {
 	tree := Tree{Kind: TreeKindGitBundlePatch, Bundle: BundleName, Patch: PatchName}
 	var last *string
 	if len(in.Checkouts) > 0 {
+		artifact = "tree"
 		paths["bundle"], paths["patch"], tree.Checkouts, err = buildCheckoutTrees(ctx, in.Worktree, in.Checkouts, staging)
 		if err != nil {
 			return nil, err
@@ -210,16 +215,19 @@ func Produce(ctx context.Context, in Input) (*Manifest, error) {
 		tree.Kind = TreeKindCheckouts
 		// No one commit is the session's: each checkout's is in its tree.
 	} else {
+		artifact = "bundle"
 		paths["bundle"], err = buildBundle(ctx, in.Worktree, filepath.Join(staging, BundleName))
 		if err != nil {
 			return nil, err
 		}
+		artifact = "patch"
 		paths["patch"], err = buildPatch(ctx, in.Worktree, filepath.Join(staging, PatchName))
 		if err != nil {
 			return nil, err
 		}
 		last = lastCommit(ctx, in.Worktree)
 	}
+	artifact = "summary"
 	paths["summary"], err = stageSummary(staging, in.Summary)
 	if err != nil {
 		return nil, err
@@ -235,7 +243,8 @@ func Produce(ctx context.Context, in Input) (*Manifest, error) {
 
 	checksums := map[string]string{}
 	sizes := map[string]int64{}
-	for _, artifact := range artifacts {
+	for _, item := range artifacts {
+		artifact = item
 		sum, size, err := checksumFile(paths[artifact])
 		if err != nil {
 			return nil, err
@@ -248,7 +257,7 @@ func Produce(ctx context.Context, in Input) (*Manifest, error) {
 		sizes[name] = size
 	}
 
-	manifest := &Manifest{
+	manifest = &Manifest{
 		Version:        1,
 		WorkspaceID:    in.WorkspaceID,
 		RuntimeVersion: RuntimeVersion,
@@ -274,6 +283,7 @@ func Produce(ctx context.Context, in Input) (*Manifest, error) {
 	// Each chat's conversation, uploaded ahead of the manifest that names it.
 	var chatUploads []chatUpload
 	for _, chat := range in.Chats {
+		artifact = "chat"
 		entry, uploads, err := stageChat(staging, chat, checksums, sizes)
 		if err != nil {
 			return nil, err
@@ -282,6 +292,7 @@ func Produce(ctx context.Context, in Input) (*Manifest, error) {
 		chatUploads = append(chatUploads, uploads...)
 	}
 
+	artifact = "manifest"
 	manifestPath := filepath.Join(staging, ManifestName)
 	if err := writeJSON(manifestPath, manifest); err != nil {
 		return nil, err
