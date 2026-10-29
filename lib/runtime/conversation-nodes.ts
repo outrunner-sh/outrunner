@@ -1,5 +1,5 @@
 import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
-import { isInterruption, isLocalCommand, localCommandLine, messageText } from "@/lib/runtime/conversation-events";
+import { isInterruption, isLocalCommand, localCommandLine, messageText, runnerContinuations } from "@/lib/runtime/conversation-events";
 import { EXIT_PLAN_MODE, planOf } from "@/lib/runtime/pending-plan";
 import { between } from "@/lib/runtime/turn-timing";
 import { parseCommentQuotes } from "@/lib/session/diff-comments";
@@ -16,8 +16,9 @@ export type ConversationNode =
   | { kind: "state"; key: string; state: string }
   | { kind: "usage"; key: string; event: Extract<AgentEvent, { t: "usage" }> }
   /** `mode` "plan": sent in plan mode. `at` is when it was sent; none on the
-   *  echo of one still on its way. */
-  | { kind: "prompt"; key: string; text: string; mode?: "plan"; at?: string }
+   *  echo of one still on its way. `continuation`: Runner news absorbed into
+   *  the running turn, so it starts neither a clock nor a turn-rail tick. */
+  | { kind: "prompt"; key: string; text: string; mode?: "plan"; at?: string; continuation?: true }
   /** A slash command Claude ran itself ("/model opus"), as typed. */
   | { kind: "command"; key: string; text: string }
   /** The conversation compacted here. */
@@ -64,6 +65,7 @@ export function conversationNodes(
   }
 
   const nodes: ConversationNode[] = [];
+  const continuations = runnerContinuations(events);
   // When the message before this one was written: a thought runs from there.
   let previousAt: string | null = null;
   // The turn under way: when its prompt was sent and its latest step (for
@@ -97,7 +99,8 @@ export function conversationNodes(
     // has no time of its own); anything after it is a step of it.
     // A record of a slash command Claude ran itself is a step of the turn
     // too (/compact's), not one of its own.
-    if (event.role === "user" && event.content.some((b) => b.type === "text") && !isInterruption(event) && !isLocalCommand(event)) {
+    const continuation = turn !== null && continuations.has(ei);
+    if (event.role === "user" && event.content.some((b) => b.type === "text") && !isInterruption(event) && !isLocalCommand(event) && !continuation) {
       endTurn();
       // A typed /compact starts no turn of its own: it has no prompt row
       // (its compaction's row says it), so a "worked" row under it would
@@ -134,13 +137,14 @@ export function conversationNodes(
             // Claude Code 2.1.304 records a typed /compact first as a prompt of
             // its own: the compaction's row says it.
             if (TYPED_COMPACT.test(block.text)) return;
-            planTurn = event.mode === "plan";
+            if (!continuation) planTurn = event.mode === "plan";
             nodes.push({
               kind: "prompt",
               key,
               text: block.text,
               ...(event.mode && { mode: event.mode }),
               ...(!isEcho(event.uuid) && { at: event.timestamp }),
+              ...(continuation && { continuation: true }),
             });
           } else {
             lastWords = { index: nodes.length, uuid: event.uuid };
@@ -209,12 +213,22 @@ export function thoughtSeconds(previousAt: string | null, at: string): number | 
  *  plain text; null while it has said none. */
 export type ConversationTurn = { key: string; prompt: string; reply: string | null };
 
+/** The running clock starts at the turn's prompt, not Runner news folded
+ *  into it. An optimistic prompt still on its way has no start time. */
+export function conversationTurnSince(nodes: ConversationNode[]): string | undefined {
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const node = nodes[i];
+    if (node.kind === "prompt" && !node.continuation) return node.at;
+  }
+  return undefined;
+}
+
 /** The conversation's turns, one per prompt, in order. Rows before the first
  *  prompt (a session's state) belong to none. */
 export function conversationTurns(nodes: ConversationNode[]): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   for (const node of nodes) {
-    if (node.kind === "prompt") turns.push({ key: node.key, prompt: promptPreview(node.text), reply: null });
+    if (node.kind === "prompt" && !node.continuation) turns.push({ key: node.key, prompt: promptPreview(node.text), reply: null });
     else if (node.kind === "prose" && turns.length > 0) {
       const reply = plainText(node.text);
       if (reply) turns[turns.length - 1].reply = reply;

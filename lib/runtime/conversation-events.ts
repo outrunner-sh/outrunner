@@ -6,6 +6,7 @@
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { promptWithoutAttachments } from "@/lib/runtime/attachments";
+import { parseRunnerEvents } from "@/lib/missions/events";
 
 /**
  * Append one event to the Conversation log, honoring the invariants from
@@ -142,13 +143,38 @@ export function claudeIsWorking(events: AgentEvent[]): boolean {
       continue;
     }
     if (event.t !== "message") continue;
-    // A prompt or a tool result awaiting Claude; not the record of a stop, or
-    // of what a command Claude ran itself printed. A command's own record
-    // (a custom command, a skill) is answered, so it awaits Claude.
-    if (event.role === "user") return !isInterruption(event) && !isLocalCommandOutput(event);
-    const last = event.content[event.content.length - 1];
-    if (!last) return false;
-    return last.type !== "text" || event.stopReason === "tool_use";
+    return messageIsWorking(event);
   }
   return false;
+}
+
+function messageIsWorking(event: Extract<AgentEvent, { t: "message" }>): boolean {
+  // A prompt or a tool result awaiting Claude; not a stop or the output of
+  // a command Claude ran itself. Words finish a reply unless a tool follows.
+  if (event.role === "user") return !isInterruption(event) && !isLocalCommandOutput(event);
+  const last = event.content[event.content.length - 1];
+  return !!last && (last.type !== "text" || event.stopReason === "tool_use");
+}
+
+/** Runner deliveries absorbed while the agent works are steps of that turn.
+ *  At rest they start a turn, just like a prompt. Return stream indices so
+ *  timing and plan projection make the same decision. */
+export function runnerContinuations(events: AgentEvent[]): Set<number> {
+  const indices = new Set<number>();
+  let working = false;
+  events.forEach((event, i) => {
+    if (event.t === "state") {
+      if (event.state === "exited" || event.state === "archived") working = false;
+      return;
+    }
+    if (event.t !== "message") return;
+    if (working && event.role === "user") {
+      const text = messageText(event);
+      if (text.includes("<runner_event") && parseRunnerEvents(text).events.length > 0) indices.add(i);
+    }
+    // A compaction in the middle of a turn doesn't finish it; a typed
+    // /compact's local-command output says when that command is done.
+    if (!event.compact) working = messageIsWorking(event);
+  });
+  return indices;
 }

@@ -42,6 +42,7 @@ import {
   conversationNodes,
   type ConversationTurn,
   conversationTurns,
+  conversationTurnSince,
   currentTurn,
 } from "@/lib/runtime/conversation-nodes";
 import { messageTime, workedFor } from "@/lib/runtime/turn-timing";
@@ -123,13 +124,7 @@ export function ConversationTimeline({
   const nodes = useMemo(() => conversationNodes(events, { plansInProse, working }), [events, plansInProse, working]);
   // When the turn under way began, for the working clock: its prompt's time,
   // so a page opened mid-turn shows how long it has really run.
-  const turnSince = useMemo(() => {
-    for (let i = nodes.length - 1; i >= 0; i--) {
-      const node = nodes[i];
-      if (node.kind === "prompt") return node.at;
-    }
-    return undefined;
-  }, [nodes]);
+  const turnSince = useMemo(() => conversationTurnSince(nodes), [nodes]);
   const turns = useMemo(() => conversationTurns(nodes), [nodes]);
   // The turn being read, as the rail marks it.
   const [current, setCurrent] = useState(-1);
@@ -258,7 +253,7 @@ export function ConversationTimeline({
           {/* Under a placeholder there is only the session's state to show,
               which the placeholder already speaks for. */}
           {!placeholder && nodes.map((node) => (
-            <div key={node.key} className="timeline-row" data-turn={node.kind === "prompt" ? "" : undefined}>
+            <div key={node.key} className="timeline-row" data-turn={node.kind === "prompt" && !node.continuation ? "" : undefined}>
               <NodeRow node={node} plan={node.kind === "plan" && plan?.id === node.id ? plan : undefined} />
             </div>
           ))}

@@ -7,7 +7,7 @@
  */
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
-import { isInterruption, messageText } from "@/lib/runtime/conversation-events";
+import { isInterruption, messageText, runnerContinuations } from "@/lib/runtime/conversation-events";
 
 /** Claude's tool for a plan ready for approval. */
 export const EXIT_PLAN_MODE = "ExitPlanMode";
@@ -38,6 +38,7 @@ export function planOf(input: unknown): string | null {
  * since. Null once anything else has happened.
  */
 export function pendingPlan(events: AgentEvent[], { plansInProse = false, working = false } = {}): PendingPlan | null {
+  const continuations = runnerContinuations(events);
   const answered = new Set<string>();
   for (const event of events) {
     if (event.t !== "message") continue;
@@ -50,6 +51,7 @@ export function pendingPlan(events: AgentEvent[], { plansInProse = false, workin
     if (event.compact) return null;
     if (event.role === "user") {
       if (isInterruption(event)) return null;
+      if (continuations.has(i)) continue;
       if (event.content.some((b) => b.type === "tool_result")) continue;
       // The prompt that started the turn: a plan's, for Codex's words to be one.
       if (plansInProse && !working && reply && event.mode === "plan") {
