@@ -86,6 +86,15 @@ func (b rawBlock) block() protocol.ContentBlock {
 	if out.ToolUseID == "" {
 		out.ToolUseID = b.ClaudeToolUseID
 	}
+	// Only an image's source is a picture the timeline shows (a document's
+	// is a PDF), and only up to MaxImageBlockData of it.
+	if out.Type != "image" {
+		out.Source = nil
+	} else if out.Source != nil && len(out.Source.Data) > protocol.MaxImageBlockData {
+		src := *out.Source
+		src.Data = ""
+		out.Source = &src
+	}
 	return out
 }
 

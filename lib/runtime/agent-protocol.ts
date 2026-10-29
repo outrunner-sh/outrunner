@@ -675,6 +675,15 @@ export const ContentBlock = z.discriminatedUnion("type", [
     input: z.unknown(),
   }),
   z.object({ type: z.literal("tool_result"), toolUseId: z.string(), content: z.unknown() }),
+  // An image pasted into Claude's prompt (in its terminal), in Claude's own
+  // shape. `data` is base64, left out by the agent past its cap
+  // (MaxImageBlockData), and absent from an agent from before it.
+  z.object({
+    type: z.literal("image"),
+    source: z
+      .object({ type: z.string().optional(), media_type: z.string().optional(), data: z.string().optional() })
+      .optional(),
+  }),
 ]);
 export type ContentBlock = z.infer<typeof ContentBlock>;
 
@@ -704,10 +713,10 @@ export const ConversationMessage = z.object({
   // it, a user turn, or a log that says none (a Codex translation).
   stopReason: z.string().optional(),
   timestamp: z.string(),
-  // Tolerate content blocks the UI doesn't model (e.g. redacted_thinking, image,
-  // or a newer Claude block type): drop the unrenderable ones instead of failing
-  // the whole frame ("Events frame did not match AgentEvent schema"). The
-  // timeline only renders the four known types anyway.
+  // Tolerate content blocks the UI doesn't model (e.g. redacted_thinking, a
+  // document, or a newer Claude block type): drop the unrenderable ones instead
+  // of failing the whole frame ("Events frame did not match AgentEvent
+  // schema"). The timeline only renders the known types anyway.
   content: z.array(z.unknown()).transform((blocks) =>
     blocks.flatMap((block) => {
       const parsed = ContentBlock.safeParse(block);

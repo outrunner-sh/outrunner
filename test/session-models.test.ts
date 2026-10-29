@@ -10,6 +10,7 @@ import {
   costHint,
   defaultModel,
   EffortUnsupportedError,
+  imageModelFor,
   matchModel,
   modelChoice,
   modelGroups,
@@ -25,7 +26,9 @@ import {
   runsOnOwnAccount,
   setModelRequest,
   takesEffort,
+  type ModelGroup,
   type ModelMenu,
+  providerModels,
 } from "@/lib/runtime/session-models";
 import { usableProviders } from "@/lib/providers/registry";
 
@@ -40,7 +43,7 @@ test("a Claude account reply matches its family's alias", () => {
 });
 
 test("a reply from one of Outrunner's models matches its OpenRouter slug, not a Claude alias", () => {
-  assert.deepEqual(matchModel(GROUPS, "z-ai/glm-5.3"), { id: "z-ai/glm-5.3", label: "GLM 5.3", provider: "outrunner" });
+  assert.deepEqual(matchModel(GROUPS, "z-ai/glm-5.3"), { id: "z-ai/glm-5.3", label: "GLM 5.3", provider: "outrunner", supportsImages: false });
   assert.equal(matchModel(GROUPS, "moonshotai/kimi-k3")?.label, "Kimi K3");
   assert.equal(matchModel(GROUPS, "deepseek/deepseek-v4.1-flash")?.label, "DeepSeek V4.1 Flash");
 });
@@ -96,12 +99,13 @@ test("the menu: Outrunner's where the server has them, each provider the user ha
 });
 
 test("a new session's default: Outrunner's first model, on the user's OpenRouter key if saved, else the first key's", () => {
-  assert.deepEqual(defaultModel(OUTRUNNER_ONLY), { id: "z-ai/glm-5.3", label: "GLM 5.3", provider: "outrunner" });
+  assert.deepEqual(defaultModel(OUTRUNNER_ONLY), { id: "z-ai/glm-5.3", label: "GLM 5.3", provider: "outrunner", supportsImages: false });
   assert.equal(defaultModel({ ...OUTRUNNER_ONLY, keys: ["openrouter"] })?.provider, "openrouter");
   // A Z.ai key alone still starts a session without the user's Claude.
   assert.deepEqual(defaultModel({ outrunner: false, allowance: false, keys: ["zai", "moonshot"] }), {
     id: "glm-5.3",
     label: "GLM 5.3",
+    supportsImages: false,
     provider: "zai",
   });
   assert.equal(defaultModel({ outrunner: false, allowance: false, keys: [] }), null);
@@ -114,7 +118,7 @@ test("a choice is checked per provider: Outrunner's and Claude's from their list
   assert.equal(modelChoice("claude", "opus")?.provider, "claude");
   assert.equal(modelChoice("claude", "claude-opus-5"), null);
 
-  assert.deepEqual(modelChoice("deepseek", "deepseek-v4-pro"), { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "deepseek" });
+  assert.deepEqual(modelChoice("deepseek", "deepseek-v4-pro"), { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "deepseek", supportsImages: false });
   assert.deepEqual(modelChoice("openrouter", "openai/gpt-5[1m]"), { id: "openai/gpt-5[1m]", label: "openai/gpt-5[1m]", provider: "openrouter" });
   for (const bad of ["", "-rf", "a b", "x;rm", "$(id)", "m".repeat(101), 42, null]) {
     assert.equal(modelChoice("zai", bad), null, `took ${JSON.stringify(bad)}`);
@@ -258,7 +262,7 @@ test("a Codex session on Outrunner's model switches on Outrunner's key, as a Cla
 });
 
 test("Codex takes its listed models and any id the agent takes, and switches with no key", async () => {
-  assert.deepEqual(modelChoice("codex", "gpt-6-luna"), { id: "gpt-6-luna", label: "GPT-6 Luna", provider: "codex" });
+  assert.deepEqual(modelChoice("codex", "gpt-6-luna"), { id: "gpt-6-luna", label: "GPT-6 Luna", provider: "codex", supportsImages: true });
   assert.deepEqual(modelChoice("codex", "gpt-7"), { id: "gpt-7", label: "gpt-7", provider: "codex" });
   assert.equal(modelChoice("codex", "--dangerously-bypass-approvals-and-sandbox"), null);
   assert.deepEqual(requestedModel({ provider: "codex", model: "gpt-6-sol" })?.provider, "codex");
@@ -360,4 +364,23 @@ test("a row's recorded model is checked as a request's choice is", () => {
   assert.equal(recordedModel(undefined, undefined, undefined), null);
   assert.equal(recordedModel("outrunner", "z-ai/glm-4", null), null);
   assert.equal(recordedModel("gemini", "flash", null), null);
+});
+
+test("imageModelFor offers a model that can see images, from the same provider first", () => {
+  const glm = OUTRUNNER_MODELS[0];
+  assert.equal(glm.supportsImages, false, "the default can't see images");
+  assert.equal(imageModelFor(GROUPS, glm)?.id, "moonshotai/kimi-k3");
+  const zai = providerModels("zai");
+  const onZai: ModelGroup[] = [{ label: "Z.ai", provider: "zai", models: zai, custom: true }, ...GROUPS];
+  assert.equal(imageModelFor(onZai, zai[0])?.id, "glm-5.3-flash");
+  const deepseek = providerModels("deepseek");
+  const onDeepseek: ModelGroup[] = [{ label: "DeepSeek", provider: "deepseek", models: deepseek, custom: true }, ...GROUPS];
+  assert.equal(imageModelFor(onDeepseek, deepseek[0])?.id, "moonshotai/kimi-k3", "none of DeepSeek's: Outrunner's");
+  assert.equal(imageModelFor([{ label: "Outrunner", provider: "outrunner", models: [glm], custom: false }], glm), null);
+});
+
+test("every listed model says whether it can see images", () => {
+  for (const group of GROUPS) {
+    for (const model of group.models) assert.equal(typeof model.supportsImages, "boolean", `${model.provider}:${model.id}`);
+  }
 });

@@ -10,6 +10,7 @@ import {
   thoughtSeconds,
 } from "@/lib/runtime/conversation-nodes";
 import { echoUuid } from "@/lib/session/optimistic-echo";
+import { promptWithAttachments } from "@/lib/runtime/attachments";
 
 function message(role: "user" | "assistant", timestamp: string, content: ContentBlock[]): AgentEvent {
   return { t: "message", uuid: `${role}-${timestamp}`, parentUuid: null, role, timestamp, content };
@@ -161,4 +162,31 @@ test("the turn read is the last whose prompt reached the reading line, else the 
   assert.equal(currentTurn([40, 500, 900], 10), 0);
   assert.equal(currentTurn([40, 500, 900], 500), 1);
   assert.equal(currentTurn([40, 500, 900], 5000), 2);
+});
+
+test("the turn rail names a prompt by its words, not the files it carried", () => {
+  const turns = conversationTurns(
+    conversationNodes([
+      message("user", "2026-10-29T10:00:00Z", [{ type: "text", text: promptWithAttachments("what's wrong here?", ["3f2a9c1b-shot.png"]) }]),
+      message("assistant", "2026-10-29T10:00:05Z", [{ type: "text", text: "a typo" }]),
+      message("user", "2026-10-29T10:01:00Z", [{ type: "text", text: promptWithAttachments("", ["3f2a9c1b-a.png", "8d41e7a0-b.png"]) }]),
+      message("assistant", "2026-10-29T10:01:05Z", [{ type: "text", text: "two cats" }]),
+      message("user", "2026-10-29T10:02:00Z", [{ type: "text", text: promptWithAttachments("", ["3f2a9c1b-log.txt"]) }]),
+    ]),
+  );
+  assert.deepEqual(
+    turns.map((t) => t.prompt),
+    ["what's wrong here?", "2 images", "File"],
+  );
+});
+
+test("an image pasted into the agent's own prompt rides on the prompt's row", () => {
+  const nodes = conversationNodes([
+    message("user", "2026-10-29T10:00:00Z", [
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } },
+      { type: "text", text: "[Image #1] what is this?" },
+    ]),
+  ]);
+  const prompt = nodes.find((n) => n.kind === "prompt");
+  assert.deepEqual(prompt?.kind === "prompt" && prompt.images, [{ mediaType: "image/png", data: "iVBORw0KGgo=" }]);
 });

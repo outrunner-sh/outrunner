@@ -26,8 +26,9 @@ export function isEcho(uuid: string): boolean {
 const ECHO_PREFIX = "optimistic-";
 
 /** One bubble: `expect` is the delivered-prompt count the stream must pass for
- *  it to go, or null while the session has not taken the prompt yet. */
-export type PendingPrompt = { id: string; text: string; expect: number | null };
+ *  it to go, or null while the session has not taken the prompt yet.
+ *  `attachmentIds` are the files it carries, shown with it. */
+export type PendingPrompt = { id: string; text: string; expect: number | null; attachmentIds?: string[] };
 
 /** Whether the stream has yet to record this bubble's turn, at `delivered`
  *  prompts. One not handed over yet always has. */

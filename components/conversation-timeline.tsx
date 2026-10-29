@@ -19,9 +19,10 @@ import {
   SquareTerminal,
   Wrench,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
-import { Markdown } from "@/components/markdown";
+import { type MessageFile, MessageAttachments, promptFiles } from "@/components/attachment-thumbnails";
+import { ImageBoxContext, Markdown } from "@/components/markdown";
 import { type PlanActions, PlanCard } from "@/components/plan-card";
 import { TickingFact } from "@/components/ui/notice";
 import { DotMatrix } from "@/components/ui/loaders";
@@ -36,11 +37,13 @@ import {
   toolRow,
   workingElapsed,
 } from "@/lib/runtime/conversation-format";
+import { promptAttachments } from "@/lib/runtime/attachments";
 import { claudeIsWorking } from "@/lib/runtime/conversation-events";
 import { compactTokens } from "@/lib/runtime/context-usage";
 import {
   type ConversationNode,
   conversationNodes,
+  type PromptImage,
   type ConversationTurn,
   conversationTurns,
   conversationTurnSince,
@@ -383,7 +386,7 @@ function NodeRow({ node, plan }: { node: ConversationNode; plan?: PlanActions })
         const { events, rest } = parseRunnerEvents(node.text);
         if (events.length > 0) return <RunnerEventCards events={events} note={rest || undefined} />;
       }
-      return <Prompt text={node.text} mode={node.mode} at={node.at} />;
+      return <Prompt text={node.text} mode={node.mode} at={node.at} images={node.images} />;
     }
     case "worked":
       return (
@@ -406,10 +409,23 @@ function NodeRow({ node, plan }: { node: ConversationNode; plan?: PlanActions })
   }
 }
 
-/** The user's prompt, and the comments on the diff it carried (withComments)
- *  as quotes under it, rather than the blocks written for the agent. */
-function Prompt({ text, mode, at }: { text: string; mode?: "plan"; at?: string }) {
-  const { text: words, quotes } = useMemo(() => parseCommentQuotes(text), [text]);
+/** The user's prompt: the files it carried as thumbnails above its words,
+ *  not the paths written for the agent, and the comments on the diff
+ *  (withComments) as quotes under them, not the blocks. */
+function Prompt({ text, mode, at, images }: { text: string; mode?: "plan"; at?: string; images?: PromptImage[] }) {
+  const workspaceId = useContext(ImageBoxContext);
+  const { typed, files } = useMemo(() => {
+    const { text: typed, files: paths } = promptAttachments(text);
+    const pasted: MessageFile[] = (images ?? []).map((image, i) => ({
+      key: `pasted-${i}`,
+      name: `Image ${i + 1}`,
+      src: `data:${image.mediaType};base64,${image.data}`,
+      image: true,
+    }));
+    return { typed, files: [...pasted, ...promptFiles(paths, workspaceId)] };
+  }, [text, images, workspaceId]);
+  const { text: words, quotes } = useMemo(() => parseCommentQuotes(typed), [typed]);
+  const attached = files.length > 0 && <MessageAttachments files={files} />;
   // Sent in plan mode: said, quietly, above its words.
   const planned = mode === "plan" && (
     <span className="timeline-prompt-mode">
@@ -422,13 +438,15 @@ function Prompt({ text, mode, at }: { text: string; mode?: "plan"; at?: string }
       <div className="timeline-prompt">
         {at && <MessageTime at={at} />}
         {planned}
-        {text}
+        {attached}
+        {words}
       </div>
     );
   return (
     <div className="timeline-prompt">
       {at && <MessageTime at={at} />}
       {planned}
+      {attached}
       {words}
       <div className={cn("timeline-quotes", words && "mt-2.5")}>
         {quotes.map((quote, i) => (
