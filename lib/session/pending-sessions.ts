@@ -135,12 +135,40 @@ export type FailedCreate = {
   message: string;
   /** The way out, when one page holds it (as the screen's own errors). */
   action: { label: string; href: string; kind: "step" | "refusal" } | null;
-  /** A create that never reached the server, though one of its sends still
-   *  might: its id and branch, which the next Send in the same repository
+  /** A create whose answer never came, though one of its sends may have made
+   *  the session: its id and branch, which the next Send of the same request
    *  takes again, so the server answers for the session rather than making a
    *  second. Null for any other failure. */
-  unsent?: { id: string; branch: string; projectId: string } | null;
+  unsent?: UnsentCreate | null;
 };
+
+/** A create that may or may not have been made (FailedCreate.unsent). */
+export type UnsentCreate = {
+  id: string;
+  branch: string;
+  projectId: string;
+  /** What else it asked for, besides its prompt: the model, its effort, the
+   *  triage item. A Send asking for anything else is another session. */
+  request: string;
+  /** When it was given up on, by this tab's clock. */
+  at: number;
+};
+
+/** How long a lost create is sent again as itself: a Send much later is a
+ *  new session, whatever it asks for. */
+export const UNSENT_REUSED_FOR_MS = 10 * 60_000;
+
+/** The lost create `unsent`, when a Send of `projectId` asking for `request`
+ *  now is that create again; else null, and the Send is a new session. */
+export function sendingAgain(
+  unsent: UnsentCreate | null | undefined,
+  projectId: string,
+  request: string,
+  now = Date.now(),
+): UnsentCreate | null {
+  if (!unsent || unsent.projectId !== projectId || unsent.request !== request) return null;
+  return now - unsent.at < UNSENT_REUSED_FOR_MS ? unsent : null;
+}
 
 export const FAILED_CREATE = store<FailedCreate | null>(null);
 

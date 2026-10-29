@@ -195,12 +195,32 @@ export type ServerSessionOptions = {
  * own, inside actAsUser (lib/supabase/acting-user.ts), which reads and writes
  * as the user just as their browser would. Answers as the route does: 202 with
  * the session's id once its row is made, or why it can't be.
+ *
+ * A send of the same create again (the screen's own id, its answer lost) can
+ * overlap the first: it passes the check for a session already made while
+ * the first is still in GitHub's checks, and then the first's row — and its
+ * box, against the plan's limit — makes this one refused. So any refusal of
+ * a create carrying its id asks once more whether that session was made, and
+ * answers with it if so.
  */
 export async function createCloudSession(
   owner: Owner,
   projectId: string,
   body: SessionRequest,
   options: ServerSessionOptions = {},
+): Promise<Response> {
+  const answer = await createOnce(owner, projectId, body, options);
+  const askedId = typeof body.id === "string" && isUuid(body.id) ? body.id : undefined;
+  if (!askedId || answer.status < 400) return answer;
+  const made = await madeBefore(askedId, owner.id, projectId);
+  return made ? NextResponse.json({ workspace: made }, { status: 202 }) : answer;
+}
+
+async function createOnce(
+  owner: Owner,
+  projectId: string,
+  body: SessionRequest,
+  options: ServerSessionOptions,
 ): Promise<Response> {
   const project = await getProject(projectId);
   if (!project) {

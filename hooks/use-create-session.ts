@@ -40,6 +40,7 @@ import {
   optimisticSession,
   refusePendingSession,
   rememberPendingSession,
+  sendingAgain,
   useFailedCreate,
 } from "@/lib/session/pending-sessions";
 import { rememberEffort } from "@/lib/session/picked-effort";
@@ -145,11 +146,13 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     const effort = startingEffort(model, pickedEffort);
     setMessage(null);
     setMessageAction(null);
-    // A Send that never got through: this one is that session again, its id
-    // and branch the same, so a first send that landed late after all is
-    // answered for rather than made twice.
-    const unsent = FAILED_CREATE.get()?.unsent;
-    const again = unsent && unsent.projectId === selected.id ? unsent : null;
+    // A Send whose answer never came: this one, asking the same of the same
+    // repository soon after, is that session again — its id and branch the
+    // same — so a first send that landed after all is answered for rather
+    // than made twice. Anything changed (the model, its effort, the item) is
+    // a new session.
+    const request = JSON.stringify([model?.provider ?? null, model?.id ?? null, effort, workItemId ?? null]);
+    const again = sendingAgain(FAILED_CREATE.get()?.unsent, selected.id, request);
     FAILED_CREATE.set(null);
     forgetRefusedSessions();
 
@@ -206,10 +209,12 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           ...(model && agent && { agent }),
         }),
       );
+      // The session may exist though no answer said so: the next Send of the
+      // same request goes out as it, which the server then answers for.
+      const unsent = { id, branch, projectId: selected.id, request, at: Date.now() };
       if (!response) {
-        // Nothing got through, though a send may still land: the next Send
-        // goes out as this same session, which the server then answers for.
-        failed("Could not reach Outrunner. Please try again.", null, { id, branch, projectId: selected.id });
+        // Nothing got through, though a send may still land.
+        failed("Could not reach Outrunner. Please try again.", null, unsent);
         return;
       }
       const result = (await response.json().catch(() => ({}))) as CreateResponse;
@@ -224,6 +229,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
             : result.sessionHref
               ? { label: "Open that session", href: result.sessionHref, kind: "refusal" }
               : null,
+          // A 5xx can be a lost answer too — a gateway giving up on a request
+          // the server went on with — so the row may have been made.
+          response.status >= 500 ? unsent : null,
         );
         return;
       }

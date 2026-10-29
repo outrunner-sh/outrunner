@@ -7,7 +7,7 @@ import { viewerScope } from "@/lib/orgs/active";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { workingStep } from "@/lib/runtime/conversation-events";
 import type { Workspace } from "@/lib/runtime/types";
-import { optimisticSession } from "@/lib/session/pending-sessions";
+import { optimisticSession, sendingAgain, UNSENT_REUSED_FOR_MS } from "@/lib/session/pending-sessions";
 import { rowsAhead } from "@/lib/session/rows-ahead";
 import { sendCreate } from "@/lib/session/send-create";
 
@@ -161,4 +161,14 @@ test("a create whose answer is lost is sent again, the same, until one gets thro
     throw new TypeError("network");
   }) as typeof fetch;
   assert.equal(await sendCreate("/u", "{}", down, async () => {}), null);
+});
+
+test("a lost create is sent again as itself only when the same request follows soon after", () => {
+  const unsent = { id: "s1", branch: "runtime/a-s1", projectId: "p1", request: '["outrunner","glm",null,null]', at: 1_000 };
+  assert.equal(sendingAgain(unsent, "p1", unsent.request, 2_000), unsent);
+  // Another repository, another model, or much later: a new session.
+  assert.equal(sendingAgain(unsent, "p2", unsent.request, 2_000), null);
+  assert.equal(sendingAgain(unsent, "p1", '["claude","opus",null,null]', 2_000), null);
+  assert.equal(sendingAgain(unsent, "p1", unsent.request, 1_000 + UNSENT_REUSED_FOR_MS), null);
+  assert.equal(sendingAgain(null, "p1", unsent.request, 2_000), null);
 });
