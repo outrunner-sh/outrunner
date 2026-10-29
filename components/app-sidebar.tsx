@@ -121,7 +121,9 @@ export function AppSidebar({
     () => buildSidebarGroups(projects, workspaces, local.sessions, { now }),
     [projects, workspaces, local.sessions, now],
   );
-  const shown = filterSidebarGroups(groups, query);
+  // Repositories with no sessions stay in Projects for management, but aren't
+  // sidebar destinations until there's a session to show under them.
+  const shown = filterSidebarGroups(groups.filter((group) => group.sessions.length > 0), query);
 
   // By status (where each session stands, lib/session/standing.ts) or by
   // project; switched here, else as the cookie had it.
@@ -181,22 +183,57 @@ export function AppSidebar({
 
   return (
     <aside className="flex h-full min-h-0 flex-col gap-5 border-r border-border/60 bg-sidebar px-3 pb-3 pt-5">
-      <div className="flex items-center justify-between gap-2 px-2">
+      <div className="flex min-w-0 items-center gap-1 px-1">
         {/* The org being shown, which switches orgs; before they've loaded
             (or with none, before orgs), the app's mark, home. */}
         {orgs.length > 0 ? (
           <OrgSwitcher orgs={orgs} activeOrgId={activeOrgId} />
         ) : (
-          <Link href="/" aria-label="Home" className="flex items-center text-foreground">
+          <Link href="/" aria-label="Home" title="Home" className="flex min-w-0 flex-1 items-center text-foreground">
             <Terminal className="size-4" />
           </Link>
         )}
+        <div className="flex shrink-0 items-center gap-0.5" role="group" aria-label="Workspace navigation">
+          <HeaderActionLink
+            href="/triage"
+            label="Triage"
+            count={triageCount}
+            countDescription="waiting"
+            shortcut="⌘I"
+            icon={<Inbox />}
+            active={pathname === "/triage"}
+          />
+          <HeaderActionLink
+            href="/workspaces"
+            label="Sessions"
+            count={needingYou}
+            countDescription="need you"
+            icon={<LayoutList />}
+            active={pathname === "/workspaces"}
+          />
+          <button
+            type="button"
+            onClick={() => setSearching(true)}
+            aria-label="Search sessions"
+            aria-keyshortcuts={keyShortcut("⌘K")}
+            aria-pressed={searching}
+            title="Search sessions (⌘K)"
+            className={cn(
+              "relative grid size-6 shrink-0 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+              searching
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            <Search className="size-4" />
+          </button>
+        </div>
         <button
           type="button"
           onClick={onCollapse}
           aria-label="Collapse sidebar"
           title="Collapse sidebar"
-          className="-mr-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <PanelLeft className="size-4" />
         </button>
@@ -212,31 +249,19 @@ export function AppSidebar({
           hint="⌘N"
           active={pathname === "/" || pathname === "/new"}
         />
-        {/* Import (/import) is hidden from the nav for now; the page still works. */}
         <NavLink
-          href="/triage"
-          icon={<Inbox />}
-          label="Triage"
-          hint="⌘I"
-          count={triageCount}
-          active={pathname === "/triage"}
+          href="/projects"
+          icon={<Folder />}
+          label="Projects"
+          active={pathname === "/projects" || pathname.startsWith("/projects/")}
         />
+        {/* Import (/import) is hidden from the nav for now; the page still works. */}
         {/* The org's open pull requests: ask about one, send it back, merge. */}
         <NavLink
           href="/review"
           icon={<GitPullRequest />}
           label="Review"
           active={pathname === "/review" || pathname.startsWith("/review/")}
-        />
-        {/* Every session, to search, filter and tidy up; the count is those
-            that need you (⌘J jumps to the next). */}
-        <NavLink
-          href="/workspaces"
-          icon={<LayoutList />}
-          label="Sessions"
-          count={needingYou}
-          countLabel={`${needingYou} need you`}
-          active={pathname === "/workspaces"}
         />
         {/* The org's automations, which post as the Outrunner GitHub App. */}
         <NavLink
@@ -247,9 +272,7 @@ export function AppSidebar({
         />
         {searching ? (
           <SearchField value={query} onChange={setQuery} onClose={closeSearch} />
-        ) : (
-          <NavButton icon={<Search />} label="Search" hint="⌘K" onClick={() => setSearching(true)} />
-        )}
+        ) : null}
       </nav>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -547,8 +570,6 @@ function NavLink({
   icon,
   label,
   hint,
-  count = 0,
-  countLabel,
   active,
 }: {
   href: string;
@@ -557,10 +578,6 @@ function NavLink({
   label: string;
   /** Its keyboard shortcut, shown at the row's end on hover. */
   hint?: string;
-  /** How many wait there; shown at the row's end, giving way to the hint on hover. */
-  count?: number;
-  /** What the count says to a screen reader; "N waiting" when not given. */
-  countLabel?: string;
   active: boolean;
 }) {
   return (
@@ -577,56 +594,59 @@ function NavLink({
     >
       {icon}
       <span className="flex-1">{label}</span>
-      {count > 0 && (
-        <span
-          aria-label={countLabel ?? `${count} waiting`}
-          className={cn(
-            "text-[11px] tabular-nums text-muted-foreground",
-            hint && "group-hover/nav:hidden group-focus-visible/nav:hidden",
-          )}
-        >
-          {count > 99 ? "99+" : count}
-        </span>
-      )}
-      {hint && <Kbd hidden={count > 0}>{hint}</Kbd>}
+      {hint && <Kbd>{hint}</Kbd>}
     </Link>
   );
 }
 
-function NavButton({
-  icon,
+function HeaderActionLink({
+  href,
   label,
-  hint,
-  onClick,
+  count,
+  countDescription,
+  shortcut,
+  icon,
+  active,
 }: {
-  icon: React.ReactNode;
+  href: string;
   label: string;
-  hint?: string;
-  onClick: () => void;
+  count: number;
+  countDescription: string;
+  shortcut?: string;
+  icon: React.ReactNode;
+  active: boolean;
 }) {
+  const spokenCount = count > 0 ? `, ${count} ${countDescription}` : "";
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-keyshortcuts={hint ? keyShortcut(hint) : undefined}
-      className={cn(SIDEBAR_ROW, "group/nav text-muted-foreground hover:bg-accent hover:text-foreground")}
+    <Link
+      href={href}
+      aria-label={`${label}${spokenCount}`}
+      aria-keyshortcuts={shortcut ? keyShortcut(shortcut) : undefined}
+      aria-current={active ? "page" : undefined}
+      title={`${label}${count > 0 ? ` (${count} ${countDescription})` : ""}${shortcut ? ` · ${shortcut}` : ""}`}
+      className={cn(
+        "relative grid size-6 shrink-0 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&_svg]:size-4",
+        active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
     >
       {icon}
-      <span className="flex-1">{label}</span>
-      {hint && <Kbd>{hint}</Kbd>}
-    </button>
+      {count > 0 && (
+        <span
+          aria-hidden="true"
+          className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] leading-none text-primary-foreground shadow-sm"
+        >
+          {count > 99 ? "99+" : count}
+        </span>
+      )}
+    </Link>
   );
 }
 
 /** A shortcut, shown only while its row is hovered or focused. */
-function Kbd({ children, hidden = false }: { children: string; hidden?: boolean }) {
+function Kbd({ children }: { children: string }) {
   return (
     <kbd
-      className={cn(
-        "font-sans text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover/nav:opacity-100 group-focus-visible/nav:opacity-100",
-        // Out of the row until hovered, where a count holds its place.
-        hidden && "hidden group-hover/nav:inline group-focus-visible/nav:inline",
-      )}
+      className="font-sans text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover/nav:opacity-100 group-focus-visible/nav:opacity-100"
     >
       {children}
     </kbd>

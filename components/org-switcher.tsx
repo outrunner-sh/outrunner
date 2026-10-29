@@ -65,6 +65,7 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
         <DropdownMenuTrigger
           className="-ml-1 flex min-w-0 max-w-full items-center gap-2 rounded-md px-1 py-1 text-sm font-semibold text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent"
           aria-label={`Org: ${active.name}. Switch org`}
+          title={active.name}
         >
           {switching ? <Spinner /> : <OrgMark size="sm" />}
           <span className="min-w-0 truncate">{active.name}</span>

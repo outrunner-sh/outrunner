@@ -4,9 +4,10 @@
  * so the grouping, ordering, search and time labels are tested without React.
  *
  * Cloud groups come from buildNavGroups and local ones from groupLocalSessions,
- * so the sidebar sorts and names them exactly as those already do; this only
- * puts the two side by side, newest activity first, then the projects with no
- * session yet.
+ * so the sidebar sorts and names them exactly as those already do; this puts
+ * the two side by side, newest activity first, and keeps a few unstarted
+ * projects in the model for the setup checklist. AppSidebar filters those
+ * projects out of navigation; they remain manageable from Projects.
  */
 
 import type { LocalSession } from "@/lib/desktop/local-runtime";
@@ -195,11 +196,10 @@ export function buildSidebarGroups(
       }))
       .sort((a, b) => newestFirst(a.at, b.at)),
   }));
-  // A project with no session yet is listed too, empty, so one just added
-  // doesn't vanish until it's started in. Only the few connected last: "Sync
-  // repositories" connects every repository at once, often dozens, and those
-  // would bury the sessions. (A hidden project is only in `projects` for a
-  // session of its own, so it never shows here.)
+  // Keep a few connected projects with no sessions in the model so the setup
+  // checklist can count them. AppSidebar filters these empty groups from its
+  // navigation; Projects is where the user manages them. (A hidden project is
+  // only in `projects` for a session of its own, so it never shows here.)
   const started = new Set(workspaces.map((w) => w.projectId));
   const unstarted: SidebarGroup[] = projects
     .filter((p) => !started.has(p.id))
