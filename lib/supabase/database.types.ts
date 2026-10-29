@@ -1240,6 +1240,9 @@ type SlackConversationRow = {
 
 // supabase/migrations/20261031170000_slack_proactive.sql
 type SlackChannelRow = {
+  shared_by: string | null;
+  shared_projects: string[];
+  shared_revision: string | null;
   team_id: string;
   channel_id: string;
   org_id: string;
@@ -1905,6 +1908,10 @@ export type Database = {
     };
     Views: Record<never, never>;
     Functions: {
+      set_slack_channel_access: {
+        Args: { target_team: string; target_channel: string; target_org: string; admin_id: string; project_ids: string[]; slack_user_id: string };
+        Returns: undefined;
+      };
       // supabase/migrations/20261102200000_missions.sql
       claim_mission_delivery: {
         Args: { target: string; lease_seconds: number; settle_seconds: number; max_wait_seconds: number };

@@ -35,7 +35,32 @@ org's key, within its plan.
   thread has its own, as the person who asked, so threads never share what they asked. These sessions run on
   Outrunner's models, charged to that person's allowance.
 
-Lookups and research need the person asking to have connected their Slack account.
+**Shared channel questions (one admin setup).** An org admin connects their own Slack account to the
+intended Outrunner org, adds Outrunner to a local channel, then sends:
+
+`@Outrunner share channel access for acme/web, acme/api`
+
+Everyone in that channel can then ask `@Outrunner what shipped this week?` or `@Outrunner where is OR-42?`
+without linking an Outrunner account. Only the named repositories and their assigned work items are shared;
+Unsorted items and repositories added later are excluded. Sending the command again replaces the repository
+list. The command is exact and handled directly, rather than interpreted by the model.
+
+`@Outrunner revoke channel access` turns sharing off, including for existing threads. Removing/demoting the
+authorizing admin, disabling their account, removing a repository from the org, removing the bot from the
+channel, or making the channel shared also invalidates the applicable access. Another connected org admin
+can explicitly authorize a replacement grant. Revocation remains available even after a channel becomes shared.
+
+Sharing applies only to this Slack workspace and channel. DMs, group DMs, Slack Connect and other shared
+channels are excluded. Existing bot installs, digests and watch settings do **not** enable sharing. An existing
+channel's organization cannot be silently replaced by another org's settings or grant. Linked people keep
+their own permission limits, intersected with the shared repository list; they never gain access through the channel grant. Questions from unlinked people
+use a separate read principal, with the actual Slack team/channel/sender and authorized repositories recorded
+in the org audit log. Each shared question uses its own text, without replaying older thread data.
+
+Filing/editing items, adding notes, code research, session starts and session steering still require a connected
+account and their existing permissions. Mention Outrunner on each shared question. Deployments upgrading the
+app must apply the channel-access migration and reinstall through the install link to approve `channels:read`
+and `groups:read` (needed to verify channel boundaries). Missing metadata or scopes fail closed.
 
 **It speaks first, too:**
 
@@ -102,6 +127,8 @@ app's signing secret.
          - commands
          - app_mentions:read
          - chat:write
+         - channels:read
+         - groups:read
          - channels:history
          - groups:history
          - im:history
@@ -134,7 +161,7 @@ app's signing secret.
    - `SLACK_SIGNING_SECRET`: the **Signing Secret**. While it is unset, the endpoint answers 404.
    - `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`: the **Client ID** and **Client Secret**. Connecting an account
      signs in with Slack, and while these are unset nobody can connect.
-4. Apply `supabase/migrations/20261030120000_work_items.sql` (`pnpm db:migrate`).
+4. Apply the database migrations (`pnpm db:migrate`), including `20261103180000_slack_channel_access.sql`.
 
 ## Connecting a Slack user to an Outrunner account (each person, once)
 
