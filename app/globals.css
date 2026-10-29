@@ -371,8 +371,17 @@
 /* Scoped to wide screens so it can't out-specify the responsive breakpoints
    (media queries add no specificity) and crush the chat column on phones. */
 @media (min-width: 1101px) {
-  /* Changes lists diffs, which want more room than the rows do. */
-  .studio-shell:has(.studio-changes) { grid-template-columns: minmax(0, 1fr) minmax(360px, 0.5fr); }
+  /* Changes lists diffs, which want more room than the rows do. The panel
+     widens over the chat's empty margin rather than taking a wider column,
+     so opening it leaves the conversation and its composer where they are:
+     its width is the margin beside the 736px chat, less a 16px gap (the
+     shell is the container), never less than 360px nor more than 640px. */
+  .studio-shell { position: relative; container-type: inline-size; }
+  .studio-shell:has(.studio-changes) .studio-inspector {
+    position: absolute; z-index: 5; top: 44px; right: 0; bottom: 0;
+    width: clamp(360px, calc(284px + (100cqw - 1036px) / 2), 640px);
+    border-left: 1px solid var(--studio-line); box-shadow: -16px 0 32px rgba(0,0,0,.35);
+  }
   .studio-shell.no-inspector { grid-template-columns: minmax(0, 1fr); }
 }
 .studio-changes { display: flex; flex-direction: column; height: 100%; min-height: 0; }

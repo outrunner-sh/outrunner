@@ -4,10 +4,12 @@
  * working in at once rather than after the layout's queries answer
  * (app/(app)/layout.tsx).
  *
- * What is kept is the list itself: the projects, the sessions, and the pull
- * requests the sidebar badges them with. Where each session stands is not —
- * the frame reads that again within seconds (hooks/use-standings.ts) — and
- * nothing of a session's own page is: a conversation has a cache of its own
+ * What is kept is the list itself: the projects, the sessions, the pull
+ * requests the sidebar badges them with, and where each session stood — so a
+ * sidebar grouped by status paints its groups at once too, rather than a
+ * skeleton, and the frame reads where they stand now within seconds
+ * (hooks/use-standings.ts), moving any that moved. Nothing of a session's own
+ * page is kept: a conversation has a cache of its own
  * (lib/session/kept-conversations.ts), and its state comes from its stream.
  *
  * The kept list is a first-paint stand-in and nothing more. What the server
@@ -23,10 +25,11 @@ import { z } from "zod";
 import { store, useStore } from "@/lib/client/store";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import type { AppData } from "@/lib/session/session-view";
+import type { SessionStanding } from "@/lib/session/standing";
 
-/** The sidebar's list as kept here: {@link AppData} without where each session
- *  stands. */
-export type CachedAppData = Omit<AppData, "standings">;
+/** The sidebar's list as kept here: {@link AppData}, where each session stood
+ *  included when it was read. */
+export type CachedAppData = AppData;
 
 /** A kept list, and the org the page that kept it was showing (the switcher's
  *  cookie, lib/orgs/active.ts; null before it was ever used): a list kept for
@@ -36,7 +39,7 @@ export type CachedList = { pickedOrgId: string | null; data: CachedAppData };
 /** One entry, not one per org: what the frame shows at once is the list the
  *  user was last looking at, and the org it belongs to is kept inside it. */
 const KEY = "outrunner:app-data";
-const VERSION = 1;
+const VERSION = 2;
 
 /** How many sessions are kept: the most recently active, which is the order
  *  the sidebar lists them in (lib/db/repositories.ts). */
@@ -75,6 +78,16 @@ function isWorkspace(value: unknown): value is Workspace {
   );
 }
 
+function isStanding(value: unknown): value is SessionStanding {
+  return (
+    isRecord(value) &&
+    typeof value.standing === "string" &&
+    typeof value.pinned === "boolean" &&
+    typeof value.unread === "boolean" &&
+    typeof value.at === "string"
+  );
+}
+
 function isPullRequest(value: unknown): value is WorkspacePullRequest {
   return (
     isRecord(value) &&
@@ -92,6 +105,7 @@ const Stored = z.object({
     hiddenProjects: z.array(z.custom<Project>(isProject)),
     workspaces: z.array(z.custom<Workspace>(isWorkspace)),
     pullRequests: z.record(z.string(), z.custom<WorkspacePullRequest>(isPullRequest)),
+    standings: z.record(z.string(), z.custom<SessionStanding>(isStanding)).optional(),
   }),
 });
 
@@ -164,10 +178,13 @@ export class AppDataCache {
     if (!kept) return null;
     const pullRequests = { ...kept.data.pullRequests };
     delete pullRequests[workspaceId];
+    const standings = kept.data.standings && { ...kept.data.standings };
+    if (standings) delete standings[workspaceId];
     const saved = this.save(kept.pickedOrgId, {
       ...kept.data,
       workspaces: kept.data.workspaces.filter((w) => w.id !== workspaceId),
       pullRequests,
+      standings,
     });
     return saved?.list ?? null;
   }
@@ -194,11 +211,15 @@ function trimmed(data: AppData): CachedAppData {
   for (const [id, pullRequest] of Object.entries(data.pullRequests)) {
     if (kept.has(id)) pullRequests[id] = pullRequest;
   }
+  const standings = data.standings
+    ? Object.fromEntries(Object.entries(data.standings).filter(([id]) => kept.has(id)))
+    : undefined;
   return {
     projects: data.projects.slice(0, KEPT_PROJECTS),
     hiddenProjects: data.hiddenProjects.slice(0, KEPT_PROJECTS),
     workspaces,
     pullRequests,
+    ...(standings && { standings }),
   };
 }
 

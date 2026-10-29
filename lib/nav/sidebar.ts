@@ -17,7 +17,7 @@ import { buildNavGroups, newestFirst, recency, type NavProject } from "@/lib/nav
 import type { Workspace } from "@/lib/runtime/types";
 import { archiveOffer, type ArchiveOffer } from "@/lib/session/archive-control";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
-import { canDestroy } from "@/lib/session/provisioning";
+import { canDestroy, isSettingUp } from "@/lib/session/provisioning";
 
 /** Whether the sidebar is collapsed: a cookie, so the layout reads it on the
  *  server and the first render already has the sidebar as it was left (kept in
@@ -104,6 +104,9 @@ export type SidebarSession = {
   archived: boolean;
   /** Started from a Slack thread: its link, for the badge. */
   slackThreadUrl?: string | null;
+  /** A cloud session still being set up: Working until the server's read of
+   *  where it stands says otherwise (lib/nav/status-groups.ts). */
+  settingUp?: boolean;
 };
 
 /** What the delete confirmation says will happen. */
@@ -174,8 +177,11 @@ export function buildSidebarGroups(
       // The server's own rule (the lifecycle route's destroy).
       deletion: canDestroy(w, now) ? { kind: "cloud" } : null,
       archive: archiveOffer(w),
-      archived: w.status === "archived",
+      // Being archived reads as archived: the user asked for it, and
+      // opening it waits for the archive either way.
+      archived: w.status === "archived" || w.status === "archiving",
       ...(w.slackThreadUrl && { slackThreadUrl: w.slackThreadUrl }),
+      ...(isSettingUp(w.status) && { settingUp: true }),
     })),
   }));
   const local: SidebarGroup[] = groupLocalSessions(localSessions).map((group) => ({

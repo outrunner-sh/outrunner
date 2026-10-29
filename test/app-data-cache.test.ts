@@ -125,14 +125,17 @@ test("the sidebar's list outlives the page", () => {
   assert.equal(back?.data.pullRequests.w1?.number, 7);
 });
 
-test("where sessions stand isn't kept, nor anything else a page reads", () => {
+test("where the kept sessions stood is kept with them, and nothing else a page reads", () => {
   const storage = new FakeStorage();
+  const stood = { standing: "needs_you", reason: "question", moved: false, pinned: false, unread: true, replyPreview: null, at: "t" } as const;
   cache(storage).save("org-1", {
     ...list(),
-    standings: { w1: { standing: "needs_you", reason: "question", moved: false, pinned: false, unread: true, replyPreview: null, at: "t" } },
+    standings: { w1: stood, gone: { ...stood, standing: "done", reason: null } },
   });
   const back = cache(storage).load()!;
-  assert.deepEqual(Object.keys(back.data).sort(), ["hiddenProjects", "projects", "pullRequests", "workspaces"]);
+  assert.deepEqual(Object.keys(back.data).sort(), ["hiddenProjects", "projects", "pullRequests", "standings", "workspaces"]);
+  // Only the kept sessions': one the list doesn't have isn't kept.
+  assert.deepEqual(back.data.standings, { w1: stood });
 });
 
 test("past the cap the least recently active go, and their pull requests with them", () => {
@@ -155,7 +158,7 @@ test("one kept by an older build, or damaged, opens from the server, and is drop
   storage.setItem("outrunner:app-data", "{not json");
   assert.equal(cache(storage).load(), null);
   // A list missing what every reader needs: a session with no id.
-  storage.setItem("outrunner:app-data", JSON.stringify({ v: 1, pickedOrgId: null, data: { projects: [], hiddenProjects: [], workspaces: [{ projectId: "p1" }], pullRequests: {} } }));
+  storage.setItem("outrunner:app-data", JSON.stringify({ v: 2, pickedOrgId: null, data: { projects: [], hiddenProjects: [], workspaces: [{ projectId: "p1" }], pullRequests: {} } }));
   assert.equal(cache(storage).load(), null);
   assert.equal(storage.getItem("outrunner:app-data"), null);
 });

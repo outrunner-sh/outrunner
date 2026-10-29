@@ -13,27 +13,21 @@ import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/sup
  *  before the migration that adds orgs. */
 export async function listMyOrgs(): Promise<Org[]> {
   const supabase = await createSupabaseServerClient();
-  // RLS: their own memberships, and the orgs they're a member of.
-  const { data: memberships, error } = await supabase.from("organization_members").select("org_id, role");
+  // RLS: their own memberships, and the orgs they're a member of. One read:
+  // every page's sidebar waits on it before its own.
+  const { data: memberships, error } = await supabase
+    .from("organization_members")
+    .select("org_id, role, organizations(id, name, personal_owner_id)");
   if (error && probeStatus(error) === "missing") return [];
   if (error) throw error;
   if (!memberships?.length) return [];
-  const { data: orgs, error: orgsError } = await supabase
-    .from("organizations")
-    .select("id, name, personal_owner_id")
-    .in(
-      "id",
-      memberships.map((m) => m.org_id),
-    );
-  if (orgsError) throw orgsError;
-  const roles = new Map(memberships.map((m) => [m.org_id, m.role as OrgRole]));
   return sortOrgs(
-    (orgs ?? []).map((o) => ({
-      id: o.id,
-      name: o.name,
-      personal: o.personal_owner_id !== null,
-      role: roles.get(o.id) ?? "member",
-    })),
+    memberships.flatMap((m) => {
+      const o = m.organizations;
+      return o
+        ? [{ id: o.id, name: o.name, personal: o.personal_owner_id !== null, role: (m.role as OrgRole) ?? "member" }]
+        : [];
+    }),
   );
 }
 

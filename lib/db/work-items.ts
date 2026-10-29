@@ -101,9 +101,13 @@ export class WorkItemChangeError extends Error {
 /**
  * `userId` as a triager in `orgId`: their level on the org's projects as a
  * whole and on each project. Null when they aren't a member.
+ *
+ * `member` says the caller already knows they are — the org is one of the
+ * user's own, read through their memberships (getOrgContext) — and saves the
+ * lookup that would say so again, one round trip ahead of the other two.
  */
-export async function triageActor(userId: string, orgId: string): Promise<TriageActor | null> {
-  if (!isUuid(orgId) || !(await memberRole(orgId, userId))) return null;
+export async function triageActor(userId: string, orgId: string, member = false): Promise<TriageActor | null> {
+  if (!isUuid(orgId) || !(member || (await memberRole(orgId, userId)))) return null;
   const client = db();
   const [org, projects] = await Promise.all([
     client.rpc("org_projects_level", { member: userId, target_org: orgId }),

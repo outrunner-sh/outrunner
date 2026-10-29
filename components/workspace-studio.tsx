@@ -163,7 +163,8 @@ export function WorkspaceStudio({
         <ArchiveSessionDialog
           session={archiving ? { id: workspace.id, title: workspaceLabel(workspace) } : null}
           onOpenChange={setArchiving}
-          onArchived={leave}
+          // The sidebar marks it archived at once (lib/session/optimistic-archive.ts).
+          onArchived={() => router.push("/")}
         />
       )}
 

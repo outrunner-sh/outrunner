@@ -5,8 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
 import { dropNarration, reconnectPlan, WS_OPEN, type WsAction, wsReducer, type WsStatus } from "@/lib/runtime/reconnect";
-import { StreamProtocolError, subscribeEventsWs } from "@/lib/runtime/session-client";
+import { StreamProtocolError } from "@/lib/runtime/session-client";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
+import { openStream } from "@/lib/session/kept-streams";
 
 import type { SessionAttachment } from "./use-session-attachment";
 
@@ -95,9 +96,10 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     let active = true;
     dispatch({ kind: "opening" });
 
-    const sub = subscribeEventsWs(
-      url,
-      (event, id) => {
+    // The stream this page left a moment ago, when it is still open on these
+    // URLs (lib/session/kept-streams.ts); else a new one from the cursor.
+    const stream = openStream(workspaceId, url, urls, lastEventIdRef.current, {
+      onEvent: (event, id) => {
         // Message/usage events are deduplicated by SSE id. State events use a
         // synthetic id ("0"): they aren't resumable and are re-observed on
         // fresh connects, so we replace the newest state entry instead.
@@ -108,52 +110,52 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
         setManualRetry(false);
         dispatch({ kind: "frame-received" });
       },
-      {
-        lastEventId: lastEventIdRef.current,
-        workspaceId,
-        // Back on: a resumed stream says nothing until Claude next writes,
-        // which during a long tool call can be minutes, so the open socket is
-        // what ends the drop, not its first frame. The backoff count waits for
-        // a frame: a socket that opens and closes again keeps backing off.
-        onOpen: () => {
-          if (!active) return;
-          setManualRetry(false);
-          dispatch({ kind: "opened" });
-        },
-        onClose: () => {
-          if (!active) return;
-          setManualRetry(false);
-          const attempt = (reconnectAttemptsRef.current += 1);
-          dispatch({ kind: "closed", attempt, at: Date.now() });
-          const plan = reconnectPlan(attempt);
-          if (!plan.retry) {
-            // Automatic retry is exhausted (e.g. endpoint permanently down). Not
-            // a dead end: the visibility/focus/online effect re-arms this when
-            // the app becomes active again, and the user can refresh to retry.
-            dispatch({ kind: "gave-up" });
-            dispatch({ kind: "error", message: "Lost connection to this session." });
-            return;
-          }
-          // Back off, then let the shared attachment refetch URLs (coalescing
-          // simultaneous terminal + events closes into one refresh).
-          reconnectTimerRef.current = setTimeout(() => {
-            if (active) reconnect();
-          }, plan.delayMs);
-        },
-        onError: (err) =>
-          dispatch(
-            err instanceof StreamProtocolError
-              ? { kind: "protocol-error", ref: err.ref }
-              : { kind: "error", message: err.message },
-          ),
+      // Back on: a resumed stream says nothing until Claude next writes,
+      // which during a long tool call can be minutes, so the open socket is
+      // what ends the drop, not its first frame. The backoff count waits for
+      // a frame: a socket that opens and closes again keeps backing off.
+      onOpen: () => {
+        if (!active) return;
+        setManualRetry(false);
+        dispatch({ kind: "opened" });
       },
-    );
+      onClose: () => {
+        if (!active) return;
+        setManualRetry(false);
+        const attempt = (reconnectAttemptsRef.current += 1);
+        dispatch({ kind: "closed", attempt, at: Date.now() });
+        const plan = reconnectPlan(attempt);
+        if (!plan.retry) {
+          // Automatic retry is exhausted (e.g. endpoint permanently down). Not
+          // a dead end: the visibility/focus/online effect re-arms this when
+          // the app becomes active again, and the user can refresh to retry.
+          dispatch({ kind: "gave-up" });
+          dispatch({ kind: "error", message: "Lost connection to this session." });
+          return;
+        }
+        // Back off, then let the shared attachment refetch URLs (coalescing
+        // simultaneous terminal + events closes into one refresh).
+        reconnectTimerRef.current = setTimeout(() => {
+          if (active) reconnect();
+        }, plan.delayMs);
+      },
+      onError: (err) =>
+        dispatch(
+          err instanceof StreamProtocolError
+            ? { kind: "protocol-error", ref: err.ref }
+            : { kind: "error", message: err.message },
+        ),
+    });
 
     return () => {
       active = false;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      sub.dispose();
+      // Left open a while: going back to this session takes it up again.
+      // URLs replaced (a reconnect) close it as the new one opens.
+      stream.leave();
     };
+    // `urls` follows `attachId`: new URLs always come with a new attachId.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attachId, attachmentStatus, dispatch, reconnect, urls?.eventsUrl, workspaceId]);
 
   // Idle recovery. A backgrounded/hidden webview (the desktop app hides to the

@@ -1,7 +1,6 @@
 "use client";
 
 import { RotateCw } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { type AgentEvent, ChangesResponse, FilesResponse, PlanActionResponse } from "@/lib/runtime/agent-protocol";
@@ -71,8 +70,10 @@ import {
   type SessionModel,
   takesEffort,
 } from "@/lib/runtime/session-models";
+import { sessionTitle } from "@/lib/nav/session-title";
 import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
 import { type QueuedPrompt, queueDrains, readQueue, writeQueue } from "@/lib/session/prompt-queue";
+import { patchRowAhead } from "@/lib/session/rows-ahead";
 import { sendIsDeadEnd } from "@/lib/session/send-failure";
 import { BOX_GONE, BOX_RESTORE_FAILED, SESSION_NOT_STARTED } from "@/lib/session/session-codes";
 import type { OutrunnerModels } from "@/lib/desktop/local-runtime";
@@ -158,7 +159,6 @@ export function WorkspaceSession({
    *  for prompts from outside the composer (Create PR). Must be stable. */
   onSender?: (sender: SessionSender | null) => void;
 }) {
-  const router = useRouter();
   const attachment = useSessionAttachment(workspaceId, local, agent);
   const conversation = useConversationStream(attachment, workspaceId);
 
@@ -296,8 +296,10 @@ export function WorkspaceSession({
         const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string; code?: string };
         if (!res.ok) return failed(body.error ?? "Could not send that message.", body.code);
         anchor(pendingId, sentAt);
-        // The first prompt just named this session: re-read the sidebar.
-        if (body.titled) router.refresh();
+        // The first prompt just named this session, as the server names it:
+        // the sidebar shows the name at once (lib/session/rows-ahead.ts).
+        const title = body.titled ? sessionTitle(text) : null;
+        if (title) patchRowAhead(workspaceId, { title });
         return true;
       },
       () => failed("Couldn't reach Outrunner. Check your connection."),
@@ -857,12 +859,13 @@ export function WorkspaceSession({
     })
       .then(async (res) => {
         const body = res.ok ? ((await res.json().catch(() => ({}))) as { titled?: boolean }) : {};
-        if (body.titled) router.refresh();
+        const title = body.titled ? sessionTitle(firstPrompt) : null;
+        if (title) patchRowAhead(workspaceId, { title });
       })
       .catch(() => {
         /* cosmetic: the session keeps its branch name until the next prompt */
       });
-  }, [firstPrompt, workspaceId, router]);
+  }, [firstPrompt, workspaceId]);
 
   // Fire the new session's first prompt exactly once, as soon as we hold the
   // keyboard: the one the URL carries, else the one kept for this session

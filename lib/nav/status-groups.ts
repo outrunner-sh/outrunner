@@ -48,13 +48,15 @@ export type StatusSection = {
 
 /**
  * A session the server hasn't placed (one on this Mac, or one made since the
- * last read): done, or backlog once it's quiet for three days. An archived one
- * is never working.
+ * last read): working while it is set up, else done, or backlog once it's
+ * quiet for three days. An archived one is never working.
  */
-export function fallbackStanding(at: string, now: number): SessionStanding {
+export function fallbackStanding(at: string, now: number, settingUp = false): SessionStanding {
   const quiet = now - Date.parse(at);
   return {
-    standing: quiet >= BACKLOG_AFTER_MS ? "backlog" : "done",
+    // One being set up — just started here, ahead of the server's read — is
+    // at work, as the server will say once it reads it.
+    standing: settingUp ? "working" : quiet >= BACKLOG_AFTER_MS ? "backlog" : "done",
     reason: null,
     moved: false,
     pinned: false,
@@ -81,7 +83,7 @@ export function buildStatusSections(
         // listed as recent before the server's next read says so.
         standing: known
           ? { ...known, at: Date.parse(session.at) > Date.parse(known.at) ? session.at : known.at }
-          : fallbackStanding(session.at, now),
+          : fallbackStanding(session.at, now, session.settingUp),
       };
     }),
   );

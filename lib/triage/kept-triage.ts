@@ -310,3 +310,29 @@ function keep(): void {
     details: [...opened.values()].reverse(),
   });
 }
+
+/**
+ * How many items wait in triage, as the list just read says: the sidebar's
+ * count shows it at once after a change here, instead of reading the whole
+ * layout again (router.refresh). The layout's own count wins once it is read
+ * again (components/app-frame.tsx). Null when the list doesn't say: none read
+ * since, or one cut at its limit, which may leave some out.
+ */
+const TRIAGE_COUNT = store<number | null>(null);
+
+/** Items the routes list at most (lib/db/work-items.ts). */
+const LISTED_AT_MOST = 500;
+
+export function useTriageCountAhead(): number | null {
+  return useStore(TRIAGE_COUNT, null);
+}
+
+/** Count what waits in triage from the list just read. */
+export function countTriageAhead(items: TriageItem[]): void {
+  TRIAGE_COUNT.set(items.length < LISTED_AT_MOST ? items.filter((item) => item.status === "triage").length : null);
+}
+
+/** The layout read its own count: that one is shown again. */
+export function forgetTriageCountAhead(): void {
+  if (TRIAGE_COUNT.get() !== null) TRIAGE_COUNT.set(null);
+}

@@ -2,6 +2,7 @@ import { store, useStore } from "@/lib/client/store";
 import { forgetKeptMission } from "@/lib/missions/kept-missions";
 import { forgetCachedSession } from "@/lib/session/app-data-cache";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
+import { forgetListedSession } from "@/lib/session/listed-sessions";
 import { localAgentRequest, localTarget } from "@/lib/desktop/local-runtime";
 import type { SessionDeletion } from "@/lib/nav/sidebar";
 
@@ -48,11 +49,13 @@ export async function deleteSession(id: string, deletion: SessionDeletion): Prom
 }
 
 /** A deleted session's kept page says it is gone, its conversation goes, and
- *  the lists kept drop it — the sidebar's, and a Mission's with its Runners
+ *  the lists kept drop it — the sidebar's, the sessions list's, and a
+ *  Mission's with its Runners
  *  (lib/missions/kept-missions.ts): a reload must not bring it back. */
 function forgetDeleted(id: string): void {
   DELETED.set(new Set([...DELETED.get(), id]));
   CONVERSATIONS.forget(id);
   forgetCachedSession(id);
+  forgetListedSession(id);
   forgetKeptMission(id);
 }

@@ -14,9 +14,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/loaders";
+import { clearKeptPages } from "@/lib/client/kept-page";
 import { clearMissions } from "@/lib/missions/kept-missions";
 import { clearAppDataCache } from "@/lib/session/app-data-cache";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
+import { closeKeptStreams } from "@/lib/session/kept-streams";
 import { clearKeptTriage } from "@/lib/triage/kept-triage";
 
 /**
@@ -65,10 +67,12 @@ function SignOutItem() {
         aria-busy={pending || undefined}
         disabled={pending}
         onClick={() => {
+          closeKeptStreams();
           CONVERSATIONS.clear();
           clearAppDataCache();
           clearMissions();
           clearKeptTriage();
+          clearKeptPages();
         }}
       >
         {pending ? <Spinner /> : <LogOut />}
