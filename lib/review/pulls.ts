@@ -9,6 +9,7 @@
 import { listOrgProjects } from "@/lib/db/org-access";
 import { getPullRequestStatus } from "@/lib/github/client";
 import { appSlug, githubAppConfig } from "@/lib/github/app";
+import { type ReviewThread, toReviewThreads } from "@/lib/review/change";
 import { pullFiles } from "@/lib/review/files";
 import type { PullFile } from "@/lib/review/hunks";
 import { countLines, type LineCounts } from "@/lib/review/line-kinds";
@@ -49,7 +50,7 @@ type GitHubPull = {
   merged_at?: string | null;
   updated_at: string;
   user?: { login?: string } | null;
-  head: { ref: string; sha: string };
+  head: { ref: string; sha: string; repo?: { full_name?: string } | null };
   base: { ref: string };
   additions?: number;
   deletions?: number;
@@ -193,6 +194,8 @@ export type PullDetail = {
   headRef: string;
   headSha: string;
   baseRef: string;
+  /** Its branch is in a fork, which Outrunner can't push to. */
+  fromFork: boolean;
   additions: number;
   deletions: number;
   changedFiles: number;
@@ -219,6 +222,21 @@ export type PullDetail = {
 export async function readableRepo(actor: TriageActor, fullName: string): Promise<{ id: string; fullName: string } | null> {
   const wanted = fullName.toLowerCase();
   return (await readableRepos(actor)).find((r) => r.fullName.toLowerCase() === wanted) ?? null;
+}
+
+/** A PR's repository and head, read lightly (one call), for what polls it;
+ *  null when the viewer may not read it. */
+export async function pullHead(
+  actor: TriageActor,
+  fullName: string,
+  number: number,
+): Promise<{ repo: string; projectId: string; number: number; headRef: string; headSha: string; token: string } | null> {
+  const repo = await readableRepo(actor, fullName);
+  if (!repo || !Number.isInteger(number) || number < 1) return null;
+  const token = await repoToken(actor.orgId, repo.fullName);
+  const pull = token ? await githubGet<GitHubPull>(token, `/repos/${repo.fullName}/pulls/${number}`) : null;
+  if (!token || !pull) return null;
+  return { repo: repo.fullName, projectId: repo.id, number, headRef: pull.head.ref, headSha: pull.head.sha, token };
 }
 
 /** How long a PR's page waits to ask GitHub again whether it merges cleanly. */
@@ -280,6 +298,7 @@ export async function pullDetail(actor: TriageActor, fullName: string, number: n
     headRef: pull.head.ref,
     headSha: pull.head.sha,
     baseRef: pull.base.ref,
+    fromFork: (pull.head.repo?.full_name ?? "").toLowerCase() !== repo.fullName.toLowerCase(),
     additions: pull.additions ?? 0,
     deletions: pull.deletions ?? 0,
     changedFiles: pull.changed_files ?? 0,
@@ -296,4 +315,58 @@ export async function pullDetail(actor: TriageActor, fullName: string, number: n
     ownSession,
     itemKey: link?.itemKey ?? null,
   };
+}
+
+const REVIEW_THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          path
+          diffSide
+          line
+          startLine
+          comments(first: 20) { nodes { databaseId author { login } body url } }
+        }
+      }
+    }
+  }
+}`;
+
+/** A PR's review comment threads (the first 100), as the App reads them;
+ *  empty when GitHub won't say. */
+export async function readReviewThreads(token: string, repo: string, number: number): Promise<ReviewThread[]> {
+  const [owner, name] = repo.split("/");
+  try {
+    const response = await fetch("https://api.github.com/graphql", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: REVIEW_THREADS_QUERY, variables: { owner, name, number } }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = (await response.json().catch(() => null)) as {
+      data?: { repository?: { pullRequest?: { reviewThreads?: { nodes?: unknown[] } } } };
+    } | null;
+    return toReviewThreads(body?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? []);
+  } catch {
+    return [];
+  }
+}
+
+/** A commit pushed to a PR since some other one. */
+export type PushedCommit = { sha: string; message: string; url: string };
+
+/** The commits on a PR's head since `since`, oldest first (at most 20);
+ *  empty when there are none, or GitHub can't compare them. */
+export async function commitsSince(token: string, repo: string, since: string, head: string): Promise<PushedCommit[]> {
+  if (since === head) return [];
+  const compare = await githubGet<{ commits?: { sha?: string; html_url?: string; commit?: { message?: string } }[] }>(
+    token,
+    `/repos/${repo}/compare/${encodeURIComponent(since)}...${encodeURIComponent(head)}`,
+  );
+  return (compare?.commits ?? []).slice(-20).flatMap((c) =>
+    typeof c.sha === "string" ? [{ sha: c.sha, message: (c.commit?.message ?? "").split("\n")[0], url: c.html_url ?? "" }] : [],
+  );
 }

@@ -58,6 +58,15 @@ that session even when no one mentions it:
   go as one turn. A line comment that mentions `@outrunner` has already gone to the session as a mention, so it
   is left out of the review turn.
 
+**Ask for a change** (the Review page, `lib/review/change.ts`). A reviewer can pick lines in a pull request's diff and
+say what should change. The request goes to the pull request's session by the same rules as a mention: the
+session must be theirs, or they must be able to write to the repository. A sleeping session is woken first.
+Otherwise a new session of theirs starts on the pull request's head branch and is linked to the pull request. The
+session is told the lines, and any open review comment threads on them, which the App reads with GraphQL
+(`reviewThreads`). It pushes its commit to the pull request's branch. If the change answers one of those
+comments, it replies to the comment and resolves its thread, as the session's own GitHub identity. The Review
+page follows the session until it is done, and shows each commit it pushed.
+
 Follow-ups wait in `github_followups` until their burst is over. They are sent by the webhook's own wait, and
 by the reconciler's cron for any that a restart cut short.
 

@@ -184,7 +184,7 @@ async function Pull({ params }: { params: Params }) {
         </div>
       </div>
       <div className="hidden min-h-0 lg:block">
-        <ReviewChat repo={pr.repo} number={pr.number} canSend={pr.ownSession && pr.state === "open"} />
+        <ReviewChat repo={pr.repo} number={pr.number} canChange={pr.state === "open" && !pr.fromFork} />
       </div>
     </div>
   );
