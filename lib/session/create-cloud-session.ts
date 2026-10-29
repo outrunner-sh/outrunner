@@ -200,8 +200,10 @@ export type ServerSessionOptions = {
  * overlap the first: it passes the check for a session already made while
  * the first is still in GitHub's checks, and then the first's row — and its
  * box, against the plan's limit — makes this one refused. So any refusal of
- * a create carrying its id asks once more whether that session was made, and
- * answers with it if so.
+ * a create carrying its id, made before its own insert, asks once more
+ * whether that session was made, and answers with it if so. A refusal after
+ * its own insert (a caller told of it that failed) is its own answer: that row
+ * is this call's, and it says why it didn't start.
  */
 export async function createCloudSession(
   owner: Owner,
@@ -209,9 +211,10 @@ export async function createCloudSession(
   body: SessionRequest,
   options: ServerSessionOptions = {},
 ): Promise<Response> {
-  const answer = await createOnce(owner, projectId, body, options);
+  const progress = { inserted: false };
+  const answer = await createOnce(owner, projectId, body, options, progress);
   const askedId = typeof body.id === "string" && isUuid(body.id) ? body.id : undefined;
-  if (!askedId || answer.status < 400) return answer;
+  if (!askedId || answer.status < 400 || progress.inserted) return answer;
   const made = await madeBefore(askedId, owner.id, projectId);
   return made ? NextResponse.json({ workspace: made }, { status: 202 }) : answer;
 }
@@ -221,6 +224,8 @@ async function createOnce(
   projectId: string,
   body: SessionRequest,
   options: ServerSessionOptions,
+  /** Set once this call has made the session's row. */
+  progress: { inserted: boolean },
 ): Promise<Response> {
   const project = await getProject(projectId);
   if (!project) {
@@ -422,6 +427,7 @@ async function createOnce(
       kind: options.kind,
       parentMissionId: options.parentMissionId,
     });
+    progress.inserted = true;
   } catch (error) {
     // The id is taken, not the branch: the same create sent again after its
     // answer was lost. The user's own session of this repository is the one
