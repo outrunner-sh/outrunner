@@ -43,6 +43,7 @@ export async function createChatWithSourceFallback(
   try { await create(hasSource); }
   catch (error) {
     if (!hasSource || !missing(error)) throw error;
+    console.warn("Chats: the source chat is missing; recreating without its history", error);
     await create(false);
   }
 }
