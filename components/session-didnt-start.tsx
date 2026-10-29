@@ -7,6 +7,8 @@ import { useState } from "react";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import { RouteMessage } from "@/components/route-states";
 import { InlineMessage } from "@/components/ui/notice";
+import { DRAFTS } from "@/lib/client/drafts";
+import { transferQueue } from "@/lib/session/prompt-queue";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import type { Workspace } from "@/lib/runtime/types";
 import { deleteSession } from "@/lib/session/delete-session";
@@ -58,6 +60,17 @@ export function useStartOver(workspace: Workspace) {
         // staying on screen, so the reason belongs where the user is.
         setRetrying(false);
         return;
+      }
+      if (!transferQueue(tabStorage(), workspace.id, body.workspace.id)) {
+        void deleteSession(body.workspace.id, { kind: "cloud" }).catch(() => {});
+        setRetryError({ message: "Couldn't move the queued messages. They are still in this tab; try again." });
+        setRetrying(false);
+        return;
+      }
+      const draft = DRAFTS.get(`ws:${workspace.id}`);
+      if (draft) {
+        DRAFTS.update(`ws:${body.workspace.id}`, () => draft);
+        DRAFTS.update(`ws:${workspace.id}`, () => ({ text: "", attachments: [] }));
       }
       setRetryError(null);
       // The waiting prompt moves to the fresh session: this one can never

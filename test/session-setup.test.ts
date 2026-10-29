@@ -228,3 +228,29 @@ test("a box that refuses the learnings' block still starts the session", async (
   await deliverSessionSetup(client, { environment, agentConfig: null, agentContext: "# Outrunner learnings", downloadUrl });
   assert.deepEqual(b.sent.map(([kind]) => kind), ["environment"]);
 });
+
+test("one setup reuses capabilities, and an upgrade invalidates the snapshot", async () => {
+  let reads = 0;
+  let upgrades = 0;
+  const sent: string[] = [];
+  await deliverSessionSetup({
+    features: async () => {
+      reads++;
+      return upgrades ? ["git-credential", "agent-config", "skills", "agent-context", "project-instructions", "warm-hooks", "session-environment"] : [];
+    },
+    upgrade: async () => { upgrades++; },
+    setAgentConfig: async () => { sent.push("config"); },
+    setAgentContext: async () => { sent.push("context"); },
+    setSkills: async () => ({ installed: [] }),
+    setEnvironment: async () => { sent.push("environment"); },
+  }, {
+    appIdentity: true,
+    agentConfig,
+    agentContext: "Use the project's conventions.",
+    environment: { ...environment, instructions: "Use pnpm.", hooks: { warm: "true", start: "true" } },
+    downloadUrl,
+  });
+  assert.equal(upgrades, 1);
+  assert.equal(reads, 2);
+  assert.deepEqual(sent, ["config", "context", "environment"]);
+});

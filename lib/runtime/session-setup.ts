@@ -28,7 +28,7 @@ import {
   type SetSkillsResponse,
   type SkillSource,
 } from "@/lib/runtime/agent-protocol";
-import { requireFeature, type FeatureClient } from "@/lib/runtime/box-features";
+import { cachedFeatures, requireFeature, type FeatureClient } from "@/lib/runtime/box-features";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 
 export type SetupClient = FeatureClient & {
@@ -59,8 +59,9 @@ export type SessionSetup = {
 
 /** Deliver the session's setup; what the box can't take is skipped, said. */
 export async function deliverSessionSetup(client: SetupClient, setup: SessionSetup): Promise<void> {
+  const capabilities = cachedFeatures(client);
   // First: an upgrade boots the agent again, asking with what it needs to.
-  if (setup.appIdentity) await supports(client, AGENT_FEATURE_GIT_CREDENTIAL, "work on GitHub as Outrunner's GitHub App");
+  if (setup.appIdentity) await supports(capabilities, AGENT_FEATURE_GIT_CREDENTIAL, "work on GitHub as Outrunner's GitHub App");
 
   const config = setup.agentConfig;
   if (config && (config.archive || Object.keys(config.mcpServers).length > 0 || Object.keys(config.settings).length > 0)) {
@@ -68,9 +69,9 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
     // agent that does where it can be. A Claude session's has always given
     // them to Claude, so its agent isn't rebooted for it.
     if (setup.agent === "codex" && Object.keys(config.mcpServers).length > 0) {
-      await supports(client, AGENT_FEATURE_CODEX_MCP, "give Codex your MCP servers");
+      await supports(capabilities, AGENT_FEATURE_CODEX_MCP, "give Codex your MCP servers");
     }
-    if (await supports(client, AGENT_FEATURE_AGENT_CONFIG, "take your agent setup")) {
+    if (await supports(capabilities, AGENT_FEATURE_AGENT_CONFIG, "take your agent setup")) {
       await client.setAgentConfig({
         ...(config.archive && {
           version: config.archive.sha256,
@@ -87,7 +88,7 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
   // when the agent starts and lists them. A repository the box couldn't
   // read is said in the log and the session starts without its skills,
   // rather than not at all.
-  if (setup.skills?.length && (await supports(client, AGENT_FEATURE_SKILLS, "install a project's skills"))) {
+  if (setup.skills?.length && (await supports(capabilities, AGENT_FEATURE_SKILLS, "install a project's skills"))) {
     try {
       const result = await client.setSkills({ sources: setup.skills });
       for (const failure of result.failed ?? []) {
@@ -101,8 +102,8 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
   if (setup.agentContext !== undefined) {
     const content = setup.agentContext;
     const takes = content
-      ? await supports(client, AGENT_FEATURE_AGENT_CONTEXT, "load your learnings")
-      : (await client.features()).includes(AGENT_FEATURE_AGENT_CONTEXT);
+      ? await supports(capabilities, AGENT_FEATURE_AGENT_CONTEXT, "load your learnings")
+      : (await capabilities.features()).includes(AGENT_FEATURE_AGENT_CONTEXT);
     // Never what keeps a session from starting: it launches with what the
     // box had.
     if (takes) {
@@ -121,18 +122,18 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
   };
   // Only to an agent that reads them: an older one would take the rest and
   // drop them without a word.
-  if (environment.instructions && (await supports(client, AGENT_FEATURE_INSTRUCTIONS, "take a project's instructions"))) {
+  if (environment.instructions && (await supports(capabilities, AGENT_FEATURE_INSTRUCTIONS, "take a project's instructions"))) {
     req.instructions = environment.instructions;
   }
   const hooks = environment.hooks;
-  if ((hooks?.warm || hooks?.start) && (await supports(client, AGENT_FEATURE_WARM_HOOKS, "run a project's warm and start hooks"))) {
+  if ((hooks?.warm || hooks?.start) && (await supports(capabilities, AGENT_FEATURE_WARM_HOOKS, "run a project's warm and start hooks"))) {
     if (hooks.warm) req.warmHook = hooks.warm;
     if (hooks.start) req.startHook = hooks.start;
   }
   if (Object.keys(req.env).length === 0 && !req.files && !req.setup && !req.instructions && !req.warmHook && !req.startHook) {
     return;
   }
-  if (await supports(client, AGENT_FEATURE_ENVIRONMENT, "take a project's environment")) {
+  if (await supports(capabilities, AGENT_FEATURE_ENVIRONMENT, "take a project's environment")) {
     await client.setEnvironment(req);
   }
 }

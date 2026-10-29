@@ -7,6 +7,8 @@ import { type AgentEvent, ChangesResponse, FilesResponse, PlanActionResponse, Re
 import { ConversationTimeline } from "@/components/conversation-timeline";
 import { ImageBoxContext } from "@/components/markdown";
 import { QueuedPrompts } from "@/components/queued-prompts";
+import { QueuedFirstPrompt, StartupStatus, type SessionStartup } from "@/components/workspace-creating";
+import { useQueuedFirstPrompt } from "@/hooks/use-queued-first-prompt";
 import { QuestionCard } from "@/components/question-card";
 import { pendingSecretRequest, type PendingSecretRequest } from "@/lib/runtime/pending-secrets";
 import { SecretsCard } from "@/components/secrets-card";
@@ -106,7 +108,7 @@ const QUEUED_ECHO_WAIT_MS = 30_000;
 const COMPACT_WAIT_MS = 5 * 60_000;
 
 /** How a prompt goes: in a mode, and answering the plan the agent waits on. */
-type SendHow = { mode?: SessionMode; dismiss?: boolean };
+type SendHow = { mode?: SessionMode; dismiss?: boolean; queuedKey?: string; sentAt?: number };
 
 const MENU_UNTIL_ANSWERED: OutrunnerModels = {
   outrunner: false,
@@ -126,6 +128,7 @@ export type SessionSender = {
 
 export function WorkspaceSession({
   workspaceId,
+  startup,
   chatId = MAIN_CHAT,
   projectId,
   agent = "claude",
@@ -141,6 +144,7 @@ export function WorkspaceSession({
   onHarnessFork,
 }: {
   workspaceId: string;
+  startup?: SessionStartup;
   /** The chat it shows (lib/session/chats.ts): its main one unless another
    *  is picked. Each keeps its own conversation, queue and model here. */
   chatId?: string;
@@ -182,8 +186,10 @@ export function WorkspaceSession({
   const stateKey = chatStateKey(workspaceId, chatId);
   // Whether a follow-up sent mid-turn steers it or queues (Settings → Account).
   const chatPreferences = useChatPreferences();
-  const attachment = useSessionAttachment(workspaceId, local, agent, chatId);
+  const attachment = useSessionAttachment(workspaceId, local, agent, chatId, !startup);
   const conversation = useConversationStream(attachment, stateKey);
+  const firstQueued = useQueuedFirstPrompt(workspaceId, { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [], ...(initialPromptKey && { key: initialPromptKey }) });
+  const [initialDeliveryComplete, setInitialDeliveryComplete] = useState(false);
 
   // The jcode engine has no PTY: prompts go over the /message API and the reply
   // streams back on the Conversation SSE. So input readiness and errors come
@@ -295,7 +301,7 @@ export function WorkspaceSession({
     how: SendHow = {},
   ) => {
     // The stream may record the prompt before the session answers.
-    const sentAt = userPromptCount(eventsRef.current);
+    const sentAt = how.sentAt ?? userPromptCount(eventsRef.current);
     if (local) {
       return localAgentRequest(
         localTarget(workspaceId),
@@ -313,7 +319,7 @@ export function WorkspaceSession({
     return fetch(chatRoute(workspaceId, chatId, "message"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: text, attachmentIds, ...(firstPromptKey && { firstPromptKey }), ...how }),
+      body: JSON.stringify({ content: text, attachmentIds, ...(firstPromptKey && { firstPromptKey }), ...(how.mode && { mode: how.mode }), ...(how.dismiss && { dismiss: true }), ...(how.queuedKey && { queuedKey: how.queuedKey }) }),
     }).then(
       async (res) => {
         const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string; code?: string };
@@ -337,10 +343,10 @@ export function WorkspaceSession({
     sendRef.current = send;
   });
   useEffect(() => {
-    if (!canSend || !onSender) return;
+    if (!canSend || startup || !onSender) return;
     onSender({ send: (text, attachmentIds) => sendRef.current(text, attachmentIds) });
     return () => onSender(null);
-  }, [canSend, onSender]);
+  }, [canSend, startup, onSender]);
 
   // The model of the most recent assistant turn — shown in the composer so it
   // reflects what's actually running, not a hardcoded label. Claude Code's
@@ -496,8 +502,25 @@ export function WorkspaceSession({
   // and go one at a time as each turn ends. One whose send failed holds the
   // queue (`queueHeld`) until the user retries it or sends it now, so a box
   // that's down doesn't fail the whole queue in a row.
-  const [queue, setQueue] = useState<QueuedPrompt[]>(() => readQueue(tabStorage(), stateKey));
-  useEffect(() => writeQueue(tabStorage(), stateKey, queue), [stateKey, queue]);
+  const [queue, setQueue] = useState<QueuedPrompt[]>([]);
+  const [queueLoadedFor, setQueueLoadedFor] = useState<string | null>(null);
+  const queueRef = useRef<QueuedPrompt[]>([]);
+  // Hydration sees the same empty queue as the server. Load before enabling
+  // drains, and never overwrite a kept queue with that initial empty snapshot.
+  useEffect(() => {
+    let live = true;
+    void Promise.resolve().then(() => {
+      if (!live) return;
+      const saved = readQueue(tabStorage(), stateKey);
+      queueRef.current = saved;
+      setQueue(saved);
+      setQueueLoadedFor(stateKey);
+    });
+    return () => { live = false; };
+  }, [stateKey]);
+  useEffect(() => {
+    if (queueLoadedFor === stateKey) writeQueue(tabStorage(), stateKey, queue);
+  }, [stateKey, queue, queueLoadedFor]);
   const [queueHeld, setQueueHeld] = useState(false);
   // Held by a stop, rather than by a failed send: the user stopped the agent,
   // so what they queued for it waits for them too, until they send another
@@ -520,21 +543,48 @@ export function WorkspaceSession({
       setQueuePaused(false);
       setQueueHeld(false);
     }
-    setQueue((q) => [...q, { id: crypto.randomUUID(), text, attachmentIds, ...(queuedMode && { mode: queuedMode }) }]);
+    const durable = !!startup || !initialDeliveryComplete;
+    const next = [...queueRef.current, { id: crypto.randomUUID(), text, attachmentIds, ...(queuedMode && { mode: queuedMode }), ...(durable && { startup: true }) }];
+    // Acknowledging the composer transfers ownership of its files and draft.
+    // During startup, persist first so a navigation/reload cannot lose them.
+    if (durable && !writeQueue(tabStorage(), stateKey, next)) {
+      setSendError({ message: "Couldn't save the queued message in this tab. Your draft is still here; try again." });
+      return Promise.resolve(false);
+    }
+    queueRef.current = next;
+    setQueue(next);
     setSendError(null);
     return Promise.resolve(true);
   };
   /** Send a queued prompt now: out of the queue, and back at its head, the
    *  queue held, if it doesn't go (its Retry sends it again). */
   const sendQueued = (prompt: QueuedPrompt): Promise<boolean> => {
-    setQueue((q) => q.filter((p) => p.id !== prompt.id));
+    const recorded = prompt.sentAt ?? userPromptCount(eventsRef.current);
+    const item = prompt.startup ? { ...prompt, sentAt: recorded } : prompt;
+    const next = prompt.startup
+      ? queueRef.current.map((p) => p.id === prompt.id ? item : p)
+      : queueRef.current.filter((p) => p.id !== prompt.id);
+    if (prompt.startup && !writeQueue(tabStorage(), stateKey, next)) {
+      setQueueHeld(true);
+      setSendError({ message: "Couldn't save this queued message before sending. It is still queued; try again." });
+      return Promise.resolve(false);
+    }
+    queueRef.current = next;
+    setQueue(next);
     setQueueHeld(false);
-    const recorded = userPromptCount(eventsRef.current);
-    const how = prompt.mode ? { mode: prompt.mode } : {};
-    return send(prompt.text, prompt.attachmentIds, () => void sendQueuedNow(prompt, false), undefined, undefined, how).then((landed) => {
-      if (landed) setQueuedAt(recorded);
+    const how = { ...(prompt.mode && { mode: prompt.mode }), ...(prompt.startup && { queuedKey: prompt.id, sentAt: recorded }) };
+    return send(prompt.text, prompt.attachmentIds, () => void sendQueuedNow(item, false), undefined, undefined, how).then((landed) => {
+      if (landed) {
+        const rest = queueRef.current.filter((p) => p.id !== prompt.id);
+        if (prompt.startup) writeQueue(tabStorage(), stateKey, rest);
+        queueRef.current = rest;
+        setQueue(rest);
+        setQueuedAt(recorded);
+      }
       else {
-        setQueue((q) => [prompt, ...q.filter((p) => p.id !== prompt.id)]);
+        const kept = [item, ...queueRef.current.filter((p) => p.id !== prompt.id)];
+        queueRef.current = kept;
+        setQueue(kept);
         setQueueHeld(true);
       }
       return landed;
@@ -553,8 +603,10 @@ export function WorkspaceSession({
       await runQueuedAction(sendingQueued, {
         take: () => {
           if (position < 0) return null;
-          queueRef.current = queueRef.current.filter((item) => item.id !== prompt.id);
-          setQueue((q) => q.filter((item) => item.id !== prompt.id));
+          if (!prompt.startup) {
+            queueRef.current = queueRef.current.filter((item) => item.id !== prompt.id);
+            setQueue((q) => q.filter((item) => item.id !== prompt.id));
+          }
           setQueueHeld(true);
           setQueuePaused(false);
           return prompt;
@@ -576,18 +628,27 @@ export function WorkspaceSession({
       setStopError(local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't stop the turn.");
     }
   };
-  const queueRef = useRef(queue);
   useEffect(() => {
     queueRef.current = queue;
   }, [queue]);
+  const updateQueue = (change: (q: QueuedPrompt[]) => QueuedPrompt[]): boolean => {
+    const next = change(queueRef.current);
+    if (queueRef.current.some((p) => p.startup) && !writeQueue(tabStorage(), stateKey, next)) {
+      setSendError({ message: "Couldn't save the queue change in this tab. Try again." });
+      return false;
+    }
+    queueRef.current = next;
+    setQueue(next);
+    return true;
+  };
   const removeQueued = (prompt: QueuedPrompt) => {
-    setQueue((q) => q.filter((p) => p.id !== prompt.id));
+    if (!updateQueue((q) => q.filter((p) => p.id !== prompt.id))) return;
     // The one that failed sits at the head; with it gone, the rest go on.
     // Not when a stop held them: that holds the rest as well.
     if (queue[0]?.id === prompt.id && !queuePaused) setQueueHeld(false);
     if (queuedEditing?.id === prompt.id) setQueuedEditing(null);
     // Its files were uploaded for it alone.
-    for (const id of prompt.attachmentIds) void fetch(`/api/attachments/${id}`, { method: "DELETE" }).catch(() => {});
+    for (const id of prompt.sentAt === undefined ? prompt.attachmentIds : []) void fetch(`/api/attachments/${id}`, { method: "DELETE" }).catch(() => {});
   };
   const awaitingLast = queuedAt !== null && delivered <= queuedAt;
   // A prompt the agent took but the stream never shows (Claude dropped it, or a
@@ -600,7 +661,7 @@ export function WorkspaceSession({
   }, [awaitingLast, working]);
   const drains = queueDrains({
     queued: queue.length,
-    attached,
+    attached: attached && initialDeliveryComplete && queueLoadedFor === stateKey,
     working,
     // A plan waiting on approval is answered by the user, not by what's queued.
     waitingOnUser: waitingOnUser || waitingOnPlan,
@@ -629,6 +690,7 @@ export function WorkspaceSession({
   // menu first, and goes in the mode the composer is in (Plan revises it,
   // Build approves it with changes).
   const sendOrQueue = (text: string, attachmentIds: string[], sentMode?: SessionMode) => {
+    if (startup || !initialDeliveryComplete) return enqueue(text, attachmentIds, sentMode);
     if (editing) return sendEdit(editing.uuid, text, attachmentIds, sentMode);
     if (queuePaused) {
       // Sending again is going on: the queue first, then this.
@@ -1018,10 +1080,13 @@ export function WorkspaceSession({
   // (the cut-off send got there). Forgotten as soon as it was offered, a
   // second reload before any of those, after a send the server had let go,
   // left it nowhere: never sent, and never offered again.
-  const settleCutOff = () => forgetFirstPromptOn(cutOffPath.current);
+  const settleCutOff = () => {
+    forgetFirstPromptOn(cutOffPath.current);
+    setInitialDeliveryComplete(true);
+  };
   const cutOffLanded = cutOff !== null && conversation.status === "connected" && userPromptCount(conversation.events) > 0;
   useEffect(() => {
-    if (cutOffLanded) settleCutOff();
+    if (cutOffLanded) void Promise.resolve().then(settleCutOff);
     // settleCutOff reads only props that don't change for this session, and a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cutOffLanded]);
@@ -1037,7 +1102,10 @@ export function WorkspaceSession({
       : local
         ? null
         : rememberedFirstPrompt(tabStorage(), workspaceId);
-    if (!first) return;
+    if (!first) {
+      void Promise.resolve().then(() => setInitialDeliveryComplete(true));
+      return;
+    }
     sentInitial.current = true;
     // send() queues an optimistic bubble (setState); this is a one-time guarded
     // fire on ready, not a render cascade. Another mount of this session may be
@@ -1075,7 +1143,10 @@ export function WorkspaceSession({
         },
         first.key,
       ).then((landed) => {
-        if (landed) itWent();
+        if (landed) {
+          itWent();
+          setInitialDeliveryComplete(true);
+        }
         else if (!local) markFirstPromptGoing(tabStorage(), workspaceId, false);
         return landed;
       });
@@ -1085,7 +1156,10 @@ export function WorkspaceSession({
     void sendFirstPromptOnce(workspaceId, attempt).then((outcome) => {
       // Another page of this tab sent it first: its send cleaned up after
       // itself, but this URL may still be the one carrying the prompt.
-      if (outcome === "already") itWent();
+      if (outcome === "already") {
+        itWent();
+        setInitialDeliveryComplete(true);
+      }
     });
     // send is stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1156,7 +1230,7 @@ export function WorkspaceSession({
           {/* Images Claude shows by path are on a cloud session's box; this
               Mac's are out of the server's reach. */}
           <ImageBoxContext value={local ? null : workspaceId}>
-            <ConversationTimeline
+            {startup && firstQueued ? <QueuedFirstPrompt first={firstQueued} /> : <ConversationTimeline
               agentLabel={AGENTS[agent].label}
               events={timelineEvents}
               working={working && !compacting}
@@ -1166,16 +1240,17 @@ export function WorkspaceSession({
               // Only between turns: an edit cuts the conversation under the
               // agent, which must not be writing to it.
               onEdit={attached && !working && !waitingOnUser && !waitingOnPlan ? editMessage : undefined}
-              placeholder={conversationPlaceholder({
+              placeholder={startup ? null : conversationPlaceholder({
                 events: timelineEvents,
                 attachment: attachment.status,
                 stream: conversation.status,
               })}
-            />
+            />}
           </ImageBoxContext>
         </div>
       </section>
 
+      {startup && <StartupStatus startup={startup} />}
       {question && (
         <QuestionCard
           key={question.toolUseId}
@@ -1259,10 +1334,11 @@ export function WorkspaceSession({
             setQueuedEditing(next);
           }}
           paused={queuePaused && queue.length > 0}
+          starting={!!startup}
           onSteer={(prompt) => void sendQueuedNow(prompt, false)}
           onSendNow={(prompt) => void sendQueuedNow(prompt)}
-          onEdit={(prompt, words) => setQueue((q) => editQueued(q, prompt.id, words))}
-          onMove={(prompt, by) => setQueue((q) => moveQueued(q, prompt.id, by))}
+          onEdit={(prompt, words) => { updateQueue((q) => editQueued(q, prompt.id, words)); }}
+          onMove={(prompt, by) => { updateQueue((q) => moveQueued(q, prompt.id, by)); }}
           onRemove={removeQueued}
         />
       )}
@@ -1273,13 +1349,13 @@ export function WorkspaceSession({
           onSend={sendWithComments}
           comments={{ items: diffComments.items, onRemove: diffComments.remove }}
           modeChoice={{ mode, onChange: setMode }}
-          onCompact={compact}
+          onCompact={startup ? undefined : compact}
           onSideChat={onSideChat}
           context={contextUsage(conversation.events, shownModel)}
           focusSignal={reviseSignal}
           editing={editing && { key: editing.uuid, text: editing.text, onCancel: () => setEditing(null) }}
           placeholder={
-            waitingOnPlan
+            startup ? "Queue a message while your session starts…" : waitingOnPlan
               ? `Tell ${AGENTS[agent].label} what to change in the plan…`
               : working
                 ? followUpRoute({ working, queued: queue.length, steerFollowUps: chatPreferences.steerFollowUps, agent }) === "steer"
@@ -1305,7 +1381,7 @@ export function WorkspaceSession({
           onDismissSendError={() => setSendError(null)}
           onRetrySendError={sendError?.retry}
           stop={stopNow}
-          listFiles={listFiles}
+          listFiles={startup ? undefined : listFiles}
         />
       )}
     </div>

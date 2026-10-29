@@ -266,31 +266,32 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       const box = sandbox;
       const home = await box.home();
 
-      await timer.stage("agent_boot", () =>
+      const boot = () => timer.stage("agent_boot", () =>
         deployClaude(box.io, binary, input.secret, {
           root: home,
           sessionEnv: boxEnvironment(box.id, input.sessionEnv),
         }),
       );
-
-      // A restored box has the mirror already, with the worktrees on it, as it
-      // was when the box ended: bring it up to date for the next session. Not
-      // at the cost of the restore, which has the sessions on it.
       if (restored) {
+        // Preserve restored CLI/auth ordering and its only copy of the work.
+        await boot();
         await timer
           .stage("mirror_fetch", () =>
             fetchMirror(box.gitExec, { repoDir: `${home}/repo.git`, token: input.githubToken }),
           )
           .catch((error: unknown) => console.warn(`Could not fetch the mirror on restored box ${box.id}`, error));
-      } else if (input.repoFullName) {
-        await timer.stage("mirror_clone", () =>
-          cloneMirror(box.gitExec, {
-            repoFullName: input.repoFullName!,
-            // Agent RUNTIME_AGENT_ROOT=home, so its mirror is $HOME/repo.git.
-            dir: `${home}/repo.git`,
-            token: input.githubToken,
-          }),
-        );
+      } else {
+        // A bare mirror only needs the base image's git. It writes repo.git;
+        // installing/booting the agent writes other paths and needn't precede
+        // it. Wait for BOTH before cleanup if either fails, so no still-running
+        // upload or clone is left racing deletion of a failed new box.
+        const tasks: Promise<unknown>[] = [boot()];
+        if (input.repoFullName) tasks.push(timer.stage("mirror_clone", () =>
+          cloneMirror(box.gitExec, { repoFullName: input.repoFullName!, dir: `${home}/repo.git`, token: input.githubToken }),
+        ));
+        const results = await Promise.allSettled(tasks);
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed?.status === "rejected") throw failed.reason;
       }
 
       const endpoint = await box.agentEndpoint(AGENT_PORT);
