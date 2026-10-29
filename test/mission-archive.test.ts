@@ -76,7 +76,6 @@ test("its Ships are archived, at work or asleep, then the Runner, last", async (
     session("asleep", "suspended"),
     session("done", "archived"),
     session("failed", "failed"),
-    session("going", "archiving"),
   ]);
   const result = await archiveMission(w.mission, w.deps);
   assert.deepEqual(result, { archived: true, ships: 3 });
@@ -93,6 +92,35 @@ test("a Ship's queued messages are taken as it's archived, and given back if it 
   // Taken before its archive, so a turn ending meanwhile can't send one.
   assert.ok(w.order.indexOf("take:a") < w.order.indexOf("a"));
   assert.deepEqual(w.returned, ["qb"]);
+});
+
+test("a Ship another ask is archiving keeps the Runner, up front or by the end", async () => {
+  const before = world([session("a", "ready"), session("going", "archiving")]);
+  const first = await archiveMission(before.mission, before.deps);
+  assert.equal(first.archived, false);
+  assert.deepEqual(before.order, []);
+  if (!first.archived) assert.match(first.why, /“going” \(it's being archived\)/);
+  // Archived when listed; brought back and being archived by another ask
+  // as this one works.
+  const during = world([session("a", "ready"), session("b", "archived")]);
+  during.hooks.onArchive = (id) => {
+    if (id === "a") during.rows.set("b", session("b", "archiving"));
+  };
+  const second = await archiveMission(during.mission, during.deps);
+  assert.equal(second.archived, false);
+  assert.ok(!during.archived.includes("m1"));
+  if (!second.archived) assert.deepEqual(second.left.map((s) => [s.id, s.why]), [["b", "it's being archived"]]);
+});
+
+test("a give-back that fails doesn't hide the archive's reason", async () => {
+  const w = world([session("a", "ready")]);
+  w.queued.set("a", ["qa"]);
+  w.refuse.set("a", "its box didn't answer");
+  w.deps.returnQueued = async () => Promise.reject(new Error("db down"));
+  const quiet = console.error;
+  console.error = () => {};
+  const result = await archiveMission(w.mission, w.deps).finally(() => (console.error = quiet));
+  if (!result.archived) assert.deepEqual(result.left.map((s) => s.why), ["its box didn't answer"]);
 });
 
 test("a Ship that can't go now: nothing is touched, and it's named", async () => {
@@ -169,10 +197,23 @@ test("out of time: the rest wait for the next ask, which goes on", async () => {
   if (first.archived) return;
   assert.equal(first.more, true);
   assert.ok(first.ships > 0 && first.ships < 10);
+  assert.equal(first.why, `${10 - first.ships} Ships still to archive. Try again to finish.`);
   assert.ok(!w.archived.includes("m1"));
   w.hooks.onArchive = () => {};
   w.tick(-w.deps.now());
   assert.deepEqual(await archiveMission(w.mission, w.deps), { archived: true, ships: 10 - first.ships });
+});
+
+test("not reached and refused together: only the refused are named as failing", async () => {
+  const w = world(Array.from({ length: 6 }, (_, i) => session(`s${i}`, "ready")));
+  w.refuse.set("s0", "its box didn't answer");
+  w.hooks.onArchive = () => w.tick(ARCHIVE_BUDGET_MS);
+  const result = await archiveMission(w.mission, w.deps);
+  assert.equal(result.archived, false);
+  if (result.archived) return;
+  assert.equal(result.more, false);
+  assert.match(result.why, /couldn't be yet: “s0” \(its box didn't answer\), and 1 Ship still to archive\. Try again shortly\./);
+  assert.doesNotMatch(result.why, /not reached/);
 });
 
 test("a few Ships at a time", async () => {
@@ -216,7 +257,7 @@ test("the confirmation counts its Ships", () => {
 
 test("the browser's ask: again while there's more, else the route's error, said", async () => {
   const answers = [
-    new Response(JSON.stringify({ error: "8 Ships archived so far; 2 to go.", more: true }), { status: 409 }),
+    new Response(JSON.stringify({ error: "2 Ships still to archive. Try again to finish.", more: true }), { status: 409 }),
     new Response("{}", { status: 200 }),
   ];
   const calls: string[] = [];

@@ -103,11 +103,15 @@ function shipNotNow(ship: Pick<Workspace, "status" | "provider">): string | null
   if (status === "ready" || status === "idle" || status === "suspended") return null;
   if (status === "creating" || status === "provisioning") return "it's still setting up";
   if (status === "restoring") return "it's being restored";
+  // Another ask's, or one cut off: it counts as gone only once it is.
+  if (status === "archiving") return "it's being archived";
   return "its box is starting or stopping";
 }
 
 const shipName = (ship: Workspace) => ship.title ?? ship.branch;
-const toArchive = (ships: Workspace[]) => ships.filter((r) => isLiveRunner(r) && r.status !== "archiving");
+/** Ships not yet archived (or ended): one being archived still counts, as
+ *  its archive may fail and leave it up. */
+const toArchive = (ships: Workspace[]) => ships.filter(isLiveRunner);
 
 /**
  * Archive `mission`'s Ships, then the Runner itself: the Runner goes only
@@ -123,11 +127,15 @@ const toArchive = (ships: Workspace[]) => ships.filter((r) => isLiveRunner(r) &&
 export async function archiveMission(mission: Workspace, deps: MissionArchiveDeps): Promise<MissionArchiveResult> {
   const started = deps.now();
   const refuse = (ships: number, left: ShipLeft[]): MissionArchiveResult => {
-    const more = left.every((s) => s.why === NOT_REACHED);
-    const named = left.map((s) => `“${s.name}” (${s.why})`).join(", ");
+    const refused = left.filter((s) => s.why !== NOT_REACHED);
+    const toGo = left.length - refused.length;
+    const more = refused.length === 0;
+    const plural = (n: number) => `${n} Ship${n === 1 ? "" : "s"}`;
+    const named = refused.map((s) => `“${s.name}” (${s.why})`).join(", ");
     const why = more
-      ? `${ships} Ship${ships === 1 ? "" : "s"} archived so far; ${left.length} to go.`
-      : `The Runner wasn't archived: ${left.length === 1 ? "a Ship" : `${left.length} Ships`} couldn't be yet: ${named}. Try again shortly.`;
+      ? `${plural(toGo)} still to archive. Try again to finish.`
+      : `The Runner wasn't archived: ${refused.length === 1 ? "a Ship" : plural(refused.length)} couldn't be yet: ${named}` +
+        `${toGo > 0 ? `, and ${plural(toGo)} still to archive` : ""}. Try again shortly.`;
     return { archived: false, ships, left, why, more };
   };
 
@@ -148,7 +156,11 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
     if (notNow) return notNow;
     const taken = await deps.takeQueued(ship.id);
     const why = await deps.archive(ship).catch(errorText);
-    if (why !== null && taken.length > 0) await deps.returnQueued(taken);
+    if (why !== null && taken.length > 0) {
+      // The archive's reason is what's said; messages that couldn't be given
+      // back are lost, and logged.
+      await deps.returnQueued(taken).catch((e: unknown) => console.error(`Ship ${ship.id}: its queued messages couldn't be given back`, e));
+    }
     return why;
   };
   const worker = async () => {
@@ -164,10 +176,12 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
   };
   await Promise.all(Array.from({ length: Math.min(ARCHIVE_CONCURRENCY, live.length) }, worker));
   // One the Runner started, or a message brought back, while the rest were
-  // archived: up still, and not already said.
+  // archived, or one another ask is archiving: up still, and not already said.
   const said = new Set(left.map((s) => s.id));
   for (const ship of toArchive(await deps.runners(mission.id))) {
-    if (!said.has(ship.id)) left.push({ id: ship.id, name: shipName(ship), why: "it started or came back as the others were archived" });
+    if (said.has(ship.id)) continue;
+    const why = ship.status === "archiving" ? "it's being archived" : "it started or came back as the others were archived";
+    left.push({ id: ship.id, name: shipName(ship), why });
   }
   if (left.length > 0) return refuse(ships, left);
 

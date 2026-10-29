@@ -44,7 +44,7 @@ This replaces the earlier Mission Engine design
   Runners that aren't archived are archived first, a few at a time, even one
   at work or with an open pull request (that stays open on GitHub); then the
   Mission itself, once every Runner has gone. If a Runner can't be archived
-  now (still setting up, on a computer that can't archive), nothing is
+  now (still setting up, being archived, on a computer that can't archive), nothing is
   touched and the error names it. One that fails, or one started or brought
   back meanwhile, keeps the Mission as it is; asking again archives the
   rest. Each Runner's queued messages are taken as it's archived, and given
