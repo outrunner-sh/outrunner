@@ -566,7 +566,7 @@ export function stopClaudeAgentScript(root: string): string {
     `if [ -r "/proc/$candidate/cmdline" ] && ` +
     `tr '\\0' ' ' < "/proc/$candidate/cmdline" | grep -q outrunner-runtime-agent-supervisor; ` +
     `then supervisor_pid=$candidate; kill -TERM "$supervisor_pid" 2>/dev/null || true; fi; fi; ` +
-    `pkill -TERM -x runtime-agent 2>/dev/null || true; ` +
+    `pkill -x runtime-agent 2>/dev/null || true; ` +
     `for i in $(seq 50); do ` +
     `agent_live=0; pgrep -x runtime-agent >/dev/null && agent_live=1; ` +
     `if [ -n "$supervisor_pid" ] && kill -0 "$supervisor_pid" 2>/dev/null; then agent_live=1; fi; ` +
