@@ -6,18 +6,22 @@
  */
 
 import { isLiveRunner } from "@/lib/missions/rules";
-import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
+import { onRuntimeComputer, type Workspace } from "@/lib/runtime/types";
 import type { ArchiveOffer } from "@/lib/session/archive-control";
 
 /** Ships archived at once: each saves its worktree, which can take a minute. */
 export const ARCHIVE_CONCURRENCY = 4;
 
 /**
- * Archive for a Runner in `status`: pressable while its box is up or asleep
- * (one asleep is woken to save its work), shown disabled saying why while
- * it's between those, and not offered once archived, deleted or failed.
+ * Archive for a Runner: offered only on a Runtime Computer, the one kind with
+ * a Snapshot to restore from (as a session's is). Pressable while its box is
+ * up or asleep (one asleep is woken to save its work), shown disabled saying
+ * why while it's between those, and not offered once archived, deleted or
+ * failed.
  */
-export function missionArchiveOffer(status: WorkspaceStatus): ArchiveOffer | null {
+export function missionArchiveOffer(runner: Pick<Workspace, "status" | "provider">): ArchiveOffer | null {
+  if (!onRuntimeComputer(runner.provider)) return null;
+  const { status } = runner;
   switch (status) {
     case "ready":
     case "idle":
@@ -60,75 +64,142 @@ export function missionArchiveConsequence(ships: number): string {
 
 export type MissionArchiveDeps = {
   runners(missionId: string): Promise<Workspace[]>;
-  /** Forget the messages queued for its Ships: sent once a turn ends, they
-   *  would restore a Ship just archived. */
-  dropQueued(missionId: string): Promise<void>;
+  /** A session as it is now: an archive waits its turn, minutes perhaps. */
+  session(id: string): Promise<Workspace | null>;
+  /** Take the messages queued for a Ship, so a turn ending as it's archived
+   *  can't send one (and restore it); their ids, to give back if it isn't. */
+  takeQueued(runnerId: string): Promise<string[]>;
+  returnQueued(ids: string[]): Promise<void>;
   /** Archive one session as its owner, waking it first if asleep; why not,
    *  or null once archived. */
   archive(session: Workspace): Promise<string | null>;
+  now(): number;
 };
 
 /** A Ship left as it was, and why. */
 export type ShipLeft = { id: string; name: string; why: string };
 
-export type MissionArchiveResult = { archived: true; ships: number } | { archived: false; ships: number; left: ShipLeft[]; why: string };
+export type MissionArchiveResult =
+  | { archived: true; ships: number }
+  /** `more`: only time ran out, so asking again goes on (the browser does). */
+  | { archived: false; ships: number; left: ShipLeft[]; why: string; more: boolean };
 
-/** Why a Ship in `status` can't be archived now, or null when it can. */
-function shipNotNow(status: WorkspaceStatus): string | null {
+/** No Ship is started on after this long in one ask, so the last ones (a
+ *  wake and a save, about 75 seconds each) and then the Runner's own end
+ *  inside the route's 300. */
+export const ARCHIVE_BUDGET_MS = 120_000;
+
+/** Said of a Ship this ask didn't reach: the next one does. */
+const NOT_REACHED = "not reached yet";
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** Why a Ship as it is can't be archived now, or null when it can. */
+function shipNotNow(ship: Pick<Workspace, "status" | "provider">): string | null {
+  if (!onRuntimeComputer(ship.provider)) return "its computer can't archive";
+  const { status } = ship;
   if (status === "ready" || status === "idle" || status === "suspended") return null;
   if (status === "creating" || status === "provisioning") return "it's still setting up";
   if (status === "restoring") return "it's being restored";
   return "its box is starting or stopping";
 }
 
+const shipName = (ship: Workspace) => ship.title ?? ship.branch;
+const toArchive = (ships: Workspace[]) => ships.filter((r) => isLiveRunner(r) && r.status !== "archiving");
+
 /**
  * Archive `mission`'s Ships, then the Runner itself: the Runner goes only
- * once every Ship has, so none is left at work with no one to hear it. One
- * that can't be archived now leaves the Runner as it is, saying which; those
- * archived stay archived, and asking again archives the rest.
+ * once every Ship has, so none is left at work with no one to hear it.
+ *
+ * Nothing is touched while any Ship can't be archived now (one setting up,
+ * say): the answer names them. Each Ship's queued messages are taken as it's
+ * archived and given back if it isn't. Ships are read again before the
+ * Runner goes, so one it started meanwhile keeps it; and each row is read
+ * as its turn comes, as minutes may have passed. An ask that runs out of
+ * time leaves the rest for the next (`more`); those archived stay archived.
  */
 export async function archiveMission(mission: Workspace, deps: MissionArchiveDeps): Promise<MissionArchiveResult> {
-  await deps.dropQueued(mission.id);
-  const live = (await deps.runners(mission.id)).filter((r) => isLiveRunner(r) && r.status !== "archiving");
+  const started = deps.now();
+  const refuse = (ships: number, left: ShipLeft[]): MissionArchiveResult => {
+    const more = left.every((s) => s.why === NOT_REACHED);
+    const named = left.map((s) => `“${s.name}” (${s.why})`).join(", ");
+    const why = more
+      ? `${ships} Ship${ships === 1 ? "" : "s"} archived so far; ${left.length} to go.`
+      : `The Runner wasn't archived: ${left.length === 1 ? "a Ship" : `${left.length} Ships`} couldn't be yet: ${named}. Try again shortly.`;
+    return { archived: false, ships, left, why, more };
+  };
+
+  const live = toArchive(await deps.runners(mission.id));
+  const blocked = live.flatMap((ship) => {
+    const why = shipNotNow(ship);
+    return why ? [{ id: ship.id, name: shipName(ship), why }] : [];
+  });
+  if (blocked.length > 0) return refuse(0, blocked);
+
   const left: ShipLeft[] = [];
   let ships = 0;
   const queue = [...live];
+  const archiveShip = async (listed: Workspace): Promise<string | null> => {
+    const ship = await deps.session(listed.id);
+    if (!ship || !toArchive([ship]).length) return null;
+    const notNow = shipNotNow(ship);
+    if (notNow) return notNow;
+    const taken = await deps.takeQueued(ship.id);
+    const why = await deps.archive(ship).catch(errorText);
+    if (why !== null && taken.length > 0) await deps.returnQueued(taken);
+    return why;
+  };
   const worker = async () => {
     for (let ship = queue.shift(); ship; ship = queue.shift()) {
-      const why = shipNotNow(ship.status) ?? (await deps.archive(ship).catch((e: unknown) => (e instanceof Error ? e.message : String(e))));
+      if (deps.now() - started > ARCHIVE_BUDGET_MS) {
+        left.push({ id: ship.id, name: shipName(ship), why: NOT_REACHED });
+        continue;
+      }
+      const why = await archiveShip(ship).catch(errorText);
       if (why === null) ships++;
-      else left.push({ id: ship.id, name: ship.title ?? ship.branch, why });
+      else left.push({ id: ship.id, name: shipName(ship), why });
     }
   };
   await Promise.all(Array.from({ length: Math.min(ARCHIVE_CONCURRENCY, live.length) }, worker));
-  if (left.length > 0) {
-    const named = left.map((s) => `“${s.name}” (${s.why})`).join(", ");
-    return {
-      archived: false,
-      ships,
-      left,
-      why: `The Runner wasn't archived: ${left.length === 1 ? "a Ship" : `${left.length} Ships`} couldn't be yet: ${named}. Try again shortly.`,
-    };
+  // One the Runner started, or a message brought back, while the rest were
+  // archived: up still, and not already said.
+  const said = new Set(left.map((s) => s.id));
+  for (const ship of toArchive(await deps.runners(mission.id))) {
+    if (!said.has(ship.id)) left.push({ id: ship.id, name: shipName(ship), why: "it started or came back as the others were archived" });
   }
-  if (mission.status !== "archived") {
-    const why = missionArchiveOffer(mission.status)?.can ? await deps.archive(mission).catch(() => "it didn't answer") : "it isn't running";
-    if (why !== null) return { archived: false, ships, left, why: `Its Ships are archived, but the Runner itself couldn't be: ${why}.` };
+  if (left.length > 0) return refuse(ships, left);
+
+  const runner = await deps.session(mission.id);
+  if (runner && runner.status !== "archived") {
+    const offer = missionArchiveOffer(runner);
+    const why = offer?.can ? await deps.archive(runner).catch(errorText) : offer ? offer.why.replace(/\.$/, "").toLowerCase() : "it isn't running";
+    if (why !== null) return { archived: false, ships, left, why: `Its Ships are archived, but the Runner itself couldn't be: ${why}.`, more: false };
   }
   return { archived: true, ships };
 }
 
+/** Asks the browser makes, each going on where the last ran out of time:
+ *  20 Ships at their slowest take two. */
+const MAX_ASKS = 5;
+
 /**
- * Archive the Runner `id` with its Ships, from the browser. Throws with a
- * sentence to show when it (or one of its Ships) couldn't be.
+ * Archive the Runner `id` with its Ships, from the browser: asked again while
+ * the server only ran out of time. Throws with a sentence to show when it (or
+ * one of its Ships) couldn't be.
  */
 export async function requestMissionArchive(id: string, fetchImpl: typeof fetch = fetch): Promise<void> {
-  let res: Response;
-  try {
-    res = await fetchImpl(`/api/missions/${id}/archive`, { method: "POST" });
-  } catch {
-    throw new Error("Could not reach Outrunner. Check your connection and try again.");
+  for (let ask = 1; ; ask++) {
+    let res: Response;
+    try {
+      res = await fetchImpl(`/api/missions/${id}/archive`, { method: "POST" });
+    } catch {
+      throw new Error("Could not reach Outrunner. Check your connection and try again.");
+    }
+    if (res.ok) return;
+    const body = (await res.json().catch(() => ({}))) as { error?: unknown; more?: unknown };
+    if (body.more === true && ask < MAX_ASKS) continue;
+    throw new Error(typeof body.error === "string" ? body.error : "Could not archive this Runner. Please try again.");
   }
-  if (res.ok) return;
-  const body = (await res.json().catch(() => ({}))) as { error?: unknown };
-  throw new Error(typeof body.error === "string" ? body.error : "Could not archive this Runner. Please try again.");
 }

@@ -41,14 +41,17 @@ This replaces the earlier Mission Engine design
   replies stay in its session and don't go to the Mission.
 - **In the Mission's chat,** Runner news shows as compact cards.
 - **Archive** a Mission from its header or its sidebar row's menu: its
-  Runners that aren't archived are archived first, even one at work or with
-  an open pull request (that stays open on GitHub), and their queued
-  messages dropped; then the Mission itself, once every Runner has gone. A
-  Runner that can't be yet (still setting up, its box not answering) keeps
-  the Mission as it is, named in the error; asking again archives the rest.
-  An archived Mission stays in the sidebar, marked, and hears no more news
-  (it's dropped, not held). Opening it restores it; a Runner comes back when
-  opened or messaged.
+  Runners that aren't archived are archived first, a few at a time, even one
+  at work or with an open pull request (that stays open on GitHub); then the
+  Mission itself, once every Runner has gone. If a Runner can't be archived
+  now (still setting up, on a computer that can't archive), nothing is
+  touched and the error names it. One that fails, or one started or brought
+  back meanwhile, keeps the Mission as it is; asking again archives the
+  rest. Each Runner's queued messages are taken as it's archived, and given
+  back if it isn't. One request stops starting Runners after two minutes, and
+  the browser asks again for the rest. An archived Mission stays in the
+  sidebar, marked, and hears no more news (it's dropped, not held). Opening
+  it restores it; a Runner comes back when opened or messaged.
 - **Notifications** go through the app's notifications (`lib/notifications`),
   under each person's preferences in Settings → Account (browser, email,
   Slack). Two kinds of news reach the user:

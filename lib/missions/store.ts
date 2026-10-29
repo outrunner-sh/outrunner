@@ -98,9 +98,22 @@ export async function returnQueuedMessage(id: string): Promise<void> {
   if (error) throw error;
 }
 
-/** Forget every message still held for the Mission's Runners. */
-export async function dropQueuedMessages(missionId: string): Promise<void> {
-  const { error } = await db().from("mission_queued_messages").delete().eq("mission_id", missionId).is("sent_at", null);
+/** Take every message still held for the Runner at once, as sent: their
+ *  ids, for returnQueuedMessages if they must wait on after all. */
+export async function takeQueuedMessages(runnerId: string): Promise<string[]> {
+  const { data, error } = await db()
+    .from("mission_queued_messages")
+    .update({ sent_at: new Date().toISOString() })
+    .eq("runner_id", runnerId)
+    .is("sent_at", null)
+    .select("id");
+  if (error) throw error;
+  return (data ?? []).map((r) => r.id);
+}
+
+export async function returnQueuedMessages(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const { error } = await db().from("mission_queued_messages").update({ sent_at: null }).in("id", ids);
   if (error) throw error;
 }
 

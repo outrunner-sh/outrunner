@@ -6,8 +6,10 @@ import { archiveMission } from "@/lib/missions/archive";
 import { missionArchiveDeps } from "@/lib/missions/archive.deps";
 import { ownsMission } from "@/lib/missions/view.deps";
 
-// Each Ship's worktree is saved as it's archived, a few at a time (serverless
-// hosts only; a no-op on a long-running server).
+// Each Ship's worktree is saved as it's archived, a few at a time; none is
+// started on past ARCHIVE_BUDGET_MS, so the last end inside this (serverless
+// hosts only; a no-op on a long-running server). The browser asks again for
+// the rest.
 export const maxDuration = 300;
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -21,6 +23,8 @@ export async function POST(request: Request, context: RouteContext) {
   const mission = await ownsMission(owner.id, id);
   if (!mission) return NextResponse.json({ error: "Runner not found." }, { status: 404 });
   const result = await archiveMission(mission, missionArchiveDeps());
-  if (!result.archived) return NextResponse.json({ error: result.why, ships: result.ships, left: result.left }, { status: 409 });
+  if (!result.archived) {
+    return NextResponse.json({ error: result.why, ships: result.ships, left: result.left, more: result.more }, { status: 409 });
+  }
   return NextResponse.json({ ok: true, ships: result.ships });
 }

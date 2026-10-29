@@ -79,7 +79,7 @@ export function WorkspaceStudio({
   // Archive, for a cloud session that has a Snapshot to restore from; a
   // Runner's takes its Ships with it. Once it is archived, leave it: left
   // open, this page would restore it at once.
-  const archive = isLocal ? null : isMission ? missionArchiveOffer(workspace.status) : archiveOffer(workspace);
+  const archive = isLocal ? null : isMission ? missionArchiveOffer(workspace) : archiveOffer(workspace);
   const archiveLabel = isMission ? "Archive Runner" : "Archive session";
   const [archiving, setArchiving] = useState(false);
   const router = useRouter();

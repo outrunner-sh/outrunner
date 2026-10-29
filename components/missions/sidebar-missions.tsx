@@ -121,7 +121,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
               const runners = nestedRunners(mission);
               const isActive = mission.id === active;
               const archived = mission.sessionStatus === "archived";
-              const archive = missionArchiveOffer(mission.sessionStatus as WorkspaceStatus);
+              const archive = missionArchiveOffer({ status: mission.sessionStatus as WorkspaceStatus, provider: mission.provider });
               return (
                 <li
                   key={mission.id}

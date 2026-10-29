@@ -1,12 +1,14 @@
 /**
  * Archiving a Runner with its Ships, wired (lib/missions/archive.ts): its
- * Ships from the database, and each archived through the lifecycle route,
- * as the owner whose request this is (POST /api/missions/[id]/archive).
+ * Ships and their queued messages from the database, and each archived
+ * through the lifecycle route, as the owner whose request this is
+ * (POST /api/missions/[id]/archive). Which computers can archive is
+ * archive.ts's to say, before any of this is asked.
  */
 
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
 import type { MissionArchiveDeps } from "@/lib/missions/archive";
-import { dropQueuedMessages, runnersOf } from "@/lib/missions/store";
+import { returnQueuedMessages, runnersOf, sessionById, takeQueuedMessages } from "@/lib/missions/store";
 import type { Workspace } from "@/lib/runtime/types";
 import { asBrowser } from "@/lib/slack/research";
 
@@ -28,5 +30,12 @@ async function archiveSession(session: Workspace): Promise<string | null> {
 }
 
 export function missionArchiveDeps(): MissionArchiveDeps {
-  return { runners: runnersOf, dropQueued: dropQueuedMessages, archive: archiveSession };
+  return {
+    runners: runnersOf,
+    session: sessionById,
+    takeQueued: takeQueuedMessages,
+    returnQueued: returnQueuedMessages,
+    archive: archiveSession,
+    now: Date.now,
+  };
 }
