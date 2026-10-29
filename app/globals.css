@@ -30,11 +30,11 @@
 }
 
 .dark {
-  --background: #121212;
+  --background: #060505;
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
+  --popover: var(--background);
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.922 0 0);
   --primary-foreground: oklch(0.205 0 0);
@@ -51,7 +51,7 @@
   --ring: oklch(0.556 0 0);
   --success: oklch(0.696 0.17 162.48);
   --warning: oklch(0.769 0.157 70.08);
-  --sidebar: #171717;
+  --sidebar: #0B0B0A;
 }
 
 @theme inline {
@@ -113,8 +113,8 @@
    text on the black composer in light mode). The app is dark only — see the
    ThemeProvider in app/layout.tsx. */
 :root {
-  --studio-bg: #121212;
-  --studio-panel: #121212;
+  --studio-bg: var(--background);
+  --studio-panel: var(--background);
   --studio-panel-2: #1b1b1b;
   --studio-hover: #1e1e1e;
   --studio-selected: #232323;
@@ -236,7 +236,7 @@
 .message-attachment-file svg { width: 13px; height: 13px; flex-shrink: 0; }
 @keyframes skeleton-pulse { 50% { background: rgba(255,255,255,.08); } }
 /* An image full size, over the page. */
-.image-lightbox { width: auto; max-width: min(92vw, 1400px); padding: 12px; gap: 8px; border-radius: 6px; background: #0d0d0d; }
+.image-lightbox { width: auto; max-width: min(92vw, 1400px); padding: 12px; gap: 8px; border-radius: 6px; }
 .image-lightbox img { display: block; max-width: 100%; max-height: 84vh; margin: 0 auto; object-fit: contain; }
 .image-lightbox-name { margin: 0; padding-right: 28px; color: #8a8a8a; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .studio-composer-notice { margin: 0; padding: 10px 16px 0; color: color-mix(in oklab, var(--foreground) 60%, transparent); font-size: 12px; animation: placeholder-in .3s cubic-bezier(.23, 1, .32, 1) both; }

@@ -269,7 +269,7 @@ export function AppFrame({
     >
       <div
         className={cn(
-          "grid h-dvh grid-cols-1 overflow-hidden bg-background [--app-sidebar-width:360px]",
+          "grid h-dvh grid-cols-1 overflow-hidden bg-background [--app-sidebar-width:320px]",
           !studio && "max-sm:grid-rows-[auto_minmax(0,1fr)]",
           railless
             ? "sm:grid-cols-1"
