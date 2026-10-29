@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { gunzipSync } from "node:zlib";
 
 import { CLAUDE_CODE_VERSION } from "@/lib/runtime/claude-cli";
-import { CODEX_PACKAGE } from "@/lib/runtime/codex-cli";
+import { CODEX_CLI_VERSION, CODEX_PACKAGE } from "@/lib/runtime/codex-cli";
 
 import {
   AGENT_BINARY_PATH,
@@ -273,7 +273,7 @@ test("claudeInstallScript skips the install when the box already has the tools",
   // that records being called: every install is guarded, so none of them runs.
   const bin = mkdtempSync(join(tmpdir(), "install-"));
   const called = join(bin, "sudo-called");
-  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["claude", "echo '2.1.999 (Claude Code)'"], ["codex", "exit 0"], ["gh", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
+  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["claude", "echo '2.1.999 (Claude Code)'"], ["codex", `echo "codex-cli ${CODEX_CLI_VERSION}"`], ["gh", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
     writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
     chmodSync(join(bin, name), 0o755);
   }
@@ -293,13 +293,15 @@ test("claudeInstallScript skips the install when the box already has the tools",
  *  would. Every other tool is already there, Codex too unless `codex` is false. */
 function claudeBox(
   version: string | null,
-  { npmTakes = true, codex = true, ownPrefix = false, rootOwned = "" } = {},
+  { npmTakes = true, codex = true, codexVersion = CODEX_CLI_VERSION as string, ownPrefix = false, rootOwned = "" } = {},
 ) {
   const bin = mkdtempSync(join(tmpdir(), "claude-box-"));
   const securePath = mkdtempSync(join(tmpdir(), "secure-path-"));
   symlinkSync("/usr/bin/env", join(securePath, "env"));
   const file = join(bin, "claude-version");
   const npmLog = join(bin, "npm-log");
+  const codexFile = join(bin, "codex-version");
+  if (codex) writeFileSync(codexFile, codexVersion);
   const sudoLog = join(bin, "sudo-log");
   const tries = join(bin, "npm-tries");
   const own = ownPrefix || rootOwned !== "";
@@ -325,10 +327,10 @@ function claudeBox(
         `case "$pkg" in @*/*) [ -d "$dir/\${pkg%%/*}" ] && dir="$dir/\${pkg%%/*}";; esac; ` +
         `[ -n "$SUDO_USER" ] || [ -w "$dir" ] || { echo "EACCES: $dir" >&2; exit 243; }; ` +
         `echo "$*" >> ${npmLog}; ` +
-        `case "$3" in @anthropic-ai/*) ${npmTakes ? `echo "\${3##*@}" > ${file}` : "true"};; esac`,
+        `case "$3" in @anthropic-ai/*) ${npmTakes ? `echo "\${3##*@}" > ${file}` : "true"};; @openai/codex@*) ${npmTakes ? `echo "\${3##*@}" > ${codexFile}` : "true"};; esac`,
     ],
   ];
-  if (codex) tools.push(["codex", "exit 0"]);
+  tools.push(["codex", `[ -f ${codexFile} ] || exit 127; echo "codex-cli $(cat ${codexFile})"`]);
   for (const [name, body] of tools) {
     writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
   }
@@ -357,6 +359,32 @@ test("claudeInstallScript brings an old Claude Code up to the pinned version", (
   assert.equal(box.version(), CLAUDE_CODE_VERSION);
   // Root's node_modules: no install without sudo, sure to fail, first.
   assert.equal(box.tries().trim(), `sudo install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`);
+});
+
+test("restored Codex 0.128 is upgraded before account TUI startup", () => {
+  const box = claudeBox(CLAUDE_CODE_VERSION, { codexVersion: "0.128.0" });
+  const result = box.run();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(box.npm().trim(), `install -g ${CODEX_PACKAGE}`);
+});
+
+test("current and newer Codex versions are retained without npm", () => {
+  for (const codexVersion of [CODEX_CLI_VERSION, "9.0.0"]) {
+    const box = claudeBox(CLAUDE_CODE_VERSION, { codexVersion });
+    const result = box.run();
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(box.npm(), "");
+  }
+});
+
+test("a shadowing old or unparseable Codex fails setup after an ineffective install", () => {
+  for (const codexVersion of ["0.128.0", "unknown"]) {
+    const box = claudeBox(CLAUDE_CODE_VERSION, { codexVersion, npmTakes: false });
+    const result = box.run();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout, /Could not bring Codex .* up to 0\.146\.0/);
+    assert.equal(box.npm().trim(), `install -g ${CODEX_PACKAGE}`);
+  }
 });
 
 // sudo's secure_path leaves out where Daytona's image puts npm: the installs
