@@ -60,6 +60,15 @@
   // in its zone, so both zones must be in this account. outrunner.neev.ai, the
   // old domain, stays bound only to redirect to the new one (worker.ts), for
   // bookmarks and Mac apps from before the move. See docs/deploy-cloudflare.md.
+  //
+  // Previews (lib/previews) live on a domain of their own, never under
+  // outrunner.sh: a preview runs the session's code in the visitor's
+  // browser, which mustn't share a site with the app. Once its zone is in
+  // this account with a proxied wildcard DNS record (`*`, AAAA 100::), add
+  // its route below and set RUNTIME_PREVIEW_DOMAIN under "vars" (a custom
+  // domain can't be a wildcard, hence a zone route). See
+  // docs/deploy-cloudflare.md#previews.
+  //   { "pattern": "*.<preview domain>/*", "zone_name": "<preview domain>" }
   "routes": [
     { "pattern": "app.outrunner.sh", "custom_domain": true },
     { "pattern": "outrunner.neev.ai", "custom_domain": true }

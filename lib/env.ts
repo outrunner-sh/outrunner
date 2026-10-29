@@ -48,6 +48,10 @@ type EnvKey =
   // Provider selection
   | "RUNTIME_PROVIDER"
   | "RUNTIME_BASE_URL"
+  // Previews (lib/previews): the domain whose subdomains are preview links,
+  // `<slug>.<domain>`. Another site than the app's (lib/previews/host.ts
+  // refuses one that isn't). Unset, previews are off.
+  | "RUNTIME_PREVIEW_DOMAIN"
   // Bearer token the Cloudflare cron sends to POST /api/billing/reconcile.
   | "BILLING_CRON_SECRET"
   // Email through Resend (lib/email/send.ts), both optional: org invites and

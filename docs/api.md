@@ -246,6 +246,32 @@ curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces
 `pull_request` is null until the session opens one; `status` is null when
 GitHub couldn't be asked.
 
+### Previews
+
+```sh
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
+  "$OUTRUNNER/api/v1/workspaces/$ID/previews" -d '{ "port": 3000, "label": "Web app" }'
+```
+
+```json
+{ "id": "…", "port": 3000, "label": "Web app", "mode": "login", "url": "https://k3x9…q2.outrunner-preview.com/", "created_by": "…", "created_at": "…", "updated_at": "…" }
+```
+
+A preview is a stable link to a server listening on the session's box
+([docs/previews.md](previews.md)). `mode` is `login` (the default: members
+of the org who can read the repository, after signing in) or `public`
+(anyone with the link); `authenticated: true | false` says the same. `201`
+for a new one; a port that has one answers `200` with it, unchanged. The
+agent's own port (8080) and the sandbox's are refused.
+
+- `GET /workspaces/{id}/previews`: `{ "data": [ … ] }`.
+- `PATCH /workspaces/{id}/previews/{preview_id}`: `{ "label"?, "mode"? }`.
+- `DELETE /workspaces/{id}/previews/{preview_id}`: `204`; the link stops
+  working within seconds, for everyone.
+
+The session's owner makes and changes its previews. An admin of the org may
+list them, make a public one `login` again, and delete any.
+
 ### Triage
 
 ```sh
@@ -400,6 +426,10 @@ claude mcp add --transport http outrunner https://app.outrunner.sh/api/mcp --hea
 | `list_workspaces` | `GET /workspaces` |
 | `get_workspace` | `GET /workspaces/{id}` |
 | `archive_workspace` | `POST /workspaces/{id}/archive` |
+| `list_previews` | `GET /workspaces/{id}/previews` |
+| `create_preview` | `POST /workspaces/{id}/previews` |
+| `update_preview` | `PATCH /workspaces/{id}/previews/{preview_id}` |
+| `delete_preview` | `DELETE /workspaces/{id}/previews/{preview_id}` |
 
 Each tool answers with the REST call's JSON (as text, and as structured
 content), or its error, flagged `isError`. The same rights, rate limits and

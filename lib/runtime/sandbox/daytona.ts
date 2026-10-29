@@ -322,6 +322,18 @@ export function box(sandbox: Sandbox): SandboxBox {
         return url.toString();
       },
     },
+    // A preview's requests come from this server, so the standard link, its
+    // token a header no browser sees. Its proxy routes by host, and would
+    // show browsers its own warning page before the user's server without
+    // the skip header.
+    previewTarget: async (port) => {
+      const preview = await sandbox.getPreviewLink(port);
+      return {
+        baseUrl: preview.url,
+        headers: { "x-daytona-preview-token": preview.token, "x-daytona-skip-preview-warning": "true" },
+        hostHeader: "upstream",
+      };
+    },
   };
 }
 

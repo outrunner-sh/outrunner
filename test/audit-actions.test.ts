@@ -55,3 +55,13 @@ test("the actor is named by login, else name or email; Outrunner for its own", (
   assert.equal(actorLabel({ id: "u", githubLogin: "ada", name: "Ada", email: null }), "ada");
   assert.equal(actorLabel({ id: "u", githubLogin: "", name: "", email: "ada@acme.dev" }), "ada@acme.dev");
 });
+
+test("a preview's mode changing and its deletion read as what they let in", () => {
+  assert.equal(
+    describeAudit(event("preview.made_public", "Web app")),
+    "made the preview Web app public: anyone with its link can open it",
+  );
+  assert.equal(describeAudit(event("preview.made_login", "port 3000")), "made the preview port 3000 sign-in only");
+  assert.equal(describeAudit(event("preview.deleted", "Web app")), "deleted the preview Web app");
+  assert.equal(auditGroup("preview.made_public"), "access");
+});

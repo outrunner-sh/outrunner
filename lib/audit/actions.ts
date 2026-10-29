@@ -42,7 +42,10 @@ export type AuditAction =
   | "github.rules_bypassed"
   | "billing.checkout_opened"
   | "billing.portal_opened"
-  | "billing.plan_changed";
+  | "billing.plan_changed"
+  | "preview.made_public"
+  | "preview.made_login"
+  | "preview.deleted";
 
 export type AuditEvent = {
   id: number;
@@ -71,7 +74,7 @@ export type AuditGroup = keyof typeof AUDIT_GROUPS;
 export function auditGroup(action: string): AuditGroup {
   const [kind] = action.split(".");
   if (kind === "member" || kind === "invite" || kind === "request") return "members";
-  if (kind === "role" || kind === "access") return "access";
+  if (kind === "role" || kind === "access" || kind === "preview") return "access";
   if (kind === "key" || kind === "api_key" || kind === "secret_sync") return "keys";
   if (kind === "github") return "github";
   if (kind === "billing") return "billing";
@@ -164,6 +167,12 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return "opened the billing portal";
     case "billing.plan_changed":
       return `saw the plan become ${what}${text(d.status) && d.status !== "active" ? ` (${text(d.status)})` : ""}`;
+    case "preview.made_public":
+      return `made the preview ${what} public: anyone with its link can open it`;
+    case "preview.made_login":
+      return `made the preview ${what} sign-in only`;
+    case "preview.deleted":
+      return `deleted the preview ${what}`;
     default:
       return event.action;
   }
