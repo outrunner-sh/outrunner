@@ -4,15 +4,20 @@ import { getOwner } from "@/lib/auth/owner";
 import { getWorkspaceComputer, getWorkspace, readRuntimeComputerSecret } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { SessionUrls } from "@/lib/runtime/agent-protocol";
+import { AGENT_FEATURE_CHATS, SessionUrls } from "@/lib/runtime/agent-protocol";
 import { withRuntimeAgentRecovery } from "@/lib/runtime/agent-recovery";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
-import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
+import { readyChatRelaunch, readyRelaunch } from "@/lib/runtime/relaunch.deps";
+import { OutdatedComputerError, signInFailure } from "@/lib/runtime/session-auth";
 import { boxUpgrade } from "@/lib/runtime/session-environment";
+import type { Workspace } from "@/lib/runtime/types";
 import { bringBack } from "@/lib/session/bring-back-box";
 import { bringBackFailure } from "@/lib/session/box-failure";
+import { agentChat, chatMissingOnBox, requestedChat } from "@/lib/session/chat-target";
 import { relaunchFailure } from "@/lib/session/relaunch-failure";
+import { requireFeature } from "@/lib/runtime/box-features";
+import type { SessionChat } from "@/lib/session/chats";
 
 // May ensure/boot a Runtime Computer before minting session tokens; give it the
 // same 60s cap as provisioning (serverless hosts only; a no-op on Railway).
@@ -56,6 +61,11 @@ export async function POST(request: Request, context: RouteContext) {
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
+
+  // The chat the page shows (?chat=): its main one unless it names another.
+  const named = await requestedChat(request, workspace);
+  if (!named.ok) return named.response;
+  const chat = agentChat(named.chat);
 
   const resolution = resolveProvider(workspace);
   if (!resolution.ok) return providerErrorResponse(resolution);
@@ -135,7 +145,7 @@ export async function POST(request: Request, context: RouteContext) {
   // fills the page's cache.
   let summary;
   if (warm) {
-    summary = await agent.workspaceSummary(identity).catch((error: unknown) => {
+    summary = await agent.workspaceSummary(identity, chat).catch((error: unknown) => {
       console.warn(`Session warm: summary fetch failed for ${workspace.id}`, error);
       return undefined;
     });
@@ -190,22 +200,73 @@ export async function POST(request: Request, context: RouteContext) {
     }
   }
 
+  // A chat other than the main one runs beside it: started (continuing its
+  // conversation) when it isn't running, which a box that paused or came
+  // back stopped, and made again on a box that lost it (a restore onto a new
+  // one), its conversation there starting afresh.
+  if (!warm && chat) {
+    const failed = await startChat(agent, identity, named.chat, workspace, owner.id, provider.restoresBoxes
+      ? boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id, workspace.id)
+      : undefined, provider.restoresBoxes);
+    if (failed) return failed;
+  }
+
   // Fetch the current WorkspaceSummary alongside the URLs so the browser has
   // it on the first paint without an extra round-trip. If the agent hiccups,
   // omit summary — clients can hit /api/workspaces/[id]/summary directly. A
   // warm-up already has it, from the check above.
   if (!summary) {
     try {
-      summary = await agent.workspaceSummary(identity);
+      summary = await agent.workspaceSummary(identity, chat);
     } catch (error) {
       console.warn(`Session attach: summary fetch failed for ${workspace.id}`, error);
     }
   }
 
   const body: SessionUrls = {
-    ptyUrl: agent.ptyUrl(identity),
-    eventsUrl: agent.eventsUrl(identity),
+    ptyUrl: agent.ptyUrl(identity, chat),
+    eventsUrl: agent.eventsUrl(identity, chat),
     ...(summary && { summary }),
   };
   return NextResponse.json(SessionUrls.parse(body));
+}
+
+/**
+ * Start one of a session's chats other than its main one, readied first
+ * (readyChatRelaunch) where the box may have come back without its sign-in
+ * (`ready`), or made again where the box doesn't have it. Null once it runs;
+ * else the response saying why it can't.
+ */
+async function startChat(
+  agent: AgentClient,
+  identity: WorkspaceIdentity,
+  chat: SessionChat,
+  workspace: Workspace,
+  ownerId: string,
+  upgrade: (() => Promise<void>) | undefined,
+  ready: boolean,
+): Promise<NextResponse | null> {
+  try {
+    if (ready) await readyChatRelaunch(agent, identity, upgrade, workspace, chat, ownerId);
+    try {
+      await agent.startWorkspace(identity, chat.id);
+    } catch (error) {
+      if (!chatMissingOnBox(error)) throw error;
+      await requireFeature(
+        { features: async () => (await agent.health(identity)).features ?? [], upgrade },
+        AGENT_FEATURE_CHATS,
+        "run several chats in a session",
+      );
+      await agent.createChat(identity, { chatId: chat.id, agent: chat.agent, noStart: true });
+      await readyChatRelaunch(agent, identity, upgrade, workspace, chat, ownerId);
+      await agent.startWorkspace(identity, chat.id);
+    }
+    return null;
+  } catch (error) {
+    const failure = signInFailure(error);
+    if (failure) return NextResponse.json(failure, { status: 409 });
+    if (error instanceof OutdatedComputerError) return NextResponse.json({ error: error.message }, { status: 409 });
+    console.error(`Session attach: chat ${chat.id} of ${workspace.id} didn't start`, error);
+    return NextResponse.json({ error: "Couldn't start this chat. Try again." }, { status: 502 });
+  }
 }

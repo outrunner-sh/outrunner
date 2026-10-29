@@ -8,6 +8,7 @@ import { requireFeature } from "@/lib/runtime/box-features";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { agentChat, requestedChat } from "@/lib/session/chat-target";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -36,10 +37,13 @@ export async function POST(request: Request, context: RouteContext) {
   });
   if (!reach.ok) return reach.response;
   const { workspace, provider, sandboxId, secret, agent, identity } = reach.reached;
+  const named = await requestedChat(request, workspace);
+  if (!named.ok) return named.response;
+  const chat = agentChat(named.chat);
 
   try {
     try {
-      await agent.compact(identity, instructions ? { instructions } : {});
+      await agent.compact(identity, instructions ? { instructions } : {}, chat);
     } catch (error) {
       // No such route: an agent from before compacting, brought up to this
       // one's, then asked again.
@@ -52,7 +56,7 @@ export async function POST(request: Request, context: RouteContext) {
         AGENT_FEATURE_COMPACT,
         "compact a conversation",
       );
-      await agent.compact(identity, instructions ? { instructions } : {});
+      await agent.compact(identity, instructions ? { instructions } : {}, chat);
     }
   } catch (error) {
     if (error instanceof OutdatedComputerError) {

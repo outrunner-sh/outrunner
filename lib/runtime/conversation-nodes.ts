@@ -1,3 +1,4 @@
+import { withoutCarried } from "@/lib/session/chats";
 import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
 import { isInterruption, isLocalCommand, localCommandLine, messageText, runnerContinuations } from "@/lib/runtime/conversation-events";
 import { EXIT_PLAN_MODE, planOf } from "@/lib/runtime/pending-plan";
@@ -32,6 +33,9 @@ export type ConversationNode =
       /** Images pasted into the agent's own prompt (its terminal), which
        *  its log keeps with the words: base64, by type. */
       images?: PromptImage[];
+      /** What a chat's prompt was sent with, out of `text`: a fork's handoff
+       *  of the conversation it continues, a side chat's context. */
+      carried?: ("handoff" | "side")[];
     }
   /** Claude's own injected record (a skill's instructions, a reminder): folded
    *  behind a disclosure rather than shown inline. `label` names it in a word. */
@@ -177,10 +181,12 @@ export function conversationNodes(
               return;
             }
             if (!continuation) planTurn = event.mode === "plan";
+            const { text, carried } = withoutCarried(block.text);
             nodes.push({
               kind: "prompt",
               key,
-              text: block.text,
+              text,
+              ...(carried.length > 0 && { carried }),
               ...(event.mode && { mode: event.mode }),
               ...(!isEcho(event.uuid) && { at: event.timestamp }),
               ...(continuation && { continuation: true }),

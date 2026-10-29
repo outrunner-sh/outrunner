@@ -28,6 +28,9 @@ import { firstPrompt, MAX_PROMPT, parseCreate, type CreateInput } from "@/lib/ap
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
 import { readConversation, readLiveConversation } from "@/lib/api/live";
+import { listChats } from "@/lib/db/chats";
+import { agentChat, chatNamed } from "@/lib/session/chat-target";
+import { mainChatOf, orderedChats, type SessionChat } from "@/lib/session/chats";
 import { pageOf, pageRequest } from "@/lib/api/pagination";
 import { isApiSource, isApiStatus, snakeKeys, statusesFor, workspaceJson } from "@/lib/api/serialize";
 import { getEnvironment } from "@/lib/db/environments";
@@ -221,8 +224,33 @@ export async function getWorkspaceApi(context: ApiContext, id: string): Promise<
   return Response.json({ ...workspaceJson(found.workspace, context.base), turn });
 }
 
+/**
+ * The chat a call names (`chat_id`): undefined for the session's main chat,
+ * which is where a call that names none goes; a response when it names one
+ * the session doesn't have.
+ */
+async function apiChat(workspace: Workspace, value: unknown): Promise<string | undefined | Response> {
+  if (value !== undefined && value !== null && typeof value !== "string") return apiError(400, "`chat_id` is a chat's id.");
+  const named = await chatNamed(value, workspace);
+  if (!named.ok) return apiError(named.response.status === 404 ? 404 : 400, named.response.status === 404 ? "No chat by that id in this session." : "`chat_id` is a chat's id.");
+  return agentChat(named.chat);
+}
+
+/** The `?chat=` an internal route takes for a chat. */
+function chatParam(chat: string | undefined): string {
+  return chat ? `?chat=${encodeURIComponent(chat)}` : "";
+}
+
+/** GET /workspaces/{id}/chats: the session's chats, its main one first. */
+export async function listChatsApi(context: ApiContext, id: string): Promise<Response> {
+  const workspace = await ownSession(context, id);
+  if (workspace instanceof Response) return workspace;
+  const chats = orderedChats(mainChatOf(workspace), await listChats(workspace.id));
+  return Response.json({ data: chats.map(chatJson) });
+}
+
 /** GET /workspaces/{id}/conversation: its events, newest last, a page at a
- *  time going back (`before_event`). */
+ *  time going back (`before_event`); a chat's with `chat_id`. */
 export async function readConversationApi(context: ApiContext, id: string): Promise<Response> {
   const params = new URL(context.request.url).searchParams;
   const before = params.get("before_event");
@@ -232,8 +260,10 @@ export async function readConversationApi(context: ApiContext, id: string): Prom
   if (perPage < 1 || perPage > 100) return apiError(400, "`per_page` must be a whole number from 1 to 100.");
   const workspace = await ownSession(context, id);
   if (workspace instanceof Response) return workspace;
+  const chat = await apiChat(workspace, params.get("chat_id") ?? undefined);
+  if (chat instanceof Response) return chat;
 
-  const conversation = await readConversation(workspace);
+  const conversation = await readConversation(workspace, chat);
   const page = conversationPage(conversation.entries, { before: before === null ? undefined : Number(before), limit: perPage });
   return Response.json({
     data: page.events.map(eventJson),
@@ -270,17 +300,23 @@ export async function sendMessageApi(
   if (content.length > MAX_PROMPT) return apiError(400, "The message is too long.");
   const workspace = await ownSession(context, id);
   if (workspace instanceof Response) return workspace;
+  const chat = await apiChat(workspace, raw.chat_id);
+  if (chat instanceof Response) return chat;
   const refused = await wake(context, workspace);
   if (refused) return refused;
   const sentAt = Date.now();
   const sent = await messagePOST(
-    appRequest(context.base, `/api/workspaces/${id}/message`, { body: { content } }),
+    appRequest(context.base, `/api/workspaces/${id}/message${chatParam(chat)}`, { body: { content } }),
     routeParams({ id }),
   );
   if (!sent.ok) return errorFromRoute(sent, context.base);
-  const fence = await fenceAfterSend((await getWorkspace(id)) ?? workspace, content, sentAt);
-  await onSent?.(workspace, fence);
-  return Response.json({ result: "sent", workspace_id: id, after_event: fence === null ? null : String(fence) }, { status: 202 });
+  const fence = await fenceAfterSend((await getWorkspace(id)) ?? workspace, content, sentAt, chat);
+  // Its webhooks follow the session's turn: the main chat's.
+  if (!chat) await onSent?.(workspace, fence);
+  return Response.json(
+    { result: "sent", workspace_id: id, ...(chat && { chat_id: chat }), after_event: fence === null ? null : String(fence) },
+    { status: 202 },
+  );
 }
 
 /** How long a send's message is looked for in the log, once more, when the
@@ -294,23 +330,27 @@ const FENCE_RETRY_MS = 1_500;
  * message. Null when the log still doesn't show it: docs/api.md says what a
  * caller does then.
  */
-async function fenceAfterSend(workspace: Workspace, content: string, sentAt: number): Promise<number | null> {
+async function fenceAfterSend(workspace: Workspace, content: string, sentAt: number, chat?: string): Promise<number | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, FENCE_RETRY_MS));
-    const live = await readLiveConversation(workspace).catch(() => null);
+    const live = await readLiveConversation(workspace, chat).catch(() => null);
     const fence = live ? fenceBefore(live.entries, content, sentAt) : null;
     if (fence !== null) return fence;
   }
   return null;
 }
 
-/** POST /workspaces/{id}/interrupt: stop the turn it's running. */
+/** POST /workspaces/{id}/interrupt: stop the turn it's running; a chat's
+ *  with `chat_id` (in the query, or a JSON body). */
 export async function interruptApi(context: ApiContext, id: string): Promise<Response> {
   const workspace = await ownSession(context, id);
   if (workspace instanceof Response) return workspace;
-  const stopped = await interruptPOST(appRequest(context.base, `/api/workspaces/${id}/interrupt`), routeParams({ id }));
+  const body = (await context.request.clone().json().catch(() => null)) as { chat_id?: unknown } | null;
+  const chat = await apiChat(workspace, new URL(context.request.url).searchParams.get("chat_id") ?? body?.chat_id);
+  if (chat instanceof Response) return chat;
+  const stopped = await interruptPOST(appRequest(context.base, `/api/workspaces/${id}/interrupt${chatParam(chat)}`), routeParams({ id }));
   if (!stopped.ok) return errorFromRoute(stopped, context.base);
-  return Response.json({ result: "interrupted", workspace_id: id });
+  return Response.json({ result: "interrupted", workspace_id: id, ...(chat && { chat_id: chat }) });
 }
 
 export type LifecycleVerb = "suspend" | "resume" | "archive" | "delete";
@@ -369,11 +409,13 @@ export async function waitApi(context: ApiContext, id: string): Promise<Response
   const afterEvent = after === null ? null : Number(after);
   const first = await ownSession(context, id);
   if (first instanceof Response) return first;
+  const chat = await apiChat(first, params.get("chat_id") ?? undefined);
+  if (chat instanceof Response) return chat;
 
   const until = Date.now() + seconds * 1000;
   let workspace = first;
   for (;;) {
-    const settled = await waitOutcome(workspace, afterEvent);
+    const settled = await waitOutcome(workspace, afterEvent, chat);
     if (settled) return Response.json({ ...workspaceJson(workspace, context.base), turn: settled.turn, timed_out: false });
     if (Date.now() + WAIT_EVERY_MS > until || context.request.signal.aborted) {
       return Response.json({ ...workspaceJson(workspace, context.base), turn: await turnJsonOf(workspace), timed_out: true });
@@ -393,6 +435,7 @@ export async function waitApi(context: ApiContext, id: string): Promise<Response
 async function waitOutcome(
   workspace: Workspace,
   afterEvent: number | null,
+  chat?: string,
 ): Promise<{ turn: Record<string, unknown> | null } | null> {
   switch (workspace.status) {
     case "creating":
@@ -405,10 +448,12 @@ async function waitOutcome(
       return null;
     case "ready":
     case "idle": {
-      const live = await readLiveConversation(workspace);
+      const live = await readLiveConversation(workspace, chat);
       // A box that didn't answer this time may on the next.
       if (!live) return null;
-      const fenced = afterEvent !== null || workspace.source === "api";
+      // A chat's first prompt is the caller's own, so only a fence it gives
+      // tells its turn from one before.
+      const fenced = afterEvent !== null || (workspace.source === "api" && !chat);
       if (!turnSettled(live.entries, live.state, { fenced, afterEvent })) return null;
       return { turn: turnJson(live.entries, live.state) };
     }
@@ -416,4 +461,17 @@ async function waitOutcome(
       // Failed, paused, archived or deleted: no turn will end by waiting.
       return { turn: null };
   }
+}
+
+/** A chat as the API shows it. */
+function chatJson(chat: SessionChat): Record<string, unknown> {
+  return {
+    id: chat.id,
+    name: chat.name,
+    kind: chat.kind,
+    coding_agent: chat.agent,
+    forked_from: chat.forkedFrom,
+    model: chat.model ? { provider: chat.model.model.provider, id: chat.model.model.id, effort: chat.model.effort } : null,
+    created_at: chat.createdAt,
+  };
 }

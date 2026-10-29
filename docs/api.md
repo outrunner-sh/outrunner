@@ -84,6 +84,7 @@ counted apart. The budget refills continuously: every answer carries
 | POST | `/api/v1/workspaces/{id}/interrupt` | Stop the turn it's running |
 | GET | `/api/v1/workspaces/{id}/conversation` | Its conversation, a page at a time going back: `before_event` |
 | GET | `/api/v1/workspaces/{id}/wait` | Hold the call until its turn is over or it needs input, up to 10 minutes: `after_event`, `timeout` |
+| GET | `/api/v1/workspaces/{id}/chats` | Its chats, its main one first |
 | POST | `/api/v1/workspaces/{id}/suspend` | Pause its box |
 | POST | `/api/v1/workspaces/{id}/resume` | Wake it (or restore it, if archived) |
 | POST | `/api/v1/workspaces/{id}/archive` | Snapshot it and let its box go |
@@ -220,6 +221,31 @@ only grow. A message the agent streams is one event, as it is now. The
 conversation is read from the session's box while it's up; an archived
 session's comes from its last snapshot (`"from": "archive"`, ids counting
 from 1), and a session with neither has none.
+
+### Chats
+
+A session can hold several chats, each a conversation of its own in the
+session's worktree, on its own coding agent: its main chat, which is the
+session itself, and the ones started beside it in the app (a new chat, a
+fork, a side chat). Everything above goes to the main chat. To reach
+another, name it with `chat_id`: in the body of a message, and in the query
+of `conversation`, `wait` and `interrupt`. A chat the session doesn't have is
+`404`.
+
+```sh
+curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/chats"
+
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
+  "$OUTRUNNER/api/v1/workspaces/$ID/messages" -d '{ "content": "And the docs?", "chat_id": "'"$CHAT"'" }'
+```
+
+```json
+{ "data": [{ "id": "main", "name": "Main", "kind": "main", "coding_agent": "claude", "forked_from": null, "model": null, "created_at": "…" }, { "id": "6f1c…", "name": "Fork of Main", "kind": "chat", "coding_agent": "codex", "forked_from": "main", "model": null, "created_at": "…" }] }
+```
+
+A chat's conversation is read from the session's box while it's up; an
+archived session has its main chat's alone. Webhooks follow the main chat's
+turns.
 
 ### Pausing, archiving, deleting
 
@@ -443,6 +469,7 @@ claude mcp add --transport http outrunner https://app.outrunner.sh/api/mcp --hea
 | `send_message` | `POST /workspaces/{id}/messages` |
 | `read_conversation` | `GET /workspaces/{id}/conversation` |
 | `wait_for_workspace` | `GET /workspaces/{id}/wait` |
+| `list_chats` | `GET /workspaces/{id}/chats` |
 | `list_workspaces` | `GET /workspaces` |
 | `get_workspace` | `GET /workspaces/{id}` |
 | `archive_workspace` | `POST /workspaces/{id}/archive` |
@@ -450,6 +477,9 @@ claude mcp add --transport http outrunner https://app.outrunner.sh/api/mcp --hea
 | `create_preview` | `POST /workspaces/{id}/previews` |
 | `update_preview` | `PATCH /workspaces/{id}/previews/{preview_id}` |
 | `delete_preview` | `DELETE /workspaces/{id}/previews/{preview_id}` |
+
+`send_message`, `read_conversation` and `wait_for_workspace` take a
+`chat_id`, as their REST calls do.
 
 Each tool answers with the REST call's JSON (as text, and as structured
 content), or its error, flagged `isError`. The same rights, rate limits and

@@ -9,6 +9,7 @@ import { requireFeature } from "@/lib/runtime/box-features";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { agentChat, requestedChat } from "@/lib/session/chat-target";
 import { watchSent } from "@/lib/session/watch";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -35,11 +36,14 @@ export async function POST(request: Request, context: RouteContext) {
   });
   if (!reach.ok) return reach.response;
   const { workspace, provider, sandboxId, secret, agent, identity } = reach.reached;
+  const named = await requestedChat(request, workspace);
+  if (!named.ok) return named.response;
+  const chat = agentChat(named.chat);
 
   try {
     let approved;
     try {
-      approved = await agent.approvePlan(identity);
+      approved = await agent.approvePlan(identity, chat);
     } catch (error) {
       // No such route: an agent from before plans, brought up to this one's,
       // then asked again. Asked only then, not on every click.
@@ -52,7 +56,7 @@ export async function POST(request: Request, context: RouteContext) {
         AGENT_FEATURE_PLAN_MODE,
         "approve a plan",
       );
-      approved = await agent.approvePlan(identity);
+      approved = await agent.approvePlan(identity, chat);
     }
     // Approved, it builds; answered already, it is in the mode its agent read
     // off its screen. The row follows, so the session opens in it again.
@@ -63,7 +67,7 @@ export async function POST(request: Request, context: RouteContext) {
     // watched until the turn ends (lib/session/watch.ts), as a sent prompt
     // is. "answered" put nothing to work, so a session idle at its box isn't
     // marked working.
-    if (approved.result === "approved") after(() => watchSent(workspace.id, workspace.ownerId));
+    if (approved.result === "approved" && !chat) after(() => watchSent(workspace.id, workspace.ownerId));
     return NextResponse.json(approved);
   } catch (error) {
     if (error instanceof OutdatedComputerError) {

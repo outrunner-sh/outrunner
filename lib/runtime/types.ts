@@ -166,6 +166,9 @@ export type Workspace = {
   /** The mode its prompts go in (lib/session/session-mode.ts): plan, or
    *  build, its own; build for a session never planned. */
   mode: SessionMode;
+  /** Its main chat's name, once renamed (lib/session/chats.ts); null or
+   *  absent is "Main". */
+  mainChatName?: string | null;
   lastActiveAt: string | null;
   errorMessage: string | null;
   createdAt: string;

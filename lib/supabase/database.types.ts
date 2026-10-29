@@ -130,6 +130,9 @@ type WorkspaceRow = {
   model_effort: string | null;
   /** Absent before the migration that adds it; null is build. */
   session_mode?: "build" | "plan" | null;
+  /** Its main chat's name once renamed (20261103100000); null is "Main",
+   *  absent before the migration. */
+  main_chat_name?: string | null;
   last_active_at: string | null;
   created_at: string;
   updated_at: string;
@@ -340,6 +343,23 @@ type MemoryRow = {
   org_id: string | null;
   body: string;
   workspace_id: string | null;
+  created_at: string;
+};
+
+/** One of a session's chats other than its main one (20261103100000). */
+type WorkspaceChatRow = {
+  id: string;
+  workspace_id: string;
+  owner_id: string;
+  name: string;
+  agent: string;
+  /** "chat", or "side" for a side chat (/btw). */
+  kind: string;
+  /** The chat it was forked from: "main", or another chat's id. */
+  forked_from: string | null;
+  model_provider: string | null;
+  model_id: string | null;
+  model_effort: string | null;
   created_at: string;
 };
 
@@ -1861,6 +1881,12 @@ export type Database = {
         Row: MemoryRow;
         Insert: Insert<MemoryRow, "user_id" | "body">;
         Update: Partial<MemoryRow>;
+        Relationships: [];
+      };
+      workspace_chats: {
+        Row: WorkspaceChatRow;
+        Insert: Insert<WorkspaceChatRow, "workspace_id" | "owner_id" | "name" | "agent">;
+        Update: Partial<WorkspaceChatRow>;
         Relationships: [];
       };
     };

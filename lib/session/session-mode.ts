@@ -8,6 +8,8 @@
  * The composer's toggle (Shift+Tab) picks the mode; `/plan <prompt>` sends one
  * prompt in plan mode and leaves the toggle there, as the session now is.
  * `/compact` compacts the conversation instead of sending anything.
+ * `/btw <question>` (or `/side`) asks it in a side chat instead, leaving
+ * the chat's turn alone (lib/session/chats.ts).
  */
 
 import type { SessionMode } from "@/lib/runtime/agent-protocol";
@@ -20,10 +22,12 @@ export type { SessionMode };
 export type ComposerCommand =
   | { kind: "plan"; prompt: string }
   | { kind: "compact"; instructions: string }
+  | { kind: "side"; question: string }
   | null;
 
 const PLAN = /^\/plan(?:\s+([\s\S]*))?$/;
 const COMPACT = /^\/compact(?:\s+([\s\S]*))?$/;
+const SIDE = /^\/(?:btw|side)(?:\s+([\s\S]*))?$/;
 
 export function composerCommand(text: string): ComposerCommand {
   const trimmed = text.trim();
@@ -31,6 +35,8 @@ export function composerCommand(text: string): ComposerCommand {
   if (plan) return { kind: "plan", prompt: (plan[1] ?? "").trim() };
   const compact = COMPACT.exec(trimmed);
   if (compact) return { kind: "compact", instructions: (compact[1] ?? "").trim() };
+  const side = SIDE.exec(trimmed);
+  if (side) return { kind: "side", question: (side[1] ?? "").trim() };
   return null;
 }
 

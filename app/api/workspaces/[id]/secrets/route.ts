@@ -14,6 +14,7 @@ import { settableEnv } from "@/lib/imports/settable-env";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { ProvideSecretsRequest } from "@/lib/runtime/agent-protocol";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { agentChat, requestedChat } from "@/lib/session/chat-target";
 import { watchSent } from "@/lib/session/watch";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -53,11 +54,14 @@ export async function POST(request: Request, context: RouteContext) {
   });
   if (!reach.ok) return reach.response;
   const { workspace, agent, identity } = reach.reached;
+  const named = await requestedChat(request, workspace);
+  if (!named.ok) return named.response;
+  const chat = agentChat(named.chat);
 
   // The session first: it checks the answer is to the request it's waiting
   // on, and nothing is saved for one that's over.
   try {
-    await agent.provideSecrets(identity, answer);
+    await agent.provideSecrets(identity, answer, chat);
   } catch (error) {
     if (error instanceof AgentRequestError && error.error?.code === "CONFLICT") {
       return NextResponse.json({ error: error.error.message }, { status: 409 });
@@ -69,7 +73,7 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Couldn't send them to the session. Please try again." }, { status: 502 });
   }
   // No longer waiting on the user: working again, and watched.
-  after(() => watchSent(workspace.id, workspace.ownerId));
+  if (!chat) after(() => watchSent(workspace.id, workspace.ownerId));
 
   if (!save || answer.skipped || Object.keys(values).length === 0) {
     return NextResponse.json({ result: "provided" });

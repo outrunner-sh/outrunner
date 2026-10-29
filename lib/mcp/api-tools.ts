@@ -18,6 +18,7 @@ import {
   createWorkspace,
   getWorkspaceApi,
   lifecycleApi,
+  listChatsApi,
   listWorkspaces,
   readConversationApi,
   sendMessageApi,
@@ -58,6 +59,10 @@ function id(args: Record<string, unknown>): string {
 }
 
 const WORKSPACE_ID = { workspace_id: { type: "string", description: "The session's id." } };
+
+const CHAT_ID = {
+  chat_id: { type: "string", description: "One of the session's chats (list_chats); none is its main chat." },
+};
 
 export const API_TOOLS: McpTool<ApiContext>[] = [
   {
@@ -111,11 +116,17 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
       "this answers with, for its reply. If after_event is null, poll get_workspace until turn.state is working before you wait.",
     inputSchema: {
       type: "object",
-      properties: { ...WORKSPACE_ID, content: { type: "string", description: "The message." } },
+      properties: { ...WORKSPACE_ID, content: { type: "string", description: "The message." }, ...CHAT_ID },
       required: ["workspace_id", "content"],
     },
     call: async (context, args) =>
-      answer(await sendMessageApi(asCall(context, { method: "POST", body: { content: args.content } }), id(args), messageSent)),
+      answer(
+        await sendMessageApi(
+          asCall(context, { method: "POST", body: { content: args.content, ...(args.chat_id !== undefined && { chat_id: args.chat_id }) } }),
+          id(args),
+          messageSent,
+        ),
+      ),
   },
   {
     name: "read_conversation",
@@ -127,11 +138,17 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
         ...WORKSPACE_ID,
         before_event: { type: "string", description: "An event id: the page before it." },
         per_page: { type: "integer", minimum: 1, maximum: 100 },
+        ...CHAT_ID,
       },
       required: ["workspace_id"],
     },
     call: async (context, args) =>
-      answer(await readConversationApi(asCall(context, { query: { before_event: args.before_event, per_page: args.per_page } }), id(args))),
+      answer(
+        await readConversationApi(
+          asCall(context, { query: { before_event: args.before_event, per_page: args.per_page, chat_id: args.chat_id } }),
+          id(args),
+        ),
+      ),
   },
   {
     name: "wait_for_workspace",
@@ -144,11 +161,25 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
         ...WORKSPACE_ID,
         after_event: { type: "string", description: "What send_message answered with: wait for the turn that message starts." },
         timeout_seconds: { type: "integer", minimum: 0, maximum: 600 },
+        ...CHAT_ID,
       },
       required: ["workspace_id"],
     },
     call: async (context, args) =>
-      answer(await waitApi(asCall(context, { query: { timeout: args.timeout_seconds, after_event: args.after_event } }), id(args))),
+      answer(
+        await waitApi(
+          asCall(context, { query: { timeout: args.timeout_seconds, after_event: args.after_event, chat_id: args.chat_id } }),
+          id(args),
+        ),
+      ),
+  },
+  {
+    name: "list_chats",
+    description:
+      "List a session's chats, its main one first: each a conversation of its own in the session's worktree, " +
+      "on its own coding agent. Pass a chat's id as chat_id to send_message, read_conversation or wait_for_workspace.",
+    inputSchema: { type: "object", properties: WORKSPACE_ID, required: ["workspace_id"] },
+    call: async (context, args) => answer(await listChatsApi(asCall(context, {}), id(args))),
   },
   {
     name: "list_workspaces",

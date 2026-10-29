@@ -72,6 +72,7 @@ import {
 } from "@/lib/runtime/session-models";
 import { sessionTitle } from "@/lib/nav/session-title";
 import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
+import { chatRoute, chatStateKey, MAIN_CHAT } from "@/lib/session/chats";
 import { type QueuedPrompt, queueDrains, readQueue, writeQueue } from "@/lib/session/prompt-queue";
 import { patchRowAhead } from "@/lib/session/rows-ahead";
 import { sendIsDeadEnd } from "@/lib/session/send-failure";
@@ -119,6 +120,7 @@ export type SessionSender = {
 
 export function WorkspaceSession({
   workspaceId,
+  chatId = MAIN_CHAT,
   projectId,
   agent = "claude",
   recorded = null,
@@ -129,8 +131,12 @@ export function WorkspaceSession({
   initialPromptKey,
   initialAttachmentIds,
   onSender,
+  onSideChat,
 }: {
   workspaceId: string;
+  /** The chat it shows (lib/session/chats.ts): its main one unless another
+   *  is picked. Each keeps its own conversation, queue and model here. */
+  chatId?: string;
   /** Its repository, so a session whose box is gone can continue in a new one there. */
   projectId?: string;
   /** The coding agent the session runs: its model menu offers only models
@@ -158,9 +164,15 @@ export function WorkspaceSession({
   /** Given a sender while the session can send, null when it no longer can:
    *  for prompts from outside the composer (Create PR). Must be stable. */
   onSender?: (sender: SessionSender | null) => void;
+  /** `/btw <question>`: ask it in a side chat about this one (the studio
+   *  starts it and shows it); resolves whether it went. */
+  onSideChat?: (question: string) => Promise<boolean>;
 }) {
-  const attachment = useSessionAttachment(workspaceId, local, agent);
-  const conversation = useConversationStream(attachment, workspaceId);
+  // What this page keeps of the chat (its conversation, queue, picks): the
+  // session's own keys for its main chat, as before there were others.
+  const stateKey = chatStateKey(workspaceId, chatId);
+  const attachment = useSessionAttachment(workspaceId, local, agent, chatId);
+  const conversation = useConversationStream(attachment, stateKey);
 
   // The jcode engine has no PTY: prompts go over the /message API and the reply
   // streams back on the Conversation SSE. So input readiness and errors come
@@ -287,7 +299,7 @@ export function WorkspaceSession({
         (error: unknown) => failed(localSendFailure(error)),
       );
     }
-    return fetch(`/api/workspaces/${workspaceId}/message`, {
+    return fetch(chatRoute(workspaceId, chatId, "message"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content: text, attachmentIds, ...(firstPromptKey && { firstPromptKey }), ...how }),
@@ -340,13 +352,13 @@ export function WorkspaceSession({
   const menu = useOutrunnerModels() ?? MENU_UNTIL_ANSWERED;
   // Whose entry the menu ticks when a model is offered by two: the one last
   // picked here, else the one a new session starts on.
-  const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => pickedProvider(workspaceId));
+  const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => pickedProvider(stateKey));
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
   // The effort it runs at, as last put on from here (lib/session/picked-effort.ts);
   // none put on from here (a session started from onboarding, or another
   // browser), as its row records. Undefined until either says.
   const [effortHere, setEffortHere] = useState<Effort | null | undefined>(
-    () => rememberedEffort(workspaceId) ?? undefined,
+    () => rememberedEffort(stateKey) ?? undefined,
   );
   const effort = effortHere !== undefined ? effortHere : (recorded?.effort ?? null);
   const repliedSincePick =
@@ -414,7 +426,7 @@ export function WorkspaceSession({
     const body = { questions: asked.raw, ...reply };
     (local
       ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/answer`, body)
-      : answerCloudQuestion(workspaceId, body)
+      : answerCloudQuestion(workspaceId, chatId, body)
     ).catch((error: unknown) => {
       const raw = error instanceof Error ? error.message : String(error ?? "");
       if (isExpiredQuestionError(raw)) {
@@ -443,7 +455,7 @@ export function WorkspaceSession({
     const body = reply ? { keys, values: reply.values } : { keys, skipped: true };
     (local
       ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/secrets`, body).then(() => null)
-      : provideCloudSecrets(workspaceId, { ...body, save: reply?.save ?? false })
+      : provideCloudSecrets(workspaceId, chatId, { ...body, save: reply?.save ?? false })
     )
       .then((saveError) => setSecretsSaveError(saveError))
       .catch((error: unknown) => {
@@ -473,8 +485,8 @@ export function WorkspaceSession({
   // and go one at a time as each turn ends. One whose send failed holds the
   // queue (`queueHeld`) until the user retries it or sends it now, so a box
   // that's down doesn't fail the whole queue in a row.
-  const [queue, setQueue] = useState<QueuedPrompt[]>(() => readQueue(tabStorage(), workspaceId));
-  useEffect(() => writeQueue(tabStorage(), workspaceId, queue), [workspaceId, queue]);
+  const [queue, setQueue] = useState<QueuedPrompt[]>(() => readQueue(tabStorage(), stateKey));
+  useEffect(() => writeQueue(tabStorage(), stateKey, queue), [stateKey, queue]);
   const [queueHeld, setQueueHeld] = useState(false);
   // Held by a stop, rather than by a failed send: the user stopped the agent,
   // so what they queued for it waits for them too, until they send another
@@ -602,7 +614,7 @@ export function WorkspaceSession({
       ? localAgentRequest<unknown>(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/plan`, { action: "approve" }).then(
           (raw) => PlanActionResponse.parse(raw),
         )
-      : approveCloudPlan(workspaceId)
+      : approveCloudPlan(workspaceId, chatId)
     ).then(
       (outcome) => {
         // Building from here, once the agent says so: an approval that didn't
@@ -653,7 +665,7 @@ export function WorkspaceSession({
       .then(() =>
         local
           ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/compact`, body).then(() => undefined)
-          : compactCloudSession(workspaceId, body),
+          : compactCloudSession(workspaceId, chatId, body),
       )
       .then(
         () => {
@@ -701,7 +713,7 @@ export function WorkspaceSession({
     }
     (local
       ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/interrupt`)
-      : stopCloudTurn(workspaceId)
+      : stopCloudTurn(workspaceId, chatId)
     )
       .then(() => {
         setStoppedAt(userPromptCount(eventsRef.current));
@@ -805,13 +817,13 @@ export function WorkspaceSession({
       // user picks now first, as the server does for a cloud one.
       (local
         ? deliverLocalAgentAuth(workspaceId, agent, runsOnOwnAccount(model)).then(() => putOnModel(workspaceId, model, next))
-        : switchCloudModel(workspaceId, model, next))
+        : switchCloudModel(workspaceId, chatId, model, next))
         .then(() => {
           setPicked({ model: model.id, events: conversation.events.length });
           setProviderPicked(model.provider);
-          rememberPickedProvider(workspaceId, model.provider);
+          rememberPickedProvider(stateKey, model.provider);
           setEffortHere(next);
-          rememberEffort(workspaceId, next);
+          rememberEffort(stateKey, next);
         })
         .catch((error: unknown) =>
           setSwitchError({
@@ -1138,6 +1150,7 @@ export function WorkspaceSession({
           comments={{ items: diffComments.items, onRemove: diffComments.remove }}
           modeChoice={{ mode, onChange: setMode }}
           onCompact={compact}
+          onSideChat={onSideChat}
           context={contextUsage(conversation.events, shownModel)}
           focusSignal={reviseSignal}
           placeholder={
@@ -1310,8 +1323,8 @@ function useWhenAttached(
 
 /** Switch a cloud session's model. The server adds the key the model needs
  *  and calls the session's agent, so the key stays off the browser. */
-async function switchCloudModel(workspaceId: string, model: SessionModel, effort: Effort | null): Promise<void> {
-  const res = await reachOutrunner(`/api/workspaces/${workspaceId}/model`, {
+async function switchCloudModel(workspaceId: string, chatId: string, model: SessionModel, effort: Effort | null): Promise<void> {
+  const res = await reachOutrunner(chatRoute(workspaceId, chatId, "model"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ provider: model.provider, model: model.id, ...(effort && { effort }) }),
@@ -1333,8 +1346,8 @@ class ModelSwitchError extends Error {
 
 /** Answer the questions a cloud session's agent is waiting on. The server
  *  reaches the session's agent, as for a prompt. */
-async function answerCloudQuestion(workspaceId: string, body: unknown): Promise<void> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/answer`, {
+async function answerCloudQuestion(workspaceId: string, chatId: string, body: unknown): Promise<void> {
+  const res = await fetch(chatRoute(workspaceId, chatId, "answer"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -1347,8 +1360,8 @@ async function answerCloudQuestion(workspaceId: string, body: unknown): Promise<
 /** Send the secrets a cloud session's agent asked for. The server reaches
  *  the session's agent, as for an answer. Resolves with why they weren't
  *  saved to the project, when they were meant to be and weren't. */
-async function provideCloudSecrets(workspaceId: string, body: unknown): Promise<string | null> {
-  const res = await reachOutrunner(`/api/workspaces/${workspaceId}/secrets`, {
+async function provideCloudSecrets(workspaceId: string, chatId: string, body: unknown): Promise<string | null> {
+  const res = await reachOutrunner(chatRoute(workspaceId, chatId, "secrets"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -1360,8 +1373,8 @@ async function provideCloudSecrets(workspaceId: string, body: unknown): Promise<
 
 /** Approve the plan a cloud session's agent waits on. The server reaches the
  *  session's agent, as for a prompt. */
-async function approveCloudPlan(workspaceId: string): Promise<PlanActionResponse> {
-  const res = await reachOutrunner(`/api/workspaces/${workspaceId}/plan`, {
+async function approveCloudPlan(workspaceId: string, chatId: string): Promise<PlanActionResponse> {
+  const res = await reachOutrunner(chatRoute(workspaceId, chatId, "plan"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ action: "approve" }),
@@ -1373,8 +1386,8 @@ async function approveCloudPlan(workspaceId: string): Promise<PlanActionResponse
 
 /** Compact a cloud session's conversation. The server reaches the session's
  *  agent, as for a prompt. */
-async function compactCloudSession(workspaceId: string, body: { instructions?: string }): Promise<void> {
-  const res = await reachOutrunner(`/api/workspaces/${workspaceId}/compact`, {
+async function compactCloudSession(workspaceId: string, chatId: string, body: { instructions?: string }): Promise<void> {
+  const res = await reachOutrunner(chatRoute(workspaceId, chatId, "compact"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -1386,8 +1399,8 @@ async function compactCloudSession(workspaceId: string, body: { instructions?: s
 
 /** Stop a cloud session's turn. The server reaches the session's agent, as
  *  for a prompt. */
-async function stopCloudTurn(workspaceId: string): Promise<void> {
-  const res = await reachOutrunner(`/api/workspaces/${workspaceId}/interrupt`, { method: "POST" });
+async function stopCloudTurn(workspaceId: string, chatId: string): Promise<void> {
+  const res = await reachOutrunner(chatRoute(workspaceId, chatId, "interrupt"), { method: "POST" });
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't stop the turn. Please try again.");

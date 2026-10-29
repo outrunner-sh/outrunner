@@ -111,6 +111,7 @@ export function SessionComposer({
   onSend,
   modeChoice,
   onCompact,
+  onSideChat,
   context = null,
   canSend,
   placeholder = "Ask anything, @ for context…",
@@ -143,6 +144,9 @@ export function SessionComposer({
    *  Without it, /compact goes to the agent as typed. Resolves whether it
    *  went, as onSend does. */
   onCompact?: (instructions: string) => Promise<boolean>;
+  /** `/btw <question>`: ask it in a side chat about this one, whose turn
+   *  goes on; resolves whether it went. Absent, `/btw` goes to the agent. */
+  onSideChat?: (question: string) => Promise<boolean>;
   /** How full the session's context is, for the footer's ring; null hides it. */
   context?: ContextUsage | null;
   canSend: boolean;
@@ -328,6 +332,18 @@ export function SessionComposer({
           release();
           setSending(false);
         });
+      return;
+    }
+    if (command?.kind === "side" && onSideChat) {
+      // Asked beside the chat, not in it: its turn goes on.
+      if (!command.question) return;
+      setValue("");
+      setSending(true);
+      void onSideChat(command.question)
+        .then((went) => {
+          if (!went) setValue((current) => restoreDraft(text, current));
+        })
+        .finally(() => setSending(false));
       return;
     }
     if (command?.kind === "plan" && modeChoice) {

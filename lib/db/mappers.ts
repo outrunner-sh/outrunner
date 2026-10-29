@@ -83,6 +83,8 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
     // Absent before the migration that adds it: build, as for a session
     // never planned.
     mode: row.session_mode === "plan" ? "plan" : "build",
+    // Absent before the migration that adds it: "Main".
+    mainChatName: row.main_chat_name ?? null,
     lastActiveAt: row.last_active_at,
     errorMessage: row.error_message,
     createdAt: row.created_at,

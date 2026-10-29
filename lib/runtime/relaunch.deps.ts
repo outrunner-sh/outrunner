@@ -10,6 +10,7 @@ import type { AgentClient, WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { putBackOnModel } from "@/lib/runtime/model-switch";
 import { relaunchNeedsAccount, sessionAuthClient, signInSession } from "@/lib/runtime/session-auth";
 import type { Workspace } from "@/lib/runtime/types";
+import type { SessionChat } from "@/lib/session/chats";
 
 /** Ready `workspace`'s session to relaunch: its failures are signInFailure's
  *  to tell the user. */
@@ -29,5 +30,28 @@ export async function readyRelaunch(
   await putBackOnModel(
     { setModel: (req) => agent.setModel(identity, req), keyFor: (holder) => modelKey(ownerId, holder, workspace.orgId) },
     workspace.model,
+  );
+}
+
+/** Ready one of a session's chats other than its main one to launch, as
+ *  readyRelaunch does the session: signed in on its own agent, and on its
+ *  recorded model. */
+export async function readyChatRelaunch(
+  agent: AgentClient,
+  identity: WorkspaceIdentity,
+  upgrade: (() => Promise<void>) | undefined,
+  workspace: Pick<Workspace, "orgId">,
+  chat: Pick<SessionChat, "id" | "agent" | "model">,
+  ownerId: string,
+): Promise<void> {
+  await signInSession(
+    sessionAuthClient(agent, identity, upgrade, chat.id),
+    chat.agent,
+    agentAuthStore(ownerId, workspace.orgId),
+    relaunchNeedsAccount(chat.agent, chat.model),
+  );
+  await putBackOnModel(
+    { setModel: (req) => agent.setModel(identity, req, chat.id), keyFor: (holder) => modelKey(ownerId, holder, workspace.orgId) },
+    chat.model,
   );
 }
