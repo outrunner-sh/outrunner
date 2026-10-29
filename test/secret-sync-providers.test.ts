@@ -1,19 +1,33 @@
 import assert from "node:assert/strict";
-import { afterEach, test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 
 import {
   checkDoppler,
   checkInfisical,
   dopplerSecrets,
+  hostAddresses,
   infisicalSecrets,
   infisicalSiteUrl,
   linkSecrets,
   SyncError,
 } from "@/lib/secret-sync/providers";
 
+import { mergeSyncedEnv } from "@/lib/secret-sync/rules";
+
 const realFetch = globalThis.fetch;
+const realLookup = hostAddresses.lookup;
+const looked: string[] = [];
+beforeEach(() => {
+  looked.length = 0;
+  // No network in tests: every host is public unless a test says otherwise.
+  hostAddresses.lookup = async (host) => {
+    looked.push(host);
+    return ["104.18.0.1"];
+  };
+});
 afterEach(() => {
   globalThis.fetch = realFetch;
+  hostAddresses.lookup = realLookup;
 });
 
 type Seen = { url: URL; init: RequestInit };
@@ -124,7 +138,7 @@ function infisical(secrets: (url: URL) => Response = () => json({ secrets: [{ se
 test("Infisical logs in by universal auth, then reads the folder's secrets with the access token", async () => {
   const seen = infisical();
   const got = await linkSecrets(
-    { provider: "infisical", credentials: CREDS, settings: { siteUrl: SITE, projectId: "p1", environment: "dev" }, link: { projectId: null, environment: "stg", path: "/api" } },
+    { provider: "infisical", credentials: CREDS, settings: { siteUrl: SITE, projectId: "p1", environment: "dev" }, link: { projectId: null, environment: "stg", path: "/api", cli: true } },
     signal(),
   );
   assert.deepEqual(got.env, { DB_URL: VALUE });
@@ -225,4 +239,82 @@ test("a Doppler service token's link is read without a target, whatever the link
     signal(),
   );
   assert.equal(seen[0].url.searchParams.get("project"), null);
+});
+
+test("a link without the CLI turned on gets the secrets and no token at all", async () => {
+  for (const cli of [undefined, false]) {
+    infisical();
+    const got = await linkSecrets(
+      { provider: "infisical", credentials: CREDS, settings: { siteUrl: SITE, projectId: "p1", environment: "dev" }, link: { projectId: null, environment: null, path: null, cli } },
+      signal(),
+    );
+    assert.deepEqual(got.env, { DB_URL: VALUE });
+    assert.equal(got.cli, null);
+    assert.ok(!JSON.stringify(got).includes("at-1"), "the access token leaves the server");
+  }
+});
+
+test("an Infisical host that resolves to a private, loopback or link-local address is refused before any call", async () => {
+  for (const address of ["10.0.0.5", "127.0.0.1", "169.254.169.254", "::1", "fd00::1", "::ffff:192.168.1.1"]) {
+    hostAddresses.lookup = async () => ["104.18.0.1", address];
+    const seen = answer(() => json({ accessToken: "at" }));
+    await assert.rejects(checkInfisical("https://10.0.0.5.nip.io", CREDS, { projectId: null, environment: null }, signal()), (e: SyncError) => {
+      assert.ok(e instanceof SyncError && e.refused);
+      assert.match(e.message, /Couldn't reach Infisical at its site URL from Outrunner/);
+      assert.ok(!e.message.includes(address));
+      return true;
+    });
+    assert.equal(seen.length, 0, `${address} was called`);
+  }
+});
+
+test("every Infisical call checks its host, not only the first", async () => {
+  infisical();
+  await linkSecrets(
+    { provider: "infisical", credentials: CREDS, settings: { siteUrl: "https://secrets.example.com", projectId: "p", environment: "dev" }, link: { projectId: null, environment: null, path: null } },
+    signal(),
+  );
+  assert.deepEqual(looked, ["secrets.example.com", "secrets.example.com"]);
+});
+
+test("a host that doesn't resolve, or an Infisical that fails, says so without its status", async () => {
+  hostAddresses.lookup = async () => {
+    throw Object.assign(new Error("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" });
+  };
+  const seen = answer(() => json({}));
+  await assert.rejects(checkInfisical(SITE, CREDS, { projectId: null, environment: null }, signal()), (e: SyncError) => {
+    assert.match(e.message, /Couldn't reach Infisical at its site URL/);
+    assert.ok(!e.message.includes("ENOTFOUND"));
+    return true;
+  });
+  assert.equal(seen.length, 0);
+
+  hostAddresses.lookup = async () => ["104.18.0.1"];
+  for (const status of [500, 502, 418]) {
+    answer(() => json({}, status));
+    await assert.rejects(checkInfisical(SITE, CREDS, { projectId: null, environment: null }, signal()), (e: SyncError) => {
+      assert.ok(!e.message.includes(String(status)), e.message);
+      assert.match(e.message, /didn't answer as expected/);
+      return true;
+    });
+  }
+});
+
+test("a secret named __proto__ is kept as a key, and counted as skipped, not lost", async () => {
+  answer(() => new Response(`{"__proto__":"${VALUE}","OK":"1"}`, { status: 200 }));
+  const doppler = await dopplerSecrets({ token: SERVICE }, { project: null, config: null }, signal());
+  assert.deepEqual(Object.keys(doppler), ["__proto__", "OK"]);
+  assert.equal(Object.getPrototypeOf(doppler), Object.prototype, "the prototype is untouched");
+
+  infisical(() => json({ secrets: [{ secretKey: "__proto__", secretValue: VALUE }, { secretKey: "B", secretValue: "2" }] }));
+  const fromInfisical = await infisicalSecrets(SITE, "at-1", { projectId: "p", environment: "dev", path: "/" }, signal());
+  assert.deepEqual(Object.keys(fromInfisical), ["__proto__", "B"]);
+
+  const { env, outcomes } = mergeSyncedEnv({}, [
+    { provider: "doppler", env: doppler },
+    { provider: "infisical", env: fromInfisical },
+  ]);
+  assert.deepEqual(env, { OK: "1", B: "2" });
+  assert.deepEqual(outcomes.get("doppler")?.skipped, ["__proto__"]);
+  assert.deepEqual(outcomes.get("infisical")?.skipped, ["__proto__"]);
 });

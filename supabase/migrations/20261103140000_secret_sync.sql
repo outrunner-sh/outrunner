@@ -40,16 +40,19 @@ create table if not exists environment_secret_links (
   org_id uuid not null references organizations (id) on delete cascade,
   provider text not null check (provider in ('doppler', 'infisical')),
   -- Where in the provider, over the integration's own: Doppler {project,
-  -- config}; Infisical {projectId, environment, path}.
+  -- config}; Infisical {projectId, environment, path, cli}, `cli` whether
+  -- sessions get its CLI signed in (off unless set).
   settings jsonb not null default '{}'::jsonb,
   linked_by uuid references auth.users (id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   -- The last fetch, by a session starting or a test from the page: when,
-  -- why it failed (a sentence, never a value), the names it brought and
-  -- the names a session can't take (PATH, RUNTIME_…).
+  -- why it failed or what it couldn't do beside (a sentence, never a
+  -- value), the names it brought and the names a session can't take (PATH,
+  -- RUNTIME_…).
   last_synced_at timestamptz,
   last_error text check (last_error is null or char_length(last_error) <= 500),
+  last_warning text check (last_warning is null or char_length(last_warning) <= 500),
   last_names text[] not null default '{}',
   last_skipped text[] not null default '{}',
   primary key (environment_id, provider)

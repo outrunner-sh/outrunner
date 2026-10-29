@@ -35,7 +35,15 @@ export type InfisicalSettings = { siteUrl: string; projectId: string | null; env
 
 /** Where a project's link reads from, over its connection's own. */
 export type DopplerLink = { project: string | null; config: string | null };
-export type InfisicalLink = { projectId: string | null; environment: string | null; path: string | null };
+export type InfisicalLink = {
+  projectId: string | null;
+  environment: string | null;
+  path: string | null;
+  /** Whether sessions get the `infisical` CLI signed in. Off unless an admin
+   *  turns it on: the access token reads whatever the machine identity can,
+   *  not only this link's folder. */
+  cli?: boolean;
+};
 
 /** The kind of a Doppler token, from its prefix: a service token (dp.st.)
  *  reads one config; a personal (dp.pt.), service account (dp.sa.) or CLI
@@ -144,8 +152,11 @@ export function mergeSyncedEnv(
     const kept: Record<string, string> = {};
     const skipped: string[] = [];
     for (const [name, value] of Object.entries(env)) {
-      if (settableEnv(name) && typeof value === "string" && !value.includes("\0")) kept[name] = value;
-      else skipped.push(name);
+      // `__proto__` passes settableEnv, but assigning it on a plain object
+      // sets a prototype instead of the key: the secret is lost without a
+      // trace, so count it as skipped.
+      if (name === "__proto__" || !settableEnv(name) || typeof value !== "string" || value.includes("\0")) skipped.push(name);
+      else kept[name] = value;
     }
     outcomes.set(provider, { names: Object.keys(kept).sort(), skipped: skipped.sort(), tooLarge: false });
     return { provider, env: kept };
@@ -192,4 +203,17 @@ export function variableSources(
 /** The order providers' secrets are applied in: Infisical's over Doppler's. */
 export function syncOrder<T extends { provider: SecretProvider }>(items: readonly T[]): T[] {
   return [...items].sort((a, b) => SECRET_PROVIDERS.indexOf(a.provider) - SECRET_PROVIDERS.indexOf(b.provider));
+}
+
+/** How long a link's sync stands before the page may test it again: each
+ *  test is a login and a read with the org's credentials, and the providers
+ *  rate-limit per token, so a burst of tests could fail real sessions. */
+export const TEST_SYNC_COOLDOWN_MS = 10_000;
+
+/** Milliseconds until a link last synced at `lastSyncedAt` may be tested
+ *  again; 0 when it may be now. */
+export function testSyncWait(lastSyncedAt: string | null | undefined, now = Date.now()): number {
+  const at = lastSyncedAt ? Date.parse(lastSyncedAt) : NaN;
+  if (Number.isNaN(at)) return 0;
+  return Math.max(0, at + TEST_SYNC_COOLDOWN_MS - now);
 }

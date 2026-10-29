@@ -226,6 +226,10 @@ function InfisicalForm({ orgId, status, onSaved }: FormProps) {
       <p className="text-xs text-muted-foreground">
         A machine identity with Universal Auth, added to the project with read access to the environments to sync.
       </p>
+      <InlineMessage tone="warning">
+        Use an identity scoped to only what sessions should read. A project linked with the CLI turned on gives its
+        sessions an access token that reads everything this identity can, in every project and environment.
+      </InlineMessage>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Client ID" value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder={keep} />
         <Field

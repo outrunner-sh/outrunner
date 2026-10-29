@@ -223,10 +223,19 @@ function ProviderRow({
           Left out, as a session can&apos;t set them: <span className="font-mono">{link.lastSync.skipped.join(", ")}</span>
         </p>
       )}
+      {link?.lastSync?.warning && !editing && <p className="text-xs text-warning">{link.lastSync.warning}</p>}
       {provider === "infisical" && link && !editing && (
         <p className="text-xs text-muted-foreground">
-          Sessions also get the <span className="font-mono">infisical</span> CLI, signed in as the machine identity:{" "}
-          <span className="font-mono">infisical secrets</span>, <span className="font-mono">infisical run -- …</span>.
+          {(link.link as InfisicalLink).cli ? (
+            <>
+              Sessions also get the <span className="font-mono">infisical</span> CLI, signed in as the machine identity:{" "}
+              <span className="font-mono">infisical secrets</span>, <span className="font-mono">infisical run -- …</span>.
+            </>
+          ) : (
+            <>
+              Sessions get the secrets only: the <span className="font-mono">infisical</span> CLI isn&apos;t signed in.
+            </>
+          )}
         </p>
       )}
       {editing && integration && (
@@ -261,13 +270,14 @@ function LinkForm({
   link: LinkView | null;
   state: ActionStatus;
   onCancel: () => void;
-  onSave: (body: Record<string, string>) => void;
+  onSave: (body: Record<string, string | boolean>) => void;
 }) {
   const doppler = provider === "doppler" ? ((link?.link as DopplerLink | undefined) ?? null) : null;
   const infisical = provider === "infisical" ? ((link?.link as InfisicalLink | undefined) ?? null) : null;
   const [a, setA] = useState(doppler?.project ?? infisical?.projectId ?? "");
   const [b, setB] = useState(doppler?.config ?? infisical?.environment ?? "");
   const [path, setPath] = useState(infisical?.path ?? "");
+  const [cli, setCli] = useState(infisical?.cli === true);
   const service = integration.provider === "doppler" && integration.settings.tokenKind === "service";
   const defaults =
     integration.provider === "doppler"
@@ -279,7 +289,7 @@ function LinkForm({
       className="space-y-3 pt-1"
       onSubmit={(event) => {
         event.preventDefault();
-        onSave(provider === "doppler" ? { project: a, config: b } : { projectId: a, environment: b, path });
+        onSave(provider === "doppler" ? { project: a, config: b } : { projectId: a, environment: b, path, cli });
       }}
     >
       {service ? (
@@ -296,6 +306,21 @@ function LinkForm({
           />
           <LinkField label={provider === "doppler" ? "Config" : "Environment"} value={b} onChange={setB} placeholder={defaults.b ?? undefined} />
           {provider === "infisical" && <LinkField label="Secret path" value={path} onChange={setPath} placeholder="/" />}
+        </div>
+      )}
+      {provider === "infisical" && (
+        <div className="space-y-1.5">
+          <label className="flex items-center gap-2 text-xs text-foreground">
+            <input type="checkbox" checked={cli} onChange={(e) => setCli(e.target.checked)} className="size-3.5" />
+            Sign in the <span className="font-mono">infisical</span> CLI in sessions
+          </label>
+          {cli && (
+            <InlineMessage tone="warning">
+              The CLI&apos;s access token can read everything the machine identity can, not only this folder: anyone who
+              starts a session here can read the identity&apos;s other projects and environments. Turn this on only with an
+              identity scoped to what this project&apos;s sessions should read.
+            </InlineMessage>
+          )}
         </div>
       )}
       <div className="flex items-center justify-end gap-2">

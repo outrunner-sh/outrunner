@@ -4,16 +4,22 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 
 import { acceptDoppler, acceptInfisical } from "@/lib/secret-sync/connect";
 import { INFISICAL_CLI, infisicalInstallStep } from "@/lib/secret-sync/infisical-cli";
-import { SyncError } from "@/lib/secret-sync/providers";
+import { hostAddresses, SyncError } from "@/lib/secret-sync/providers";
 import { SecretSyncRuleError } from "@/lib/secret-sync/rules";
 
 const realFetch = globalThis.fetch;
+const realLookup = hostAddresses.lookup;
+// No network in tests: every Infisical host is public.
+beforeEach(() => {
+  hostAddresses.lookup = async () => ["104.18.0.1"];
+});
 afterEach(() => {
   globalThis.fetch = realFetch;
+  hostAddresses.lookup = realLookup;
 });
 
 function answer(respond: (url: URL, init: RequestInit) => Response): URL[] {

@@ -637,6 +637,7 @@ type EnvironmentSecretLinkRow = {
   updated_at: string;
   last_synced_at: string | null;
   last_error: string | null;
+  last_warning: string | null;
   last_names: string[];
   last_skipped: string[];
 };

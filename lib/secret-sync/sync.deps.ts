@@ -7,7 +7,7 @@
 
 import { recordSync, type SyncLink, syncLinks } from "@/lib/db/secret-sync";
 import { linkSecrets, SyncError } from "@/lib/secret-sync/providers";
-import { PROVIDER_LABELS } from "@/lib/secret-sync/rules";
+import { PROVIDER_LABELS, type SecretProvider } from "@/lib/secret-sync/rules";
 import { type SyncResult, syncSecrets } from "@/lib/secret-sync/sync";
 
 /** The project's variables and start hook for a session starting now, with
@@ -15,10 +15,12 @@ import { type SyncResult, syncSecrets } from "@/lib/secret-sync/sync";
 export function syncEnvironmentSecrets(
   environmentId: string,
   own: { env: Record<string, string>; startHook: string | null },
+  /** Only this provider's link: a test of one from the page. */
+  only?: SecretProvider,
 ): Promise<SyncResult> {
   return syncSecrets<SyncLink>(
     {
-      links: () => syncLinks(environmentId),
+      links: () => syncLinks(environmentId, only),
       fetch: async (link, signal) => {
         if (!link.credentials) {
           throw new SyncError(`The org's ${PROVIDER_LABELS[link.provider]} credentials can't be opened. Reconnect it.`, true);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 
-import { MAX_ENV_BYTES } from "@/lib/environments/rules";
+import { MAX_ENV_BYTES, MAX_SCRIPT_BYTES } from "@/lib/environments/rules";
 import { SyncError } from "@/lib/secret-sync/providers";
 import {
   dopplerTokenKind,
@@ -9,6 +9,8 @@ import {
   secretPath,
   SecretSyncRuleError,
   slug,
+  TEST_SYNC_COOLDOWN_MS,
+  testSyncWait,
   variableSources,
 } from "@/lib/secret-sync/rules";
 import { syncSecrets, type SyncDeps } from "@/lib/secret-sync/sync";
@@ -84,7 +86,7 @@ test("the page lists each variable's source, and what a shadowed one loses to", 
 // A session starting
 
 type Link = { provider: "doppler" | "infisical" };
-type Recorded = { provider: string; error: string | null; names: string[]; skipped: string[] };
+type Recorded = { provider: string; error: string | null; warning: string | null; names: string[]; skipped: string[] };
 
 const VALUE = "hunter2-very-secret";
 let logged: string[] = [];
@@ -122,7 +124,7 @@ test("a session gets its linked secrets fetched now, beneath its project's own",
   const result = await syncSecrets(d, { env: { OWN: "project" }, startHook: "make dev" });
   assert.deepEqual(result.env, { API: VALUE, OWN: "project" });
   assert.equal(result.startHook, "make dev", "no CLI to install for Doppler");
-  assert.deepEqual(recorded, [{ provider: "doppler", error: null, names: ["API", "OWN"], skipped: [] }]);
+  assert.deepEqual(recorded, [{ provider: "doppler", error: null, warning: null, names: ["API", "OWN"], skipped: [] }]);
   assert.ok(!logged.join("\n").includes(VALUE));
 });
 
@@ -137,6 +139,7 @@ test("a provider outage or a revoked token doesn't stop the session: it starts w
   assert.deepEqual(recorded.find((r) => r.provider === "infisical"), {
     provider: "infisical",
     error: null,
+    warning: null,
     names: ["FROM_INFISICAL"],
     skipped: [],
   });
@@ -210,4 +213,43 @@ test("a sync that can't be recorded still gives the session its secrets", async 
   };
   assert.deepEqual((await syncSecrets(d, { env: {}, startHook: null })).env, { A: VALUE });
   assert.ok(!logged.join("\n").includes(VALUE));
+});
+
+test("a start hook too large for the CLI's install keeps its own hook, and the sync says the install was skipped", async () => {
+  const own = `# ${"x".repeat(MAX_SCRIPT_BYTES - 200)}`;
+  const { deps: d, recorded } = deps([{ provider: "infisical" }], async () => ({ env: { A: "1" }, cli: { INFISICAL_TOKEN: "at" } }));
+  const result = await syncSecrets(d, { env: {}, startHook: own });
+  assert.equal(result.startHook, own, "the hook the agent takes");
+  assert.deepEqual(result.env, { INFISICAL_TOKEN: "at", A: "1" }, "the secrets all the same");
+  assert.equal(recorded[0].error, null);
+  assert.match(recorded[0].warning!, /CLI wasn't installed/);
+
+  // One that fits gets the install, and no warning.
+  const fits = deps([{ provider: "infisical" }], async () => ({ env: {}, cli: { INFISICAL_TOKEN: "at" } }));
+  const small = await syncSecrets(fits.deps, { env: {}, startHook: "echo hi" });
+  assert.notEqual(small.startHook, "echo hi");
+  assert.equal(fits.recorded[0].warning, null);
+});
+
+test("a link without the CLI gets no install in its start hook", async () => {
+  const { deps: d } = deps([{ provider: "infisical" }], async () => ({ env: { A: "1" }, cli: null }));
+  assert.equal((await syncSecrets(d, { env: {}, startHook: null })).startHook, null);
+});
+
+test("a link may be tested again only once its last sync is 10 seconds old", () => {
+  const now = Date.parse("2026-10-29T10:00:00Z");
+  assert.equal(testSyncWait(null, now), 0);
+  assert.equal(testSyncWait("not a time", now), 0);
+  assert.equal(testSyncWait(new Date(now - 3_000).toISOString(), now), TEST_SYNC_COOLDOWN_MS - 3_000);
+  assert.equal(testSyncWait(new Date(now - TEST_SYNC_COOLDOWN_MS).toISOString(), now), 0);
+  assert.equal(testSyncWait(new Date(now - 60_000).toISOString(), now), 0);
+});
+
+test("a synced __proto__ is counted as skipped, and sets no prototype", () => {
+  const env: Record<string, string> = { OK: "1" };
+  Object.defineProperty(env, "__proto__", { value: "x", enumerable: true, writable: true, configurable: true });
+  const { env: merged, outcomes } = mergeSyncedEnv({}, [{ provider: "doppler", env }]);
+  assert.deepEqual(merged, { OK: "1" });
+  assert.deepEqual(outcomes.get("doppler"), { names: ["OK"], skipped: ["__proto__"], tooLarge: false });
+  assert.equal(Object.getPrototypeOf(merged), Object.prototype);
 });

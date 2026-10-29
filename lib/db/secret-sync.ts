@@ -25,6 +25,7 @@ import {
   type SecretProvider,
   syncOrder,
 } from "@/lib/secret-sync/rules";
+import type { SyncOutcome } from "@/lib/secret-sync/sync";
 import { probeStatus } from "@/lib/supabase/probe";
 import type { Json } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -40,7 +41,7 @@ export type OrgSecretIntegrations = { doppler: IntegrationStatus | null; infisic
 export type LinkView = {
   provider: SecretProvider;
   link: DopplerLink | InfisicalLink;
-  lastSync: { at: string; error: string | null; names: string[]; skipped: string[] } | null;
+  lastSync: { at: string; error: string | null; warning: string | null; names: string[]; skipped: string[] } | null;
 };
 
 /** What a project's page shows of secret sync: the org's connections, which
@@ -82,7 +83,7 @@ function linkOf(provider: SecretProvider, value: Json): DopplerLink | InfisicalL
   const text = (x: Json | undefined) => (typeof x === "string" ? x : null);
   return provider === "doppler"
     ? { project: text(v.project), config: text(v.config) }
-    : { projectId: text(v.projectId), environment: text(v.environment), path: text(v.path) };
+    : { projectId: text(v.projectId), environment: text(v.environment), path: text(v.path), cli: v.cli === true };
 }
 
 /** The org's connections, and how many projects each is linked to. */
@@ -162,11 +163,12 @@ export async function saveOrgSecretIntegration(
  *  it (on delete cascade). How many projects were linked. */
 export async function removeOrgSecretIntegration(orgId: string, provider: SecretProvider): Promise<number> {
   const supabase = createSupabaseAdminClient();
-  const { count } = await supabase
+  const { count, error: countError } = await supabase
     .from("environment_secret_links")
     .select("environment_id", { count: "exact", head: true })
     .eq("org_id", orgId)
     .eq("provider", provider);
+  if (countError) throw countError;
   const { error } = await supabase.from("org_secret_integrations").delete().eq("org_id", orgId).eq("provider", provider);
   if (error) throw error;
   return count ?? 0;
@@ -202,7 +204,7 @@ export async function environmentSecretSync(userId: string, environmentId: strin
 async function environmentLinks(environmentId: string): Promise<LinkView[]> {
   const { data, error } = await createSupabaseAdminClient()
     .from("environment_secret_links")
-    .select("provider, settings, last_synced_at, last_error, last_names, last_skipped")
+    .select("provider, settings, last_synced_at, last_error, last_warning, last_names, last_skipped")
     .eq("environment_id", environmentId);
   if (error && beforeSecretSync(error)) return [];
   if (error) throw error;
@@ -210,7 +212,13 @@ async function environmentLinks(environmentId: string): Promise<LinkView[]> {
     provider: row.provider,
     link: linkOf(row.provider, row.settings),
     lastSync: row.last_synced_at
-      ? { at: row.last_synced_at, error: row.last_error, names: row.last_names, skipped: row.last_skipped }
+      ? {
+          at: row.last_synced_at,
+          error: row.last_error,
+          warning: row.last_warning,
+          names: row.last_names,
+          skipped: row.last_skipped,
+        }
       : null,
   }));
 }
@@ -264,6 +272,7 @@ export async function linkEnvironment(
       // A new target's last sync was of the old one.
       last_synced_at: null,
       last_error: null,
+      last_warning: null,
       last_names: [],
       last_skipped: [],
     },
@@ -297,16 +306,15 @@ export type SyncLink =
   | { provider: "doppler"; credentials: DopplerCredentials | null; settings: DopplerSettings; link: DopplerLink }
   | { provider: "infisical"; credentials: InfisicalCredentials | null; settings: InfisicalSettings; link: InfisicalLink };
 
-/** The project's links, Doppler's first, for a session starting (whose
+/** The project's links (or only its `only` one), Doppler's first, for a session starting (whose
  *  user's access to the project was checked as its setup was read) or a
  *  test from the page. Credentials that no longer open (a rotated
  *  CREDENTIALS_ENCRYPTION_KEY) come as null, for the sync to say so. */
-export async function syncLinks(environmentId: string): Promise<SyncLink[]> {
+export async function syncLinks(environmentId: string, only?: SecretProvider): Promise<SyncLink[]> {
   const supabase = createSupabaseAdminClient();
-  const { data: links, error } = await supabase
-    .from("environment_secret_links")
-    .select("provider, integration_id, settings")
-    .eq("environment_id", environmentId);
+  let query = supabase.from("environment_secret_links").select("provider, integration_id, settings").eq("environment_id", environmentId);
+  if (only) query = query.eq("provider", only);
+  const { data: links, error } = await query;
   if (error && beforeSecretSync(error)) return [];
   if (error) throw error;
   if (links.length === 0) return [];
@@ -349,18 +357,19 @@ export async function syncLinks(environmentId: string): Promise<SyncLink[]> {
   });
 }
 
-/** Record a link's sync: when, its error (a sentence, never a value) and the
- *  names it brought. */
+/** Record a link's sync: when, its error or warning (a sentence, never a
+ *  value) and the names it brought. */
 export async function recordSync(
   environmentId: string,
   provider: SecretProvider,
-  result: { error: string | null; names: string[]; skipped: string[] },
+  result: SyncOutcome,
 ): Promise<void> {
   const { error } = await createSupabaseAdminClient()
     .from("environment_secret_links")
     .update({
       last_synced_at: new Date().toISOString(),
       last_error: result.error?.slice(0, 500) ?? null,
+      last_warning: result.warning?.slice(0, 500) ?? null,
       last_names: result.names,
       last_skipped: result.skipped,
     })

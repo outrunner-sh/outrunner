@@ -21,6 +21,7 @@ import {
   secretPath,
   SecretSyncRuleError,
   slug,
+  testSyncWait,
 } from "@/lib/secret-sync/rules";
 import { syncEnvironmentSecrets } from "@/lib/secret-sync/sync.deps";
 
@@ -31,9 +32,11 @@ type RouteContext = { params: Promise<{ id: string }> };
  * (docs/secret-sync.md). GET, for anyone who can read the project, says
  * which it's linked to and what each brought at its last sync, by name.
  * PUT links it (where to read, over the connection's own) and DELETE
- * unlinks it: an org admin's. POST syncs it now, as a session starting
- * would, for anyone who can change the project: the answer is names, never
- * a value.
+ * unlinks it: an org admin's. POST syncs one link now, as a session
+ * starting would, for anyone who can change the project: the answer is
+ * names, never a value. A link synced in the last few seconds isn't again
+ * (429): each test spends the org's credentials against the provider's rate
+ * limit, which its sessions share.
  */
 
 const NOT_FOUND = { error: "Project not found." };
@@ -76,6 +79,9 @@ export async function PUT(request: Request, context: RouteContext) {
             projectId: slug(body.projectId, "The Infisical project ID"),
             environment: slug(body.environment, "The Infisical environment"),
             path: secretPath(body.path),
+            // Off unless asked for: the CLI's token reads whatever the
+            // machine identity can.
+            cli: body.cli === true,
           };
   } catch (error) {
     if (error instanceof SecretSyncRuleError) return NextResponse.json({ error: error.message }, { status: 400 });
@@ -95,6 +101,7 @@ export async function PUT(request: Request, context: RouteContext) {
         details: {
           provider: PROVIDER_LABELS[provider],
           ...(integration && { target: describeTarget(provider, integration.settings, link) }),
+          ...(provider === "infisical" && { cli: (link as InfisicalLink).cli === true }),
         },
       });
       return NextResponse.json(sync);
@@ -133,6 +140,9 @@ export async function DELETE(request: Request, context: RouteContext) {
 export async function POST(request: Request, context: RouteContext) {
   const c = await caller(request, context);
   if (c instanceof Response) return c;
+  const body = (await request.json().catch(() => null)) as { provider?: unknown } | null;
+  const provider = body?.provider;
+  if (!isSecretProvider(provider)) return NextResponse.json({ error: "Choose Doppler or Infisical." }, { status: 400 });
   const sync = await environmentSecretSync(c.userId, c.id);
   if (!sync) return NextResponse.json(NOT_FOUND, { status: 404 });
   if (!sync.canTest) {
@@ -141,9 +151,19 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 403 },
     );
   }
-  // The project's own variables too, as a session would have them: whether
-  // the synced fit beside them is part of what's tested. Only names leave.
+  const link = sync.links.find((l) => l.provider === provider);
+  if (!link) return NextResponse.json({ error: `This project isn't linked to ${PROVIDER_LABELS[provider]}.` }, { status: 404 });
+  const wait = testSyncWait(link.lastSync?.at);
+  if (wait > 0) {
+    return NextResponse.json(
+      { error: `${PROVIDER_LABELS[provider]} was synced moments ago. Try again in a few seconds.` },
+      { status: 429, headers: { "retry-after": String(Math.ceil(wait / 1000)) } },
+    );
+  }
+  // The project's own variables and start hook too, as a session would have
+  // them: whether the synced fit beside them is part of what's tested. Only
+  // names leave.
   const setup = await environmentSetup(c.userId, c.id);
-  await syncEnvironmentSecrets(c.id, { env: setup?.env ?? {}, startHook: null });
+  await syncEnvironmentSecrets(c.id, { env: setup?.env ?? {}, startHook: setup?.hooks?.start ?? null }, provider);
   return view(c.userId, c.id);
 }

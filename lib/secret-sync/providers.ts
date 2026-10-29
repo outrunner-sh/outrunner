@@ -8,7 +8,9 @@
  * echo what it was sent, and a body that did parse holds the secrets.
  */
 
-import { webhookUrl } from "@/lib/api/webhooks";
+import { lookup } from "node:dns/promises";
+
+import { isPrivateAddress, webhookUrl } from "@/lib/api/webhooks";
 import {
   dopplerTarget,
   INFISICAL_CLOUD,
@@ -40,8 +42,36 @@ export class SyncError extends Error {
 export type DopplerCredentials = { token: string };
 export type InfisicalCredentials = { clientId: string; clientSecret: string };
 
-/** `fetch`, with what went wrong on the way said as a {@link SyncError}. */
+/** How a host's addresses are found: replaced by the tests, which have no
+ *  network. */
+export const hostAddresses = {
+  lookup: async (host: string): Promise<string[]> => (await lookup(host, { all: true })).map((a) => a.address),
+};
+
+/** Refused before an Infisical call when its host resolves to an address the
+ *  server must not call. Said the same however the host failed, so a site
+ *  URL can't be used to map the server's network. */
+const UNREACHABLE_SITE = "Couldn't reach Infisical at its site URL from Outrunner. Use an Infisical that's reachable from the internet.";
+
+/** Throw unless every address `url`'s host resolves to is public. Checked
+ *  before every call, not only when the URL was saved: a name can point
+ *  anywhere later. (A name that changes between this lookup and the
+ *  connection's own isn't caught; that window is a lookup's length.) */
+async function requirePublicHost(url: string): Promise<void> {
+  const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+  let addresses: string[];
+  try {
+    addresses = await hostAddresses.lookup(host);
+  } catch {
+    throw new SyncError(UNREACHABLE_SITE, false);
+  }
+  if (addresses.length === 0 || addresses.some(isPrivateAddress)) throw new SyncError(UNREACHABLE_SITE, true);
+}
+
+/** `fetch`, with what went wrong on the way said as a {@link SyncError}.
+ *  An Infisical call's host is checked first: its site URL is an admin's. */
 async function call(label: string, url: string, init: RequestInit, signal: AbortSignal): Promise<Response> {
+  if (label === "Infisical") await requirePublicHost(url);
   try {
     return await fetch(url, { ...init, signal, redirect: "error" });
   } catch (error) {
@@ -59,9 +89,18 @@ async function json(label: string, response: Response): Promise<unknown> {
   }
 }
 
-/** The answer to give for a status that isn't a success, never its body. */
+/** The answer to give for a status that isn't a success, never its body.
+ *  Doppler's status is said (its host is Doppler's own); Infisical's isn't,
+ *  as its host is whatever an admin typed. */
 function unavailable(label: string, status: number): SyncError {
-  return new SyncError(`${label} answered ${status}. Sessions start without its secrets until it answers again.`, false);
+  const answered = label === "Doppler" ? `${label} answered ${status}.` : `${label} didn't answer as expected.`;
+  return new SyncError(`${answered} Sessions start without its secrets until it answers again.`, false);
+}
+
+/** Set `name` as an own key, `__proto__` included: assigned on a plain
+ *  object, that one would set its prototype and be lost. */
+function setOwn(record: Record<string, string>, name: string, value: string): void {
+  Object.defineProperty(record, name, { value, enumerable: true, writable: true, configurable: true });
 }
 
 /** A record of string values, else a SyncError: a non-string value (a
@@ -72,8 +111,8 @@ function stringRecord(label: string, value: unknown): Record<string, string> {
   }
   const out: Record<string, string> = {};
   for (const [name, v] of Object.entries(value)) {
-    if (typeof v === "string") out[name] = v;
-    else if (typeof v === "number" || typeof v === "boolean") out[name] = String(v);
+    if (typeof v === "string") setOwn(out, name, v);
+    else if (typeof v === "number" || typeof v === "boolean") setOwn(out, name, String(v));
   }
   return out;
 }
@@ -245,7 +284,7 @@ export async function infisicalSecrets(
   const out: Record<string, string> = {};
   const add = (secrets: InfisicalSecret[] | undefined) => {
     for (const s of secrets ?? []) {
-      if (typeof s.secretKey === "string" && typeof s.secretValue === "string") out[s.secretKey] = s.secretValue;
+      if (typeof s.secretKey === "string" && typeof s.secretValue === "string") setOwn(out, s.secretKey, s.secretValue);
     }
   };
   for (const imported of [...(body.imports ?? [])].reverse()) add(imported.secrets);
@@ -286,8 +325,9 @@ export async function checkInfisical(
 /** What a session's box needs to run the `infisical` CLI as the link's
  *  machine identity, signed in, without `infisical login` or `init`: the CLI
  *  reads each of these (checked against v0.44). The access token lasts as
- *  long as the identity's access token TTL in Infisical; the client secret
- *  never leaves the server. */
+ *  long as the identity's access token TTL in Infisical, and reads
+ *  everything the identity can, whatever the link's folder; the client
+ *  secret never leaves the server. */
 export function infisicalCliEnv(
   siteUrl: string,
   accessToken: string,
@@ -303,8 +343,8 @@ export function infisicalCliEnv(
   };
 }
 
-/** A linked project's secrets from its provider, and for Infisical what its
- *  CLI needs. */
+/** A linked project's secrets from its provider, and for an Infisical link
+ *  with its CLI turned on, what the CLI needs; null otherwise. */
 export async function linkSecrets(
   link:
     | { provider: "doppler"; credentials: DopplerCredentials; settings: DopplerSettings; link: DopplerLink }
@@ -327,5 +367,7 @@ export async function linkSecrets(
   const resolved = { projectId: target.projectId, environment: target.environment, path: target.path };
   const { accessToken } = await infisicalLogin(link.settings.siteUrl, link.credentials, signal);
   const env = await infisicalSecrets(link.settings.siteUrl, accessToken, resolved, signal);
-  return { env, cli: infisicalCliEnv(link.settings.siteUrl, accessToken, resolved) };
+  // The token only where an admin turned the CLI on for the link: it reads
+  // whatever the machine identity can, not only this folder.
+  return { env, cli: link.link.cli ? infisicalCliEnv(link.settings.siteUrl, accessToken, resolved) : null };
 }
