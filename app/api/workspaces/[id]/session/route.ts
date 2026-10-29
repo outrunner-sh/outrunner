@@ -182,7 +182,6 @@ export async function POST(request: Request, context: RouteContext) {
           workspaceId: workspace.id,
         },
         async (current) => {
-          agent = current;
           await readyRelaunch(current, identity, upgrade, workspace, owner.id);
           await current.startWorkspace(identity);
         },

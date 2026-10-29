@@ -1,9 +1,13 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -11,9 +15,24 @@ import (
 	"runtime-agent/internal/workspace"
 )
 
+type activitySessions struct {
+	workspace.Sessions
+	err error
+}
+
+func (s activitySessions) ListSessions(context.Context) ([]string, error) {
+	return nil, s.err
+}
+
+func (activitySessions) KillSession(context.Context, string) error {
+	return errors.New("no such session")
+}
+
 func TestActivityTakesOnlyTheListingTokenAndCountsWrites(t *testing.T) {
 	const secret = "test-secret"
-	srv := New(secret, workspace.NewService(t.TempDir()))
+	root := t.TempDir()
+	sessions := &activitySessions{}
+	srv := New(secret, workspace.NewServiceWithSessions(root, sessions))
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -39,8 +58,8 @@ func TestActivityTakesOnlyTheListingTokenAndCountsWrites(t *testing.T) {
 		t.Errorf("activity with a workspace token = %d, want 401", status)
 	}
 
-	// A newly provisioned box gets a short boot grace. No turn is open.
-	srv.startedAt = time.Now().Add(-time.Hour)
+	// A newly provisioned box gets a short boot grace, even when its last
+	// actual input was an hour ago. No turn is open.
 	srv.lastInput.Store(time.Now().Add(-time.Hour).UnixNano())
 	status, booted := call(protocol.ListingWorkspaceID, "GET", "/activity")
 	if status != http.StatusOK {
@@ -50,8 +69,8 @@ func TestActivityTakesOnlyTheListingTokenAndCountsWrites(t *testing.T) {
 		t.Error("no session, yet a turn is in progress")
 	}
 	at, err := time.Parse(time.RFC3339, booted.LastActivity)
-	if err != nil || time.Since(at) < 59*time.Minute {
-		t.Errorf("last activity = %q, want about an hour ago", booted.LastActivity)
+	if err != nil || time.Since(at) > time.Minute {
+		t.Errorf("last activity = %q, want the recent boot grace", booted.LastActivity)
 	}
 
 	// Reading doesn't count as activity (a poll mustn't keep a box up)...
@@ -59,6 +78,20 @@ func TestActivityTakesOnlyTheListingTokenAndCountsWrites(t *testing.T) {
 	if _, after := call(protocol.ListingWorkspaceID, "GET", "/activity"); after.LastActivity != booted.LastActivity {
 		t.Errorf("a read moved last activity from %s to %s", booted.LastActivity, after.LastActivity)
 	}
+
+	// If tmux cannot be listed, the service's persisted unknown interval is
+	// authoritative; a restarted agent's later boot time must not replace it.
+	sessions.err = errors.New("tmux list-sessions timed out")
+	since := srv.startedAt.Add(-time.Second)
+	if err := os.WriteFile(filepath.Join(root, "runtime-agent-activity-unknown-since"), []byte(since.Format(time.RFC3339Nano)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, unknown := call(protocol.ListingWorkspaceID, "GET", "/activity")
+	unknownAt, err := time.Parse(time.RFC3339, unknown.LastActivity)
+	if err != nil || !unknownAt.Before(srv.startedAt) {
+		t.Errorf("unknown activity = %q, want the persisted time before agent boot", unknown.LastActivity)
+	}
+
 	// ...a control call that changes something does, even one that fails.
 	call("ws-1", "POST", "/workspaces/ws-1/stop")
 	_, after := call(protocol.ListingWorkspaceID, "GET", "/activity")

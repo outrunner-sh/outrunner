@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,9 +32,9 @@ import (
 	"runtime-agent/internal/transcript"
 )
 
-// sessions is the part of tmux the service drives, behind an interface so tests
-// can stand in for a session that is running, busy or failing to start.
-type sessions interface {
+// Sessions is the tmux surface the service drives. ListSessions is part of the
+// contract because activity recovery must see every live workspace session.
+type Sessions interface {
 	NewSession(ctx context.Context, name, workdir string, command []string, env []string) error
 	HideStatus(ctx context.Context, name string)
 	HasSession(ctx context.Context, name string) bool
@@ -52,7 +53,7 @@ type sessions interface {
 type Service struct {
 	// Root is the Runtime Computer working area, e.g. /home/runtime.
 	Root string
-	tmux sessions
+	tmux Sessions
 	env  []string
 	// secrets are values that can legitimately appear in the Claude process
 	// environment. The HTTP server uses them to redact browser-visible PTY
@@ -68,6 +69,7 @@ type Service struct {
 	activityUnknownLogged         time.Time
 	activityUnknownExpiredLogged  bool
 	activityUnknownClearAttempted bool
+	activityUnknownClearFailed    bool
 
 	// sendLocks serializes prompt delivery per workspace. SendKeys types then
 	// submits in separate tmux commands, so concurrent sends on one session
@@ -254,10 +256,17 @@ type CreateInput struct {
 }
 
 func NewService(root string) *Service {
+	return NewServiceWithSessions(root, tmux.New())
+}
+
+// NewServiceWithSessions constructs a service with the supplied session
+// manager. Production uses NewService; callers that compose the runtime-agent
+// or exercise its server can inject a manager with deterministic list results.
+func NewServiceWithSessions(root string, manager Sessions) *Service {
 	env, secrets := sessionEnvironment(os.Environ())
 	return &Service{
 		Root:        root,
-		tmux:        tmux.New(),
+		tmux:        manager,
 		env:         env,
 		secrets:     secrets,
 		facts:       map[string]workspaceFacts{},
@@ -1761,7 +1770,9 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 
 // Activity reports the most recent activity in any session on this box, and
 // whether Claude is mid-turn in any of them; zero time when no session has a
-// summary yet. The control plane pauses a box idle long enough.
+// summary yet. The third result is true when the complete set of live sessions
+// cannot be established, so the server can avoid mistaking its boot for user
+// activity. The control plane pauses a box idle long enough.
 func (s *Service) Activity() (last time.Time, turnInProgress, unknown bool) {
 	// tmux and its Claude processes outlive this Go service. After a runtime-
 	// agent restart (including an in-place upgrade), re-arm summaries for live
@@ -1831,16 +1842,19 @@ func (s *Service) unknownActivity(reason string) (time.Time, bool) {
 	if s.activityUnknownSince.IsZero() {
 		s.activityUnknownClearAttempted = false
 		s.activityUnknownExpiredLogged = false
-		s.activityUnknownSince = s.readUnknownActivitySince()
+		if !s.activityUnknownClearFailed {
+			s.activityUnknownSince = s.readUnknownActivitySince()
+		}
 		if s.activityUnknownSince.IsZero() {
 			s.activityUnknownSince = now
 			s.writeUnknownActivitySince(s.activityUnknownSince)
 		}
+		s.activityUnknownClearFailed = false
 	}
 	s.activityUnknownReason = reason
 	if s.activityUnknownLogged.IsZero() || now.Sub(s.activityUnknownLogged) >= unknownActivityLogInterval {
 		age := now.Sub(s.activityUnknownSince).Round(time.Second)
-		log.Printf("runtime-agent: activity remains unknown for %s (%s); unknown-only protection lasts %s", age, s.activityUnknownReason, unknownActivityGrace)
+		log.Printf("runtime-agent: activity remains unknown for %s (%s); unknown-only protection window %s, expired=%t", age, s.activityUnknownReason, unknownActivityGrace, age >= unknownActivityGrace)
 		s.activityUnknownLogged = now
 	}
 	if now.Sub(s.activityUnknownSince) < unknownActivityGrace {
@@ -1882,10 +1896,14 @@ func laterOf(a, b time.Time) time.Time {
 func (s *Service) clearUnknownActivity() {
 	s.activityMu.Lock()
 	if s.Root != "" && !s.activityUnknownClearAttempted {
-		if err := os.Remove(s.unknownActivityPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		err := os.Remove(s.unknownActivityPath())
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.activityUnknownClearFailed = true
 			log.Printf("runtime-agent: couldn't clear persisted unknown activity time: %v", err)
+		} else {
+			s.activityUnknownClearAttempted = true
+			s.activityUnknownClearFailed = false
 		}
-		s.activityUnknownClearAttempted = true
 	}
 	s.activityUnknownSince = time.Time{}
 	s.activityUnknownReason = ""
@@ -1917,7 +1935,34 @@ func (s *Service) readUnknownActivitySince() time.Time {
 		log.Printf("runtime-agent: couldn't parse persisted unknown activity time: %v", err)
 		return time.Time{}
 	}
-	return since.UTC()
+	since = since.UTC()
+	if booted := systemBootTime(); !booted.IsZero() && since.Before(booted) {
+		log.Printf("runtime-agent: persisted unknown activity time %s predates box boot %s; starting a new protection window", since.Format(time.RFC3339), booted.Format(time.RFC3339))
+		return time.Time{}
+	}
+	return since
+}
+
+// systemBootTime is the box lifetime boundary for persisted activity state.
+// runtime-agent itself may restart many times in one box lifetime; an old
+// unknown interval from before a box resume must not suppress the next wake.
+func systemBootTime() time.Time {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return time.Time{}
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != "btime" {
+			continue
+		}
+		seconds, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil {
+			return time.Time{}
+		}
+		return time.Unix(seconds, 0).UTC()
+	}
+	return time.Time{}
 }
 
 func (s *Service) writeUnknownActivitySince(since time.Time) {
