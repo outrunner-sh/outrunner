@@ -2,9 +2,36 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
 import { toPullFiles } from "@/lib/review/hunks";
-import { normalizeTour, readJsonAnswer, salvageAnswer, tourHunks, tourPrompt, tourTokens, writeTour } from "@/lib/review/tour";
+import {
+  normalizeTour,
+  readJsonAnswer,
+  salvageAnswer,
+  streamAnswer,
+  tourHunks,
+  tourPrompt,
+  tourTimeoutMs,
+  tourTokens,
+  writeTour,
+} from "@/lib/review/tour";
 
 const realFetch = globalThis.fetch;
+
+/** The model's answer as OpenRouter streams it: server-sent events of a few
+ *  characters each, cut across chunks at odd places. */
+function sse(text: string, finish = "stop"): Response {
+  const events = [];
+  for (let i = 0; i < text.length; i += 7) events.push(`data: ${JSON.stringify({ choices: [{ delta: { content: text.slice(i, i + 7) } }] })}\n\n`);
+  events.push(`: keep-alive\n\ndata: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finish }] })}\n\ndata: [DONE]\n\n`);
+  const raw = new TextEncoder().encode(events.join(""));
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        for (let i = 0; i < raw.length; i += 13) controller.enqueue(raw.slice(i, i + 13));
+        controller.close();
+      },
+    }),
+  );
+}
 afterEach(() => {
   globalThis.fetch = realFetch;
 });
@@ -105,9 +132,7 @@ test("writeTour asks the model once and normalizes its answer", async () => {
   let asked = 0;
   globalThis.fetch = (async () => {
     asked += 1;
-    return new Response(
-      JSON.stringify({ choices: [{ message: { content: '```json\n{"summary":"S","steps":[{"hunk":"lib/types.ts#0","title":"T","explanation":"E"}]}\n```' } }] }),
-    );
+    return sse('```json\n{"summary":"S","steps":[{"hunk":"lib/types.ts#0","title":"T","explanation":"E"}]}\n```');
   }) as typeof fetch;
   const tour = await writeTour("key", { title: "t", body: "" }, files);
   assert.equal(asked, 1);
@@ -127,7 +152,7 @@ test("an answer cut off mid-step keeps the steps it finished", async () => {
   assert.deepEqual(saved, { summary: 'Adds "a".', steps: [{ hunk: "lib/types.ts#0", title: "T", explanation: "E" }] });
   assert.equal(salvageAnswer("no steps at all"), null);
 
-  globalThis.fetch = (async () => new Response(JSON.stringify({ choices: [{ message: { content: cut }, finish_reason: "length" }] }))) as typeof fetch;
+  globalThis.fetch = (async () => sse(cut, "length")) as typeof fetch;
   const warn = console.warn;
   const warned: string[] = [];
   console.warn = (message: string) => warned.push(message);
@@ -153,6 +178,85 @@ test("the answer's tokens grow with the hunks, to a ceiling; a long tour asks fo
 test("a tour of only some of the PR's files says so, to the model and on the card", async () => {
   const { hunks } = tourHunks(files);
   assert.match(tourPrompt({ title: "t", body: "" }, hunks, false), /only some of its files/);
-  globalThis.fetch = (async () => new Response(JSON.stringify({ choices: [{ message: { content: "{}" } }] }))) as typeof fetch;
+  globalThis.fetch = (async () => sse("{}")) as typeof fetch;
   assert.equal((await writeTour("key", { title: "t", body: "" }, files, false)).complete, false);
+});
+
+test("a brace or quote in a step's text doesn't lose it when the answer is cut", () => {
+  const cut =
+    '{"summary": "Returns {tour}.", "steps": [{"hunk": "lib/api.ts#0", "title": "Shape", "explanation": "Returns `{ tour, headSha }` and \\"}\\" too."}, {"hunk": "lib/api.ts#1", "title": "Cut';
+  assert.deepEqual(salvageAnswer(cut), {
+    summary: "Returns {tour}.",
+    steps: [{ hunk: "lib/api.ts#0", title: "Shape", explanation: 'Returns `{ tour, headSha }` and "}" too.' }],
+  });
+  // A "summary" inside a step is not the answer's.
+  assert.equal(salvageAnswer('{"steps": [{"hunk": "a#0", "summary": "no"}]')?.summary, "");
+});
+
+test("an answer that runs out of time keeps what it wrote", async () => {
+  globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          const chunk = { choices: [{ delta: { content: '{"steps": [{"hunk": "lib/api.ts#0", "title": "T", "explanation": "E"}' } }] };
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`));
+          // Then nothing, until the call is aborted.
+          init?.signal?.addEventListener("abort", () => controller.error(new DOMException("aborted", "AbortError")));
+        },
+      }),
+    )) as typeof fetch;
+  const { text, finish } = await streamAnswer("key", "p", 100, 50);
+  assert.equal(finish, "timeout");
+  assert.equal(salvageAnswer(text)?.steps.length, 1);
+});
+
+test("a disconnected caller cancels the model stream instead of becoming a timeout fallback", async () => {
+  const caller = new AbortController();
+  globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          init?.signal?.addEventListener("abort", () => controller.error(new DOMException("aborted", "AbortError")));
+        },
+      }),
+    )) as typeof fetch;
+  const answer = streamAnswer("key", "p", 100, 1_000, caller.signal);
+  caller.abort();
+  await assert.rejects(answer, { name: "AbortError" });
+});
+
+test("a refused call throws with the model's reason", async () => {
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: { message: "No credits" } }), { status: 402 })) as typeof fetch;
+  await assert.rejects(streamAnswer("key", "p", 100, 1_000), /402.*No credits/);
+});
+
+test("provider errors in a 200 stream are logged while completed steps survive", async () => {
+  const partial = '{"summary":"Partial","steps":[{"hunk":"lib/api.ts#0","title":"T","explanation":"E"},';
+  const providerError = { error: { code: 402, message: "Insufficient credits" } };
+  const response = (text: string) => new Response(
+    `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\ndata: ${JSON.stringify(providerError)}\n\n`,
+  );
+  globalThis.fetch = (async () => response(partial)) as typeof fetch;
+  const warn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (message: string) => warnings.push(message);
+  try {
+    const tour = await writeTour("key", { title: "t", body: "" }, files);
+    assert.equal(tour.summary, "Partial");
+    assert.equal(tour.steps[0].explanation, "E");
+    assert.match(warnings[0], /error: Insufficient credits.*kept the steps it finished/);
+    // Even a completed JSON answer must not hide a subsequent provider error.
+    globalThis.fetch = (async () => response('{"summary":"Done","steps":[]}')) as typeof fetch;
+    await writeTour("key", { title: "t", body: "" }, files);
+    assert.match(warnings[1], /error: Insufficient credits.*kept its completed answer/);
+  } finally {
+    console.warn = warn;
+  }
+  globalThis.fetch = (async () => response("")) as typeof fetch;
+  await assert.rejects(streamAnswer("key", "p", 100, 1_000), /Insufficient credits/);
+});
+
+test("the time allowed grows with the tokens, inside the route's limit", () => {
+  assert.equal(tourTimeoutMs(4_000), 130_000);
+  assert.equal(tourTimeoutMs(16_000), 420_000);
 });
