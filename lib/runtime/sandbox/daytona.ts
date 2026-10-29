@@ -48,10 +48,10 @@ export const DESKTOP_RESOLUTION = "1280x800";
 const DESKTOP_START_TIMEOUT_MS = 30_000;
 
 /** `promise`, or a rejection saying `message` once `ms` have gone by. */
-async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<void> {
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await Promise.race([
+    return await Promise.race([
       promise,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(`${message} (${ms / 1000} s)`)), ms);
@@ -277,7 +277,9 @@ export function box(sandbox: Sandbox): SandboxBox {
     desktop: {
       // Starts what isn't running (the display, its window manager, the VNC
       // server and noVNC) and leaves what is: a second start is a no-op.
-      start: () => withTimeout(sandbox.computerUse.start(), DESKTOP_START_TIMEOUT_MS, "Daytona's desktop didn't start in time"),
+      start: async () => {
+        await withTimeout(sandbox.computerUse.start(), DESKTOP_START_TIMEOUT_MS, "Daytona's desktop didn't start in time");
+      },
       // A signed preview link is good for its one port alone (checked on a
       // real box: the token in it is refused on any other), and noVNC's
       // proxy there forwards to the VNC server alone, a target fixed at its

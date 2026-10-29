@@ -76,8 +76,11 @@ test("a desktop start that hangs is given up after 30 seconds, not the SDK's fiv
       () => "started",
       (error: Error) => error.message,
     );
+    let settled: string | undefined;
+    void outcome.then((value) => (settled = value));
     mock.timers.tick(29_999);
     await Promise.resolve();
+    assert.equal(settled, undefined);
     mock.timers.tick(1);
     assert.equal(await outcome, "Daytona's desktop didn't start in time (30 s)");
   } finally {
