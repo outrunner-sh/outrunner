@@ -78,9 +78,10 @@ and RLS (including service-only access to Codex credentials).
 
 1. Open the private owner link in a browser signed into Replicas.
 2. Optionally select **Open real Codex settings** to inspect the actual product
-   UI as the isolated org admin. Use Back to return. Do not run the settings'
-   `npx outrunner@latest` command for this premerge test; that package is still
-   the published version. The launcher runs the built branch CLI instead.
+   UI as the isolated org admin. Settings links back to the private launcher;
+   local CLI instructions are hidden in this test build. The published CLI
+   does not yet contain this branch's command. The launcher already runs the
+   built branch CLI; no owner-side terminal command is needed.
 3. Select **Start official device login**. Open **Approve on OpenAI**, enter the
    displayed code at `https://auth.openai.com/codex/device`, and approve using
    the intended personal ChatGPT Plus/Pro account. Enable device-code login in

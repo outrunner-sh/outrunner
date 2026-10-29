@@ -14,6 +14,16 @@ export type CodexMeta = {
   pending: { id: string; expiresAt: string; mine?: boolean } | null;
 };
 type Scopes = { user: string; orgs: Org[]; activeOrg: string | null };
+// Set only after a release containing codex-auth is published. Never assume
+// the registry's mutable latest tag contains this deployment's commands.
+const configuredVersion = process.env.NEXT_PUBLIC_CODEX_CLI_VERSION ?? "";
+const cliVersion = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(configuredVersion)
+  ? configuredVersion
+  : null;
+const configuredLauncher = process.env.NEXT_PUBLIC_CODEX_AUTH_LAUNCHER_PATH ?? "";
+const launcherPath = /^\/[A-Za-z0-9/_-]+$/.test(configuredLauncher)
+  ? configuredLauncher
+  : null;
 
 /** Native login stays on the user's computer; this page receives status only. */
 export function CodexConnection({ active = true }: { active?: boolean }) {
@@ -152,8 +162,8 @@ function ConnectionScope({
     }
   }
   const command =
-    meta?.pending && origin
-      ? `npx outrunner@latest --url ${origin} --account ${user} codex-auth${org ? ` --org ${org.id}` : ""} --attempt ${meta.pending.id}`
+    meta?.pending && origin && cliVersion && !launcherPath
+      ? `npx outrunner@${cliVersion} --url ${origin} --account ${user} codex-auth${org ? ` --org ${org.id}` : ""} --attempt ${meta.pending.id}`
       : null;
   return (
     <section
@@ -205,7 +215,27 @@ function ConnectionScope({
             : "Ask an organization admin to reconnect."}
         </InlineMessage>
       )}
-      {meta?.pending && admin && meta.pending.mine !== false && (
+      {admin && launcherPath && (
+        <div className="space-y-2">
+          <p className="text-sm">
+            This isolated test runs the branch CLI for you. Open the private
+            approval launcher, select Approve on OpenAI, and enter its displayed
+            code in your browser. No local terminal command is needed. If no
+            code is active, start device login in the launcher.
+          </p>
+          <a className="text-sm underline" href={launcherPath}>
+            Open private approval launcher
+          </a>
+        </div>
+      )}
+      {admin && !launcherPath && !cliVersion && (
+        <InlineMessage>
+          Codex sign-in needs an Outrunner CLI release containing codex-auth.
+          This deployment has not configured a supported release yet. Existing
+          connections and API-key authentication remain available.
+        </InlineMessage>
+      )}
+      {meta?.pending && admin && meta.pending.mine !== false && !launcherPath && cliVersion && (
         <div className="space-y-3">
           <p className="text-sm">
             Run this command on your computer, then approve the official OpenAI
@@ -265,10 +295,10 @@ function ConnectionScope({
             >
               Cancel sign-in
             </Button>
-          ) : (
+          ) : !launcherPath ? (
             <Button
               variant="outline"
-              disabled={busy}
+              disabled={busy || !cliVersion}
               onClick={() => void change("begin")}
             >
               {meta.connected
@@ -277,7 +307,7 @@ function ConnectionScope({
                   ? "Reconnect Codex"
                   : "Connect Codex"}
             </Button>
-          )}
+          ) : null}
           {(meta.connected || meta.reconnect) && (
             <Button
               variant="outline"

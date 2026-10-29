@@ -135,6 +135,14 @@ A real Plus/Pro owner must approve device login in the secure OpenAI browser
 flow to verify live upload, inference and eventual real token renewal.
 
 Rollout requires the migration, normal app/runtime release and a CLI release
-containing `codex-auth` via the existing CLI-publish workflow before directing
-users to the `outrunner@latest` command. No production deployment or provider
-entitlement is assumed by this PR.
+containing `codex-auth` via the existing CLI-publish workflow. After verifying
+that release, build the app with `NEXT_PUBLIC_CODEX_CLI_VERSION` set to its exact
+version. Settings pins that release; without a configured version it explains
+the prerequisite and disables starting an unusable sign-in. It never assumes
+the mutable `latest` tag contains this unreleased command. No production
+deployment or provider entitlement is assumed by this PR.
+
+The isolated harness instead builds with
+`NEXT_PUBLIC_CODEX_AUTH_LAUNCHER_PATH=/__test`, so settings links back to the
+private launcher and hides local CLI instructions. The owner only enters the
+active device code on OpenAI; the branch CLI already runs in the workspace.

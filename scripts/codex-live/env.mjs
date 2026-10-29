@@ -27,6 +27,7 @@ export const env = {
   RUNTIME_AGENT_ROOT: root + "/runtime",
   RUNTIME_TMUX_SOCKET: "outrunner-codex-test-live328",
   HOST: "127.0.0.1",
+  NEXT_PUBLIC_CODEX_AUTH_LAUNCHER_PATH: "/__test",
 };
 if (!env.NEXT_PUBLIC_SUPABASE_ANON_KEY || !env.SUPABASE_SERVICE_ROLE_KEY)
   throw new Error("Missing isolated stack credentials");
