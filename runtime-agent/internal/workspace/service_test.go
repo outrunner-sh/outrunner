@@ -48,6 +48,21 @@ func TestUnknownActivityStartsFreshWhenBoxLifetimeChanges(t *testing.T) {
 	}
 }
 
+func TestBoxLifetimeIDPersistsWithEitherAvailableSource(t *testing.T) {
+	if got := boxLifetimeIDParts("boot-id", "pid1-start"); got != "boot:boot-id:pid1:pid1-start" {
+		t.Errorf("full lifetime ID = %q", got)
+	}
+	if got := boxLifetimeIDParts("boot-id", ""); got != "boot:boot-id" {
+		t.Errorf("boot-only lifetime ID = %q", got)
+	}
+	if got := boxLifetimeIDParts("", "pid1-start"); got != "pid1:pid1-start" {
+		t.Errorf("PID1-only lifetime ID = %q", got)
+	}
+	if got := boxLifetimeIDParts("", ""); got != "" {
+		t.Errorf("lifetime ID without either source = %q, want empty", got)
+	}
+}
+
 func TestOrientationUsesRecordedFacts(t *testing.T) {
 	s := NewService(t.TempDir())
 	s.setFacts("ws1", workspaceFacts{Branch: "feature/login", BaseBranch: "main"})

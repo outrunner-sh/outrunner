@@ -1955,36 +1955,64 @@ func (s *Service) readUnknownActivitySince() time.Time {
 		return time.Time{}
 	}
 	lifetime := s.lifetimeID()
-	if marker.LifetimeID == "" || lifetime == "" || marker.LifetimeID != lifetime {
+	if lifetime == "" {
+		log.Printf("runtime-agent: couldn't validate persisted unknown activity time without a box lifetime id; starting a new protection window")
+		return time.Time{}
+	}
+	if marker.LifetimeID == "" {
+		log.Printf("runtime-agent: persisted unknown activity time has no box lifetime id; starting a new protection window")
+		return time.Time{}
+	}
+	if marker.LifetimeID != lifetime {
 		log.Printf("runtime-agent: persisted unknown activity time belongs to another box lifetime; starting a new protection window")
 		return time.Time{}
 	}
 	return marker.Since.UTC()
 }
 
-// boxLifetimeID combines the kernel boot ID with PID 1's start time. A VM
-// reboot changes the former; a container start on a shared host changes the
-// latter. Both remain stable across runtime-agent restarts.
+// boxLifetimeID combines the kernel boot ID with PID 1's start time when both
+// are available. A VM reboot changes the former; a container start on a shared
+// host changes the latter. If one source is unavailable, the other still keeps
+// the unknown-activity window bounded across runtime-agent restarts.
 func boxLifetimeID() string {
 	bootID, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	if err != nil {
-		return ""
+	boot := ""
+	if err == nil {
+		boot = strings.TrimSpace(string(bootID))
 	}
 	data, err := os.ReadFile("/proc/1/stat")
-	if err != nil {
-		return ""
+	pid1Start := ""
+	if err == nil {
+		pid1Start = pid1StartTime(string(data))
 	}
-	close := strings.LastIndex(string(data), ")")
+	return boxLifetimeIDParts(boot, pid1Start)
+}
+
+func pid1StartTime(stat string) string {
+	close := strings.LastIndex(stat, ")")
 	if close < 0 {
 		return ""
 	}
-	fields := strings.Fields(string(data[close+1:]))
+	fields := strings.Fields(stat[close+1:])
 	// After the command name, the first field is stat field 3 (state), so field
 	// 22 (starttime) is at index 19.
 	if len(fields) <= 19 {
 		return ""
 	}
-	return strings.TrimSpace(string(bootID)) + ":" + fields[19]
+	return fields[19]
+}
+
+func boxLifetimeIDParts(bootID, pid1Start string) string {
+	switch {
+	case bootID != "" && pid1Start != "":
+		return "boot:" + bootID + ":pid1:" + pid1Start
+	case bootID != "":
+		return "boot:" + bootID
+	case pid1Start != "":
+		return "pid1:" + pid1Start
+	default:
+		return ""
+	}
 }
 
 func (s *Service) writeUnknownActivitySince(since time.Time) {
