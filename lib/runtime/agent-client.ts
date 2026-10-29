@@ -118,6 +118,13 @@ export class AgentRequestError extends Error {
   }
 }
 
+export class InvalidSnapshotManifestError extends Error {
+  constructor(cause: unknown) {
+    super("The agent returned an invalid Snapshot manifest.", { cause });
+    this.name = "InvalidSnapshotManifestError";
+  }
+}
+
 /** The query naming a chat on a session's route or stream (AGENT_FEATURE_CHATS):
  *  none for its main chat, which every agent serves unnamed. */
 export function chatQuery(chat: string | undefined, join: "?" | "&" = "?"): string {
@@ -355,7 +362,11 @@ export class AgentClient {
       body,
       AGENT_LIFECYCLE_TIMEOUT_MS,
     );
-    return parseManifest(raw);
+    try {
+      return parseManifest(raw);
+    } catch (error) {
+      throw new InvalidSnapshotManifestError(error);
+    }
   }
 
   /**

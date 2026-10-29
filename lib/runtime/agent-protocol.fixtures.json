@@ -99,7 +99,8 @@
         "message": "agent did not respond"
       }
     },
-    { "error": { "code": "CHAT_NOT_FOUND", "message": "unknown chat" } }
+    { "error": { "code": "CHAT_NOT_FOUND", "message": "unknown chat" } },
+    {"error": {"code": "INTERNAL", "message": "upload conversation: unexpected status 503: redacted", "snapshot": {"stage": "upload", "artifact": "conversation", "cause": "storage_http", "httpStatus": 503}}}
   ],
   "SessionUrls": [
     {

@@ -17,7 +17,7 @@ func buildBundle(ctx context.Context, worktree, dst string) (string, error) {
 	out, err := exec.CommandContext(ctx, "git", "-C", worktree,
 		"bundle", "create", dst, "--all").CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("git bundle: %v: %s", err, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("git bundle: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return dst, nil
 }

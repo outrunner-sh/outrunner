@@ -1610,11 +1610,11 @@ func (s *Service) SessionName(workspaceID string) string { return sessionName(wo
 func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.ArchiveWorkspaceRequest) (*snapshot.Manifest, error) {
 	chats, err := s.snapshotChats(workspaceID, req.Chats)
 	if err != nil {
-		return nil, err
+		return nil, snapshot.FailureAt("chats", "chat", err)
 	}
 
 	if err := s.Stop(ctx, workspaceID); err != nil {
-		return nil, err
+		return nil, snapshot.FailureAt("stop", "", err)
 	}
 
 	summary := s.SummaryOf(ctx, workspaceID)

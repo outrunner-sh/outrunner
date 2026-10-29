@@ -107,3 +107,13 @@ test("a malformed health answer is not enough evidence to discard saveable files
   });
   await assert.rejects(saving(recovery(target)), (error) => error instanceof AgentRequestError && error.status === 503);
 });
+
+test("malformed optional Snapshot diagnostics never turn a real save refusal into an unreachable archive", async (t) => {
+  let upgrades = 0;
+  const target = await endpoint(t, (_req, res) => {
+    res.writeHead(500);
+    res.end(JSON.stringify({error:{code:"INTERNAL",message:"capture failed",snapshot:{stage:"invalid",cause:"private"}}}));
+  });
+  await assert.rejects(saving(recovery(target, async () => { upgrades++; })), (error) => error instanceof AgentRequestError && error.error?.code === "INTERNAL" && error.error.snapshot === undefined);
+  assert.equal(upgrades, 0);
+});

@@ -210,7 +210,7 @@ async function archiveDaytonaWorkspace(
     // `note`: archived without its files, which the user is told.
     return NextResponse.json({ workspace: { id: workspace.id, status: "archived" }, ...(archived.unsaved && { note: archived.note }) });
   }
-  if (archived.reason === "failed") return NextResponse.json({ error: archived.error }, { status: archived.status });
+  if (archived.reason === "failed") return NextResponse.json({ error: archived.error, ...(archived.diagnostic && { diagnostic: archived.diagnostic }) }, { status: archived.status });
   return archived.reason === "reconcile" ? lifecycleReconciliationRequired("archive") : lifecycleConflict();
 }
 

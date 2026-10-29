@@ -539,10 +539,21 @@ const FeatureGitCredential = "git-credential"
 const FeatureMessageKeys = "message-keys"
 
 // ErrorResponse is the stable error envelope for control-plane failures.
+// SnapshotFailure contains no arbitrary strings: it is safe to show to the
+// session owner even when the underlying error includes credentials or paths.
+type SnapshotFailure struct {
+	Stage      string `json:"stage"`
+	Artifact   string `json:"artifact,omitempty"`
+	Cause      string `json:"cause"`
+	HTTPStatus int    `json:"httpStatus,omitempty"`
+	ExitCode   *int   `json:"exitCode,omitempty"`
+}
+
 type ErrorResponse struct {
 	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code     string           `json:"code"`
+		Message  string           `json:"message"`
+		Snapshot *SnapshotFailure `json:"snapshot,omitempty"`
 	} `json:"error"`
 }
 
