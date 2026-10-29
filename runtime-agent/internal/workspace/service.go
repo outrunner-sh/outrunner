@@ -37,6 +37,7 @@ type sessions interface {
 	NewSession(ctx context.Context, name, workdir string, command []string, env []string) error
 	HideStatus(ctx context.Context, name string)
 	HasSession(ctx context.Context, name string) bool
+	ListSessions(ctx context.Context) ([]string, error)
 	SessionExists(ctx context.Context, name string) (bool, error)
 	KillSession(ctx context.Context, name string) error
 	Paste(ctx context.Context, name, text string) error
@@ -60,6 +61,12 @@ type Service struct {
 
 	mu    sync.Mutex
 	facts map[string]workspaceFacts
+
+	activityMu                    sync.Mutex
+	activityUnknownSince          time.Time
+	activityUnknownReason         string
+	activityUnknownLogged         time.Time
+	activityUnknownClearAttempted bool
 
 	// sendLocks serializes prompt delivery per workspace. SendKeys types then
 	// submits in separate tmux commands, so concurrent sends on one session
@@ -1762,12 +1769,85 @@ func (s *Service) Activity() (last time.Time, turnInProgress bool) {
 	// 15-minute idle cutoff, which pauses the box underneath that turn.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if !s.recoverRunningSummaries(ctx) {
-		// We could not establish whether a live tmux session is working. Treat
-		// that as active until a later probe can read tmux; never pause on an
-		// unknown process state.
-		return time.Now().UTC(), true
+	if reason := s.recoverRunningSummaries(ctx); reason != "" {
+		// Protect active work when tmux is temporarily unreadable or a live
+		// session has lost its persisted facts. The two-hour bound matches the
+		// reconciler's stuck-turn limit; afterward this unknown state is eligible
+		// for the ordinary idle pause instead of holding a box forever.
+		return s.unknownActivity(reason)
 	}
+	s.clearUnknownActivity()
+	return s.summariesActivity()
+}
+
+// recoverRunningSummaries reattaches conversation collectors for tmux
+// sessions that survived a runtime-agent restart. Facts are persisted beside
+// each worktree, so the session id and summary path can be recovered without
+// changing or restarting the user process. A non-empty result explains why
+// Activity cannot establish the complete set of live sessions.
+func (s *Service) recoverRunningSummaries(ctx context.Context) string {
+	if s.jcode != nil {
+		return "" // jcode boxes are metered but are not paused by the reconciler.
+	}
+	names, err := s.tmux.ListSessions(ctx)
+	if err != nil {
+		return fmt.Sprintf("couldn't list tmux sessions: %v", err)
+	}
+	unknown := ""
+	for _, name := range names {
+		id, ok := strings.CutPrefix(name, "ws-")
+		if !ok || id == "" {
+			continue // editor or another non-workspace tmux session
+		}
+		if _, ok := s.getFacts(id); !ok {
+			if unknown == "" {
+				unknown = fmt.Sprintf("live tmux session %q has no persisted workspace facts", name)
+			}
+			continue
+		}
+		s.beginSummary(id, s.worktreePath(id))
+	}
+	return unknown
+}
+
+const (
+	unknownActivityGrace       = 2 * time.Hour
+	unknownActivityLogInterval = 10 * time.Minute
+)
+
+// unknownActivity keeps the reconciler fail-safe for the same two-hour window
+// it already grants a known in-progress turn. Its timestamp does not move on
+// every poll, so persistent tmux failures and orphan sessions eventually
+// become eligible for the ordinary idle pause. Warnings are rate-limited per
+// service instance while still making the reason and age visible.
+func (s *Service) unknownActivity(reason string) (time.Time, bool) {
+	now := time.Now().UTC()
+	knownLast, knownTurn := s.summariesActivity()
+	s.activityMu.Lock()
+	defer s.activityMu.Unlock()
+	if s.activityUnknownSince.IsZero() {
+		s.activityUnknownClearAttempted = false
+		s.activityUnknownSince = s.readUnknownActivitySince()
+		if s.activityUnknownSince.IsZero() {
+			s.activityUnknownSince = now
+			s.writeUnknownActivitySince(s.activityUnknownSince)
+		}
+	}
+	s.activityUnknownReason = reason
+	if s.activityUnknownLogged.IsZero() || now.Sub(s.activityUnknownLogged) >= unknownActivityLogInterval {
+		age := now.Sub(s.activityUnknownSince).Round(time.Second)
+		log.Printf("runtime-agent: activity remains unknown for %s (%s); unknown-only protection lasts %s", age, s.activityUnknownReason, unknownActivityGrace)
+		s.activityUnknownLogged = now
+	}
+	if now.Sub(s.activityUnknownSince) < unknownActivityGrace {
+		return laterOf(s.activityUnknownSince, knownLast), true
+	}
+	// A collector that is still making progress can see activity even when
+	// tmux's session list is unavailable. Keep its normal turn protection.
+	return laterOf(s.activityUnknownSince, knownLast), knownTurn
+}
+
+func (s *Service) summariesActivity() (last time.Time, turnInProgress bool) {
 	s.summariesMu.Lock()
 	sums := make([]*Summary, 0, len(s.summaries))
 	for _, sum := range s.summaries {
@@ -1784,40 +1864,60 @@ func (s *Service) Activity() (last time.Time, turnInProgress bool) {
 	return last, turnInProgress
 }
 
-// recoverRunningSummaries reattaches conversation collectors for tmux
-// sessions that survived a runtime-agent restart. Facts are persisted beside
-// each worktree, so the session id and summary path can be recovered without
-// changing or restarting the user process. false means tmux or the session
-// metadata could not be read and Activity must fail closed.
-func (s *Service) recoverRunningSummaries(ctx context.Context) bool {
-	if s.jcode != nil {
-		return true // jcode boxes are metered but are not paused by the reconciler.
+func laterOf(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
 	}
-	lister, ok := s.tmux.(interface {
-		ListSessions(context.Context) ([]string, error)
-	})
-	if !ok {
-		return true
+	return a
+}
+
+func (s *Service) clearUnknownActivity() {
+	s.activityMu.Lock()
+	if s.Root != "" && !s.activityUnknownClearAttempted {
+		if err := os.Remove(s.unknownActivityPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("runtime-agent: couldn't clear persisted unknown activity time: %v", err)
+		}
+		s.activityUnknownClearAttempted = true
 	}
-	names, err := lister.ListSessions(ctx)
+	s.activityUnknownSince = time.Time{}
+	s.activityUnknownReason = ""
+	s.activityUnknownLogged = time.Time{}
+	s.activityMu.Unlock()
+}
+
+// Persist the start of an unknown-activity interval so restarting
+// runtime-agent cannot keep resetting the protection window for an orphaned
+// session or a tmux server that never answers.
+func (s *Service) unknownActivityPath() string {
+	return filepath.Join(s.Root, "runtime-agent-activity-unknown-since")
+}
+
+func (s *Service) readUnknownActivitySince() time.Time {
+	if s.Root == "" {
+		return time.Time{}
+	}
+	data, err := os.ReadFile(s.unknownActivityPath())
 	if err != nil {
-		log.Printf("runtime-agent: couldn't list tmux sessions for activity: %v", err)
-		return false
-	}
-	known := true
-	for _, name := range names {
-		id, ok := strings.CutPrefix(name, "ws-")
-		if !ok || id == "" {
-			continue // editor or another non-workspace tmux session
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("runtime-agent: couldn't read persisted unknown activity time: %v", err)
 		}
-		if _, ok := s.getFacts(id); !ok {
-			log.Printf("runtime-agent: live tmux session %q has no persisted workspace facts", name)
-			known = false
-			continue
-		}
-		s.beginSummary(id, s.worktreePath(id))
+		return time.Time{}
 	}
-	return known
+	since, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data)))
+	if err != nil {
+		log.Printf("runtime-agent: couldn't parse persisted unknown activity time: %v", err)
+		return time.Time{}
+	}
+	return since.UTC()
+}
+
+func (s *Service) writeUnknownActivitySince(since time.Time) {
+	if s.Root == "" {
+		return
+	}
+	if err := os.WriteFile(s.unknownActivityPath(), []byte(since.Format(time.RFC3339Nano)), 0o600); err != nil {
+		log.Printf("runtime-agent: couldn't persist unknown activity time: %v", err)
+	}
 }
 
 // beginSummary creates (or refreshes) the Workspace Summary collector for a

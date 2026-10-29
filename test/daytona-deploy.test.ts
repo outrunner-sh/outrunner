@@ -16,7 +16,7 @@ import {
   agentLaunchScript,
   agentPrepScript,
   bootAgent,
-  claudeAgentLaunchScript,
+  claudeAgentSupervisorLaunchScript,
   claudeConfigSeedScript,
   claudeInstallScript,
   compressAgent,
@@ -415,17 +415,21 @@ test("claudeInstallScript fails when the old Claude Code still comes first after
   assert.match(result.stdout, new RegExp(`Could not bring Claude Code \\(2\\.1\\.19\\) up to ${CLAUDE_CODE_VERSION.replaceAll(".", "\\.")}`));
 });
 
-test("claudeAgentLaunchScript roots the agent + Claude HOME at the box home", () => {
-  const s = claudeAgentLaunchScript("/home/daytona", "s3cr3t", {
+test("claudeAgentSupervisorLaunchScript roots and supervises the agent at the box home", () => {
+  const s = claudeAgentSupervisorLaunchScript("/home/daytona", "s3cr3t", {
     CLAUDE_CODE_OAUTH_TOKEN: "tok en",
   });
   assert.ok(s.includes("RUNTIME_AGENT_SECRET='s3cr3t'"));
-  assert.ok(s.includes("RUNTIME_AGENT_ROOT=/home/daytona"));
+  assert.ok(s.includes("RUNTIME_AGENT_ROOT='/home/daytona'"));
   assert.ok(s.includes("PORT=8080"));
   // HOME=root so `claude` reads the seeded ~/.claude.json under the same root.
-  assert.ok(s.includes("HOME=/home/daytona"));
+  assert.ok(s.includes("HOME='/home/daytona'"));
   assert.ok(s.includes("CLAUDE_CODE_OAUTH_TOKEN='tok en'"));
-  // Detached and input-closed so it outlives the launch call.
+  assert.ok(s.includes("runtime-agent-supervisor.pid"));
+  assert.ok(s.includes(": > '/home/daytona/runtime-agent.log'"), "truncates old logs once before launch");
+  assert.ok(s.includes('sleep "$delay"'), "backs off between failed child launches");
+  assert.ok(s.includes('if [ "$lived" -ge 300 ]; then delay=1; fi'), "resets backoff after a stable run");
+  // Detached and input-closed so the supervisor outlives the launch call.
   assert.ok(s.trim().endsWith("< /dev/null &"));
 });
 

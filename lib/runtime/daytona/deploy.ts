@@ -498,27 +498,12 @@ export function claudeConfigSeedScript(root: string): string {
   );
 }
 
-/** Launch the runtime-agent in Claude mode (default engine), detached, rooted at
- *  the box's home, seeding CLAUDE_CODE_OAUTH_TOKEN (etc.) so Claude auths. */
-export function claudeAgentLaunchScript(
-  root: string,
-  secret: string,
-  env: Record<string, string> = {},
-): string {
-  const extra = Object.entries(env)
-    .map(([key, value]) => `${key}=${shellQuote(value)}`)
-    .join(" ");
-  const assignments =
-    `RUNTIME_AGENT_SECRET=${shellQuote(secret)} RUNTIME_AGENT_ROOT=${root} ` +
-    `PORT=${AGENT_PORT} HOME=${root}` +
-    (extra ? ` ${extra}` : "");
-  return `setsid env ${assignments} ${root}/runtime-agent > ${root}/runtime-agent.log 2>&1 < /dev/null &`;
-}
-
 /** Launch a small shell supervisor around the Go control agent. The child
  * process restarts after a crash while tmux keeps Claude and its worktree
- * alive. The secret is supplied through the supervisor's environment, never
- * embedded in its persistent command string or script. */
+ * alive. Fast failures back off up to 30 seconds; a child that stayed up for
+ * five minutes resets that delay. The log is truncated once per launch. The
+ * secret is supplied through the supervisor's environment, never embedded in
+ * its persistent command string or script. */
 export function claudeAgentSupervisorLaunchScript(
   root: string,
   secret: string,
@@ -538,15 +523,21 @@ export function claudeAgentSupervisorLaunchScript(
   const supervisor =
     `# outrunner-runtime-agent-supervisor\n` +
     `echo $$ > ${shellQuote(pid)}\n` +
+    `delay=1\n` +
     `while [ ! -e ${shellQuote(stop)} ]; do\n` +
+    `  started=$SECONDS\n` +
     `  ${shellQuote(binary)} >> ${shellQuote(log)} 2>&1\n` +
     `  status=$?\n` +
-    `  printf 'runtime-agent exited (%s); restarting\\n' "$status" >> ${shellQuote(log)}\n` +
+    `  lived=$((SECONDS - started))\n` +
+    `  printf 'runtime-agent exited (%s) after %ss\\n' "$status" "$lived" >> ${shellQuote(log)}\n` +
     `  [ -e ${shellQuote(stop)} ] && break\n` +
-    `  sleep 1\n` +
+    `  if [ "$lived" -ge 300 ]; then delay=1; fi\n` +
+    `  printf 'restarting in %ss\\n' "$delay" >> ${shellQuote(log)}\n` +
+    `  sleep "$delay"\n` +
+    `  if [ "$delay" -lt 30 ]; then delay=$((delay * 2)); [ "$delay" -gt 30 ] && delay=30; fi\n` +
     `done`;
   return (
-    `rm -f ${shellQuote(stop)}; ` +
+    `rm -f ${shellQuote(stop)}; : > ${shellQuote(log)}; ` +
     `setsid env ${assignments} bash -c ${shellQuote(supervisor)} ` +
     `>/dev/null 2>&1 < /dev/null &`
   );

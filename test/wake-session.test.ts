@@ -10,6 +10,7 @@ test("a session left ready while its box was paused idle is brought back before 
   assert.deepEqual(wakeSteps("idle", "stopped"), ["attach"]);
   assert.deepEqual(wakeSteps("ready", "error"), ["attach"]);
   assert.deepEqual(wakeSteps("ready", null), ["attach"]);
+  assert.deepEqual(wakeSteps("idle", "ready"), ["attach"]);
   // A ready row does not prove the workspace's tmux session still exists.
   assert.deepEqual(wakeSteps("ready", "ready"), ["attach"]);
 });

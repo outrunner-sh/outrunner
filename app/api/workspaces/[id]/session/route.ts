@@ -182,8 +182,14 @@ export async function POST(request: Request, context: RouteContext) {
           workspaceId: workspace.id,
         },
         async (current) => {
+          agent = current;
           await readyRelaunch(current, identity, upgrade, workspace, owner.id);
           await current.startWorkspace(identity);
+        },
+        (current) => {
+          // If recovery itself fails, the best-effort summary probe below
+          // should still use the most recently discovered endpoint.
+          agent = current;
         },
       );
       agent = recovered.agent;
