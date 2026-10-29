@@ -38,7 +38,10 @@ test("a CSV is read as RFC 4180 has it", () => {
   assert.deepEqual(long.rows, [["h"], ["1"], ["2"]]);
   assert.equal(long.truncated, true);
   assert.equal(parseCsv("h\n1\n2\n", 3).truncated, false);
-  assert.equal(parseCsv(`${Array.from({ length: 80 }, (_, i) => i).join(",")}\n`).rows[0].length, MAX_CSV_COLUMNS);
+  const wide = parseCsv(`${Array.from({ length: 80 }, (_, i) => i).join(",")}\n`);
+  assert.equal(wide.rows[0].length, MAX_CSV_COLUMNS);
+  assert.equal(wide.columnsTruncated, true);
+  assert.equal(parseCsv("a,b\n").columnsTruncated, false);
 });
 
 test("a page runs sandboxed in an origin of its own, and anything else is inert", () => {

@@ -3,7 +3,7 @@
 import { useEffect, useId, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
-import { type CanvasKind, canvasFileUrl, parseCsv } from "@/lib/session/canvas";
+import { type CanvasKind, canvasFileUrl, MAX_CSV_COLUMNS, parseCsv } from "@/lib/session/canvas";
 
 /**
  * One file of a session's Canvas, shown as what it is (lib/session/canvas.ts):
@@ -44,10 +44,7 @@ export function CanvasView({
       />
     );
   }
-  if (!raw && (kind === "image" || kind === "svg")) {
-    // eslint-disable-next-line @next/next/no-img-element -- a file off the box, sized by itself
-    return <img src={url} alt={path} className="canvas-image" />;
-  }
+  if (!raw && (kind === "image" || kind === "svg")) return <CanvasImage key={url} url={url} path={path} />;
   if (kind === "other") {
     return (
       <div className="canvas-message">
@@ -59,12 +56,35 @@ export function CanvasView({
       </div>
     );
   }
-  return <CanvasText url={url} kind={raw ? "text" : kind} />;
+  // Keyed by the file and how it's shown: another file starts afresh, while
+  // a rewrite of this one keeps showing what it had until the new loads.
+  return <CanvasText key={`${path}:${raw}`} url={url} kind={raw ? "text" : kind} />;
+}
+
+/** An image off the box, or why it can't be shown (the route's reason: a
+ *  file that isn't the image its name says, or gone since it was listed). */
+function CanvasImage({ url, path }: { url: string; path: string }) {
+  const [failed, setFailed] = useState<string | null>(null);
+  if (failed) return <div className="canvas-message">{failed}</div>;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- a file off the box, sized by itself
+    <img
+      src={url}
+      alt={path}
+      className="canvas-image"
+      onError={() => {
+        void fetch(url, { cache: "no-store" })
+          .then((response) => response.json() as Promise<{ error?: string }>)
+          .then((body) => setFailed(body.error ?? "This image couldn't be shown."))
+          .catch(() => setFailed("This image couldn't be shown."));
+      }}
+    />
+  );
 }
 
 /** A file read as text, then shown by its kind. */
 function CanvasText({ url, kind }: { url: string; kind: CanvasKind }) {
-  const [state, setState] = useState<{ url: string; text?: string; error?: string } | null>(null);
+  const [state, setState] = useState<{ text?: string; error?: string } | null>(null);
   useEffect(() => {
     let live = true;
     fetch(url, { cache: "no-store" })
@@ -76,14 +96,14 @@ function CanvasText({ url, kind }: { url: string; kind: CanvasKind }) {
         return response.text();
       })
       .then(
-        (text) => live && setState({ url, text }),
-        (error: unknown) => live && setState({ url, error: error instanceof Error ? error.message : "Couldn't read that file." }),
+        (text) => live && setState({ text }),
+        (error: unknown) => live && setState({ error: error instanceof Error ? error.message : "Couldn't read that file." }),
       );
     return () => {
       live = false;
     };
   }, [url]);
-  // What the last URL loaded stays up while a rewrite loads, rather than a flash.
+  // What the last version loaded stays up while a rewrite loads, rather than a flash.
   if (!state) return <div className="canvas-message">Loading…</div>;
   if (state.error) return <div className="canvas-message">{state.error}</div>;
   const text = state.text ?? "";
@@ -148,7 +168,7 @@ export function MermaidDiagram({ source }: { source: string }) {
 
 /** A CSV as a table, its first row the header. */
 function CsvTable({ text }: { text: string }) {
-  const { rows, truncated } = parseCsv(text);
+  const { rows, truncated, columnsTruncated } = parseCsv(text);
   if (rows.length === 0) return <div className="canvas-message">An empty table.</div>;
   const [head, ...body] = rows;
   return (
@@ -171,7 +191,13 @@ function CsvTable({ text }: { text: string }) {
           ))}
         </tbody>
       </table>
-      {truncated && <p className="canvas-message">Only the first {rows.length} rows are shown.</p>}
+      {(truncated || columnsTruncated) && (
+        <p className="canvas-message">
+          Only the first {truncated ? `${rows.length} rows` : ""}
+          {truncated && columnsTruncated ? " and " : ""}
+          {columnsTruncated ? `${MAX_CSV_COLUMNS} columns` : ""} are shown.
+        </p>
+      )}
     </div>
   );
 }

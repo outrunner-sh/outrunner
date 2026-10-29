@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -109,5 +110,26 @@ func TestCanvasIsNamedAndRemoved(t *testing.T) {
 	s.removeCanvas("ws-1")
 	if fileExists(dir) {
 		t.Error("the Canvas outlived its session")
+	}
+}
+
+// Past the bound, the newest files are the ones listed, whatever their names.
+func TestCanvasListsTheNewestPastTheBound(t *testing.T) {
+	s, dir := canvasService(t)
+	old := time.Now().Add(-time.Hour)
+	for i := 0; i < MaxCanvasFiles; i++ {
+		path := filepath.Join(dir, "old", fmt.Sprintf("a-%04d.md", i))
+		writeTestFile(t, path, "x")
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTestFile(t, filepath.Join(dir, "zz-report.md"), "new")
+	canvas, err := s.CanvasFiles("ws-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(canvas.Files) != MaxCanvasFiles || !canvas.Truncated || canvas.Files[0].Path != "zz-report.md" {
+		t.Fatalf("%d files, truncated %v, first %q", len(canvas.Files), canvas.Truncated, canvas.Files[0].Path)
 	}
 }

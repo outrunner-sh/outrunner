@@ -98,16 +98,22 @@ export const MAX_CSV_COLUMNS = 50;
 /**
  * A CSV's rows, as RFC 4180 has them: fields split on commas, a quoted field
  * may hold commas, quotes ("") and line breaks; CRLF or LF ends a row. Stops
- * at `maxRows`; `truncated` says there were more.
+ * at `maxRows`, and keeps the first MAX_CSV_COLUMNS of a row; `truncated`
+ * and `columnsTruncated` say there were more.
  */
-export function parseCsv(text: string, maxRows = MAX_CSV_ROWS): { rows: string[][]; truncated: boolean } {
+export function parseCsv(
+  text: string,
+  maxRows = MAX_CSV_ROWS,
+): { rows: string[][]; truncated: boolean; columnsTruncated: boolean } {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
   let quoted = false;
+  let columnsTruncated = false;
   let i = text.charCodeAt(0) === 0xfeff ? 1 : 0; // a byte-order mark isn't data
   const endRow = () => {
     row.push(field);
+    if (row.length > MAX_CSV_COLUMNS) columnsTruncated = true;
     rows.push(row.slice(0, MAX_CSV_COLUMNS));
     row = [];
     field = "";
@@ -132,11 +138,11 @@ export function parseCsv(text: string, maxRows = MAX_CSV_ROWS): { rows: string[]
     } else if (c === "\n" || c === "\r") {
       if (c === "\r" && text[i + 1] === "\n") i++;
       endRow();
-      if (rows.length >= maxRows) return { rows, truncated: i < text.length - 1 };
+      if (rows.length >= maxRows) return { rows, truncated: i < text.length - 1, columnsTruncated };
     } else field += c;
   }
   if (field !== "" || row.length > 0) endRow();
-  return { rows, truncated: false };
+  return { rows, truncated: false, columnsTruncated };
 }
 
 /** A size in bytes, as the list shows it. */

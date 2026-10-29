@@ -67,6 +67,9 @@ const AGENT_REQUEST_TIMEOUT_MS = 12_000;
  *  before saying it's still starting. */
 const EDITOR_TIMEOUT_MS = 25_000;
 
+/** How long a Canvas file (up to 5 MB) may take to arrive, body and all. */
+const CANVAS_FILE_TIMEOUT_MS = 30_000;
+
 /**
  * Archive/restore do real snapshot I/O on the box — the agent uploads or
  * downloads the tree + conversation and rebuilds the worktree — which routinely
@@ -206,7 +209,15 @@ export class AgentClient {
   /** One file of the session's Canvas, as bytes: 400 INVALID_REQUEST for a
    *  path that names none, 404 NOT_FOUND for none, 413 TOO_LARGE past 5 MB. */
   async readCanvasFile(identity: WorkspaceIdentity, path: string): Promise<Uint8Array> {
-    const response = await this.send("GET", `/workspaces/${identity.workspaceId}/canvas/file?path=${encodeURIComponent(path)}`, identity);
+    // Up to 5 MB through the provider's proxy: the window covers reading
+    // the body too, so it's wider than a call's.
+    const response = await this.send(
+      "GET",
+      `/workspaces/${identity.workspaceId}/canvas/file?path=${encodeURIComponent(path)}`,
+      identity,
+      undefined,
+      CANVAS_FILE_TIMEOUT_MS,
+    );
     return new Uint8Array(await response.arrayBuffer());
   }
 

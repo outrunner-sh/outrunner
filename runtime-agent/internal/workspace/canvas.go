@@ -58,16 +58,27 @@ func (s *Service) removeCanvas(workspaceID string) {
 	_ = os.RemoveAll(s.canvasDir(workspaceID))
 }
 
+// maxCanvasWalk bounds the entries a listing looks at, so a Canvas the agent
+// filled with a build's output can't keep it walking.
+const maxCanvasWalk = 50_000
+
 // CanvasFiles lists a session's Canvas: its regular files, by their paths in
-// it, newest first. Hidden files and folders, and links, are left out: a
-// link could point anywhere on the box.
+// it, newest first, the newest MaxCanvasFiles of them. Hidden files and
+// folders, and links, are left out: a link could point anywhere on the box.
+// Times are to the nanosecond: the app reloads an open file when its time
+// changes, and an agent often writes a file twice in a second.
 func (s *Service) CanvasFiles(workspaceID string) (protocol.CanvasResponse, error) {
 	if _, ok := s.getFacts(workspaceID); !ok {
 		return protocol.CanvasResponse{}, ErrUnknownWorkspace
 	}
 	dir := s.canvasDir(workspaceID)
-	files := []protocol.CanvasFile{}
-	truncated := false
+	type entry struct {
+		path    string
+		size    int64
+		modTime time.Time
+	}
+	var entries []entry
+	walked, truncated := 0, false
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if path == dir && errors.Is(err, fs.ErrNotExist) {
@@ -78,6 +89,10 @@ func (s *Service) CanvasFiles(workspaceID string) (protocol.CanvasResponse, erro
 		if path == dir {
 			return nil
 		}
+		if walked++; walked > maxCanvasWalk {
+			truncated = true
+			return filepath.SkipAll
+		}
 		if strings.HasPrefix(d.Name(), ".") {
 			if d.IsDir() {
 				return filepath.SkipDir
@@ -87,10 +102,6 @@ func (s *Service) CanvasFiles(workspaceID string) (protocol.CanvasResponse, erro
 		if !d.Type().IsRegular() {
 			return nil
 		}
-		if len(files) >= MaxCanvasFiles {
-			truncated = true
-			return filepath.SkipAll
-		}
 		info, err := d.Info()
 		if err != nil {
 			return nil
@@ -99,22 +110,25 @@ func (s *Service) CanvasFiles(workspaceID string) (protocol.CanvasResponse, erro
 		if err != nil {
 			return nil
 		}
-		files = append(files, protocol.CanvasFile{
-			Path:       filepath.ToSlash(rel),
-			Size:       info.Size(),
-			ModifiedAt: info.ModTime().UTC().Format(time.RFC3339),
-		})
+		entries = append(entries, entry{filepath.ToSlash(rel), info.Size(), info.ModTime()})
 		return nil
 	})
 	if err != nil {
 		return protocol.CanvasResponse{}, err
 	}
-	sort.SliceStable(files, func(i, j int) bool {
-		if files[i].ModifiedAt != files[j].ModifiedAt {
-			return files[i].ModifiedAt > files[j].ModifiedAt
+	sort.SliceStable(entries, func(i, j int) bool {
+		if !entries[i].modTime.Equal(entries[j].modTime) {
+			return entries[i].modTime.After(entries[j].modTime)
 		}
-		return files[i].Path < files[j].Path
+		return entries[i].path < entries[j].path
 	})
+	if len(entries) > MaxCanvasFiles {
+		entries, truncated = entries[:MaxCanvasFiles], true
+	}
+	files := make([]protocol.CanvasFile, 0, len(entries))
+	for _, e := range entries {
+		files = append(files, protocol.CanvasFile{Path: e.path, Size: e.size, ModifiedAt: e.modTime.UTC().Format(time.RFC3339Nano)})
+	}
 	return protocol.CanvasResponse{Dir: dir, Files: files, Truncated: truncated}, nil
 }
 
