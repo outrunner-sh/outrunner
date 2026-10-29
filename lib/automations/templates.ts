@@ -41,7 +41,7 @@ Read the change with \`gh pr diff\` and \`gh pr view\`, and the surrounding code
 
 For each meaningful issue, leave a review comment on the line or lines it concerns. Then post one top-level comment on the pull request with your overall summary and a score out of 5 ("Score: X/5").
 
-Post the line comments together, as one review, from a JSON file. Write review.json:
+Post the line comments together, as one review, from a JSON file. Create a temporary directory with \`mktemp -d /tmp/code-review.XXXXXX\`, and keep review.json and comment.md there. Use its absolute paths in the commands below (shown as /tmp/code-review.XXXXXX). Write /tmp/code-review.XXXXXX/review.json:
 
 \`\`\`json
 {
@@ -54,9 +54,11 @@ Post the line comments together, as one review, from a JSON file. Write review.j
 }
 \`\`\`
 
-and post it with \`gh api repos/{owner}/{repo}/pulls/<number>/reviews --method POST --input review.json\` (\`gh\` fills in \`{owner}\` and \`{repo}\`). Newlines in a body are \`\\n\` in the JSON. Leave the review's own body out. Every \`line\` must be one the diff shows. To post a single comment instead, \`gh api repos/{owner}/{repo}/pulls/<number>/comments -F body=@comment.md -f path=<path> -F line=<line> -f side=RIGHT -f commit_id=<sha>\`: \`-F\` reads the file, while \`-f body=@comment.md\` posts the text "@comment.md" itself.
+and post it with \`gh api repos/{owner}/{repo}/pulls/<number>/reviews --method POST --input /tmp/code-review.XXXXXX/review.json\` (\`gh\` fills in \`{owner}\` and \`{repo}\`). Newlines in a body are \`\\n\` in the JSON. Leave the review's own body out. Every \`line\` and \`start_line\` must be one the diff shows. To post a single comment instead, \`gh api repos/{owner}/{repo}/pulls/<number>/comments -F body=@/tmp/code-review.XXXXXX/comment.md -f path=<path> -F line=<line> -f side=RIGHT -f commit_id=<sha>\`: \`-F\` reads the file, while \`-f body=@/tmp/code-review.XXXXXX/comment.md\` posts the text "@/tmp/code-review.XXXXXX/comment.md" itself.
 
-Then read your comments back with \`gh api repos/{owner}/{repo}/pulls/<number>/comments --paginate\`. Fix any whose body isn't the text you meant with \`gh api repos/{owner}/{repo}/pulls/comments/<id> --method PATCH -F body=@comment.md\`.
+If GitHub rejects the review with 422, read the validation error. For a line outside the diff, move the comment onto a line the diff shows, or move its feedback into the top-level summary and remove it from the review. Correct any other invalid fields before retrying. A rejected review posts none of its comments; submit the corrected review again if any line comments remain.
+
+Then read your comments back with \`gh api repos/{owner}/{repo}/pulls/<number>/comments --paginate\`. Fix any whose body isn't the text you meant with \`gh api repos/{owner}/{repo}/pulls/comments/<id> --method PATCH -F body=@/tmp/code-review.XXXXXX/comment.md\`.
 
 If nothing fits the list above, leave no line comments: post only the top-level comment with the score and a short note that the change looks good.
 

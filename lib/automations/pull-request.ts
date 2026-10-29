@@ -214,6 +214,8 @@ export function runPrompt(automationPrompt: string, event: PullRequestEvent, app
     // Automations keep the prompt their template had when they were made, so
     // this reaches the ones made before the Code Review template said it: a
     // session that once posted `-f body=@file` left the path as the comment.
+    // TODO: Remove this backstop once the existing Code Review automations
+    // have been re-created from the updated template.
     "To post a comment's body from a file, pass it with `gh api -F body=@file` (or `--input` a JSON file, or `gh pr comment --body-file`), never `-f body=@file`, which posts the text \"@file\" itself. Read what you posted back, and fix a comment whose body isn't what you meant.",
     event.trigger === "pull_request.synchronize"
       ? "The pull request has new commits since it was last looked at: look at it again, and don't repeat what's already been said on it."
