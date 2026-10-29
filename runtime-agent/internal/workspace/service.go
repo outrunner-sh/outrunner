@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1849,7 +1848,6 @@ func (s *Service) unknownActivity(reason string) (time.Time, bool) {
 			s.activityUnknownSince = now
 			s.writeUnknownActivitySince(s.activityUnknownSince)
 		}
-		s.activityUnknownClearFailed = false
 	}
 	s.activityUnknownReason = reason
 	if s.activityUnknownLogged.IsZero() || now.Sub(s.activityUnknownLogged) >= unknownActivityLogInterval {
@@ -1898,8 +1896,10 @@ func (s *Service) clearUnknownActivity() {
 	if s.Root != "" && !s.activityUnknownClearAttempted {
 		err := os.Remove(s.unknownActivityPath())
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			if !s.activityUnknownClearFailed {
+				log.Printf("runtime-agent: couldn't clear persisted unknown activity time: %v", err)
+			}
 			s.activityUnknownClearFailed = true
-			log.Printf("runtime-agent: couldn't clear persisted unknown activity time: %v", err)
 		} else {
 			s.activityUnknownClearAttempted = true
 			s.activityUnknownClearFailed = false
@@ -1930,46 +1930,67 @@ func (s *Service) readUnknownActivitySince() time.Time {
 		}
 		return time.Time{}
 	}
-	since, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data)))
-	if err != nil {
-		log.Printf("runtime-agent: couldn't parse persisted unknown activity time: %v", err)
-		return time.Time{}
+	var marker struct {
+		Since      time.Time `json:"since"`
+		LifetimeID string    `json:"lifetimeId"`
 	}
-	since = since.UTC()
-	if booted := systemBootTime(); !booted.IsZero() && since.Before(booted) {
-		log.Printf("runtime-agent: persisted unknown activity time %s predates box boot %s; starting a new protection window", since.Format(time.RFC3339), booted.Format(time.RFC3339))
-		return time.Time{}
-	}
-	return since
-}
-
-// systemBootTime is the box lifetime boundary for persisted activity state.
-// runtime-agent itself may restart many times in one box lifetime; an old
-// unknown interval from before a box resume must not suppress the next wake.
-func systemBootTime() time.Time {
-	data, err := os.ReadFile("/proc/stat")
-	if err != nil {
-		return time.Time{}
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 2 || fields[0] != "btime" {
-			continue
-		}
-		seconds, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil {
+	decodeErr := json.Unmarshal(data, &marker)
+	if decodeErr != nil || marker.Since.IsZero() {
+		// A timestamp from the earlier marker format has no container identity;
+		// reset it once rather than risk carrying an expired interval into a
+		// resumed box.
+		if _, legacyErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data))); legacyErr == nil {
+			log.Printf("runtime-agent: persisted unknown activity time has no box lifetime; starting a new protection window")
 			return time.Time{}
 		}
-		return time.Unix(seconds, 0).UTC()
+		if decodeErr != nil {
+			log.Printf("runtime-agent: couldn't parse persisted unknown activity time: %v", decodeErr)
+		} else {
+			log.Printf("runtime-agent: persisted unknown activity time has no timestamp")
+		}
+		return time.Time{}
 	}
-	return time.Time{}
+	if lifetime := boxLifetimeID(); marker.LifetimeID == "" || (lifetime != "" && marker.LifetimeID != lifetime) {
+		log.Printf("runtime-agent: persisted unknown activity time belongs to another box lifetime; starting a new protection window")
+		return time.Time{}
+	}
+	return marker.Since.UTC()
+}
+
+// boxLifetimeID uses PID 1's start time, which changes when a stopped
+// container starts again but stays stable across runtime-agent restarts.
+func boxLifetimeID() string {
+	data, err := os.ReadFile("/proc/1/stat")
+	if err != nil {
+		return ""
+	}
+	close := strings.LastIndex(string(data), ")")
+	if close < 0 {
+		return ""
+	}
+	fields := strings.Fields(string(data[close+1:]))
+	// After the command name, the first field is stat field 3 (state), so field
+	// 22 (starttime) is at index 19.
+	if len(fields) <= 19 {
+		return ""
+	}
+	return fields[19]
 }
 
 func (s *Service) writeUnknownActivitySince(since time.Time) {
 	if s.Root == "" {
 		return
 	}
-	if err := os.WriteFile(s.unknownActivityPath(), []byte(since.Format(time.RFC3339Nano)), 0o600); err != nil {
+	marker := struct {
+		Since      time.Time `json:"since"`
+		LifetimeID string    `json:"lifetimeId"`
+	}{Since: since.UTC(), LifetimeID: boxLifetimeID()}
+	data, err := json.Marshal(marker)
+	if err != nil {
+		log.Printf("runtime-agent: couldn't encode unknown activity time: %v", err)
+		return
+	}
+	if err := os.WriteFile(s.unknownActivityPath(), data, 0o600); err != nil {
 		log.Printf("runtime-agent: couldn't persist unknown activity time: %v", err)
 	}
 }
