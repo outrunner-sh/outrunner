@@ -164,6 +164,7 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
         liveRunners: own.filter((r) => !["archived", "archiving", "failed"].includes(r.status)).length,
         environment: mission.environmentId ? { id: mission.environmentId, name: envName.get(mission.environmentId) ?? "Project" } : null,
         sessionStatus: mission.status,
+        provider: mission.provider,
         standing: standings[mission.id] ?? null,
         runners: runnerViews.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
         createdAt: mission.createdAt,
