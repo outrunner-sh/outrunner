@@ -641,6 +641,8 @@ export const ErrorCode = z.enum([
   "CONFLICT",
   // A session credential on an engine that runs sessions on its own login.
   "UNSUPPORTED",
+  // A chat (?chat=) the session doesn't have on this box (AGENT_FEATURE_CHATS).
+  "CHAT_NOT_FOUND",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
