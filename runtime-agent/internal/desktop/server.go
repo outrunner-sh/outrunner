@@ -15,7 +15,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -616,14 +618,45 @@ func cleanLabel(label string) string {
 	return label
 }
 
-// running is the toolbox's recording in progress, if there is one.
+// The toolbox's recordings are the box's, and its desktop is shared by the
+// box's sessions, while this server is one session's. So each recording is
+// tagged with the session it is for: the label the toolbox puts in its file
+// name (<id>_<label>_<date>_<time>.mp4) starts with the session's tag, and
+// a server only stops, or keeps, recordings carrying its own.
+
+// sessionTag is the tag of this server's session: a short hash of its
+// files folder, the same for every run of the server in that session.
+func (s *server) sessionTag() string {
+	sum := sha256.Sum256([]byte(s.cfg.Folder))
+	return "s" + hex.EncodeToString(sum[:6])
+}
+
+// ownLabel reads the label back from a recording's file name: ok when it
+// carries this session's tag, label what was given after it ("" for none).
+func (s *server) ownLabel(rec *Recording) (label string, ok bool) {
+	parts := strings.Split(strings.TrimSuffix(filepath.Base(rec.FilePath), ".mp4"), "_")
+	if len(parts) < 4 {
+		return "", false
+	}
+	tagged := strings.Join(parts[1:len(parts)-2], "_")
+	tag := s.sessionTag()
+	if tagged == tag {
+		return "", true
+	}
+	if rest, found := strings.CutPrefix(tagged, tag+"-"); found {
+		return rest, true
+	}
+	return "", false
+}
+
+// running is this session's recording in progress, if there is one.
 func (s *server) running(ctx context.Context) (*Recording, error) {
 	recordings, err := s.cfg.Toolbox.Recordings(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for i := range recordings {
-		if recordings[i].Status == "recording" {
+		if _, ours := s.ownLabel(&recordings[i]); ours && recordings[i].Status == "recording" {
 			return &recordings[i], nil
 		}
 	}
@@ -637,11 +670,11 @@ func (s *server) recordStart(ctx context.Context, label string) (map[string]any,
 		return nil, fmt.Errorf("a recording is already running (since %s): call record_stop first", current.StartTime)
 	}
 	label = cleanLabel(label)
-	toolboxLabel := label
-	if toolboxLabel == "" {
-		toolboxLabel = "session"
+	tagged := s.sessionTag()
+	if label != "" {
+		tagged += "-" + label
 	}
-	rec, err := s.cfg.Toolbox.StartRecording(ctx, toolboxLabel)
+	rec, err := s.cfg.Toolbox.StartRecording(ctx, tagged)
 	if err != nil {
 		return nil, err
 	}
@@ -657,9 +690,10 @@ func (s *server) recordStart(ctx context.Context, label string) (map[string]any,
 	}, nil
 }
 
-// recordStop stops the recording running and keeps it; with none running,
-// it keeps the one its watchdog stopped at the time limit, still in the
-// toolbox's folder (CapRecording), whichever run of this server started it.
+// recordStop stops this session's recording and keeps it; with none
+// running, it keeps the one its watchdog stopped at the time limit, still in
+// the toolbox's folder (CapRecording), whichever run of this server started
+// it. Another session's recordings, and one that failed, are left alone.
 func (s *server) recordStop(ctx context.Context) (map[string]any, error) {
 	recordings, err := s.cfg.Toolbox.Recordings(ctx)
 	if err != nil {
@@ -668,10 +702,13 @@ func (s *server) recordStop(ctx context.Context) (map[string]any, error) {
 	var current, stopped *Recording
 	for i := range recordings {
 		rec := &recordings[i]
+		if _, ours := s.ownLabel(rec); !ours {
+			continue
+		}
 		switch {
 		case rec.Status == "recording":
 			current = rec
-		case stopped == nil || rec.StartTime > stopped.StartTime:
+		case rec.Status == "completed" && (stopped == nil || rec.StartTime > stopped.StartTime):
 			stopped = rec
 		}
 	}
@@ -679,15 +716,17 @@ func (s *server) recordStop(ctx context.Context) (map[string]any, error) {
 	text := ""
 	switch {
 	case current != nil:
+		label, _ := s.ownLabel(current)
 		rec, err := s.cfg.Toolbox.StopRecording(ctx, current.ID)
 		if err != nil {
 			return nil, err
 		}
-		if saved, err = s.keep(ctx, rec, labelOf(current)); err != nil {
+		if saved, err = s.keep(ctx, rec, label); err != nil {
 			return nil, err
 		}
 	case stopped != nil:
-		if saved, err = s.keep(ctx, *stopped, labelOf(stopped)); err != nil {
+		label, _ := s.ownLabel(stopped)
+		if saved, err = s.keep(ctx, *stopped, label); err != nil {
 			return nil, err
 		}
 		text = fmt.Sprintf("The recording reached its %s limit and stopped by itself. ", s.cfg.MaxRecording)
@@ -698,17 +737,6 @@ func (s *server) recordStop(ctx context.Context) (map[string]any, error) {
 		"content":           []any{map[string]any{"type": "text", "text": text + saved.describe()}},
 		"structuredContent": saved,
 	}, nil
-}
-
-// labelOf reads back the label a recording was started with, from its file
-// name (<id>_<label>_<date>_<time>.mp4), for a recording this server didn't
-// start (an earlier run of it, before the agent's CLI restarted it).
-func labelOf(rec *Recording) string {
-	parts := strings.Split(strings.TrimSuffix(filepath.Base(rec.FilePath), ".mp4"), "_")
-	if len(parts) >= 4 && parts[1] != "session" {
-		return cleanLabel(strings.Join(parts[1:len(parts)-2], "-"))
-	}
-	return ""
 }
 
 // keep moves a stopped recording's file into the files folder, named by

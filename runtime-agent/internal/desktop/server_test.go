@@ -300,7 +300,8 @@ func TestARecordingIsKeptInTheSessionFolderUnderItsLabel(t *testing.T) {
 	if text, r := c.tool(ToolRecordStart, map[string]any{"label": "Login fix: before!"}); isError(r) {
 		t.Fatal(text)
 	}
-	if b := fake.body("/computeruse/recordings/start"); b["label"] != "login-fix-before" {
+	tag := (&server{cfg: cfg}).sessionTag()
+	if b := fake.body("/computeruse/recordings/start"); b["label"] != tag+"-login-fix-before" {
 		t.Errorf("label sent = %v", b)
 	}
 	if text, r := c.tool(ToolRecordStart, nil); !isError(r) || !strings.Contains(text, "already running") {
@@ -325,6 +326,36 @@ func TestARecordingIsKeptInTheSessionFolderUnderItsLabel(t *testing.T) {
 	// Moved, not copied: the toolbox lists it no more.
 	if entries, _ := os.ReadDir(fake.dir); len(entries) != 0 {
 		t.Errorf("left in the toolbox's folder: %v", entries)
+	}
+}
+
+func TestRecordStopLeavesOtherSessionsAndFailedRecordingsAlone(t *testing.T) {
+	fake, toolbox := newFakeToolbox(t)
+	cfg, _ := testConfig(t, toolbox.URL)
+	other := &server{cfg: Config{Folder: t.TempDir()}}
+	for id, item := range map[string]struct {
+		tag    string
+		status string
+	}{
+		"other-session": {tag: other.sessionTag(), status: "completed"},
+		"failed":        {tag: (&server{cfg: cfg}).sessionTag(), status: "failed"},
+	} {
+		path := filepath.Join(fake.dir, id+"_"+item.tag+"_20261029_090000.mp4")
+		if err := os.WriteFile(path, []byte("MP4DATA"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		fake.recs[id] = &Recording{ID: id, FilePath: path, Status: item.status, StartTime: "2026-10-29T09:00:00Z"}
+	}
+
+	c := startServer(t, cfg)
+	if text, result := c.tool(ToolRecordStop, nil); !isError(result) || !strings.Contains(text, "no recording is running") {
+		t.Fatalf("record_stop adopted an unrelated recording: %q", text)
+	}
+	if n := fake.called("POST /computeruse/recordings/stop"); n != 0 {
+		t.Errorf("stopped unrelated recordings %d times", n)
+	}
+	if entries, _ := os.ReadDir(fake.dir); len(entries) != 2 {
+		t.Errorf("recordings in toolbox folder = %v", entries)
 	}
 }
 
