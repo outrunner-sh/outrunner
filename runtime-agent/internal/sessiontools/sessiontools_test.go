@@ -38,3 +38,22 @@ func TestWrapper(t *testing.T) {
 		t.Fatalf("Wrapper = %q", got)
 	}
 }
+
+// memory's search is its flag and any words after; remember's note is its
+// arguments or stdin, shared with the org on --org.
+func TestParseMemory(t *testing.T) {
+	tool, args, err := parse("memory", []string{"--search", "pnpm", "tests"}, strings.NewReader(""))
+	if err != nil || tool != "read_memory" || string(args) != `{"query":"pnpm tests"}` {
+		t.Fatalf("memory = %q, %s, %v", tool, args, err)
+	}
+	if _, args, _ := parse("memory", nil, strings.NewReader("")); string(args) != `{"query":""}` {
+		t.Fatalf("memory alone = %s", args)
+	}
+	tool, args, err = parse("remember", []string{"--org", "-"}, strings.NewReader("CI runs on Node 22.\n"))
+	if err != nil || tool != "remember" || string(args) != `{"body":"CI runs on Node 22.","scope":"org"}` {
+		t.Fatalf("remember = %q, %s, %v", tool, args, err)
+	}
+	if _, _, err := parse("remember", nil, strings.NewReader("  ")); err == nil {
+		t.Fatal("remember took no note")
+	}
+}

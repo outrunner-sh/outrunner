@@ -201,6 +201,7 @@ test("an agent's suggestion is filed for its user to accept, in its session's or
   const toolDeps = {
     actor: async (userId: string, orgId: string) => (orgId === ORG && userId === "u-member" ? member : null),
     learnings: d,
+    memory: { list: async () => [], get: async () => null, insert: async () => assert.fail(), remove: async () => false },
     base: "https://app.outrunner.sh",
   };
   const scope = { userId: "u-member", orgId: ORG, workspaceId: "ws-1" };

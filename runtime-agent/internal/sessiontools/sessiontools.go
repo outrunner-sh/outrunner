@@ -1,7 +1,9 @@
 // Package sessiontools is a session's own commands for reaching Outrunner,
 // for the agent working in it, Claude or Codex alike: `outrunner-session
 // suggest-learning` suggests a standing instruction for every future
-// session, which the user accepts or dismisses in Settings → Learnings.
+// session, which the user accepts or dismisses in Settings → Learnings;
+// `memory` reads the user's long-term memory, and `remember` adds a note to
+// it for the next sessions.
 //
 // A command is a shell command rather than an MCP tool so that both agents
 // have it the same way (Codex sessions launch no MCP relay, ask.go). It runs
@@ -96,6 +98,13 @@ Commands:
       accepts or dismisses it in Outrunner (Settings → Learnings); nothing
       is saved until they do. --org suggests it for the whole org, for its
       admins to accept. The instruction may come on stdin instead ("-").
+  memory [--search <words>]
+      Print the notes in your long-term memory, the user's and the org's,
+      newest first; --search keeps those holding each word.
+  remember [--org] <note>
+      Keep a note for the next sessions: a fact worth knowing later, one
+      or two lines. --org shares it with everyone in the org. Never a
+      secret. The note may come on stdin instead ("-").
 `
 
 // Main runs a command and returns its exit status: 0 done, 1 refused or
@@ -151,6 +160,36 @@ func parse(command string, args []string, stdin io.Reader) (string, json.RawMess
 		}
 		raw, err := json.Marshal(map[string]string{"scope": scope, "title": strings.TrimSpace(*title), "body": body})
 		return "suggest_learning", raw, err
+	case "memory":
+		flags := flag.NewFlagSet(command, flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		search := flags.String("search", "", "")
+		if err := flags.Parse(args); err != nil {
+			return "", nil, err
+		}
+		query := strings.TrimSpace(strings.Join(append([]string{*search}, flags.Args()...), " "))
+		raw, err := json.Marshal(map[string]string{"query": query})
+		return "read_memory", raw, err
+	case "remember":
+		flags := flag.NewFlagSet(command, flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		org := flags.Bool("org", false, "")
+		if err := flags.Parse(args); err != nil {
+			return "", nil, err
+		}
+		body, err := text(flags.Args(), stdin)
+		if err != nil {
+			return "", nil, err
+		}
+		if body == "" {
+			return "", nil, errors.New("remember needs the note")
+		}
+		scope := "personal"
+		if *org {
+			scope = "org"
+		}
+		raw, err := json.Marshal(map[string]string{"scope": scope, "body": body})
+		return "remember", raw, err
 	}
 	return "", nil, fmt.Errorf("no command %q", command)
 }
