@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -14,6 +15,38 @@ import (
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/codex"
 )
+
+func TestUnknownActivityStartsFreshWhenBoxLifetimeChanges(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.lifetimeID = func() string { return "current-container" }
+	old := unknownActivityMarker{
+		Since:      time.Now().Add(-3 * time.Hour),
+		LifetimeID: "previous-container",
+	}
+	data, err := json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.unknownActivityPath(), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	last, active := s.unknownActivity("tmux list-sessions timed out")
+	if !active || time.Since(last) > time.Minute {
+		t.Errorf("unknown activity = (%s, %t), want a fresh active window", last, active)
+	}
+	data, err = os.ReadFile(s.unknownActivityPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var current unknownActivityMarker
+	if err := json.Unmarshal(data, &current); err != nil {
+		t.Fatal(err)
+	}
+	if current.LifetimeID != "current-container" || current.Since.Before(last) {
+		t.Errorf("persisted marker = %+v, want current container and fresh time", current)
+	}
+}
 
 func TestOrientationUsesRecordedFacts(t *testing.T) {
 	s := NewService(t.TempDir())

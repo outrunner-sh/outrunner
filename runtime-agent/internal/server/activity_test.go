@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -27,22 +26,6 @@ func (s activitySessions) ListSessions(context.Context) ([]string, error) {
 
 func (activitySessions) KillSession(context.Context, string) error {
 	return errors.New("no such session")
-}
-
-func activityLifetimeID() string {
-	stat, err := os.ReadFile("/proc/1/stat")
-	if err != nil {
-		return ""
-	}
-	close := strings.LastIndex(string(stat), ")")
-	if close < 0 {
-		return ""
-	}
-	fields := strings.Fields(string(stat[close+1:]))
-	if len(fields) <= 19 {
-		return ""
-	}
-	return fields[19]
 }
 
 func TestActivityTakesOnlyTheListingTokenAndCountsWrites(t *testing.T) {
@@ -101,45 +84,29 @@ func TestActivityTakesOnlyTheListingTokenAndCountsWrites(t *testing.T) {
 
 	// If tmux cannot be listed, the service's persisted unknown interval is
 	// authoritative; a restarted agent's later boot time must not replace it.
-	if lifetime := activityLifetimeID(); lifetime != "" {
-		sessions.err = errors.New("tmux list-sessions timed out")
-		since := srv.startedAt.Add(-time.Second)
-		marker, err := json.Marshal(struct {
-			Since      time.Time `json:"since"`
-			LifetimeID string    `json:"lifetimeId"`
-		}{Since: since, LifetimeID: lifetime})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, "runtime-agent-activity-unknown-since"), marker, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		_, unknown := call(protocol.ListingWorkspaceID, "GET", "/activity")
-		unknownAt, err := time.Parse(time.RFC3339, unknown.LastActivity)
-		if err != nil || !unknownAt.Before(srv.startedAt) {
-			t.Errorf("unknown activity = %q, want the persisted time before agent boot", unknown.LastActivity)
-		}
+	sessions.err = errors.New("tmux list-sessions timed out")
+	_, unknown := call(protocol.ListingWorkspaceID, "GET", "/activity")
+	unknownAt, err := time.Parse(time.RFC3339, unknown.LastActivity)
+	if err != nil || !unknown.TurnInProgress {
+		t.Errorf("unknown activity = %+v, want an active fail-safe interval", unknown)
+	}
+	srv.startedAt = unknownAt.Add(time.Minute)
+	_, unknownWithLaterBoot := call(protocol.ListingWorkspaceID, "GET", "/activity")
+	if unknownWithLaterBoot.LastActivity != unknown.LastActivity {
+		t.Errorf("unknown activity moved to boot time %q, want %q", unknownWithLaterBoot.LastActivity, unknown.LastActivity)
+	}
 
-		// A different PID 1 start time represents a stopped and resumed box.
-		// Its old, expired marker must not make the new lifetime immediately idle.
-		stale, err := json.Marshal(struct {
-			Since      time.Time `json:"since"`
-			LifetimeID string    `json:"lifetimeId"`
-		}{Since: time.Now().Add(-3 * time.Hour), LifetimeID: lifetime + "-old"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, "runtime-agent-activity-unknown-since"), stale, 0o600); err != nil {
-			t.Fatal(err)
-		}
+	// Where the platform exposes a box-lifetime ID, a new runtime-agent reads
+	// the same persisted interval rather than using its later boot time.
+	if _, err := os.Stat(filepath.Join(root, "runtime-agent-activity-unknown-since")); err == nil {
 		resumedSessions := &activitySessions{err: sessions.err}
 		resumed := New(secret, workspace.NewServiceWithSessions(root, resumedSessions))
+		resumed.startedAt = unknownAt.Add(time.Minute)
 		resumedTS := httptest.NewServer(resumed.Handler())
 		defer resumedTS.Close()
 		_, resumedActivity := callAt(resumedTS.URL, protocol.ListingWorkspaceID, "GET", "/activity")
-		resumedAt, err := time.Parse(time.RFC3339, resumedActivity.LastActivity)
-		if err != nil || time.Since(resumedAt) > time.Minute {
-			t.Errorf("resumed activity = %q, want a fresh unknown-activity window", resumedActivity.LastActivity)
+		if resumedActivity.LastActivity != unknown.LastActivity {
+			t.Errorf("resumed activity = %q, want persisted unknown time %q", resumedActivity.LastActivity, unknown.LastActivity)
 		}
 	}
 

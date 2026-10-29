@@ -48,6 +48,11 @@ type Sessions interface {
 	CapturePaneStyled(ctx context.Context, name string) (string, error)
 }
 
+type unknownActivityMarker struct {
+	Since      time.Time `json:"since"`
+	LifetimeID string    `json:"lifetimeId"`
+}
+
 // Service holds the on-box layout and the tmux manager. One instance per agent.
 type Service struct {
 	// Root is the Runtime Computer working area, e.g. /home/runtime.
@@ -69,6 +74,7 @@ type Service struct {
 	activityUnknownExpiredLogged  bool
 	activityUnknownClearAttempted bool
 	activityUnknownClearFailed    bool
+	lifetimeID                    func() string
 
 	// sendLocks serializes prompt delivery per workspace. SendKeys types then
 	// submits in separate tmux commands, so concurrent sends on one session
@@ -266,6 +272,7 @@ func NewServiceWithSessions(root string, manager Sessions) *Service {
 	return &Service{
 		Root:        root,
 		tmux:        manager,
+		lifetimeID:  boxLifetimeID,
 		env:         env,
 		secrets:     secrets,
 		facts:       map[string]workspaceFacts{},
@@ -1930,10 +1937,7 @@ func (s *Service) readUnknownActivitySince() time.Time {
 		}
 		return time.Time{}
 	}
-	var marker struct {
-		Since      time.Time `json:"since"`
-		LifetimeID string    `json:"lifetimeId"`
-	}
+	var marker unknownActivityMarker
 	decodeErr := json.Unmarshal(data, &marker)
 	if decodeErr != nil || marker.Since.IsZero() {
 		// A timestamp from the earlier marker format has no container identity;
@@ -1950,16 +1954,22 @@ func (s *Service) readUnknownActivitySince() time.Time {
 		}
 		return time.Time{}
 	}
-	if lifetime := boxLifetimeID(); marker.LifetimeID == "" || (lifetime != "" && marker.LifetimeID != lifetime) {
+	lifetime := s.lifetimeID()
+	if marker.LifetimeID == "" || lifetime == "" || marker.LifetimeID != lifetime {
 		log.Printf("runtime-agent: persisted unknown activity time belongs to another box lifetime; starting a new protection window")
 		return time.Time{}
 	}
 	return marker.Since.UTC()
 }
 
-// boxLifetimeID uses PID 1's start time, which changes when a stopped
-// container starts again but stays stable across runtime-agent restarts.
+// boxLifetimeID combines the kernel boot ID with PID 1's start time. A VM
+// reboot changes the former; a container start on a shared host changes the
+// latter. Both remain stable across runtime-agent restarts.
 func boxLifetimeID() string {
+	bootID, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return ""
+	}
 	data, err := os.ReadFile("/proc/1/stat")
 	if err != nil {
 		return ""
@@ -1974,17 +1984,19 @@ func boxLifetimeID() string {
 	if len(fields) <= 19 {
 		return ""
 	}
-	return fields[19]
+	return strings.TrimSpace(string(bootID)) + ":" + fields[19]
 }
 
 func (s *Service) writeUnknownActivitySince(since time.Time) {
 	if s.Root == "" {
 		return
 	}
-	marker := struct {
-		Since      time.Time `json:"since"`
-		LifetimeID string    `json:"lifetimeId"`
-	}{Since: since.UTC(), LifetimeID: boxLifetimeID()}
+	lifetime := s.lifetimeID()
+	if lifetime == "" {
+		log.Printf("runtime-agent: couldn't persist unknown activity time without a box lifetime id")
+		return
+	}
+	marker := unknownActivityMarker{Since: since.UTC(), LifetimeID: lifetime}
 	data, err := json.Marshal(marker)
 	if err != nil {
 		log.Printf("runtime-agent: couldn't encode unknown activity time: %v", err)
