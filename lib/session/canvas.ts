@@ -91,6 +91,20 @@ export function canvasFileUrl(workspaceId: string, path: string): string {
   return `/api/workspaces/${workspaceId}/canvas/file?path=${encodeURIComponent(path)}`;
 }
 
+/** Check an inline page before mounting its opaque frame, where the route's
+ *  HTTP error body can't be read. Successful bodies needn't be downloaded. */
+export async function canvasFileError(url: string, signal?: AbortSignal): Promise<string | null> {
+  const response = await fetch(url, { cache: "no-store", signal });
+  if (response.ok) {
+    if (response.body) await response.body.cancel().catch(() => {});
+    return null;
+  }
+  const body = await response.json().catch(() => null) as { error?: unknown } | null;
+  return typeof body?.error === "string" && body.error.trim()
+    ? body.error
+    : `Couldn't read that file (${response.status}).`;
+}
+
 /** The most rows and columns a CSV shows: past them, the table says so. */
 export const MAX_CSV_ROWS = 1000;
 export const MAX_CSV_COLUMNS = 50;
@@ -200,8 +214,8 @@ function cleanCanvasPath(path: string): string | null {
  * original styles are restored before paint. Fixed overlays do not determine
  * intrinsic height. Measurements are coalesced per animation frame, and a
  * repeated viewport-growth pattern is stopped for viewport-sized descendants.
- * Clipped subtrees contribute only their container; DOM animations settle
- * before mutation-driven measurements run.
+ * Clipped subtrees contribute only their container; mutation measurements
+ * run at most once per 150ms so continuous animations still get updates.
  */
 export const VISUAL_HEIGHT_MESSAGE = "outrunnerVisualHeight";
 export const VISUAL_EMBED_SCRIPT = `<script>(()=>{
@@ -220,7 +234,7 @@ export const VISUAL_EMBED_SCRIPT = `<script>(()=>{
         if(n.nodeType===1){
           const style=getComputedStyle(n);
           if(style.position==="fixed"||style.display==="none")return;
-          bottom=Math.max(bottom,n.getBoundingClientRect().bottom);
+          bottom=Math.max(bottom,n.getBoundingClientRect().bottom+Math.max(0,parseFloat(style.marginBottom)||0));
           if(style.overflowY!=="visible")return;
         }else if(n.nodeType===3&&n.textContent.trim()){
           range.selectNodeContents(n);bottom=Math.max(bottom,range.getBoundingClientRect().bottom);
@@ -251,8 +265,8 @@ export const VISUAL_EMBED_SCRIPT = `<script>(()=>{
     requestAnimationFrame(()=>{queued=false;const force=forceNext;forceNext=false;post(force)});
   };
   const mutations=new MutationObserver(()=>{
-    growing=0;clearTimeout(mutationTimer);
-    mutationTimer=setTimeout(()=>{mutationTimer=0;schedule()},150);
+    growing=0;
+    if(!mutationTimer)mutationTimer=setTimeout(()=>{mutationTimer=0;schedule()},150);
   });
   mutations.observe(root,options);
   new ResizeObserver(()=>schedule()).observe(root);

@@ -13,6 +13,7 @@ import remarkGfm from "remark-gfm";
 
 import { boxImageUrl, localImagePath } from "@/lib/runtime/chat-image";
 import {
+  canvasFileError,
   canvasFileUrl,
   canvasKind,
   canvasPathFrom,
@@ -199,7 +200,7 @@ function MarkdownImage({ src, alt }: { src?: string | Blob; alt?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
   if (inCanvas && workspaceId && canvasKind(inCanvas) === "html") {
-    return <InlineVisual workspaceId={workspaceId} path={inCanvas} title={alt || inCanvas} />;
+    return <InlineVisual key={`${workspaceId}:${inCanvas}`} workspaceId={workspaceId} path={inCanvas} title={alt || inCanvas} />;
   }
   if (!url || current.failed) {
     const retry =
@@ -261,8 +262,22 @@ function MarkdownImage({ src, alt }: { src?: string | Blob; alt?: string }) {
  * and when it loads), with its title and a link to open it in a tab.
  */
 function InlineVisual({ workspaceId, path, title }: { workspaceId: string; path: string; title: string }) {
+  const url = canvasFileUrl(workspaceId, path);
   const frame = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(360);
+  const [read, setRead] = useState<{ error?: string } | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    let live = true;
+    canvasFileError(url, controller.signal).then(
+      (error) => live && setRead(error ? { error } : {}),
+      (error: unknown) => live && setRead({ error: error instanceof Error ? error.message : "Couldn't read that file." }),
+    );
+    return () => {
+      live = false;
+      controller.abort();
+    };
+  }, [url]);
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow) return;
@@ -274,7 +289,14 @@ function InlineVisual({ workspaceId, path, title }: { workspaceId: string; path:
     frame.current?.contentWindow?.postMessage(VISUAL_HEIGHT_MESSAGE, "*");
     return () => window.removeEventListener("message", onMessage);
   }, []);
-  const url = canvasFileUrl(workspaceId, path);
+  if (read?.error) {
+    return (
+      <span className="md-image-missing" title={path}>
+        <ImageOff aria-hidden />
+        {title} couldn&apos;t be shown: {read.error}
+      </span>
+    );
+  }
   return (
     <span className="md-visual">
       <span className="md-visual-head">
@@ -283,16 +305,20 @@ function InlineVisual({ workspaceId, path, title }: { workspaceId: string; path:
           Open
         </a>
       </span>
-      <iframe
-        ref={frame}
-        src={`${url}&embed=1`}
-        title={title}
-        sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
-        referrerPolicy="no-referrer"
-        loading="lazy"
-        onLoad={(event) => event.currentTarget.contentWindow?.postMessage(VISUAL_HEIGHT_MESSAGE, "*")}
-        style={{ height }}
-      />
+      {read === null ? (
+        <span className="p-3 text-xs text-muted-foreground">Loading…</span>
+      ) : (
+        <iframe
+          ref={frame}
+          src={`${url}&embed=1`}
+          title={title}
+          sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          onLoad={(event) => event.currentTarget.contentWindow?.postMessage(VISUAL_HEIGHT_MESSAGE, "*")}
+          style={{ height }}
+        />
+      )}
     </span>
   );
 }
