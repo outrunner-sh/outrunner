@@ -98,7 +98,8 @@
         "code": "AGENT_UNREACHABLE",
         "message": "agent did not respond"
       }
-    }
+    },
+    { "error": { "code": "CHAT_NOT_FOUND", "message": "unknown chat" } }
   ],
   "SessionUrls": [
     {
@@ -279,6 +280,24 @@
     {
       "content": "Plan it first",
       "mode": "plan"
+    }
+  ],
+  "CreateChatRequest": [
+    {
+      "chatId": "3f6c1d2e-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+    },
+    {
+      "chatId": "b7e1",
+      "agent": "codex",
+      "from": "main",
+      "fromName": "Main chat"
+    },
+    {
+      "chatId": "c9a2",
+      "from": "b7e1",
+      "fromName": "Refactor",
+      "side": true,
+      "noStart": true
     }
   ],
   "CompactRequest": [
@@ -599,6 +618,45 @@
         "codex-mcp",
         "canvas",
         "agent-context"
+      ]
+    },
+    {
+      "status": "ok",
+      "gateways": [
+        "anthropic",
+        "deepseek",
+        "moonshot",
+        "openrouter",
+        "zai"
+      ],
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "features": [
+        "restore-imports",
+        "session-environment",
+        "agent-config",
+        "restore-model",
+        "editor",
+        "ports",
+        "codex-gateway",
+        "project-instructions",
+        "request-secrets",
+        "warm-hooks",
+        "multi-repo",
+        "multi-repo-snapshots",
+        "git-credential",
+        "multi-repo-warm",
+        "plan-mode",
+        "compact",
+        "files",
+        "message-keys",
+        "chats",
+        "agent-context",
+        "environment-skills",
+        "codex-mcp",
+        "canvas"
       ]
     }
   ],

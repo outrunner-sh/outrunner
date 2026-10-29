@@ -17,7 +17,9 @@ import {
   ArchiveWorkspaceRequest,
   ChangedFileDiffResponse,
   ChangesResponse,
+  ChatId,
   CompactRequest,
+  CreateChatRequest,
   CreateWorkspaceRequest,
   PlanActionRequest,
   PlanActionResponse,
@@ -26,6 +28,7 @@ import {
   CanvasResponse,
   FilesResponse,
   LISTING_WORKSPACE_ID,
+  MAIN_CHAT,
   PortsResponse,
   RestoreWorkspaceRequest,
   RestoreWorkspaceResult,
@@ -113,6 +116,12 @@ export class AgentRequestError extends Error {
   }
 }
 
+/** The query naming a chat on a session's route or stream (AGENT_FEATURE_CHATS):
+ *  none for its main chat, which every agent serves unnamed. */
+export function chatQuery(chat: string | undefined, join: "?" | "&" = "?"): string {
+  return chat && chat !== MAIN_CHAT ? `${join}chat=${encodeURIComponent(chat)}` : "";
+}
+
 export class AgentClient {
   private readonly target: AgentTarget;
   private readonly fetchFn: FetchFn;
@@ -132,17 +141,18 @@ export class AgentClient {
     }>;
   }
 
-  startWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
+  /** Start the session's agent, or one of its chats' (`chat`). */
+  startWorkspace(identity: WorkspaceIdentity, chat?: string): Promise<unknown> {
     return this.post(
-      `/workspaces/${identity.workspaceId}/start`,
+      `/workspaces/${identity.workspaceId}/start${chatQuery(chat)}`,
       identity,
       undefined,
       AGENT_START_TIMEOUT_MS,
     );
   }
 
-  stopWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/stop`, identity);
+  stopWorkspace(identity: WorkspaceIdentity, chat?: string): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/stop${chatQuery(chat)}`, identity);
   }
 
   /**
@@ -153,23 +163,36 @@ export class AgentClient {
     identity: WorkspaceIdentity,
     content: string,
     options: Omit<SendMessageRequest, "content"> = {},
+    chat?: string,
   ): Promise<unknown> {
     // A mode only where one is asked for: a prompt that names none is the
     // body every agent has always taken.
     const body = SendMessageRequest.parse({ content, ...options });
-    return this.post(`/workspaces/${identity.workspaceId}/message`, identity, body, AGENT_SEND_TIMEOUT_MS);
+    return this.post(`/workspaces/${identity.workspaceId}/message${chatQuery(chat)}`, identity, body, AGENT_SEND_TIMEOUT_MS);
+  }
+
+  /** Make a chat in the session, forked or afresh, and start it
+   *  (CreateChatRequest). An agent from before chats answers 404 with no
+   *  error envelope. */
+  createChat(identity: WorkspaceIdentity, req: CreateChatRequest): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/chats`, identity, CreateChatRequest.parse(req), AGENT_START_TIMEOUT_MS);
+  }
+
+  /** End one of the session's chats and forget it; one already gone is fine. */
+  deleteChat(identity: WorkspaceIdentity, chat: string): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/chats/${encodeURIComponent(ChatId.parse(chat))}/delete`, identity);
   }
 
   /** Approve the plan the session's agent waits on (PlanActionRequest). */
-  async approvePlan(identity: WorkspaceIdentity): Promise<PlanActionResponse> {
-    const raw = await this.post(`/workspaces/${identity.workspaceId}/plan`, identity, PlanActionRequest.parse({ action: "approve" }), AGENT_SEND_TIMEOUT_MS);
+  async approvePlan(identity: WorkspaceIdentity, chat?: string): Promise<PlanActionResponse> {
+    const raw = await this.post(`/workspaces/${identity.workspaceId}/plan${chatQuery(chat)}`, identity, PlanActionRequest.parse({ action: "approve" }), AGENT_SEND_TIMEOUT_MS);
     return PlanActionResponse.parse(raw);
   }
 
   /** Compact the session's conversation, as /compact does in its terminal.
    *  Answers once the compaction is under way; the stream shows it done. */
-  async compact(identity: WorkspaceIdentity, req: CompactRequest = {}): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/compact`, identity, CompactRequest.parse(req), AGENT_SEND_TIMEOUT_MS);
+  async compact(identity: WorkspaceIdentity, req: CompactRequest = {}, chat?: string): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/compact${chatQuery(chat)}`, identity, CompactRequest.parse(req), AGENT_SEND_TIMEOUT_MS);
   }
 
   /**
@@ -231,28 +254,28 @@ export class AgentClient {
 
   /** Stop the turn the workspace's session is running, as Escape does in its
    *  terminal; a session not running one is already stopped. */
-  interrupt(identity: WorkspaceIdentity): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/interrupt`, identity);
+  interrupt(identity: WorkspaceIdentity, chat?: string): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/interrupt${chatQuery(chat)}`, identity);
   }
 
   /** Answer the questions the workspace's session is waiting on (its agent's
    *  ask_user call). `questions` are the call's, as the transcript has them:
    *  the agent refuses an answer to any it isn't waiting on (409 CONFLICT). */
-  answer(identity: WorkspaceIdentity, req: AnswerRequest): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/answer`, identity, AnswerRequest.parse(req));
+  answer(identity: WorkspaceIdentity, req: AnswerRequest, chat?: string): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/answer${chatQuery(chat)}`, identity, AnswerRequest.parse(req));
   }
 
   /** Answer the request for secrets the workspace's session is waiting on
    *  (its agent's request_secrets call): the values go into its session,
    *  never into a log. An answer to a request it isn't waiting on is 409
    *  CONFLICT. */
-  provideSecrets(identity: WorkspaceIdentity, req: ProvideSecretsRequest): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/secrets`, identity, ProvideSecretsRequest.parse(req));
+  provideSecrets(identity: WorkspaceIdentity, req: ProvideSecretsRequest, chat?: string): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/secrets${chatQuery(chat)}`, identity, ProvideSecretsRequest.parse(req));
   }
 
-  resumeWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
+  resumeWorkspace(identity: WorkspaceIdentity, chat?: string): Promise<unknown> {
     return this.post(
-      `/workspaces/${identity.workspaceId}/resume`,
+      `/workspaces/${identity.workspaceId}/resume${chatQuery(chat)}`,
       identity,
       undefined,
       AGENT_START_TIMEOUT_MS,
@@ -262,8 +285,8 @@ export class AgentClient {
   /** Give the workspace's session its own credential, applied at its next
    *  launch. An agent from before per-session credentials answers 404 with no
    *  error envelope; one that doesn't know the session, 404 NOT_FOUND. */
-  setAuth(identity: WorkspaceIdentity, req: SetAuthRequest): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/auth`, identity, SetAuthRequest.parse(req));
+  setAuth(identity: WorkspaceIdentity, req: SetAuthRequest, chat?: string): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/auth${chatQuery(chat)}`, identity, SetAuthRequest.parse(req));
   }
 
   /** Install the user's own agent setup on the computer. */
@@ -296,9 +319,9 @@ export class AgentClient {
 
   /** Switch the workspace's session to another model; the agent relaunches
    *  Claude on it with the conversation continued. */
-  setModel(identity: WorkspaceIdentity, req: SetModelRequest): Promise<unknown> {
+  setModel(identity: WorkspaceIdentity, req: SetModelRequest, chat?: string): Promise<unknown> {
     return this.post(
-      `/workspaces/${identity.workspaceId}/model`,
+      `/workspaces/${identity.workspaceId}/model${chatQuery(chat)}`,
       identity,
       req,
       AGENT_MODEL_SWITCH_TIMEOUT_MS,
@@ -358,8 +381,8 @@ export class AgentClient {
    * Mission Engine's polling cadence; the agent maintains the event-driven
    * fields in memory and shells out to git for the rest at request time.
    */
-  async workspaceSummary(identity: WorkspaceIdentity): Promise<WorkspaceSummary> {
-    const raw = await this.get(`/workspaces/${identity.workspaceId}/summary`, identity);
+  async workspaceSummary(identity: WorkspaceIdentity, chat?: string): Promise<WorkspaceSummary> {
+    const raw = await this.get(`/workspaces/${identity.workspaceId}/summary${chatQuery(chat)}`, identity);
     return WorkspaceSummary.parse(raw);
   }
 
@@ -390,12 +413,12 @@ export class AgentClient {
    * browser-ready host (any credential already in it, so no headers) plus a
    * short Runtime token the agent verifies.
    */
-  ptyUrl(identity: WorkspaceIdentity): string {
+  ptyUrl(identity: WorkspaceIdentity, chat?: string): string {
     const base = this.target.wsBaseUrl
       .replace(/^http/, "ws")
       .replace(/\/$/, "");
     const token = mintRuntimeToken(identity, this.target.secret);
-    return `${base}/pty?token=${encodeURIComponent(token)}`;
+    return `${base}/pty?token=${encodeURIComponent(token)}${chatQuery(chat, "&")}`;
   }
 
   /**
@@ -408,12 +431,12 @@ export class AgentClient {
    * Resume is via `?lastEventId=<seq>`; the agent starts its watcher at that
    * JSONL byte offset so no event is duplicated or skipped across reconnects.
    */
-  eventsUrl(identity: WorkspaceIdentity): string {
+  eventsUrl(identity: WorkspaceIdentity, chat?: string): string {
     const base = this.target.wsBaseUrl
       .replace(/^http/, "ws")
       .replace(/\/$/, "");
     const token = mintRuntimeToken(identity, this.target.secret);
-    return `${base}/events-ws?token=${encodeURIComponent(token)}`;
+    return `${base}/events-ws?token=${encodeURIComponent(token)}${chatQuery(chat, "&")}`;
   }
 
   /**
@@ -422,10 +445,10 @@ export class AgentClient {
    * that speak plain SSE (the Daytona verify script), since `fetch()` cannot
    * open a `wss:` URL.
    */
-  eventsSseUrl(identity: WorkspaceIdentity): string {
+  eventsSseUrl(identity: WorkspaceIdentity, chat?: string): string {
     const base = this.target.wsBaseUrl.replace(/\/$/, "");
     const token = mintRuntimeToken(identity, this.target.secret);
-    return `${base}/events?token=${encodeURIComponent(token)}`;
+    return `${base}/events?token=${encodeURIComponent(token)}${chatQuery(chat, "&")}`;
   }
 
   private async post(

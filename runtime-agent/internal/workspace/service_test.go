@@ -322,7 +322,7 @@ func TestClaudeConvDirEncodesWorktreePath(t *testing.T) {
 }
 
 func TestUserTurnCountMissingDirIsZero(t *testing.T) {
-	if got := userTurnCount(t.TempDir() + "/does-not-exist"); got != 0 {
+	if got := userTurnCount(t.TempDir()+"/does-not-exist", nil); got != 0 {
 		t.Errorf("userTurnCount(missing) = %d, want 0", got)
 	}
 }
@@ -632,4 +632,20 @@ func TestASwitchCancelledWhileWaitingRecordsNothing(t *testing.T) {
 	if f, _ := s.getFacts("ws-x"); f.Model != "sonnet" {
 		t.Errorf("a cancelled switch recorded %q", f.Model)
 	}
+}
+
+// sendLock exposes unacquired state for fixtures; production uses lockSend.
+func (s *Service) sendLock(workspaceID string) *sendState {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	return s.sendStateHeld(workspaceID)
+}
+
+func (st *sendState) Lock() {
+	if st.owner != nil {
+		st.owner.sendMu.Lock()
+		st.users++
+		st.owner.sendMu.Unlock()
+	}
+	st.mu.Lock()
 }

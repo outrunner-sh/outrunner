@@ -11,9 +11,11 @@
 package conversation
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -400,4 +402,57 @@ func IsInterruption(msg *protocol.ConversationMessage) bool {
 		}
 	}
 	return strings.HasPrefix(strings.TrimSpace(text.String()), Interrupted)
+}
+
+// Read decodes the renderable records of a session file from byte offset
+// from to its last whole line, each with its ID, as a Watcher delivers them:
+// for a reader that wants what the conversation holds now rather than a tail
+// of it (a fork's transcript, an edit finding its message). An offset inside
+// a line starts at the next one.
+func Read(path string, from int64) ([]Event, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if from < 0 || from > info.Size() {
+		from = 0
+	}
+	partial := false
+	if from > 0 {
+		var prior [1]byte
+		if _, err := f.ReadAt(prior[:], from-1); err != nil {
+			return nil, err
+		}
+		partial = prior[0] != '\n'
+	}
+	if _, err := f.Seek(from, io.SeekStart); err != nil {
+		return nil, err
+	}
+	reader := bufio.NewReader(f)
+	cursor := from
+	var events []Event
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		cursor += int64(len(line))
+		if partial {
+			partial = false
+			continue
+		}
+		if ev, ok := decode(line); ok {
+			ev.ID = cursor
+			events = append(events, ev)
+		}
+	}
+	return events, nil
 }

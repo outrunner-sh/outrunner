@@ -113,7 +113,7 @@ func (s *Service) SetInstructions(workspaceID, instructions string) error {
 
 // instructions are the session's project instructions, or "".
 func (s *Service) instructions(workspaceID string) string {
-	data, _ := os.ReadFile(s.instructionsPath(workspaceID))
+	data, _ := os.ReadFile(s.instructionsPath(s.owner(workspaceID)))
 	return strings.TrimSpace(string(data))
 }
 
@@ -252,7 +252,7 @@ func (s *Service) putEnvRoot(workspaceID string, files map[string]string) error 
 // first: its credential and gateway, sourced after, win over a variable of
 // the same name.
 func (s *Service) withEnvironment(workspaceID string, argv []string) []string {
-	path := s.envFiles().path(workspaceID)
+	path := s.envFiles().path(s.owner(workspaceID)) // a chat's is its session's
 	if _, err := os.Stat(path); err != nil {
 		return argv
 	}
@@ -272,6 +272,9 @@ func (s *Service) withEnvironment(workspaceID string, argv []string) []string {
 // it again. With no setup script, the session's files are copied into its
 // worktree, once.
 func (s *Service) startSetup(workspaceID, worktree string, env []string) {
+	if s.isChat(workspaceID) {
+		return // its session's launch ran them in this worktree
+	}
 	setup := s.setupPath(workspaceID)
 	if !fileExists(setup) && !fileExists(setup+".run") {
 		s.copyEnvFilesOnce(workspaceID, worktree)

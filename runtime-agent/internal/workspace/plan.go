@@ -161,8 +161,7 @@ func (s *Service) Compact(workspaceID, instructions string) error {
 	if _, ok := s.getFacts(workspaceID); !ok {
 		return ErrUnknownWorkspace
 	}
-	lock := s.sendLock(workspaceID)
-	lock.Lock()
+	lock := s.lockSend(workspaceID)
 	defer lock.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
@@ -293,8 +292,7 @@ const PlanApproved = "The plan is approved. Go ahead and implement it."
 // a mode switch running at the same time can't be undone by an older read.
 func (s *Service) PlanAnsweredMode(workspaceID string) string {
 	defer s.lockLifecycle(workspaceID)()
-	lock := s.sendLock(workspaceID)
-	lock.Lock()
+	lock := s.lockSend(workspaceID)
 	defer lock.Unlock()
 	f, _ := s.getFacts(workspaceID)
 	mode := ModeBuild
@@ -393,8 +391,7 @@ func (s *Service) ApprovePlan(workspaceID string) (string, error) {
 	}
 	if f.Agent != AgentCodex {
 		unlock := s.lockLifecycle(workspaceID)
-		lock := s.sendLock(workspaceID)
-		lock.Lock()
+		lock := s.lockSend(workspaceID)
 		picked, err := s.pickPlanOptionHeld(workspaceID)
 		if picked {
 			s.updateFacts(workspaceID, func(f *workspaceFacts) { f.Plan = false })

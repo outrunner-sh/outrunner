@@ -350,6 +350,35 @@ export const PlanActionResponse = z.object({
 });
 export type PlanActionResponse = z.infer<typeof PlanActionResponse>;
 
+/** The agent runs several chats in a session: POST /workspaces/{id}/chats
+ *  makes one, and `?chat=` names one on the session's routes and streams. An
+ *  agent without it has the main chat alone, which they reach unnamed. */
+export const AGENT_FEATURE_CHATS = "chats";
+
+/** The chat every session has: the session itself, which an agent from before
+ *  chats runs, and where a send that names no chat goes. */
+export const MAIN_CHAT = "main";
+
+/** A chat's id as the agent takes it: the control plane's UUIDs. */
+export const ChatId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).refine((id) => id !== MAIN_CHAT);
+
+/** POST /workspaces/{id}/chats: a new chat in the session, started unless
+ *  `noStart`. `agent` is its own (absent: the session's); `from` forks it
+ *  from one of the session's chats ("main" for the main one), its handoff
+ *  naming that chat `fromName`; `side` makes it a side chat about `from`. */
+export const CreateChatRequest = z
+  .object({
+    chatId: ChatId,
+    agent: z.enum(["claude", "codex"]).optional(),
+    from: z.union([z.literal(MAIN_CHAT), ChatId]).optional(),
+    fromName: z.string().max(200).optional(),
+    side: z.boolean().optional(),
+    noStart: z.boolean().optional(),
+  })
+  .strict()
+  .refine((req) => !req.side || req.from !== undefined, { message: "A side chat is about another chat." });
+export type CreateChatRequest = z.infer<typeof CreateChatRequest>;
+
 /** The agent compacts a session's conversation (POST /workspaces/{id}/compact). */
 export const AGENT_FEATURE_COMPACT = "compact";
 
@@ -612,6 +641,8 @@ export const ErrorCode = z.enum([
   "CONFLICT",
   // A session credential on an engine that runs sessions on its own login.
   "UNSUPPORTED",
+  // A chat (?chat=) the session doesn't have on this box (AGENT_FEATURE_CHATS).
+  "CHAT_NOT_FOUND",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
@@ -859,6 +890,7 @@ export const PROTOCOL_SCHEMAS = {
   TokenUsage,
   WorkspaceStateChanged,
   SendMessageRequest,
+  CreateChatRequest,
   CompactRequest,
   PlanActionRequest,
   PlanActionResponse,

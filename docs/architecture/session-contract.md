@@ -30,6 +30,22 @@ This document is intentionally short. It is invariant. See
 - **Summary** — a compact struct maintained in the agent and served by
   `GET /workspaces/{id}/summary`. What Mission Engine consumes.
 
+## Chats
+
+A Session holds one or more **chats**. Its **main chat** is the Session
+itself, as it was before chats: every input and output above that names no
+chat is the main chat's, so Mission Engine, Slack and the API reach it
+unchanged. Each other chat is a conversation of its own (its own agent,
+model, PTY, Conversation stream and Summary) in the Session's one worktree,
+with the Session's environment and provided secrets; `?chat=<id>` names it
+on the Session's routes and streams. Files and git state are shared: a chat
+sees what another changed. A **fork** starts a chat from another's
+conversation (a cleaned transcript in the worktree's `.context/chats/`, and
+the latest turns sent with its first prompt), on either agent; a **side
+chat** is a fork whose every prompt carries the source chat's newest turns.
+Archive captures the main chat's conversation; the other chats stop with the
+Session.
+
 ## Guarantees
 
 - **Reconnect-safe.** Losing the browser (network, laptop lid, token expiry)

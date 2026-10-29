@@ -270,6 +270,15 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	s := a.s
 	mode, orientation := s.permissionMode(workspaceID), s.orientation(workspaceID, worktree)
 	f, _ := s.getFacts(workspaceID)
+	if f.ClaudeSessionID == "" && resume && len(s.chatKeys(workspaceID)) > 0 {
+		// --continue takes the folder's newest conversation, which may be
+		// one of the session's other chats'.
+		s.pinClaudeSession(workspaceID)
+		f, _ = s.getFacts(workspaceID)
+		// A main chat with no log of its own must start afresh. Folder-wide
+		// --continue could select one of the other chats' conversations.
+		resume = f.ClaudeSessionID != ""
+	}
 	var argv []string
 	switch {
 	case f.ClaudeSessionID != "" && s.SessionLog(workspaceID) != "":
@@ -333,14 +342,17 @@ func (s *Service) claudeConvDir(workspaceID string) string {
 // log — can't be mistaken for our prompt being accepted. Each conversation entry
 // is one JSON line; parse its `type` field (rather than substring-matching
 // `"type":"user"`, which can appear inside an assistant turn's content).
-func userTurnCount(dir string) int {
+//
+// The files of other chats (skip, by session id) aren't counted: they share
+// the folder.
+func userTurnCount(dir string, skip map[string]bool) int {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0
 	}
 	count := 0
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") || skip[strings.TrimSuffix(e.Name(), ".jsonl")] {
 			continue
 		}
 		count += fileUserTurns(filepath.Join(dir, e.Name()))
@@ -387,7 +399,7 @@ func (a claudeAgent) userTurns(workspaceID string) int {
 	if f, _ := s.getFacts(workspaceID); f.ClaudeSessionID != "" {
 		return fileUserTurns(filepath.Join(s.claudeConvDir(workspaceID), f.ClaudeSessionID+".jsonl"))
 	}
-	return userTurnCount(s.claudeConvDir(workspaceID))
+	return userTurnCount(s.claudeConvDir(workspaceID), s.chatSessionIDs(workspaceID))
 }
 
 // sessionLog returns the current Claude JSONL path for a workspace, or "" if
@@ -413,10 +425,12 @@ func (a claudeAgent) sessionLog(workspaceID string) string {
 	if err != nil {
 		return ""
 	}
+	// Not another chat's: the session's chats share its worktree.
+	skip := s.chatSessionIDs(workspaceID)
 	var newest string
 	var newestMod time.Time
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".jsonl" {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".jsonl" || skip[strings.TrimSuffix(e.Name(), ".jsonl")] {
 			continue
 		}
 		info, err := e.Info()

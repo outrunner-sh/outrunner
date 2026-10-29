@@ -7,6 +7,7 @@ import {
   AGENT_FEATURE_AGENT_CONFIG,
   AGENT_FEATURE_CANVAS,
   AGENT_FEATURE_AGENT_CONTEXT,
+  AGENT_FEATURE_CHATS,
   AGENT_FEATURE_CODEX_GATEWAY,
   AGENT_FEATURE_CODEX_MCP,
   AGENT_FEATURE_COMPACT,
@@ -15,6 +16,7 @@ import {
   AGENT_FEATURE_FILES,
   AGENT_FEATURE_GIT_CREDENTIAL,
   AGENT_FEATURE_IMPORTS,
+  AGENT_FEATURE_MESSAGE_KEYS,
   AGENT_FEATURE_MULTI_REPO,
   AGENT_FEATURE_MULTI_REPO_SNAPSHOTS,
   AGENT_FEATURE_MULTI_REPO_WARM,
@@ -166,7 +168,19 @@ test("the newest health fixture names every feature the agent and the control pl
     AGENT_FEATURE_CODEX_MCP,
     AGENT_FEATURE_CANVAS,
     AGENT_FEATURE_AGENT_CONTEXT,
+    AGENT_FEATURE_MESSAGE_KEYS,
+    AGENT_FEATURE_CHATS,
   ]) {
     assert.ok(newest.includes(feature), `the newest AgentHealth fixture lacks ${feature}`);
   }
+});
+
+test("a chat is made with an id of the agent's, and a side chat only about another", () => {
+  const create = (req: unknown) => PROTOCOL_SCHEMAS.CreateChatRequest.safeParse(req).success;
+  assert.equal(create({ chatId: "3f6c1d2e-7a8b-4c9d-8e0f-1a2b3c4d5e6f" }), true);
+  assert.equal(create({ chatId: "main" }), false, "the main chat is the session itself");
+  assert.equal(create({ chatId: "../x" }), false, "an id a file can be named by");
+  assert.equal(create({ chatId: "b7e1", from: "main", side: true }), true);
+  assert.equal(create({ chatId: "b7e1", side: true }), false, "a side chat names the chat it's about");
+  assert.equal(create({ chatId: "b7e1", agent: "gemini" }), false);
 });

@@ -128,6 +128,16 @@ func (s *Service) findRollout(workspaceID string, f workspaceFacts, sessions str
 			return "", transcript.RolloutMeta{}
 		}
 	}
+	if s.sharesWorktree(workspaceID) {
+		// Another chat's Codex may have begun a rollout here since this one
+		// launched: this one's begins no sooner than its own first prompt.
+		prompted, err := time.Parse(time.RFC3339Nano, f.CodexPromptedAt)
+		// Terminal-typed prompts bypass codexPrompted. Retain the launch bound
+		// then; claimedRollouts still excludes other sessions.
+		if err == nil && prompted.After(since) {
+			since = prompted
+		}
+	}
 	since = since.Add(-rolloutFindSlack)
 	worktree := realPath(s.worktreePath(workspaceID))
 	claimed := s.claimedRollouts(workspaceID)
@@ -173,6 +183,23 @@ func (s *Service) findRollout(workspaceID string, f workspaceFacts, sessions str
 	// should the user have started Codex in the same folder since.
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].started.Before(candidates[j].started) })
 	return candidates[0].file, candidates[0].meta
+}
+
+// sharesWorktree reports whether other chats work in a key's worktree: it is
+// a chat, or a session with chats.
+func (s *Service) sharesWorktree(workspaceID string) bool {
+	return s.isChat(workspaceID) || len(s.chatKeys(workspaceID)) > 0
+}
+
+// codexPrompted records a Codex session's first prompt since its launch,
+// before it is sent, while its rollout isn't found (findRollout).
+func (s *Service) codexPrompted(workspaceID string) {
+	f, _ := s.getFacts(workspaceID)
+	if f.Agent != AgentCodex || f.CodexRollout != "" || f.CodexPromptedAt != "" {
+		return
+	}
+	at := time.Now().UTC().Format(time.RFC3339Nano)
+	s.updateFacts(workspaceID, func(f *workspaceFacts) { f.CodexPromptedAt = at })
 }
 
 // claimedRollouts are the rollouts other sessions have found as theirs.
@@ -238,7 +265,7 @@ func (s *Service) prepareRollout(workspaceID string) error {
 	f, _ := s.getFacts(workspaceID)
 	if f.CodexRollout == "" {
 		at := time.Now().UTC().Format(time.RFC3339Nano)
-		s.updateFacts(workspaceID, func(f *workspaceFacts) { f.CodexLaunchedAt = at })
+		s.updateFacts(workspaceID, func(f *workspaceFacts) { f.CodexLaunchedAt, f.CodexPromptedAt = at, "" })
 		return nil
 	}
 	if _, err := os.Stat(f.CodexRollout); err != nil {

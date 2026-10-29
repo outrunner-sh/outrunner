@@ -92,7 +92,7 @@ type Service struct {
 	// each other to `git worktree add` or `tmux new-session` (lifeMu guards the
 	// map). Taken before a send lock, never after.
 	lifeMu    sync.Mutex
-	lifeLocks map[string]*sync.Mutex
+	lifeLocks map[string]*lifecycleState
 
 	// rolloutClaimMu makes finding a Codex session's rollout and claiming it
 	// (codexRollout) one step across sessions.
@@ -127,7 +127,7 @@ type Service struct {
 	// takes (claudeTakes).
 	claudeHelp claudeHelp
 
-	// factsWriteMu serializes updateFacts' read-modify-writes.
+	// factsWriteMu serializes updateFacts' read-modify-writes and deletion.
 	factsWriteMu sync.Mutex
 
 	// codexTails translate the running Codex sessions' rollouts.
@@ -230,6 +230,10 @@ type workspaceFacts struct {
 	// CodexLaunchedAt is when a Codex session whose rollout isn't found yet
 	// was launched: the rollout it begins is no older.
 	CodexLaunchedAt string `json:"codexLaunchedAt,omitempty"`
+	// CodexPromptedAt is when such a session was first sent a prompt since
+	// its launch: Codex begins its rollout then. A worktree several chats
+	// share can hold another chat's rollout begun since the launch.
+	CodexPromptedAt string `json:"codexPromptedAt,omitempty"`
 	// Model is the model the session runs; empty is Claude's own default.
 	Model string `json:"model,omitempty"`
 	// Gateway, when set, runs the session through it on a key of its own (in
@@ -247,6 +251,17 @@ type workspaceFacts struct {
 	// in. Kept across launches, as the model is, until a prompt in build
 	// mode takes it out.
 	Plan bool `json:"plan,omitempty"`
+	// Parent is the session a chat belongs to (chats.go): set for every chat
+	// but its session's main one, which is the session itself. A chat works
+	// in its parent's worktree, with its parent's environment and secrets.
+	Parent string `json:"parent,omitempty"`
+	// Handoff is what a forked chat's first prompt is sent with: where the
+	// conversation it continues is, and its latest turns. Cleared once that
+	// prompt lands.
+	Handoff string `json:"handoff,omitempty"`
+	// SideOf is the chat a side chat asks about: each of its prompts goes
+	// with that chat's newest turns.
+	SideOf string `json:"sideOf,omitempty"`
 	// Name and Title label the session in the desktop's list: the folder's name,
 	// and what the user asked for first.
 	Name      string `json:"name,omitempty"`
@@ -303,7 +318,7 @@ func NewServiceWithSessions(root string, manager Sessions) *Service {
 		secrets:     secrets,
 		facts:       map[string]workspaceFacts{},
 		sendLocks:   map[string]*sendState{},
-		lifeLocks:   map[string]*sync.Mutex{},
+		lifeLocks:   map[string]*lifecycleState{},
 		summaries:   map[string]*Summary{},
 		recorders:   map[string]*cast.Recorder{},
 		lookPath:    exec.LookPath,
@@ -404,7 +419,11 @@ func (s *Service) factsPath(id string) string {
 // worktreePath is where a workspace's Claude works: its worktree under Root, or
 // for an in-place local session, the user's folder itself.
 func (s *Service) worktreePath(id string) string {
-	if f, ok := s.getFacts(id); ok && f.InPlace && f.RepoPath != "" {
+	f, ok := s.getFacts(id)
+	if ok && f.Parent != "" {
+		return s.worktreePath(f.Parent) // a chat works in its session's
+	}
+	if ok && f.InPlace && f.RepoPath != "" {
 		return f.RepoPath
 	}
 	return filepath.Join(s.Root, "workspaces", id)
@@ -834,8 +853,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	}
 	// Held from the busy check through the relaunch, so no prompt can be sent
 	// after Claude looked idle and then be cut off by the kill.
-	lock := s.sendLock(workspaceID)
-	lock.Lock()
+	lock := s.lockSend(workspaceID)
 	defer lock.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err // the request gave up while a prompt was sent: nothing recorded
@@ -914,8 +932,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 func (s *Service) relaunch(ctx context.Context, workspaceID, anthropicToken string, resume bool) (string, error) {
 	// Hold the send lock across the kill+recreate so an in-flight SendMessage
 	// retry loop can't press Enter into the freshly recreated session.
-	lock := s.sendLock(workspaceID)
-	lock.Lock()
+	lock := s.lockSend(workspaceID)
 	defer lock.Unlock()
 	return s.relaunchHeld(ctx, workspaceID, anthropicToken, resume, lock)
 }
@@ -1134,7 +1151,26 @@ func (s *Service) getFacts(workspaceID string) (workspaceFacts, bool) {
 // Stop ends the Claude session and stops the Summary collector, marking the
 // summary's endedAt. The Summary itself is retained so a post-stop
 // SummaryOf still returns the last-known state.
+//
+// A session's other chats stop with it: they work in its worktree, which an
+// archive captures as it is. Stop (and Archive, which calls it) waits for
+// an in-flight SetModel or mode-switch relaunch to release the lifecycle
+// lock before stopping the session (up to switchRelaunchTimeout).
 func (s *Service) Stop(ctx context.Context, workspaceID string) error {
+	defer s.lockLifecycle(workspaceID)()
+	return s.stopHeld(ctx, workspaceID)
+}
+
+// stopHeld requires the lifecycle lock for workspaceID. A session caller
+// holds its parent/session lock before listing chats, then takes each child
+// lock before recursively stopping it. Callers already holding these locks
+// (such as Destroy and endChat) must use this path rather than Stop.
+func (s *Service) stopHeld(ctx context.Context, workspaceID string) error {
+	for _, key := range s.chatKeys(workspaceID) {
+		unlock := s.lockLifecycle(key)
+		_ = s.stopHeld(ctx, key)
+		unlock()
+	}
 	if s.jcode != nil {
 		s.jcode.StopSession(workspaceID)
 		s.endSummary(workspaceID)
@@ -1180,8 +1216,7 @@ func (s *Service) SendPrompt(workspaceID string, p Prompt) error {
 		if p.Mode == ModePlan {
 			return ErrModeUnsupported
 		}
-		lock := s.sendLock(workspaceID)
-		lock.Lock()
+		lock := s.lockSend(workspaceID)
 		defer lock.Unlock()
 		return s.jcode.SendMessage(workspaceID, p.Content)
 	}
@@ -1200,8 +1235,7 @@ func (s *Service) SendPrompt(workspaceID string, p Prompt) error {
 		unlockLifecycle = s.lockLifecycle(workspaceID)
 	}
 	defer func() { unlockLifecycle() }()
-	lock := s.sendLock(workspaceID)
-	lock.Lock()
+	lock := s.lockSend(workspaceID)
 	defer lock.Unlock()
 	if p.RequirePlan {
 		f, ok := s.getFacts(workspaceID)
@@ -1226,13 +1260,18 @@ func (s *Service) SendPrompt(workspaceID string, p Prompt) error {
 	// one while holding the other, so letting it go early can't deadlock.
 	unlockLifecycle()
 	unlockLifecycle = func() {}
-	return s.deliverHeld(workspaceID, s.promptText(workspaceID, p.Content), lock)
+	if err := s.deliverHeld(workspaceID, s.promptText(workspaceID, p.Content), lock); err != nil {
+		return err
+	}
+	s.handedOff(workspaceID)
+	return nil
 }
 
 // promptText is a prompt as the session's agent is given it: as typed, but
 // for a Codex session in plan mode, which is told with each prompt that a
 // plan is wanted (codex.PlanPreamble).
 func (s *Service) promptText(workspaceID, content string) string {
+	content = s.chatPromptText(workspaceID, content)
 	if f, _ := s.getFacts(workspaceID); f.Plan && f.Agent == AgentCodex {
 		return codex.PlanPreamble + content
 	}
@@ -1252,6 +1291,7 @@ func (s *Service) deliverHeld(workspaceID, content string, lock *sendState) erro
 	case retry && s.userTurns(workspaceID) > before:
 		return nil // the earlier copy landed after that send gave up
 	case !retry:
+		s.codexPrompted(workspaceID)
 		before = s.userTurns(workspaceID)
 		if s.awaitingAnswer(ctx, workspaceID, name) {
 			return errAwaitsAnswer
@@ -1357,8 +1397,7 @@ func (s *Service) Interrupt(ctx context.Context, workspaceID string) error {
 	if _, ok := s.getFacts(workspaceID); !ok {
 		return ErrUnknownWorkspace
 	}
-	lock := s.sendLock(workspaceID)
-	lock.Lock()
+	lock := s.lockSend(workspaceID)
 	defer lock.Unlock()
 	return s.interruptHeld(ctx, workspaceID)
 }
@@ -1434,8 +1473,34 @@ const (
 // sendState is one workspace's prompt delivery: the lock that serializes it,
 // and the prompt the last send typed but never saw Claude record.
 type sendState struct {
+	mu      sync.Mutex
+	staged  *stagedPrompt
+	owner   *Service
+	key     string
+	users   int // holders and queued acquisitions, guarded by sendMu
+	retired bool
+}
+
+func (st *sendState) Unlock() {
+	st.mu.Unlock()
+	if st.owner == nil {
+		return
+	}
+	s := st.owner
+	s.sendMu.Lock()
+	st.users--
+	if st.retired && st.users == 0 {
+		st.staged = nil
+		if s.sendLocks[st.key] == st {
+			delete(s.sendLocks, st.key)
+		}
+	}
+	s.sendMu.Unlock()
+}
+
+type lifecycleState struct {
 	sync.Mutex
-	staged *stagedPrompt
+	users int // holders and queued acquisitions, guarded by lifeMu
 }
 
 // stagedPrompt is text SendMessage pasted and submitted without seeing Claude
@@ -1461,8 +1526,7 @@ func (st *sendState) takeStaged(content string, now time.Time) (baseline int, re
 // forgetStagedPrompt drops a staged prompt once its session is replaced: the
 // new Claude's composer is empty, so a retry has to paste again.
 func (s *Service) forgetStagedPrompt(workspaceID string) {
-	lock := s.sendLock(workspaceID)
-	lock.Lock()
+	lock := s.lockSend(workspaceID)
 	lock.staged = nil
 	lock.Unlock()
 }
@@ -1471,27 +1535,58 @@ func (s *Service) forgetStagedPrompt(workspaceID string) {
 // for `defer s.lockLifecycle(id)()`.
 func (s *Service) lockLifecycle(workspaceID string) (unlock func()) {
 	s.lifeMu.Lock()
-	lock, ok := s.lifeLocks[workspaceID]
-	if !ok {
-		lock = &sync.Mutex{}
+	lock := s.lifeLocks[workspaceID]
+	if lock == nil {
+		lock = &lifecycleState{}
 		s.lifeLocks[workspaceID] = lock
 	}
+	lock.users++
 	s.lifeMu.Unlock()
 	lock.Lock()
-	return lock.Unlock
+	return func() {
+		lock.Unlock()
+		s.lifeMu.Lock()
+		lock.users--
+		if lock.users == 0 {
+			delete(s.lifeLocks, workspaceID)
+		}
+		s.lifeMu.Unlock()
+	}
 }
 
-// sendLock returns the per-workspace send state, whose mutex serializes
-// SendMessage, creating it on first use.
-func (s *Service) sendLock(workspaceID string) *sendState {
+// lockSend registers holders and waiters before releasing the map lock, so
+// retiring a chat cannot give concurrent users different send mutexes.
+// The returned state is locked; callers release it with Unlock.
+func (s *Service) lockSend(workspaceID string) *sendState {
 	s.sendMu.Lock()
-	defer s.sendMu.Unlock()
-	lock, ok := s.sendLocks[workspaceID]
-	if !ok {
-		lock = &sendState{}
+	lock := s.sendStateHeld(workspaceID)
+	lock.users++
+	s.sendMu.Unlock()
+	lock.mu.Lock()
+	return lock
+}
+
+func (s *Service) sendStateHeld(workspaceID string) *sendState {
+	lock := s.sendLocks[workspaceID]
+	if lock == nil {
+		lock = &sendState{owner: s, key: workspaceID}
 		s.sendLocks[workspaceID] = lock
 	}
 	return lock
+}
+
+// retireSendState drops staged prompt text after all holders and queued
+// acquisitions finish. Lifecycle entries similarly retain only active users.
+func (s *Service) retireSendState(workspaceID string) {
+	s.sendMu.Lock()
+	if lock := s.sendLocks[workspaceID]; lock != nil {
+		lock.retired = true
+		if lock.users == 0 {
+			lock.staged = nil
+			delete(s.sendLocks, workspaceID)
+		}
+	}
+	s.sendMu.Unlock()
 }
 
 // SessionName exposes the tmux session name the PTY handler attaches to.
@@ -1760,7 +1855,13 @@ func (s *Service) SessionAlive(ctx context.Context, workspaceID string) bool {
 // it may hold commits that were never pushed.
 func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 	defer s.lockLifecycle(workspaceID)()
-	_ = s.Stop(ctx, workspaceID)
+	// Its chats first: they work in the worktree about to go.
+	for _, key := range s.chatKeys(workspaceID) {
+		unlock := s.lockLifecycle(key)
+		s.endChat(ctx, key)
+		unlock()
+	}
+	_ = s.stopHeld(ctx, workspaceID)
 	// An in-place session's directory is the user's own folder: forget the
 	// session, never touch the files.
 	if f, ok := s.getFacts(workspaceID); ok && f.InPlace {
@@ -1792,17 +1893,30 @@ func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 
 func (s *Service) forgetWorkspace(workspaceID string) {
 	s.stopCodexTail(workspaceID)
-	if f, _ := s.getFacts(workspaceID); f.Agent == AgentCodex {
+	f, _ := s.getFacts(workspaceID)
+	if f.Agent == AgentCodex {
 		_ = os.Remove(conversationPath(s.Root, workspaceID)) // its translation
 	}
+	chat := f.Parent != ""
+	// Prompt-path updates hold factsWriteMu while their file write finishes.
+	// Hold it before mu, as updateFacts does, so neither an in-flight write
+	// nor getFacts' disk read can resurrect a deleted chat.
+	s.factsWriteMu.Lock()
 	s.mu.Lock()
 	delete(s.facts, workspaceID)
-	s.mu.Unlock()
 	_ = os.Remove(s.factsPath(workspaceID))
+	s.mu.Unlock()
+	s.factsWriteMu.Unlock()
+	s.retireSendState(workspaceID)
 	s.gatewayFiles().remove(workspaceID)
 	s.authFiles().remove(workspaceID)
-	s.removeEnvironment(workspaceID)
-	s.removeProvided(workspaceID)
+	if !chat {
+		// A chat's environment and secrets are its session's, still in use.
+		s.removeEnvironment(workspaceID)
+		s.removeProvided(workspaceID)
+	} else {
+		_ = os.Remove(filepath.Join(s.Root, "ask", workspaceID+".settings.json"))
+	}
 	s.forgetMessageKeys(workspaceID)
 	s.forgetAsk(workspaceID)
 	s.forgetDesktop(workspaceID)

@@ -120,6 +120,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/editor", s.authed(s.openEditor))
 	mux.HandleFunc("GET /workspaces/{id}/ports", s.authed(s.listPorts))
 	mux.HandleFunc("POST /workspaces/{id}/answer", s.authed(s.answer))
+	mux.HandleFunc("POST /workspaces/{id}/chats", s.authed(s.createChat))
+	mux.HandleFunc("POST /workspaces/{id}/chats/{chat}/delete", s.authed(s.deleteChat))
 	// The session's own relay asks, with the session's ask token rather than
 	// a Runtime token (package ask).
 	mux.HandleFunc("POST /workspaces/{id}/ask", s.ask)
@@ -169,7 +171,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats},
 	})
 }
 
@@ -251,9 +253,13 @@ func (s *Server) startWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
+	key, ok := s.chatOf(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
 	// The Anthropic token is supplied out-of-band by the control plane at
 	// provision time and held in agent memory (M2 wiring); empty here.
-	name, err := s.ws.Start(r.Context(), r.PathValue("id"), "")
+	name, err := s.ws.Start(r.Context(), key, "")
 	respond(w, name, err)
 }
 
@@ -261,7 +267,11 @@ func (s *Server) stopWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
-	err := s.ws.Stop(r.Context(), r.PathValue("id"))
+	key, ok := s.chatOf(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	err := s.ws.Stop(r.Context(), key)
 	respond(w, "stopped", err)
 }
 
@@ -269,7 +279,11 @@ func (s *Server) resumeWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
-	name, err := s.ws.Resume(r.Context(), r.PathValue("id"), "")
+	key, ok := s.chatOf(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	name, err := s.ws.Resume(r.Context(), key, "")
 	respond(w, name, err)
 }
 
@@ -362,7 +376,11 @@ func (s *Server) workspaceSummary(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
-	summary := s.ws.SummaryOf(r.Context(), r.PathValue("id"))
+	key, ok := s.chatOf(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	summary := s.ws.SummaryOf(r.Context(), key)
 	writeJSON(w, http.StatusOK, summary)
 }
 
@@ -560,6 +578,89 @@ func (s *Server) requireWorkspace(w http.ResponseWriter, r *http.Request, worksp
 	return true
 }
 
+// chatOf is the key a control request's chat runs under (workspace.ChatKey):
+// ?chat= names one of the workspace's chats; none, or "main", its main chat,
+// which is all an agent from before chats has. A chat the workspace doesn't
+// have is refused rather than taken for the main one.
+func (s *Server) chatOf(w http.ResponseWriter, r *http.Request, workspaceID string) (string, bool) {
+	chat := r.URL.Query().Get("chat")
+	if chat == "" || chat == workspace.MainChat {
+		return workspaceID, true
+	}
+	if !workspace.ValidChatID(chat) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid chat id")
+		return "", false
+	}
+	if !s.ws.HasChat(workspaceID, chat) {
+		writeError(w, http.StatusNotFound, "CHAT_NOT_FOUND", workspace.ErrUnknownChat.Error())
+		return "", false
+	}
+	return workspace.ChatKey(workspaceID, chat), true
+}
+
+// createChat makes a chat in the workspace's session and starts its agent
+// (workspace.CreateChat): afresh, or forked from one of its chats. Making
+// one that exists starts it, as start does.
+func (s *Server) createChat(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireWorkspace(w, r, id) {
+		return
+	}
+	var req protocol.CreateChatRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if !workspace.ValidChatID(req.ChatID) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid chat id")
+		return
+	}
+	if req.From != "" && req.From != workspace.MainChat && !workspace.ValidChatID(req.From) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid chat to fork")
+		return
+	}
+	if req.Side && req.From == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "a side chat is about another chat: name it in from")
+		return
+	}
+	if err := s.ws.CheckAgent(req.Agent); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	err := s.ws.CreateChat(r.Context(), id, workspace.ChatInput{
+		ChatID: req.ChatID, Agent: req.Agent, From: req.From, FromName: req.FromName, Side: req.Side,
+	})
+	switch {
+	case errors.Is(err, workspace.ErrUnknownChat):
+		writeError(w, http.StatusNotFound, "CHAT_NOT_FOUND", err.Error())
+		return
+	case errors.Is(err, workspace.ErrChatsUnsupported), errors.Is(err, workspace.ErrAgentUnsupported):
+		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
+		return
+	case err != nil:
+		respond(w, "", err)
+		return
+	}
+	if req.NoStart {
+		respond(w, "created", nil)
+		return
+	}
+	name, err := s.ws.Start(r.Context(), workspace.ChatKey(id, req.ChatID), "")
+	respond(w, name, err)
+}
+
+// deleteChat ends one of the workspace's chats and forgets it.
+func (s *Server) deleteChat(w http.ResponseWriter, r *http.Request) {
+	id, chat := r.PathValue("id"), r.PathValue("chat")
+	if !s.requireWorkspace(w, r, id) {
+		return
+	}
+	if !workspace.ValidChatID(chat) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid chat id; the main chat ends with its session")
+		return
+	}
+	respond(w, "deleted", s.ws.DeleteChat(r.Context(), id, chat))
+}
+
 // validWorkspaceID admits the ids the control plane mints (UUIDs) and the short
 // ones tests use. The id becomes a path segment under the agent root, so
 // anything that could climb out of it is refused before it reaches a handler.
@@ -582,6 +683,10 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
+	key, ok := s.chatOf(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
 	var req protocol.SendMessageRequest
 	if !decode(w, r, &req) {
 		return
@@ -594,7 +699,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "mode is plan or build")
 		return
 	}
-	err := s.ws.SendPromptOnce(r.PathValue("id"), workspace.Prompt{Content: req.Content, Mode: req.Mode, Dismiss: req.Dismiss}, req.Key)
+	err := s.ws.SendPromptOnce(key, workspace.Prompt{Content: req.Content, Mode: req.Mode, Dismiss: req.Dismiss}, req.Key)
 	switch {
 	case errors.Is(err, workspace.ErrInvalidMessageKey):
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
@@ -613,6 +718,10 @@ func (s *Server) planAction(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
+	key, ok := s.chatOf(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
 	var req protocol.PlanActionRequest
 	if !decode(w, r, &req) {
 		return
@@ -621,13 +730,13 @@ func (s *Server) planAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "a plan is approved here; revise it with a prompt in plan mode")
 		return
 	}
-	via, err := s.ws.ApprovePlan(r.PathValue("id"))
+	via, err := s.ws.ApprovePlan(key)
 	switch {
 	case errors.Is(err, workspace.ErrNoPlanWaiting):
 		// Answered already (another tab, the terminal): nothing failed. The
 		// answer says the mode the session is in, which only its screen
 		// knows for sure, for the page's toggle.
-		writeJSON(w, http.StatusOK, protocol.PlanActionResponse{Result: "answered", Mode: s.ws.PlanAnsweredMode(r.PathValue("id"))})
+		writeJSON(w, http.StatusOK, protocol.PlanActionResponse{Result: "answered", Mode: s.ws.PlanAnsweredMode(key)})
 	case errors.Is(err, workspace.ErrModeBusy),
 		errors.Is(err, workspace.ErrSessionUnchecked), errors.Is(err, workspace.ErrNotInterrupted):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
@@ -646,13 +755,17 @@ func (s *Server) compact(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
+	key, ok := s.chatOf(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
 	// A body is optional: /compact alone takes none.
 	var req protocol.CompactRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "malformed JSON body")
 		return
 	}
-	err := s.ws.Compact(r.PathValue("id"), req.Instructions)
+	err := s.ws.Compact(key, req.Instructions)
 	switch {
 	case errors.Is(err, workspace.ErrCompactBusy), errors.Is(err, workspace.ErrSessionUnchecked),
 		errors.Is(err, workspace.ErrPromptStaged):
@@ -669,7 +782,11 @@ func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
-	err := s.ws.Interrupt(r.Context(), r.PathValue("id"))
+	key, ok := s.chatOf(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	err := s.ws.Interrupt(r.Context(), key)
 	if errors.Is(err, workspace.ErrNotInterrupted) {
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
 		return
@@ -775,6 +892,10 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
+	key, ok := s.chatOf(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
 	var req struct {
 		Questions []ask.Question `json:"questions"`
 		ask.Reply
@@ -782,7 +903,7 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	err := s.ws.Answer(r.PathValue("id"), req.Questions, req.Reply)
+	err := s.ws.Answer(key, req.Questions, req.Reply)
 	switch {
 	case errors.Is(err, ask.ErrNotWaiting):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
@@ -911,11 +1032,15 @@ func (s *Server) provideSecrets(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
+	key, ok := s.chatOf(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
 	var req protocol.ProvideSecretsRequest
 	if !decode(w, r, &req) {
 		return
 	}
-	err := s.ws.ProvideSecrets(r.PathValue("id"), req.Keys, req.Values, req.Skipped)
+	err := s.ws.ProvideSecrets(key, req.Keys, req.Values, req.Skipped)
 	switch {
 	case errors.Is(err, ask.ErrNotWaiting):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
@@ -985,6 +1110,10 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
+	key, ok := s.chatOf(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
 	var req protocol.SetModelRequest
 	if !decode(w, r, &req) {
 		return
@@ -994,7 +1123,7 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
-	err = s.ws.SetModel(r.Context(), r.PathValue("id"), choice, "")
+	err = s.ws.SetModel(r.Context(), key, choice, "")
 	switch {
 	case errors.Is(err, workspace.ErrUnknownWorkspace):
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
@@ -1041,6 +1170,10 @@ func (s *Server) setAuth(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
+	key, ok := s.chatOf(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
 	var req protocol.SetAuthRequest
 	if !decode(w, r, &req) {
 		return
@@ -1049,7 +1182,7 @@ func (s *Server) setAuth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
-	err := s.ws.SetAuth(r.Context(), r.PathValue("id"), req.Kind, req.Token)
+	err := s.ws.SetAuth(r.Context(), key, req.Kind, req.Token)
 	if errors.Is(err, workspace.ErrAuthMismatch) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
@@ -1210,6 +1343,10 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Runtime token")
 		return
 	}
+	key, ok := s.chatOf(w, r, claims.WorkspaceID)
+	if !ok {
+		return
+	}
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -1217,7 +1354,7 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	conn.SetReadLimit(maxWSMessageBytes)
 
-	sess, err := ptyx.Attach(s.ws.SessionName(claims.WorkspaceID))
+	sess, err := ptyx.Attach(s.ws.SessionName(key))
 	if err != nil {
 		_ = conn.WriteJSON(protocol.PtyServerMessage{T: "exit", Code: intptr(1)})
 		return
@@ -1240,7 +1377,7 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 		w := writer
 		_ = writeFrame(protocol.PtyServerMessage{T: "role", Writer: &w})
 	}
-	attachment := s.broker.Attach(claims.WorkspaceID, setRole)
+	attachment := s.broker.Attach(key, setRole)
 	defer attachment.Detach()
 
 	// Output pipeline: PTY → coalescer → WS. Coalescing satisfies the frozen
@@ -1266,7 +1403,7 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	go pumpOut(sess, coalescer, writeFrame, func() bool {
-		return s.ws.SessionAlive(context.Background(), claims.WorkspaceID)
+		return s.ws.SessionAlive(context.Background(), key)
 	})
 	pumpIn(conn, sess, attachment.IsWriter, writeFrame, s.touch)
 }
@@ -1343,6 +1480,11 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	key, ok := s.chatOf(w, r, claims.WorkspaceID)
+	if !ok {
+		return
+	}
+
 	fromOffset := int64(0)
 	if h := r.Header.Get("Last-Event-ID"); h != "" {
 		if v, perr := strconv.ParseInt(h, 10, 64); perr == nil && v > 0 {
@@ -1393,7 +1535,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	s.streamEvents(r.Context(), claims.WorkspaceID, fromOffset, writeSSE, writeHeartbeat)
+	s.streamEvents(r.Context(), claims.WorkspaceID, key, fromOffset, writeSSE, writeHeartbeat)
 }
 
 // streamEvents produces the Conversation event stream for a verified session and
@@ -1405,6 +1547,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 //     the current cursor, see below). Return false to stop (the transport is
 //     gone).
 //   - `heartbeat()` keeps the connection alive on idle. Return false to stop.
+//
+// key is the chat whose conversation it follows: the workspace's own id for
+// its main chat (workspace.ChatKey).
 //
 // A synthetic `state` event is emitted first on fresh connects (fromOffset == 0)
 // so subscribers know whether the workspace is running before any conversation
@@ -1420,13 +1565,13 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 // Returns when ctx is cancelled (client gone) or a write fails.
 func (s *Server) streamEvents(
 	ctx context.Context,
-	workspaceID string,
+	workspaceID, key string,
 	fromOffset int64,
 	writeEvent func(id int64, payload []byte) bool,
 	heartbeat func() bool,
 ) {
 	cursor := fromOffset
-	running := s.ws.SessionLog(workspaceID) != ""
+	running := s.ws.SessionLog(key) != ""
 	writeState := func(state string) bool {
 		payload, _ := json.Marshal(protocol.WorkspaceStateChanged{
 			T: "state", WorkspaceID: workspaceID, State: state,
@@ -1453,7 +1598,7 @@ func (s *Server) streamEvents(
 
 	// Watcher tails the JSONL and delivers events on `out`. Its lifetime is tied
 	// to ctx — when the client disconnects, ctx cancels and the watcher exits.
-	pathFn := func() string { return s.ws.SessionLog(workspaceID) }
+	pathFn := func() string { return s.ws.SessionLog(key) }
 	watcher := conversation.New(pathFn, fromOffset)
 	out := make(chan conversation.Event, 64)
 	go watcher.Run(ctx, out)
@@ -1476,7 +1621,7 @@ func (s *Server) streamEvents(
 		case <-ctx.Done():
 			return
 		case <-stateCheck:
-			if s.ws.SessionLog(workspaceID) != "" {
+			if s.ws.SessionLog(key) != "" {
 				stopStateCheck()
 				if !reportRunning() {
 					return
@@ -1535,6 +1680,11 @@ func (s *Server) eventsWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	key, ok := s.chatOf(w, r, claims.WorkspaceID)
+	if !ok {
+		return
+	}
+
 	fromOffset := int64(0)
 	if q := r.URL.Query().Get("lastEventId"); q != "" {
 		if v, perr := strconv.ParseInt(q, 10, 64); perr == nil && v > 0 {
@@ -1586,7 +1736,7 @@ func (s *Server) eventsWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	s.streamEvents(ctx, claims.WorkspaceID, fromOffset, writeEvent, heartbeat)
+	s.streamEvents(ctx, claims.WorkspaceID, key, fromOffset, writeEvent, heartbeat)
 }
 
 // ---------------------------------------------------------------------------

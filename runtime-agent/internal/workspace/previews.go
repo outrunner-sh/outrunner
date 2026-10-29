@@ -37,7 +37,7 @@ func (s *Service) CreatePreview(ctx context.Context, workspaceID string, port in
 	if s.previews == nil {
 		return preview.Preview{}, ErrNoPreviews
 	}
-	return s.previews.Create(ctx, workspaceID, port, label)
+	return s.previews.Create(ctx, s.owner(workspaceID), port, label)
 }
 
 // previewsNote tells the session's agent how to make a preview, in its
