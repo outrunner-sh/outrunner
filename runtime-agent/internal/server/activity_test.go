@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -109,8 +110,8 @@ func TestActivityTakesOnlyTheListingTokenAndCountsWrites(t *testing.T) {
 		if resumedActivity.LastActivity != unknown.LastActivity {
 			t.Errorf("resumed activity = %q, want persisted unknown time %q", resumedActivity.LastActivity, unknown.LastActivity)
 		}
-	} else if errors.Is(err, os.ErrNotExist) {
-		t.Log("skipping persisted-marker restart assertion: no marker is available in this environment")
+	} else if errors.Is(err, os.ErrNotExist) && runtime.GOOS != "linux" {
+		t.Log("skipping persisted-marker restart assertion: box-lifetime sources are Linux-specific")
 	} else {
 		t.Fatalf("stat persisted unknown activity marker: %v", err)
 	}
