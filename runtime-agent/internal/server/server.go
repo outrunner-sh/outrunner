@@ -201,6 +201,10 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
+	if err := workspace.ValidGuide(req.Guide); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
 	var gitUser *workspace.GitUser
 	if req.GitUser != nil {
 		gitUser = &workspace.GitUser{Name: req.GitUser.Name, Email: req.GitUser.Email}

@@ -695,8 +695,9 @@ async function provisionWorkspace({
           // How it writes a pull request, however it's asked to open one.
           guide: prGuide({
             tools: evidenceToolsFor(provider.name),
-            baseBranch: checkouts?.[0].baseBranch ?? workspace.baseBranch,
-            sessionUrl: appUrl(`/workspaces/${workspace.id}`),
+            baseBranch: workspace.baseBranch,
+            checkouts: checkouts ?? undefined,
+            sessionUrl: appUrl(`/workspaces/${workspace.id}`, "https://app.outrunner.sh"),
             userName: owner.name,
           }),
         },

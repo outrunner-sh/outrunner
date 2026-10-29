@@ -114,7 +114,7 @@ export const FOOTER_RULE =
 export function evidenceSteps(tools: EvidenceTools, baseBranch: string): string[] {
   if (!tools.desktop) {
     return [
-      "This session's box has no desktop to verify the change in a browser (or no way to upload what it captured). Still use the template, and don't fail the PR: under Evidence, say in one line why there is none; under \"Verified in the browser\", list what a reviewer should check, each item unchecked with the reason.",
+      "If the diff changes UI or behaviour a person can see, this session's box has no desktop to verify the change in a browser (or no way to upload what it captured). Still use the template, and don't fail the PR: under Evidence, say in one line why there is none; under \"Verified in the browser\", list what a reviewer should check, each item unchecked with the reason.",
     ];
   }
   return [
@@ -137,7 +137,7 @@ export function evidenceSection(tools: EvidenceTools, baseBranch: string): strin
 
 /** Items as Markdown bullets; numbered steps stay numbered. */
 export function bullets(items: string[]): string {
-  return items.map((item) => (/^\d\. /.test(item) ? item : `- ${item}`)).join("\n");
+  return items.map((item) => (/^\d+\. /.test(item) ? item : `- ${item}`)).join("\n");
 }
 
 /** The template, its rules and the footer, for a body to be written from. */
@@ -165,7 +165,7 @@ export const UPDATE_RULE =
 
 /** The whole guide, as a session's standing instructions: when it opens or
  *  updates a pull request, however it was asked to. */
-export function prGuide(input: PrFooterInput & { tools: EvidenceTools; baseBranch: string }): string {
+export function prGuide(input: PrFooterInput & { tools: EvidenceTools; baseBranch: string; checkouts?: { checkout: string; baseBranch: string }[] }): string {
   return `# Pull requests
 
 Whenever you open or update a pull request, write it this way.
@@ -174,7 +174,11 @@ ${templateSection(input)}
 
 ## Evidence for a change a person can see
 
-${evidenceSection(input.tools, input.baseBranch)}
+${input.checkouts?.length ? `For each PR, work in its repository checkout and use that checkout's base branch as <base> in every diff and Before command:
+
+${bullets(input.checkouts.map((c) => `Checkout ${c.checkout}: origin/${c.baseBranch}`))}
+
+` : ""}${evidenceSection(input.tools, input.checkouts?.length ? "<base>" : input.baseBranch)}
 
 ${UPDATE_RULE}`;
 }

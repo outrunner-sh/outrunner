@@ -31,8 +31,8 @@ func (s *Service) SetGuide(workspaceID, guide string) error {
 	if guide == "" {
 		return nil
 	}
-	if len(guide) > maxGuideBytes || strings.ContainsRune(guide, 0) {
-		return fmt.Errorf("%w: guide too large", ErrInvalidEnvironment)
+	if err := ValidGuide(guide); err != nil {
+		return err
 	}
 	return writeKeysFile(s.guidePath(workspaceID), guide+"\n")
 }
@@ -45,3 +45,14 @@ func (s *Service) guide(workspaceID string) string {
 
 // removeGuide removes a destroyed session's guide.
 func (s *Service) removeGuide(workspaceID string) { _ = os.Remove(s.guidePath(workspaceID)) }
+
+// ValidGuide checks a guide before creating a workspace or writing its files.
+func ValidGuide(guide string) error {
+	if len(strings.TrimSpace(guide)) > maxGuideBytes {
+		return fmt.Errorf("%w: guide too large", ErrInvalidEnvironment)
+	}
+	if strings.ContainsRune(guide, 0) {
+		return fmt.Errorf("%w: guide contains NUL", ErrInvalidEnvironment)
+	}
+	return nil
+}

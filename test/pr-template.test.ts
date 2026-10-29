@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { CreateWorkspaceRequest } from "@/lib/runtime/agent-protocol";
-import { EVIDENCE_RULES, evidenceToolsFor, PR_BODY_TEMPLATE, prFooter, prGuide } from "@/lib/session/pr-template";
+import { bullets, EVIDENCE_RULES, evidenceToolsFor, PR_BODY_TEMPLATE, prFooter, prGuide } from "@/lib/session/pr-template";
 
 const INPUT = {
   tools: { desktop: true },
@@ -71,4 +71,22 @@ test("a session's standing guide has the template, the evidence flow and its foo
   assert.doesNotMatch(without, /record_start|get\.docker\.com/);
   // It rides with the session's create, within the protocol's bound.
   assert.ok(CreateWorkspaceRequest.safeParse({ workspaceId: "w", repoFullName: "a/b", branch: "b", baseBranch: "main", guide }).success);
+});
+
+test("multi-repo guides select the base for the repository being changed", () => {
+  const guide = prGuide({ ...INPUT, checkouts: [{ checkout: "web", baseBranch: "main" }, { checkout: "api", baseBranch: "develop" }] });
+  assert.match(guide, /Checkout web: origin\/main/);
+  assert.match(guide, /Checkout api: origin\/develop/);
+  assert.match(guide, /git worktree add \/tmp\/before origin\/<base>/);
+  assert.doesNotMatch(guide, /git worktree add \/tmp\/before origin\/main/);
+});
+
+test("without a desktop only visible changes require missing-evidence explanations", () => {
+  const guide = prGuide({ ...INPUT, tools: { desktop: false } });
+  assert.match(guide, /If the diff changes UI or behaviour a person can see, this session's box has no desktop/);
+  assert.match(guide, /Backend-only or docs changes leave out "Evidence" and "Verified in the browser"/);
+});
+
+test("numbered evidence steps keep double-digit numbering", () => {
+  assert.equal(bullets(["9. Capture", "10. Upload", "Other"]), "9. Capture\n10. Upload\n- Other");
 });
