@@ -117,3 +117,24 @@ test("the Code Review template runs on opened PRs and new commits, and parses as
     assert.ok(parsed.ok, t.id);
   }
 });
+
+test("the Code Review template says how to post line comments so their bodies arrive", () => {
+  const prompt = automationTemplate("code-review")?.prompt ?? "";
+  // One review from a JSON file: bodies of any length, as they were written.
+  assert.match(prompt, /gh api repos\/\{owner\}\/\{repo\}\/pulls\/<number>\/reviews --method POST --input \/tmp\/code-review\.XXXXXX\/review\.json/);
+  assert.match(prompt, /"event": "COMMENT"/);
+  // A single comment's body read from its file with -F, and -f named for what
+  // it does: on #297 the session's `-f body=@file` posted the path.
+  assert.match(prompt, /-F body=@\/tmp\/code-review\.XXXXXX\/comment\.md -f path=<path> -F line=<line>/);
+  assert.match(prompt, /`-f body=@\/tmp\/code-review\.XXXXXX\/comment\.md` posts the text "@\/tmp\/code-review\.XXXXXX\/comment\.md" itself/);
+  assert.match(prompt, /mktemp -d \/tmp\/code-review\.XXXXXX/);
+  assert.match(prompt, /JSON serializer.*quotes, backslashes and newlines/);
+  assert.match(prompt, /removed lines use `side: "LEFT"` and the original file line number/);
+  assert.match(prompt, /set `start_side` to the side of its first line/);
+  assert.match(prompt, /422, read the validation error/);
+  assert.match(prompt, /move its feedback into the top-level summary and remove it from the review/);
+  assert.match(prompt, /A rejected review posts none of its comments; submit the corrected review again/);
+  // Then checked, and mended in place.
+  assert.match(prompt, /read your comments back/);
+  assert.match(prompt, /pulls\/comments\/<id> --method PATCH -F body=@\/tmp\/code-review\.XXXXXX\/comment\.md/);
+});
