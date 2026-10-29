@@ -49,6 +49,7 @@ import { workspaceLabel } from "@/lib/nav/session-title";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId } from "@/lib/providers/registry";
 import { newBoxSize } from "@/lib/orgs/defaults";
+import { appUrl } from "@/lib/orgs/notify";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_CODEX_GATEWAY, AGENT_FEATURE_MULTI_REPO } from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
@@ -92,6 +93,7 @@ import { refillProjectPool, takePooledBox } from "@/lib/runtime/warm-pool.deps";
 import type { BoxSizeId } from "@/lib/runtime/box-sizes";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace, WorkspaceSource } from "@/lib/runtime/types";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
+import { evidenceToolsFor, prGuide } from "@/lib/session/pr-template";
 import { SETTING_UP } from "@/lib/session/provisioning";
 import { getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
 import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
@@ -690,6 +692,14 @@ async function provisionWorkspace({
           ...(agentId !== "claude" && { agent: agentId }),
           // Configure git author so commits are attributed to the user.
           ...(owner.email && { gitUser: { name: owner.name, email: owner.email } }),
+          // How it writes a pull request, however it's asked to open one.
+          guide: prGuide({
+            tools: evidenceToolsFor(provider.name),
+            baseBranch: workspace.baseBranch,
+            checkouts: checkouts ?? undefined,
+            sessionUrl: appUrl(`/workspaces/${workspace.id}`, "https://app.outrunner.sh"),
+            userName: owner.name,
+          }),
         },
         identity,
       );

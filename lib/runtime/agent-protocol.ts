@@ -413,6 +413,10 @@ export const CreateWorkspaceRequest = z.object({
    *  session works in a folder of worktrees, one a repository, each off its
    *  mirror at $ROOT/repos/<checkout>.git, all on `branch`. */
   repos: RepoCheckouts.optional(),
+  /** Outrunner's standing instructions for the session beyond its
+   *  orientation, given at every launch after it: how it writes a pull
+   *  request (lib/session/pr-template.ts prGuide). An older agent ignores it. */
+  guide: z.string().max(32 * 1024).optional(),
 });
 export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequest>;
 
