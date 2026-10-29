@@ -39,6 +39,7 @@ export type AuditAction =
   | "github.uninstalled"
   | "github.suspended"
   | "github.unsuspended"
+  | "github.rules_bypassed"
   | "billing.checkout_opened"
   | "billing.portal_opened"
   | "billing.plan_changed";
@@ -155,6 +156,8 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `saw the GitHub App suspended on ${what}`;
     case "github.unsuspended":
       return `saw the GitHub App unsuspended on ${what}`;
+    case "github.rules_bypassed":
+      return `merged ${what} past its branch's rules`;
     case "billing.checkout_opened":
       return `opened checkout for ${what}${text(d.interval) ? `, ${text(d.interval)}ly` : ""}`;
     case "billing.portal_opened":

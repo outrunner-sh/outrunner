@@ -10,9 +10,11 @@ import { MergeButton } from "@/components/review/merge-button";
 import { PullFiles } from "@/components/review/pull-files";
 import { ReviewChat } from "@/components/review/review-chat";
 import { RouteLoading } from "@/components/route-states";
+import { getMergeAccess } from "@/lib/github/client";
+import { optionalGithubToken } from "@/lib/github/token";
+import { mergeOffer } from "@/lib/review/merge-plan";
 import { pullDetail } from "@/lib/review/pulls";
 import { reviewViewer } from "@/lib/review/viewer";
-import { whyNotMergeable } from "@/lib/session/pull-request-status";
 import { cn } from "@/lib/utils";
 
 type Params = Promise<{ owner: string; repo: string; number: string }>;
@@ -66,8 +68,15 @@ async function Pull({ params }: { params: Params }) {
   if (!viewer) redirect(`/signin?next=/review/${owner}/${repo}/${number}`);
   const pr = await pullDetail(viewer.actor, `${owner}/${repo}`, Number(number)).catch(() => null);
   if (!pr) notFound();
-  const why = whyNotMergeable(pr);
-  const ready = why === null;
+  // How they may merge it is GitHub's word for their own account: whether
+  // the branch merges through a queue, and whether they may bypass its rules.
+  const token = pr.state === "open" ? await optionalGithubToken(viewer.owner.id).catch(() => undefined) : undefined;
+  const access = token
+    ? await getMergeAccess({ token, repoFullName: pr.repo, number: pr.number, baseRef: pr.baseRef }).catch((error: unknown) => {
+        console.error(`Review: couldn't read how ${pr.repo}#${pr.number} merges`, error);
+        return null;
+      })
+    : null;
 
   return (
     <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px]">
@@ -86,7 +95,18 @@ async function Pull({ params }: { params: Params }) {
                 <ArrowUpRight className="size-3.5" />
               </a>
             </span>
-            {pr.state === "open" && <MergeButton repo={pr.repo} number={pr.number} headSha={pr.headSha} ready={ready} why={why} />}
+            {pr.state === "open" && (
+              <MergeButton
+                repo={pr.repo}
+                number={pr.number}
+                headSha={pr.headSha}
+                offer={mergeOffer(
+                  pr,
+                  access,
+                  token ? undefined : "Connect your GitHub account to merge (sign out and in again).",
+                )}
+              />
+            )}
           </div>
 
           <div className="space-y-2">
