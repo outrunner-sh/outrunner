@@ -150,6 +150,7 @@ export function ReviewChat({ repo, number, canChange }: { repo: string; number: 
         own?: boolean;
         threads?: number;
         since?: string;
+        askedAt?: string;
         error?: string;
       };
       if (!response.ok || !body.sessionId || !body.kind || !body.since) {
@@ -162,7 +163,7 @@ export function ReviewChat({ repo, number, canChange }: { repo: string; number: 
         own: body.own === true,
         since: body.since,
         threads: body.threads ?? 0,
-        askedAt: new Date().toISOString(),
+        askedAt: body.askedAt ?? new Date().toISOString(),
       };
       setMessages((current) => {
         const next = [...current, { role: "change" as const, content: text, quote: quote ?? undefined, track }];

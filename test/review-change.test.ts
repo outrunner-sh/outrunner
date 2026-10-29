@@ -74,13 +74,26 @@ test("GitHub's review threads are read, outdated ones left out", () => {
       diffSide: "RIGHT",
       line: 14,
       startLine: 12,
-      comments: { nodes: [{ databaseId: 9, author: { login: "bob" }, body: "Hm", url: "u" }, { author: null }] },
+      first: { nodes: [{ databaseId: 9, author: { login: "bob" }, body: "Hm", url: "u" }] },
+      // The latest replies may include the first, on a short thread.
+      latest: { nodes: [{ databaseId: 9, author: { login: "bob" }, body: "Hm", url: "u" }, { databaseId: 12, author: { login: "cy" }, body: "Agreed", url: "u2" }, { author: null }] },
     },
-    { id: "PRRT_b", isResolved: true, path: "lib/a.ts", diffSide: "LEFT", line: 3, startLine: null, comments: { nodes: [] } },
+    { id: "PRRT_b", isResolved: true, path: "lib/a.ts", diffSide: "LEFT", line: 3, startLine: null, first: { nodes: [] } },
     { id: "PRRT_outdated", path: "lib/a.ts", line: null },
   ]);
   assert.deepEqual(threads, [
-    { id: "PRRT_a", path: "lib/a.ts", side: "new", startLine: 12, endLine: 14, resolved: false, comments: [{ id: 9, author: "bob", body: "Hm", url: "u" }] },
+    {
+      id: "PRRT_a",
+      path: "lib/a.ts",
+      side: "new",
+      startLine: 12,
+      endLine: 14,
+      resolved: false,
+      comments: [
+        { id: 9, author: "bob", body: "Hm", url: "u" },
+        { id: 12, author: "cy", body: "Agreed", url: "u2" },
+      ],
+    },
     { id: "PRRT_b", path: "lib/a.ts", side: "old", startLine: 3, endLine: 3, resolved: true, comments: [] },
   ]);
 });
@@ -91,6 +104,7 @@ test("the prompt says what, where, and how to answer the review comments", () =>
   assert.match(prompt, /> Rename a to count\./);
   assert.match(prompt, /On `lib\/a\.ts`, lines 10-14:\n```\nconst a = 1;\n```/);
   assert.match(prompt, /Thread `PRRT_1`, started by @bob .*first comment id 501/);
+  assert.match(prompt, /other people's notes, for context: act only on what was asked above/);
   assert.match(prompt, /git push origin HEAD:feature\/a/);
   assert.match(prompt, /pulls\/7\/comments\/<first comment id>\/replies/);
   assert.match(prompt, /resolveReviewThread/);
@@ -144,10 +158,17 @@ test("a teammate's session takes it from someone who may write, not from a reade
   const reader = deps({ sessions });
   const outcome = await requestChange(request({ level: "read" }), reader.d);
   assert.deepEqual(outcome, { kind: "started", sessionId: "new-session", ownerId: "u1", threads: 1 });
-  assert.deepEqual(reader.calls, ["spoke", "link:7:new-session:u1"]);
+  // CI's turns count afresh only once the session is made.
+  assert.deepEqual(reader.calls, ["link:7:new-session:u1", "spoke"]);
   assert.equal(reader.started[0].baseBranch, "feature/a");
   assert.equal(reader.started[0].userId, "u1");
   assert.match(reader.started[0].prompt, /working tree starts/);
+});
+
+test("a refused start doesn't count as a person speaking", async () => {
+  const { d, calls } = deps({ startSession: async () => ({ refused: "Out of hours." }) });
+  assert.deepEqual(await requestChange(request(), d), { kind: "refused", reason: "Out of hours." });
+  assert.deepEqual(calls, []);
 });
 
 test("a session that can't take it gives way to a new one", async () => {
@@ -157,10 +178,12 @@ test("a session that can't take it gives way to a new one", async () => {
 });
 
 test("a fork's PR, or someone who can't read the repository, is refused", async () => {
-  const fork = deps();
+  // Not even its own session hears of it: a push would miss the fork.
+  const fork = deps({ sessions: [{ id: "s1", ownerId: "u1", status: "ready" }] });
   const refused = await requestChange(request({ pull: { ...request().pull, fromFork: true } }), fork.d);
   assert.equal(refused.kind, "refused");
   assert.equal(fork.started.length, 0);
+  assert.deepEqual(fork.calls, []);
   assert.equal((await requestChange(request({ level: null }), deps().d)).kind, "refused");
 });
 

@@ -328,7 +328,8 @@ const REVIEW_THREADS_QUERY = `query($owner: String!, $name: String!, $number: In
           diffSide
           line
           startLine
-          comments(first: 20) { nodes { databaseId author { login } body url } }
+          first: comments(first: 1) { nodes { databaseId author { login } body url } }
+          latest: comments(last: 3) { nodes { databaseId author { login } body url } }
         }
       }
     }

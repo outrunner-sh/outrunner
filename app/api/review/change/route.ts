@@ -36,6 +36,9 @@ export async function POST(request: Request) {
   const pr = await pullDetail(caller.actor, body.repo, body.number);
   if (!pr) return NextResponse.json({ error: "Pull request not found." }, { status: 404 });
   if (pr.state !== "open") return NextResponse.json({ error: "This pull request isn't open." }, { status: 409 });
+  // When it was asked, by the server's clock: the session's replies are
+  // timed by it, and the page tells the change's reply by this.
+  const askedAt = new Date().toISOString();
   const token = await repoToken(caller.actor.orgId, pr.repo);
 
   const outcome = await requestChange(
@@ -75,6 +78,7 @@ export async function POST(request: Request) {
     own: outcome.ownerId === caller.owner.id,
     threads: outcome.threads,
     since: pr.headSha,
+    askedAt,
   });
 }
 
