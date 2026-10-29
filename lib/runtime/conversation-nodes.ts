@@ -36,6 +36,9 @@ export type ConversationNode =
       /** What a chat's prompt was sent with, out of `text`: a fork's handoff
        *  of the conversation it continues, a side chat's context. */
       carried?: ("handoff" | "side")[];
+      /** The message it is, for an edit of it; none on an echo, which isn't
+       *  in the log yet. */
+      uuid?: string;
     }
   /** Claude's own injected record (a skill's instructions, a reminder): folded
    *  behind a disclosure rather than shown inline. `label` names it in a word. */
@@ -116,6 +119,8 @@ export function conversationNodes(
       nodes.push({ kind: "usage", key: `us-${ei}`, event });
       return;
     }
+    // An edit's cut is applied as it arrives (appendEvent): nothing to show.
+    if (event.t === "rewind") return;
     // A prompt starts a turn (the echo of one not yet sent starts none: it
     // has no time of its own); anything after it is a step of it.
     // A record of a slash command Claude ran itself is a step of the turn
@@ -187,6 +192,7 @@ export function conversationNodes(
               key,
               text,
               ...(carried.length > 0 && { carried }),
+              ...(!isEcho(event.uuid) && { uuid: event.uuid }),
               ...(event.mode && { mode: event.mode }),
               ...(!isEcho(event.uuid) && { at: event.timestamp }),
               ...(continuation && { continuation: true }),

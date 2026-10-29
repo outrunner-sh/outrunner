@@ -64,6 +64,20 @@ conversation and listed in the manifest's `chats`, and a restore's `chats`
 (`RestoreChat`) are brought back before the main chat relaunches, which is
 then named by its session id.
 
+## Editing a sent message
+
+An agent that advertises `rewind` takes `POST /workspaces/{id}/rewind`
+(`RewindRequest`: the prompt's `uuid`, `?chat=` for a chat). It refuses while
+the agent works (`409 CONFLICT`), cuts the chat's log just before that prompt
+(keeping what it cut beside the log as `.rewound-<n>`), and relaunches the
+agent on what is left: Claude on its own session, Codex on a new one whose
+next prompt carries the conversation before the edit. It answers
+`RewindResponse` (`at`, `uuid`, `rewinds`). Files and git state are not rolled
+back. Every conversation stream of the chat then sends `ConversationRewound`
+(`{ "t": "rewind", "at", "uuid", "rewinds" }`, its id the cut): drop that
+prompt and everything after it, and read on from `at`. A client says the
+edits it has seen with `?rewinds=` and is told only of newer ones.
+
 ## Conversation events (agent → Next/browser)
 
 Derived by the ConversationWatcher from Claude Code's session JSONL. **Not** parsed from the PTY.

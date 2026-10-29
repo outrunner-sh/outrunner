@@ -10,6 +10,9 @@ export type CachedConversation = {
   lastEventId: string | null;
   /** Event ids already taken in (lib/runtime/conversation-events.ts). */
   seenIds: Set<string>;
+  /** The edits of the conversation taken in (ConversationRewound); none
+   *  until one is. */
+  rewinds?: number;
 };
 
 /** Where conversations are kept past the page (lib/session/kept-conversations.ts):

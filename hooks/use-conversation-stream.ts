@@ -29,6 +29,9 @@ export type ConversationStreamState = {
   protocolErrorRef: string | null;
   /** Force a full URL refresh + re-subscribe. Preserves the resume cursor. */
   refresh: () => void;
+  /** Take an edit's cut in at once (what POST …/rewind answered), as the
+   *  stream's own word of it would: its prompt and what followed are gone. */
+  rewind: (cut: { at: number; uuid: string; rewinds: number }) => void;
 };
 
 // Reconnect backoff lives in lib/runtime/reconnect (pure + unit-tested). Unlike
@@ -70,14 +73,23 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
   const lastEventIdRef = useRef<string | null>(kept?.lastEventId ?? null);
   // A copy: a sidebar warm-up may still be adding to the kept one.
   const seenIdsRef = useRef<Set<string>>(new Set(kept?.seenIds));
+  // The edits taken in, which the stream is told of so it tells only of newer.
+  const rewindsRef = useRef<number>(kept?.rewinds ?? 0);
   // Keep what this page has seen for the next time the session is opened.
   useEffect(() => {
     CONVERSATIONS.set(workspaceId, {
       events,
       lastEventId: lastEventIdRef.current,
       seenIds: seenIdsRef.current,
+      rewinds: rewindsRef.current,
     });
   }, [workspaceId, events]);
+  const rewind = useCallback((cut: { at: number; uuid: string; rewinds: number }) => {
+    if (cut.rewinds <= rewindsRef.current) return;
+    rewindsRef.current = cut.rewinds;
+    lastEventIdRef.current = cut.at > 0 ? String(cut.at) : null;
+    setEvents((prev) => appendEvent(prev, { t: "rewind", ...cut }, String(cut.at), seenIdsRef.current));
+  }, []);
   // Consecutive failed reconnects (reset by any received frame). A ref, not
   // reducer state, so the onClose closure reads the live count, not a stale one.
   const reconnectAttemptsRef = useRef(0);
@@ -103,6 +115,15 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
         // Message/usage events are deduplicated by SSE id. State events use a
         // synthetic id ("0"): they aren't resumable and are re-observed on
         // fresh connects, so we replace the newest state entry instead.
+        if (event.t === "rewind") {
+          // An edit cut the log: the stream reads on from the cut, behind
+          // the cursor, and says so once.
+          if (event.rewinds > rewindsRef.current) rewindsRef.current = event.rewinds;
+          lastEventIdRef.current = event.at > 0 ? String(event.at) : null;
+          setEvents((prev) => appendEvent(prev, event, id, seenIdsRef.current));
+          reconnectAttemptsRef.current = 0;
+          return;
+        }
         setEvents((prev) => appendEvent(prev, event, id, seenIdsRef.current));
         if (id && id !== "0") lastEventIdRef.current = id;
         // A live frame means this connection is healthy: clear the backoff.
@@ -234,6 +255,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     retrying: manualRetry,
     protocolErrorRef: ws.protocolErrorRef,
     refresh: refreshStream,
+    rewind,
   };
 }
 

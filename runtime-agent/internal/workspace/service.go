@@ -262,6 +262,12 @@ type workspaceFacts struct {
 	// SideOf is the chat a side chat asks about: each of its prompts goes
 	// with that chat's newest turns.
 	SideOf string `json:"sideOf,omitempty"`
+	// Rewinds counts the edits that cut the conversation's log short
+	// (rewind.go), the last at RewoundAt, where the prompt RewoundUUID
+	// began: a stream that read past it reads from there again.
+	Rewinds     int    `json:"rewinds,omitempty"`
+	RewoundAt   int64  `json:"rewoundAt,omitempty"`
+	RewoundUUID string `json:"rewoundUuid,omitempty"`
 	// Name and Title label the session in the desktop's list: the folder's name,
 	// and what the user asked for first.
 	Name      string `json:"name,omitempty"`

@@ -1,0 +1,214 @@
+package workspace
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+
+	"runtime-agent/internal/conversation"
+)
+
+// Editing a sent message rewinds the chat's conversation to just before it:
+// the message and everything after it are cut from the log, and the agent
+// continues from there, in the same chat, when the edited prompt is sent.
+// Files and git state are not rolled back.
+//
+// Claude continues its own session: its log is cut where the message began
+// and Claude is launched on it again, by id. Codex can't be handed a rollout
+// cut short, so a Codex chat continues as a new Codex conversation in the
+// same chat: its log (Runtime's translation) is cut, its rollout put aside,
+// and the edited prompt goes with a handoff of the conversation before it,
+// as a fork's first prompt does.
+//
+// What was cut is kept beside the log (.rewound-<n>), never thrown away.
+
+var (
+	// ErrRewindBusy is an edit asked for while the agent works or waits on
+	// an answer: cutting its log under it would lose what it is writing.
+	ErrRewindBusy = errors.New("the agent is working: stop it before editing a message")
+	// ErrRewindUnsupported is an edit on the jcode engine, whose bridge keeps
+	// its own conversation.
+	ErrRewindUnsupported = errors.New("this computer's engine can't edit a sent message")
+	// ErrNotAPrompt is an edit of a message that isn't one of the chat's
+	// prompts (a reply, a tool's result, or one not in its log).
+	ErrNotAPrompt = errors.New("that message isn't one of this chat's prompts")
+)
+
+// Rewound is where an edit cut a chat's log: at byte At, where the prompt
+// UUID began, its Rewinds-th edit.
+type Rewound struct {
+	At      int64
+	UUID    string
+	Rewinds int
+}
+
+// Rewind cuts a chat's conversation back to just before its prompt uuid,
+// for the edited prompt to be sent in its place. A running agent is
+// relaunched on what is left; one that isn't is left for the next Start.
+func (s *Service) Rewind(ctx context.Context, key, uuid string) (Rewound, error) {
+	if s.jcode != nil {
+		return Rewound{}, ErrRewindUnsupported
+	}
+	defer s.lockLifecycle(key)()
+	f, ok := s.getFacts(key)
+	if !ok {
+		return Rewound{}, ErrUnknownWorkspace
+	}
+	// Held throughout, so no prompt lands between the check and the cut.
+	lock := s.sendLock(key)
+	lock.Lock()
+	defer lock.Unlock()
+	base := context.WithoutCancel(ctx)
+	checkCtx, cancel := context.WithTimeout(base, switchCheckTimeout)
+	defer cancel()
+	name := sessionName(key)
+	running, err := s.tmux.SessionExists(checkCtx, name)
+	if err != nil {
+		return Rewound{}, fmt.Errorf("%w (%v)", ErrSessionUnchecked, err)
+	}
+	a := s.agentFor(key)
+	if running {
+		pane, err := s.tmux.CapturePane(checkCtx, name)
+		if err != nil {
+			return Rewound{}, fmt.Errorf("%w (its screen could not be read: %v)", ErrSessionUnchecked, err)
+		}
+		if a.isBusy(pane) || a.awaitsAnswer(pane) {
+			return Rewound{}, ErrRewindBusy
+		}
+	}
+	log := s.SessionLog(key)
+	if log == "" {
+		return Rewound{}, ErrNotAPrompt
+	}
+	cut, err := promptStart(log, uuid)
+	if err != nil {
+		return Rewound{}, err
+	}
+	codexChat := f.Agent == AgentCodex
+	if !codexChat {
+		// Launched again by id, on this log: never "the newest" in a folder
+		// another chat's may be newer in.
+		s.pinClaudeSession(key)
+	}
+	// The agent holds its log open: it goes before the cut, and the
+	// conversation's collector with it, to be begun again on what is left.
+	if running {
+		_ = s.tmux.KillSession(base, name)
+	}
+	s.endSummary(key)
+	s.summariesMu.Lock()
+	delete(s.summaries, key)
+	s.summariesMu.Unlock()
+
+	rewinds := f.Rewinds + 1
+	if err := cutLog(log, cut, rewinds); err != nil {
+		return Rewound{}, err
+	}
+	handoff := ""
+	if codexChat {
+		if cut > 0 {
+			handoff, err = s.editHandoff(key, log)
+			if err != nil {
+				return Rewound{}, err
+			}
+		}
+		// Put aside, so a new conversation's rollout is the one found.
+		if f.CodexRollout != "" {
+			_ = os.Rename(f.CodexRollout, fmt.Sprintf("%s.rewound-%d", f.CodexRollout, rewinds))
+		}
+	}
+	s.updateFacts(key, func(f *workspaceFacts) {
+		f.Rewinds, f.RewoundAt, f.RewoundUUID = rewinds, cut, uuid
+		if codexChat {
+			f.CodexSessionID, f.CodexRollout, f.CodexPromptedAt = "", "", ""
+			f.Handoff = handoff
+		}
+	})
+	lock.staged = nil
+	if running {
+		relaunchCtx, cancelRelaunch := context.WithTimeout(base, switchRelaunchTimeout)
+		defer cancelRelaunch()
+		if _, err := s.relaunchHeld(relaunchCtx, key, "", s.SessionLog(key) != "", lock); err != nil {
+			return Rewound{}, err
+		}
+	}
+	return Rewound{At: cut, UUID: uuid, Rewinds: rewinds}, nil
+}
+
+// LogRewind is where a chat's log was last cut by an edit, and how many
+// edits it has had: 0 for none, which a stream reads its log as before.
+func (s *Service) LogRewind(key string) (rewinds int, at int64, uuid string) {
+	f, _ := s.getFacts(key)
+	return f.Rewinds, f.RewoundAt, f.RewoundUUID
+}
+
+// promptStart is where the prompt uuid begins in a conversation log: one of
+// the user's, not a tool's result, Claude's own record, or a stop.
+func promptStart(log, uuid string) (int64, error) {
+	events, err := conversation.Read(log, 0)
+	if err != nil {
+		return 0, err
+	}
+	for _, ev := range events {
+		msg := ev.Message
+		if msg == nil || msg.UUID != uuid {
+			continue
+		}
+		if msg.Role != "user" || msg.Meta || conversation.IsInterruption(msg) {
+			return 0, ErrNotAPrompt
+		}
+		for _, block := range msg.Content {
+			if block.Type == "text" {
+				return ev.Start, nil
+			}
+		}
+		return 0, ErrNotAPrompt
+	}
+	return 0, ErrNotAPrompt
+}
+
+// cutLog cuts a log at byte at, keeping what it cut beside it. A log cut to
+// nothing is removed: an agent launched on an empty one has nothing to
+// continue, and starts afresh as it would without.
+func cutLog(log string, at int64, rewinds int) error {
+	data, err := os.ReadFile(log)
+	if err != nil {
+		return err
+	}
+	if at > int64(len(data)) {
+		return ErrNotAPrompt
+	}
+	if err := os.WriteFile(fmt.Sprintf("%s.rewound-%d", log, rewinds), data[at:], 0o600); err != nil {
+		return fmt.Errorf("keep what the edit cut: %w", err)
+	}
+	if at == 0 {
+		return os.Remove(log)
+	}
+	return os.Truncate(log, at)
+}
+
+// editHandoff is what a Codex chat's edited prompt goes with: the
+// conversation before it, which its new Codex conversation hasn't had, as a
+// transcript and its latest turns.
+func (s *Service) editHandoff(key, log string) (string, error) {
+	parent, chatID := s.owner(key), MainChat
+	if parent != key {
+		chatID = strings.TrimPrefix(key, parent+"_")
+	}
+	path := s.handoffPath(parent, chatID+"-before-edit")
+	turns, err := s.writeTranscript(parent, log, "This chat before its edit", path)
+	if err != nil {
+		return "", err
+	}
+	var note strings.Builder
+	note.WriteString(handoffOpen + "\n")
+	note.WriteString("The user edited one of their messages in this chat: the conversation before it carries on below, and what came after it is gone. Files and git state were not rolled back, so they may show work from after it.\n")
+	fmt.Fprintf(&note, "The conversation before the edit is in %s (tool calls named, not quoted; secrets masked).\n", path)
+	if recent := recentTurns(turns, handoffRecentTurns, handoffRecentBytes); recent != "" {
+		note.WriteString("Its latest turns:\n\n" + s.masker()(recent))
+	}
+	note.WriteString(handoffClose + "\n\n")
+	return note.String(), nil
+}

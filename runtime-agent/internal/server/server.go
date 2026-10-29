@@ -121,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /workspaces/{id}/ports", s.authed(s.listPorts))
 	mux.HandleFunc("POST /workspaces/{id}/answer", s.authed(s.answer))
 	mux.HandleFunc("POST /workspaces/{id}/chats", s.authed(s.createChat))
+	mux.HandleFunc("POST /workspaces/{id}/rewind", s.authed(s.rewind))
 	mux.HandleFunc("POST /workspaces/{id}/chats/{chat}/delete", s.authed(s.deleteChat))
 	// The session's own relay asks, with the session's ask token rather than
 	// a Runtime token (package ask).
@@ -171,7 +172,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots, protocol.FeatureRewind},
 	})
 }
 
@@ -596,6 +597,39 @@ func (s *Server) chatOf(w http.ResponseWriter, r *http.Request, workspaceID stri
 		return "", false
 	}
 	return workspace.ChatKey(workspaceID, chat), true
+}
+
+// rewind cuts a chat's conversation back to just before one of its prompts,
+// for an edit of it to be sent in its place (workspace.Rewind).
+func (s *Server) rewind(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	key, ok := s.chatOf(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	var req protocol.RewindRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.UUID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "rewind names the prompt it replaces")
+		return
+	}
+	cut, err := s.ws.Rewind(r.Context(), key, req.UUID)
+	switch {
+	case errors.Is(err, workspace.ErrNotAPrompt):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, workspace.ErrRewindBusy), errors.Is(err, workspace.ErrSessionUnchecked):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, workspace.ErrRewindUnsupported):
+		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
+	case err != nil:
+		respond(w, "", err)
+	default:
+		writeJSON(w, http.StatusOK, protocol.RewindResponse{At: cut.At, UUID: cut.UUID, Rewinds: cut.Rewinds})
+	}
 }
 
 // createChat makes a chat in the workspace's session and starts its agent
@@ -1535,7 +1569,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	s.streamEvents(r.Context(), claims.WorkspaceID, key, fromOffset, writeSSE, writeHeartbeat)
+	s.streamEvents(r.Context(), claims.WorkspaceID, key, fromOffset, knownRewinds(r), writeSSE, writeHeartbeat)
 }
 
 // streamEvents produces the Conversation event stream for a verified session and
@@ -1567,6 +1601,7 @@ func (s *Server) streamEvents(
 	ctx context.Context,
 	workspaceID, key string,
 	fromOffset int64,
+	rewinds int,
 	writeEvent func(id int64, payload []byte) bool,
 	heartbeat func() bool,
 ) {
@@ -1598,10 +1633,44 @@ func (s *Server) streamEvents(
 
 	// Watcher tails the JSONL and delivers events on `out`. Its lifetime is tied
 	// to ctx — when the client disconnects, ctx cancels and the watcher exits.
+	// An edit's cut starts it again, from the cut.
 	pathFn := func() string { return s.ws.SessionLog(key) }
-	watcher := conversation.New(pathFn, fromOffset)
-	out := make(chan conversation.Event, 64)
-	go watcher.Run(ctx, out)
+	var out chan conversation.Event
+	stopWatcher := func() {}
+	startWatcher := func(from int64) {
+		stopWatcher()
+		watchCtx, cancel := context.WithCancel(ctx)
+		stopWatcher = cancel
+		out = make(chan conversation.Event, 64)
+		go conversation.New(pathFn, from).Run(watchCtx, out)
+	}
+	defer func() { stopWatcher() }()
+
+	// An edit the client hasn't seen (rewinds, as it says): it is told the
+	// prompt the log was cut at, to drop it and what followed, and the stream
+	// reads on from the cut, or from its cursor if that is short of it.
+	rewound := func() bool {
+		n, at, uuid := s.ws.LogRewind(key)
+		if n == rewinds {
+			return true
+		}
+		rewinds = n
+		if at < cursor {
+			cursor = at
+		}
+		payload, _ := json.Marshal(protocol.ConversationRewound{T: "rewind", At: at, UUID: uuid, Rewinds: n})
+		if !writeEvent(cursor, payload) {
+			return false
+		}
+		startWatcher(cursor)
+		return true
+	}
+	startWatcher(fromOffset)
+	if !rewound() {
+		return
+	}
+	rewindCheck := time.NewTicker(stateCheckInterval)
+	defer rewindCheck.Stop()
 
 	ticker := time.NewTicker(sseHeartbeat)
 	defer ticker.Stop()
@@ -1627,7 +1696,19 @@ func (s *Server) streamEvents(
 					return
 				}
 			}
+		case <-rewindCheck.C:
+			if !rewound() {
+				return
+			}
 		case ev := <-out:
+			// Read before an edit cut the log, maybe from where it now holds
+			// something else: the stream starts again from the cut instead.
+			if n, _, _ := s.ws.LogRewind(key); n != rewinds {
+				if !rewound() {
+					return
+				}
+				continue
+			}
 			// The log just yielded an event, so it exists: the "running" lands
 			// before the first message it explains. No SessionLog lookup here,
 			// since a fresh connect replays the whole log through this path.
@@ -1658,6 +1739,16 @@ func (s *Server) streamEvents(
 			}
 		}
 	}
+}
+
+// knownRewinds is the edits a stream's client has seen (?rewinds=), 0 for
+// none: one from before edits has seen none.
+func knownRewinds(r *http.Request) int {
+	n, err := strconv.Atoi(r.URL.Query().Get("rewinds"))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // eventsWSFrame is one Conversation event over the WebSocket transport: the
@@ -1736,7 +1827,7 @@ func (s *Server) eventsWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	s.streamEvents(ctx, claims.WorkspaceID, key, fromOffset, writeEvent, heartbeat)
+	s.streamEvents(ctx, claims.WorkspaceID, key, fromOffset, knownRewinds(r), writeEvent, heartbeat)
 }
 
 // ---------------------------------------------------------------------------

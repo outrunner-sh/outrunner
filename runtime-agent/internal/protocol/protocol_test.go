@@ -44,7 +44,7 @@ func TestTheNewestHealthFixtureNamesEveryFeature(t *testing.T) {
 		t.Fatal(err)
 	}
 	newest := groups.AgentHealth[len(groups.AgentHealth)-1].Features
-	for _, feature := range []string{FeatureImports, FeatureEnvironment, FeatureAgentConfig, FeatureRestoreModel, FeatureEditor, FeaturePorts, FeatureCodexGateway, FeatureWarmHooks, FeatureMultiRepo, FeatureMultiRepoSnapshots, FeatureGitCredential, FeatureMultiRepoWarm, FeaturePlanMode, FeatureCompact, FeatureFiles, FeatureSkills, FeatureCodexMCP, FeatureCanvas, FeatureAgentContext, FeatureMessageKeys, FeatureChats, FeatureChatSnapshots} {
+	for _, feature := range []string{FeatureImports, FeatureEnvironment, FeatureAgentConfig, FeatureRestoreModel, FeatureEditor, FeaturePorts, FeatureCodexGateway, FeatureWarmHooks, FeatureMultiRepo, FeatureMultiRepoSnapshots, FeatureGitCredential, FeatureMultiRepoWarm, FeaturePlanMode, FeatureCompact, FeatureFiles, FeatureSkills, FeatureCodexMCP, FeatureCanvas, FeatureAgentContext, FeatureMessageKeys, FeatureChats, FeatureChatSnapshots, FeatureRewind} {
 		if !slices.Contains(newest, feature) {
 			t.Errorf("the newest AgentHealth fixture lacks %s: %q", feature, newest)
 		}
@@ -129,6 +129,12 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &SendMessageRequest{})
 	case "CreateChatRequest":
 		return json.Unmarshal(raw, &CreateChatRequest{})
+	case "RewindRequest":
+		return json.Unmarshal(raw, &RewindRequest{})
+	case "RewindResponse":
+		return json.Unmarshal(raw, &RewindResponse{})
+	case "ConversationRewound":
+		return json.Unmarshal(raw, &ConversationRewound{})
 	case "PlanActionRequest":
 		return json.Unmarshal(raw, &PlanActionRequest{})
 	case "PlanActionResponse":

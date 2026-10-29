@@ -16,6 +16,10 @@ This document is intentionally short. It is invariant. See
 - **PTY input** — bytes typed into the terminal by the single writer client.
 - **Lifecycle actions** — `start`, `stop`, `archive`, `suspend`, `resume`,
   `destroy`, `publish` (owner-gated, idempotent).
+- **Edit** — a sent prompt replaced: the chat's conversation is cut back to
+  just before it (`rewind`), and the edit sent in its place. The Conversation
+  projection says so with a `rewind` event; its `seq` goes back to the cut,
+  the one place it does. Files and git state are not rolled back.
 
 ## Outputs
 

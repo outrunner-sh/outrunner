@@ -21,6 +21,8 @@ import { parseRunnerEvents } from "@/lib/missions/events";
  *     replace the existing entry in place rather than append every partial.
  *   - usage/other events carry a stable SSE id (JSONL byte offset); dedup by id
  *     defensively against a client-side double-subscribe.
+ *   - a rewind (an edit cut the log) drops the prompt it names and everything
+ *     after it, and the ids past its cut, which the stream sends again.
  */
 export function appendEvent(
   prev: AgentEvent[],
@@ -39,6 +41,10 @@ export function appendEvent(
     const withoutState = prev.filter((e) => e.t !== "state");
     return [...withoutState, event];
   }
+  if (event.t === "rewind") {
+    for (const seen of [...seenIds]) if (Number(seen) > event.at) seenIds.delete(seen);
+    return rewound(prev, event.uuid);
+  }
   if (event.t === "message") {
     // Streaming: the same uuid arrives repeatedly, growing. Replace in place so
     // the message renders once and updates, instead of stacking partials.
@@ -53,6 +59,15 @@ export function appendEvent(
   if (id && seenIds.has(id)) return prev;
   if (id) seenIds.add(id);
   return [...prev, event];
+}
+
+/** The events up to the prompt `uuid`, which an edit cut along with all that
+ *  followed it; the session's state is kept. A prompt not among them leaves
+ *  them as they are. */
+export function rewound(events: AgentEvent[], uuid: string): AgentEvent[] {
+  const at = events.findIndex((e) => e.t === "message" && e.uuid === uuid);
+  if (at < 0) return events;
+  return [...events.slice(0, at), ...events.slice(at).filter((e) => e.t === "state")];
 }
 
 /** Plain text of a message event's text blocks, trimmed to match how the agent

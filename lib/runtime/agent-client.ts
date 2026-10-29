@@ -32,6 +32,8 @@ import {
   PortsResponse,
   RestoreWorkspaceRequest,
   RestoreWorkspaceResult,
+  RewindRequest,
+  RewindResponse,
   type RuntimeTokenClaims,
   SendMessageRequest,
   SetAgentConfigRequest,
@@ -176,6 +178,14 @@ export class AgentClient {
    *  error envelope. */
   createChat(identity: WorkspaceIdentity, req: CreateChatRequest): Promise<unknown> {
     return this.post(`/workspaces/${identity.workspaceId}/chats`, identity, CreateChatRequest.parse(req), AGENT_START_TIMEOUT_MS);
+  }
+
+  /** Cut a chat's conversation back to just before its prompt `uuid`, for
+   *  an edit of it to be sent in its place (RewindRequest). Refused (409
+   *  CONFLICT) while the agent works; 400 for what isn't a prompt. */
+  async rewind(identity: WorkspaceIdentity, req: RewindRequest, chat?: string): Promise<RewindResponse> {
+    const raw = await this.post(`/workspaces/${identity.workspaceId}/rewind${chatQuery(chat)}`, identity, RewindRequest.parse(req), AGENT_MODEL_SWITCH_TIMEOUT_MS);
+    return RewindResponse.parse(raw);
   }
 
   /** End one of the session's chats and forget it; one already gone is fine. */
