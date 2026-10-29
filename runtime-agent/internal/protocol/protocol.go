@@ -430,6 +430,28 @@ type FilesResponse struct {
 	Truncated bool     `json:"truncated,omitempty"`
 }
 
+// FeatureCanvas is GET /workspaces/{id}/canvas and /canvas/file: a
+// session's Canvas, the folder its agent writes plans, reports and pages in
+// for the user to see.
+const FeatureCanvas = "canvas"
+
+// CanvasResponse lists a session's Canvas: Dir is the folder on the box,
+// Files its files by path in it, newest first. Truncated says more were
+// left out than the agent lists.
+type CanvasResponse struct {
+	Dir       string       `json:"dir"`
+	Files     []CanvasFile `json:"files"`
+	Truncated bool         `json:"truncated,omitempty"`
+}
+
+// CanvasFile is one file of a Canvas: its size in bytes, and when it was
+// last written (RFC 3339).
+type CanvasFile struct {
+	Path       string `json:"path"`
+	Size       int64  `json:"size"`
+	ModifiedAt string `json:"modifiedAt"`
+}
+
 // FeatureRestoreModel is a restore that puts the session back on its model
 // (RestoreWorkspaceRequest.Model). An older agent ignores the field, and
 // relaunches the session on Claude's own default.

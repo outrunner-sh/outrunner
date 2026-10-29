@@ -678,6 +678,7 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 		return "", err
 	}
 	s.makeContextDir(ctx, workspaceID, worktree)
+	s.makeCanvasDir(workspaceID)
 	env := a.env(anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, s.SessionLog(workspaceID) != "")
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
@@ -940,6 +941,7 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
 	s.makeContextDir(ctx, workspaceID, worktree)
+	s.makeCanvasDir(workspaceID)
 	env := a.env(anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, resume)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
@@ -974,6 +976,7 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 	if s.desktopReady(workspaceID) {
 		o += "\n\n# Desktop\n\n" + desktop.Instructions
 	}
+	o += "\n\n" + s.canvasNote(workspaceID)
 	switch {
 	case !f.Gateway.SpeaksAsOutrunner():
 	case f.Agent == AgentCodex:
@@ -1795,6 +1798,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	s.forgetMessageKeys(workspaceID)
 	s.forgetAsk(workspaceID)
 	s.forgetDesktop(workspaceID)
+	s.removeCanvas(workspaceID)
 	// A session's own Codex home holds a copy of its key (auth.json).
 	_ = os.RemoveAll(s.codexHome(workspaceID))
 	s.summariesMu.Lock()

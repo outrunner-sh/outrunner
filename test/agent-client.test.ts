@@ -386,3 +386,20 @@ test("a session's files are listed by its box's agent, changed ones counted", as
   assert.equal(seenUrl, `${target.controlBaseUrl}/workspaces/ws-1/files`);
   assert.deepEqual(listed, { files: ["src/a.ts", "README.md"], changed: 1 });
 });
+
+test("the Canvas is listed as JSON, and a file read as its bytes", async () => {
+  const seen: string[] = [];
+  const fakeFetch = (async (url: string) => {
+    seen.push(url);
+    if (url.endsWith("/canvas")) {
+      return new Response(JSON.stringify({ dir: "/home/runtime/.outrunner/canvas/ws-1", files: [{ path: "a.png", size: 4, modifiedAt: "2026-11-03T10:00:00Z" }] }));
+    }
+    if (url.includes("missing")) return new Response(JSON.stringify({ error: { code: "NOT_FOUND", message: "no such file" } }), { status: 404 });
+    return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+  }) as unknown as typeof fetch;
+  const client = new AgentClient(target, fakeFetch);
+  assert.equal((await client.listCanvas(identity)).files[0].path, "a.png");
+  assert.deepEqual([...(await client.readCanvasFile(identity, "charts/a b.png"))], [0x89, 0x50, 0x4e, 0x47]);
+  assert.equal(seen[1], "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/canvas/file?path=charts%2Fa%20b.png");
+  await assert.rejects(client.readCanvasFile(identity, "missing.md"), (e) => e instanceof AgentRequestError && e.status === 404);
+});

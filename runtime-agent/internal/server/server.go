@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"path"
@@ -145,6 +146,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /workspaces/{id}/summary", s.authed(s.workspaceSummary))
 	mux.HandleFunc("GET /workspaces/{id}/changes", s.authed(s.workspaceChanges))
 	mux.HandleFunc("GET /workspaces/{id}/files", s.authed(s.workspaceFiles))
+	mux.HandleFunc("GET /workspaces/{id}/canvas", s.authed(s.workspaceCanvas))
+	mux.HandleFunc("GET /workspaces/{id}/canvas/file", s.authed(s.workspaceCanvasFile))
 	mux.HandleFunc("GET /activity", s.authed(s.activity))
 	return mux
 }
@@ -163,7 +166,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas},
 	})
 }
 
@@ -502,6 +505,44 @@ func (s *Server) workspaceFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, files)
+}
+
+// workspaceCanvas lists the session's Canvas.
+func (s *Server) workspaceCanvas(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireWorkspace(w, r, id) {
+		return
+	}
+	canvas, err := s.ws.CanvasFiles(id)
+	if err != nil {
+		respond(w, "", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, canvas)
+}
+
+// workspaceCanvasFile answers one file of the session's Canvas (?path=), as
+// bytes: the app says what it is and how it's shown.
+func (s *Server) workspaceCanvasFile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireWorkspace(w, r, id) {
+		return
+	}
+	data, err := s.ws.CanvasFile(id, r.URL.Query().Get("path"))
+	switch {
+	case errors.Is(err, workspace.ErrInvalidCanvasPath):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, fs.ErrNotExist):
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "no such file in the Canvas")
+	case errors.Is(err, workspace.ErrCanvasFileTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "TOO_LARGE", err.Error())
+	case err != nil:
+		respond(w, "", err)
+	default:
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(data)
+	}
 }
 
 // requireWorkspace binds a verified Runtime token to the exact workspace a

@@ -596,7 +596,8 @@
         "compact",
         "files",
         "environment-skills",
-        "codex-mcp"
+        "codex-mcp",
+        "canvas"
       ]
     }
   ],
@@ -784,6 +785,16 @@
       "changed": 0,
       "truncated": true
     }
+  ],
+  "CanvasResponse": [
+    {
+      "dir": "/home/runtime/.outrunner/canvas/ws-1",
+      "files": [
+        { "path": "rollout-plan.md", "size": 2048, "modifiedAt": "2026-11-03T10:00:00Z" },
+        { "path": "charts/latency.html", "size": 18234, "modifiedAt": "2026-11-03T09:00:00Z" }
+      ]
+    },
+    { "dir": "/home/runtime/.outrunner/canvas/ws-2", "files": [], "truncated": true }
   ],
   "ProviderPorts": [
     [

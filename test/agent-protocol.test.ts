@@ -5,6 +5,7 @@ import { test } from "node:test";
 
 import {
   AGENT_FEATURE_AGENT_CONFIG,
+  AGENT_FEATURE_CANVAS,
   AGENT_FEATURE_CODEX_GATEWAY,
   AGENT_FEATURE_CODEX_MCP,
   AGENT_FEATURE_COMPACT,
@@ -162,6 +163,7 @@ test("the newest health fixture names every feature the agent and the control pl
     AGENT_FEATURE_FILES,
     AGENT_FEATURE_SKILLS,
     AGENT_FEATURE_CODEX_MCP,
+    AGENT_FEATURE_CANVAS,
   ]) {
     assert.ok(newest.includes(feature), `the newest AgentHealth fixture lacks ${feature}`);
   }
