@@ -154,11 +154,13 @@ Actual owner-approved connection and disconnect:
 
 Rollout requires the migration, normal app/runtime release and a CLI release
 containing `codex-auth` via the existing CLI-publish workflow. After verifying
-that release, build the app with `NEXT_PUBLIC_CODEX_CLI_VERSION` set to its exact
-version. Settings pins that release; without a configured version it explains
+that release, set the repository Actions variable `CODEX_CLI_VERSION` to its
+exact version. Deployment verifies the public executable and passes it through
+Docker to `NEXT_PUBLIC_CODEX_CLI_VERSION` at build time. Settings pins that release; without a configured version it explains
 the prerequisite and disables starting an unusable sign-in. It never assumes
 the mutable `latest` tag contains this unreleased command. No production
 deployment or provider entitlement is assumed by this PR.
+See [production rollout and existing-user recovery](../operations/codex-rollout.md).
 
 The isolated harness instead builds with
 `NEXT_PUBLIC_CODEX_AUTH_LAUNCHER_PATH=/__test`, so settings links back to the

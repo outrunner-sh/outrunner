@@ -12,6 +12,10 @@ name: Deploy to Cloudflare Containers
 #   CLOUDFLARE_API_TOKEN   - Workers Scripts:Edit, Durable Objects:Edit,
 #                            Containers:Edit, and neev.ai Zone:DNS:Edit
 #   CLOUDFLARE_ACCOUNT_ID  - the Neevcloud account id
+# Required repository Actions variable:
+#   CODEX_CLI_VERSION     - exact public CLI release verified to have codex-auth.
+# Apply pending SQL migrations separately before deploying; the health gate
+# refuses to call a missing Codex schema a successful feature rollout.
 #
 # Runtime secrets (Supabase, Daytona, CREDENTIALS_ENCRYPTION_KEY) are NOT set
 # here. They live as Worker secrets, set once with `wrangler secret put`, and
