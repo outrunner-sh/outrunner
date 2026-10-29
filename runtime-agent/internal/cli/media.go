@@ -47,11 +47,13 @@ Outrunner, and prints the markdown to paste in the pull request.
   --access   Who the link opens for. Images are public by default: anyone
              with the link, as a pull request needs. Videos are private by
              default (only you, signed in to Outrunner); --access public opens
-             one for anyone.
+             one for anyone. The GIF made from an MP4 is public even when its
+             video is private, so it can show in a pull request.
 
 An MP4 is also made into a GIF (outrunner media gif) and uploaded, and a line
 that shows the GIF and links to the video is printed: GitHub doesn't play a
-video from a link.
+video from a link. The automatic GIF shows the recording's first 10 seconds.
+For the relevant moment, make a GIF with outrunner media gif and upload it.
 
 Public links are bearer links and don't expire. Upload only what goes in the
 pull request: screenshots taken to check your own work stay on the box.
@@ -354,8 +356,10 @@ func mediaUploadCommand(ctx context.Context, args []string, stdout, stderr io.Wr
 			fmt.Fprintf(stderr, "outrunner: uploaded the video, but not a GIF of it (%v); make one with `outrunner media gif` and upload it\n", err)
 		} else {
 			out["gif"] = gif
-			out["poster"] = posterLine(strings.TrimSpace(*name), gif, link)
-			lines = append(lines, posterLine(strings.TrimSpace(*name), gif, link))
+			poster := posterLine(strings.TrimSpace(*name), gif, link)
+			out["poster"] = poster
+			lines = append(lines, poster)
+			fmt.Fprintln(stderr, "\nThe GIF shows the recording's first 10 seconds. For the part that matters, make one with `outrunner media gif --start <s> --duration <s> --crop w:h:x:y` and upload it.")
 		}
 	}
 

@@ -305,6 +305,9 @@ func TestAVideoIsUploadedWithAGIFThatLinksToIt(t *testing.T) {
 	if !strings.Contains(stderr, "opens only for you") {
 		t.Fatalf("stderr %q doesn't say the video is private", stderr)
 	}
+	if !strings.Contains(stderr, "first 10 seconds") || !strings.Contains(uploadUsage, "GIF made from an MP4 is public even when its") {
+		t.Fatalf("the video/GIF visibility wasn't explained: usage %q, stderr %q", uploadUsage, stderr)
+	}
 }
 
 // fakeFFmpegOnPath is a PATH with an `ffmpeg` (never run: runFFmpeg is
