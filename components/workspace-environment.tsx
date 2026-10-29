@@ -16,6 +16,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
+import { SessionMediaRows } from "@/components/session-media";
+import { EnvRow } from "@/components/studio-env-row";
 import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceChanges } from "@/components/workspace-changes";
 import type { SessionSender } from "@/components/workspace-session";
@@ -176,6 +178,10 @@ export function WorkspaceEnvironment({
         {/* The servers running on a cloud session's box, each a click from
             the user's browser. */}
         {!local && opensInBrowser(workspace.provider) && <PortRows workspaceId={workspace.id} active={isReady} />}
+
+        {/* What the session's agent uploaded to show its work: screenshots
+            and GIFs for its pull request. */}
+        {!local && <SessionMediaRows workspaceId={workspace.id} />}
       </div>
     </>
   );
@@ -694,63 +700,5 @@ function ChangesCount({ changes, active }: { changes: WorkspaceChangesState; act
       <span className="text-positive">+{totals.additions}</span>{" "}
       <span className="text-destructive">-{totals.deletions}</span>
     </span>
-  );
-}
-
-/** One row: icon, what it is, and a count or chevron on the right. With
- *  `onClick` it is a button: `expanded` marks one that unfolds details, `busy`
- *  one at work, which ignores clicks. */
-function EnvRow({
-  ref,
-  icon,
-  right,
-  title,
-  onClick,
-  expanded,
-  disabled,
-  busy,
-  merged,
-  children,
-}: {
-  ref?: React.Ref<HTMLButtonElement>;
-  icon: React.ReactNode;
-  right?: React.ReactNode;
-  title?: string;
-  onClick?: () => void;
-  expanded?: boolean;
-  disabled?: boolean;
-  busy?: boolean;
-  /** Tint the icon and PR link in the merged colour (an opened PR once merged). */
-  merged?: boolean;
-  children: React.ReactNode;
-}) {
-  const content = (
-    <>
-      <span className="studio-env-icon">{icon}</span>
-      <span className="flex min-w-0 flex-1 items-center">{children}</span>
-      {right && <span className="studio-env-right">{right}</span>}
-    </>
-  );
-  if (!onClick) {
-    return (
-      <div title={title} className={cn("studio-env-row", merged && "is-merged")}>
-        {content}
-      </div>
-    );
-  }
-  // Busy is not disabled: the button keeps its focus and just ignores clicks.
-  return (
-    <button
-      ref={ref}
-      type="button"
-      onClick={busy ? undefined : onClick}
-      title={title}
-      aria-expanded={expanded}
-      aria-busy={busy || undefined}
-      disabled={disabled}
-      className="studio-env-row is-action disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      {content}
-    </button>
   );
 }

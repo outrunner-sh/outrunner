@@ -48,9 +48,21 @@ var protocolVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-
 
 const toolDescription = `Ask the user one to four multiple-choice questions and wait for their answers. Use it whenever you need the user to decide something, state a preference or give information you can't find yourself before you go on. Outrunner shows the questions in place of the chat box. Give each question 2 to 4 options with a short label and a description of what it means. The user can always type their own answer, so never add an "Other" option. If you recommend an option, list it first and end its label with "(Recommended)". Set multiSelect when more than one option can apply.`
 
-const serverInstructions = "To ask the user a question with choices, call ask_user rather than asking in plain text: Outrunner shows it as a card the user answers with a click. Whenever you need a secret, API key, token, password or private key you don't have, call request_secrets: never ask the user to paste one into the chat."
+const serverInstructions = "To ask the user a question with choices, call ask_user rather than asking in plain text: Outrunner shows it as a card the user answers with a click. Whenever you need a secret, API key, token, password or private key you don't have, call request_secrets: never ask the user to paste one into the chat. To show a screenshot or recording in a pull request, call upload_media with its file and paste the markdown line it returns."
 
 const secretsToolDescription = `Ask the user for secrets you need and don't have (API keys, tokens, passwords, private keys) and wait for them. Outrunner shows a form in place of the chat box; the values go straight into this session's environment and never into the conversation. Use it instead of ever asking the user to paste a secret in chat. Name each variable as the code reads it (e.g. STRIPE_SECRET_KEY), say in reason what you'll use them for, and mark a variable optional when the work can go on without it. The result says which were provided; they're in your Bash environment from your next command. Never print, echo, log or commit a value. If the user skips the request, don't ask again: use a local substitute or explain why it's needed.`
+
+const mediaToolDescription = `Upload a screenshot or screen recording from this computer to Outrunner and get a public link that GitHub shows, with the markdown line to paste: ![name](url). Use it to prove a change a person can see in a pull request: before and after screenshots, or a GIF of anything that moves. Takes PNG, JPEG, GIF, WebP and MP4 files up to 50 MB. GitHub shows images inline but doesn't play an MP4, so show a recording as a short GIF (under 5 MB: GitHub's image proxy won't show a larger one). An image's link is public and doesn't expire: never upload anything secret. Upload only what goes in the pull request; screenshots you take to check your own work stay on the box.`
+
+var mediaInputSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "path": {"type": "string", "description": "The file to upload, absolute or relative to the session's working folder."},
+    "name": {"type": "string", "description": "What it shows, descriptive and unique, the markdown's alt text, e.g. \"Settings page on a phone, after\". Never just \"screenshot\"."},
+    "access": {"type": "string", "enum": ["public", "private"], "description": "Who the link opens for. Images default to public; videos to private (only the session's owner), unless public is asked for."}
+  },
+  "required": ["path", "name"]
+}`)
 
 var secretsInputSchema = json.RawMessage(`{
   "type": "object",
@@ -226,6 +238,13 @@ func (r *relay) handle(ctx context.Context, msg rpcMessage) {
 				"inputSchema": secretsInputSchema,
 				"annotations": map[string]any{"readOnlyHint": false, "openWorldHint": false},
 			},
+			map[string]any{
+				"name":        MediaToolName,
+				"title":       "Upload a screenshot or recording",
+				"description": mediaToolDescription,
+				"inputSchema": mediaInputSchema,
+				"annotations": map[string]any{"readOnlyHint": false, "openWorldHint": true},
+			},
 		}})
 	case "tools/call":
 		r.startCall(ctx, msg)
@@ -284,6 +303,9 @@ func (r *relay) call(ctx context.Context, raw json.RawMessage) (string, bool) {
 			Questions json.RawMessage `json:"questions"`
 			Reason    json.RawMessage `json:"reason"`
 			Keys      json.RawMessage `json:"keys"`
+			Path      string          `json:"path"`
+			Name      string          `json:"name"`
+			Access    string          `json:"access"`
 		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
@@ -306,6 +328,11 @@ func (r *relay) call(ctx context.Context, raw json.RawMessage) (string, bool) {
 			reason = json.RawMessage(`""`)
 		}
 		route, request = "ask-secrets", map[string]any{"reason": reason, "keys": params.Arguments.Keys}
+	case MediaToolName:
+		if params.Arguments.Path == "" {
+			return "upload_media needs the path of the file to upload", true
+		}
+		route, request = "media", map[string]any{"path": params.Arguments.Path, "name": params.Arguments.Name, "access": params.Arguments.Access}
 	default:
 		return "unknown tool " + params.Name, true
 	}
@@ -317,7 +344,7 @@ func (r *relay) call(ctx context.Context, raw json.RawMessage) (string, bool) {
 
 	var unreachableSince time.Time
 	for {
-		text, failed, err := r.post(ctx, route, body)
+		text, failed, err := r.post(ctx, params.Name, route, body)
 		if err == nil {
 			return text, failed
 		}
@@ -327,7 +354,7 @@ func (r *relay) call(ctx context.Context, raw json.RawMessage) (string, bool) {
 		if unreachableSince.IsZero() {
 			unreachableSince = time.Now()
 		} else if time.Since(unreachableSince) > r.cfg.RetryFor {
-			return "Outrunner couldn't be reached to show the question (" + err.Error() + "). Ask the user in plain text instead.", true
+			return unavailable(params.Name, "Outrunner couldn't be reached", err), true
 		}
 		select {
 		case <-ctx.Done():
@@ -337,20 +364,36 @@ func (r *relay) call(ctx context.Context, raw json.RawMessage) (string, bool) {
 	}
 }
 
+// unavailable is a tool's text when its call can't reach the agent: what to
+// do instead, which is the tool's own. A question can be asked in the chat;
+// a secret must never be pasted there; an upload can't be done another way,
+// and the user mustn't be asked to do it.
+func unavailable(tool, what string, err error) string {
+	why := what + " (" + err.Error() + ")."
+	switch tool {
+	case SecretsToolName:
+		return why + " Tell the user which secrets you need and where to set them in Outrunner; never ask for a value in the chat."
+	case MediaToolName:
+		return why + " The file wasn't uploaded. Leave it out of the pull request and say under Evidence that it couldn't be uploaded; don't ask the user to upload or paste it."
+	default:
+		return why + " Ask the user in plain text instead."
+	}
+}
+
 // errUnreachable is an agent that isn't there to answer: not started yet,
 // restarting, or gone mid-call. The call is tried again.
 var errUnreachable = errors.New("runtime-agent unreachable")
 
 // post sends the call to the agent once. An error means it should be tried
 // again; an answer, even a refusal, is returned as the tool's text.
-func (r *relay) post(ctx context.Context, route string, body []byte) (string, bool, error) {
+func (r *relay) post(ctx context.Context, tool, route string, body []byte) (string, bool, error) {
 	addr, err := readTrimmed(r.cfg.AddrFile)
 	if err != nil {
 		return "", false, fmt.Errorf("%w: %v", errUnreachable, err)
 	}
 	token, err := readTrimmed(r.cfg.TokenFile)
 	if err != nil {
-		return "This session can't ask questions in Outrunner (" + err.Error() + "). Ask the user in plain text instead.", true, nil
+		return unavailable(tool, "This session can't reach Outrunner", err), true, nil
 	}
 	url := "http://" + addr + "/workspaces/" + r.cfg.WorkspaceID + "/" + route
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))

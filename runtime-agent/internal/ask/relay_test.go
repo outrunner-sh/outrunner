@@ -127,7 +127,7 @@ func TestRelayServesTheToolAndForwardsCalls(t *testing.T) {
 	r.send(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 	r.send(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	tools := r.next()["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 2 || tools[0].(map[string]any)["name"] != ToolName || tools[1].(map[string]any)["name"] != SecretsToolName {
+	if len(tools) != 3 || tools[0].(map[string]any)["name"] != ToolName || tools[1].(map[string]any)["name"] != SecretsToolName || tools[2].(map[string]any)["name"] != MediaToolName {
 		t.Fatalf("tools = %v", tools)
 	}
 
@@ -231,6 +231,23 @@ func TestRelayGivesUpOnAnAgentThatNeverComesBack(t *testing.T) {
 	}
 }
 
+// Each tool says what to do instead: an upload never sends the agent to ask
+// the user for the file, and secrets are never asked for in the chat.
+func TestEachToolHasItsOwnFallbackWhenTheAgentIsGone(t *testing.T) {
+	agent := httptest.NewServer(http.NotFoundHandler())
+	agent.Close()
+	r := startRelay(t, agent, 30*time.Millisecond)
+	r.send(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"upload_media","arguments":{"path":"after.png","name":"After"}}}`)
+	text, failed := toolText(t, r.next())
+	if !failed || !strings.Contains(text, "wasn't uploaded") || strings.Contains(text, "plain text") {
+		t.Fatalf("upload_media's fallback = %q (error %v)", text, failed)
+	}
+	r.send(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"request_secrets","arguments":{"reason":"r","keys":[{"name":"K"}]}}}`)
+	if text, _ := toolText(t, r.next()); !strings.Contains(text, "never ask for a value in the chat") {
+		t.Fatalf("request_secrets' fallback = %q", text)
+	}
+}
+
 // A request for secrets goes to the agent's own route, with its reason and
 // keys, and the agent's text is the tool's result.
 func TestRelayForwardsASecretsRequest(t *testing.T) {
@@ -261,5 +278,50 @@ func TestRelayForwardsASecretsRequest(t *testing.T) {
 	r.send(`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"request_secrets","arguments":{"reason":"x"}}}`)
 	if text, failed := toolText(t, r.next()); !failed || !strings.Contains(text, "needs keys") {
 		t.Fatalf("no keys: %q (error %v)", text, failed)
+	}
+}
+
+func TestRelayForwardsAnUploadToTheAgent(t *testing.T) {
+	var got struct {
+		RequestID string `json:"requestId"`
+		Path      string `json:"path"`
+		Name      string `json:"name"`
+		Access    string `json:"access"`
+	}
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/workspaces/ws/media" || r.Header.Get("Authorization") != "Bearer tok" {
+			t.Errorf("call to %s with %q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = io.WriteString(w, `{"text":"![After](https://app/m/x.png)"}`)
+	}))
+	defer agent.Close()
+	r := startRelay(t, agent, 0)
+
+	r.send(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"upload_media","arguments":{"path":"shots/after.png","name":"After","access":"public"}}}`)
+	if text, failed := toolText(t, r.next()); failed || text != "![After](https://app/m/x.png)" {
+		t.Fatalf("tool result = %q (error %v)", text, failed)
+	}
+	if got.Path != "shots/after.png" || got.Name != "After" || got.Access != "public" || got.RequestID == "" {
+		t.Fatalf("agent got %+v", got)
+	}
+
+	// No file named: refused before the agent is asked.
+	r.send(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"upload_media","arguments":{}}}`)
+	if text, failed := toolText(t, r.next()); !failed || !strings.Contains(text, "path") {
+		t.Fatalf("tool result = %q (error %v)", text, failed)
+	}
+}
+
+func TestRelayPassesOnARefusedUpload(t *testing.T) {
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = io.WriteString(w, `{"error":{"code":"REFUSED","message":"Files are limited to 50 MB."}}`)
+	}))
+	defer agent.Close()
+	r := startRelay(t, agent, 0)
+	r.send(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"upload_media","arguments":{"path":"big.mp4"}}}`)
+	if text, failed := toolText(t, r.next()); !failed || text != "Files are limited to 50 MB." {
+		t.Fatalf("tool result = %q (error %v)", text, failed)
 	}
 }

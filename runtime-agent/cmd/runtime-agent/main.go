@@ -20,6 +20,7 @@ import (
 	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/localimport"
+	"runtime-agent/internal/media"
 	"runtime-agent/internal/preview"
 	"runtime-agent/internal/server"
 	"runtime-agent/internal/workspace"
@@ -83,6 +84,9 @@ func main() {
 		}
 		// The same means make the sessions' previews.
 		svc.UsePreviews(&preview.Client{AppURL: cfg.AppURL, SandboxID: cfg.SandboxID, Secret: cfg.Secret})
+		// The same means let its sessions upload screenshots and recordings
+		// for their pull requests (package media).
+		svc.UseMedia(&media.Client{Config: cfg})
 	}
 	if raw := os.Getenv("RUNTIME_DEFAULT_PERMISSION_MODE"); raw != "" {
 		mode, err := claude.ParsePermissionMode(raw)
