@@ -1,18 +1,17 @@
 # TEMPORARY — delete before this pull request merges.
 #
 # CI's own logs aren't readable from this session's token (no actions:read), so
-# this re-runs the two failing commands and surfaces their output as check
-# annotations, which are readable. It changes nothing about the build.
+# this re-runs the same commands and reports their output as check annotations,
+# which are readable. Notices, not errors, so this job stays green and only the
+# real CI jobs go red. It changes nothing about the build.
 name: CI debug
 
 on:
   pull_request:
 
 jobs:
-  tsc:
+  check:
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    # As CI's app job: the tests that run migrations' SQL for real are skipped
-    # without it, so a failure there would be invisible here otherwise.
     services:
       postgres:
         image: postgres:16
@@ -32,18 +31,21 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: The typecheck's own output
+      - name: What fails, and why
         run: |
-          pnpm exec tsc --noEmit > /tmp/tsc.log 2>&1
-          echo "tsc exit=$?"
-          head -n 60 /tmp/tsc.log | while IFS= read -r line; do echo "::error::$line"; done
-          exit 0
-      - name: The tests' own output
-        run: |
-          pnpm test > /tmp/test.log 2>&1
-          echo "test exit=$?"
-          grep -A 12 "^✖ failing tests" /tmp/test.log | head -n 60 | while IFS= read -r line; do echo "::error::$line"; done
-          tail -n 20 /tmp/test.log | while IFS= read -r line; do echo "::notice::$line"; done
+          set +e
+          report () {
+            name="$1"; log="$2"; lines="$3"
+            code=$(cat "/tmp/$name.code")
+            echo "::notice::$name exit=$code"
+            head -n "$lines" "$log" | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::notice::$name: $line"
+            done
+          }
+          pnpm exec tsc --noEmit > /tmp/tsc.log 2>&1; echo $? > /tmp/tsc.code
+          report tsc /tmp/tsc.log 30
+          pnpm test > /tmp/test.log 2>&1; echo $? > /tmp/test.code
+          report test /tmp/test.log 30
           exit 0
 
   build:
@@ -72,9 +74,13 @@ jobs:
               console.log(`${name}=${vars[name]}`);
             }
           ' >> "$GITHUB_ENV"
-      - name: The build's own output
+      - name: What the build says
         run: |
+          set +e
           pnpm build > /tmp/build.log 2>&1
-          echo "build exit=$?"
-          head -n 60 /tmp/build.log | while IFS= read -r line; do echo "::error::$line"; done
+          echo "::notice::build exit=$?"
+          # The failure is at the end of a long build log.
+          tail -n 40 /tmp/build.log | while IFS= read -r line; do
+            [ -n "$line" ] && echo "::notice::build: $line"
+          done
           exit 0
