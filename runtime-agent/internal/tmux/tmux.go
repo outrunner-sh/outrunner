@@ -206,10 +206,20 @@ func (m *Manager) CapturePane(ctx context.Context, name string) (string, error) 
 
 // ListSessions returns the names of all live sessions.
 func (m *Manager) ListSessions(ctx context.Context) ([]string, error) {
-	out, err := Command(ctx, "list-sessions", "-F", "#{session_name}").Output()
+	var stderr bytes.Buffer
+	cmd := Command(ctx, "list-sessions", "-F", "#{session_name}")
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		// tmux exits non-zero when there is no server/sessions; treat as empty.
-		return nil, nil
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		// tmux exits non-zero when there is no server/sessions; only that is
+		// an empty list. Other failures mean activity is unknown to the caller.
+		if errors.As(err, new(*exec.ExitError)) && sessionGone(stderr.String()) {
+			return []string{}, nil
+		}
+		return nil, fmt.Errorf("tmux list-sessions: %v: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	var names []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {

@@ -31,12 +31,13 @@ import (
 	"runtime-agent/internal/transcript"
 )
 
-// sessions is the part of tmux the service drives, behind an interface so tests
-// can stand in for a session that is running, busy or failing to start.
-type sessions interface {
+// Sessions is the tmux surface the service drives. ListSessions is part of the
+// contract because activity recovery must see every live workspace session.
+type Sessions interface {
 	NewSession(ctx context.Context, name, workdir string, command []string, env []string) error
 	HideStatus(ctx context.Context, name string)
 	HasSession(ctx context.Context, name string) bool
+	ListSessions(ctx context.Context) ([]string, error)
 	SessionExists(ctx context.Context, name string) (bool, error)
 	KillSession(ctx context.Context, name string) error
 	Paste(ctx context.Context, name, text string) error
@@ -47,11 +48,16 @@ type sessions interface {
 	CapturePaneStyled(ctx context.Context, name string) (string, error)
 }
 
+type unknownActivityMarker struct {
+	Since      time.Time `json:"since"`
+	LifetimeID string    `json:"lifetimeId"`
+}
+
 // Service holds the on-box layout and the tmux manager. One instance per agent.
 type Service struct {
 	// Root is the Runtime Computer working area, e.g. /home/runtime.
 	Root string
-	tmux sessions
+	tmux Sessions
 	env  []string
 	// secrets are values that can legitimately appear in the Claude process
 	// environment. The HTTP server uses them to redact browser-visible PTY
@@ -60,6 +66,15 @@ type Service struct {
 
 	mu    sync.Mutex
 	facts map[string]workspaceFacts
+
+	activityMu                    sync.Mutex
+	activityUnknownSince          time.Time
+	activityUnknownReason         string
+	activityUnknownLogged         time.Time
+	activityUnknownExpiredLogged  bool
+	activityUnknownClearAttempted bool
+	activityUnknownClearFailed    bool
+	lifetimeID                    func() string
 
 	// sendLocks serializes prompt delivery per workspace. SendKeys types then
 	// submits in separate tmux commands, so concurrent sends on one session
@@ -246,10 +261,18 @@ type CreateInput struct {
 }
 
 func NewService(root string) *Service {
+	return NewServiceWithSessions(root, tmux.New())
+}
+
+// NewServiceWithSessions constructs a service with the supplied session
+// manager. Production uses NewService; callers that compose the runtime-agent
+// or exercise its server can inject a manager with deterministic list results.
+func NewServiceWithSessions(root string, manager Sessions) *Service {
 	env, secrets := sessionEnvironment(os.Environ())
 	return &Service{
 		Root:        root,
-		tmux:        tmux.New(),
+		tmux:        manager,
+		lifetimeID:  boxLifetimeID,
 		env:         env,
 		secrets:     secrets,
 		facts:       map[string]workspaceFacts{},
@@ -1753,8 +1776,105 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 
 // Activity reports the most recent activity in any session on this box, and
 // whether Claude is mid-turn in any of them; zero time when no session has a
-// summary yet. The control plane pauses a box idle long enough.
-func (s *Service) Activity() (last time.Time, turnInProgress bool) {
+// summary yet. The third result is true when the complete set of live sessions
+// cannot be established, so the server can avoid mistaking its boot for user
+// activity. The control plane pauses a box idle long enough.
+func (s *Service) Activity() (last time.Time, turnInProgress, unknown bool) {
+	// tmux and its Claude processes outlive this Go service. After a runtime-
+	// agent restart (including an in-place upgrade), re-arm summaries for live
+	// sessions before reporting activity to the box reconciler. Without this,
+	// an active turn is forgotten and the fresh server boot time ages into the
+	// 15-minute idle cutoff, which pauses the box underneath that turn.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if reason := s.recoverRunningSummaries(ctx); reason != "" {
+		// Protect active work when tmux is temporarily unreadable or a live
+		// session has lost its persisted facts. The two-hour bound matches the
+		// reconciler's stuck-turn limit; afterward this unknown state is eligible
+		// for the ordinary idle pause instead of holding a box forever.
+		last, turnInProgress = s.unknownActivity(reason)
+		return last, turnInProgress, true
+	}
+	s.clearUnknownActivity()
+	last, turnInProgress = s.summariesActivity()
+	return last, turnInProgress, false
+}
+
+// recoverRunningSummaries reattaches conversation collectors for tmux
+// sessions that survived a runtime-agent restart. Facts are persisted beside
+// each worktree, so the session id and summary path can be recovered without
+// changing or restarting the user process. A non-empty result explains why
+// Activity cannot establish the complete set of live sessions.
+func (s *Service) recoverRunningSummaries(ctx context.Context) string {
+	if s.jcode != nil {
+		return "" // jcode boxes are metered but are not paused by the reconciler.
+	}
+	names, err := s.tmux.ListSessions(ctx)
+	if err != nil {
+		return fmt.Sprintf("couldn't list tmux sessions: %v", err)
+	}
+	unknown := ""
+	for _, name := range names {
+		id, ok := strings.CutPrefix(name, "ws-")
+		if !ok || id == "" {
+			continue // editor or another non-workspace tmux session
+		}
+		if _, ok := s.getFacts(id); !ok {
+			if unknown == "" {
+				unknown = fmt.Sprintf("live tmux session %q has no persisted workspace facts", name)
+			}
+			continue
+		}
+		s.beginSummary(id, s.worktreePath(id))
+	}
+	return unknown
+}
+
+const (
+	unknownActivityGrace       = 2 * time.Hour
+	unknownActivityLogInterval = 10 * time.Minute
+)
+
+// unknownActivity keeps the reconciler fail-safe for the same two-hour window
+// it already grants a known in-progress turn. Its timestamp does not move on
+// every poll, so persistent tmux failures and orphan sessions eventually
+// become eligible for the ordinary idle pause. Warnings are rate-limited per
+// service instance while still making the reason and age visible.
+func (s *Service) unknownActivity(reason string) (time.Time, bool) {
+	now := time.Now().UTC()
+	knownLast, knownTurn := s.summariesActivity()
+	s.activityMu.Lock()
+	defer s.activityMu.Unlock()
+	if s.activityUnknownSince.IsZero() {
+		s.activityUnknownClearAttempted = false
+		s.activityUnknownExpiredLogged = false
+		if !s.activityUnknownClearFailed {
+			s.activityUnknownSince = s.readUnknownActivitySince()
+		}
+		if s.activityUnknownSince.IsZero() {
+			s.activityUnknownSince = now
+			s.writeUnknownActivitySince(s.activityUnknownSince)
+		}
+	}
+	s.activityUnknownReason = reason
+	if s.activityUnknownLogged.IsZero() || now.Sub(s.activityUnknownLogged) >= unknownActivityLogInterval {
+		age := now.Sub(s.activityUnknownSince).Round(time.Second)
+		log.Printf("runtime-agent: activity remains unknown for %s (%s); unknown-only protection window %s, expired=%t", age, s.activityUnknownReason, unknownActivityGrace, age >= unknownActivityGrace)
+		s.activityUnknownLogged = now
+	}
+	if now.Sub(s.activityUnknownSince) < unknownActivityGrace {
+		return laterOf(s.activityUnknownSince, knownLast), true
+	}
+	if !s.activityUnknownExpiredLogged {
+		log.Printf("runtime-agent: unknown-activity protection window elapsed after %s; falling back to observed summaries and idle state", now.Sub(s.activityUnknownSince).Round(time.Second))
+		s.activityUnknownExpiredLogged = true
+	}
+	// A collector that is still making progress can see activity even when
+	// tmux's session list is unavailable. Keep its normal turn protection.
+	return laterOf(s.activityUnknownSince, knownLast), knownTurn
+}
+
+func (s *Service) summariesActivity() (last time.Time, turnInProgress bool) {
 	s.summariesMu.Lock()
 	sums := make([]*Summary, 0, len(s.summaries))
 	for _, sum := range s.summaries {
@@ -1769,6 +1889,152 @@ func (s *Service) Activity() (last time.Time, turnInProgress bool) {
 		turnInProgress = turnInProgress || open
 	}
 	return last, turnInProgress
+}
+
+func laterOf(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
+}
+
+func (s *Service) clearUnknownActivity() {
+	s.activityMu.Lock()
+	if s.Root != "" && !s.activityUnknownClearAttempted {
+		err := os.Remove(s.unknownActivityPath())
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			if !s.activityUnknownClearFailed {
+				log.Printf("runtime-agent: couldn't clear persisted unknown activity time: %v", err)
+			}
+			s.activityUnknownClearFailed = true
+		} else {
+			s.activityUnknownClearAttempted = true
+			s.activityUnknownClearFailed = false
+		}
+	}
+	s.activityUnknownSince = time.Time{}
+	s.activityUnknownReason = ""
+	s.activityUnknownLogged = time.Time{}
+	s.activityUnknownExpiredLogged = false
+	s.activityMu.Unlock()
+}
+
+// Persist the start of an unknown-activity interval so restarting
+// runtime-agent cannot keep resetting the protection window for an orphaned
+// session or a tmux server that never answers.
+func (s *Service) unknownActivityPath() string {
+	return filepath.Join(s.Root, "runtime-agent-activity-unknown-since")
+}
+
+func (s *Service) readUnknownActivitySince() time.Time {
+	if s.Root == "" {
+		return time.Time{}
+	}
+	data, err := os.ReadFile(s.unknownActivityPath())
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("runtime-agent: couldn't read persisted unknown activity time: %v", err)
+		}
+		return time.Time{}
+	}
+	var marker unknownActivityMarker
+	decodeErr := json.Unmarshal(data, &marker)
+	if decodeErr != nil || marker.Since.IsZero() {
+		// A timestamp from the earlier marker format has no container identity;
+		// reset it once rather than risk carrying an expired interval into a
+		// resumed box.
+		if _, legacyErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data))); legacyErr == nil {
+			log.Printf("runtime-agent: persisted unknown activity time has no box lifetime; starting a new protection window")
+			return time.Time{}
+		}
+		if decodeErr != nil {
+			log.Printf("runtime-agent: couldn't parse persisted unknown activity time: %v", decodeErr)
+		} else {
+			log.Printf("runtime-agent: persisted unknown activity time has no timestamp")
+		}
+		return time.Time{}
+	}
+	lifetime := s.lifetimeID()
+	if lifetime == "" {
+		log.Printf("runtime-agent: couldn't validate persisted unknown activity time without a box lifetime id; starting a new protection window")
+		return time.Time{}
+	}
+	if marker.LifetimeID == "" {
+		log.Printf("runtime-agent: persisted unknown activity time has no box lifetime id; starting a new protection window")
+		return time.Time{}
+	}
+	if marker.LifetimeID != lifetime {
+		log.Printf("runtime-agent: persisted unknown activity time belongs to another box lifetime; starting a new protection window")
+		return time.Time{}
+	}
+	return marker.Since.UTC()
+}
+
+// boxLifetimeID combines the kernel boot ID with PID 1's start time when both
+// are available. A VM reboot changes the former; a container start on a shared
+// host changes the latter. If one source is unavailable, the other still keeps
+// the unknown-activity window bounded across runtime-agent restarts. A boot-only
+// ID cannot distinguish a container restart on a shared host, so a stale marker
+// may still match across that boundary.
+func boxLifetimeID() string {
+	bootID, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	boot := ""
+	if err == nil {
+		boot = strings.TrimSpace(string(bootID))
+	}
+	data, err := os.ReadFile("/proc/1/stat")
+	pid1Start := ""
+	if err == nil {
+		pid1Start = pid1StartTime(string(data))
+	}
+	return boxLifetimeIDParts(boot, pid1Start)
+}
+
+func pid1StartTime(stat string) string {
+	close := strings.LastIndex(stat, ")")
+	if close < 0 {
+		return ""
+	}
+	fields := strings.Fields(stat[close+1:])
+	// After the command name, the first field is stat field 3 (state), so field
+	// 22 (starttime) is at index 19.
+	if len(fields) <= 19 {
+		return ""
+	}
+	return fields[19]
+}
+
+func boxLifetimeIDParts(bootID, pid1Start string) string {
+	switch {
+	case bootID != "" && pid1Start != "":
+		return "boot:" + bootID + ":pid1:" + pid1Start
+	case bootID != "":
+		return "boot:" + bootID
+	case pid1Start != "":
+		return "pid1:" + pid1Start
+	default:
+		return ""
+	}
+}
+
+func (s *Service) writeUnknownActivitySince(since time.Time) {
+	if s.Root == "" {
+		return
+	}
+	lifetime := s.lifetimeID()
+	if lifetime == "" {
+		log.Printf("runtime-agent: couldn't persist unknown activity time without a box lifetime id")
+		return
+	}
+	marker := unknownActivityMarker{Since: since.UTC(), LifetimeID: lifetime}
+	data, err := json.Marshal(marker)
+	if err != nil {
+		log.Printf("runtime-agent: couldn't encode unknown activity time: %v", err)
+		return
+	}
+	if err := os.WriteFile(s.unknownActivityPath(), data, 0o600); err != nil {
+		log.Printf("runtime-agent: couldn't persist unknown activity time: %v", err)
+	}
 }
 
 // beginSummary creates (or refreshes) the Workspace Summary collector for a

@@ -498,31 +498,75 @@ export function claudeConfigSeedScript(root: string): string {
   );
 }
 
-/** Launch the runtime-agent in Claude mode (default engine), detached, rooted at
- *  the box's home, seeding CLAUDE_CODE_OAUTH_TOKEN (etc.) so Claude auths. */
-export function claudeAgentLaunchScript(
+/** Launch a small shell supervisor around the Go control agent. The child
+ * process restarts after a crash while tmux keeps Claude and its worktree
+ * alive. Fast failures back off up to 30 seconds; a child that stayed up for
+ * five minutes resets that delay. The log is truncated once per launch. The
+ * secret is supplied through the supervisor's environment, never embedded in
+ * its persistent command string or script. */
+export function claudeAgentSupervisorLaunchScript(
   root: string,
   secret: string,
   env: Record<string, string> = {},
 ): string {
+  const stop = `${root}/runtime-agent.stop`;
+  const pid = `${root}/runtime-agent-supervisor.pid`;
+  const binary = `${root}/runtime-agent`;
+  const log = `${root}/runtime-agent.log`;
   const extra = Object.entries(env)
     .map(([key, value]) => `${key}=${shellQuote(value)}`)
     .join(" ");
   const assignments =
-    `RUNTIME_AGENT_SECRET=${shellQuote(secret)} RUNTIME_AGENT_ROOT=${root} ` +
-    `PORT=${AGENT_PORT} HOME=${root}` +
+    `RUNTIME_AGENT_SECRET=${shellQuote(secret)} RUNTIME_AGENT_ROOT=${shellQuote(root)} ` +
+    `PORT=${AGENT_PORT} HOME=${shellQuote(root)}` +
     (extra ? ` ${extra}` : "");
-  return `setsid env ${assignments} ${root}/runtime-agent > ${root}/runtime-agent.log 2>&1 < /dev/null &`;
+  const supervisor =
+    `# outrunner-runtime-agent-supervisor\n` +
+    `echo $$ > ${shellQuote(pid)}\n` +
+    `delay=1\n` +
+    `while [ ! -e ${shellQuote(stop)} ]; do\n` +
+    `  started=$SECONDS\n` +
+    `  ${shellQuote(binary)} >> ${shellQuote(log)} 2>&1\n` +
+    `  status=$?\n` +
+    `  lived=$((SECONDS - started))\n` +
+    `  printf 'runtime-agent exited (%s) after %ss\\n' "$status" "$lived" >> ${shellQuote(log)}\n` +
+    `  [ -e ${shellQuote(stop)} ] && break\n` +
+    `  if [ "$lived" -ge 300 ]; then delay=1; fi\n` +
+    `  printf 'restarting in %ss\\n' "$delay" >> ${shellQuote(log)}\n` +
+    `  sleep "$delay"\n` +
+    `  if [ "$delay" -lt 30 ]; then delay=$((delay * 2)); [ "$delay" -gt 30 ] && delay=30; fi\n` +
+    `done`;
+  return (
+    `rm -f ${shellQuote(stop)}; : > ${shellQuote(log)}; ` +
+    `setsid env ${assignments} bash -c ${shellQuote(supervisor)} ` +
+    `>/dev/null 2>&1 < /dev/null &`
+  );
 }
 
 /**
- * Stop an agent still running on the box: one brought back from a pause can
- * have its processes, and that agent holds the port on the old secret. Waits
- * up to 5s for it to go, then kills it; succeeds when there was none.
+ * Stop the runtime-agent supervisor and its child before replacing the binary
+ * or rotating the per-computer secret. The stop marker prevents the supervisor
+ * from starting another child while the deploy is in progress.
  */
-export const STOP_AGENT_SCRIPT =
-  "pkill -x runtime-agent; for i in $(seq 50); do pgrep -x runtime-agent >/dev/null || exit 0; sleep 0.1; done; " +
-  "pkill -9 -x runtime-agent; exit 0";
+export function stopClaudeAgentScript(root: string): string {
+  const stop = `${root}/runtime-agent.stop`;
+  const pid = `${root}/runtime-agent-supervisor.pid`;
+  return (
+    `touch ${shellQuote(stop)}; supervisor_pid=''; ` +
+    `if [ -r ${shellQuote(pid)} ]; then candidate=$(cat ${shellQuote(pid)}); ` +
+    `if [ -r "/proc/$candidate/cmdline" ] && ` +
+    `tr '\\0' ' ' < "/proc/$candidate/cmdline" | grep -q outrunner-runtime-agent-supervisor; ` +
+    `then supervisor_pid=$candidate; kill -TERM "$supervisor_pid" 2>/dev/null || true; fi; fi; ` +
+    `pkill -TERM -x runtime-agent 2>/dev/null || true; ` +
+    `for i in $(seq 50); do ` +
+    `agent_live=0; pgrep -x runtime-agent >/dev/null && agent_live=1; ` +
+    `if [ -n "$supervisor_pid" ] && kill -0 "$supervisor_pid" 2>/dev/null; then agent_live=1; fi; ` +
+    `[ "$agent_live" -eq 0 ] && break; sleep 0.1; done; ` +
+    `pkill -9 -x runtime-agent 2>/dev/null || true; ` +
+    `if [ -n "$supervisor_pid" ]; then kill -KILL "$supervisor_pid" 2>/dev/null || true; fi; ` +
+    `rm -f ${shellQuote(pid)}`
+  );
+}
 
 /** Full Claude deploy on one box: install tmux → upload+unpack the agent
  *  (unless that build is there) → launch it in Claude mode → wait for health. Reuses the root-parameterized
@@ -540,7 +584,7 @@ export async function deployClaude(
     );
   }
   // Before the upload, which can't replace a binary that's running.
-  await io.exec(`bash -lc ${shellQuote(STOP_AGENT_SCRIPT)}`);
+  await io.exec(`bash -lc ${shellQuote(stopClaudeAgentScript(opts.root))}`);
   // A box restored on the disk an ended one left (Modal) has the agent there
   // already. The upload is the slowest part of a deploy, so only a different
   // build goes up.
@@ -564,6 +608,8 @@ export async function deployClaude(
       `claude config seed failed (exit ${seed.exitCode}): ${seed.stdout.trim()}`,
     );
   }
-  await io.launch(`bash -lc ${shellQuote(claudeAgentLaunchScript(opts.root, secret, opts.sessionEnv))}`);
+  await io.launch(
+    `bash -lc ${shellQuote(claudeAgentSupervisorLaunchScript(opts.root, secret, opts.sessionEnv))}`,
+  );
   return waitForJcodeAgentHealth(io, opts.root, opts);
 }
