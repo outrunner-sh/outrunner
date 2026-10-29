@@ -200,12 +200,14 @@ function cleanCanvasPath(path: string): string | null {
  * original styles are restored before paint. Fixed overlays do not determine
  * intrinsic height. Measurements are coalesced per animation frame, and a
  * repeated viewport-growth pattern is stopped for viewport-sized descendants.
+ * Clipped subtrees contribute only their container; DOM animations settle
+ * before mutation-driven measurements run.
  */
 export const VISUAL_HEIGHT_MESSAGE = "outrunnerVisualHeight";
 export const VISUAL_EMBED_SCRIPT = `<script>(()=>{
   const root=document.documentElement;
   const options={childList:true,subtree:true,attributes:true,characterData:true};
-  let last=-1,lastViewport=-1,lastOverflow=-1,growing=0,queued=false,forceNext=false;
+  let last=-1,lastViewport=-1,lastOverflow=-1,growing=0,queued=false,forceNext=false,mutationTimer=0;
   const measure=()=>{
     const body=document.body;if(!body)return 0;
     const nodes=[root,body],styles=nodes.map(n=>n.getAttribute("style"));
@@ -216,8 +218,10 @@ export const VISUAL_EMBED_SCRIPT = `<script>(()=>{
       const range=document.createRange();
       const visit=n=>{
         if(n.nodeType===1){
-          if(getComputedStyle(n).position==="fixed")return;
+          const style=getComputedStyle(n);
+          if(style.position==="fixed"||style.display==="none")return;
           bottom=Math.max(bottom,n.getBoundingClientRect().bottom);
+          if(style.overflowY!=="visible")return;
         }else if(n.nodeType===3&&n.textContent.trim()){
           range.selectNodeContents(n);bottom=Math.max(bottom,range.getBoundingClientRect().bottom);
         }
@@ -232,6 +236,7 @@ export const VISUAL_EMBED_SCRIPT = `<script>(()=>{
     }
   };
   const post=force=>{
+    clearTimeout(mutationTimer);mutationTimer=0;
     const h=measure(),viewport=innerHeight,overflow=h-viewport;
     if(viewport!==lastViewport){
       growing=Math.abs(viewport-last)<2&&overflow>0&&Math.abs(overflow-lastOverflow)<2?growing+1:0;
@@ -245,7 +250,10 @@ export const VISUAL_EMBED_SCRIPT = `<script>(()=>{
     forceNext=forceNext||force===true;if(queued)return;queued=true;
     requestAnimationFrame(()=>{queued=false;const force=forceNext;forceNext=false;post(force)});
   };
-  const mutations=new MutationObserver(()=>{growing=0;schedule()});
+  const mutations=new MutationObserver(()=>{
+    growing=0;clearTimeout(mutationTimer);
+    mutationTimer=setTimeout(()=>{mutationTimer=0;schedule()},150);
+  });
   mutations.observe(root,options);
   new ResizeObserver(()=>schedule()).observe(root);
   addEventListener("message",e=>{if(e.source===parent)schedule(true)});
