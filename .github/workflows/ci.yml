@@ -15,7 +15,7 @@ jobs:
     name: App (typecheck, lint, tests)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     # A Postgres for the tests that run migrations' SQL for real
-    # (test/missions-sql.test.ts); they're skipped without MISSIONS_PG.
+    # (Missions and composer history); skipped locally without a test server.
     services:
       postgres:
         image: postgres:16
@@ -26,6 +26,7 @@ jobs:
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       MISSIONS_PG: postgresql://postgres:postgres@localhost:5432/postgres
+      COMPOSER_HISTORY_PG: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
       # No version pin: pnpm/action-setup reads the pnpm version from the
