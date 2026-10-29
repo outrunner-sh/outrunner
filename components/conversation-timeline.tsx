@@ -2,6 +2,7 @@
 
 import {
   Bot,
+  Clock,
   FilePlus,
   FoldVertical,
   FileText,
@@ -15,7 +16,7 @@ import {
   SquareTerminal,
   Wrench,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { Markdown } from "@/components/markdown";
 import { type PlanActions, PlanCard } from "@/components/plan-card";
@@ -41,6 +42,7 @@ import {
   conversationTurns,
   currentTurn,
 } from "@/lib/runtime/conversation-nodes";
+import { messageTime, workedFor } from "@/lib/runtime/turn-timing";
 import type { ConversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import { lineRange, parseCommentQuotes } from "@/lib/session/diff-comments";
 import { FOLLOW_SLACK_PX, followsAfterScroll, USER_SCROLL_MS } from "@/lib/session/follow-scroll";
@@ -117,6 +119,15 @@ export function ConversationTimeline({
 
   const contentRef = useRef<HTMLDivElement | null>(null);
   const nodes = useMemo(() => conversationNodes(events, { plansInProse, working }), [events, plansInProse, working]);
+  // When the turn under way began, for the working clock: its prompt's time,
+  // so a page opened mid-turn shows how long it has really run.
+  const turnSince = useMemo(() => {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const node = nodes[i];
+      if (node.kind === "prompt") return node.at;
+    }
+    return undefined;
+  }, [nodes]);
   const turns = useMemo(() => conversationTurns(nodes), [nodes]);
   // The turn being read, as the rail marks it.
   const [current, setCurrent] = useState(-1);
@@ -249,7 +260,9 @@ export function ConversationTimeline({
               <NodeRow node={node} plan={node.kind === "plan" && plan?.id === node.id ? plan : undefined} />
             </div>
           ))}
-          {(working || compacting) && <WorkingIndicator label={compacting ? "Compacting conversation" : "Working"} />}
+          {(working || compacting) && (
+            <WorkingIndicator label={compacting ? "Compacting conversation" : "Working"} since={turnSince} />
+          )}
         </div>
       </div>
       {/* One turn has nowhere else to go. */}
@@ -301,16 +314,20 @@ function TurnRail({
 }
 
 /** Live "Claude is working" affordance: a small dot-matrix wave and an elapsed
- *  timer, so activity is visible instead of a still pane. Remounts (resetting
- *  the clock) each time we re-enter the working state. The timer is tabular so
- *  the row never shifts as digits change. */
-function WorkingIndicator({ label }: { label: string }) {
+ *  timer, so activity is visible instead of a still pane. The clock runs from
+ *  the turn's prompt (`since`) where it has a time, else from when the
+ *  indicator showed; it remounts each time we re-enter the working state. The
+ *  timer is tabular so the row never shifts as digits change. */
+function WorkingIndicator({ label, since }: { label: string; since?: string }) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    const startedAt = Date.now();
+    const sent = since ? Date.parse(since) : NaN;
+    // A prompt's time ahead of this clock (skew) or long gone (a turn that
+    // never ended) is no start to count from.
+    const startedAt = Number.isFinite(sent) && sent <= Date.now() && Date.now() - sent < 6 * 3_600_000 ? sent : Date.now();
     const id = setInterval(() => setElapsed(Date.now() - startedAt), 100);
     return () => clearInterval(id);
-  }, []);
+  }, [since]);
   return (
     <div role="status" className="flex items-center gap-2.5 py-1 text-[13px] text-muted-foreground">
       <DotMatrix rows={3} cols={3} cell={3} gap={1.5} />
@@ -361,7 +378,15 @@ function NodeRow({ node, plan }: { node: ConversationNode; plan?: PlanActions })
         </div>
       );
     case "prompt":
-      return <Prompt text={node.text} mode={node.mode} />;
+      return <Prompt text={node.text} mode={node.mode} at={node.at} />;
+    case "worked":
+      return (
+        <div className="timeline-worked">
+          <Clock aria-hidden />
+          {workedFor(node.ms)}
+          <MessageTime at={node.at} />
+        </div>
+      );
     case "interrupted":
       return <div className="timeline-thought">Interrupted</div>;
     case "prose":
@@ -375,7 +400,7 @@ function NodeRow({ node, plan }: { node: ConversationNode; plan?: PlanActions })
 
 /** The user's prompt, and the comments on the diff it carried (withComments)
  *  as quotes under it, rather than the blocks written for the agent. */
-function Prompt({ text, mode }: { text: string; mode?: "plan" }) {
+function Prompt({ text, mode, at }: { text: string; mode?: "plan"; at?: string }) {
   const { text: words, quotes } = useMemo(() => parseCommentQuotes(text), [text]);
   // Sent in plan mode: said, quietly, above its words.
   const planned = mode === "plan" && (
@@ -387,12 +412,14 @@ function Prompt({ text, mode }: { text: string; mode?: "plan" }) {
   if (quotes.length === 0)
     return (
       <div className="timeline-prompt">
+        {at && <MessageTime at={at} />}
         {planned}
         {text}
       </div>
     );
   return (
     <div className="timeline-prompt">
+      {at && <MessageTime at={at} />}
       {planned}
       {words}
       <div className={cn("timeline-quotes", words && "mt-2.5")}>
@@ -486,4 +513,20 @@ function ToolOutput({ content }: { content: unknown }) {
 function compactionLabel(node: Extract<ConversationNode, { kind: "compact" }>): string {
   const how = node.trigger === "auto" ? "Conversation compacted automatically" : "Conversation compacted";
   return node.preTokens ? `${how} · ${compactTokens(node.preTokens)} tokens summarized` : how;
+}
+
+const noSubscription = () => () => {};
+
+/** A message's time, its full date and time on hover. In the browser's time
+ *  zone, so not on the server: a replay rendered there would say another
+ *  hour than the page it hydrates (useSyncExternalStore's server snapshot is
+ *  none). */
+function MessageTime({ at }: { at: string }) {
+  const label = useSyncExternalStore(noSubscription, () => messageTime(at), () => null);
+  if (!label) return null;
+  return (
+    <time className="timeline-time" dateTime={at} title={new Date(at).toLocaleString()}>
+      {label}
+    </time>
+  );
 }

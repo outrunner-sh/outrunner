@@ -15,17 +15,23 @@ export function QueuedPrompts({
   onSendNow,
   onRemove,
   canSendNow,
+  paused = false,
 }: {
   queue: QueuedPrompt[];
   onSendNow: (prompt: QueuedPrompt) => void;
   onRemove: (prompt: QueuedPrompt) => void;
   /** False while the session can't take a prompt (not connected). */
   canSendNow: boolean;
+  /** Held since the user stopped the turn: the next prompt sent lets them
+   *  go, ahead of it. */
+  paused?: boolean;
 }) {
   if (queue.length === 0) return null;
   return (
     <section className="studio-queue" aria-label="Queued messages">
-      <p className="studio-queue-label">Queued · sends when the current turn ends</p>
+      <p className="studio-queue-label">
+        {paused ? "Queued · held since you stopped the turn; your next message goes after them" : "Queued · sends when the current turn ends"}
+      </p>
       <ol>
         {queue.map((prompt) => {
           // Comments on the diff it carries are counted, not spelled out.

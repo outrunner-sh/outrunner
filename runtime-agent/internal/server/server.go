@@ -131,6 +131,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
 	mux.HandleFunc("GET /workspaces/{id}/summary", s.authed(s.workspaceSummary))
 	mux.HandleFunc("GET /workspaces/{id}/changes", s.authed(s.workspaceChanges))
+	mux.HandleFunc("GET /workspaces/{id}/files", s.authed(s.workspaceFiles))
 	mux.HandleFunc("GET /activity", s.authed(s.activity))
 	return mux
 }
@@ -149,7 +150,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles},
 	})
 }
 
@@ -458,6 +459,21 @@ func (s *Server) workspaceChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+}
+
+// workspaceFiles lists the session's files, its changed ones first, for the
+// composer's @ mentions.
+func (s *Server) workspaceFiles(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireWorkspace(w, r, id) {
+		return
+	}
+	files, err := s.ws.Files(r.Context(), id)
+	if err != nil {
+		respond(w, "", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, files)
 }
 
 // requireWorkspace binds a verified Runtime token to the exact workspace a

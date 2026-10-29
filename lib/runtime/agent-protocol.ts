@@ -231,6 +231,20 @@ export const ChangesResponse = z.object({
 });
 export type ChangesResponse = z.infer<typeof ChangesResponse>;
 
+/** The agent lists a session's files (GET /workspaces/{id}/files). */
+export const AGENT_FEATURE_FILES = "files";
+
+/** A session's files, for the composer's @ mentions: the first `changed` are
+ *  those changed since its base branch, most recently written first; then the
+ *  repository's others (tracked, and untracked but not ignored). `truncated`
+ *  where there were more than the agent lists. */
+export const FilesResponse = z.object({
+  files: z.array(z.string()),
+  changed: z.number().int().nonnegative(),
+  truncated: z.boolean().optional(),
+});
+export type FilesResponse = z.infer<typeof FilesResponse>;
+
 /** One changed file's bounded diff (GET /workspaces/{id}/changes?path=). */
 export const ChangedFileDiffResponse = z.object({ diff: z.string() });
 
@@ -774,6 +788,7 @@ export const PROTOCOL_SCHEMAS = {
   SetAgentConfigRequest,
   EditorResponse,
   PortsResponse,
+  FilesResponse,
   /** The provider's own ports on every box (lib/runtime/box-ports.ts and the
    *  agent's ports package each hold the list, checked against this). */
   ProviderPorts: z.array(z.number().int()),

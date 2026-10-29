@@ -23,6 +23,7 @@ import {
   PlanActionResponse,
   EditorResponse,
   ErrorResponse,
+  FilesResponse,
   LISTING_WORKSPACE_ID,
   PortsResponse,
   RestoreWorkspaceRequest,
@@ -185,6 +186,12 @@ export class AgentClient {
    *  command. An agent from before this answers 404 with no error envelope. */
   async listChanges(identity: WorkspaceIdentity): Promise<ChangesResponse["files"]> {
     return ChangesResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/changes`, identity)).files;
+  }
+
+  /** The session's files for the composer's @ mentions, its changed ones
+   *  first. An agent from before this answers 404 with no error envelope. */
+  async listFiles(identity: WorkspaceIdentity): Promise<FilesResponse> {
+    return FilesResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/files`, identity));
   }
 
   /** One changed file's bounded diff, from the same base: 400 INVALID_REQUEST

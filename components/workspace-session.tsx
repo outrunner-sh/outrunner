@@ -4,7 +4,7 @@ import { RotateCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { type AgentEvent, PlanActionResponse } from "@/lib/runtime/agent-protocol";
+import { type AgentEvent, ChangesResponse, FilesResponse, PlanActionResponse } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline } from "@/components/conversation-timeline";
 import { ImageBoxContext } from "@/components/markdown";
 import { QueuedPrompts } from "@/components/queued-prompts";
@@ -16,6 +16,7 @@ import { ErrorRef, InlineMessage, Notice, TickingFact } from "@/components/ui/no
 import { deliverLocalAgentAuth, LocalAgentAuthError } from "@/lib/desktop/local-agent-auth";
 import {
   LOCAL_RUNNER_LOG,
+  LocalRuntimeError,
   accountsHere,
   localAgentRequest,
   localTarget,
@@ -43,6 +44,7 @@ import {
   type PendingPrompt,
 } from "@/lib/session/optimistic-echo";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
+import { changedOnly } from "@/lib/session/file-mentions";
 import { reachOutrunner } from "@/lib/http/request-json";
 import {
   dropFirstPromptFromAddressBar,
@@ -467,6 +469,10 @@ export function WorkspaceSession({
   const [queue, setQueue] = useState<QueuedPrompt[]>(() => readQueue(tabStorage(), workspaceId));
   useEffect(() => writeQueue(tabStorage(), workspaceId, queue), [workspaceId, queue]);
   const [queueHeld, setQueueHeld] = useState(false);
+  // Held by a stop, rather than by a failed send: the user stopped the agent,
+  // so what they queued for it waits for them too, until they send another
+  // prompt (which goes after it) or send one of them now.
+  const [queuePaused, setQueuePaused] = useState(false);
   const sendingQueued = useRef(false);
   // Bumped as each queued send settles, so the queue looks again: the turn it
   // started may have ended while the send was still being answered.
@@ -477,6 +483,11 @@ export function WorkspaceSession({
   // let the next go into the same turn.
   const [queuedAt, setQueuedAt] = useState<number | null>(null);
   const enqueue = (text: string, attachmentIds: string[], queuedMode?: SessionMode): Promise<boolean> => {
+    if (queue.length === 0 && queuePaused) {
+      // What the stop held has all gone since: this one waits on the turn alone.
+      setQueuePaused(false);
+      setQueueHeld(false);
+    }
     setQueue((q) => [...q, { id: crypto.randomUUID(), text, attachmentIds, ...(queuedMode && { mode: queuedMode }) }]);
     setSendError(null);
     return Promise.resolve(true);
@@ -497,10 +508,15 @@ export function WorkspaceSession({
       return landed;
     });
   };
+  const queueRef = useRef(queue);
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
   const removeQueued = (prompt: QueuedPrompt) => {
     setQueue((q) => q.filter((p) => p.id !== prompt.id));
     // The one that failed sits at the head; with it gone, the rest go on.
-    if (queue[0]?.id === prompt.id) setQueueHeld(false);
+    // Not when a stop held them: that holds the rest as well.
+    if (queue[0]?.id === prompt.id && !queuePaused) setQueueHeld(false);
     // Its files were uploaded for it alone.
     for (const id of prompt.attachmentIds) void fetch(`/api/attachments/${id}`, { method: "DELETE" }).catch(() => {});
   };
@@ -542,6 +558,11 @@ export function WorkspaceSession({
   // menu first, and goes in the mode the composer is in (Plan revises it,
   // Build approves it with changes).
   const sendOrQueue = (text: string, attachmentIds: string[], sentMode?: SessionMode) => {
+    if (queuePaused) {
+      // Sending again is going on: the queue first, then this.
+      setQueuePaused(false);
+      setQueueHeld(false);
+    }
     if (waitingOnPlan && plan) return answerPlan(plan.id, text, attachmentIds, { mode: sentMode, dismiss: plan.dismiss });
     return working || queue.length > 0
       ? enqueue(text, attachmentIds, sentMode)
@@ -658,6 +679,19 @@ export function WorkspaceSession({
     setStopping(true);
     setSendError(null);
     setStopError(null);
+    // What's queued stays queued: the stop was for the agent's work, not for
+    // the next prompt to start it again at once. Held before the stop goes,
+    // not once it is answered: the stream may say the turn is over first,
+    // and the queue would drain into the gap.
+    const hadQueue = queueRef.current.length > 0;
+    // As they were, for a stop that fails: a hold a failed send put on the
+    // queue stays, its Retry still to come.
+    const wasHeld = queueHeld;
+    const wasPaused = queuePaused;
+    if (hadQueue) {
+      setQueueHeld(true);
+      setQueuePaused(true);
+    }
     (local
       ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/interrupt`)
       : stopCloudTurn(workspaceId)
@@ -670,13 +704,70 @@ export function WorkspaceSession({
         setQueuedAt(null);
         setPending(pendingAfterStop);
       })
-      .catch((error: unknown) =>
+      .catch((error: unknown) => {
+        // The turn goes on, and the queue with it, as it was.
+        if (hadQueue) {
+          setQueueHeld(wasHeld);
+          setQueuePaused(wasPaused);
+        }
         setStopError(
           local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't stop the turn.",
-        ),
-      )
+        );
+      })
       .finally(() => setStopping(false));
   };
+  // Escape stops the turn from anywhere in the session, not only the
+  // composer's box: a click in the conversation takes the focus out of it.
+  // Not from another field (it has its own Escape), nor one already taken
+  // (a menu, a dialog, the composer's own).
+  const stopNow = attached && working ? { onStop: stop, stopping } : undefined;
+  const sessionRef = useRef<HTMLDivElement>(null);
+  const stopRef = useRef(stopNow);
+  useEffect(() => {
+    stopRef.current = stopNow;
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const inField = target?.closest("input, textarea, select, [contenteditable=true]");
+      const inSession = !target || target === document.body || sessionRef.current?.contains(target);
+      if (event.key !== "Escape" || event.defaultPrevented || inField || !inSession || event.isComposing) return;
+      if (document.querySelector('[role="dialog"][data-state="open"], [role="menu"][data-state="open"]')) return;
+      const current = stopRef.current;
+      if (!current || current.stopping) return;
+      event.preventDefault();
+      current.onStop();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  /** The session's files for the composer's @ mentions: from its agent, on
+   *  this Mac or through the server. The Mac's app relays only the routes it
+   *  knows, and one installed before this relays no `files`: there, the
+   *  change set it does relay stands in, as the server's route does for an
+   *  agent from before it. */
+  const listFiles = useCallback(
+    (): Promise<FilesResponse> =>
+      local
+        ? localAgentRequest<unknown>(localTarget(workspaceId), "GET", `/workspaces/${workspaceId}/files`).then(
+            (raw) => FilesResponse.parse(raw),
+            (error: unknown) => {
+              // Only an app that doesn't relay the listing: a real failure (git,
+              // a timeout, a runner that's down) is said as one.
+              if (!(error instanceof LocalRuntimeError && error.code === "route-not-allowed")) throw error;
+              return localAgentRequest<unknown>(localTarget(workspaceId), "GET", `/workspaces/${workspaceId}/changes`).then(
+                (raw) => changedOnly(ChangesResponse.parse(raw).files),
+              );
+            },
+          )
+        : fetch(`/api/workspaces/${workspaceId}/files`).then(async (res) => {
+            if (!res.ok) throw new Error("Couldn't list this session's files.");
+            return FilesResponse.parse(await res.json());
+          }),
+    [local, workspaceId],
+  );
+
   // The user's own accounts this session can switch to. A local session's
   // agent is already running on this Mac, so its own login there counts.
   const accounts = accountsHere(menu.agents, local, null);
@@ -865,7 +956,7 @@ export function WorkspaceSession({
   }, [attached, initialPrompt, initialPromptKey, initialAttachmentIds]);
 
   return (
-    <div className="studio-live-session" data-testid="workspace-session">
+    <div ref={sessionRef} className="studio-live-session" data-testid="workspace-session">
       {conversation.lost ? (
         <Notice
           tone="warning"
@@ -1021,7 +1112,11 @@ export function WorkspaceSession({
         <QueuedPrompts
           queue={queue}
           canSendNow={attached}
-          onSendNow={(prompt) => void sendQueued(prompt)}
+          paused={queuePaused && queue.length > 0}
+          onSendNow={(prompt) => {
+            setQueuePaused(false);
+            void sendQueued(prompt);
+          }}
           onRemove={removeQueued}
         />
       )}
@@ -1056,7 +1151,8 @@ export function WorkspaceSession({
           newSessionHref={projectId ? `/new?project=${projectId}` : "/new"}
           onDismissSendError={() => setSendError(null)}
           onRetrySendError={sendError?.retry}
-          stop={attached && working ? { onStop: stop, stopping } : undefined}
+          stop={stopNow}
+          listFiles={listFiles}
         />
       )}
     </div>

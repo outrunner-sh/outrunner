@@ -44,7 +44,7 @@ func TestTheNewestHealthFixtureNamesEveryFeature(t *testing.T) {
 		t.Fatal(err)
 	}
 	newest := groups.AgentHealth[len(groups.AgentHealth)-1].Features
-	for _, feature := range []string{FeatureImports, FeatureEnvironment, FeatureAgentConfig, FeatureRestoreModel, FeatureEditor, FeaturePorts, FeatureCodexGateway, FeatureWarmHooks, FeatureMultiRepo, FeatureMultiRepoSnapshots, FeatureGitCredential, FeatureMultiRepoWarm, FeaturePlanMode, FeatureCompact} {
+	for _, feature := range []string{FeatureImports, FeatureEnvironment, FeatureAgentConfig, FeatureRestoreModel, FeatureEditor, FeaturePorts, FeatureCodexGateway, FeatureWarmHooks, FeatureMultiRepo, FeatureMultiRepoSnapshots, FeatureGitCredential, FeatureMultiRepoWarm, FeaturePlanMode, FeatureCompact, FeatureFiles} {
 		if !slices.Contains(newest, feature) {
 			t.Errorf("the newest AgentHealth fixture lacks %s: %q", feature, newest)
 		}
@@ -127,6 +127,8 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &PlanActionResponse{})
 	case "CompactRequest":
 		return json.Unmarshal(raw, &CompactRequest{})
+	case "FilesResponse":
+		return json.Unmarshal(raw, &FilesResponse{})
 	case "TokenUsage":
 		return json.Unmarshal(raw, &TokenUsage{})
 	case "WorkspaceStateChanged":
