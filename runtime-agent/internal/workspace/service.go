@@ -1157,9 +1157,14 @@ func (s *Service) getFacts(workspaceID string) (workspaceFacts, bool) {
 // A session's other chats stop with it: they work in its worktree, which an
 // archive captures as it is.
 func (s *Service) Stop(ctx context.Context, workspaceID string) error {
+	defer s.lockLifecycle(workspaceID)()
+	return s.stopHeld(ctx, workspaceID)
+}
+
+func (s *Service) stopHeld(ctx context.Context, workspaceID string) error {
 	for _, key := range s.chatKeys(workspaceID) {
 		unlock := s.lockLifecycle(key)
-		_ = s.Stop(ctx, key)
+		_ = s.stopHeld(ctx, key)
 		unlock()
 	}
 	if s.jcode != nil {
@@ -1799,7 +1804,7 @@ func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 		s.endChat(ctx, key)
 		unlock()
 	}
-	_ = s.Stop(ctx, workspaceID)
+	_ = s.stopHeld(ctx, workspaceID)
 	// An in-place session's directory is the user's own folder: forget the
 	// session, never touch the files.
 	if f, ok := s.getFacts(workspaceID); ok && f.InPlace {

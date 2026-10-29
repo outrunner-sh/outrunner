@@ -267,7 +267,7 @@ func (s *Service) DeleteChat(ctx context.Context, workspaceID, chatID string) er
 // endChat stops a chat and forgets it. Callers hold its lifecycle lock, or
 // its session's when the session is going too.
 func (s *Service) endChat(ctx context.Context, key string) {
-	_ = s.Stop(ctx, key)
+	_ = s.stopHeld(ctx, key)
 	if f, _ := s.getFacts(key); f.Parent != "" {
 		_ = os.Remove(s.handoffPath(f.Parent, strings.TrimPrefix(key, f.Parent+"_")))
 	}

@@ -404,3 +404,20 @@ func TestParentTeardownWaitsForTheChatLifecycle(t *testing.T) {
 		})
 	}
 }
+
+func TestStopWaitsForTheParentLifecycleBeforeListingChats(t *testing.T) {
+	s, id, _ := chatSession(t, ChatInput{})
+	unlock := s.lockLifecycle(id)
+	done := make(chan error, 1)
+	go func() { done <- s.Stop(context.Background(), id) }()
+	select {
+	case err := <-done:
+		unlock()
+		t.Fatalf("stop skipped the parent lock: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	unlock()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
