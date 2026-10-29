@@ -33,5 +33,5 @@ func (s *Service) UploadMedia(ctx context.Context, workspaceID, path string, opt
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(s.worktreePath(workspaceID), path)
 	}
-	return s.media.Upload(ctx, workspaceID, path, opts)
+	return s.media.Upload(ctx, s.owner(workspaceID), path, opts)
 }

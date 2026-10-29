@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime-agent/internal/gitcred"
+	"runtime-agent/internal/media"
 	"runtime-agent/internal/preview"
 	"runtime-agent/internal/sessiontools"
 	"slices"
@@ -531,5 +532,41 @@ func TestAChatsLearningAndMemoryCommandsNameItsOwningSession(t *testing.T) {
 		if call.Workspace != id {
 			t.Fatalf("control plane got runtime chat key: %+v", call)
 		}
+	}
+}
+
+func TestAChatsMediaUploadNamesItsOwningSession(t *testing.T) {
+	s, id, key := chatSession(t, ChatInput{})
+	seen := []string{}
+	var cp *httptest.Server
+	cp = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		var body struct {
+			Workspace string `json:"workspaceId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		seen = append(seen, body.Workspace)
+		if strings.HasSuffix(r.URL.Path, "/complete") {
+			_ = json.NewEncoder(w).Encode(media.Result{URL: cp.URL + "/image.png", Markdown: "![image](" + cp.URL + "/image.png)"})
+		} else {
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "image", "uploadUrl": cp.URL + "/upload"})
+		}
+	}))
+	defer cp.Close()
+	s.UseMedia(&media.Client{Config: gitcred.Config{AppURL: cp.URL, SandboxID: "box", Secret: "secret"}, HTTP: cp.Client()})
+	path := filepath.Join(s.worktreePath(id), "image.png")
+	if err := os.WriteFile(path, []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UploadMedia(context.Background(), key, "image.png", media.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 || seen[0] != id || seen[1] != id {
+		t.Fatalf("mint/complete got runtime chat keys: %v", seen)
 	}
 }
