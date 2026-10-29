@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import Image from "next/image";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
@@ -57,7 +59,7 @@ async function AccountSection({ searchParams }: { searchParams: Promise<{ link_e
 
   return (
     <section className="space-y-6">
-      <h1 className="text-lg font-semibold text-foreground">Profile</h1>
+      <PageHeader title="Profile" />
 
       <div className="flex items-center gap-3">
         {owner.avatarUrl ? (

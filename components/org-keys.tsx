@@ -1,4 +1,6 @@
 "use client";
+
+import { PageHeader } from "@/components/page-layout";
 import Link from "next/link";
 import { useState } from "react";
 import { ApiKeyCard, type ProviderKeys } from "@/components/api-key-card";
@@ -46,7 +48,7 @@ export function OrgKeysSettings({
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Coding agents</h1>
+        <PageHeader title="Coding agents" />
         <p className="text-[13px] text-muted-foreground">
           Organization · {org.name}. Shared provider accounts for members’ cloud
           sessions. Admins manage these credentials.

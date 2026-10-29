@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
+import { useReviewPanelVisible } from "@/components/review/panel-visibility";
 import { changeDone, SETTING_UP, WAKING } from "@/lib/review/change";
 import type { PushedCommit } from "@/lib/review/pulls";
 import { cn } from "@/lib/utils";
@@ -56,6 +57,7 @@ function stateLine(progress: Progress | null, track: ChangeTrack): string {
  * page's diff.
  */
 export function ChangeCard({ repo, number, track }: { repo: string; number: number; track: ChangeTrack }) {
+  const visible = useReviewPanelVisible();
   const router = useRouter();
   const [progress, setProgress] = useState<Progress | null>(null);
   const [lost, setLost] = useState<string | null>(null);
@@ -63,7 +65,7 @@ export function ChangeCard({ repo, number, track }: { repo: string; number: numb
   const seenHead = useRef(track.since);
 
   useEffect(() => {
-    if (done || lost) return;
+    if (!visible || done || lost) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = async () => {
@@ -95,7 +97,7 @@ export function ChangeCard({ repo, number, track }: { repo: string; number: numb
       stopped = true;
       clearTimeout(timer);
     };
-  }, [done, lost, number, repo, router, track]);
+  }, [visible, done, lost, number, repo, router, track]);
 
   return (
     <div className="space-y-1.5 rounded-lg border border-border/60 px-3 py-2 text-[12px]">

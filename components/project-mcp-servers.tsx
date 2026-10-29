@@ -106,7 +106,7 @@ function TransportPicker({ value, onChange }: { value: McpTransport; onChange: (
       aria-label="Transport"
       value={value}
       onChange={(e) => onChange(e.target.value as McpTransport)}
-      className={cn("h-8 rounded-md border border-input bg-transparent px-2 text-[13px] text-foreground dark:bg-input/30", SELECT_OPTIONS)}
+      className={cn("h-8 rounded-md border border-input bg-transparent px-2 text-[13px] text-foreground", SELECT_OPTIONS)}
     >
       <option value="stdio">stdio: a command</option>
       <option value="http">http: a URL</option>

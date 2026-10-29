@@ -293,7 +293,7 @@ function OrgSource({
           aria-label="Org"
           value={active.id}
           onChange={(e) => onSwitch(e.target.value)}
-          className="border-border/60 bg-background text-foreground rounded-md border px-2 py-1 text-sm"
+          className="border-border/60 bg-transparent text-foreground rounded-md border px-2 py-1 text-sm"
         >
           {access.orgs.map((org) => (
             <option key={org.id} value={org.id}>

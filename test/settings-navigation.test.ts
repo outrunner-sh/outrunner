@@ -4,6 +4,7 @@ import {
   ORG_SETTINGS,
   PERSONAL_SETTINGS,
   SETTINGS_REDIRECTS,
+  settingsNavigationTitle,
 } from "@/lib/settings-navigation";
 
 test("settings have exactly the approved personal and organization orders", () => {
@@ -31,6 +32,17 @@ test("settings have exactly the approved personal and organization orders", () =
       "Audit log",
     ],
   );
+});
+
+test("breadcrumbs use the canonical personal and organization navigation labels", () => {
+  for (const [path, label] of PERSONAL_SETTINGS)
+    assert.equal(settingsNavigationTitle(`/settings/${path}`), label);
+  for (const [path, label] of ORG_SETTINGS)
+    assert.equal(settingsNavigationTitle(`/settings/org${path}`), label);
+  assert.equal(settingsNavigationTitle("/settings/org/github"), "GitHub");
+  assert.equal(settingsNavigationTitle("/settings/org/slack"), "Slack");
+  assert.equal(settingsNavigationTitle("/settings/org/integrations/linear"), "Integrations");
+  assert.equal(settingsNavigationTitle("/settings/unknown"), "Settings");
 });
 test("old credential/auth, membership, and billing destinations keep compatible scoped destinations", () => {
   const redirects = new Map<string, string>(SETTINGS_REDIRECTS);

@@ -1,8 +1,10 @@
+import { PageHeader } from "@/components/page-layout";
+
 /** General: what the app is. Kept to real, static facts — no faked toggles. */
 export default function GeneralSettings() {
   return (
     <section className="space-y-6">
-      <h1 className="text-lg font-semibold text-foreground">Help / About</h1>
+      <PageHeader title="Help / About" />
 
       <div className="space-y-1">
         <span className="text-lg font-semibold text-foreground">Outrunner</span>

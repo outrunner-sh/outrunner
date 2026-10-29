@@ -1,5 +1,7 @@
 "use client";
 
+import { PageHeader } from "@/components/page-layout";
+
 import { Check, Lock, Pencil, SquareTerminal, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -138,7 +140,7 @@ export function SandboxSettingsForm({
   return (
     <section className="space-y-6">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Sandbox</h1>
+        <PageHeader title={"Sandbox"} />
         <p className="text-sm text-muted-foreground">Where your cloud sessions run.</p>
       </div>
 

@@ -176,7 +176,7 @@ function Controls({ scenario, set, restart }: { scenario: Scenario; set: (next: 
               <select
                 value={scenario[key]}
                 onChange={(e) => set({ [key]: e.target.value } as Partial<Scenario>)}
-                className="bg-background border-border/60 rounded border px-1 py-0.5"
+                className="bg-transparent border-border/60 rounded border px-1 py-0.5"
               >
                 {OPTIONS[key].values.map(([value, label]) => (
                   <option key={value} value={value}>

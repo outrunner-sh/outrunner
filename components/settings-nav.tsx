@@ -69,15 +69,14 @@ export function SettingsNav({
     <aside
       role="navigation"
       aria-label="Settings"
-      className="flex h-full min-h-0 flex-col gap-5 overflow-y-auto border-r border-border/60 bg-sidebar px-3 pb-3 pt-5"
+      className="flex h-full min-h-0 flex-col gap-7 overflow-y-auto border-r border-border/60 bg-sidebar px-3 pb-6 pt-4"
     >
       <div className="flex items-center justify-between gap-2">
         <Link
           href="/"
-          className="flex items-center gap-2 px-2 font-mono text-sm font-semibold text-foreground"
+          className={cn(SIDEBAR_ROW, "text-muted-foreground hover:bg-accent hover:text-foreground")}
         >
-          <Terminal className="size-4" />
-          outrunner
+          <ArrowLeft /> Back to app
         </Link>
         {onClose && (
           <button
@@ -90,18 +89,9 @@ export function SettingsNav({
           </button>
         )}
       </div>
-      <Link
-        href="/"
-        className={cn(
-          SIDEBAR_ROW,
-          "text-muted-foreground hover:bg-accent hover:text-foreground",
-        )}
-      >
-        <ArrowLeft /> Back to app
-      </Link>
       {groups.map((group) => (
         <div key={group.label} className="space-y-0.5">
-          <h2 className="px-2 pb-1 text-[13px] text-muted-foreground">
+          <h2 className="px-2 pb-2 text-[11px] font-medium text-muted-foreground">
             {group.label}
           </h2>
           {group.sections.map(({ href, label, icon: Icon }) => {

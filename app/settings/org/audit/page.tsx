@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
@@ -27,7 +29,7 @@ async function AuditSection() {
   if (!org || org.personal || org.role !== "admin") {
     return (
       <section className="space-y-6">
-        <h1 className="text-lg font-semibold text-foreground">Audit log</h1>
+        <PageHeader title={"Audit log"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           {!org
             ? "Couldn't load your orgs. Reload the page to try again."

@@ -33,3 +33,15 @@ export const ORG_SETTINGS = [
   ["/developer", "Developer"],
   ["/audit", "Audit log"],
 ] as const;
+
+/** Breadcrumb labels follow the same canonical routes as the settings sidebar. */
+export function settingsNavigationTitle(pathname: string): string {
+  const personal = PERSONAL_SETTINGS.find(([path]) => pathname === `/settings/${path}`);
+  if (personal) return personal[1];
+  const organization = ORG_SETTINGS.find(([path]) => pathname === `/settings/org${path}`);
+  if (organization) return organization[1];
+  if (pathname === "/settings/org/github") return "GitHub";
+  if (pathname === "/settings/org/slack") return "Slack";
+  if (pathname.startsWith("/settings/org/integrations/")) return "Integrations";
+  return "Settings";
+}

@@ -76,7 +76,7 @@ export function OrgDefaultsSettings({
         {admin ? (
           <select
             id="org-default-model"
-            className="block w-full max-w-sm rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+            className="block w-full max-w-sm rounded-md border border-border bg-transparent px-2 py-1.5 text-sm"
             disabled={saving}
             value={defaults.defaultModel ? valueOf(defaults.defaultModel) : ""}
             onChange={(event) => {

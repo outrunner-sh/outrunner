@@ -225,7 +225,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                               <RunnerGlyph group={runner.group} state={runner.state} standing={runner.standing} className="size-3" />
                               <span className="min-w-0 flex-1 truncate">{runner.name}</span>
                               <UnreadDot standing={runner.standing} />
-                              {pr && <PullRequestChip pr={pr} link={false} />}
+                              {pr && <PullRequestChip pr={pr} link={false} compact />}
                             </Link>
                           </li>
                         );

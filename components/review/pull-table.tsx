@@ -1,104 +1,159 @@
+"use client";
+
+import { GitPullRequest, Search } from "lucide-react";
 import Link from "next/link";
+import { useMemo, useState } from "react";
 
 import { ChecksDot } from "@/components/review/checks-dot";
-import { Delta, KindIcon, kindLabel } from "@/components/review/line-counts";
+import { Input } from "@/components/ui/input";
+import { SELECT_OPTIONS } from "@/components/ui/select-options";
+import { useNow } from "@/hooks/use-now";
+import { relativeTime } from "@/lib/nav/sidebar";
+import { compactCount, totalLines } from "@/lib/review/presentation";
 import type { PullSummary } from "@/lib/review/pulls";
+import { cn } from "@/lib/utils";
 
-function ago(iso: string): string {
-  const minutes = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
-  if (minutes < 60) return `${minutes}m`;
-  if (minutes < 60 * 24) return `${Math.round(minutes / 60)}h`;
-  return `${Math.round(minutes / (60 * 24))}d`;
-}
-
-const KINDS = ["code", "test", "generated"] as const;
-
-/** The Review inbox: one line per pull request, dense enough to scan dozens,
- *  with its lines by kind in columns of their own. */
+/** The inbox uses only the page's shared data, including its partial counts. */
 export function PullTable({ pulls }: { pulls: PullSummary[] }) {
+  const [repository, setRepository] = useState("");
+  const [query, setQuery] = useState("");
+  const now = useNow(60_000);
+  const repositories = useMemo(
+    () => [...new Set(pulls.map((pull) => pull.repo))].sort(),
+    [pulls],
+  );
+  const selected = repositories.includes(repository) ? repository : "";
+  const search = query.trim().toLowerCase();
+  const shown = pulls.filter(
+    (pull) =>
+      (!selected || pull.repo === selected) &&
+      (!search ||
+        `${pull.title} ${pull.repo} ${pull.author ?? ""} #${pull.number}`
+          .toLowerCase()
+          .includes(search)),
+  );
+
   return (
-    <div className="overflow-x-auto rounded-lg border border-border/60">
-      <table className="w-full text-[12px]">
-        <thead className="bg-muted/30 text-left text-[11px] text-muted-foreground">
-          <tr className="[&>th]:px-2 [&>th]:py-1.5 [&>th]:font-normal">
-            <th className="w-6" aria-label="Checks" />
-            <th>Pull request</th>
-            <th>Repository</th>
-            <th>Author</th>
-            {KINDS.map((kind) => (
-              <th key={kind} className="text-right" title={`${kindLabel(kind)} lines`}>
-                <span className="inline-flex items-center gap-1">
-                  <KindIcon kind={kind} />
-                  {kindLabel(kind)}
-                </span>
-              </th>
-            ))}
-            <th>Outrunner</th>
-            <th className="text-right">Updated</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border/60">
-          {pulls.map((p) => (
-            <PullRow key={`${p.repo}#${p.number}`} pull={p} />
+    <section aria-label="Pull requests" className="@container space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-4">
+        <select
+          aria-label="Repository"
+          value={selected}
+          onChange={(event) => setRepository(event.target.value)}
+          className={cn(
+            "max-w-full rounded-md border border-border bg-transparent px-2 py-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            SELECT_OPTIONS,
+          )}
+        >
+          <option value="">All repositories</option>
+          {repositories.map((repo) => (
+            <option key={repo} value={repo}>
+              {repo}
+            </option>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </select>
+        <div className="relative w-full sm:w-60">
+          <Search
+            aria-hidden
+            className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground"
+          />
+          <Input
+            aria-label="Search pull requests"
+            placeholder="Search pull requests…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+      </div>
+      <p className="px-1 text-xs text-muted-foreground">
+        Open pull requests{" "}
+        <span className="ml-1 tabular-nums">{shown.length}</span>
+      </p>
+      <ul className="divide-y divide-border/60">
+        {shown.map((pull) => (
+          <PullRow key={`${pull.repo}#${pull.number}`} pull={pull} now={now} />
+        ))}
+      </ul>
+      {shown.length === 0 && (
+        <p className="py-12 text-center text-sm text-muted-foreground">
+          {pulls.length
+            ? "No pull requests match your filters."
+            : "You're all caught up. No open pull requests."}
+        </p>
+      )}
+    </section>
   );
 }
-/** One pull request, a line of the table: the whole row opens it. */
-function PullRow({ pull: p }: { pull: PullSummary }) {
-  const href = `/review/${p.repo}/${p.number}`;
-  // Each cell links, rather than the row, as a table row can't be a link.
-  const cell = "block px-2 py-1.5";
+
+function PullRow({ pull, now }: { pull: PullSummary; now: number }) {
+  const total = totalLines(pull.lines);
   return (
-    <tr className="transition-colors hover:bg-accent/60">
-      <td>
-        <Link href={href} className={cell} tabIndex={-1}>
-          <ChecksDot checks={p.checks} />
-        </Link>
-      </td>
-      <td className="max-w-0 w-[40%]">
-        <Link href={href} className={`${cell} truncate text-foreground`}>
-          <span className="text-muted-foreground">#{p.number}</span> {p.title}
-          {p.draft && <span className="ml-2 rounded border border-border px-1 text-[10px] text-muted-foreground">Draft</span>}
-        </Link>
-      </td>
-      <td className="whitespace-nowrap text-muted-foreground">
-        <Link href={href} className={cell} tabIndex={-1}>
-          {p.repo.split("/")[1] ?? p.repo}
-        </Link>
-      </td>
-      <td className="whitespace-nowrap text-muted-foreground">
-        <Link href={href} className={cell} tabIndex={-1}>
-          {p.author ?? "–"}
-        </Link>
-      </td>
-      {KINDS.map((kind) => (
-        <td key={kind} className="whitespace-nowrap text-right">
-          <Link href={href} className={cell} tabIndex={-1}>
-            {p.lines ? (
-              // GitHub's pageInfo marks exactly 100 files complete and more than 100 partial.
-              <span title={p.linesComplete ? undefined : "Counted from its first 100 files"}>
-                {!p.linesComplete && <span className="text-muted-foreground">≥ </span>}
-                <Delta delta={p.lines[kind]} dim={kind === "generated"} />
+    <li>
+      <Link
+        href={`/review/${pull.repo}/${pull.number}`}
+        title={pull.title}
+        className="group flex items-start gap-3 rounded-lg px-2 py-4 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring @lg:items-center"
+      >
+        <GitPullRequest
+          aria-hidden
+          className={cn(
+            "mt-0.5 size-4 shrink-0 @lg:mt-0",
+            pull.draft ? "text-muted-foreground" : "text-success",
+          )}
+        />
+        <span className="min-w-0 flex-1 space-y-1.5">
+          <span className="line-clamp-2 break-words text-[13px] font-medium leading-relaxed text-foreground">
+            {pull.title}{" "}
+            <span className="whitespace-nowrap font-normal text-muted-foreground">
+              #{pull.number}
+            </span>
+            {pull.draft && (
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                Draft
               </span>
-            ) : (
-              <span className="text-muted-foreground/50">…</span>
             )}
-          </Link>
-        </td>
-      ))}
-      <td className="whitespace-nowrap text-muted-foreground">
-        <Link href={href} className={cell} tabIndex={-1}>
-          {p.itemKey ?? (p.sessionId ? "Session" : "–")}
-        </Link>
-      </td>
-      <td className="whitespace-nowrap text-right text-muted-foreground">
-        <Link href={href} className={cell} tabIndex={-1}>
-          {ago(p.updatedAt)}
-        </Link>
-      </td>
-    </tr>
+          </span>
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span>{relativeTime(pull.updatedAt, now)}</span>
+            <span aria-hidden>·</span>
+            {pull.author && (
+              <>
+                <span className="max-w-full truncate">{pull.author}</span>
+                <span aria-hidden>·</span>
+              </>
+            )}
+            <span className="max-w-full truncate">{pull.repo}</span>
+            {pull.itemKey && <span>{pull.itemKey}</span>}
+          </span>
+        </span>
+        <span className="flex shrink-0 flex-col items-end gap-2 @lg:flex-row @lg:items-center @lg:gap-4">
+          {total ? (
+            <span
+              className="whitespace-nowrap text-xs tabular-nums"
+              title={`${pull.linesComplete ? "" : "At least "}+${total.additions} −${total.deletions}${pull.linesComplete ? "" : "; first 100 files"}`}
+            >
+              {!pull.linesComplete && (
+                <span className="text-muted-foreground">≥ </span>
+              )}
+              <span className="text-success">
+                +{compactCount(total.additions)}
+              </span>{" "}
+              <span className="text-destructive">
+                −{compactCount(total.deletions)}
+              </span>
+            </span>
+          ) : (
+            <span
+              className="text-xs text-muted-foreground"
+              title="Line counts unavailable"
+            >
+              —
+            </span>
+          )}
+          <ChecksDot checks={pull.checks} />
+        </span>
+      </Link>
+    </li>
   );
 }

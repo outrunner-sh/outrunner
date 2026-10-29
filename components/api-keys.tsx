@@ -105,7 +105,7 @@ export function ApiKeysSettings({
           <label className="space-y-1 text-xs text-muted-foreground">
             Expires
             <select
-              className="block h-9 rounded-md border border-border bg-background px-2 text-sm text-foreground"
+              className="block h-9 rounded-md border border-border bg-transparent px-2 text-sm text-foreground"
               value={days ?? "never"}
               onChange={(e) => setDays(e.target.value === "never" ? null : Number(e.target.value))}
             >

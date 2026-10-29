@@ -37,7 +37,7 @@ export function KeyInput({
       data-lpignore="true"
       data-bwignore
       spellCheck={false}
-      className="border-border bg-background/60 h-9 min-w-48 flex-1 rounded-md border px-3 text-sm"
+      className="border-border bg-transparent h-9 min-w-48 flex-1 rounded-md border px-3 text-sm"
     />
   );
 }

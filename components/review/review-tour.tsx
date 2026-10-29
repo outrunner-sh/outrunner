@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
+import { useReviewPanelVisible } from "@/components/review/panel-visibility";
 import { Button } from "@/components/ui/button";
 import type { Tour } from "@/lib/review/tour";
 
@@ -27,6 +28,7 @@ function typing(target: EventTarget | null): boolean {
  * the hunk the current step is on, for the diff to scroll to and highlight.
  */
 export function useTour(repo: string, number: number, headSha: string) {
+  const visible = useReviewPanelVisible();
   const router = useRouter();
   const [state, setState] = useState<TourState>({ status: "off" });
   // A tour written for an older head is redone: its hunks are not the page's.
@@ -69,9 +71,9 @@ export function useTour(repo: string, number: number, headSha: string) {
 
   const on = state.status === "on";
   useEffect(() => {
-    if (!on) return;
+    if (!on || !visible) return;
     const onKey = (event: KeyboardEvent) => {
-      if (typing(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.defaultPrevented || typing(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === "ArrowRight") go(1);
       else if (event.key === "ArrowLeft") go(-1);
       else if (event.key === "Escape") end();
@@ -80,7 +82,7 @@ export function useTour(repo: string, number: number, headSha: string) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [on, go, end]);
+  }, [on, visible, go, end]);
 
   const focus = state.status === "on" && state.step >= 0 ? (state.tour.steps[state.step]?.hunkId ?? null) : null;
   return { state, start, end, next: () => go(1), back: () => go(-1), focus };
@@ -122,10 +124,10 @@ export function TourCard({ tour }: { tour: TourControls }) {
   // Pinned at the very top of the PR page's column, over its top padding
   // (py-6), so no code shows above it as the diff scrolls under.
   return (
-    <div className="sticky -top-6 z-10 -mx-1 rounded-lg border border-sky-500/40 bg-background/95 px-4 py-3 shadow-sm backdrop-blur">
+    <div className="sticky -top-6 z-10 -mx-1 rounded-lg border border-foreground/40 bg-background/95 px-4 py-3 shadow-sm backdrop-blur">
       <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
         <span className="inline-flex items-center gap-1.5">
-          <Compass className="size-3.5 text-sky-500" />
+          <Compass className="size-3.5 text-muted-foreground" />
           {step ? `Step ${state.step + 1} of ${steps.length}` : "Tour"}
           {step && <span className="truncate font-mono">· {step.path}</span>}
         </span>

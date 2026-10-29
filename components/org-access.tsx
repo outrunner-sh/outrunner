@@ -1,5 +1,7 @@
 "use client";
 
+import { PageHeader } from "@/components/page-layout";
+
 import { useRouter } from "next/navigation";
 import { Trash2, Users } from "lucide-react";
 import { useState } from "react";
@@ -62,7 +64,7 @@ export function OrgAccessSettings({
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Roles &amp; access</h1>
+        <PageHeader title={"Roles & access"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           What members of {org.name} may do with its projects. <b className="font-medium text-foreground">Read</b>: see
           a project and start sessions in it. <b className="font-medium text-foreground">Write</b>: also change its

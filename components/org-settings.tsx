@@ -1,5 +1,7 @@
 "use client";
 
+import { PageHeader } from "@/components/page-layout";
+
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -44,7 +46,7 @@ export function OrgGeneralSettings({ org, domain }: { org: Org; domain: string |
 
   return (
     <section className="space-y-6">
-      <h1 className="text-lg font-semibold text-foreground">General</h1>
+      <PageHeader title="General" />
 
       <Details>
         <DetailRow term="Org">{org.personal ? "Personal: just you" : "Team"}</DetailRow>

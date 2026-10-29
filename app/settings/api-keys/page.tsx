@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import Link from "next/link";
 import { SettingsSectionTabs } from "@/components/settings-section-tabs";
 import { redirect } from "next/navigation";
@@ -40,7 +42,7 @@ async function ApiKeysSection({
   return (
     <section className="space-y-6">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Developer</h1>
+        <PageHeader title="Developer" />
         <p className="max-w-prose text-sm text-muted-foreground">
           Keys for Outrunner&apos;s API and MCP server that act as you, with
           your Roles &amp; access, in any org you&apos;re in: a call names one
