@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { AutomationEditor } from "@/components/automation-editor";
+import { AutomationLoading } from "@/components/automations-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { orgAppCoverage } from "@/lib/automations/coverage";
 import type { AppCoverage } from "@/lib/automations/rules";
@@ -12,11 +13,30 @@ import { getOrgContext } from "@/lib/orgs/server";
 
 type Params = Promise<{ automationId: string }>;
 
+/** Opening an automation never waits on the server: the build checks it, on a
+ *  sample automation opened from the list. The cookies are the app layout's
+ *  (lib/nav/sidebar.ts), named here rather than imported because a segment
+ *  config is read by static analysis. */
+export const unstable_instant = {
+  prefetch: "static",
+  samples: [
+    {
+      params: { automationId: "00000000-0000-0000-0000-000000000000" },
+      cookies: [
+        { name: "sidebar-collapsed", value: null },
+        { name: "sidebar-folded", value: null },
+        { name: "sidebar-grouping", value: null },
+        { name: "get-started-skipped", value: null },
+      ],
+    },
+  ],
+};
+
 /** One automation of the org the app is showing: its admins change it, its
  *  members see it. */
 export default function AutomationPage({ params }: { params: Params }) {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<AutomationLoading />}>
       <AutomationSection params={params} />
     </Suspense>
   );
