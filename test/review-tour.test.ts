@@ -230,6 +230,32 @@ test("a refused call throws with the model's reason", async () => {
   await assert.rejects(streamAnswer("key", "p", 100, 1_000), /402.*No credits/);
 });
 
+test("provider errors in a 200 stream are logged while completed steps survive", async () => {
+  const partial = '{"summary":"Partial","steps":[{"hunk":"lib/api.ts#0","title":"T","explanation":"E"},';
+  const providerError = { error: { code: 402, message: "Insufficient credits" } };
+  const response = (text: string) => new Response(
+    `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\ndata: ${JSON.stringify(providerError)}\n\n`,
+  );
+  globalThis.fetch = (async () => response(partial)) as typeof fetch;
+  const warn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (message: string) => warnings.push(message);
+  try {
+    const tour = await writeTour("key", { title: "t", body: "" }, files);
+    assert.equal(tour.summary, "Partial");
+    assert.equal(tour.steps[0].explanation, "E");
+    assert.match(warnings[0], /error: Insufficient credits.*kept the steps it finished/);
+    // Even a completed JSON answer must not hide a subsequent provider error.
+    globalThis.fetch = (async () => response('{"summary":"Done","steps":[]}')) as typeof fetch;
+    await writeTour("key", { title: "t", body: "" }, files);
+    assert.match(warnings[1], /error: Insufficient credits.*kept its completed answer/);
+  } finally {
+    console.warn = warn;
+  }
+  globalThis.fetch = (async () => response("")) as typeof fetch;
+  await assert.rejects(streamAnswer("key", "p", 100, 1_000), /Insufficient credits/);
+});
+
 test("the time allowed grows with the tokens, inside the route's limit", () => {
   assert.equal(tourTimeoutMs(4_000), 130_000);
   assert.equal(tourTimeoutMs(16_000), 420_000);

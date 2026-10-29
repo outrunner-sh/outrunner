@@ -221,12 +221,15 @@ export async function writeTour(
   const tokens = tourTokens(hunks.length);
   const { text, finish } = await streamAnswer(key, tourPrompt(pr, hunks, complete), tokens, tourTimeoutMs(tokens), cancel);
   let answer = readJsonAnswer(text);
-  if (answer === null) {
+  const incomplete = answer === null;
+  if (incomplete) {
     // Cut off (out of tokens or time), or not JSON: the steps it finished
     // still have their notes.
     answer = salvageAnswer(text);
+  }
+  if (incomplete || finish.startsWith("error:")) {
     console.warn(
-      `Review: the tour's answer wasn't whole JSON (finish_reason ${finish}, ${text.length} characters, ${hunks.length} hunks, ${tokens} tokens allowed); ${answer ? "kept the steps it finished" : "walking the plain order"}`,
+      `Review: the tour's stream ended with finish_reason ${finish} (${text.length} characters, ${hunks.length} hunks, ${tokens} tokens allowed); ${!incomplete ? "kept its completed answer" : answer ? "kept the steps it finished" : "walking the plain order"}`,
     );
   }
   return { ...normalizeTour(answer, hunks, skipped), complete };
@@ -284,9 +287,13 @@ export async function streamAnswer(
         const data = line.startsWith("data:") ? line.slice(5).trim() : "";
         if (!data || data === "[DONE]") continue;
         try {
-          const chunk = JSON.parse(data) as { choices?: { delta?: { content?: string | null }; finish_reason?: string | null }[] };
+          const chunk = JSON.parse(data) as {
+            choices?: { delta?: { content?: string | null }; finish_reason?: string | null }[];
+            error?: { message?: string };
+          };
+          if (chunk.error) finish = `error: ${chunk.error.message || "no detail"}`;
           text += chunk.choices?.[0]?.delta?.content ?? "";
-          finish = chunk.choices?.[0]?.finish_reason ?? finish;
+          if (!finish.startsWith("error:")) finish = chunk.choices?.[0]?.finish_reason ?? finish;
         } catch {
           // A keep-alive comment, or a line cut at a chunk's edge: skipped.
         }
@@ -299,6 +306,7 @@ export async function streamAnswer(
     clearTimeout(timer);
   }
   if (!text && finish === "timeout") throw new Error("The model wrote nothing before the tour's time ran out.");
+  if (!text.trim() && finish.startsWith("error:")) throw new Error(`The model stream failed (${finish}).`);
   return { text, finish };
 }
 
