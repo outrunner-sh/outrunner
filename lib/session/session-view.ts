@@ -38,10 +38,24 @@ export type SessionAnswer =
 export function resolveSessionView(id: string, data: AppData | null): SessionView | null {
   const workspace = data?.workspaces.find((w) => w.id === id);
   if (!data || !workspace || workspace.status === "destroyed") return null;
+  return sessionViewOf(workspace, data);
+}
+
+/**
+ * A session's page from its row, whatever that row came from: the sidebar's
+ * list, the server's read, or the one its creation answered with
+ * (lib/session/pending-sessions.ts), which is the only one of the three that
+ * arrives before the session's page is opened. The repository's name and the
+ * session's pull request come from the sidebar's data, so both are missing
+ * from a row the sidebar doesn't have yet.
+ */
+export function sessionViewOf(workspace: Workspace, data: AppData | null): SessionView {
   return {
     workspace,
-    projectName: [...data.projects, ...data.hiddenProjects].find((p) => p.id === workspace.projectId)?.fullName,
-    pullRequest: data.pullRequests[workspace.id] ?? null,
+    projectName: [...(data?.projects ?? []), ...(data?.hiddenProjects ?? [])].find(
+      (p) => p.id === workspace.projectId,
+    )?.fullName,
+    pullRequest: data?.pullRequests[workspace.id] ?? null,
   };
 }
 

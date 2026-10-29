@@ -11,7 +11,8 @@ import { WorkspaceStudio } from "@/components/workspace-studio";
 import { replaceAddressBar } from "@/lib/client/address-bar";
 import { useDeletedSession } from "@/lib/session/delete-session";
 import { keepFirstPromptFromUrl, tabStorage } from "@/lib/session/first-prompt";
-import { newerSessionView, resolveSessionView, type SessionAnswer } from "@/lib/session/session-view";
+import { forgetPendingSession, usePendingSession } from "@/lib/session/pending-sessions";
+import { newerSessionView, resolveSessionView, sessionViewOf, type SessionAnswer } from "@/lib/session/session-view";
 
 /**
  * A cloud session's page. It shows at once from what the sidebar holds
@@ -26,7 +27,14 @@ import { newerSessionView, resolveSessionView, type SessionAnswer } from "@/lib/
  */
 export function SessionRoute({ server }: { server: React.ReactNode }) {
   const { id } = useParams<{ id: string }>();
-  const fromSidebar = resolveSessionView(id, useAppData());
+  const data = useAppData();
+  const listed = resolveSessionView(id, data);
+  const sidebarHasIt = listed !== null;
+  // This tab started it and the sidebar's data doesn't list it yet: its own
+  // page opens on the row the create call answered with, rather than waiting
+  // for the server to say what the page already knows.
+  const pending = usePendingSession(id);
+  const fromSidebar = listed ?? (pending ? sessionViewOf(pending, data) : null);
   const [answer, slot] = useServerAnswer<SessionAnswer>(server);
   const gone = answer && "gone" in answer ? answer.gone : null;
   const view = newerSessionView(id, fromSidebar, answer && !("gone" in answer) ? answer : null);
@@ -40,6 +48,12 @@ export function SessionRoute({ server }: { server: React.ReactNode }) {
   const initialPromptKey = search.get("promptKey") ?? undefined;
   const attachments = search.getAll("attachment").join("\n");
   const initialAttachmentIds = useMemo(() => (attachments ? attachments.split("\n") : []), [attachments]);
+  // The sidebar's data has the session now (the layout was re-read after the
+  // create call): the row held from that call is done with.
+  useEffect(() => {
+    if (sidebarHasIt) forgetPendingSession(id);
+  }, [sidebarHasIt, id]);
+
   // Out of the URL as soon as this tab keeps a copy, before it is sent: a
   // reload then sends it from the copy if it hasn't gone yet, and never again
   // once it has. The page reads it from the copy from here on.
