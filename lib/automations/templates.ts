@@ -41,6 +41,23 @@ Read the change with \`gh pr diff\` and \`gh pr view\`, and the surrounding code
 
 For each meaningful issue, leave a review comment on the line or lines it concerns. Then post one top-level comment on the pull request with your overall summary and a score out of 5 ("Score: X/5").
 
+Post the line comments together, as one review, from a JSON file. Write review.json:
+
+\`\`\`json
+{
+  "commit_id": "<the head commit's SHA>",
+  "event": "COMMENT",
+  "comments": [
+    { "path": "lib/example.ts", "line": 42, "side": "RIGHT", "body": "First paragraph.\\n\\nSecond paragraph." },
+    { "path": "lib/example.ts", "start_line": 50, "line": 54, "side": "RIGHT", "body": "A comment on lines 50 to 54." }
+  ]
+}
+\`\`\`
+
+and post it with \`gh api repos/{owner}/{repo}/pulls/<number>/reviews --method POST --input review.json\` (\`gh\` fills in \`{owner}\` and \`{repo}\`). Newlines in a body are \`\\n\` in the JSON. Leave the review's own body out. Every \`line\` must be one the diff shows. To post a single comment instead, \`gh api repos/{owner}/{repo}/pulls/<number>/comments -F body=@comment.md -f path=<path> -F line=<line> -f side=RIGHT -f commit_id=<sha>\`: \`-F\` reads the file, while \`-f body=@comment.md\` posts the text "@comment.md" itself.
+
+Then read your comments back with \`gh api repos/{owner}/{repo}/pulls/<number>/comments --paginate\`. Fix any whose body isn't the text you meant with \`gh api repos/{owner}/{repo}/pulls/comments/<id> --method PATCH -F body=@comment.md\`.
+
 If nothing fits the list above, leave no line comments: post only the top-level comment with the score and a short note that the change looks good.
 
 Never approve the pull request or request changes; comments only. Never change, commit or push code.

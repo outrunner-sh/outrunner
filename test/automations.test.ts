@@ -117,3 +117,17 @@ test("the Code Review template runs on opened PRs and new commits, and parses as
     assert.ok(parsed.ok, t.id);
   }
 });
+
+test("the Code Review template says how to post line comments so their bodies arrive", () => {
+  const prompt = automationTemplate("code-review")?.prompt ?? "";
+  // One review from a JSON file: bodies of any length, as they were written.
+  assert.match(prompt, /gh api repos\/\{owner\}\/\{repo\}\/pulls\/<number>\/reviews --method POST --input review\.json/);
+  assert.match(prompt, /"event": "COMMENT"/);
+  // A single comment's body read from its file with -F, and -f named for what
+  // it does: on #297 the session's `-f body=@file` posted the path.
+  assert.match(prompt, /-F body=@comment\.md -f path=<path> -F line=<line>/);
+  assert.match(prompt, /`-f body=@comment\.md` posts the text "@comment\.md" itself/);
+  // Then checked, and mended in place.
+  assert.match(prompt, /read your comments back/);
+  assert.match(prompt, /pulls\/comments\/<id> --method PATCH -F body=@comment\.md/);
+});
