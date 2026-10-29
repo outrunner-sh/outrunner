@@ -12,11 +12,13 @@ export type AttachFailure = {
  * What a session attach answers when readying or starting its agent failed,
  * or null to attach as usual. A sign-in to fix and a box that's gone say so,
  * as before. Any other failure only matters if the session isn't running
- * after it (`running` asks its box, and says true when it can't tell): a
- * hiccup putting a running session back on its key leaves it working. One that isn't was attached all the same, as
- * if fine: its stream said it was there and every send then failed with a
- * generic "Couldn't deliver", the cause (Claude exiting at launch, a model
- * key missing) only in the server's log. Now the page says it, with its code.
+ * after it (`running` asks its box): a hiccup putting a still-running session
+ * back on its key leaves it working. Previously, if the session was not
+ * running—or the box could not answer—the route still returned URLs. The
+ * stream then looked connected while every send failed with a generic
+ * "Couldn't deliver"; the real cause was only in the server log. Fail closed
+ * when the status probe cannot answer, so an unreachable runtime-agent is not
+ * reported as a successful attach.
  */
 export async function relaunchFailure(error: unknown, running: () => Promise<boolean>): Promise<AttachFailure | null> {
   const failure = signInFailure(error);
@@ -30,7 +32,7 @@ export async function relaunchFailure(error: unknown, running: () => Promise<boo
       },
     };
   }
-  if (await running()) return null;
+  if (await running().catch(() => false)) return null;
   const reason = error instanceof AgentRequestError ? shownReason(error.error?.message) : null;
   return {
     status: 502,

@@ -26,6 +26,7 @@ import {
   AGENT_FEATURE_MULTI_REPO_SNAPSHOTS,
   AGENT_FEATURE_RESTORE_MODEL,
 } from "@/lib/runtime/agent-protocol";
+import { withRuntimeAgentRecovery } from "@/lib/runtime/agent-recovery";
 import { requireFeature } from "@/lib/runtime/box-features";
 import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
@@ -456,11 +457,16 @@ async function resumeDaytonaWorkspace(
   const transitioned = await startTransition(workspace, ["suspended"], "resuming");
   if (!transitioned) return lifecycleConflict();
   try {
-    const { agent, identity, upgrade } = await daytonaAgent(workspace, provider, owner);
+    const { agent, identity, upgrade, sandboxId, secret } = await daytonaAgent(workspace, provider, owner);
     // Signed in as the user picks now, and on its model's key as it is now,
     // before it relaunches.
-    await readyRelaunch(agent, identity, upgrade, workspace, owner.id);
-    await agent.resumeWorkspace(identity);
+    await withRuntimeAgentRecovery(
+      { provider, sandboxId, secret, agent, identity, upgrade, workspaceId: workspace.id },
+      async (current) => {
+        await readyRelaunch(current, identity, upgrade, workspace, owner.id);
+        await current.resumeWorkspace(identity);
+      },
+    );
   } catch (error) {
     const failure = signInFailure(error);
     if (!failure) console.error(`Workspace ${workspace.id} resume failed`, error);

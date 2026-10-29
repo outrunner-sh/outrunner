@@ -33,7 +33,13 @@ export async function daytonaAgent(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
   owner: Owner,
-): Promise<{ agent: AgentClient; identity: WorkspaceIdentity; upgrade?: () => Promise<void> }> {
+): Promise<{
+  agent: AgentClient;
+  identity: WorkspaceIdentity;
+  upgrade?: () => Promise<void>;
+  sandboxId: string;
+  secret: string;
+}> {
   const computer = await getWorkspaceComputer(workspace);
   if (!computer?.daytonaSandboxId || computer.status !== "ready") {
     throw new Error("Runtime Computer is not available.");
@@ -44,6 +50,8 @@ export async function daytonaAgent(
   return {
     upgrade: boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id, workspace.id),
     agent: new AgentClient(target),
+    sandboxId: computer.daytonaSandboxId,
+    secret,
     identity: {
       workspaceId: workspace.id,
       projectId: workspace.projectId,

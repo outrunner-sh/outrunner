@@ -14,6 +14,12 @@ export function wakeSteps(
   computerStatus: RuntimeComputerStatus | null,
 ): ("attach" | "resume" | "restore")[] {
   if (workspaceStatus === "archived") return ["restore"];
+  // A ready box does not prove its Claude process is alive. tmux drops a
+  // session when Claude exits, while both workspace and computer rows stay
+  // ready. Attach is idempotent and starts the session again from its saved
+  // conversation when that happened, so do it before every send to a live
+  // session rather than sending into a missing tmux session.
+  if (workspaceStatus === "ready" || workspaceStatus === "idle") return ["attach"];
   const steps: ("attach" | "resume")[] = computerStatus === "ready" ? [] : ["attach"];
   // A suspended session on a paused box starts twice: the attach brings the
   // box back and starts its agent, then resume relaunches it. Expected, and

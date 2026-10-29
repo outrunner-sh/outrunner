@@ -17,6 +17,7 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { newBoxSize } from "@/lib/orgs/defaults";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
+import { withRuntimeAgentRecovery } from "@/lib/runtime/agent-recovery";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { scopeOf } from "@/lib/runtime/computer-scope";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
@@ -144,7 +145,7 @@ export async function POST(request: Request, context: RouteContext) {
     computerId: computer.id,
     userId: owner.id,
   };
-  const agent = new AgentClient(target);
+  let agent = new AgentClient(target);
 
   // A hover must leave the session as it found it: a warm-up signs nothing in
   // and starts nothing. Its URLs stand in for the page's first attach, so it
@@ -170,16 +171,29 @@ export async function POST(request: Request, context: RouteContext) {
       // Signed in as the user picks now, and on its model's key as it is
       // now, before it launches.
       const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id, workspace.id);
-      await readyRelaunch(agent, identity, upgrade, workspace, owner.id);
-      await agent.startWorkspace(identity);
+      const recovered = await withRuntimeAgentRecovery(
+        {
+          provider,
+          sandboxId: computer.daytonaSandboxId,
+          secret,
+          agent,
+          identity,
+          upgrade,
+          workspaceId: workspace.id,
+        },
+        async (current) => {
+          await readyRelaunch(current, identity, upgrade, workspace, owner.id);
+          await current.startWorkspace(identity);
+        },
+      );
+      agent = recovered.agent;
     } catch (error) {
       const failed = await relaunchFailure(error, async () => {
         try {
           summary = await agent.workspaceSummary(identity);
         } catch (summaryError) {
-          // Not known to have failed: attached, as before, for the stream to tell.
           console.warn(`Session attach: couldn't ask whether ${workspace.id} is running`, summaryError);
-          return true;
+          return false;
         }
         return summary.state === "running";
       });

@@ -1755,6 +1755,19 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 // whether Claude is mid-turn in any of them; zero time when no session has a
 // summary yet. The control plane pauses a box idle long enough.
 func (s *Service) Activity() (last time.Time, turnInProgress bool) {
+	// tmux and its Claude processes outlive this Go service. After a runtime-
+	// agent restart (including an in-place upgrade), re-arm summaries for live
+	// sessions before reporting activity to the box reconciler. Without this,
+	// an active turn is forgotten and the fresh server boot time ages into the
+	// 15-minute idle cutoff, which pauses the box underneath that turn.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if !s.recoverRunningSummaries(ctx) {
+		// We could not establish whether a live tmux session is working. Treat
+		// that as active until a later probe can read tmux; never pause on an
+		// unknown process state.
+		return time.Now().UTC(), true
+	}
 	s.summariesMu.Lock()
 	sums := make([]*Summary, 0, len(s.summaries))
 	for _, sum := range s.summaries {
@@ -1769,6 +1782,42 @@ func (s *Service) Activity() (last time.Time, turnInProgress bool) {
 		turnInProgress = turnInProgress || open
 	}
 	return last, turnInProgress
+}
+
+// recoverRunningSummaries reattaches conversation collectors for tmux
+// sessions that survived a runtime-agent restart. Facts are persisted beside
+// each worktree, so the session id and summary path can be recovered without
+// changing or restarting the user process. false means tmux or the session
+// metadata could not be read and Activity must fail closed.
+func (s *Service) recoverRunningSummaries(ctx context.Context) bool {
+	if s.jcode != nil {
+		return true // jcode boxes are metered but are not paused by the reconciler.
+	}
+	lister, ok := s.tmux.(interface {
+		ListSessions(context.Context) ([]string, error)
+	})
+	if !ok {
+		return true
+	}
+	names, err := lister.ListSessions(ctx)
+	if err != nil {
+		log.Printf("runtime-agent: couldn't list tmux sessions for activity: %v", err)
+		return false
+	}
+	known := true
+	for _, name := range names {
+		id, ok := strings.CutPrefix(name, "ws-")
+		if !ok || id == "" {
+			continue // editor or another non-workspace tmux session
+		}
+		if _, ok := s.getFacts(id); !ok {
+			log.Printf("runtime-agent: live tmux session %q has no persisted workspace facts", name)
+			known = false
+			continue
+		}
+		s.beginSummary(id, s.worktreePath(id))
+	}
+	return known
 }
 
 // beginSummary creates (or refreshes) the Workspace Summary collector for a
