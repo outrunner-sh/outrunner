@@ -146,7 +146,14 @@ test("a provider outage or a revoked token doesn't stop the session: it starts w
 test("a provider that hangs is given up on at the timeout", async () => {
   const { deps: d, recorded } = deps([{ provider: "doppler" }], (_link, signal) =>
     new Promise((_resolve, reject) => {
-      signal.addEventListener("abort", () => reject(new SyncError("Doppler didn't answer in time.", false)));
+      // A hung request holds the event loop open, as a real socket would:
+      // AbortSignal.timeout's own timer doesn't, and the runner would end
+      // the file before the abort fired.
+      const open = setInterval(() => {}, 1_000);
+      signal.addEventListener("abort", () => {
+        clearInterval(open);
+        reject(new SyncError("Doppler didn't answer in time.", false));
+      });
     }),
   );
   const started = Date.now();
