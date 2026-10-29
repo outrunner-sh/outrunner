@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowUpRight, Check, Copy, Globe, Lock, Plus, Trash2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Spinner } from "@/components/ui/loaders";
 import { cn } from "@/lib/utils";
@@ -33,26 +33,42 @@ const COPIED_MS = 1_500;
 export function WorkspacePreviews({ workspaceId, active }: { workspaceId: string; active: boolean }) {
   const [previews, setPreviews] = useState<Preview[] | null>(null);
   const [enabled, setEnabled] = useState(false);
+  // Bumped by every change made here: a read that set out before one is
+  // older than what the panel shows, and mustn't put it back (a deleted
+  // row, or a public preview shown as sign-in only).
+  const changes = useRef(0);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let stopped = false;
+    let looking = false;
+    let previewsOff = false;
     const look = async () => {
-      if (document.hidden) return;
+      if (document.hidden || looking || previewsOff) return;
+      // Only one read at a time: overlapping answers can arrive out of order,
+      // letting an older list replace a newer one even without a mutation.
+      looking = true;
+      const started = changes.current;
       try {
         const res = await fetch(`/api/workspaces/${workspaceId}/previews`, { cache: "no-store" });
         const body = (await res.json().catch(() => null)) as { previews?: Preview[]; enabled?: boolean } | null;
-        if (!stopped && res.ok && body?.previews) {
+        if (!stopped && started === changes.current && res.ok && body?.previews) {
           setPreviews(body.previews);
           setEnabled(body.enabled !== false);
+          if (body.enabled === false) {
+            previewsOff = true;
+            clearInterval(timer);
+          }
         }
       } catch {
-        // Unreachable for now: the list stays as it was, and the next look tries again.
+        // The list stays as it was, and the next look tries again.
+      } finally {
+        looking = false;
       }
     };
-    void look();
     const timer = setInterval(() => void look(), PREVIEWS_POLL_MS);
+    void look();
     const onVisible = () => {
       if (!document.hidden) void look();
     };
@@ -67,7 +83,10 @@ export function WorkspacePreviews({ workspaceId, active }: { workspaceId: string
   // Nothing until the first read, nor where this Outrunner serves none.
   if (previews === null || !enabled) return null;
 
-  const replace = (next: Preview) => setPreviews((list) => (list ?? []).map((p) => (p.id === next.id ? next : p)));
+  const replace = (next: Preview) => {
+    changes.current++;
+    setPreviews((list) => (list ?? []).map((p) => (p.id === next.id ? next : p)));
+  };
 
   return (
     <>
@@ -90,6 +109,7 @@ export function WorkspacePreviews({ workspaceId, active }: { workspaceId: string
           active={active}
           taken={previews.map((p) => p.port)}
           onAdded={(preview) => {
+            changes.current++;
             setPreviews((list) => [...(list ?? []).filter((p) => p.id !== preview.id), preview]);
             setAdding(false);
           }}
@@ -107,7 +127,10 @@ export function WorkspacePreviews({ workspaceId, active }: { workspaceId: string
           workspaceId={workspaceId}
           preview={preview}
           onChanged={replace}
-          onDeleted={() => setPreviews((list) => (list ?? []).filter((p) => p.id !== preview.id))}
+          onDeleted={() => {
+            changes.current++;
+            setPreviews((list) => (list ?? []).filter((p) => p.id !== preview.id));
+          }}
           onError={setError}
         />
       ))}
