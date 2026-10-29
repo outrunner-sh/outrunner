@@ -79,12 +79,18 @@ test("the inbox counts lines in one GraphQL call a repository, without patches",
             },
             p8: { files: { pageInfo: { hasNextPage: true }, nodes: [{ path: "test/a.test.ts", additions: 2, deletions: 0 }] } },
             p9: null,
+            p10: {
+              files: {
+                pageInfo: { hasNextPage: false },
+                nodes: Array.from({ length: 100 }, (_, i) => ({ path: `lib/exact-${i}.ts`, additions: 1, deletions: 0 })),
+              },
+            },
           },
         },
       }),
     );
   }) as typeof fetch;
-  const counts = await inboxFileCounts("t", "acme/repo", [7, 8, 9, 7]);
+  const counts = await inboxFileCounts("t", "acme/repo", [7, 8, 9, 7, 10]);
   assert.equal(sent.length, 1);
   assert.doesNotMatch(sent[0].query, /patch/);
   assert.match(sent[0].query, /p7: pullRequest\(number: 7\)/);
@@ -96,6 +102,8 @@ test("the inbox counts lines in one GraphQL call a repository, without patches",
   // More than 100 files: partial, by GitHub's own word rather than a guess.
   assert.equal(counts.get(8)?.complete, false);
   assert.equal(counts.has(9), false);
+  assert.equal(counts.get(10)?.complete, true);
+  assert.equal(counts.get(10)?.lines.code.additions, 100);
 });
 
 test("the inbox shows no counts when GitHub doesn't answer", async () => {

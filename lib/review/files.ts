@@ -77,18 +77,18 @@ ${group.map((n) => `    p${n}: pullRequest(number: ${n}) { files(first: 100) { p
       }
       const repository = body?.data?.repository ?? {};
       for (const n of group) {
-      const files = repository[`p${n}`]?.files;
-      if (!files?.nodes) continue;
-      counts.set(n, {
-        lines: countLines(
-          files.nodes.flatMap((f) =>
-            typeof f?.path === "string"
-              ? [{ path: f.path, additions: typeof f.additions === "number" ? f.additions : 0, deletions: typeof f.deletions === "number" ? f.deletions : 0 }]
-              : [],
+        const files = repository[`p${n}`]?.files;
+        if (!files?.nodes) continue;
+        counts.set(n, {
+          lines: countLines(
+            files.nodes.flatMap((f) =>
+              typeof f?.path === "string"
+                ? [{ path: f.path, additions: typeof f.additions === "number" ? f.additions : 0, deletions: typeof f.deletions === "number" ? f.deletions : 0 }]
+                : [],
+            ),
           ),
-        ),
-        complete: files.pageInfo?.hasNextPage !== true,
-      });
+          complete: files.pageInfo?.hasNextPage !== true,
+        });
       }
     } catch (error) {
       console.error(`Review: couldn't read inbox file counts for ${repo}#${group.join(",#")}`, error);
