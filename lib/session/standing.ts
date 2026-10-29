@@ -20,7 +20,7 @@
  */
 
 import type { WorkspacePullRequest, WorkspaceStatus } from "@/lib/runtime/types";
-import { isErrorPreview, type TurnState, type Waiting } from "@/lib/session/turn-state";
+import { isErrorPreview, shownPreview, type TurnState, type Waiting } from "@/lib/session/turn-state";
 import { isSettingUp, SETUP_STALLS_AFTER_MS } from "@/lib/session/provisioning";
 
 export const STANDINGS = ["needs_you", "working", "in_review", "done", "backlog"] as const;
@@ -134,7 +134,7 @@ export function sessionStanding({ workspace, activity, pullRequest, mark, owner,
     moved,
     pinned: Boolean(mark?.pinnedAt),
     unread,
-    replyPreview: activity?.replyPreview ?? null,
+    replyPreview: shownPreview(activity?.replyPreview),
     at,
   };
 }

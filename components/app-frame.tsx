@@ -134,6 +134,9 @@ export function AppFrame({
   const wide = useMediaQuery("(min-width: 640px)");
   const [drawerOn, setDrawerOn] = useState<string | null>(null);
   const drawerOpen = drawerOn === pathname && !wide;
+  // Closed for good once it stops matching: Back to the page it was opened
+  // on, or a window narrow again, must not open it by itself.
+  if (drawerOn !== null && !drawerOpen) setDrawerOn(null);
   const closeDrawer = () => setDrawerOn(null);
   const drawer = useModalPanel(drawerOpen, closeDrawer);
   // The sidebar shows the kept list at once too — except where a list landing

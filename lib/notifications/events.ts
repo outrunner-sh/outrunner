@@ -9,7 +9,7 @@
  * Pure, so the rules are unit-tested in Node.
  */
 
-import type { TurnState } from "@/lib/session/turn-state";
+import { shownPreview, type TurnState } from "@/lib/session/turn-state";
 
 export const NOTIFICATION_KINDS = ["turn_done", "needs_input", "errored", "pr_opened", "pr_merged", "pr_ready"] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
@@ -99,7 +99,7 @@ export function activityNews(
     after.repliedAt !== before.repliedAt &&
     fresh(after.repliedAt, now)
   ) {
-    return [draft("turn_done", after.repliedAt, after.replyPreview || "Finished its turn")];
+    return [draft("turn_done", after.repliedAt, shownPreview(after.replyPreview) || "Finished its turn")];
   }
   return [];
 }
