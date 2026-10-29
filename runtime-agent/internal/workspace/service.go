@@ -1973,7 +1973,9 @@ func (s *Service) readUnknownActivitySince() time.Time {
 // boxLifetimeID combines the kernel boot ID with PID 1's start time when both
 // are available. A VM reboot changes the former; a container start on a shared
 // host changes the latter. If one source is unavailable, the other still keeps
-// the unknown-activity window bounded across runtime-agent restarts.
+// the unknown-activity window bounded across runtime-agent restarts. A boot-only
+// ID cannot distinguish a container restart on a shared host, so a stale marker
+// may still match across that boundary.
 func boxLifetimeID() string {
 	bootID, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	boot := ""
