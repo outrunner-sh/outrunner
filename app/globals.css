@@ -98,6 +98,11 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Closed fields blend into their surface; native option lists stay readable. */
+  select option,
+  select optgroup {
+    @apply bg-popover text-popover-foreground;
+  }
   /* An app, not a page: a panel scrolled to its end mustn't hand the scroll
      on to the document, which in the Mac app's webview bounces the whole
      window, sidebar and all. Each panel scrolls on its own. */
@@ -195,6 +200,9 @@
 .studio-queue-actions button[aria-label="Move up"], .studio-queue-actions button[aria-label="Move down"], .studio-queue-actions button[aria-label="Edit"] { padding: 0 6px; border-color: transparent; color: #8a8a8a; }
 .studio-queue-edit { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid var(--studio-border); border-radius: 3px; color: var(--studio-text); background: transparent; font: 13px var(--font-geist-sans); resize: none; outline: none; }
 .studio-composer textarea { display:block; width:100%; resize:none; min-height:56px; padding:14px 16px 10px; border:0; outline:0; color:var(--studio-text); background:transparent; font:14px var(--font-geist-sans); }
+.studio-composer:focus-within { border-color: color-mix(in oklab, var(--ring) 65%, var(--studio-border)); }
+.new-session-composer.studio-composer { width: 100%; max-width: none; margin: 0; border-radius: 8px; }
+.new-session-composer textarea { min-height: 112px; }
 .studio-composer textarea::placeholder { color:#6f6f6f !important; opacity:1; }
 .studio-composer textarea:disabled { cursor:not-allowed; opacity:.7; }
 /* Files staged on the composer: images as square tiles of their own picture,

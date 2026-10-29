@@ -22,9 +22,9 @@ export const unstable_instant = {
 };
 
 /**
- * Home is the new-session screen: every session is in the sidebar, so the page
- * itself is for starting the next one. It shows at once; a new user is sent
- * through onboarding as the server's check arrives.
+ * Home starts the next session and offers the five most recent to resume.
+ * It shows at once; a new user is sent through onboarding as the server's
+ * check arrives.
  */
 export default function Home() {
   return (

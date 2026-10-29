@@ -31,17 +31,15 @@ import type { Project } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { newSessionDetails } from "@/lib/session/new-session-target";
 
-/** One item in the row beneath the wordmark: where, what, which branch, how. */
+/** One item in the row above the composer: where, what, which branch, how. */
 const CHIP = "inline-flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground [&_svg]:size-3.5";
 const CHIP_BUTTON = `${CHIP} transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50`;
 
 /**
- * The new-session screen, filling the page: a faded wordmark with what the
- * session would run on beneath it (cloud or this Mac, the repository or folder,
- * its branch, and whether it gets a worktree), and the composer pinned to the
- * bottom, where the session's own composer sits once it opens. Submitting
- * creates a workspace and opens it, carrying the first prompt so the session
- * starts on that instruction once its box is ready.
+ * The shared home and new-session form: a centered heading, the session's
+ * repository or folder and branch, then the composer. Home can show recent
+ * sessions beneath it. Submitting creates a workspace and opens it, carrying
+ * the first prompt so the session starts on it once its box is ready.
  */
 export function NewSessionForm({
   projects: listed,
@@ -51,6 +49,7 @@ export function NewSessionForm({
   focusComposer = false,
   initialPick,
   workItemId,
+  children,
 }: {
   projects: Project[];
   /** False until the list arrives (a cold start): it is not yet "none". */
@@ -68,6 +67,7 @@ export function NewSessionForm({
   /** The triage item to start from (Start session): its prompt fills the
    *  composer, and the session is linked to it. */
   workItemId?: string;
+  children?: React.ReactNode;
 }) {
   const { projects, projectId, selectProject, selected, isCreating, message, messageAction, refusedPrompt, refusedAttachments, takeRefusedAttachments, create, createLocal } =
     useCreateSession(listed, initialProjectId);
@@ -151,17 +151,14 @@ export function NewSessionForm({
   // setup progress on its own page), so the form only waits, disabled; one
   // that fails hands its prompt back.
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10">
-        <p
-          aria-hidden
-          className="pointer-events-none mb-10 select-none text-center font-display text-[13vw] leading-none text-foreground/20 sm:text-[112px]"
-        >
-          outrunner
-        </p>
+    <div className="flex min-h-full flex-col px-4 py-12 sm:px-6 sm:pb-12 sm:pt-[12vh]">
+      <div className="mx-auto my-auto w-full max-w-3xl">
+        <h1 className="mb-8 text-balance text-center text-3xl font-semibold tracking-tight sm:text-4xl">
+          What would you like to build?
+        </h1>
 
         {noRepositories ? (
-          <div className="flex w-full max-w-md flex-col items-center gap-4 rounded-2xl border border-dashed py-10 text-center">
+          <div className="mx-auto mb-4 flex w-full max-w-md flex-col items-center gap-4 rounded-2xl border border-dashed px-4 py-6 text-center">
             <p className="text-sm font-medium">No repositories synchronized</p>
             <p className="text-muted-foreground max-w-xs text-xs">
               Pull in the repositories your GitHub token can access to start a session.
@@ -178,7 +175,7 @@ export function NewSessionForm({
             )}
           </div>
         ) : (
-          <div className="flex max-w-full flex-wrap items-center justify-center gap-x-3 gap-y-2 text-[13px]">
+          <div className="mb-3 flex max-w-full flex-wrap items-center gap-x-3 gap-y-2 text-[13px]">
             {LOCAL_SESSIONS && <SessionLocationMenu state={where} disabled={busy} className={CHIP_BUTTON} />}
             {local ? (
               <LocalRepositoryButton
@@ -220,16 +217,13 @@ export function NewSessionForm({
           </div>
         )}
 
-        <LocalBlocker state={where} className="mt-4 text-center" />
+        <LocalBlocker state={where} className="mb-4" />
         {!local && !noRepositories && <EnvironmentOffer environment={environment} disabled={busy} />}
-      </div>
-
-      <div className="shrink-0">
         {message && (
           // A failure with a fix to make first is a step, not an error. One
           // that points at what is in the way (a taken branch) still didn't start.
           <Notice
-            className="mx-auto w-[calc(100%-32px)] max-w-[720px]"
+            className="mb-3"
             tone={messageAction?.kind === "step" ? "info" : "error"}
             title={messageAction?.kind === "step" ? "One step before this session starts" : "Couldn't start the session"}
             detail={message}
@@ -239,6 +233,7 @@ export function NewSessionForm({
           />
         )}
         <SessionComposer
+          className="new-session-composer"
           onSend={(text, attachmentIds) =>
             where.localFolder
               ? createLocal(
@@ -313,6 +308,7 @@ export function NewSessionForm({
           // triage item's prompt has its own.
           draftKey={workItemId ? `new:triage:${workItemId}` : "new"}
         />
+        {children}
       </div>
     </div>
   );
@@ -326,7 +322,7 @@ export function NewSessionForm({
 function EnvironmentOffer({ environment: env, disabled }: { environment: FirstSessionEnvironment; disabled: boolean }) {
   if (!env.offer || !env.pick) return null;
   return (
-    <section className="mt-8 w-full max-w-xl space-y-3 rounded-lg border border-border/60 p-4 text-left">
+    <section className="mb-4 w-full space-y-3 rounded-lg border border-border/60 p-4 text-left">
       <div>
         <h2 className="text-sm font-medium">Bring {env.offer.repo}&apos;s environment from this Mac</h2>
         <p className="text-muted-foreground text-xs">

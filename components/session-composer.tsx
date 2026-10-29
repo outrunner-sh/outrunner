@@ -133,6 +133,7 @@ export function SessionComposer({
   editing = null,
   comments,
   listFiles,
+  className,
 }: {
   /** Send a prompt, in `mode` where the session has modes. When it returns
    *  a promise of whether the send landed, a failed send gives the text and
@@ -210,6 +211,8 @@ export function SessionComposer({
   /** The session's files, for @ mentions (lib/session/file-mentions.ts):
    *  asked for once, as the first @ is typed. Without it @ is just text. */
   listFiles?: () => Promise<FilesResponse>;
+  /** A surrounding screen's layout and sizing, such as the home composer. */
+  className?: string;
 }) {
   const ownKey = `${PAGE_ONLY}composer:${useId()}`;
   // Editing gets a page-only draft of its own. The ordinary draft (text and
@@ -456,7 +459,7 @@ export function SessionComposer({
 
   return (
     <form
-      className="studio-composer"
+      className={cn("studio-composer", className)}
       onSubmit={(event) => {
         event.preventDefault();
         submit();
