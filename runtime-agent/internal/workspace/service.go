@@ -1761,7 +1761,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 // Activity reports the most recent activity in any session on this box, and
 // whether Claude is mid-turn in any of them; zero time when no session has a
 // summary yet. The control plane pauses a box idle long enough.
-func (s *Service) Activity() (last time.Time, turnInProgress bool) {
+func (s *Service) Activity() (last time.Time, turnInProgress, unknown bool) {
 	// tmux and its Claude processes outlive this Go service. After a runtime-
 	// agent restart (including an in-place upgrade), re-arm summaries for live
 	// sessions before reporting activity to the box reconciler. Without this,
@@ -1774,10 +1774,12 @@ func (s *Service) Activity() (last time.Time, turnInProgress bool) {
 		// session has lost its persisted facts. The two-hour bound matches the
 		// reconciler's stuck-turn limit; afterward this unknown state is eligible
 		// for the ordinary idle pause instead of holding a box forever.
-		return s.unknownActivity(reason)
+		last, turnInProgress = s.unknownActivity(reason)
+		return last, turnInProgress, true
 	}
 	s.clearUnknownActivity()
-	return s.summariesActivity()
+	last, turnInProgress = s.summariesActivity()
+	return last, turnInProgress, false
 }
 
 // recoverRunningSummaries reattaches conversation collectors for tmux

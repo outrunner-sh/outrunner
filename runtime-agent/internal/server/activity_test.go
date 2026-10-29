@@ -39,7 +39,8 @@ func TestActivityTakesOnlyTheListingTokenAndCountsWrites(t *testing.T) {
 		t.Errorf("activity with a workspace token = %d, want 401", status)
 	}
 
-	// From the start, the agent's boot is the last activity, and no turn is open.
+	// A newly provisioned box gets a short boot grace. No turn is open.
+	srv.startedAt = time.Now().Add(-time.Hour)
 	srv.lastInput.Store(time.Now().Add(-time.Hour).UnixNano())
 	status, booted := call(protocol.ListingWorkspaceID, "GET", "/activity")
 	if status != http.StatusOK {
