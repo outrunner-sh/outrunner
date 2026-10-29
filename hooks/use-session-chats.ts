@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AgentId } from "@/lib/agents/registry";
 import { requestJson } from "@/lib/http/request-json";
@@ -16,6 +16,7 @@ export type SessionChats = {
   loaded: boolean;
   error: string | null;
   reportError: (message: string) => void;
+  isCurrent: () => boolean;
   start: (how: NewChat) => Promise<SessionChat>;
   rename: (chatId: string, name: string) => Promise<void>;
   remove: (chatId: string) => Promise<void>;
@@ -40,6 +41,12 @@ export function useSessionChats(workspaceId: string, main: SessionChat, enabled:
     setMainName(null);
     setError(null);
   }
+
+  const shown = useRef<string | null>(workspaceId);
+  useEffect(() => {
+    shown.current = workspaceId;
+    return () => { shown.current = null; };
+  }, [workspaceId]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -70,6 +77,7 @@ export function useSessionChats(workspaceId: string, main: SessionChat, enabled:
         has: (d) => typeof d.chat?.id === "string",
         fallback: "Couldn't start the chat. Try again.",
       });
+      if (shown.current !== workspaceId) throw new Error("The session changed before the chat was ready.");
       setOthers((chats) => [...chats, chat]);
       return chat;
     },
@@ -83,6 +91,7 @@ export function useSessionChats(workspaceId: string, main: SessionChat, enabled:
         body: { name },
         fallback: "Couldn't rename the chat. Try again.",
       });
+      if (shown.current !== workspaceId) return;
       if (chatId === MAIN_CHAT) setMainName(name);
       else setOthers((chats) => chats.map((chat) => (chat.id === chatId ? { ...chat, name } : chat)));
     },
@@ -95,10 +104,11 @@ export function useSessionChats(workspaceId: string, main: SessionChat, enabled:
         method: "DELETE",
         fallback: "Couldn't delete the chat. Try again.",
       });
+      if (shown.current !== workspaceId) return;
       setOthers((chats) => chats.filter((chat) => chat.id !== chatId));
     },
     [workspaceId],
   );
 
-  return { loaded: !enabled || loadedWorkspace === workspaceId, error, reportError: setError, chats: [mainName ? { ...main, name: mainName } : main, ...others], start, rename, remove };
+  return { loaded: !enabled || loadedWorkspace === workspaceId, error, isCurrent: () => shown.current === workspaceId, reportError: (message) => { if (shown.current === workspaceId) setError(message); }, chats: [mainName ? { ...main, name: mainName } : main, ...others], start, rename, remove };
 }

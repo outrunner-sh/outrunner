@@ -119,8 +119,14 @@ export function WorkspaceStudio({
   const chats = useSessionChats(workspace.id, main, chatsOffered);
   const search = useSearchParams();
   const [chatId, setChatId] = useState(() => parseChatId(search.get("chat")) ?? MAIN_CHAT);
+  const [shownSession, setShownSession] = useState(workspace.id);
+  if (shownSession !== workspace.id) {
+    setShownSession(workspace.id);
+    setChatId(parseChatId(search.get("chat")) ?? MAIN_CHAT);
+  }
   const current = chats.chats.find((chat) => chat.id === chatId) ?? main;
   const pick = (chat: SessionChat) => {
+    if (!chats.isCurrent()) return;
     setChatId(chat.id);
     const url = new URL(window.location.href);
     if (chat.id === MAIN_CHAT) url.searchParams.delete("chat");
