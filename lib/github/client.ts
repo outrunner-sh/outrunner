@@ -117,7 +117,7 @@ function githubHeaders(token: string) {
 async function fetchGitHub(
   url: URL,
   token: string,
-  init: { method?: "GET" | "PUT"; body?: unknown } = {},
+  init: { method?: "GET" | "PUT" | "POST"; body?: unknown } = {},
 ): Promise<Response> {
   try {
     return await fetch(url, {
@@ -609,24 +609,32 @@ async function readPullRequest(input: {
   };
 }
 
+export type MergeMethod = "merge" | "squash" | "rebase";
+
 /**
  * Merge a pull request at `headSha`, the commit the user saw pass: should the
  * branch have moved since, GitHub refuses (409) rather than merge what nobody
  * looked at. The method is the first the repository allows of a merge commit,
- * a squash and a rebase. GitHub's own reason for a refusal is the message.
+ * a squash and a rebase, among those the base branch's rules allow
+ * (`methods`) when they narrow them. GitHub's own reason for a refusal is
+ * the message.
+ *
+ * Merging past the branch's rules is this same call: GitHub lets it through
+ * for a token whose user may bypass them, and refuses anyone else.
  */
 export async function mergePullRequest(input: {
   token: string;
   repoFullName: string;
   number: number;
   headSha: string;
+  methods?: readonly MergeMethod[] | null;
 }): Promise<void> {
   const repoResponse = await fetchGitHub(new URL(`/repos/${input.repoFullName}`, GITHUB_API_URL), input.token);
   if (!repoResponse.ok) {
     throw rejected(repoResponse, "repository lookup", "GitHub could not look up that repository. Please try again.");
   }
   const repo = (await readJson(repoResponse)) as Record<string, unknown>;
-  const method = mergeMethod(repo);
+  const method = mergeMethod(repo, input.methods);
   if (!method) throw new GitHubSyncError("This repository allows no way of merging a pull request.");
 
   const response = await fetchGitHub(
@@ -636,22 +644,149 @@ export async function mergePullRequest(input: {
   );
   if (response.ok) return;
   if (response.status === 405 || response.status === 409 || response.status === 422) {
-    const reason = ((await response.json().catch(() => ({}))) as { message?: unknown }).message;
-    console.error("GitHub merge was refused", { status: response.status, reason });
-    throw new GitHubSyncError(
-      typeof reason === "string" && reason ? `GitHub could not merge: ${reason}` : "GitHub could not merge this pull request.",
-      response.status,
-    );
+    throw await refusal(response, "merge", "GitHub could not merge this pull request.");
   }
   throw rejected(response, "merge", "GitHub could not merge this pull request. Please try again.");
 }
 
-/** The first merge method a repository record allows, merge commit first. */
-export function mergeMethod(repo: Record<string, unknown>): "merge" | "squash" | "rebase" | null {
-  if (repo.allow_merge_commit !== false) return "merge";
-  if (repo.allow_squash_merge !== false) return "squash";
-  if (repo.allow_rebase_merge !== false) return "rebase";
+/** GitHub said no for a reason of its own, which it names: that reason, as
+ *  the error. */
+async function refusal(response: Response, what: string, fallback: string): Promise<GitHubSyncError> {
+  const reason = ((await response.json().catch(() => ({}))) as { message?: unknown }).message;
+  console.error(`GitHub ${what} was refused`, { status: response.status, reason });
+  return new GitHubSyncError(
+    typeof reason === "string" && reason ? `GitHub could not ${what}: ${reason}` : fallback,
+    response.status,
+  );
+}
+
+/** The first merge method a repository record allows, merge commit first,
+ *  among `allowed` when given. */
+export function mergeMethod(repo: Record<string, unknown>, allowed?: readonly MergeMethod[] | null): MergeMethod | null {
+  const ok = (method: MergeMethod) => !allowed || allowed.includes(method);
+  if (repo.allow_merge_commit !== false && ok("merge")) return "merge";
+  if (repo.allow_squash_merge !== false && ok("squash")) return "squash";
+  if (repo.allow_rebase_merge !== false && ok("rebase")) return "rebase";
   return null;
+}
+
+/** A GraphQL call; its `data`, or a GitHubSyncError with GitHub's reason. */
+async function githubGraphql<T>(token: string, query: string, variables: Record<string, unknown>, what: string): Promise<T> {
+  const response = await fetchGitHub(new URL("/graphql", GITHUB_API_URL), token, { method: "POST", body: { query, variables } });
+  if (!response.ok) throw rejected(response, what, `GitHub could not ${what}. Please try again.`);
+  const body = (await readJson(response)) as { data?: T | null; errors?: { message?: unknown }[] };
+  const reason = body.errors?.map((e) => e.message).find((m) => typeof m === "string" && m);
+  if (reason || !body.data) {
+    console.error(`GitHub ${what} was refused`, { reason });
+    throw new GitHubSyncError(reason ? `GitHub could not ${what}: ${reason}` : `GitHub could not ${what}.`);
+  }
+  return body.data;
+}
+
+/** How the person looking may merge a pull request, as GitHub tells them:
+ *  past its base branch's rules or not, and through a merge queue or not. */
+export type MergeAccess = {
+  /** The pull request's GraphQL id, which the merge queue takes. */
+  pullId: string;
+  /** GitHub would let them merge it now, past the branch's rules: they are
+   *  an admin the rules don't hold to, or a bypass actor on its rulesets. */
+  canBypass: boolean;
+  /** The base branch merges through a merge queue. */
+  mergeQueue: boolean;
+  /** Its place in that queue, from 1, when it's in it. */
+  queuePosition: number | null;
+  /** The merge methods the base branch's rules allow, when they narrow them. */
+  methods: MergeMethod[] | null;
+};
+
+const MERGE_ACCESS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id
+      viewerCanMergeAsAdmin
+      isMergeQueueEnabled
+      isInMergeQueue
+      mergeQueueEntry { position }
+    }
+  }
+}`;
+
+const METHOD_NAMES: Record<string, MergeMethod> = { merge: "merge", squash: "squash", rebase: "rebase" };
+
+/**
+ * How `token`'s user may merge a pull request into `baseRef`: GitHub's own
+ * word on whether they may merge past its rules (`viewerCanMergeAsAdmin`,
+ * which covers both branch protection and rulesets), whether the branch
+ * merges through a queue, and which methods its rules allow.
+ */
+export async function getMergeAccess(input: {
+  token: string;
+  repoFullName: string;
+  number: number;
+  baseRef: string;
+}): Promise<MergeAccess> {
+  const [owner, name] = input.repoFullName.split("/");
+  const [data, rules] = await Promise.all([
+    githubGraphql<{
+      repository?: {
+        pullRequest?: {
+          id?: unknown;
+          viewerCanMergeAsAdmin?: unknown;
+          isMergeQueueEnabled?: unknown;
+          isInMergeQueue?: unknown;
+          mergeQueueEntry?: { position?: unknown } | null;
+        } | null;
+      } | null;
+    }>(input.token, MERGE_ACCESS_QUERY, { owner, name, number: input.number }, "read the pull request's merge rules"),
+    fetchGitHub(
+      new URL(`/repos/${input.repoFullName}/rules/branches/${input.baseRef.split("/").map(encodeURIComponent).join("/")}`, GITHUB_API_URL),
+      input.token,
+    ),
+  ]);
+  const pr = data.repository?.pullRequest;
+  if (!pr || typeof pr.id !== "string") throw new GitHubSyncError("GitHub returned an invalid pull request record.");
+  // The rules are only for the methods: a repository without rulesets, or
+  // one GitHub won't show them for, merges by its own settings.
+  const ruleList = rules.ok ? ((await rules.json().catch(() => [])) as unknown) : [];
+  return {
+    pullId: pr.id,
+    canBypass: pr.viewerCanMergeAsAdmin === true,
+    mergeQueue: pr.isMergeQueueEnabled === true,
+    queuePosition:
+      pr.isInMergeQueue === true ? (typeof pr.mergeQueueEntry?.position === "number" ? pr.mergeQueueEntry.position : 0) : null,
+    methods: allowedMethods(ruleList),
+  };
+}
+
+/** The merge methods a branch's rules allow (the `pull_request` rules'
+ *  `allowed_merge_methods`, each narrowing the last); null when none says. */
+export function allowedMethods(rules: unknown): MergeMethod[] | null {
+  if (!Array.isArray(rules)) return null;
+  let allowed: MergeMethod[] | null = null;
+  for (const rule of rules as { type?: unknown; parameters?: { allowed_merge_methods?: unknown } | null }[]) {
+    if (rule?.type !== "pull_request" || !Array.isArray(rule.parameters?.allowed_merge_methods)) continue;
+    const these = (rule.parameters.allowed_merge_methods as unknown[]).flatMap((m) => (typeof m === "string" && METHOD_NAMES[m] ? [METHOD_NAMES[m]] : []));
+    allowed = allowed ? allowed.filter((m) => these.includes(m)) : these;
+  }
+  return allowed;
+}
+
+/**
+ * Add a pull request to its base branch's merge queue, as `token`'s user, at
+ * `headSha`: GitHub refuses one whose head moved since. The queue merges it
+ * once its checks pass on top of what's ahead of it.
+ */
+export async function enqueuePullRequest(input: { token: string; pullId: string; headSha: string }): Promise<{ position: number | null }> {
+  const data = await githubGraphql<{ enqueuePullRequest?: { mergeQueueEntry?: { position?: unknown } | null } | null }>(
+    input.token,
+    `mutation($id: ID!, $sha: GitObjectID!) {
+      enqueuePullRequest(input: { pullRequestId: $id, expectedHeadOid: $sha }) { mergeQueueEntry { position } }
+    }`,
+    { id: input.pullId, sha: input.headSha },
+    "add it to the merge queue",
+  );
+  const position = data.enqueuePullRequest?.mergeQueueEntry?.position;
+  return { position: typeof position === "number" ? position : null };
 }
 
 async function readJson(response: Response): Promise<unknown> {
