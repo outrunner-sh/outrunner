@@ -1145,7 +1145,7 @@ export function WorkspaceSession({
       {!waitingOnUser && (
         <SessionComposer
           // Kept while a question or secrets card stands in for it, too.
-          draftKey={`ws:${workspaceId}`}
+          draftKey={`ws:${stateKey}`}
           onSend={sendWithComments}
           comments={{ items: diffComments.items, onRemove: diffComments.remove }}
           modeChoice={{ mode, onChange: setMode }}
