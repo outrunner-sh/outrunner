@@ -5,14 +5,17 @@ export const root =
   resolve(import.meta.dirname, "../../.context/codex-live");
 export const secrets = JSON.parse(readFileSync(root + "/secrets.json", "utf8"));
 // Deliberately do not inherit deployment/provider environment variables.
-export const env = {
-  CODEX_LIVE_ROOT: root,
+export const systemEnv = {
   PATH:
     root +
     "/codex/node_modules/.bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin",
   HOME: root + "/home",
   LANG: "C.UTF-8",
   TERM: "xterm-256color",
+};
+export const env = {
+  ...systemEnv,
+  CODEX_LIVE_ROOT: root,
   NEXT_PUBLIC_SUPABASE_URL: secrets.API_URL,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: secrets.ANON_KEY,
   SUPABASE_SERVICE_ROLE_KEY: secrets.SERVICE_ROLE_KEY,

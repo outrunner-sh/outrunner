@@ -111,3 +111,12 @@ execFileSync(
   ],
   { stdio: "pipe" },
 );
+
+for (const name of ["computer-a", "computer-b"]) {
+  mkdirSync(root + "/" + name + "/home", { recursive: true, mode: 0o700 });
+  execFileSync(
+    "git",
+    ["clone", "--no-hardlinks", fixture, root + "/" + name + "/test-repo"],
+    { stdio: "pipe" },
+  );
+}

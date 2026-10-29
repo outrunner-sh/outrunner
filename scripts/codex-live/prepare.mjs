@@ -105,7 +105,7 @@ try {
 }
 // From this point children receive only this stack's freshly generated config.
 process.env.CODEX_LIVE_ROOT = root;
-const { env } = await import("./env.mjs");
+const { env, systemEnv } = await import("./env.mjs");
 const task = async (bin, args, cwd, childEnv = env) =>
   new Promise((ok, fail) => {
     const child = spawn(bin, args, {
@@ -138,6 +138,7 @@ await task(
   "go",
   ["build", "-o", root + "/runtime-agent", "./cmd/runtime-agent"],
   root + "/app/runtime-agent",
+  { ...systemEnv, CGO_ENABLED: "0" },
 );
 await task(
   "go",
@@ -159,6 +160,23 @@ await task(
 );
 await task("node", [root + "/app/scripts/codex-live/seed.mjs", commit], repo);
 await task(
+  "docker",
+  [
+    "build",
+    "--build-arg",
+    "RUNTIME_UID=" + process.getuid(),
+    "--build-arg",
+    "RUNTIME_GID=" + process.getgid(),
+    "-t",
+    "outrunner-codex-live-runtime:328",
+    "-f",
+    root + "/app/scripts/codex-live/Dockerfile.runtime",
+    root + "/app/scripts/codex-live",
+  ],
+  repo,
+  systemEnv,
+);
+await task(
   "node",
   [root + "/app/scripts/codex-live/launch.mjs", "build"],
   repo,
@@ -166,5 +184,5 @@ await task(
 console.log(
   "Prepared " +
     commit +
-    ". Follow scripts/codex-live/README.md to start the four named services and create an authenticated preview.",
+    ". Follow scripts/codex-live/README.md to start the five named services and create an authenticated preview.",
 );

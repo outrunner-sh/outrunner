@@ -4,7 +4,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
-import { env, root } from "./env.mjs";
+import { env, root, systemEnv } from "./env.mjs";
 const state = JSON.parse(readFileSync(root + "/state.json", "utf8"));
 const db = createClient(
   env.NEXT_PUBLIC_SUPABASE_URL,
@@ -111,7 +111,7 @@ function start() {
       state.org,
     ],
     {
-      env: { ...env, OUTRUNNER_CONFIG: root + "/cli.json" },
+      env: { ...systemEnv, OUTRUNNER_CONFIG: root + "/cli.json" },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );

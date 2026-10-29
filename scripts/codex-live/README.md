@@ -7,7 +7,7 @@ fixtures and a successful device-code request do not prove live inference.
 
 It does **not** publish a release, apply hosted migrations, enable local sessions
 in the product, reuse a developer's provider login, or provision a paid sandbox.
-The runtimes run here on private tmux sockets with separate HOME directories, roots and runtime secrets.
+The runtimes run in network-disabled, non-root Docker containers with read-only system files, separate data mounts and control secrets. They have no controller keys, files or database network access. Inference-only Unix relays connect them to the real controller; runtime control still verifies the normal Runtime tokens.
 It exercises the cloud authentication resolver with test org identities. Actual
 cloud-provider provisioning remains covered separately by the normal runtime path.
 
@@ -22,13 +22,13 @@ From a committed branch checkout with installed dependencies:
 ```sh
 node scripts/codex-live/prepare.mjs
 replicas service start codex-live-app "node scripts/codex-live/launch.mjs app" --cwd "$PWD"
+replicas service start codex-live-brokers "node scripts/codex-live/brokers.mjs" --cwd "$PWD"
 replicas service start codex-live-runtime "node scripts/codex-live/launch.mjs runtime" --cwd "$PWD"
 replicas service start codex-live-runtime-member "node scripts/codex-live/launch.mjs runtime-member" --cwd "$PWD"
 replicas service start codex-live-gateway "node scripts/codex-live/gateway.mjs" --cwd "$PWD"
 curl -fsS http://127.0.0.1:3408/signin >/dev/null
-curl -fsS http://127.0.0.1:3409/health >/dev/null
-curl -fsS http://127.0.0.1:3411/health >/dev/null
 node scripts/codex-live/run-verify.mjs --preflight
+node scripts/codex-live/isolation.mjs
 curl -fsS http://127.0.0.1:3410/__test >/dev/null
 replicas preview create 3410 --authenticated
 ```
@@ -48,13 +48,13 @@ invalidates old test-launcher sessions; it preserves any Codex connection.
 
 Preparation refuses to overwrite an existing directory or adopt existing test
 containers. To resume an existing setup, keep its directory/keys and start the
-four services again; do not rerun preparation. It never reads `.env*`. Children
-receive only freshly generated local configuration. Supabase/DB/runtime ports
+five services again; do not rerun preparation. It never reads `.env*`. Children
+receive only freshly generated local configuration. Supabase/DB ports and runtime sockets
 are not published as previews; only the protected gateway is exposed.
 
 Preparation snapshots the commit, builds its CLI/runtime/app, installs official
 Codex **0.146.0**, applies all branch migrations in a new Supabase project, and
-creates three isolated users: an org admin, a teammate and a nonmember. It
+builds a local test-computer image and creates three isolated users: an org admin, a teammate and a nonmember. It
 preprovisions a revocable Outrunner CLI token for the isolated admin; this is
 **test bootstrap**, not provider authentication. Local legacy Data API default
 grants are applied _before_ the migrations, preserving their explicit revokes
@@ -118,7 +118,7 @@ Outrunner-side revocation; use the provider's own security controls for provider
 side revocation. Unrelated personal logins are not read, modified or logged out.
 
 When testing is complete, the operator should first disconnect and verify denial,
-then stop only these four services and delete only the isolated Supabase project:
+then stop only these five services and delete only the isolated Supabase project:
 
 ```sh
 node scripts/codex-live/run-verify.mjs --cleanup
@@ -126,6 +126,7 @@ replicas service stop codex-live-gateway
 replicas service stop codex-live-app
 replicas service stop codex-live-runtime
 replicas service stop codex-live-runtime-member
+replicas service stop codex-live-brokers
 pnpm exec supabase --workdir .context/codex-live/stack stop --no-backup
 ```
 

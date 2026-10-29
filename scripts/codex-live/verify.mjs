@@ -1,12 +1,8 @@
+import { execFileSync } from "node:child_process";
+import { unixFetch } from "./unix-fetch.mjs";
 /** Dedicated operator-only live check. No OAuth credential is printed. */
 import assert from "node:assert/strict";
-import {
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  existsSync,
-  unlinkSync,
-} from "node:fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import { resolveAgentAuth } from "@/lib/agents/resolve";
 import { agentAuthStore } from "@/lib/db/credentials";
@@ -14,7 +10,7 @@ import { codexStore, codexAccounts } from "@/lib/codex/store";
 import { inferenceGrant, authorizeGrant, readGrant } from "@/lib/codex/grant";
 import { AgentClient } from "@/lib/runtime/agent-client";
 
-import { root } from "./env.mjs";
+import { root, systemEnv } from "./env.mjs";
 assert.equal(process.env.NEXT_PUBLIC_SUPABASE_URL, "http://127.0.0.1:55421");
 assert.equal(process.env.RUNTIME_BASE_URL, "http://127.0.0.1:3408");
 const state = JSON.parse(readFileSync(root + "/state.json", "utf8"));
@@ -23,17 +19,20 @@ const db = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY,
   { auth: { persistSession: false, autoRefreshToken: false } },
 );
-const agents = [3409, 3411].map(
-  (port, i) =>
-    new AgentClient({
-      controlBaseUrl: "http://127.0.0.1:" + port,
-      controlHeaders: {},
-      wsBaseUrl: "ws://127.0.0.1:" + port,
-      secret:
-        i === 0
-          ? process.env.RUNTIME_AGENT_SECRET
-          : process.env.RUNTIME_AGENT_MEMBER_SECRET,
-    }),
+const agents = ["computer-a", "computer-b"].map(
+  (name, i) =>
+    new AgentClient(
+      {
+        controlBaseUrl: "http://codex-live-agent",
+        controlHeaders: {},
+        wsBaseUrl: "ws://codex-live-agent",
+        secret:
+          i === 0
+            ? process.env.RUNTIME_AGENT_SECRET
+            : process.env.RUNTIME_AGENT_MEMBER_SECRET,
+      },
+      unixFetch(root + "/" + name + "/agent.sock"),
+    ),
 );
 const agentFor = (id) =>
   agents[ids.findIndex((x) => x.workspaceId === id.workspaceId)];
@@ -79,13 +78,19 @@ if (process.argv.includes("--cleanup")) {
   console.log("PASS isolated runtime sessions cleared");
   process.exit(0);
 }
+// This inspects only our own fresh containers' key names and isolation.
+const isolation = execFileSync(
+  "node",
+  [root + "/app/scripts/codex-live/isolation.mjs"],
+  { env: systemEnv, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+);
+process.stdout.write(isolation);
 if (process.argv.includes("--preflight")) {
   try {
     for (let i = 0; i < ids.length; i++) {
       const health = await agents[i].health(ids[i]);
       assert.ok(health.features?.includes("codex-account"));
-      const folder = root + "/test-repo";
-      mkdirSync(folder, { recursive: true, mode: 0o700 });
+      const folder = "/data/test-repo";
       await agents[i].createWorkspace(
         {
           workspaceId: ids[i].workspaceId,
@@ -184,8 +189,7 @@ try {
   pass(
     "Nonmember and cross-organization grants rejected before upstream (admin belongs to both orgs)",
   );
-  const rootPath = root + "/test-repo";
-  mkdirSync(rootPath, { recursive: true, mode: 0o700 });
+  const rootPath = "/data/test-repo";
   const summary = async (id) => agentFor(id).workspaceSummary(id);
   async function ask(id, word) {
     const before = (await summary(id)).lastAssistantMessage;
