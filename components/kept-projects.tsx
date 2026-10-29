@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-import { useAppData } from "@/components/app-data";
+import { useAppData, useViewerScope } from "@/components/app-data";
 import { ProjectsIndex } from "@/components/projects-index";
 import { RouteLoading } from "@/components/route-states";
 import { keptPage } from "@/lib/client/kept-page";
@@ -12,9 +12,12 @@ import type { Project } from "@/lib/runtime/types";
  *  one thing on Projects the sidebar's data doesn't carry. */
 const KEPT_CAN_SYNC = keptPage<boolean>("projects-can-sync", 1, (value): value is boolean => typeof value === "boolean");
 
-/** The server's answer: shown, and what it said of syncing kept. */
-export function ServedProjects({ projects, canSync }: { projects: Project[]; canSync: boolean }) {
-  useEffect(() => KEPT_CAN_SYNC.remember(canSync), [canSync]);
+/** The server's answer: shown, and what it said of syncing kept for
+ *  `scope` (null with no org, when nothing is kept). */
+export function ServedProjects({ projects, canSync, scope }: { projects: Project[]; canSync: boolean; scope: string | null }) {
+  useEffect(() => {
+    if (scope) KEPT_CAN_SYNC.remember(canSync, scope);
+  }, [canSync, scope]);
   return <ProjectsIndex projects={projects} canSync={canSync} />;
 }
 
@@ -25,6 +28,6 @@ export function ServedProjects({ projects, canSync }: { projects: Project[]; can
  */
 export function KeptProjects() {
   const data = useAppData();
-  const canSync = KEPT_CAN_SYNC.useKept();
+  const canSync = KEPT_CAN_SYNC.useKept(useViewerScope());
   return data ? <ProjectsIndex projects={data.projects} canSync={canSync ?? false} /> : <RouteLoading label="Loading projects" />;
 }

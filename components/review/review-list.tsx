@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 
+import { useViewerScope } from "@/components/app-data";
 import { PullTable } from "@/components/review/pull-table";
 import { RouteLoading } from "@/components/route-states";
 import { keptPage } from "@/lib/client/kept-page";
@@ -25,15 +26,15 @@ function isReviewData(value: unknown): value is ReviewData {
  *  (lib/client/kept-page.ts). */
 const KEPT_REVIEW = keptPage<ReviewData>("review", 1, isReviewData);
 
-/** The server's answer: shown, and kept for the next visit. */
-export function ReviewList({ data }: { data: ReviewData }) {
-  useEffect(() => KEPT_REVIEW.remember(data), [data]);
+/** The server's answer: shown, and kept for `scope`'s next visit. */
+export function ReviewList({ data, scope }: { data: ReviewData; scope: string }) {
+  useEffect(() => KEPT_REVIEW.remember(data, scope), [data, scope]);
   return <ReviewPulls data={data} />;
 }
 
 /** While the server reads GitHub: what Review last showed, else the loader. */
 export function KeptReviewList() {
-  const kept = KEPT_REVIEW.useKept();
+  const kept = KEPT_REVIEW.useKept(useViewerScope());
   return kept ? <ReviewPulls data={kept} /> : <RouteLoading label="Loading pull requests" />;
 }
 

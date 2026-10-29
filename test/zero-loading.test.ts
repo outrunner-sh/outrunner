@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import { KEPT_PAGE_CHARS, keptPage } from "@/lib/client/kept-page";
 import { fallbackStanding } from "@/lib/nav/status-groups";
+import { viewerScope } from "@/lib/orgs/active";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { workingStep } from "@/lib/runtime/conversation-events";
 import type { Workspace } from "@/lib/runtime/types";
@@ -31,37 +32,43 @@ class FakeStorage {
 const isList = (value: unknown): value is { names: string[] } =>
   Array.isArray((value as { names?: unknown } | null)?.names);
 
-test("a kept page is read back by the next page, and the server's answer replaces it", () => {
+test("a kept page is read back by the next page, under whose view it was, and the server's answer replaces it", () => {
   const storage = new FakeStorage();
-  const first = keptPage("test-a", 1, isList, () => storage);
-  first.remember({ names: ["a"] });
+  keptPage("test-a", 1, isList, () => storage).remember({ names: ["a"] }, "u1:org1");
   // A reload: a new page, the same storage.
-  const again = keptPage("test-a", 1, isList, () => storage);
-  // useKept reads it through a store; what a reader gets back is the same.
-  assert.deepEqual(JSON.parse(storage.getItem("outrunner:page:test-a")!), { v: 1, value: { names: ["a"] } });
-  again.remember({ names: ["b"] });
+  assert.deepEqual(JSON.parse(storage.getItem("outrunner:page:test-a")!), { v: 1, scope: "u1:org1", value: { names: ["a"] } });
+  keptPage("test-a", 1, isList, () => storage).remember({ names: ["b"] }, "u1:org1");
   assert.deepEqual(JSON.parse(storage.getItem("outrunner:page:test-a")!).value, { names: ["b"] });
 });
 
-test("one kept by an older build, or damaged, is dropped rather than shown", () => {
+test("one kept by an older build, unscoped, or damaged, is dropped rather than shown", () => {
   const storage = new FakeStorage();
-  storage.setItem("outrunner:page:test-b", JSON.stringify({ v: 0, value: { names: [] } }));
+  storage.setItem("outrunner:page:test-b", JSON.stringify({ v: 0, scope: "u1:org1", value: { names: [] } }));
   keptPage("test-b", 1, isList, () => storage);
   assert.equal(storage.getItem("outrunner:page:test-b"), null);
-  storage.setItem("outrunner:page:test-c", JSON.stringify({ v: 1, value: { names: "not a list" } }));
+  storage.setItem("outrunner:page:test-c", JSON.stringify({ v: 1, scope: "u1:org1", value: { names: "not a list" } }));
   keptPage("test-c", 1, isList, () => storage);
   assert.equal(storage.getItem("outrunner:page:test-c"), null);
+  storage.setItem("outrunner:page:test-f", JSON.stringify({ v: 1, value: { names: [] } }));
+  keptPage("test-f", 1, isList, () => storage);
+  assert.equal(storage.getItem("outrunner:page:test-f"), null);
 });
 
 test("a page too long to keep, or out of room, keeps nothing, and no older copy stands in", () => {
   const storage = new FakeStorage();
   const page = keptPage("test-d", 1, isList, () => storage);
-  page.remember({ names: ["a"] });
-  page.remember({ names: ["x".repeat(KEPT_PAGE_CHARS)] });
+  page.remember({ names: ["a"] }, "u1:org1");
+  page.remember({ names: ["x".repeat(KEPT_PAGE_CHARS)] }, "u1:org1");
   assert.equal(storage.getItem("outrunner:page:test-d"), null);
   const small = new FakeStorage(10);
-  keptPage("test-e", 1, isList, () => small).remember({ names: ["a", "b", "c"] });
+  keptPage("test-e", 1, isList, () => small).remember({ names: ["a", "b", "c"] }, "u1:org1");
   assert.equal(small.getItem("outrunner:page:test-e"), null);
+});
+
+test("another viewer's kept page is never theirs to see", () => {
+  assert.equal(viewerScope("u1", "org1"), "u1:org1");
+  assert.notEqual(viewerScope("u2", "org1"), viewerScope("u1", "org1"));
+  assert.notEqual(viewerScope("u1", "org2"), viewerScope("u1", "org1"));
 });
 
 test("the row made on Send is setting up, named from its prompt, on the branch it asks for", () => {
@@ -89,19 +96,26 @@ function workspace(id: string, updatedAt: string): Workspace {
   return { id, updatedAt, status: "ready", title: "Old" } as Workspace;
 }
 
-test("what this tab changed shows over rows read before it, and a row read since wins", () => {
-  const since = Date.parse("2026-10-29T10:00:00Z");
+test("a change shows over the row it was made over, and a row the server wrote since wins", () => {
   const before = workspace("a", "2026-10-29T09:59:00Z");
-  const after = workspace("b", "2026-10-29T10:01:00Z");
-  const shown = rowsAhead([before, after], {
-    a: { patch: { status: "archiving" }, since },
-    b: { patch: { status: "archiving" }, since },
-  });
+  const written = workspace("b", "2026-10-29T10:01:00Z");
+  // Made over rows last written at 09:59; the browser's clock doesn't enter into it.
+  const held = { patch: { status: "archiving" as const }, over: "2026-10-29T09:59:00Z", since: 0 };
+  const shown = rowsAhead([before, written], { a: held, b: held }, 1);
   assert.equal(shown[0].status, "archiving");
-  assert.equal(shown[1], after);
+  assert.equal(shown[1], written);
   // Nothing ahead: the same list, so nothing downstream re-renders.
   const rows = [before];
-  assert.equal(rowsAhead(rows, {}), rows);
+  assert.equal(rowsAhead(rows, {}, 0), rows);
+});
+
+test("a change to a session the list didn't have shows until a list arrives after it", () => {
+  const row = workspace("new", "2026-10-29T10:00:05Z");
+  const held = { patch: { title: "Named" }, over: null, since: 1_000 };
+  // A list that arrived before the change, by this tab's clock: the change shows.
+  assert.equal(rowsAhead([row], { new: held }, 900)[0].title, "Named");
+  // One that arrived after it is the server's word.
+  assert.equal(rowsAhead([row], { new: held }, 1_100)[0].title, "Old");
 });
 
 test("a session being set up that the server hasn't placed is working", () => {

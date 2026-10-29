@@ -58,6 +58,30 @@ function startingEffort(model: SessionModel | undefined, effort: Effort | null):
   return model && effort && takesEffort(model) ? effort : null;
 }
 
+/** How many times, and how far apart, a create whose answer was lost asks
+ *  whether its session was made: the request may still be finishing. */
+const LOST_ANSWER_CHECKS = 3;
+const LOST_ANSWER_CHECK_MS = 1_000;
+
+/**
+ * Whether the session `id` exists, for a create whose answer never came: its
+ * status route answers 200 for a session of the user's and 404 for none.
+ * Asked a few times, a second apart, since the create may still be making
+ * it; false once it is still missing, or Outrunner can't be reached at all.
+ */
+async function sessionExists(id: string): Promise<boolean> {
+  for (let i = 0; i < LOST_ANSWER_CHECKS; i++) {
+    await new Promise((resolve) => setTimeout(resolve, LOST_ANSWER_CHECK_MS));
+    try {
+      const res = await fetch(`/api/workspaces/${id}/status`, { cache: "no-store" });
+      if (res.ok) return true;
+    } catch {
+      // Still unreachable: ask again.
+    }
+  }
+  return false;
+}
+
 /** Same shape as the server's generated branches (runtime/<time>-<id>): a
  *  local session's, and a cloud session's named on Send. */
 function localBranch(workspaceId: string): string {
@@ -154,18 +178,16 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     const branch = localBranch(id);
     const first = newFirstPrompt(prompt, attachmentIds);
     // Before the push: its page and the sidebar open on this row.
-    rememberPendingSession(
-      optimisticSession({
-        id,
-        project: selected,
-        prompt,
-        branch,
-        agent: agentOf(model?.provider ?? "claude", model ? agent : undefined),
-        ownerId: ownSession?.ownerId ?? "",
-        provider: ownSession?.provider ?? "daytona",
-      }),
-      false,
-    );
+    const held = optimisticSession({
+      id,
+      project: selected,
+      prompt,
+      branch,
+      agent: agentOf(model?.provider ?? "claude", model ? agent : undefined),
+      ownerId: ownSession?.ownerId ?? "",
+      provider: ownSession?.provider ?? "daytona",
+    });
+    rememberPendingSession(held, false);
     // The prompt and attachments are not delivered from here: the session has
     // no box yet. They wait in this tab for it to be ready
     // (lib/session/first-prompt.ts); only where the tab won't keep them do
@@ -206,6 +228,13 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           }),
         });
       } catch {
+        // The answer was lost, not necessarily the session: it may have been
+        // made before the connection went. The id is this screen's, so ask
+        // after it before taking it back — a resend would make a second one.
+        if (await sessionExists(id)) {
+          rememberPendingSession({ ...held, status: "provisioning" });
+          return;
+        }
         failed("Could not reach Outrunner. Please try again.");
         return;
       }

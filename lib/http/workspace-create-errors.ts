@@ -4,6 +4,21 @@ export function isUniqueViolation(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "23505");
 }
 
+/** Postgres' unique_violation on the session's own primary key, rather than
+ *  on its branch: an id the new-session screen made that a session already
+ *  has — the same create sent again, its first answer lost. */
+export function isIdTaken(error: unknown): boolean {
+  if (!isUniqueViolation(error)) return false;
+  const { message, details } = error as { message?: unknown; details?: unknown };
+  return [message, details].some((text) => typeof text === "string" && /workspaces_pkey|Key \(id\)=/.test(text));
+}
+
+/** An id the screen made that another session already has: not a branch
+ *  conflict, and nothing the user can fix but sending again. */
+export function idTakenResponse(): Response {
+  return Response.json({ error: "Couldn't start the session. Please try again." }, { status: 409 });
+}
+
 /** The answer when another session holds the requested branch: that session's
  * name, and its page, so the user can go to it rather than only being told
  * that one exists. */

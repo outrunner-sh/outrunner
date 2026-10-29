@@ -22,9 +22,13 @@ import { Spinner } from "@/components/ui/loaders";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
 import { useNow } from "@/hooks/use-now";
 import { useStandings } from "@/hooks/use-standings";
-import { forgetWithKeptPages } from "@/lib/client/kept-page";
-import { store } from "@/lib/client/store";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
+import {
+  listedIsFresh,
+  listedSessions,
+  rememberListedSessions,
+  useListedSessions,
+} from "@/lib/session/listed-sessions";
 import { relativeTime, type SessionDeletion } from "@/lib/nav/sidebar";
 import { archiveOffer, archiveSession } from "@/lib/session/archive-control";
 import { deleteSession } from "@/lib/session/delete-session";
@@ -44,16 +48,6 @@ import { STANDING_LABEL, STANDINGS, type Standing } from "@/lib/session/standing
 import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
 import { cn } from "@/lib/utils";
 
-/** How long the list's last answer stands without asking again: going back
- *  and forth between pages shouldn't re-read the whole org each time. What
- *  changes here (archive, delete) reads it again at once. */
-const LISTED_FRESH_FOR_MS = 30_000;
-
-/** The list's last answer, for the page's life: a revisit shows it at once. */
-const LISTED_SESSIONS = store<{ sessions: SessionListEntry[]; at: number } | null>(null);
-// Another org's, or another user's, once the org switches or they sign out.
-forgetWithKeptPages(() => LISTED_SESSIONS.set(null));
-
 /**
  * Every session in the org the user may see: searched, filtered by owner,
  * source and where it stands, newest first. The user's own can be picked
@@ -70,9 +64,11 @@ export function SessionsList() {
   const now = useNow(60_000);
   const local = useLocalSessions();
   const live = useStandings();
-  // The last answer this page had, shown at once on a revisit
-  // (LISTED_SESSIONS): read again only once it is a while old.
-  const [cloud, setCloud] = useState<SessionListEntry[] | null>(() => LISTED_SESSIONS.get()?.sessions ?? null);
+  // The last answer this page had, shown at once on a revisit and kept in
+  // step with what this tab does elsewhere (lib/session/listed-sessions.ts):
+  // read again only once it is a while old, or may be wrong.
+  const listed = useListedSessions();
+  const cloud = listed?.sessions ?? null;
   const data = useAppData();
   const seed = useMemo(() => ownSessionEntries(data), [data]);
   // The server's read of the whole org once it answers; the layout's own data
@@ -88,20 +84,21 @@ export function SessionsList() {
       const response = await fetch("/api/sessions", { cache: "no-store" });
       const body = (await response.json().catch(() => ({}))) as { sessions?: SessionListEntry[]; error?: string };
       if (!response.ok || !body.sessions) throw new Error(body.error ?? "Couldn't load the sessions.");
-      LISTED_SESSIONS.set({ sessions: body.sessions, at: Date.now() });
-      setCloud(body.sessions);
+      rememberListedSessions(body.sessions);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Couldn't load the sessions.");
     }
   }, []);
 
+  // On each visit, and whenever what this tab did elsewhere left the kept
+  // answer unsure (staleListedSessions).
+  const stale = listed !== null && listed.at === 0;
   useEffect(() => {
-    const listed = LISTED_SESSIONS.get();
-    if (listed && Date.now() - listed.at < LISTED_FRESH_FOR_MS) return;
+    if (listedIsFresh(listedSessions())) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
-  }, [load]);
+  }, [load, stale]);
 
   // The user's own cloud sessions as the frame keeps them live, and this
   // Mac's, which only the browser can read.

@@ -137,6 +137,7 @@ async function SidebarData() {
           pullRequests: picked,
           standings,
         },
+        ownerId: owner.id,
         ownerLogin: owner.githubLogin || owner.name,
         ownerAvatarUrl: owner.avatarUrl,
         orgs: orgs?.orgs ?? [],

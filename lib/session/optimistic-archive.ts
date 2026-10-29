@@ -3,6 +3,7 @@
 import { store, useStore } from "@/lib/client/store";
 import { forgetCachedSession } from "@/lib/session/app-data-cache";
 import { archiveSession } from "@/lib/session/archive-control";
+import { patchListedSession, staleListedSessions } from "@/lib/session/listed-sessions";
 import { dropRowAhead, patchRowAhead } from "@/lib/session/rows-ahead";
 
 /**
@@ -25,12 +26,17 @@ const FAILURE = store<ArchiveFailure | null>(null);
 export function archiveInBackground(session: { id: string; title: string }): void {
   if (FAILURE.get()?.id === session.id) FAILURE.set(null);
   patchRowAhead(session.id, { status: "archiving" });
+  patchListedSession(session.id, "archiving");
   // Until the list comes back, a reload must not show it as it was.
   forgetCachedSession(session.id);
   archiveSession(session.id).then(
-    () => patchRowAhead(session.id, { status: "archived" }),
+    () => {
+      patchRowAhead(session.id, { status: "archived" });
+      patchListedSession(session.id, "archived");
+    },
     (error: unknown) => {
       dropRowAhead(session.id, ["status"]);
+      staleListedSessions();
       FAILURE.set({
         id: session.id,
         title: session.title,

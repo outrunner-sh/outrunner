@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   branchTakenByTeammateResponse,
   branchTakenResponse,
+  isIdTaken,
   workspaceCreateErrorResponse,
 } from "@/lib/http/workspace-create-errors";
 
@@ -70,4 +71,17 @@ test("a branch another member's session holds is named as theirs, with no sessio
   assert.deepEqual(await response.json(), {
     error: "Another member's session is working on that branch. Pick another branch.",
   });
+});
+
+test("a taken id is told apart from a taken branch", () => {
+  assert.equal(isIdTaken(branchTaken()), false);
+  assert.equal(
+    isIdTaken({
+      code: "23505",
+      message: 'duplicate key value violates unique constraint "workspaces_pkey"',
+      details: "Key (id)=(11111111-2222-4333-8444-555555555555) already exists.",
+    }),
+    true,
+  );
+  assert.equal(isIdTaken({ code: "23503", message: "workspaces_pkey" }), false);
 });

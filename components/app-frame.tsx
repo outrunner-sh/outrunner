@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { PanelLeftOpen, Plus } from "lucide-react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import { AppDataProvider } from "@/components/app-data";
+import { AppDataProvider, ViewerScopeProvider } from "@/components/app-data";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ArchiveFailureNotice } from "@/components/archive-session-dialog";
 import { MissionToasts } from "@/components/missions/mission-toasts";
@@ -19,7 +19,7 @@ import { usePendingSessions } from "@/lib/session/pending-sessions";
 import { useAppDataAhead } from "@/lib/session/rows-ahead";
 import { nextNeedingYou } from "@/lib/session/standing";
 import { startNewSession } from "@/lib/session/new-session-reset";
-import type { Org } from "@/lib/orgs/active";
+import { type Org, viewerScope } from "@/lib/orgs/active";
 import type { AppData } from "@/lib/session/session-view";
 import { warmSession } from "@/lib/session/warm-session";
 import { forgetTriageCountAhead, useTriageCountAhead } from "@/lib/triage/kept-triage";
@@ -29,6 +29,8 @@ import { cn } from "@/lib/utils";
 /** What the layout reads for the frame, streamed in (app/(app)/layout.tsx). */
 export type FrameData = {
   appData: AppData;
+  /** The signed-in user's id. */
+  ownerId: string;
   ownerLogin: string;
   ownerAvatarUrl: string | null;
   /** The user's orgs, personal first, for the switcher; empty before orgs. */
@@ -274,7 +276,11 @@ export function AppFrame({
           </div>
         )}
         <main className="relative min-h-0 min-w-0 overflow-y-auto">
-          <AppDataProvider value={appData}>{children}</AppDataProvider>
+          <AppDataProvider value={appData}>
+            <ViewerScopeProvider value={frame?.activeOrgId ? viewerScope(frame.ownerId, frame.activeOrgId) : null}>
+              {children}
+            </ViewerScopeProvider>
+          </AppDataProvider>
         </main>
       </div>
       {chromeSlot}

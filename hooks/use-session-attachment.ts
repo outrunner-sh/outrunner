@@ -127,6 +127,8 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
         // its URLs, so the page takes up that socket rather than attaching.
         const kept = fresh ? null : keptStreamUrls(workspaceId);
         if (kept) {
+          // A warm-up under way would stream beside the socket taken up here.
+          void takeWarmUrls(workspaceId);
           attachedWith.current = null;
           setUrls(kept);
           setAttachId((n) => n + 1);

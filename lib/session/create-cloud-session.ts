@@ -41,6 +41,8 @@ import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import {
   branchTakenByTeammateResponse,
   branchTakenResponse,
+  idTakenResponse,
+  isIdTaken,
   isUniqueViolation,
   workspaceCreateErrorResponse,
 } from "@/lib/http/workspace-create-errors";
@@ -367,11 +369,12 @@ export async function createCloudSession(
     }
   }
 
+  // The id the new-session screen made, when it sent a well-formed one.
+  const askedId = typeof body.id === "string" && isUuid(body.id) ? body.id : undefined;
   let workspace;
   try {
     workspace = await createWorkspaceRow({
-      // Only a well-formed one: the primary key refuses one already taken.
-      ...(typeof body.id === "string" && isUuid(body.id) && { id: body.id }),
+      ...(askedId && { id: askedId }),
       ownerId: owner.id,
       projectId: project.id,
       environmentId,
@@ -385,6 +388,17 @@ export async function createCloudSession(
       parentMissionId: options.parentMissionId,
     });
   } catch (error) {
+    // The id is taken, not the branch: the same create sent again after its
+    // answer was lost. The user's own session of this repository is the one
+    // the first send made, so it is the answer again (its setup is already
+    // under way); any other is a plain conflict, never a branch's.
+    if (askedId && isIdTaken(error)) {
+      const made = await getWorkspace(askedId).catch(() => null);
+      if (made && made.ownerId === owner.id && made.projectId === project.id) {
+        return NextResponse.json({ workspace: made }, { status: 202 });
+      }
+      return idTakenResponse();
+    }
     // A requested branch can be one a live session already works on: name that
     // session and offer its page, rather than only saying one is there.
     // (Generated branches can't collide.) Not the user's own, in a team org's

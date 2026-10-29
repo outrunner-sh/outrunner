@@ -9,6 +9,7 @@ import { listRuns, RECENT_RUNS } from "@/lib/db/automation-runs";
 import { listAutomations } from "@/lib/db/automations";
 import { listOrgInstallations } from "@/lib/db/github-installations";
 import { appSlug, githubAppConfig } from "@/lib/github/app";
+import { viewerScope } from "@/lib/orgs/active";
 import { getOrgContext } from "@/lib/orgs/server";
 
 /** Opening Automations never waits on the server: the build checks it. The
@@ -92,6 +93,7 @@ async function AutomationsSection({ searchParams }: { searchParams: SearchParams
   ]);
   return (
     <ServedAutomations
+      scope={viewerScope(owner.id, active.id)}
       org={active}
       appSlug={config ? await appSlug(config) : null}
       installations={installations?.map((i) => ({ login: i.accountLogin, suspended: i.suspended })) ?? null}

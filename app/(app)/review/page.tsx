@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { KeptReviewList, ReviewList } from "@/components/review/review-list";
+import { viewerScope } from "@/lib/orgs/active";
 import { listOpenPulls, type PullSummary } from "@/lib/review/pulls";
 import { reviewViewer } from "@/lib/review/viewer";
 
@@ -48,5 +49,10 @@ async function ServerReview() {
     console.error("Review: could not list pull requests", error);
     return { pulls: [] as PullSummary[], unreachable: [] as string[] };
   });
-  return <ReviewList data={{ orgName: viewer.orgName, pulls, unreachable }} />;
+  return (
+    <ReviewList
+      data={{ orgName: viewer.orgName, pulls, unreachable }}
+      scope={viewerScope(viewer.owner.id, viewer.actor.orgId)}
+    />
+  );
 }

@@ -16,8 +16,11 @@ import { store, useStore, type Store } from "@/lib/client/store";
  * entry, checked on the way in, capped by characters, dropped whole when the
  * store is full rather than left half-written.
  *
- * Kept pages go as the user's own acts make them wrong: the org switched, the
- * user signed out ({@link clearKeptPages}).
+ * Each is kept under whose view it was — the signed-in user in the org the
+ * app showed (viewerScope, lib/orgs/active.ts) — and shown only to that view
+ * again: another account signing in on this browser, or the org changed in
+ * another tab, never sees it. Kept pages also go as the user's own acts make
+ * them wrong: the org switched, the user signed out ({@link clearKeptPages}).
  */
 
 /** The most one page's entry may take, in characters of JSON. One longer
@@ -26,13 +29,17 @@ export const KEPT_PAGE_CHARS = 500_000;
 
 const PREFIX = "outrunner:page:";
 
+/** What a page showed, and to whom. */
+type Scoped<T> = { scope: string; value: T };
+
 type PageStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 export type KeptPage<T> = {
-  /** What the page last showed, or null: none kept, or before hydration. */
-  useKept: () => T | null;
-  /** The server just answered with `value`: show it, and keep it. */
-  remember: (value: T) => void;
+  /** What the page last showed to `scope`, or null: none kept for it, the
+   *  scope not known yet (null), or before hydration. */
+  useKept: (scope: string | null) => T | null;
+  /** The server just answered `scope` with `value`: show it, and keep it. */
+  remember: (value: T, scope: string) => void;
   /** Forget it, here and in storage. */
   clear: () => void;
 };
@@ -58,7 +65,7 @@ export function keptPage<T>(
       // Blocked storage keeps nothing to forget.
     }
   };
-  const load = (): T | null => {
+  const load = (): Scoped<T> | null => {
     let raw: string | null = null;
     try {
       raw = storage()?.getItem(key) ?? null;
@@ -67,19 +74,22 @@ export function keptPage<T>(
     }
     if (raw === null) return null;
     const parsed = parseJson(raw);
-    if (!isRecord(parsed) || parsed.v !== version || !valid(parsed.value)) {
+    if (!isRecord(parsed) || parsed.v !== version || typeof parsed.scope !== "string" || !valid(parsed.value)) {
       // Kept by an older build, or damaged: the page opens from the server.
       forget();
       return null;
     }
-    return parsed.value;
+    return { scope: parsed.scope, value: parsed.value };
   };
-  const shown: Store<T | null> = store(load());
+  const shown: Store<Scoped<T> | null> = store(load());
   const page: KeptPage<T> = {
-    useKept: () => useStore(shown, null),
-    remember: (value) => {
-      shown.set(value);
-      const json = JSON.stringify({ v: version, value });
+    useKept: (scope) => {
+      const kept = useStore(shown, null);
+      return scope !== null && kept?.scope === scope ? kept.value : null;
+    },
+    remember: (value, scope) => {
+      shown.set({ scope, value });
+      const json = JSON.stringify({ v: version, scope, value });
       if (json.length > KEPT_PAGE_CHARS) return forget();
       try {
         storage()?.setItem(key, json);

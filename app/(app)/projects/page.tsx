@@ -6,6 +6,7 @@ import { getOwnerSafe } from "@/lib/auth/owner";
 import { listProjectsOnce } from "@/lib/db/request-cache";
 import { orgProjectsLevel } from "@/lib/db/org-access";
 import { allows } from "@/lib/orgs/access";
+import { viewerScope } from "@/lib/orgs/active";
 import { getOrgContext } from "@/lib/orgs/server";
 
 /** Opening Projects never waits on the server: the build checks it. The
@@ -56,5 +57,11 @@ async function ServerProjects() {
     ? await Promise.all([listProjectsOnce(org.active.id), orgProjectsLevel(owner.id, org.active.id)])
     : [[], null];
 
-  return <ServedProjects projects={projects} canSync={allows(connectAccess, "write")} />;
+  return (
+    <ServedProjects
+      projects={projects}
+      canSync={allows(connectAccess, "write")}
+      scope={org ? viewerScope(owner.id, org.active.id) : null}
+    />
+  );
 }
