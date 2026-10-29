@@ -120,6 +120,7 @@ test("a give-back that fails doesn't hide the archive's reason", async () => {
   const quiet = console.error;
   console.error = () => {};
   const result = await archiveMission(w.mission, w.deps).finally(() => (console.error = quiet));
+  assert.equal(result.archived, false);
   if (!result.archived) assert.deepEqual(result.left.map((s) => s.why), ["its box didn't answer"]);
 });
 
