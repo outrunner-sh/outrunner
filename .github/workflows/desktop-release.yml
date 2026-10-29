@@ -399,12 +399,16 @@ jobs:
           (cd "$OUT" && shasum -a 256 "$NAME.dmg" "$NAME.app.tar.gz" > SHA256SUMS)
           ls -la "$OUT"
 
+      # Releases attach these files directly below; only a dry run needs
+      # Actions storage, whose quota must not block draft or published releases.
       - name: Upload artifact
+        if: steps.version.outputs.release == 'none'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Outrunner_${{ steps.version.outputs.version }}_universal
           path: ${{ env.OUT }}
           if-no-files-found: error
+          retention-days: 3
 
       - name: Attach to a draft release
         if: steps.version.outputs.release == 'draft'
