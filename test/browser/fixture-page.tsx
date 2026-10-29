@@ -238,7 +238,7 @@ export function FixturePage() {
         </Dialog>
       </PageLayout>
     );
-  else if (view === "startup") content = <StartupFixture />;
+  else if (view === "startup") content = <StartupFixture agent={params.get("harness") === "codex" ? "codex" : "claude"} shared={params.get("shared") === "1"} />;
   else content = pathname === "/new" ? <NewSessionRoute server={<ServerAnswer value={null} />} /> : <HomeSessionRoute />;
   return (
     <>

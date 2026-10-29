@@ -46,7 +46,13 @@ Creation sends provider, model, compatible effort and harness together. Its
 optimistic workspace contains that exact selection before navigation, and the
 server records the intended selection before setup and the applied selection
 before starting the runtime. Old browser model/effort hints cannot override a
-recorded session. Resume preserves explicit recorded effort. Runner overrides
+recorded session. During startup, queued input belongs to that recorded
+harness/model/effort; prompts keep their own mode and attachment IDs. The picker
+stays inspectable, with selection changes held until the initial send and startup
+queue settle, so a retry cannot silently run under another selection. Start over
+carries the explicit harness as well as provider/model/effort, and transfers the
+waiting queue, initial prompt and unsent draft/attachments to the replacement.
+Resume preserves explicit recorded effort. Runner overrides
 and cross-harness forks resolve compatible choices instead of inheriting an
 unrelated model or effort.
 

@@ -977,6 +977,8 @@ export function WorkspaceSession({
       ? "Finish or cancel editing the prompt before changing selection"
       : !attached
       ? "Waiting for the session to connect"
+      : !initialDeliveryComplete || queue.some((prompt) => prompt.startup)
+        ? "Finish sending or remove the queued startup messages before changing selection"
       : waitingOnUser
         ? waitingOnSecrets
           ? `Answer ${AGENTS[agent].label}'s request first`

@@ -42,6 +42,7 @@ export function useStartOver(workspace: Workspace) {
         // Its branch isn't carried: the session it replaces still holds it.
         body: JSON.stringify({
           branch: "",
+          agent: workspace.agent,
           ...(workspace.model && {
             provider: workspace.model.model.provider,
             model: workspace.model.model.id,
@@ -82,8 +83,8 @@ export function useStartOver(workspace: Workspace) {
       // Its URL too: Back to this session, once its setup finishes after all,
       // would otherwise send the prompt the fresh one already has.
       dropFirstPromptFromAddressBar();
+      // Refreshing the old route in the same turn can cancel this navigation.
       router.push(`/workspaces/${body.workspace.id}${first ? firstPromptSearch(tabStorage(), body.workspace.id, first) : ""}`);
-      router.refresh();
       // The replaced session goes: left alone, its box would keep setting up
       // (and could come up, costing a computer) beside the fresh one.
       void deleteSession(workspace.id, { kind: "cloud" }).catch((error) => {

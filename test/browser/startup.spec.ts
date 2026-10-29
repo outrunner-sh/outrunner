@@ -1,9 +1,12 @@
+import { selectionMenu } from "./selection-fixtures";
 import { expect, test, type WebSocketRoute } from "@playwright/test";
 
-for (const retry of [false, true]) test(`startup keeps input ordered through reload${retry ? " and a lost acknowledgment" : ""}`, async ({ page }) => {
+for (const agent of ["claude", "codex"] as const) for (const retry of [false, true]) test(`${agent} startup keeps input ordered through reload${retry ? " and a lost acknowledgment" : ""}`, async ({ page }) => {
+  test.setTimeout(60_000); // Multiple reloads plus dev-app compilation.
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const requests: { content: string; queuedKey?: string; firstPromptKey?: string; attachmentIds: string[] }[] = [];
+  const retunes: unknown[] = [];
   const frames: object[] = [];
   const sockets = new Set<WebSocketRoute>();
   const accepted = new Set<string>();
@@ -24,6 +27,7 @@ for (const retry of [false, true]) test(`startup keeps input ordered through rel
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/settings/chat") return route.fulfill({ json: { preferences: { steerFollowUps: false } } });
+    if (path.endsWith("/model")) { retunes.push(route.request().postDataJSON()); return route.fulfill({ status: 503, json: { error: "Unexpected retune" } }); }
     if (path.endsWith("/info")) return route.fulfill({ status: 503, json: { error: "Resource details unavailable in fixture" } });
     if (path === "/api/missions") return route.fulfill({ json: { missions: [] } });
     if (path === "/api/notifications") return route.fulfill({ json: { notifications: [], now: new Date().toISOString(), kinds: [] } });
@@ -51,16 +55,19 @@ for (const retry of [false, true]) test(`startup keeps input ordered through rel
       return route.fulfill({ json: { result: body.firstPromptKey && already ? "already" : "sent" } });
     }
     if (path === "/api/attachments") return route.fulfill({ json: { attachment: { id: "fixture-image", filename: "image.png" } } });
-    if (path === "/api/outrunner-models") return route.fulfill({ json: { outrunner: true, allowance: true, available: true, keys: [], loadout: { models: [], default: null }, agents: { claude: { cloud: true, local: false }, codex: { cloud: true, local: false } } } });
+    if (path === "/api/outrunner-models") return route.fulfill({ json: selectionMenu });
     if (path === "/api/prompt-history") return route.fulfill({ json: { prompts: [], owner: "preview-owner" } });
     return route.fulfill({ status: 503, json: { error: "Unavailable in startup fixture" } });
   });
-  await page.goto("/?view=startup");
+  await page.goto(`/?view=startup&harness=${agent}`);
   await expect(page.getByTestId("fixture-ready")).toHaveAttribute("data-ready", "true");
-  const composer = page.getByRole("textbox", { name: "Message", exact: true });
+  const composer = page.getByRole("textbox", { name: agent === "codex" ? "Message Codex" : "Message", exact: true });
+  const selected = page.getByRole("button", { name: agent === "codex" ? /^Harness: Codex.*Account coding model.*High effort/ : /^Harness: Claude Code.*Kimi K3/ });
+  await expect(selected).toBeVisible();
   await expect(composer).toBeEnabled();
   await expect(page.getByText("Queued · sends when ready")).toBeVisible();
   expect(attachCalls).toBe(0);
+  await expect(selected).toBeVisible();
   await composer.fill("Check this image first");
   await page.locator('input[type="file"]').setInputFiles({ name: "image.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==", "base64") });
   await expect(page.getByText("image.png attached", { exact: true })).toBeAttached();
@@ -85,6 +92,7 @@ for (const retry of [false, true]) test(`startup keeps input ordered through rel
   await page.reload();
   await expect(composer).toHaveValue("Unsent draft");
   await expect(queue.locator("li")).toHaveCount(2);
+  await expect(selected).toBeVisible();
   expect(requests).toHaveLength(0);
   expect(attachCalls).toBe(0);
   await page.getByRole("button", { name: "Finish fixture startup" }).click();
@@ -95,6 +103,14 @@ for (const retry of [false, true]) test(`startup keeps input ordered through rel
   if (retry) {
     await expect.poll(() => lostAck).toBe(true);
     await expect(page.getByText("Controlled acknowledgment failure after acceptance")).toBeVisible();
+    await selected.click();
+    await expect(page.getByText("Finish sending or remove the queued startup messages before changing selection")).toBeVisible();
+    if (agent === "codex") {
+      await page.getByRole("menuitem", { name: /^Effort / }).click();
+      await expect(page.getByRole("menuitemradio", { name: "Low", exact: true })).toHaveAttribute("aria-disabled", "true");
+      await expect(page.getByRole("menuitemradio", { name: "High", exact: true })).toHaveAttribute("aria-checked", "true");
+    }
+    await page.keyboard.press("Escape");
     await page.reload();
     await expect(queue.locator("li")).toHaveCount(2);
     await page.getByRole("button", { name: "Finish fixture startup" }).click();
@@ -108,6 +124,8 @@ for (const retry of [false, true]) test(`startup keeps input ordered through rel
   expect(new Set(requests.filter((r) => r.queuedKey).map((r) => r.queuedKey)).size).toBe(2);
   await expect(composer).toHaveValue("Unsent draft");
   await expect(queue).toBeHidden();
+  await expect(selected).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(retunes).toEqual([]);
   expect(errors).toEqual([]);
 });
