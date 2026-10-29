@@ -20,6 +20,7 @@ export async function getOnboardingUser(): Promise<
   const text = (key: string) => (typeof meta[key] === "string" && meta[key] ? (meta[key] as string) : null);
   const login = githubLogin(user) ?? "";
   return {
+    id: user.id,
     name: text("full_name") ?? text("name") ?? login,
     login,
     avatarUrl: text("avatar_url"),

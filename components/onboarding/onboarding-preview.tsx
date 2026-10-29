@@ -112,7 +112,7 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
       ? { ...status, claude: { ...status.claude, subscription: true, last4: "t3rm" } }
       : status;
   return {
-    user: { name: "Sajda", login: "sajdakabir", avatarUrl: null },
+    user: { id: "preview", name: "Sajda", login: "sajdakabir", avatarUrl: null },
     desktop: scenario.surface === "desktop",
     outrunnerModels: scenario.outrunnerModels === "yes",
     agentStatus: async () => (await wait(300), current()),
@@ -128,6 +128,7 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
       else status.codex.apiKey = true;
       return current();
     },
+    agentChoices: async () => (await wait(200), { claude: null, codex: null }),
     chooseMethod: async () => void (await wait(300)),
     async githubAccess() {
       await wait(200);
@@ -157,6 +158,9 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
       return `/workspaces/new-on-${projectId}-${runOn}`;
     },
     skip: async () => (await wait(300), "/"),
+    // Each run starts over: the panel's restart is the preview's reload.
+    savedProgress: () => null,
+    saveProgress: () => {},
   };
 }
 
