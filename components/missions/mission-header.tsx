@@ -79,13 +79,13 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
         }}
       >
         <DropdownMenuTrigger
-          aria-label={`Icon: ${current.label}. Change it`}
+          aria-label={`Runner icon: ${current.label}. Change it`}
           className="rounded-md outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-white/30"
         >
           <MissionGlyph id={missionId} icon={shownIcon} size="md" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-[212px] p-2">
-          <DropdownMenuLabel className="px-1 pt-0 pb-2 text-[11.5px] font-normal text-muted-foreground">Mission icon</DropdownMenuLabel>
+          <DropdownMenuLabel className="px-1 pt-0 pb-2 text-[11.5px] font-normal text-muted-foreground">Runner icon</DropdownMenuLabel>
           {/* Capture arrows before Radix's item handlers move focus in a
               single list; leave selection and typeahead to the menu. */}
           <div ref={grid} className="grid grid-cols-5 gap-1" onKeyDownCapture={moveInGrid}>
@@ -128,7 +128,7 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
               setEditing(false);
             }
           }}
-          aria-label="Mission name"
+          aria-label="Runner name"
           maxLength={120}
           className="h-7 min-w-0 rounded-md border border-white/20 bg-black/30 px-2 text-[14px] text-[#ededed] outline-none"
         />
@@ -165,10 +165,10 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
       {mission && (
         <span
           className="hidden shrink-0 items-center gap-1 rounded-md border border-white/[0.08] px-1.5 py-0.5 text-[12px] tabular-nums text-[#a3a3a3] md:inline-flex"
-          title={`Runners with work open (archived ones with an open pull request too) · ${mission.liveRunners} of ${MAX_RUNNERS} places taken`}
+          title={`Ships with work open (archived ones with an open pull request too) · ${mission.liveRunners} of ${MAX_RUNNERS} places taken`}
         >
           <Users className="size-3" />
-          {active} Runner{active === 1 ? "" : "s"}
+          {active} Ship{active === 1 ? "" : "s"}
         </span>
       )}
     </div>

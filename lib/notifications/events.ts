@@ -25,7 +25,7 @@ export const KIND_LABEL: Record<NotificationKind, string> = {
   errored: "A session errors",
   pr_opened: "A pull request opens",
   pr_merged: "A pull request merges",
-  pr_ready: "A Mission's pull request is ready to review",
+  pr_ready: "A Ship's pull request is ready to review",
 };
 
 /**

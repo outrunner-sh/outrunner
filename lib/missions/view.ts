@@ -34,7 +34,7 @@ export const RUNNER_GROUPS: { key: Exclude<RunnerGroup, "done">; label: string }
   { key: "needs_you", label: "Needs you" },
   { key: "ready_to_merge", label: "Ready to merge" },
   { key: "ready_to_review", label: "Ready to review" },
-  { key: "working", label: "Runners working" },
+  { key: "working", label: "Ships working" },
   { key: "shipping", label: "Shipping" },
 ];
 

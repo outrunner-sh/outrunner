@@ -156,7 +156,7 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
       const profile = profileOf.get(mission.id);
       return {
         id: mission.id,
-        title: mission.title ?? "New Mission",
+        title: mission.title ?? "New Runner",
         icon: profile?.icon ?? null,
         position: profile?.position ?? null,
         status: missionStatus({ standing: standings[mission.id] ?? null, runners: runnerViews }),

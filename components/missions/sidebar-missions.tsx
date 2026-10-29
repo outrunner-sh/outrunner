@@ -78,13 +78,13 @@ export function SidebarMissions({ active, projects }: { active?: string; project
     <section aria-labelledby="missions-heading" className="mb-4">
       <div className="flex items-center justify-between px-2">
         <h2 id="missions-heading" className="text-[13px] text-muted-foreground">
-          Missions
+          Runners
         </h2>
         <button
           type="button"
           onClick={() => setCreating(true)}
-          aria-label="Start a Mission"
-          title="Start a Mission"
+          aria-label="Start a Runner"
+          title="Start a Runner"
           className="-mr-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <Plus className="size-3.5" />
@@ -103,8 +103,8 @@ export function SidebarMissions({ active, projects }: { active?: string; project
               <Rocket className="size-[11px]" />
             </span>
             <span className="min-w-0">
-              <span className="block text-foreground/90">Start a Mission</span>
-              <span className="block truncate text-[11.5px] text-muted-foreground">It plans; Runners do the work</span>
+              <span className="block text-foreground/90">Start a Runner</span>
+              <span className="block truncate text-[11.5px] text-muted-foreground">It plans; Ships do the work</span>
             </span>
           </button>
         ) : (

@@ -29,15 +29,15 @@ export async function POST(request: Request) {
     body.environmentId = (await defaultEnvironmentId(owner.id, body.projectId)) ?? undefined;
   }
   if (!body || typeof body.environmentId !== "string") {
-    return NextResponse.json({ error: "Choose a project for the Mission." }, { status: 400 });
+    return NextResponse.json({ error: "Choose a project for the Runner." }, { status: 400 });
   }
   if ((body.agent !== undefined && body.agent !== null && body.agent !== "claude") || body.provider === "codex") {
-    return NextResponse.json({ error: "Missions run on Claude Code." }, { status: 400 });
+    return NextResponse.json({ error: "Runners run on Claude Code." }, { status: 400 });
   }
   const environment = await getEnvironment(owner.id, body.environmentId);
   const projectId = environment?.defaultForProjectId ?? environment?.repos[0]?.projectId;
   if (!environment || !projectId) {
-    return NextResponse.json({ error: "That project isn't one you can start a Mission in." }, { status: 404 });
+    return NextResponse.json({ error: "That project isn't one you can start a Runner in." }, { status: 404 });
   }
   const { environmentId: _, projectId: __, ...session } = body;
   void _;

@@ -58,18 +58,18 @@ export function RunnersPane({ missionId, onClose }: { missionId: string; onClose
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 px-4">
         <div className="flex min-w-0 items-baseline gap-2">
-          <h3 className="text-[13px] font-medium text-[#ededed]">Runners</h3>
+          <h3 className="text-[13px] font-medium text-[#ededed]">Ships</h3>
           {mission && (
             <span
               className="truncate text-[12px] text-[#7a7a7a] tabular-nums"
-              title={`${mission.liveRunners} of ${MAX_RUNNERS} places taken by Runners that aren't archived`}
+              title={`${mission.liveRunners} of ${MAX_RUNNERS} places taken by Ships that aren't archived`}
             >
               {runners.length - done.length} with work · {MAX_RUNNERS - mission.liveRunners} places free
             </span>
           )}
         </div>
         {onClose && (
-          <button type="button" onClick={onClose} aria-label="Hide Runners" className="studio-env-close">
+          <button type="button" onClick={onClose} aria-label="Hide Ships" className="studio-env-close">
             <X />
           </button>
         )}
@@ -85,9 +85,9 @@ export function RunnersPane({ missionId, onClose }: { missionId: string; onClose
             <span className="mx-auto mb-3 grid size-9 place-items-center rounded-lg border border-white/10 bg-white/[0.03] text-[#9a9a9a]">
               <Users className="size-4" />
             </span>
-            <p className="text-[13px] text-[#ededed]">No Runners yet</p>
+            <p className="text-[13px] text-[#ededed]">No Ships yet</p>
             <p className="mx-auto mt-1.5 max-w-[240px] text-[12px] leading-relaxed text-[#7a7a7a]">
-              Tell the Mission what you need. It starts a Runner for each piece of work, and they show up here as they go.
+              Tell the Runner what you need. It starts a Ship for each piece of work, and they show up here as they go.
             </p>
           </div>
         ) : (
@@ -259,7 +259,7 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
           ref={back}
           type="button"
           onClick={onBack}
-          aria-label="Back to Runners"
+          aria-label="Back to Ships"
           className="rounded-md p-1.5 text-[#8f8f8f] transition-colors hover:bg-white/[0.05] hover:text-[#ededed]"
         >
           <ArrowLeft className="size-4" />

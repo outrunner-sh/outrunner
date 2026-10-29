@@ -121,7 +121,7 @@ export function WorkspaceStudio({
           <button
             className="studio-icon-button"
             onClick={() => setRightOpen((open) => !open)}
-            title={isMission ? (rightOpen ? "Hide Runners" : "Show Runners") : rightOpen ? "Hide environment" : "Show environment"}
+            title={isMission ? (rightOpen ? "Hide Ships" : "Show Ships") : rightOpen ? "Hide environment" : "Show environment"}
             aria-pressed={rightOpen}
           >
             {rightOpen ? <PanelRightClose /> : <PanelRight />}
@@ -238,7 +238,7 @@ export function WorkspaceStudio({
       <aside
         className={cn("studio-inspector", isMission ? "studio-runners" : "studio-env")}
         hidden={!rightOpen}
-        aria-label={isMission ? "Runners" : "Environment"}
+        aria-label={isMission ? "Ships" : "Environment"}
       >
         {rightOpen && isMission && <RunnersPane missionId={workspace.id} onClose={() => setRightOpen(false)} />}
         {rightOpen && !isMission && (
