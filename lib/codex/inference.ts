@@ -113,7 +113,7 @@ export function createCodexProxy(deps: ProxyDeps) {
           // refresh token for rate limits, account entitlements or network errors.
           throw new CodexError(
             "reconnect",
-            "Codex rejected this account. Reconnect in Settings → Providers.",
+            "Codex rejected this account. Reconnect in Settings → Coding agents.",
           );
         }
         const outgoing = new Headers({

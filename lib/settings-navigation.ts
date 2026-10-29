@@ -4,7 +4,6 @@ export const SETTINGS_REDIRECTS = [
   ["/settings/account", "/settings/profile"],
   ["/settings/general", "/help/about"],
   ["/settings/claude", "/settings/coding-agents?tab=claude"],
-  ["/settings/providers", "/settings/coding-agents"],
   ["/settings/models", "/settings/preferences"],
   ["/settings/integrations", "/settings/connections"],
   ["/settings/api-keys", "/settings/developer"],

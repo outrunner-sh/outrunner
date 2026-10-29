@@ -3,6 +3,8 @@ import Link from "next/link";
 import { useState } from "react";
 import { ApiKeyCard, type ProviderKeys } from "@/components/api-key-card";
 import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
+import { CodexConnection } from "@/components/codex-connection";
+import { AuthMethodCards } from "@/components/auth-method-cards";
 import { ConnectionStatus } from "@/components/settings-details";
 import { SettingsTabs } from "@/components/settings-tabs";
 import { AGENTS, agentOfKey, isAgentId } from "@/lib/agents/registry";
@@ -15,6 +17,7 @@ import {
   type ProviderPlace,
   type ProviderTab,
   withProviderTab,
+  withProviderMethod,
 } from "@/lib/settings-links";
 
 export function OrgKeysSettings({
@@ -29,6 +32,15 @@ export function OrgKeysSettings({
   const [keys, setKeys] = useState(initial);
   const [active, setActive] = useState<ProviderTab>(place?.tab ?? "claude");
   const admin = org.role === "admin";
+  const [codexConnected, setCodexConnected] = useState(false);
+  const [codexMethod, setCodexMethod] = useState<"codex-account" | "api-key">(
+    place?.tab === "codex" && place.method === "api-key"
+      ? "api-key"
+      : "codex-account",
+  );
+  const codexMethods = AGENTS.codex.methods.filter(
+    (method) => method.id === "codex-account" || method.id === "api-key",
+  );
   const providerFor = (tab: ProviderTab) =>
     KEY_PROVIDER_IDS.find((id) => agentOfKey(id) === tab || id === tab)!;
   return (
@@ -77,7 +89,10 @@ export function OrgKeysSettings({
               {isAgentId(id) ? AGENTS[id].label : PROVIDERS[id].label}
             </>
           )}
-          connected={(id) => keys[providerFor(id)].connected}
+          connected={(id) =>
+            (id === "codex" && codexConnected) ||
+            keys[providerFor(id)].connected
+          }
         />
         {PROVIDER_TABS.map((tab) => {
           const provider = providerFor(tab);
@@ -90,7 +105,47 @@ export function OrgKeysSettings({
               hidden={active !== tab}
               className="space-y-5"
             >
-              {isAgentId(tab) && (
+              {tab === "codex" && (
+                <div className="space-y-3">
+                  <h2 className="text-sm font-medium">Authentication</h2>
+                  <AuthMethodCards
+                    methods={codexMethods}
+                    chosen={null}
+                    shown={codexMethod}
+                    busy={false}
+                    label="Organization Codex authentication"
+                    onChoose={(method) => {
+                      if (method !== "codex-account" && method !== "api-key")
+                        return;
+                      setCodexMethod(method);
+                      replaceAddressBar(
+                        withProviderMethod(
+                          new URL(window.location.href),
+                          "codex",
+                          method,
+                        ),
+                      );
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Both connections are shared organization credentials.
+                    Personal credentials and saved authentication choices keep
+                    their existing priority.
+                  </p>
+                </div>
+              )}
+              {tab === "codex" && (
+                <div hidden={codexMethod !== "codex-account"}>
+                  <CodexConnection
+                    orgId={org.id}
+                    active={
+                      active === "codex" && codexMethod === "codex-account"
+                    }
+                    onConnected={setCodexConnected}
+                  />
+                </div>
+              )}
+              {tab === "claude" && (
                 <p className="text-[13px] text-muted-foreground">
                   Shared subscription connections for {AGENTS[tab].label} are
                   not available on this release. You can use a shared{" "}
@@ -98,27 +153,29 @@ export function OrgKeysSettings({
                   subscription in Personal → Coding agents.
                 </p>
               )}
-              {admin ? (
-                <ApiKeyCard
-                  provider={provider}
-                  stored={keys[provider]}
-                  onChange={(next) =>
-                    setKeys((current) => ({
-                      ...current,
-                      [provider]: next[provider],
-                    }))
-                  }
-                  endpoint={`/api/orgs/${org.id}/keys`}
-                  whose="The org's"
-                />
-              ) : (
-                <>
-                  <ConnectionStatus connected={keys[provider].connected} />
-                  <p className="text-xs text-muted-foreground">
-                    Only organization admins can change shared credentials.
-                  </p>
-                </>
-              )}
+              <div hidden={tab === "codex" && codexMethod !== "api-key"}>
+                {admin ? (
+                  <ApiKeyCard
+                    provider={provider}
+                    stored={keys[provider]}
+                    onChange={(next) =>
+                      setKeys((current) => ({
+                        ...current,
+                        [provider]: next[provider],
+                      }))
+                    }
+                    endpoint={`/api/orgs/${org.id}/keys`}
+                    whose="The org's"
+                  />
+                ) : (
+                  <>
+                    <ConnectionStatus connected={keys[provider].connected} />
+                    <p className="text-xs text-muted-foreground">
+                      Only organization admins can change shared credentials.
+                    </p>
+                  </>
+                )}
+              </div>
             </div>
           );
         })}

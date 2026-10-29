@@ -1,6 +1,8 @@
 # Codex account connections
 
-Settings → Providers → Codex offers **ChatGPT account** alongside the existing
+Organization → Coding agents → Codex contains the active organization’s shared ChatGPT connection and OpenAI API-key cards. Page ownership is fixed: Personal never defaults to a team org, and an inaccessible org never falls back to a personal connection. Old provider links to Codex account/default methods retain #328’s active-org destination; explicit API-key/local-method links stay personal, and query parameters/fragments survive the alias.
+
+Personal → Coding agents → Codex offers a private **ChatGPT account** alongside the existing
 API-key method. The old Mac-only ChatGPT/local choices are kept as they were;
 local sessions remain disabled on the web. No existing choice is rewritten.
 

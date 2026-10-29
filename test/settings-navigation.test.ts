@@ -34,7 +34,8 @@ test("settings have exactly the approved personal and organization orders", () =
 });
 test("old credential/auth, membership, and billing destinations keep compatible scoped destinations", () => {
   const redirects = new Map<string, string>(SETTINGS_REDIRECTS);
-  assert.equal(redirects.get("/settings/providers"), "/settings/coding-agents");
+  // Provider aliases resolve at request time to preserve #328's active-org account links.
+  assert.equal(redirects.has("/settings/providers"), false);
   assert.equal(
     redirects.get("/settings/org/keys"),
     "/settings/org/coding-agents",
