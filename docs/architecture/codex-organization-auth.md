@@ -118,7 +118,17 @@ CODEX_TEST_BINARY=/path/to/codex go test ./internal/codex -run AccountNative -v
 ```
 
 That probe runs the actual pinned CLI through the actual runtime configuration
-against a local synthetic upstream, completing an inference response. It is not
+against a local synthetic upstream, completing an inference response. A second
+probe drives the real Service create/start/auth/message flow, real Codex TUI in
+a private tmux server, and translated assistant conversation:
+
+```
+CODEX_TEST_BINARY=/path/to/codex RUNTIME_TMUX_SOCKET=outrunner-codex-test-probe \
+  go test ./internal/workspace -run TestCodexAccountNativeSession -v
+```
+
+Both probes passed on pinned 0.146.0 with the app's current model identifier.
+This is synthetic upstream validation. It is not
 provider acceptance. Browser evidence uses the actual components with visibly
 labeled synthetic organization/status fixtures; no real account was authorized.
 A real Plus/Pro owner must approve device login in the secure OpenAI browser

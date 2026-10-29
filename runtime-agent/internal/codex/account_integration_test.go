@@ -61,7 +61,7 @@ func TestAccountNativeCLIUsesHostManagedBroker(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, binary, "exec", "--skip-git-repo-check", "--sandbox", "read-only", "-m", "gpt-5.4", "Return broker verified.")
+	command := exec.CommandContext(ctx, binary, "exec", "--skip-git-repo-check", "--sandbox", "read-only", "-m", "gpt-6.1-sol", "Return broker verified.")
 	command.Env = []string{"HOME=" + home, "CODEX_HOME=" + home, "PATH=" + os.Getenv("PATH")}
 	command.Dir = home
 	out, err := command.CombinedOutput()
