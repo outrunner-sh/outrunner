@@ -350,7 +350,8 @@ org's, which its admins change) or `personal` (the key's maker's own, in
 every org; the default). A member's learning for the org, or any sent with
 `"suggest": true`, is `suggested` until someone who may change it accepts it
 (`PATCH` with `"status": "active"`) or dismisses it (`DELETE`). A title is at
-most 120 characters, a body 2,000, and a scope holds at most 100.
+most 120 characters, a body 2,000; a scope holds at most 100 active
+learnings, and one person 10 suggestions waiting in it.
 
 ## CLI
 

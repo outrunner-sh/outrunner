@@ -44,14 +44,35 @@ function learningOf(row: Row): Learning {
 }
 
 export const learningStore: LearningStore = {
-  async list(where) {
-    const query = createSupabaseAdminClient().from("learnings").select(COLUMNS);
-    const { data, error } = await ("orgId" in where ? query.eq("org_id", where.orgId) : query.eq("user_id", where.userId))
-      .order("created_at", { ascending: true })
-      .limit(500);
-    if (error && probeStatus(error) === "missing") return [];
+  async list(where, status) {
+    const client = createSupabaseAdminClient();
+    const learnings: Learning[] = [];
+    const pageSize = 500;
+    for (let offset = 0; ; offset += pageSize) {
+      let query = client.from("learnings").select(COLUMNS);
+      query = "orgId" in where ? query.eq("org_id", where.orgId) : query.eq("user_id", where.userId);
+      if (status) query = query.eq("status", status);
+      const { data, error } = await query
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1);
+      if (error && probeStatus(error) === "missing") return [];
+      if (error) throw error;
+      learnings.push(...(data ?? []).map((row) => learningOf(row as Row)));
+      if (!data || data.length < pageSize) return learnings;
+    }
+  },
+
+  async count(where, { status, createdBy }) {
+    let query = createSupabaseAdminClient().from("learnings").select("id", { count: "exact", head: true });
+    query = "orgId" in where ? query.eq("org_id", where.orgId) : query.eq("user_id", where.userId);
+    query = query.eq("status", status);
+    if (createdBy !== undefined) query = query.eq("created_by", createdBy);
+    const { count, error } = await query;
+    if (error && probeStatus(error) === "missing") return 0;
     if (error) throw error;
-    return (data ?? []).map((row) => learningOf(row as Row));
+    if (count === null) throw new Error("Couldn't count learnings.");
+    return count;
   },
 
   async get(id) {

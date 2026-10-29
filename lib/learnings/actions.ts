@@ -28,9 +28,13 @@ export type NewLearningRow = {
   suggestedIn: string | null;
 };
 
+export type LearningScopeWhere = { orgId: string } | { userId: string };
+
 export type LearningStore = {
   /** A scope's learnings, oldest first: an org's (`orgId`) or a person's (`userId`). */
-  list(where: { orgId: string } | { userId: string }): Promise<Learning[]>;
+  list(where: LearningScopeWhere, status?: LearningStatus): Promise<Learning[]>;
+  /** Exact counts for caps, independent of any listing page. */
+  count(where: LearningScopeWhere, filter: { status: LearningStatus; createdBy?: string }): Promise<number>;
   get(id: string): Promise<Learning | null>;
   insert(row: NewLearningRow): Promise<Learning>;
   update(id: string, patch: { title?: string; body?: string; status?: LearningStatus }): Promise<Learning | null>;
@@ -74,7 +78,7 @@ export async function listLearnings(
   { scope, status }: { scope?: LearningScope; status?: LearningStatus } = {},
 ): Promise<Learning[]> {
   const scopes: LearningScope[] = scope ? [scope] : ["org", "personal"];
-  const lists = await Promise.all(scopes.map((s) => deps.store.list(scopeOf(actor, s))));
+  const lists = await Promise.all(scopes.map((s) => deps.store.list(scopeOf(actor, s), status)));
   return lists.flat().filter((l) => learningRights(actor, l).read && (!status || l.status === status));
 }
 
@@ -95,15 +99,18 @@ export async function createLearning(
   if (input.scope === "org" && (await deps.personalOrg?.(actor.orgId))) {
     throw new LearningError(400, "A personal org has only your own learnings: add it with scope personal.");
   }
-  const existing = await deps.store.list(scopeOf(actor, input.scope));
   const status = newLearningStatus(actor, input.scope, input.suggested ?? false);
-  if (status === "active" && existing.filter((l) => l.status === "active").length >= MAX_LEARNINGS) {
+  const count = await deps.store.count(scopeOf(actor, input.scope), {
+    status,
+    ...(status === "suggested" ? { createdBy: actor.userId } : {}),
+  });
+  if (status === "active" && count >= MAX_LEARNINGS) {
     throw new LearningError(
       409,
       `${input.scope === "org" ? "The org has" : "You have"} ${MAX_LEARNINGS} learnings, the most there can be. Delete one first.`,
     );
   }
-  if (status === "suggested" && existing.filter((l) => l.status === "suggested" && l.createdBy === actor.userId).length >= MAX_PENDING_SUGGESTIONS) {
+  if (status === "suggested" && count >= MAX_PENDING_SUGGESTIONS) {
     throw new LearningError(
       409,
       `${MAX_PENDING_SUGGESTIONS} suggestions of yours are already waiting${input.scope === "org" ? " for the org's admins" : ""}. Accept or dismiss some in Settings → Learnings first.`,
@@ -138,8 +145,8 @@ export async function updateLearning(
   }
   const accepting = patch.status === "active" && learning.status === "suggested";
   if (accepting) {
-    const active = (await deps.store.list(scopeOf(actor, learning.scope))).filter((l) => l.status === "active");
-    if (active.length >= MAX_LEARNINGS) {
+    const active = await deps.store.count(scopeOf(actor, learning.scope), { status: "active" });
+    if (active >= MAX_LEARNINGS) {
       throw new LearningError(409, `There are ${MAX_LEARNINGS} learnings already, the most there can be. Delete one first.`);
     }
   }
@@ -166,7 +173,7 @@ export async function sessionLearnings(
   userId: string,
   orgId: string,
 ): Promise<{ org: Learning[]; personal: Learning[] }> {
-  const [org, personal] = await Promise.all([store.list({ orgId }), store.list({ userId })]);
+  const [org, personal] = await Promise.all([store.list({ orgId }, "active"), store.list({ userId }, "active")]);
   return {
     org: org.filter((l) => l.status === "active"),
     personal: personal.filter((l) => l.status === "active"),

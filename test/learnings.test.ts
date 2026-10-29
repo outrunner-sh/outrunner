@@ -29,6 +29,10 @@ function deps(): LearningDeps & { rows: Learning[]; audited: string[] } {
   let n = 0;
   const store: LearningStore = {
     list: async (where) => rows.filter((l) => ("orgId" in where ? l.orgId === where.orgId : l.userId === where.userId)),
+    count: async (where, { status, createdBy }) => rows.filter((l) =>
+      ("orgId" in where ? l.orgId === where.orgId : l.userId === where.userId) &&
+      l.status === status && (createdBy === undefined || l.createdBy === createdBy)
+    ).length,
     get: async (id) => rows.find((l) => l.id === id) ?? null,
     insert: async (row) => {
       const now = new Date(Date.UTC(2026, 10, 3, 0, 0, n)).toISOString();
@@ -157,6 +161,33 @@ test("suggestions are held to a few waiting per person, apart from the learnings
   // Another member, and an admin's own, aren't held by them.
   await createLearning({ userId: "u-other", orgId: ORG, role: "member" }, d, { scope: "org", title: "theirs", body: "x" });
   await createLearning(admin, d, { scope: "org", title: "Real", body: "x" });
+});
+
+test("caps count the full scope even when the displayed list is incomplete", async () => {
+  const d = deps();
+  for (let person = 0; person < 60; person++) {
+    const actor = { ...member, userId: `teammate-${person}` };
+    for (let i = 0; i < MAX_PENDING_SUGGESTIONS; i++) {
+      await createLearning(actor, d, { scope: "org", title: `S${i}`, body: "x" });
+    }
+  }
+  for (let i = 0; i < MAX_PENDING_SUGGESTIONS; i++) {
+    await createLearning(member, d, { scope: "org", title: `Mine${i}`, body: "x" });
+  }
+  for (let i = 0; i < MAX_LEARNINGS; i++) {
+    await createLearning(admin, d, { scope: "org", title: `Active${i}`, body: "x" });
+  }
+  const own = await listLearnings(member, d, { scope: "org", status: "suggested" });
+  assert.equal(own.length, MAX_PENDING_SUGGESTIONS);
+  assert.equal(own.at(-1)?.title, "Mine9");
+  assert.equal((await listLearnings(admin, d, { scope: "org" })).length, 710);
+
+  // Counts must remain exact independently of the list the caller has loaded.
+  const list = d.store.list;
+  d.store.list = async (...args) => (await list(...args)).slice(0, 500);
+  await assert.rejects(createLearning(member, d, { scope: "org", title: "extra", body: "x" }), /already waiting/);
+  await assert.rejects(createLearning(admin, d, { scope: "org", title: "extra", body: "x" }), /100 learnings/);
+  await assert.rejects(updateLearning(admin, d, own[0].id, { status: "active" }), /100 learnings/);
 });
 
 test("a personal org has no learnings of its own", async () => {
