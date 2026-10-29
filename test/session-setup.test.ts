@@ -13,6 +13,7 @@ function box(features: string[], skills: SetSkillsResponse = { installed: [] }) 
       features: async () => features,
       setEnvironment: async (req: unknown) => void sent.push(["environment", req]),
       setAgentConfig: async (req: unknown) => void sent.push(["config", req]),
+      setAgentContext: async (req: unknown) => void sent.push(["context", req]),
       setSkills: async (req: unknown) => {
         sent.push(["skills", req]);
         return skills;
@@ -161,6 +162,26 @@ test("skills the box couldn't install don't stop the session starting", async ()
   assert.deepEqual(b.sent.map(([kind]) => kind), ["environment"]);
 });
 
+test("the learnings block reaches a box that takes it after setup; empty does not upgrade an old box", async () => {
+  const current = box([...all, "agent-context"]);
+  await deliverSessionSetup(current.client, { environment: null, agentConfig, agentContext: "# Outrunner learnings", downloadUrl });
+  assert.deepEqual(current.sent.map(([kind]) => kind), ["config", "context"]);
+  assert.deepEqual(current.sent[1][1], { content: "# Outrunner learnings" });
+
+  const cleared = box([...all, "agent-context"]);
+  await deliverSessionSetup(cleared.client, { environment: null, agentConfig: null, agentContext: "", downloadUrl });
+  assert.deepEqual(cleared.sent, [["context", { content: "" }]]);
+
+  let upgrades = 0;
+  const old = box(all);
+  const client = { ...old.client, upgrade: async () => void upgrades++ };
+  await deliverSessionSetup(client, { environment: null, agentConfig: null, agentContext: "", downloadUrl });
+  assert.equal(upgrades, 0);
+  await deliverSessionSetup(client, { environment: null, agentConfig: null, agentContext: "# Outrunner learnings", downloadUrl });
+  assert.equal(upgrades, 1);
+  assert.deepEqual(old.sent, []);
+});
+
 test("a Codex session's box with MCP servers to load is upgraded first when its Codex wouldn't get them", async () => {
   let features = ["session-environment", "agent-config"];
   const order: string[] = [];
@@ -199,4 +220,11 @@ test("a Codex session's box with MCP servers to load is upgraded first when its 
     assert.equal(upgraded, false, JSON.stringify(setup.agent));
     assert.ok(!JSON.stringify(warned).includes("Codex"), JSON.stringify(warned));
   }
+});
+
+test("a box that refuses the learnings' block still starts the session", async () => {
+  const b = box([...all, "agent-context"]);
+  const client = { ...b.client, setAgentContext: async () => Promise.reject(new Error("400 INVALID_REQUEST: too large")) };
+  await deliverSessionSetup(client, { environment, agentConfig: null, agentContext: "# Outrunner learnings", downloadUrl });
+  assert.deepEqual(b.sent.map(([kind]) => kind), ["environment"]);
 });

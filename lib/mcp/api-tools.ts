@@ -11,6 +11,7 @@
 import { listProjectsApi } from "@/lib/api/catalog";
 import { takeLimit, type ApiContext } from "@/lib/api/handler";
 import { createPreviewApi, deletePreviewApi, listPreviewsApi, updatePreviewApi } from "@/lib/api/previews";
+import { createLearningApi, deleteLearningApi, listLearningsApi, updateLearningApi } from "@/lib/api/learnings";
 import { CREATE_LIMIT } from "@/lib/api/rate-limit";
 import { checkWebhookUrl, messageSent, webhookHooks } from "@/lib/api/webhooks.deps";
 import {
@@ -234,6 +235,62 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
       answer(
         await deletePreviewApi(asCall(context, { method: "DELETE" }), id(args), typeof args.preview_id === "string" ? args.preview_id : ""),
       ),
+  },
+  {
+    name: "list_learnings",
+    description:
+      "List learnings: short standing instructions every new session loads. scope org is the org's (its admins change them), " +
+      "personal the key's maker's own; status suggested lists suggestions waiting to be accepted.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scope: { type: "string", enum: ["org", "personal"] },
+        status: { type: "string", enum: ["active", "suggested"] },
+        page: { type: "integer", minimum: 1 },
+        per_page: { type: "integer", minimum: 1, maximum: 100 },
+      },
+    },
+    call: async (context, args) => answer(await listLearningsApi(asCall(context, { query: args }))),
+  },
+  {
+    name: "create_learning",
+    description:
+      "Add a learning every new session loads: a one-line title and the instruction itself, one to three lines, as the user said it. " +
+      "A member's learning for the org (or one with suggest true) waits for an admin to accept it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scope: { type: "string", enum: ["org", "personal"], description: "Whose it is; personal unless said." },
+        title: { type: "string", maxLength: 120 },
+        body: { type: "string", maxLength: 2000 },
+        suggest: { type: "boolean", description: "File it as a suggestion for someone to accept." },
+      },
+      required: ["title", "body"],
+    },
+    call: async (context, args) => answer(await createLearningApi(asCall(context, { method: "POST", body: args }))),
+  },
+  {
+    name: "update_learning",
+    description: "Change a learning's title or body, or accept a suggestion with status active.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        learning_id: { type: "string" },
+        title: { type: "string", maxLength: 120 },
+        body: { type: "string", maxLength: 2000 },
+        status: { type: "string", enum: ["active"] },
+      },
+      required: ["learning_id"],
+    },
+    call: async (context, { learning_id, ...patch }) =>
+      answer(await updateLearningApi(asCall(context, { method: "PATCH", body: patch }), typeof learning_id === "string" ? learning_id : "")),
+  },
+  {
+    name: "delete_learning",
+    description: "Delete a learning, or dismiss a suggested one.",
+    inputSchema: { type: "object", properties: { learning_id: { type: "string" } }, required: ["learning_id"] },
+    call: async (context, args) =>
+      answer(await deleteLearningApi(asCall(context, { method: "DELETE" }), typeof args.learning_id === "string" ? args.learning_id : "")),
   },
 ];
 

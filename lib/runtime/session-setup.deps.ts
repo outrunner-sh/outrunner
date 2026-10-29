@@ -19,6 +19,7 @@ import { repositorySource } from "@/lib/github/repository-source";
 import { withMissionEnvironment, withMissionServer } from "@/lib/missions/setup";
 import { missionBoxSetup } from "@/lib/missions/setup.deps";
 import type { AgentClient, WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { sessionAgentContext } from "@/lib/runtime/agent-context.deps";
 import type { SkillSource } from "@/lib/runtime/agent-protocol";
 import { deliverSessionSetup } from "@/lib/runtime/session-setup";
 import { mintSnapshotDownloadUrl } from "@/lib/runtime/storage";
@@ -40,7 +41,7 @@ export async function setUpSession(
   session: { agent: AgentId; appIdentity?: boolean },
 ): Promise<void> {
   const id = environmentId ?? (await defaultEnvironmentId(ownerId, projectId));
-  const [environment, skills, projectServers, userConfig, githubIdentity, mission] = await Promise.all([
+  const [environment, skills, projectServers, userConfig, githubIdentity, mission, agentContext] = await Promise.all([
     sessionEnvironment(ownerId, projectId, id),
     id ? sessionSkills(ownerId, id) : undefined,
     id ? projectMcpServers(ownerId, id) : {},
@@ -48,6 +49,7 @@ export async function setUpSession(
     getGithubIdentity(ownerId),
     // A Mission's box also gets its tools, notes and instructions.
     missionBoxSetup(identity.workspaceId),
+    sessionAgentContext(ownerId, identity.workspaceId),
   ]);
   const agentConfig = withProjectMcpServers(userConfig, projectServers);
   await deliverSessionSetup(
@@ -56,12 +58,14 @@ export async function setUpSession(
       upgrade,
       setEnvironment: (req) => agent.setEnvironment(identity, req),
       setAgentConfig: (req) => agent.setAgentConfig(identity, req),
+      setAgentContext: (req) => agent.setAgentContext(identity, req),
       setSkills: (req) => agent.setSkills(identity, req),
     },
     {
       environment: mission ? withMissionEnvironment(environment, mission) : environment,
       agentConfig: mission ? withMissionServer(agentConfig, mission) : agentConfig,
       skills,
+      agentContext,
       agent: session.agent,
       appIdentity: session.appIdentity || githubIdentity === "app",
       downloadUrl: (path) => mintSnapshotDownloadUrl(supabaseSnapshotStorage(), path, ownerId),

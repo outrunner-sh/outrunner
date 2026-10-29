@@ -597,7 +597,8 @@
         "files",
         "environment-skills",
         "codex-mcp",
-        "canvas"
+        "canvas",
+        "agent-context"
       ]
     }
   ],
@@ -748,6 +749,10 @@
       "failed": [{ "repo": "acme/skills-registry", "skill": "review", "error": "a skill of yours has this name: yours is kept" }]
     },
     { "installed": [] }
+  ],
+  "SetAgentContextRequest": [
+    { "content": "# Outrunner learnings\n\n## The user's learnings\n\n### Conventional Commits\n\nUse Conventional Commits." },
+    { "content": "" }
   ],
   "EditorResponse": [
     {

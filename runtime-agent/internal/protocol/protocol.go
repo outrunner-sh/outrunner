@@ -364,6 +364,16 @@ const FeatureSkills = "environment-skills"
 // (SetAgentConfigRequest's MCPServers), as a Claude one does.
 const FeatureCodexMCP = "codex-mcp"
 
+// SetAgentContextRequest is what every session on this computer reads
+// besides its orientation (POST /agent-context): Markdown put in a block of
+// its own in ~/.claude/CLAUDE.md and ~/.codex/AGENTS.md. Empty removes it.
+type SetAgentContextRequest struct {
+	Content string `json:"content"`
+}
+
+// FeatureAgentContext is POST /agent-context.
+const FeatureAgentContext = "agent-context"
+
 // FeatureEnvironment is POST /workspaces/{id}/environment.
 const FeatureEnvironment = "session-environment"
 

@@ -157,6 +157,11 @@ type Service struct {
 	// media uploads the sessions' screenshots and recordings to the control
 	// plane (media.go); nil when it can't take them.
 	media *media.Client
+	// controlPlane is how the agent reaches the control plane, for the
+	// sessions' own commands too (sessiontools.go); nil where it can't.
+	controlPlane *gitcred.Client
+	// sessionTools is whether the sessions' command is in place.
+	sessionTools bool
 	// RelayExecutable is this binary, which a session's agent launches as
 	// its ask_user relay; empty launches sessions without the tool.
 	RelayExecutable string
@@ -985,6 +990,9 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 		o += "\n\n" + claude.Identity(f.Model)
 	}
 	if note := s.previewsNote(workspaceID); note != "" {
+		o += "\n\n" + note
+	}
+	if note := s.sessionToolsNote(); note != "" {
 		o += "\n\n" + note
 	}
 	if guide := s.guide(workspaceID); guide != "" {

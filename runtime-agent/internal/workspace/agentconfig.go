@@ -104,6 +104,11 @@ func (s *Service) SetAgentConfig(ctx context.Context, req AgentConfigRequest) er
 	if err := writeJSONFile(agentConfigStatePath(home), state, 0o600); err != nil {
 		return err
 	}
+	// An import's CLAUDE.md or AGENTS.md took the place of the one that
+	// held Outrunner's block (agentcontext.go): it goes back in.
+	if err := applyAgentContext(home); err != nil {
+		return err
+	}
 
 	// The box's own servers are added by the box, last (desktop.go): one of
 	// theirs by the same name is dropped here, so it can't shadow them.

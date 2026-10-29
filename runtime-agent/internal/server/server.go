@@ -34,6 +34,7 @@ import (
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/ptyx"
 	"runtime-agent/internal/redact"
+	"runtime-agent/internal/sessiontools"
 	"runtime-agent/internal/workspace"
 )
 
@@ -133,11 +134,13 @@ func (s *Server) Handler() http.Handler {
 	// git's credential helper and the gh wrapper on this box ask, with the
 	// agent's credential token (package gitcred).
 	mux.HandleFunc("POST /git-credential", s.gitCredential)
+	mux.HandleFunc("POST /session-tools", s.sessionTool)
 	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
 	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
 	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
 	mux.HandleFunc("POST /config", s.authed(s.setAgentConfig))
 	mux.HandleFunc("POST /skills", s.authed(s.setSkills))
+	mux.HandleFunc("POST /agent-context", s.authed(s.setAgentContext))
 	mux.HandleFunc("POST /warm", s.authed(s.startWarm))
 	mux.HandleFunc("GET /warm", s.authed(s.warmStatus))
 	mux.HandleFunc("GET /pty", s.pty)
@@ -166,7 +169,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext},
 	})
 }
 
@@ -1113,6 +1116,36 @@ func (s *Server) setAgentConfig(w http.ResponseWriter, r *http.Request) {
 	respond(w, "set", err)
 }
 
+// sessionTool passes a session's own command on to the control plane, proven
+// to come from this box as git's credential helper is, and answers as it did.
+func (s *Server) sessionTool(w http.ResponseWriter, r *http.Request) {
+	refuse := func(status int, message string) {
+		writeJSON(w, status, sessiontools.Answer{Error: message})
+	}
+	if !s.ws.SessionToolsEnabled() {
+		refuse(http.StatusNotFound, workspace.ErrNoSessionTools.Error())
+		return
+	}
+	if !s.ws.GitCredentialAuthorized(bearer(r)) {
+		refuse(http.StatusUnauthorized, "invalid credential token")
+		return
+	}
+	var call sessiontools.Call
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10)).Decode(&call); err != nil || !sessiontools.ValidTool(call.Tool) {
+		refuse(http.StatusBadRequest, "malformed request")
+		return
+	}
+	status, answer, err := s.ws.SessionTool(r.Context(), call)
+	switch {
+	case errors.Is(err, workspace.ErrUnknownWorkspace):
+		refuse(http.StatusNotFound, "no such session on this computer")
+	case err != nil:
+		refuse(http.StatusBadGateway, err.Error())
+	default:
+		writeJSON(w, status, answer)
+	}
+}
+
 // setSkills installs a project's skills on this computer. Any session's
 // token may, as for the user's own setup: the computer is that session's.
 func (s *Server) setSkills(w http.ResponseWriter, r *http.Request) {
@@ -1138,6 +1171,22 @@ func (s *Server) setSkills(w http.ResponseWriter, r *http.Request) {
 		failed = append(failed, protocol.SkillFailure{Repo: f.Repo, Skill: f.Skill, Error: f.Error})
 	}
 	writeJSON(w, http.StatusOK, protocol.SetSkillsResponse{Installed: result.Installed, Failed: failed})
+}
+
+// setAgentContext puts what every session reads besides its orientation (the
+// user's and org's learnings) in Claude's CLAUDE.md and Codex's AGENTS.md,
+// in a block of its own.
+func (s *Server) setAgentContext(w http.ResponseWriter, r *http.Request) {
+	var req protocol.SetAgentContextRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	err := s.ws.SetAgentContext(req.Content)
+	if errors.Is(err, workspace.ErrInvalidAgentContext) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	respond(w, "set", err)
 }
 
 // validAuth checks a session credential as set or restored: a known kind, and
