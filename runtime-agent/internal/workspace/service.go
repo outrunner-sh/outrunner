@@ -24,6 +24,7 @@ import (
 	"runtime-agent/internal/codex"
 	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/jcode"
+	"runtime-agent/internal/preview"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/redact"
 	"runtime-agent/internal/snapshot"
@@ -147,6 +148,9 @@ type Service struct {
 	// nil and empty when it gives none.
 	gitTokens *gitcred.Cache
 	gitToken  string
+	// previews asks the control plane for the sessions' previews
+	// (previews.go); nil where it makes none.
+	previews *preview.Client
 	// RelayExecutable is this binary, which a session's agent launches as
 	// its ask_user relay; empty launches sessions without the tool.
 	RelayExecutable string
@@ -956,6 +960,9 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 		o += "\n\n" + codex.Identity()
 	default:
 		o += "\n\n" + claude.Identity(f.Model)
+	}
+	if note := s.previewsNote(workspaceID); note != "" {
+		o += "\n\n" + note
 	}
 	if instructions := s.instructions(workspaceID); instructions != "" {
 		o += "\n\n# Project instructions\n\nThe user gave these for every session in this project:\n\n" + instructions
