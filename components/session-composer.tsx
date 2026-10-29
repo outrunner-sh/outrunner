@@ -122,6 +122,7 @@ export function SessionComposer({
   focusSignal = 0,
   prefill = null,
   prefillAttachments = null,
+  onPrefillAttachmentsTaken,
   comments,
   listFiles,
 }: {
@@ -180,6 +181,9 @@ export function SessionComposer({
    *  refused after the form had moved on (a new session's create), whose
    *  files were already taken off. Shown from this page's kept previews. */
   prefillAttachments?: readonly string[] | null;
+  /** The files given back are on the box now: from here they are the box's,
+   *  removed from it like any other, so they aren't given back again. */
+  onPrefillAttachmentsTaken?: () => void;
   /** Comments on the session's diff, waiting to go with the next message:
    *  shown above the box, each removable. The caller adds them to what is
    *  sent (onSend gets the typed text alone). */
@@ -241,7 +245,8 @@ export function SessionComposer({
     if (!restoreKey || restoreKey === restoredFor.current) return;
     restoredFor.current = restoreKey;
     restoreAttachments(restoreKey.split(",").map(restoredAttachment));
-  }, [restoreKey, restoreAttachments]);
+    onPrefillAttachmentsTaken?.();
+  }, [restoreKey, restoreAttachments, onPrefillAttachmentsTaken]);
 
   const focusedFor = useRef(0);
   useEffect(() => {

@@ -174,6 +174,14 @@ export function sendingAgain(
 
 export const FAILED_CREATE = store<FailedCreate | null>(null);
 
+/** The failed creation's files are back on the composer: they are the
+ *  composer's from here, and not given back again (a remount of the form, a
+ *  file since removed and deleted). */
+export function takeFailedAttachments(): void {
+  const failed = FAILED_CREATE.get();
+  if (failed && failed.attachmentIds.length > 0) FAILED_CREATE.set({ ...failed, attachmentIds: [] });
+}
+
 /** The last creation that failed, until the next is started. */
 export function useFailedCreate(): FailedCreate | null {
   return useStore(FAILED_CREATE, null);

@@ -41,6 +41,7 @@ import {
   refusePendingSession,
   rememberPendingSession,
   sendingAgain,
+  takeFailedAttachments,
   useFailedCreate,
 } from "@/lib/session/pending-sessions";
 import { rememberEffort } from "@/lib/session/picked-effort";
@@ -342,6 +343,8 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
      *  composer to give back. */
     refusedPrompt: failedCreate?.prompt ?? null,
     refusedAttachments: failedCreate?.attachmentIds ?? null,
+    /** The composer put those files back: they aren't given back again. */
+    takeRefusedAttachments: takeFailedAttachments,
     create,
     createLocal,
   };

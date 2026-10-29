@@ -7,7 +7,13 @@ import { viewerScope } from "@/lib/orgs/active";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { workingStep } from "@/lib/runtime/conversation-events";
 import type { Workspace } from "@/lib/runtime/types";
-import { optimisticSession, sendingAgain, UNSENT_REUSED_FOR_MS } from "@/lib/session/pending-sessions";
+import {
+  FAILED_CREATE,
+  optimisticSession,
+  sendingAgain,
+  takeFailedAttachments,
+  UNSENT_REUSED_FOR_MS,
+} from "@/lib/session/pending-sessions";
 import { rowsAhead } from "@/lib/session/rows-ahead";
 import { sendCreate } from "@/lib/session/send-create";
 
@@ -171,4 +177,13 @@ test("a lost create is sent again as itself only when the same request follows s
   assert.equal(sendingAgain(unsent, "p1", '["claude","opus",null,null]', 2_000), null);
   assert.equal(sendingAgain(unsent, "p1", unsent.request, 1_000 + UNSENT_REUSED_FOR_MS), null);
   assert.equal(sendingAgain(null, "p1", unsent.request, 2_000), null);
+});
+
+test("a refused create's files are given back once, then are the composer's", () => {
+  FAILED_CREATE.set({ prompt: "p", attachmentIds: ["a1"], message: "no", action: null });
+  takeFailedAttachments();
+  assert.deepEqual(FAILED_CREATE.get()?.attachmentIds, []);
+  // The prompt and the reason stay for the screen to say.
+  assert.equal(FAILED_CREATE.get()?.message, "no");
+  FAILED_CREATE.set(null);
 });
