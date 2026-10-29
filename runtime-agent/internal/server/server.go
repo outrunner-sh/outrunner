@@ -68,8 +68,12 @@ type Server struct {
 	ProcRoot  string
 	upgrader  websocket.Upgrader
 	broker    *ptyx.Broker
+	// startedAt gives a newly provisioned box a short idle grace. It is kept
+	// separate from actual user input so an agent restart cannot refresh the
+	// unknown-activity deadline.
+	startedAt time.Time
 	// lastInput: when a user last did something here (Unix nanoseconds) — typed
-	// in a terminal or made a control call — from the agent's start.
+	// in a terminal or made a control call.
 	lastInput atomic.Int64
 }
 
@@ -77,17 +81,17 @@ type claimsContextKey struct{}
 
 func New(secret string, ws *workspace.Service) *Server {
 	s := &Server{
-		secret: secret,
-		ws:     ws,
-		broker: ptyx.NewBroker(),
-		Editor: &editor.Editor{Home: ws.Root, Env: ws.SessionEnv()},
+		secret:    secret,
+		ws:        ws,
+		startedAt: time.Now().UTC(),
+		broker:    ptyx.NewBroker(),
+		Editor:    &editor.Editor{Home: ws.Root, Env: ws.SessionEnv()},
 		upgrader: websocket.Upgrader{
 			// The Daytona preview proxy already gates access; the Runtime token in
 			// the URL is the real authorization check.
 			CheckOrigin: func(*http.Request) bool { return true },
 		},
 	}
-	s.touch()
 	return s
 }
 
@@ -364,9 +368,16 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Runtime token does not authorize reading the box's activity")
 		return
 	}
-	last, turnInProgress := s.ws.Activity()
+	last, turnInProgress, unknown := s.ws.Activity()
 	if input := time.Unix(0, s.lastInput.Load()); input.After(last) {
 		last = input
+	}
+	// Boot gives a newly provisioned, otherwise idle box a short window to
+	// receive its first request. When session activity is unknown, do not let a
+	// runtime-agent restart keep resetting the reconciler's pause clock; the
+	// workspace service's persisted unknown interval is authoritative instead.
+	if !unknown && s.startedAt.After(last) {
+		last = s.startedAt
 	}
 	// Someone working in the editor is activity: its heartbeat beats while a
 	// tab is open on it, so an editor left open also keeps the box awake

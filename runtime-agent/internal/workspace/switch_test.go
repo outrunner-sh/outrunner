@@ -67,6 +67,19 @@ func (f *fakeSessions) HasSession(_ context.Context, name string) bool {
 	return f.running[name]
 }
 
+func (f *fakeSessions) ListSessions(context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	names := make([]string, 0, len(f.running))
+	for name, running := range f.running {
+		if running {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names, nil
+}
+
 func (f *fakeSessions) SessionExists(_ context.Context, name string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
