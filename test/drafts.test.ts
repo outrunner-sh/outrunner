@@ -11,6 +11,7 @@ import {
   PAGE_ONLY,
   type PendingAttachment,
 } from "@/lib/client/drafts";
+import { chatStateKey } from "@/lib/session/chats";
 import { restoreDraft } from "@/lib/runtime/attachments";
 
 /** localStorage, with a quota in characters when given one. */
@@ -574,4 +575,39 @@ test("signing out forgets every draft and lets their uploads go", () => {
   assert.equal(heard, 1);
   run();
   assert.equal(storage.items.size, 0, "nothing written back after");
+});
+
+
+test("each chat keeps a separate persisted composer draft, with the main key unchanged", () => {
+  const storage = new FakeStorage();
+  const { drafts, run } = page(storage);
+  const main = `ws:${chatStateKey("session", "main")}`;
+  const side = `ws:${chatStateKey("session", "side")}`;
+  assert.equal(main, "ws:session");
+  assert.notEqual(main, side);
+  drafts.setText(main, "main draft");
+  drafts.setText(side, "side draft");
+  run();
+  const reloaded = page(storage).drafts;
+  assert.equal(reloaded.get(main)?.text, "main draft");
+  assert.equal(reloaded.get(side)?.text, "side draft");
+});
+
+test("a temporary edit and its pending send preserve the ordinary draft across reload", () => {
+  const storage = new FakeStorage();
+  const { drafts, run } = page(storage);
+  const key = "ws:session";
+  const edit = `${PAGE_ONLY}composer:r1:edit:1`;
+  drafts.update(key, (draft) => ({ ...draft, text: "ordinary draft", attachments: [ready("original")] }));
+  drafts.setText(edit, "edited prompt");
+  const release = drafts.hold(edit, "edited prompt", []);
+  drafts.setText(edit, "");
+  run();
+  assert.equal(drafts.get(key)?.text, "ordinary draft");
+  assert.equal(drafts.get(key)?.attachments[0].id, "original");
+  const reloaded = page(storage).drafts;
+  assert.equal(reloaded.get(key)?.text, "ordinary draft");
+  assert.equal(reloaded.get(key)?.attachments[0].id, "original");
+  assert.equal(reloaded.get(edit), null);
+  release();
 });
