@@ -36,7 +36,7 @@ export function SettingsFrame({ children }: { children: React.ReactNode }) {
         }}
         className={cn(
           "min-h-0 sm:block",
-          open ? "fixed inset-y-0 left-0 z-50 w-[min(280px,85vw)] shadow-2xl shadow-black/60" : "hidden",
+          open ? "fixed inset-y-0 left-0 z-50 w-[min(264px,85vw)] shadow-2xl shadow-black/60" : "hidden",
         )}
       >
         <SettingsNav onClose={close} />
