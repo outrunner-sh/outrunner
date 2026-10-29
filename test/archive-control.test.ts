@@ -8,12 +8,13 @@ test("Archive can be pressed only from the statuses the lifecycle route archives
   const pressable = (status: WorkspaceStatus) => archiveOffer({ status, provider: "daytona" })?.can ?? null;
   assert.equal(pressable("ready"), true);
   assert.equal(pressable("idle"), true);
+  // Asleep: the agent stops a session before saving it, so none need wake.
+  assert.equal(pressable("suspended"), true);
   for (const status of [
     "creating",
     "provisioning",
     "suspending",
     "resuming",
-    "suspended",
     "destroying",
     "archiving",
     "restoring",
@@ -54,8 +55,11 @@ test("an archive asks the lifecycle route, and a refusal says why", async () => 
       return new Response(JSON.stringify(body), { status });
     }) as unknown as typeof fetch;
 
-  await archiveSession("ws-1", answering(200, { workspace: { id: "ws-1", status: "archived" } }));
+  assert.equal(await archiveSession("ws-1", answering(200, { workspace: { id: "ws-1", status: "archived" } })), null);
   assert.deepEqual(calls, [{ url: "/api/workspaces/ws-1/lifecycle", body: { action: "archive" } }]);
+  // Archived without its files, its box out of reach: that's said.
+  const note = "Archived without its files: its box couldn't be reached.";
+  assert.equal(await archiveSession("ws-5", answering(200, { workspace: { id: "ws-5", status: "archived" }, note })), note);
 
   await assert.rejects(
     archiveSession("ws-2", answering(409, { error: "Only an active workspace can be archived." })),

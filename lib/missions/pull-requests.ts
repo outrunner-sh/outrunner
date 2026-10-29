@@ -420,11 +420,11 @@ async function archiveDoneRunner(runner: Workspace, missionId: string): Promise<
   if (await sessionWorking(runner).catch(() => true)) return;
   if (((await queuedCounts([runner.id])).get(runner.id) ?? 0) > 0) return;
   if (runner.status === "creating" || runner.status === "provisioning") return;
+  // Automatic cleanup must save its files. If its box can't be reached,
+  // leave it active so a person can decide whether to archive without them.
   const archived = await actAsUser(runner.ownerId, async () => {
     const params = { params: Promise.resolve({ id: runner.id }) };
-    const lifecycle = (action: string) => lifecyclePOST(asBrowser(`/api/workspaces/${runner.id}/lifecycle`, { action }), params);
-    if (runner.status === "suspended" && !(await lifecycle("resume")).ok) return false;
-    return (await lifecycle("archive")).ok;
+    return (await lifecyclePOST(asBrowser(`/api/workspaces/${runner.id}/lifecycle`, { action: "archive", requireSnapshot: true }), params)).ok;
   }).catch(() => false);
   if (!archived) return;
   await recordMissionEvent({
