@@ -423,12 +423,17 @@ func TestStopWaitsForTheParentLifecycleBeforeListingChats(t *testing.T) {
 }
 
 func TestForgettingAChatCannotReloadItsDeletedFacts(t *testing.T) {
-	s, id, key := chatSession(t, ChatInput{})
+	s, _, key := chatSession(t, ChatInput{})
+	facts, _ := s.getFacts(key)
 	for n := 0; n < 100; n++ {
-		s.updateFacts(key, func(f *workspaceFacts) { f.Parent = id })
-		stop, done := make(chan struct{}), make(chan struct{})
+		// Recreate the facts after each deletion so every iteration exercises
+		// the disk-to-cache reload race.
+		s.setFacts(key, facts)
+		stop, done, ready := make(chan struct{}), make(chan struct{}), make(chan struct{})
 		go func() {
 			defer close(done)
+			s.getFacts(key)
+			close(ready)
 			for {
 				select {
 				case <-stop:
@@ -438,6 +443,7 @@ func TestForgettingAChatCannotReloadItsDeletedFacts(t *testing.T) {
 				}
 			}
 		}()
+		<-ready
 		s.forgetWorkspace(key)
 		close(stop)
 		<-done
