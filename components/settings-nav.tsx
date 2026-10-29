@@ -74,7 +74,7 @@ export function SettingsNav() {
     <aside
       role="navigation"
       aria-label="Settings"
-      className="flex min-h-0 flex-col gap-5 overflow-y-auto border-r border-border/60 bg-sidebar px-3 pb-3 pt-5"
+      className="flex min-h-0 flex-col gap-5 overflow-y-auto border-r border-border/60 bg-sidebar px-4 pb-3 pt-5"
     >
       <Link href="/" className="flex items-center gap-2 px-2 font-mono text-sm font-semibold text-foreground">
         <Terminal className="size-4" />

@@ -279,6 +279,7 @@ export function AppSidebar({
         ) : null}
       </nav>
 
+      {/* -mx-4/px-4 mirror the aside's px-4, so the rule runs edge to edge. */}
       <div className="-mx-4 min-h-0 flex-1 overflow-y-auto border-t border-border/60 px-4 pt-4">
         <SidebarMissions active={active} projects={projects} />
         <div className="flex items-center justify-between px-2">

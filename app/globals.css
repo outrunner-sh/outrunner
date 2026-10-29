@@ -107,6 +107,13 @@
   }
 }
 
+/* The expanded sidebar's width: the app's (components/app-frame.tsx) and
+   Settings' (app/settings/layout.tsx) alike, so moving between them doesn't
+   resize it. */
+:root {
+  --sidebar-width: 320px;
+}
+
 /* The app's dark surface palette. Defined app-wide, not on the studio alone:
    the home composer and the workspace-creation steps share these classes
    outside it, and an undefined colour there fell back to the theme's (black
