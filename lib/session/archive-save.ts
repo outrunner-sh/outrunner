@@ -68,7 +68,7 @@ export async function saveForArchive<Box>(
     capturing = true;
     return { saved: true, manifest: await deps.capture(box) };
   } catch (error) {
-    const unreachable = error instanceof TypeError ||
+    const unreachable = (error instanceof TypeError && (error.message === "fetch failed" || error.message === "Failed to fetch")) ||
       (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError"));
     // A malformed manifest or other capture failure is not proof that the
     // box is unreachable. Preserve the session for a retry in those cases.

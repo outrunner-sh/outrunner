@@ -67,6 +67,7 @@ test("a reachable agent's capture or upload error leaves the session available t
     new AgentRequestError(404, { code: "NOT_FOUND", message: "artifact not found" }),
     new AgentRequestError(403, { code: "UNAUTHORIZED", message: "unauthorized" }),
     new Error("invalid Snapshot manifest"),
+    new TypeError("Cannot read properties of undefined"),
   ]) {
     await assert.rejects(saveForArchive(box({ capture: error }).deps), (caught) => caught === error);
   }
