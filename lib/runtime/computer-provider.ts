@@ -649,6 +649,16 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     return box.browserUrl ? box.browserUrl(port, ttlSeconds) : null;
   }
 
+  /** The WebSocket the owner's browser views the box's desktop through, for
+   *  `ttlSeconds`, the desktop started first if it wasn't running; null where
+   *  the provider has no desktop. */
+  async openDesktop(sandboxId: string, ttlSeconds: number): Promise<string | null> {
+    const box = await this.backend.get(sandboxId);
+    if (!box.desktop) return null;
+    await box.desktop.start();
+    return box.desktop.viewerUrl(ttlSeconds);
+  }
+
   /**
    * Build the {@link AgentTarget} an {@link AgentClient} needs for one box. Its
    * endpoint is kept a few minutes (lib/runtime/agent-endpoint-cache.ts);

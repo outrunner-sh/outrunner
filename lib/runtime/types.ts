@@ -90,6 +90,13 @@ export function opensInBrowser(provider: ProviderName): boolean {
   return provider === "daytona" || provider === "user-daytona";
 }
 
+/** Whether a session on `provider` has a desktop (the Desktop tab, the
+ *  agent's desktop tools): Daytona's computer use. Modal and Neev boxes have
+ *  no display server, so neither is offered there. */
+export function hasDesktop(provider: ProviderName): boolean {
+  return provider === "daytona" || provider === "user-daytona";
+}
+
 /** One repository of a multi-repository session. */
 export type SessionCheckout = {
   projectId: string;

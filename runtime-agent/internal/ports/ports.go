@@ -27,12 +27,21 @@ type Port struct {
 // ProviderPorts in agent-protocol.fixtures.json.
 var ProviderPorts = []int{2280, 22220, 22222, 33333}
 
+// DesktopPorts are the desktop's: x11vnc and noVNC's proxy, which Daytona's
+// computer use starts, and the DevTools port of the browser the agent's
+// desktop tools launch. Not servers of the user's either: the Desktop tab is
+// the way to the desktop, through a link that lasts minutes, and a preview
+// link to any of these would be a key to the box's desktop or its browser
+// good for hours. lib/runtime/box-ports.ts holds the same list; both match
+// DesktopPorts in agent-protocol.fixtures.json.
+var DesktopPorts = []int{5900, 5901, 6080, 19222}
+
 // tcpListen is the LISTEN state in /proc/net/tcp.
 const tcpListen = "0A"
 
 // Listening is every TCP port something on the box listens on, lowest first,
-// but `skip` (the agent's own, the editor's), the provider's, and ports below
-// 1024. procRoot is "/proc" but in tests.
+// but `skip` (the agent's own, the editor's), the provider's, the desktop's,
+// and ports below 1024. procRoot is "/proc" but in tests.
 func Listening(procRoot string, skip ...int) ([]Port, error) {
 	inodes := map[int]string{} // port -> a socket inode listening on it
 	found := false
@@ -55,7 +64,7 @@ func Listening(procRoot string, skip ...int) ([]Port, error) {
 		return nil, os.ErrNotExist
 	}
 	skipped := map[int]bool{}
-	for _, port := range append(append([]int{}, skip...), ProviderPorts...) {
+	for _, port := range append(append(append([]int{}, skip...), ProviderPorts...), DesktopPorts...) {
 		skipped[port] = true
 	}
 	var listening []Port

@@ -1,6 +1,7 @@
 import { Daytona, DaytonaNotFoundError, type Sandbox } from "@daytonaio/sdk";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
+import { NOVNC_PORT } from "@/lib/runtime/box-ports";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
 import type { ListedBox } from "@/lib/runtime/orphan-boxes";
@@ -27,6 +28,16 @@ export const EXEC_TIMEOUT_SECONDS = 10 * 60;
 /** The SDK's deadline for its other calls (get, start, uploads), 24 hours
  *  unless set: none of them takes minutes. */
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * The desktop's screen size. Daytona's computer use starts its display at the
+ * VNC_RESOLUTION in the box's environment, 1024×768 without one, and reads it
+ * only from the environment the box was made with: a box made before this
+ * keeps 1024×768. Wider is more of a web page per screenshot; no wider than
+ * this so a screenshot reaches the model at full size, its pixels the ones
+ * the agent clicks.
+ */
+export const DESKTOP_RESOLUTION = "1280x800";
 
 /** Monotonic suffix so each detached launch gets its own Daytona session. */
 let launchSeq = 0;
@@ -71,7 +82,13 @@ export class DaytonaBackend implements SandboxBackend {
       // Never auto-stopped or auto-deleted by Daytona: Outrunner stops an
       // idle box itself (lib/billing/reconcile.ts), by what its sessions are
       // doing.
-      { autoStopInterval: 0, autoDeleteInterval: -1, labels, ...(snapshot && { snapshot }) },
+      {
+        autoStopInterval: 0,
+        autoDeleteInterval: -1,
+        labels,
+        envVars: { VNC_RESOLUTION: DESKTOP_RESOLUTION },
+        ...(snapshot && { snapshot }),
+      },
       { timeout: CREATE_TIMEOUT_SECONDS },
     );
     return box(sandbox);
@@ -234,6 +251,24 @@ export function box(sandbox: Sandbox): SandboxBox {
     // The token is in the host, so every page, asset and socket under it is
     // let through: what the editor needs.
     browserUrl: async (port, ttlSeconds) => (await sandbox.getSignedPreviewUrl(port, ttlSeconds)).url,
+    desktop: {
+      // Starts what isn't running (the display, its window manager, the VNC
+      // server and noVNC) and leaves what is: a second start is a no-op.
+      start: async () => {
+        await sandbox.computerUse.start();
+      },
+      // A signed preview link is good for its one port alone (checked on a
+      // real box: the token in it is refused on any other), and noVNC's
+      // proxy there forwards to the VNC server alone, a target fixed at its
+      // launch that no client can change. So the link reaches the desktop,
+      // and not the agent or Daytona's toolbox.
+      viewerUrl: async (ttlSeconds) => {
+        const url = new URL((await sandbox.getSignedPreviewUrl(NOVNC_PORT, ttlSeconds)).url);
+        url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
+        url.pathname = "/websockify";
+        return url.toString();
+      },
+    },
   };
 }
 
