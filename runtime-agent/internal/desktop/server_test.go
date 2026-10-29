@@ -28,7 +28,9 @@ type fakeToolbox struct {
 	dir    string
 	recs   map[string]*Recording
 	// broken answers every call as a crashed computer-use service does.
-	broken bool
+	broken   bool
+	failList int
+	failStop int
 }
 
 func newFakeToolbox(t *testing.T) (*fakeToolbox, *httptest.Server) {
@@ -74,10 +76,22 @@ func (f *fakeToolbox) serve(w http.ResponseWriter, r *http.Request) {
 		f.recs[rec.ID] = rec
 		reply(rec)
 	case "/computeruse/recordings/stop":
+		if f.failStop > 0 {
+			f.failStop--
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"message":"temporarily unavailable"}`))
+			return
+		}
 		rec := f.recs[body["id"].(string)]
 		rec.Status, rec.DurationSeconds, rec.SizeBytes = "completed", 4.5, 7
 		reply(rec)
 	case "/computeruse/recordings":
+		if f.failList > 0 {
+			f.failList--
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"message":"temporarily unavailable"}`))
+			return
+		}
 		var list []Recording
 		for _, rec := range f.recs {
 			if _, err := os.Stat(rec.FilePath); err == nil {
@@ -432,6 +446,43 @@ func TestAWatchdogLeavesARecordingAlreadyStopped(t *testing.T) {
 	}
 	if n := fake.called("POST /computeruse/recordings/stop"); n != 1 {
 		t.Errorf("stopped %d times", n)
+	}
+}
+
+func TestWatchdogRetriesTransientToolboxFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		failList int
+		failStop int
+		stops    int
+		wantErr  bool
+	}{
+		{name: "listing", failList: 1, stops: 1},
+		{name: "stopping", failStop: 2, stops: 3},
+		{name: "keeps failing", failStop: 5, stops: 5, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, toolbox := newFakeToolbox(t)
+			path := filepath.Join(fake.dir, "recording.mp4")
+			if err := os.WriteFile(path, []byte("MP4DATA"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			fake.recs["rec-1"] = &Recording{ID: "rec-1", Status: "recording", FilePath: path}
+			fake.failList = tc.failList
+			fake.failStop = tc.failStop
+
+			err := capRecording(context.Background(), &Toolbox{Base: toolbox.URL}, "rec-1", time.Now(), time.Millisecond)
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "after 5 attempts") {
+					t.Fatalf("CapRecording error = %v, want exhausted retry error", err)
+				}
+			} else if err != nil {
+				t.Fatalf("CapRecording: %v", err)
+			}
+			if got := fake.called("POST /computeruse/recordings/stop"); got != tc.stops {
+				t.Errorf("stop requests = %d, want %d", got, tc.stops)
+			}
+		})
 	}
 }
 

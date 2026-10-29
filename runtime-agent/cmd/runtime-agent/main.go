@@ -12,8 +12,8 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"syscall"
@@ -270,6 +270,9 @@ func desktopServer(args []string) int {
 		Watchdog: func(id string, until time.Time) error {
 			cmd := exec.Command(exe, "desktop-mcp", "--stop-recording", id, "--at", strconv.FormatInt(until.Unix(), 10))
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+			// The detached process runs beyond this server; keep its retry
+			// failure visible in the runtime agent's logs.
+			cmd.Stderr = os.Stderr
 			if err := cmd.Start(); err != nil {
 				return err
 			}

@@ -114,20 +114,43 @@ type Watchdog func(id string, until time.Time) error
 // running. Its file stays in the toolbox's folder, where the next
 // record_stop finds it and keeps it.
 func CapRecording(ctx context.Context, tb *Toolbox, id string, until time.Time) error {
+	return capRecording(ctx, tb, id, until, 30*time.Second)
+}
+
+func capRecording(ctx context.Context, tb *Toolbox, id string, until time.Time, retryDelay time.Duration) error {
 	if err := pause(ctx, time.Until(until)); err != nil {
 		return err
 	}
-	recordings, err := tb.Recordings(ctx)
-	if err != nil {
-		return err
-	}
-	for _, rec := range recordings {
-		if rec.ID == id && rec.Status == "recording" {
-			_, err := tb.StopRecording(ctx, id)
-			return err
+	const attempts = 5
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			if err := pause(ctx, retryDelay); err != nil {
+				return err
+			}
+		}
+		recordings, err := tb.Recordings(ctx)
+		if err != nil {
+			lastErr = fmt.Errorf("list recordings: %w", err)
+			continue
+		}
+		running := false
+		for _, rec := range recordings {
+			if rec.ID != id || rec.Status != "recording" {
+				continue
+			}
+			running = true
+			if _, err := tb.StopRecording(ctx, id); err != nil {
+				lastErr = fmt.Errorf("stop recording: %w", err)
+				break
+			}
+			return nil
+		}
+		if !running {
+			return nil
 		}
 	}
-	return nil
+	return fmt.Errorf("stop recording %s after %d attempts: %w", id, attempts, lastErr)
 }
 
 // protocolVersions are the MCP versions the server speaks; a client asking
