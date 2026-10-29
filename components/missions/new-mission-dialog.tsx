@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Starting a Mission: pick its project, say what it owns. The Mission is
+ * Starting a Runner: pick its project, say what it owns. The Runner is
  * made at once and opens; what was typed is its first message, which names
  * it (as a session's first prompt does), sent once its box is ready.
  */
@@ -47,7 +47,7 @@ export function NewMissionDialog({
 
   const start = async () => {
     if (!chosen || !prompt.trim() || busy) return;
-    // So a ready pull request, or a Mission needing them, can reach them
+    // So a ready pull request, or a Runner needing them, can reach them
     // while they're elsewhere (lib/notifications): asked while this click is
     // still the gesture browsers want, before anything is awaited.
     if (typeof Notification !== "undefined" && Notification.permission === "default") void askPermission();
@@ -60,7 +60,7 @@ export function NewMissionDialog({
         body: JSON.stringify({ projectId: chosen, prompt: prompt.trim() }),
       });
       const body = (await response.json().catch(() => null)) as { workspace?: { id: string }; error?: string } | null;
-      if (!response.ok || !body?.workspace) throw new Error(body?.error ?? "The Mission didn't start. Try again.");
+      if (!response.ok || !body?.workspace) throw new Error(body?.error ?? "The Runner didn't start. Try again.");
       void refreshMissions();
       onOpenChange(false);
       setPrompt("");
@@ -80,9 +80,9 @@ export function NewMissionDialog({
             <Rocket className="size-[18px] text-[#e5e5e5]" strokeWidth={1.75} />
           </span>
           <div className="min-w-0">
-            <DialogTitle className="text-[15px] font-medium">New Mission</DialogTitle>
+            <DialogTitle className="text-[15px] font-medium">New Runner</DialogTitle>
             <DialogDescription className="mt-1 text-[12.5px] leading-relaxed text-[#8f8f8f]">
-              A Mission owns one area of a project. It plans, hands each piece of work to a Runner with its own box and
+              A Runner owns one area of a project. It plans, hands each piece of work to a Ship with its own box and
               branch, and tells you when a pull request is ready or it needs a decision.
             </DialogDescription>
           </div>
@@ -164,7 +164,7 @@ export function NewMissionDialog({
             className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#ededed] px-3 text-[13px] font-medium text-[#0a0a0a] transition-colors hover:bg-white disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/40"
           >
             {busy ? <Spinner className="size-3.5" label="Starting" /> : <ArrowUp className="size-3.5" />}
-            Start Mission
+            Start Runner
           </button>
         </div>
       </DialogContent>

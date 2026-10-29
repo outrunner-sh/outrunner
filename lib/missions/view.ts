@@ -1,6 +1,6 @@
 /**
- * A Mission as its owner sees it (the sidebar's Missions, the Runners pane):
- * its status, and its Runners grouped by what they wait on. The parts with no
+ * A Runner as its owner sees it (the sidebar's Runners, the Ships pane): its
+ * status, and its Ships grouped by what they wait on. The parts with no
  * network; lib/missions/view.deps.ts reads the rows.
  */
 
@@ -27,14 +27,14 @@ export type RunnerPullView = {
   endedAt: string | null;
 };
 
-/** Where a Runner sits in the Runners pane. */
+/** Where a Ship sits in the Ships pane. */
 export type RunnerGroup = "needs_you" | "ready_to_merge" | "ready_to_review" | "working" | "shipping" | "done";
 
 export const RUNNER_GROUPS: { key: Exclude<RunnerGroup, "done">; label: string }[] = [
   { key: "needs_you", label: "Needs you" },
   { key: "ready_to_merge", label: "Ready to merge" },
   { key: "ready_to_review", label: "Ready to review" },
-  { key: "working", label: "Runners working" },
+  { key: "working", label: "Working" },
   { key: "shipping", label: "Shipping" },
 ];
 
@@ -64,7 +64,7 @@ export type MissionView = {
   status: MissionStatus;
   /** Pull requests ready to merge or review. */
   readyCount: number;
-  /** Runners that aren't archived. */
+  /** Ships that aren't archived. */
   liveRunners: number;
   environment: { id: string; name: string } | null;
   /** Its own session's status (archived, asleep, …). */
@@ -90,7 +90,7 @@ export function briefSummary(brief: string | null): string {
   return first.length > 140 ? `${first.slice(0, 139)}…` : first;
 }
 
-/** Where a Runner goes in the pane, and why it needs someone if it does. */
+/** Where a Ship goes in the pane, and why it needs someone if it does. */
 export function runnerGroup(
   runner: {
     state: RunnerState;
@@ -125,15 +125,15 @@ export function runnerGroup(
 }
 
 /**
- * The Mission's status in the sidebar: it needs you only when its own
+ * The Runner's status in the sidebar: it needs you only when its own
  * session does, as every session's standing says (it asked you through
- * ask_user, errored, or is stuck; a Runner that's stuck is the Mission's to
+ * ask_user, errored, or is stuck; a Ship that's stuck is the Runner's to
  * handle);
- * working while it or any Runner is at it, or a pull request is settling;
+ * working while it or any Ship is at it, or a pull request is settling;
  * ready while a pull request waits on a review or a merge.
  */
 export function missionStatus(input: {
-  /** Where the Mission's own session stands. */
+  /** Where the Runner's own session stands. */
   standing: Pick<SessionStanding, "standing"> | null;
   runners: readonly Pick<RunnerView, "group" | "state" | "pulls">[];
 }): MissionStatus {

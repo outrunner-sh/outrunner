@@ -43,13 +43,13 @@ export function missionToolDeps(): MissionToolDeps {
       const level = mission.environmentId
         ? await environmentLevel(mission.ownerId, mission.environmentId)
         : await projectLevel(mission.ownerId, mission.projectId);
-      return allows(level, "read") ? null : "The Mission's owner can no longer read its project, so its tools are off.";
+      return allows(level, "read") ? null : "The Runner's owner can no longer read its project, so its tools are off.";
     },
     environmentReady: async (mission) => {
       if (!mission.environmentId) return null;
       const environment = await getEnvironment(mission.ownerId, mission.environmentId);
-      if (!environment) return "the Mission's project is gone or archived.";
-      if (environment.repos.length === 0) return "the Mission's project has no repositories.";
+      if (!environment) return "the Runner's project is gone or archived.";
+      if (environment.repos.length === 0) return "the Runner's project has no repositories.";
       return null;
     },
     session: sessionById,

@@ -7,7 +7,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 type RouteContext = { params: Promise<{ id: string; runnerId: string }> };
 
-/** A Runner of the owner's Mission, opened in the Runners pane: its brief
+/** A Ship under the owner's Runner, opened in the Ships pane: its brief
  *  and its latest response (from its box, else as last recorded). */
 export async function GET(_request: Request, context: RouteContext) {
   const owner = await getOwner();
@@ -15,7 +15,7 @@ export async function GET(_request: Request, context: RouteContext) {
   const { id, runnerId } = await context.params;
   const runner = await sessionById(runnerId);
   if (!runner || runner.ownerId !== owner.id || runner.parentMissionId !== id) {
-    return NextResponse.json({ error: "Runner not found." }, { status: 404 });
+    return NextResponse.json({ error: "Ship not found." }, { status: 404 });
   }
   const [summary, brief] = await Promise.all([
     boxSummary(runner).catch(() => null),

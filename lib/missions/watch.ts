@@ -69,11 +69,11 @@ function toState(row: WatchRow): WatchState {
 
 export type WatchOutcome = "waiting" | "finished" | "needs_attention" | "closed";
 
-/** What a Runner waiting on a person is told to its Mission as. */
+/** How a Ship waiting on a person is described to its Runner. */
 const WAITING_REASON = {
-  question: "it asked a question only a person can answer: open the Runner to answer it",
-  plan: "it's waiting for its plan to be approved: open the Runner to approve it",
-  secrets: "it's waiting for secrets: open the Runner to provide them",
+  question: "it asked a question only a person can answer: open the Ship to answer it",
+  plan: "it's waiting for its plan to be approved: open the Ship to approve it",
+  secrets: "it's waiting for secrets: open the Ship to provide them",
 } as const;
 
 /** Look at one watched turn, and act on what's seen. */

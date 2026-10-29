@@ -35,10 +35,10 @@ export function branchTakenByTeammateResponse(): Response {
  * it tests without Next.
  */
 export function workspaceCreateErrorResponse(error: unknown, context: string): Response {
-  // A Mission's Runners are capped in the database (20261102200000_missions.sql).
+  // A Runner's Ships are capped in the database (20261102200000_missions.sql).
   if (isRunnerCap(error)) {
     return Response.json(
-      { error: "This Mission already has 20 Runners that aren't archived. Archive a finished one first." },
+      { error: "This Runner already has 20 Ships that aren't archived. Archive a finished one first." },
       { status: 409 },
     );
   }
@@ -55,7 +55,7 @@ export function workspaceCreateErrorResponse(error: unknown, context: string): R
   return Response.json({ error: "Couldn't create the session. Try again in a moment." }, { status: 500 });
 }
 
-/** The cap on a Mission's live Runners, raised by its trigger. */
+/** The cap on a Runner's live Ships, raised by its trigger. */
 export function isRunnerCap(error: unknown): boolean {
   return Boolean(
     error &&

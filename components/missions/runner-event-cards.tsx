@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * A message of `<runner_event>` blocks to a Mission (lib/missions/events.ts),
- * shown as what it is: news from its Runners, one compact card each, labelled
+ * A message of `<runner_event>` blocks in a Runner's conversation (lib/missions/events.ts),
+ * shown as what it is: news from its Ships, one compact card each, labelled
  * with where it came from, rather than the raw markup. A card with more to
- * say (a Runner's whole response) opens.
+ * say (a Ship's whole response) opens.
  */
 
 import { AlertTriangle, Archive, CheckCircle2, ChevronRight, GitMerge, GitPullRequest, GitPullRequestClosed } from "lucide-react";
@@ -38,7 +38,7 @@ function headline(event: ParsedRunnerEvent): { line: string; rest: string | null
 
 export function RunnerEventCards({ events, note }: { events: ParsedRunnerEvent[]; note?: string }) {
   return (
-    <div className="flex flex-col gap-1.5" aria-label="News from Runners">
+    <div className="flex flex-col gap-1.5" aria-label="News from Ships">
       {note && <div className="timeline-prompt">{note}</div>}
       {events.map((event, i) => {
         const { label, Icon, tone } = KIND[event.kind];
@@ -48,13 +48,13 @@ export function RunnerEventCards({ events, note }: { events: ParsedRunnerEvent[]
             <Icon className={cn("mt-[3px] size-3.5 shrink-0", tone)} />
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5 text-[12px]">
-                <span className="text-[#7a7a7a]">Runner</span>
+                <span className="text-[#7a7a7a]">Ship</span>
                 <Link
                   href={`/workspaces/${event.runnerId}`}
                   className="max-w-[40%] truncate font-medium text-[#d6d6d6] hover:underline"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  {event.runner ?? "Runner"}
+                  {event.runner ?? "Ship"}
                 </Link>
                 <span className={cn("truncate", tone)}>{label}</span>
               </span>

@@ -22,7 +22,7 @@ import type { Workspace } from "@/lib/runtime/types";
 import { createCloudSession, type SessionRequest } from "@/lib/session/create-cloud-session";
 import { ActAsUserError, actAsUser } from "@/lib/supabase/acting-user";
 
-/** The new-session request for a Runner of `mission`. */
+/** The new-session request for a Ship under `runner`. */
 export function runnerRequest(mission: Pick<Workspace, "model" | "agent">, start: RunnerStart): SessionRequest {
   const own = mission.model;
   let provider: string | undefined = own?.model.provider;
@@ -61,7 +61,7 @@ export async function startRunner(mission: Workspace, start: RunnerStart): Promi
     try {
       return await actAsUser(mission.ownerId, async () => {
         const owner = await getOwner();
-        if (!owner) return { error: "The Mission's owner can't use Outrunner any more." };
+        if (!owner) return { error: "The Runner's owner can't use Outrunner any more." };
         let runnerId: string | null = null;
         const response = await createCloudSession(owner, mission.projectId, runnerRequest(mission, start), {
           title: start.name ?? start.brief.replace(/\s+/g, " ").slice(0, 80),

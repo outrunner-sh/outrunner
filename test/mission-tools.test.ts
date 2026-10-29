@@ -105,8 +105,8 @@ test("a Mission's token reaches its own Runners and nothing else", async () => {
     for (const tool of ["message_runner", "read_runner", "archive_runner"]) {
       const result = await callMissionTool(scope, tool, { runner_id: other, message: "hi" }, deps);
       assert.equal(result.isError, true, `${tool} ${other}`);
-      // Another Mission's Runner reads exactly as no Runner: nothing learned.
-      assert.match(result.text, /no Runner with that id/, `${tool} ${other}`);
+      // Another Runner's Ship reads exactly as no Ship: nothing learned.
+      assert.match(result.text, /no Ship with that id/, `${tool} ${other}`);
     }
   }
   assert.deepEqual(calls, []);
@@ -141,14 +141,14 @@ test("a Runner of another owner's Mission is never reached, even named as its pa
   assert.deepEqual(calls, []);
 });
 
-test("spawn_runner stops at the cap, counting only Runners that aren't archived", async () => {
+test("spawn_runner stops at the cap, counting only Ships that aren't archived", async () => {
   const runners = (n: number, status: WorkspaceStatus) =>
     Array.from({ length: n }, (_, i) => session(`${status}-${i}`, { parentMissionId: "m1", status }));
   const full = world(runners(MAX_RUNNERS - 1, "ready"));
   // r1 is the twentieth.
   const refused = await callMissionTool({ missionId: "m1" }, "spawn_runner", { prompt: "do it" }, full.deps);
   assert.equal(refused.isError, true);
-  assert.match(refused.text, /20 Runners/);
+  assert.match(refused.text, /20 Ships/);
   assert.equal(full.started.length, 0);
 
   const archived = world([...runners(MAX_RUNNERS - 2, "ready"), ...runners(5, "archived"), ...runners(3, "failed")]);
@@ -215,7 +215,7 @@ test("a Runner's state reads from its status and whether it's mid-turn", () => {
 test("access is asked on every call: taken away, the tools stop", async () => {
   const { deps, calls, state } = world();
   assert.equal((await callMissionTool({ missionId: "m1" }, "message_runner", { runner_id: "r1", message: "a" }, deps)).isError, undefined);
-  state.denied = "The Mission's owner can no longer read its project, so its tools are off.";
+  state.denied = "The Runner's owner can no longer read its project, so its tools are off.";
   for (const tool of ["list_runners", "read_notes", "spawn_runner", "message_runner"]) {
     const result = await callMissionTool({ missionId: "m1" }, tool, { runner_id: "r1", message: "b", prompt: "x" }, deps);
     assert.equal(result.isError, true, tool);
@@ -226,9 +226,9 @@ test("access is asked on every call: taken away, the tools stop", async () => {
 
 test("spawn_runner says why when the project isn't ready", async () => {
   const { deps, started, state } = world();
-  state.notReady = "the Mission's project is gone or archived.";
+  state.notReady = "the Runner's project is gone or archived.";
   const result = await callMissionTool({ missionId: "m1" }, "spawn_runner", { prompt: "do it" }, deps);
   assert.equal(result.isError, true);
-  assert.match(result.text, /didn't start: the Mission's project is gone/);
+  assert.match(result.text, /didn't start: the Runner's project is gone/);
   assert.equal(started.length, 0);
 });

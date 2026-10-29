@@ -48,7 +48,7 @@ test("a call reaches only its token's Mission's Runners", async () => {
     result: { isError?: boolean; content: { text: string }[] };
   };
   assert.equal(other.result.isError, true);
-  assert.match(other.result.content[0].text, /no Runner with that id/);
+  assert.match(other.result.content[0].text, /no Ship with that id/);
   const own = (await rpc("tools/call", { name: "message_runner", arguments: { runner_id: "r2", message: "hi" } }, "m2")) as {
     result: { isError?: boolean };
   };

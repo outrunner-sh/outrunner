@@ -1,10 +1,10 @@
 /**
- * The Mission's tools for its Runners (docs/missions.md), as plain functions:
- * the Mission's MCP endpoint (app/api/missions/mcp) serves them, and the
+ * The Runner's tools for its Ships (docs/missions.md), as plain functions:
+ * the Runner's MCP endpoint (app/api/missions/mcp) serves them, and the
  * org-wide MCP server can register the same ones later. Each is called for
- * one Mission (`scope`, from its token), and reaches only that Mission's
- * Runners: a Runner of another Mission, or any other session, reads as no
- * Runner at all, so a token can't even learn that one exists.
+ * one Runner (`scope`, from its token), and reaches only that Runner's
+ * Ships: a Ship of another Runner, or any other session, reads as no Ship at
+ * all, so a token can't even learn that one exists.
  *
  * What touches the world comes in as `deps` (lib/missions/tools.deps.ts), so
  * the scoping and the refusals here test without a database or a box.
@@ -23,12 +23,12 @@ import {
 } from "@/lib/missions/rules";
 import type { Workspace } from "@/lib/runtime/types";
 
-/** The Mission a call is for: the one its token names. */
+/** The Runner a call is for: the one its token names. */
 export type MissionScope = { missionId: string };
 
-/** What spawn_runner asks for. */
+/** What spawn_runner asks for when starting a Ship. */
 export type RunnerStart = {
-  /** Its brief, as the Mission wrote it: kept, and its name's source. */
+  /** Its brief, as the Runner wrote it: kept, and its name's source. */
   brief: string;
   /** Plan first: its first message asks for a plan before any change. */
   planMode: boolean;
@@ -39,10 +39,10 @@ export type RunnerStart = {
 };
 
 export type MissionToolDeps = {
-  /** Why the Mission's owner may no longer use it (they lost read on its
-   *  project, or left its org), or null when they may. Asked on every call. */
+  /** Why the Runner's owner may no longer use its tools (they lost read on
+   *  its project, or left its org), or null when they may. Asked on every call. */
   access(mission: Workspace): Promise<string | null>;
-  /** Why a Runner can't be started from the Mission's project now (gone,
+  /** Why a Ship can't be started from the Runner's project now (gone,
    *  archived, no repositories), or null when one can. */
   environmentReady(mission: Workspace): Promise<string | null>;
   /** Any session by id, whoever's. */
@@ -70,19 +70,19 @@ export type ToolDefinition = {
   inputSchema: Record<string, unknown>;
 };
 
-const RUNNER_ID = { type: "string", description: "The Runner's id, as spawn_runner or list_runners gave it." };
+const RUNNER_ID = { type: "string", description: "The Ship's id, as spawn_runner or list_runners gave it." };
 
 export const MISSION_TOOLS: ToolDefinition[] = [
   {
     name: "spawn_runner",
     description:
-      `Start a Runner: a new cloud session of this Mission's project, with its own box and branch, that works on one task. It sees only the brief you write, so make it self-contained: the goal, the context it needs, what done looks like (usually a pull request). Runs on this Mission's model unless model, agent or effort says otherwise. At most ${MAX_RUNNERS} Runners that aren't archived.`,
+      `Start a Ship: a new cloud session delegated by this Runner, in its project, with its own box and branch, to work on one task. It sees only the brief you write, so make it self-contained: the goal, the context it needs, what done looks like (usually a pull request). Runs on this Runner's model unless model, agent or effort says otherwise. At most ${MAX_RUNNERS} Ships that aren't archived.`,
     inputSchema: {
       type: "object",
       properties: {
-        prompt: { type: "string", description: "The Runner's brief: everything it knows about the task." },
-        name: { type: "string", description: "A short name for the Runner, shown in the sidebar." },
-        model: { type: "string", description: "A model id to run it on instead of this Mission's." },
+        prompt: { type: "string", description: "The Ship's brief: everything it knows about the task." },
+        name: { type: "string", description: "A short name for the Ship, shown under the Runner in the sidebar." },
+        model: { type: "string", description: "A model id to run it on instead of this Runner's." },
         agent: { type: "string", enum: ["claude", "codex"], description: "The coding agent to run." },
         effort: { type: "string", enum: ["low", "medium", "high", "xhigh", "max"], description: "Thinking effort." },
         plan_mode: { type: "boolean", description: "Have it reply with a plan first and change nothing until told to go ahead." },
@@ -94,13 +94,13 @@ export const MISSION_TOOLS: ToolDefinition[] = [
   {
     name: "message_runner",
     description:
-      "Send a Runner a follow-up. A working Runner is steered mid-turn unless queue is set, in which case the message waits for its turn to end. An idle Runner starts a new turn; an asleep or archived one is woken or restored first.",
+      "Send a Ship a follow-up. A working Ship is steered mid-turn unless queue is set, in which case the message waits for its turn to end. An idle Ship starts a new turn; an asleep or archived one is woken or restored first.",
     inputSchema: {
       type: "object",
       properties: {
         runner_id: RUNNER_ID,
         message: { type: "string", description: "What to tell it." },
-        queue: { type: "boolean", description: "Hold it until the Runner's current turn ends, rather than steering." },
+        queue: { type: "boolean", description: "Hold it until the Ship's current turn ends, rather than steering." },
       },
       required: ["runner_id", "message"],
       additionalProperties: false,
@@ -109,22 +109,22 @@ export const MISSION_TOOLS: ToolDefinition[] = [
   {
     name: "list_runners",
     description:
-      "List this Mission's Runners: each one's state (setting_up, working, idle, asleep, archived, failed), its pull requests with their CI checks and mergeability, and messages queued for it.",
+      "List this Runner's Ships: each one's state (setting_up, working, idle, asleep, archived, failed), its pull requests with their CI checks and mergeability, and messages queued for it.",
     inputSchema: {
       type: "object",
-      properties: { include_archived: { type: "boolean", description: "Include archived Runners too." } },
+      properties: { include_archived: { type: "boolean", description: "Include archived Ships too." } },
       additionalProperties: false,
     },
   },
   {
     name: "read_runner",
-    description: "Read one Runner: its settings, its pull requests and their status, and its latest response.",
+    description: "Read one Ship: its settings, its pull requests and their status, and its latest response.",
     inputSchema: { type: "object", properties: { runner_id: RUNNER_ID }, required: ["runner_id"], additionalProperties: false },
   },
   {
     name: "archive_runner",
     description:
-      "Archive a finished Runner, freeing its place and its box. Refuses one that is working or has an open pull request unless force is set; a Runner whose pull requests are all merged or closed is archived on its own, so this is rarely needed. Don't force it to free a box: its pull request still needs it for fixes. Messaging it later restores it.",
+      "Archive a finished Ship, freeing its place and its box. Refuses one that is working or has an open pull request unless force is set; a Ship whose pull requests are all merged or closed is archived on its own, so this is rarely needed. Don't force it to free a box: its pull request still needs it for fixes. Messaging it later restores it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -137,12 +137,12 @@ export const MISSION_TOOLS: ToolDefinition[] = [
   },
   {
     name: "read_notes",
-    description: `Read this Mission's notes. They are also on your box at ${NOTES_FILE}, as they were when it started.`,
+    description: `Read this Runner's notes. They are also on your box at ${NOTES_FILE}, as they were when it started.`,
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     name: "write_notes",
-    description: `Replace this Mission's notes with content (Markdown, up to ${NOTES_MAX_CHARS} characters). Saved notes outlive this box; edits to ${NOTES_FILE} alone don't.`,
+    description: `Replace this Runner's notes with content (Markdown, up to ${NOTES_MAX_CHARS} characters). Saved notes outlive this box; edits to ${NOTES_FILE} alone don't.`,
     inputSchema: {
       type: "object",
       properties: { content: { type: "string", description: "The whole of the notes." } },
@@ -152,7 +152,7 @@ export const MISSION_TOOLS: ToolDefinition[] = [
   },
 ];
 
-const NO_SUCH_RUNNER: ToolResult = { text: "This Mission has no Runner with that id. list_runners shows its Runners.", isError: true };
+const NO_SUCH_RUNNER: ToolResult = { text: "This Runner has no Ship with that id. list_runners shows its Ships.", isError: true };
 
 function refuse(text: string): ToolResult {
   return { text, isError: true };
@@ -162,14 +162,14 @@ function json(value: unknown): ToolResult {
   return { text: JSON.stringify(value, null, 2) };
 }
 
-/** The Mission the scope names, if it is one still. */
+/** The Runner the scope names, if it is one still. */
 async function missionOf(scope: MissionScope, deps: MissionToolDeps): Promise<Workspace | null> {
   const mission = await deps.session(scope.missionId);
   if (!mission || mission.kind !== "mission" || mission.status === "destroyed" || mission.status === "destroying") return null;
   return mission;
 }
 
-/** One of the Mission's own Runners, or null for any other id. */
+/** One of the Runner's own Ships, or null for any other id. */
 export async function ownRunner(mission: Workspace, runnerId: unknown, deps: MissionToolDeps): Promise<Workspace | null> {
   if (typeof runnerId !== "string" || !runnerId) return null;
   const runner = await deps.session(runnerId);
@@ -210,7 +210,7 @@ async function runnerView(runner: Workspace, deps: MissionToolDeps, queued: numb
   };
 }
 
-/** Run one tool for the Mission the scope names. */
+/** Run one tool for the Runner the scope names. */
 export async function callMissionTool(
   scope: MissionScope,
   name: string,
@@ -218,7 +218,7 @@ export async function callMissionTool(
   deps: MissionToolDeps,
 ): Promise<ToolResult> {
   const mission = await missionOf(scope, deps);
-  if (!mission) return refuse("This Mission is gone, so its tools no longer work.");
+  if (!mission) return refuse("This Runner is gone, so its tools no longer work.");
   // Rechecked each call: access taken away since the box started counts now.
   const denied = await deps.access(mission);
   if (denied) return refuse(denied);
@@ -251,12 +251,12 @@ export async function callMissionTool(
 
 async function spawnRunner(mission: Workspace, args: Record<string, unknown>, deps: MissionToolDeps): Promise<ToolResult> {
   const prompt = textArg(args, "prompt");
-  if (!prompt) return refuse("prompt is required: the Runner's brief.");
+  if (!prompt) return refuse("prompt is required: the Ship's brief.");
   const notReady = await deps.environmentReady(mission);
-  if (notReady) return refuse(`The Runner didn't start: ${notReady}`);
+  if (notReady) return refuse(`The Ship didn't start: ${notReady}`);
   const places = runnerPlacesLeft(await deps.runners(mission.id));
   if (places === 0) {
-    return refuse(`This Mission already has ${MAX_RUNNERS} Runners that aren't archived. Archive a finished one (archive_runner) first.`);
+    return refuse(`This Runner already has ${MAX_RUNNERS} Ships that aren't archived. Archive a finished one (archive_runner) first.`);
   }
   const started = await deps.startRunner(mission, {
     brief: prompt,
@@ -266,7 +266,7 @@ async function spawnRunner(mission: Workspace, args: Record<string, unknown>, de
     agent: textArg(args, "agent"),
     effort: textArg(args, "effort"),
   });
-  if ("error" in started) return refuse(`The Runner didn't start: ${started.error}`);
+  if ("error" in started) return refuse(`The Ship didn't start: ${started.error}`);
   return json({
     runner_id: started.runnerId,
     note: "It's setting up its box and starts on the brief once ready. You hear when its turn ends; there is no need to poll.",
@@ -278,29 +278,29 @@ async function messageRunner(mission: Workspace, args: Record<string, unknown>, 
   if (!runner) return NO_SUCH_RUNNER;
   const message = textArg(args, "message");
   if (!message) return refuse("message is required.");
-  if (runner.status === "failed") return refuse("That Runner failed to start, so it can't take messages. Spawn another.");
+  if (runner.status === "failed") return refuse("That Ship failed to start, so it can't take messages. Spawn another.");
   if (runner.status === "creating" || runner.status === "provisioning") {
     await deps.queue(mission.id, runner.id, message);
-    return { text: "The Runner is still setting up: your message waits, and goes once its first turn ends." };
+    return { text: "The Ship is still setting up: your message waits, and goes once its first turn ends." };
   }
   const working = await deps.working(runner).catch(() => false);
   if (working && boolArg(args, "queue")) {
     await deps.queue(mission.id, runner.id, message);
-    return { text: "Queued: it goes when the Runner's current turn ends." };
+    return { text: "Queued: it goes when the Ship's current turn ends." };
   }
   if (!(await deps.send(runner, message))) {
     return refuse(
       runner.status === "archived" && runnerPlacesLeft(await deps.runners(mission.id)) === 0
-        ? `That Runner is archived, and restoring it would put this Mission over ${MAX_RUNNERS} Runners. Archive another first.`
-        : "The Runner couldn't take the message (its box didn't answer). Try again shortly.",
+        ? `That Ship is archived, and restoring it would put this Runner over ${MAX_RUNNERS} Ships. Archive another first.`
+        : "The Ship couldn't take the message (its box didn't answer). Try again shortly.",
     );
   }
   return {
     text: working
-      ? "Sent: it steers the Runner's current turn."
+      ? "Sent: it steers the Ship's current turn."
       : runner.status === "archived"
-        ? "Sent: the Runner is being restored, and starts a new turn on it."
-        : "Sent: the Runner starts a new turn on it.",
+        ? "Sent: the Ship is being restored, and starts a new turn on it."
+        : "Sent: the Ship starts a new turn on it.",
   };
 }
 
@@ -326,19 +326,19 @@ async function readRunner(mission: Workspace, args: Record<string, unknown>, dep
 async function archiveRunner(mission: Workspace, args: Record<string, unknown>, deps: MissionToolDeps): Promise<ToolResult> {
   const runner = await ownRunner(mission, args.runner_id, deps);
   if (!runner) return NO_SUCH_RUNNER;
-  if (runner.status === "archived" || runner.status === "archiving") return { text: "That Runner is archived already." };
+  if (runner.status === "archived" || runner.status === "archiving") return { text: "That Ship is archived already." };
   const force = boolArg(args, "force");
   if (!force) {
     if (await deps.working(runner).catch(() => false)) {
-      return refuse("That Runner is working. Wait for its turn to end, or set force to archive it anyway.");
+      return refuse("That Ship is working. Wait for its turn to end, or set force to archive it anyway.");
     }
     const open = (await deps.pullRequests(runner).catch(() => [])).filter((p) => p.status === null || p.status.state === "open");
     if (open.length > 0) {
       return refuse(
-        `That Runner has an open pull request (${open.map((p) => p.url).join(", ")}). It's archived on its own once they're merged or closed; set force to archive it now.`,
+        `That Ship has an open pull request (${open.map((p) => p.url).join(", ")}). It's archived on its own once they're merged or closed; set force to archive it now.`,
       );
     }
   }
-  if (!(await deps.archive(runner))) return refuse("The Runner couldn't be archived just now. Try again shortly.");
+  if (!(await deps.archive(runner))) return refuse("The Ship couldn't be archived just now. Try again shortly.");
   return { text: "Archived. Messaging it restores it." };
 }

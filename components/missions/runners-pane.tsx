@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * A Mission's Runners, in the right pane of its page (docs/missions.md):
- * grouped as Needs you, Ready to merge, Ready to review, Runners working and
+ * A Runner's Ships, in the right pane of its page (docs/missions.md):
+ * grouped as Needs you, Ready to merge, Ready to review, Working and
  * Shipping, each with its task in a line, its pull request, its size and its
- * checks (listed on hover). A Runner clicked opens here, with its latest
+ * checks (listed on hover). A Ship clicked opens here, with its latest
  * response and a box to message it; Escape or Back returns to the list.
  */
 
@@ -58,18 +58,18 @@ export function RunnersPane({ missionId, onClose }: { missionId: string; onClose
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 px-4">
         <div className="flex min-w-0 items-baseline gap-2">
-          <h3 className="text-[13px] font-medium text-[#ededed]">Runners</h3>
+          <h3 className="text-[13px] font-medium text-[#ededed]">Ships</h3>
           {mission && (
             <span
               className="truncate text-[12px] text-[#7a7a7a] tabular-nums"
-              title={`${mission.liveRunners} of ${MAX_RUNNERS} places taken by Runners that aren't archived`}
+              title={`${mission.liveRunners} of ${MAX_RUNNERS} places taken by Ships that aren't archived`}
             >
               {runners.length - done.length} with work · {MAX_RUNNERS - mission.liveRunners} places free
             </span>
           )}
         </div>
         {onClose && (
-          <button type="button" onClick={onClose} aria-label="Hide Runners" className="studio-env-close">
+          <button type="button" onClick={onClose} aria-label="Hide Ships" className="studio-env-close">
             <X />
           </button>
         )}
@@ -85,9 +85,9 @@ export function RunnersPane({ missionId, onClose }: { missionId: string; onClose
             <span className="mx-auto mb-3 grid size-9 place-items-center rounded-lg border border-white/10 bg-white/[0.03] text-[#9a9a9a]">
               <Users className="size-4" />
             </span>
-            <p className="text-[13px] text-[#ededed]">No Runners yet</p>
+            <p className="text-[13px] text-[#ededed]">No Ships yet</p>
             <p className="mx-auto mt-1.5 max-w-[240px] text-[12px] leading-relaxed text-[#7a7a7a]">
-              Tell the Mission what you need. It starts a Runner for each piece of work, and they show up here as they go.
+              Tell the Runner what you need. It starts a Ship for each piece of work, and they show up here as they go.
             </p>
           </div>
         ) : (
@@ -143,7 +143,7 @@ export function RunnersPane({ missionId, onClose }: { missionId: string; onClose
 function RunnerRow({ runner, onOpen }: { runner: RunnerView; onOpen: () => void }) {
   const pr = runner.pulls.find((p) => p.state === "open") ?? runner.pulls[runner.pulls.length - 1];
   return (
-    // A row that opens the Runner, holding its pull request's link: a link
+    // A row that opens the Ship, holding its pull request's link: a link
     // can't sit inside a button, so the row is a focusable div that answers
     // Enter and Space as one would.
     <div
@@ -180,7 +180,7 @@ function RunnerRow({ runner, onOpen }: { runner: RunnerView; onOpen: () => void 
 
 type Detail = { brief: string | null; latestResponse: string | null; live: boolean; status: string };
 
-/** One Runner, opened in the pane: its latest response, its pull requests,
+/** One Ship, opened in the pane: its latest response, its pull requests,
  *  its brief, and a box to message it. */
 function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner: RunnerView; onBack: () => void }) {
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -259,7 +259,7 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
           ref={back}
           type="button"
           onClick={onBack}
-          aria-label="Back to Runners"
+          aria-label="Back to Ships"
           className="rounded-md p-1.5 text-[#8f8f8f] transition-colors hover:bg-white/[0.05] hover:text-[#ededed]"
         >
           <ArrowLeft className="size-4" />

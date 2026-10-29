@@ -1,10 +1,10 @@
 /**
- * The owner's Missions read for the sidebar and the Runners pane
+ * The owner's Runners read for the sidebar and the Ships pane
  * (lib/missions/view.ts), with the service role and scoped to the owner
- * here: their Missions, their Runners. Where each stands (working, needing
+ * here: their Runners, their Ships. Where each stands (working, needing
  * you, unread) is every session's standing (lib/session/standing.ts), read
- * as the sidebar reads the user's other sessions; the Missions' own part is
- * their Runners' pull requests and groups.
+ * as the sidebar reads the user's other sessions; each Runner's own part is
+ * its Ships' pull requests and groups.
  */
 
 import { runnerState } from "@/lib/missions/rules";
@@ -43,7 +43,7 @@ function checksOf(value: unknown): RunnerCheck[] {
     : [];
 }
 
-/** The owner's Missions in an org (or all of theirs), in their order. */
+/** The owner's Runners in an org (or all of theirs), in their order. */
 export async function missionsFor(ownerId: string, orgId: string | null, only?: string): Promise<MissionView[]> {
   let query = db().from("workspaces").select("*").eq("owner_id", ownerId).eq("kind", "mission").not("status", "in", "(destroyed,destroying)");
   if (orgId) query = query.eq("org_id", orgId);
@@ -156,7 +156,7 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
       const profile = profileOf.get(mission.id);
       return {
         id: mission.id,
-        title: mission.title ?? "New Mission",
+        title: mission.title ?? "New Runner",
         icon: profile?.icon ?? null,
         position: profile?.position ?? null,
         status: missionStatus({ standing: standings[mission.id] ?? null, runners: runnerViews }),

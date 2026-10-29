@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * The sidebar's Missions (docs/missions.md): each Mission with its icon, a
+ * The sidebar's Runners (docs/missions.md): each Runner with its icon, a
  * live status (needs you, working, ready, idle) and how many pull requests
- * are ready, its Runners with open work nested under it. Dragged to reorder;
- * arrow keys move between rows. `+` starts a Mission.
+ * are ready, its Ships with open work nested under it. Dragged to reorder;
+ * arrow keys move between rows. `+` starts a Runner.
  */
 
 import Link from "next/link";
@@ -19,10 +19,10 @@ import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import { MISSION_STATUS_LABEL, type MissionView, type RunnerView } from "@/lib/missions/view";
 import { cn } from "@/lib/utils";
 
-/** Runners shown under a Mission before "more". */
+/** Ships shown under a Runner before "more". */
 const SHOWN_RUNNERS = 5;
 
-/** Runners with open work (an archived one's pull request still open is),
+/** Ships with open work (an archived one's pull request still open is),
  *  the ones that need someone first. */
 function nestedRunners(mission: MissionView): RunnerView[] {
   const order = { needs_you: 0, ready_to_merge: 1, ready_to_review: 2, working: 3, shipping: 4, done: 5 } as const;
@@ -78,13 +78,13 @@ export function SidebarMissions({ active, projects }: { active?: string; project
     <section aria-labelledby="missions-heading" className="mb-4">
       <div className="flex items-center justify-between px-2">
         <h2 id="missions-heading" className="text-[13px] text-muted-foreground">
-          Missions
+          Runners
         </h2>
         <button
           type="button"
           onClick={() => setCreating(true)}
-          aria-label="Start a Mission"
-          title="Start a Mission"
+          aria-label="Start a Runner"
+          title="Start a Runner"
           className="-mr-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <Plus className="size-3.5" />
@@ -103,8 +103,8 @@ export function SidebarMissions({ active, projects }: { active?: string; project
               <Rocket className="size-[11px]" />
             </span>
             <span className="min-w-0">
-              <span className="block text-foreground/90">Start a Mission</span>
-              <span className="block truncate text-[11.5px] text-muted-foreground">It plans; Runners do the work</span>
+              <span className="block text-foreground/90">Start a Runner</span>
+              <span className="block truncate text-[11.5px] text-muted-foreground">It plans; Ships do the work</span>
             </span>
           </button>
         ) : (
