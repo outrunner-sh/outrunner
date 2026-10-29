@@ -26,6 +26,10 @@ export type AuditAction =
   | "key.removed"
   | "api_key.created"
   | "api_key.revoked"
+  | "secret_sync.connected"
+  | "secret_sync.disconnected"
+  | "secret_sync.linked"
+  | "secret_sync.unlinked"
   | "webhook.changed"
   | "webhook.secret_rotated"
   | "defaults.changed"
@@ -67,7 +71,7 @@ export function auditGroup(action: string): AuditGroup {
   const [kind] = action.split(".");
   if (kind === "member" || kind === "invite" || kind === "request") return "members";
   if (kind === "role" || kind === "access") return "access";
-  if (kind === "key" || kind === "api_key") return "keys";
+  if (kind === "key" || kind === "api_key" || kind === "secret_sync") return "keys";
   if (kind === "github") return "github";
   if (kind === "billing") return "billing";
   return "settings";
@@ -120,6 +124,14 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `removed the org's ${what} key`;
     case "api_key.created":
       return `made the API key ${what}${text(d.hint) ? ` (…${text(d.hint)})` : ""}${text(d.expiresAt) ? `, until ${text(d.expiresAt)?.slice(0, 10)}` : ""}`;
+    case "secret_sync.connected":
+      return `connected ${what}${text(d.label) ? ` (${text(d.label)})` : ""}`;
+    case "secret_sync.disconnected":
+      return `disconnected ${what}${text(d.links) && d.links !== 0 ? `, unlinking ${text(d.links)} project${d.links === 1 ? "" : "s"}` : ""}`;
+    case "secret_sync.linked":
+      return `linked the project ${what} to ${text(d.provider) ?? "?"}${text(d.target) ? ` (${text(d.target)})` : ""}`;
+    case "secret_sync.unlinked":
+      return `unlinked the project ${what} from ${text(d.provider) ?? "?"}`;
     case "webhook.changed":
       return text(d.url) ? `set the API's webhook endpoint to ${text(d.url)}` : "removed the API's webhook endpoint";
     case "webhook.secret_rotated":

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 /**
  * One service on Settings → Org → Integrations: its mark and name; when
  * connected, a green dot and what it's connected to, else what it does; and
- * Configure, or Install.
+ * Configure, or Install (an app) or Connect (credentials pasted in).
  */
 export function IntegrationCard({
   icon,
@@ -20,10 +20,10 @@ export function IntegrationCard({
   description: string;
   /** What it's connected to (an account, a Slack workspace); null when it isn't. */
   connected: string | null;
-  /** Configure (connected) or Install; none for someone who can't. */
-  action: { kind: "configure" | "install"; href: string; external?: boolean } | null;
+  /** Configure (connected), or Install or Connect; none for someone who can't. */
+  action: { kind: "configure" | "install" | "connect"; href: string; external?: boolean } | null;
 }) {
-  const label = action?.kind === "configure" ? "Configure" : "Install";
+  const label = action?.kind === "configure" ? "Configure" : action?.kind === "connect" ? "Connect" : "Install";
   const icon2 = action?.kind === "configure" ? <Settings /> : <Plus />;
   return (
     <div className="flex items-center gap-3 border-border/60 p-4">
