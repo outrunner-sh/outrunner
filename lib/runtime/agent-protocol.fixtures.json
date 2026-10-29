@@ -53,16 +53,8 @@
       "branch": "feat/z",
       "baseBranch": "main",
       "repos": [
-        {
-          "fullName": "acme/web",
-          "checkout": "web",
-          "baseBranch": "main"
-        },
-        {
-          "fullName": "acme/api",
-          "checkout": "api",
-          "baseBranch": "develop"
-        }
+        { "fullName": "acme/web", "checkout": "web", "baseBranch": "main" },
+        { "fullName": "acme/api", "checkout": "api", "baseBranch": "develop" }
       ]
     },
     {
@@ -402,30 +394,13 @@
       "branch": "feat/z",
       "sessionId": "sess-3",
       "downloads": [
-        {
-          "artifact": "bundle",
-          "url": "https://storage.example/download/bundle?token=t"
-        },
-        {
-          "artifact": "patch",
-          "url": "https://storage.example/download/patch?token=t"
-        },
-        {
-          "artifact": "conversation",
-          "url": "https://storage.example/download/conversation?token=t"
-        }
+        { "artifact": "bundle", "url": "https://storage.example/download/bundle?token=t" },
+        { "artifact": "patch", "url": "https://storage.example/download/patch?token=t" },
+        { "artifact": "conversation", "url": "https://storage.example/download/conversation?token=t" }
       ],
       "repos": [
-        {
-          "fullName": "acme/web",
-          "checkout": "web",
-          "baseBranch": "main"
-        },
-        {
-          "fullName": "acme/api",
-          "checkout": "api",
-          "baseBranch": "develop"
-        }
+        { "fullName": "acme/web", "checkout": "web", "baseBranch": "main" },
+        { "fullName": "acme/api", "checkout": "api", "baseBranch": "develop" }
       ]
     },
     {
@@ -760,16 +735,8 @@
       "baseBranch": "main",
       "hook": "pnpm -C web install && pnpm -C api install",
       "repos": [
-        {
-          "fullName": "acme/web",
-          "checkout": "web",
-          "baseBranch": "main"
-        },
-        {
-          "fullName": "acme/api",
-          "checkout": "api",
-          "baseBranch": "develop"
-        }
+        { "fullName": "acme/web", "checkout": "web", "baseBranch": "main" },
+        { "fullName": "acme/api", "checkout": "api", "baseBranch": "develop" }
       ]
     }
   ],
@@ -828,40 +795,18 @@
   "SetSkillsRequest": [
     {
       "sources": [
-        {
-          "repo": "anthropics/skills",
-          "skills": [
-            "pdf"
-          ]
-        },
-        {
-          "repo": "acme/skills-registry",
-          "ref": "main",
-          "token": "ghs_0123456789abcdef"
-        }
+        { "repo": "anthropics/skills", "skills": ["pdf"] },
+        { "repo": "acme/skills-registry", "ref": "main", "token": "ghs_0123456789abcdef" }
       ]
     },
-    {
-      "sources": []
-    }
+    { "sources": [] }
   ],
   "SetSkillsResponse": [
     {
-      "installed": [
-        "deploy",
-        "pdf"
-      ],
-      "failed": [
-        {
-          "repo": "acme/skills-registry",
-          "skill": "review",
-          "error": "a skill of yours has this name: yours is kept"
-        }
-      ]
+      "installed": ["deploy", "pdf"],
+      "failed": [{ "repo": "acme/skills-registry", "skill": "review", "error": "a skill of yours has this name: yours is kept" }]
     },
-    {
-      "installed": []
-    }
+    { "installed": [] }
   ],
   "SetAgentContextRequest": [
     { "content": "# Outrunner learnings\n\n## The user's learnings\n\n### Conventional Commits\n\nUse Conventional Commits." },
@@ -908,23 +853,11 @@
     {
       "dir": "/home/runtime/.outrunner/canvas/ws-1",
       "files": [
-        {
-          "path": "rollout-plan.md",
-          "size": 2048,
-          "modifiedAt": "2026-11-03T10:00:00Z"
-        },
-        {
-          "path": "charts/latency.html",
-          "size": 18234,
-          "modifiedAt": "2026-11-03T09:00:00Z"
-        }
+        { "path": "rollout-plan.md", "size": 2048, "modifiedAt": "2026-11-03T10:00:00Z" },
+        { "path": "charts/latency.html", "size": 18234, "modifiedAt": "2026-11-03T09:00:00Z" }
       ]
     },
-    {
-      "dir": "/home/runtime/.outrunner/canvas/ws-2",
-      "files": [],
-      "truncated": true
-    }
+    { "dir": "/home/runtime/.outrunner/canvas/ws-2", "files": [], "truncated": true }
   ],
   "ProviderPorts": [
     [

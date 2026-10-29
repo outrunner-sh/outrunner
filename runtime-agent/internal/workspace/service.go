@@ -1155,12 +1155,18 @@ func (s *Service) getFacts(workspaceID string) (workspaceFacts, bool) {
 // SummaryOf still returns the last-known state.
 //
 // A session's other chats stop with it: they work in its worktree, which an
-// archive captures as it is.
+// archive captures as it is. Stop (and Archive, which calls it) waits for
+// an in-flight SetModel or mode-switch relaunch to release the lifecycle
+// lock before stopping the session (up to switchRelaunchTimeout).
 func (s *Service) Stop(ctx context.Context, workspaceID string) error {
 	defer s.lockLifecycle(workspaceID)()
 	return s.stopHeld(ctx, workspaceID)
 }
 
+// stopHeld requires the lifecycle lock for workspaceID. A session caller
+// holds its parent/session lock before listing chats, then takes each child
+// lock before recursively stopping it. Callers already holding these locks
+// (such as Destroy and endChat) must use this path rather than Stop.
 func (s *Service) stopHeld(ctx context.Context, workspaceID string) error {
 	for _, key := range s.chatKeys(workspaceID) {
 		unlock := s.lockLifecycle(key)
