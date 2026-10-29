@@ -129,8 +129,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
    * The create call's answer then stands in for the made-up row. Should the
    * server refuse it, the session goes from the sidebar, its page gives way to
    * this screen again, and the screen says why, with the prompt given back
-   * (useFailedCreate). Resolves false only when nothing was started: no
-   * repository is picked.
+   * (useFailedCreate). Navigation is immediate; the result waits for the
+   * server, so the composer keeps its stored draft until creation lands and
+   * restores it on refusal, even after the form unmounts.
    */
   function create(
     prompt: string,
@@ -194,7 +195,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       // the screen says so when next opened.
       if (window.location.pathname === href) router.replace("/new");
     };
-    void (async () => {
+    return (async () => {
       // The prompt goes along only to name the session at once. The model
       // picked on this screen, who serves it, and its effort; none, the
       // server starts it on the menu's default.
@@ -216,7 +217,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       if (!response) {
         // Nothing got through, though a send may still land.
         failed("Could not reach Outrunner. Please try again.", null, unsent);
-        return;
+        return false;
       }
       const result = (await response.json().catch(() => ({}))) as CreateResponse;
       if (!response.ok || !result.workspace) {
@@ -234,15 +235,15 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           // the server went on with — so the row may have been made.
           response.status >= 500 ? unsent : null,
         );
-        return;
+        return false;
       }
       // The server's row now, until the sidebar's own list has it: the
       // standings poll re-reads that list when a session it hasn't got
       // appears (components/app-frame.tsx), and the page re-reads it once
       // setup ends (hooks/use-workspace-setup.ts).
       rememberPendingSession(result.workspace);
+      return true;
     })();
-    return Promise.resolve(true);
   }
 
   /**

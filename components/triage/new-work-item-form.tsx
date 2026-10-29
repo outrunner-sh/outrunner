@@ -8,13 +8,16 @@ import { StatusIcon } from "@/components/triage/item-icons";
 import { WorkspaceSelect } from "@/components/triage/workspace-select";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { useDraftText } from "@/lib/client/drafts";
 import type { TriageItem } from "@/lib/triage/work-items";
 import { cn } from "@/lib/utils";
 
 /**
  * Capture a work item (⌘I), in a dialog over the list: a title, Markdown, and
  * which workspace if known. It lands in triage; ⌘Enter adds it. With "Create
- * more" on, the dialog stays open, emptied, for the next one.
+ * more" on, the dialog stays open, emptied, for the next one. What is typed is
+ * a draft (lib/client/drafts.ts), there again however the dialog was shut,
+ * until the item is added.
  */
 export function NewWorkItemForm({
   projects,
@@ -29,8 +32,8 @@ export function NewWorkItemForm({
   onCreated: (item: TriageItem, more: boolean) => void;
   onCancel: () => void;
 }) {
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+  const [title, setTitle] = useDraftText("triage:new/title");
+  const [body, setBody] = useDraftText("triage:new/body");
   const [projectId, setProjectId] = useState<string | null>(initialProjectId);
   const [more, setMore] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -51,10 +54,10 @@ export function NewWorkItemForm({
       });
       const result = (await response.json().catch(() => ({}))) as { item?: TriageItem; error?: string };
       if (!response.ok || !result.item) throw new Error(result.error ?? "Couldn't add the item.");
+      setTitle("");
+      setBody("");
       onCreated(result.item, more);
       if (more) {
-        setTitle("");
-        setBody("");
         setSaving(false);
         titleRef.current?.focus();
       }

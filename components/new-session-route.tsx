@@ -13,7 +13,8 @@ import { useNewSessionCount } from "@/lib/session/new-session-reset";
 
 /**
  * Home: the new-session form, on the repository of the most recent session,
- * from what the sidebar holds. A fresh form on each "New Session".
+ * from what the sidebar holds. A fresh form on each "New Session", the
+ * prompt's draft kept.
  */
 export function HomeSessionRoute() {
   const data = useAppData();
@@ -73,7 +74,7 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
       <NewSessionCreator
         // A new form per "New Session" and per target: arriving while already
         // on /new must not keep the repository, folder or cloud/Mac choice the
-        // open form was switched to.
+        // open form was switched to. The prompt's draft stays.
         key={`${project ?? ""}\n${folder}\n${workItemId ?? ""}\n${asked}`}
         projects={projects}
         // A hidden repository asked for may still be on its way from the

@@ -2,7 +2,7 @@
 
 import { ArrowUp, Check, Hammer, ImagePlus, ListChecks, MessageSquareText, Plus, Search, Settings2, Square, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import {
@@ -17,6 +17,7 @@ import { ComposerAttachment } from "@/components/attachment-thumbnails";
 import { Spinner } from "@/components/ui/loaders";
 import { InlineMessage } from "@/components/ui/notice";
 import { type PendingAttachment, useAttachments } from "@/hooks/use-attachments";
+import { DRAFTS, draftPaintScript, PAGE_ONLY, useDraft, useHydrating } from "@/lib/client/drafts";
 import { attachNotice, isImage, restoreDraft } from "@/lib/runtime/attachments";
 import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
 import { CustomModelDialog } from "@/components/custom-model-dialog";
@@ -71,6 +72,10 @@ import { cn } from "@/lib/utils";
  * Files can ride along: picked, dropped, or pasted. They upload immediately
  * rather than on send, so the wait happens while the user is still typing, and
  * `onSend` receives their ids to attach server-side.
+ *
+ * What is typed and attached is a draft kept at `draftKey`
+ * (lib/client/drafts.ts): it is there again when the composer comes back, from
+ * another page, the browser's Back or a reload, until it is sent.
  */
 
 /** Switching the session's model, and the effort it runs at, from the footer,
@@ -123,6 +128,7 @@ export function SessionComposer({
   prefill = null,
   prefillAttachments = null,
   onPrefillAttachmentsTaken,
+  draftKey,
   comments,
   listFiles,
 }: {
@@ -184,6 +190,10 @@ export function SessionComposer({
   /** The files given back are on the box now: from here they are the box's,
    *  removed from it like any other, so they aren't given back again. */
   onPrefillAttachmentsTaken?: () => void;
+  /** Where the draft is kept (lib/client/drafts.ts): `new` for the
+   *  new-session form, `ws:<id>` for a session. Without it, the draft lasts as
+   *  long as the page. */
+  draftKey?: string;
   /** Comments on the session's diff, waiting to go with the next message:
    *  shown above the box, each removable. The caller adds them to what is
    *  sent (onSend gets the typed text alone). */
@@ -192,13 +202,14 @@ export function SessionComposer({
    *  asked for once, as the first @ is typed. Without it @ is just text. */
   listFiles?: () => Promise<FilesResponse>;
 }) {
-  const [value, setValue] = useState(prefill ?? "");
-  // Arriving after the form mounted (fetched): put in an empty box, once.
-  const [prefillSeen, setPrefillSeen] = useState(prefill);
-  if (prefill !== prefillSeen) {
-    setPrefillSeen(prefill);
-    if (prefill && !value) setValue(prefill);
-  }
+  const ownKey = `${PAGE_ONLY}composer:${useId()}`;
+  const key = draftKey ?? ownKey;
+  // The prefill, arriving after the form mounted (fetched) or not, shows
+  // until something is typed: the draft, once there is one, is what was.
+  const draft = useDraft(key);
+  const value = draft?.text ?? prefill ?? "";
+  const setValue = (next: string | ((current: string) => string)) => DRAFTS.setText(key, next);
+  const hydrating = useHydrating();
   const [sending, setSending] = useState(false);
   // Files dragged over the page: anywhere on it is the drop zone
   // (usePageDrop), and an overlay says so.
@@ -206,7 +217,7 @@ export function SessionComposer({
   const [notice, setNotice] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const attachments = useAttachments();
+  const attachments = useAttachments(key);
   // Recall (↑/↓ in an empty box, Ctrl+R to search) of the user's prompts.
   const { history, remember } = usePromptHistory(canSend);
   const [recall, setRecall] = useState<Recall | null>(null);
@@ -229,13 +240,14 @@ export function SessionComposer({
   const changedFiles = useMemo(() => new Set(fileList?.files.slice(0, fileList.changed) ?? []), [fileList]);
   const mentionOpen = mention !== null && listFiles !== undefined;
 
-  // A prefilled box is as tall as its text, as if it had been typed.
-  useEffect(() => {
+  // The box is as tall as its text, however it got there (typed, prefilled,
+  // a kept draft back, recalled, sent), before it paints.
+  useLayoutEffect(() => {
     const el = textareaRef.current;
-    if (!prefillSeen || !el) return;
+    if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-  }, [prefillSeen]);
+  }, [value]);
 
   // Put back once per set given, as the text is, ahead of anything staged since.
   const restoredFor = useRef<string | null>(null);
@@ -268,17 +280,22 @@ export function SessionComposer({
   const provider = shownModel?.provider;
   const messageLabel = provider === "claude" || provider === "codex" ? `Message ${AGENTS[provider].label}` : "Message";
 
+  // Files staged where they can't go (a draft's, carried into a form for this
+  // Mac) stay in the draft for a cloud session, and aren't sent or waited on.
+  const readyIds = allowAttachments ? attachments.readyIds : [];
+  const uploading = allowAttachments && attachments.busy;
   // Images staged for a model that can't see them would fail the turn (the
   // provider refuses the request): said before sending, with a model that
   // can a click away, and the send held until one or the other.
   const blindModel =
-    shownModel?.supportsImages === false && attachments.items.some((item) => isImage(item.contentType)) ? shownModel : null;
+    allowAttachments && shownModel?.supportsImages === false && attachments.items.some((item) => isImage(item.contentType))
+      ? shownModel
+      : null;
   const seeingModel = blindModel && modelChoice ? imageModelFor(modelChoice.groups, blindModel) : null;
 
   // A prompt of only attachments is legitimate — "here's a screenshot" — and
   // so is one of only comments on the diff.
-  const hasSomethingToSend =
-    value.trim() !== "" || attachments.readyIds.length > 0 || (comments?.items.length ?? 0) > 0;
+  const hasSomethingToSend = value.trim() !== "" || readyIds.length > 0 || (comments?.items.length ?? 0) > 0;
 
   /** Stage files, or say why they cannot be (attachNotice). */
   function addFiles(files: File[]) {
@@ -294,18 +311,23 @@ export function SessionComposer({
   usePageDrop(allowAttachments, setDragging, addFiles, textareaRef);
 
   function submit() {
-    if (!canSend || sending || !hasSomethingToSend || attachments.busy || blindModel) return;
+    if (!canSend || sending || !hasSomethingToSend || uploading || blindModel) return;
     let text = value.trim();
     let mode = modeChoice?.mode;
     const command = composerCommand(text);
     if (command?.kind === "compact" && onCompact) {
+      // The box empties at once; the kept draft only once it went.
+      const release = DRAFTS.hold(key, text);
       setValue("");
       setSending(true);
       void onCompact(command.instructions)
         .then((went) => {
           if (!went) setValue((current) => restoreDraft(text, current));
         })
-        .finally(() => setSending(false));
+        .finally(() => {
+          release();
+          setSending(false);
+        });
       return;
     }
     if (command?.kind === "plan" && modeChoice) {
@@ -313,7 +335,7 @@ export function SessionComposer({
       // planning now. /plan alone just switches.
       if (modeChoice.mode !== "plan") modeChoice.onChange("plan");
       mode = "plan";
-      if (!command.prompt && attachments.readyIds.length === 0) {
+      if (!command.prompt && readyIds.length === 0) {
         setValue("");
         return;
       }
@@ -323,15 +345,17 @@ export function SessionComposer({
     // while it is in flight. The box empties at once, files and all: the
     // message shows them now. A failed send gives its text and files back,
     // ahead of anything typed or attached since, so nothing is lost.
-    const sentIds = attachments.readyIds;
+    const sentIds = readyIds;
     const taken = attachments.forget(sentIds);
     const result = onSend(text, sentIds, mode);
+    // The box empties at once; the kept draft only once the send lands, so a
+    // reload while it is on its way gives the prompt and its files back.
+    const release = DRAFTS.hold(key, text, taken);
     setValue("");
     setRecall(null);
     closeMention();
-    const el = textareaRef.current;
-    if (el) el.style.height = "auto";
     if (!result) {
+      release();
       remember(text);
       return;
     }
@@ -347,7 +371,10 @@ export function SessionComposer({
           textareaRef.current?.focus();
         }
       })
-      .finally(() => setSending(false));
+      .finally(() => {
+        release();
+        setSending(false);
+      });
   }
 
   /** Close the @ menu. A listing that failed is let go, so the next @ typed
@@ -365,8 +392,6 @@ export function SessionComposer({
     requestAnimationFrame(() => {
       const el = textareaRef.current;
       if (!el) return;
-      el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
       el.setSelectionRange(next.length, next.length);
     });
   }
@@ -504,6 +529,11 @@ export function SessionComposer({
           {modelChoice?.disabledReason && seeingModel ? ` (${modelChoice.disabledReason})` : ""}
         </InlineMessage>
       )}
+      {!allowAttachments && attachments.items.length > 0 && (
+        <InlineMessage className="studio-composer-message" tone="info">
+          These files stay for a cloud session: a session on this Mac can&apos;t take them.
+        </InlineMessage>
+      )}
       {attachments.items
         .filter((item) => item.status === "error")
         .map((item) => (
@@ -558,10 +588,7 @@ export function SessionComposer({
             setValue(event.target.value);
             // Typing over a recalled prompt makes it this one's.
             setRecall(null);
-            const el = event.target;
-            el.style.height = "auto";
-            el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-            followCaret(el.value, el.selectionStart);
+            followCaret(event.target.value, event.target.selectionStart);
           }}
           onSelect={(event) => {
             const el = event.currentTarget;
@@ -651,6 +678,10 @@ export function SessionComposer({
             }
           }}
         />
+        {/* A reload paints the kept draft in the box, not an empty one until
+            the page hydrates. Only in the server's HTML: a script React adds
+            itself never runs. */}
+        {draftKey && hydrating && <script dangerouslySetInnerHTML={{ __html: draftPaintScript(draftKey) }} />}
       </div>
       <div className="studio-composer-footer">
         <span>
@@ -700,7 +731,7 @@ export function SessionComposer({
           <button
             type="submit"
             className="studio-composer-send"
-            disabled={!canSend || sending || !hasSomethingToSend || attachments.busy || blindModel !== null}
+            disabled={!canSend || sending || !hasSomethingToSend || uploading || blindModel !== null}
             aria-label="Send"
             title={blindModel ? `${blindModel.label} can't see images` : undefined}
           >

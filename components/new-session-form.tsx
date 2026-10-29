@@ -308,6 +308,10 @@ export function NewSessionForm({
           prefill={refusedPrompt ?? workItem?.prompt ?? null}
           prefillAttachments={refusedAttachments}
           onPrefillAttachmentsTaken={takeRefusedAttachments}
+          // One draft for the form, whichever repository or folder it is on
+          // and however often "New Session" opens it, until it is sent; a
+          // triage item's prompt has its own.
+          draftKey={workItemId ? `new:triage:${workItemId}` : "new"}
         />
       </div>
     </div>

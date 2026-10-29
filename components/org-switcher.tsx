@@ -17,6 +17,7 @@ import {
 import { Spinner } from "@/components/ui/loaders";
 import { refreshMissions } from "@/hooks/use-missions";
 import { clearKeptPages } from "@/lib/client/kept-page";
+import { clearDrafts } from "@/lib/client/drafts";
 import { requestJson } from "@/lib/http/request-json";
 import { clearMissions } from "@/lib/missions/kept-missions";
 import { type Org, orgSummary } from "@/lib/orgs/active";
@@ -55,12 +56,14 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
         fallback: "Couldn't switch orgs. Try again.",
       });
       // The lists kept are the org left behind: none of it shows in the new one
-      // (the Runners and Triage panes seed from them). The Runners are looked
-      // at again here, since the sidebar stays put across the switch.
+      // (the Runners and Triage panes seed from them), nor do the drafts typed
+      // there. The Runners are looked at again here, since the sidebar stays
+      // put across the switch.
       clearAppDataCache();
       clearMissions();
       clearKeptTriage();
       clearKeptPages();
+      clearDrafts();
       void refreshMissions();
       router.push("/");
       router.refresh();
