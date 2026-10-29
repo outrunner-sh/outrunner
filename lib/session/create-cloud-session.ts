@@ -36,6 +36,7 @@ import {
 } from "@/lib/db/repositories";
 import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
 import { linkWorkItemToSession, projectOrgId, triageActor } from "@/lib/db/work-items";
+import { isUuid } from "@/lib/ids";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import {
   branchTakenByTeammateResponse,
@@ -128,6 +129,10 @@ export type SessionRequest = {
   prompt?: unknown;
   /** The triage item the session was started from (Start session). */
   workItemId?: unknown;
+  /** The id the screen made for it (a UUID), so its page opens at once, on
+   *  the session as the screen holds it, while this request is answered
+   *  (hooks/use-create-session.ts). The database's own when not given. */
+  id?: unknown;
 };
 
 /** How it ended: ready (and its first message sent, if it had one), or failed. */
@@ -365,6 +370,8 @@ export async function createCloudSession(
   let workspace;
   try {
     workspace = await createWorkspaceRow({
+      // Only a well-formed one: the primary key refuses one already taken.
+      ...(typeof body.id === "string" && isUuid(body.id) && { id: body.id }),
       ownerId: owner.id,
       projectId: project.id,
       environmentId,

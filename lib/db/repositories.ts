@@ -185,6 +185,9 @@ export async function getWorkspace(id: string): Promise<Workspace | null> {
 }
 
 export async function createWorkspaceRow(input: {
+  /** The id the new-session screen made for it, opening its page before
+   *  this row exists; the database's own when not given. */
+  id?: string;
   ownerId: string;
   projectId: string;
   branch: string;
@@ -206,6 +209,7 @@ export async function createWorkspaceRow(input: {
   const { data, error } = await supabase
     .from("workspaces")
     .insert({
+      ...(input.id && { id: input.id }),
       owner_id: input.ownerId,
       project_id: input.projectId,
       branch: input.branch,

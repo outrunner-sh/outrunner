@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 
-import { RouteLoading } from "@/components/route-states";
+import { SessionLoading } from "@/components/route-states";
 import { ServerAnswer } from "@/components/server-answer";
 import { SessionRoute } from "@/components/session-route";
 import { getOwnerSafe } from "@/lib/auth/owner";
@@ -38,7 +38,7 @@ type Params = Promise<{ id: string }>;
  */
 export default function WorkspacePage({ params }: { params: Params }) {
   return (
-    <Suspense fallback={<RouteLoading label="Opening session" />}>
+    <Suspense fallback={<SessionLoading />}>
       <SessionRoute
         server={
           <Suspense fallback={null}>
@@ -52,12 +52,20 @@ export default function WorkspacePage({ params }: { params: Params }) {
 
 async function ServerSession({ params }: { params: Params }) {
   // Signed out is the proxy's to catch; this is a signed-in user who isn't the
-  // allowlisted owner.
-  if (!(await getOwnerSafe())) redirect("/signin");
-
+  // allowlisted owner. The session is read beside that check rather than after
+  // it: RLS answers a stranger with nothing.
   const { id } = await params;
-  const workspace = await getWorkspace(id);
-  if (!workspace) notFound();
+  const workspaceRead = getWorkspace(id).then(
+    (workspace) => ({ workspace }),
+    (error: unknown) => ({ error }),
+  );
+  if (!(await getOwnerSafe())) redirect("/signin");
+  const read = await workspaceRead;
+  if ("error" in read) throw read.error;
+  const { workspace } = read;
+  // Not found is the page's to say: a session this tab has just started is
+  // opened before its row is made, and shows meanwhile (components/session-route.tsx).
+  if (!workspace) return <ServerAnswer<SessionAnswer> value={{ missing: true }} />;
   // A deleted session keeps its row, marked destroyed: say so, rather than
   // leaving the user to wonder whether the link was wrong.
   if (workspace.status === "destroyed") {

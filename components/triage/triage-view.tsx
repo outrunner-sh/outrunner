@@ -14,7 +14,7 @@ import { Spinner } from "@/components/ui/loaders";
 import { useNow } from "@/hooks/use-now";
 import { relativeTime } from "@/lib/nav/sidebar";
 import type { AccessLevel } from "@/lib/orgs/access";
-import { rememberTriage, useTriage } from "@/lib/triage/kept-triage";
+import { countTriageAhead, rememberTriage, useTriage } from "@/lib/triage/kept-triage";
 import { groupWorkItems, tabCounts, tabOf, TRIAGE_TABS, type TriageTab } from "@/lib/triage/groups";
 import { captureHref, itemKey, STATUS_LABELS, type TriageItem } from "@/lib/triage/work-items";
 import { cn } from "@/lib/utils";
@@ -55,6 +55,7 @@ export function TriageView() {
       if (!response.ok || !body.items) throw new Error(body.error ?? "Couldn't load triage.");
       // The server's list always wins over what was kept.
       rememberTriage({ items: body.items, levels: body.projects ?? {}, orgLevel: body.orgLevel ?? null });
+      return body.items;
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Couldn't load triage.");
@@ -66,11 +67,13 @@ export function TriageView() {
     void load();
   }, [load]);
 
-  /** Something changed: re-read the list, and the sidebar's count. */
+  /** Something changed: re-read the list, and the sidebar's count from it
+   *  rather than from the whole layout. */
   const changed = useCallback(() => {
-    void load();
-    router.refresh();
-  }, [load, router]);
+    void load().then((items) => {
+      if (items) countTriageAhead(items);
+    });
+  }, [load]);
 
   const open = (id: string | null) => router.push(id ? `/triage?item=${id}` : "/triage", { scroll: false });
   /** The capture dialog, over whatever is open, in `projectId` if given. */

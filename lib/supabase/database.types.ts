@@ -1338,7 +1338,15 @@ export type Database = {
         Row: OrganizationMemberRow;
         Insert: Insert<OrganizationMemberRow, "org_id" | "user_id" | "role">;
         Update: Partial<OrganizationMemberRow>;
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "organization_members_org_id_fkey";
+            columns: ["org_id"];
+            isOneToOne: false;
+            referencedRelation: "organizations";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       projects: {
         Row: ProjectRow;

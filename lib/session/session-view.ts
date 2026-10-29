@@ -23,11 +23,14 @@ export type SessionView = {
   pullRequest: WorkspacePullRequest | null;
 };
 
-/** The server's read of a cloud session's page: the session, or that it was
- *  deleted (its row stays, marked destroyed) and what of it is left. */
+/** The server's read of a cloud session's page: the session, that it was
+ *  deleted (its row stays, marked destroyed) and what of it is left, or that
+ *  there is no such session — yet, for one this tab has just started, whose
+ *  page opens before the server has made it (lib/session/pending-sessions.ts). */
 export type SessionAnswer =
   | SessionView
-  | { gone: Pick<SessionView, "workspace" | "pullRequest"> & { pullRequests?: WorkspacePullRequest[] } };
+  | { gone: Pick<SessionView, "workspace" | "pullRequest"> & { pullRequests?: WorkspacePullRequest[] } }
+  | { missing: true };
 
 /**
  * A cloud session's page from what the sidebar already holds, so it shows the

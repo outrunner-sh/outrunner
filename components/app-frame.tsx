@@ -7,6 +7,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 
 import { AppDataProvider } from "@/components/app-data";
 import { AppSidebar } from "@/components/app-sidebar";
+import { ArchiveFailureNotice } from "@/components/archive-session-dialog";
 import { MissionToasts } from "@/components/missions/mission-toasts";
 import { useServerAnswer } from "@/components/server-answer";
 import { useNotificationsFeed } from "@/hooks/use-notifications";
@@ -14,11 +15,14 @@ import { standingsNow, useStandingsFeed } from "@/hooks/use-standings";
 import { activeSessionId, isStudioPath, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import type { Grouping } from "@/lib/nav/status-groups";
 import { cachedListFor, rememberAppData, useCachedAppData } from "@/lib/session/app-data-cache";
+import { usePendingSessions } from "@/lib/session/pending-sessions";
+import { useAppDataAhead } from "@/lib/session/rows-ahead";
 import { nextNeedingYou } from "@/lib/session/standing";
 import { startNewSession } from "@/lib/session/new-session-reset";
 import type { Org } from "@/lib/orgs/active";
 import type { AppData } from "@/lib/session/session-view";
 import { warmSession } from "@/lib/session/warm-session";
+import { forgetTriageCountAhead, useTriageCountAhead } from "@/lib/triage/kept-triage";
 import { captureHref } from "@/lib/triage/work-items";
 import { cn } from "@/lib/utils";
 
@@ -102,7 +106,21 @@ export function AppFrame({
   // link or the app's relaunch shows its session rather than a placeholder.
   // The server's own list always wins over it.
   const cached = useCachedAppData();
-  const appData: AppData | null = frame?.appData ?? cachedListFor(cached, look?.pickedOrgId);
+  // With what this tab has changed since it was read laid over it
+  // (lib/session/rows-ahead.ts): a session archived or named here shows so at
+  // once, without reading the list again.
+  const appData: AppData | null = useAppDataAhead(frame?.appData ?? cachedListFor(cached, look?.pickedOrgId));
+  // Sessions this tab has just started, listed from the moment Send is
+  // pressed until the server's list has them (lib/session/pending-sessions.ts);
+  // one the server refused goes again.
+  const pending = usePendingSessions();
+  const sidebarWorkspaces = useMemo(() => {
+    const listed = appData?.workspaces ?? NO_WORKSPACES;
+    const started = Object.values(pending)
+      .filter((p) => !p.refused && !listed.some((w) => w.id === p.workspace.id))
+      .map((p) => p.workspace);
+    return started.length > 0 ? [...started, ...listed] : listed;
+  }, [appData, pending]);
   const sidebarProjects = useMemo(
     () => (appData ? [...appData.projects, ...appData.hiddenProjects] : []),
     [appData],
@@ -114,17 +132,21 @@ export function AppFrame({
   useEffect(() => {
     if (frame) rememberAppData(look?.pickedOrgId ?? null, frame.appData);
   }, [frame, look?.pickedOrgId]);
+  // Triage's count as its page last read it, until the layout reads its own.
+  const triageCountAhead = useTriageCountAhead();
+  useEffect(() => {
+    forgetTriageCountAhead();
+  }, [frame]);
   const router = useRouter();
   const pathname = usePathname();
   // Decided by the path, not by the studio being on screen: the rail must not
   // flash in while one session's page loads in place of another's.
   const railless = collapsed && isStudioPath(pathname);
-  // The sidebar shows the kept list at once too — except where a list landing
-  // late would move the rows on screen. Grouped by status it would: the
-  // server's standings are what place each session in its group
-  // (lib/nav/status-groups.ts), and the kept list doesn't carry them. Grouped
-  // by project the rows are the projects', which the kept list does carry.
-  const sidebarFromCache = appData !== null && (look?.grouping ?? "status") === "projects";
+  // The sidebar shows the kept list at once too — grouped by project, and
+  // grouped by status when the kept list carries where its sessions stood:
+  // the standings place each session in its group (lib/nav/status-groups.ts),
+  // and the server's, landing within moments, move only those that moved.
+  const sidebarFromCache = appData !== null && ((look?.grouping ?? "status") === "projects" || appData.standings !== undefined);
   // Bumped by ⌘K: the sidebar opens its search field on each change.
   const [searchSignal, setSearchSignal] = useState(0);
 
@@ -234,12 +256,12 @@ export function AppFrame({
               <AppSidebar
                 loading={frame === null && !sidebarFromCache}
                 projects={sidebarProjects}
-                workspaces={appData?.workspaces ?? NO_WORKSPACES}
+                workspaces={sidebarWorkspaces}
                 ownerLogin={frame?.ownerLogin ?? ""}
                 ownerAvatarUrl={frame?.ownerAvatarUrl ?? null}
                 orgs={frame?.orgs ?? NO_ORGS}
                 activeOrgId={frame?.activeOrgId ?? null}
-                triageCount={frame?.triageCount ?? 0}
+                triageCount={triageCountAhead ?? frame?.triageCount ?? 0}
                 onCollapse={() => setAndRemember(true)}
                 searchSignal={searchSignal}
                 initialFolded={look?.folded ?? NO_FOLDED}
@@ -257,6 +279,7 @@ export function AppFrame({
       </div>
       {chromeSlot}
       {slot}
+      <ArchiveFailureNotice />
       {/* A Mission's news while the user looks, whatever the sidebar does
           (components/missions/mission-toasts.tsx). */}
       <MissionToasts />

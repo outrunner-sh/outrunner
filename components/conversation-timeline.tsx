@@ -38,7 +38,7 @@ import {
   workingElapsed,
 } from "@/lib/runtime/conversation-format";
 import { promptAttachments } from "@/lib/runtime/attachments";
-import { claudeIsWorking } from "@/lib/runtime/conversation-events";
+import { claudeIsWorking, workingStep } from "@/lib/runtime/conversation-events";
 import { compactTokens } from "@/lib/runtime/context-usage";
 import {
   type ConversationNode,
@@ -129,6 +129,8 @@ export function ConversationTimeline({
   // When the turn under way began, for the working clock: its prompt's time,
   // so a page opened mid-turn shows how long it has really run.
   const turnSince = useMemo(() => conversationTurnSince(nodes), [nodes]);
+  // What Claude is at while it works: thinking, or running a tool.
+  const step = useMemo(() => workingStep(events), [events]);
   const turns = useMemo(() => conversationTurns(nodes), [nodes]);
   // The turn being read, as the rail marks it.
   const [current, setCurrent] = useState(-1);
@@ -264,7 +266,11 @@ export function ConversationTimeline({
           {(working || compacting) && (
             // A compaction counts from when it began here: the last prompt's
             // time may be long before it (a typed /compact is no prompt row).
-            <WorkingIndicator label={compacting ? "Compacting conversation" : "Working"} since={compacting ? undefined : turnSince} />
+            <WorkingIndicator
+              label={compacting ? "Compacting conversation" : step.label}
+              since={compacting ? undefined : turnSince}
+              stepSince={compacting ? null : step.since}
+            />
           )}
         </div>
       </div>
@@ -321,24 +327,31 @@ function TurnRail({
  *  the turn's prompt (`since`) where it has a time, else from when the
  *  indicator showed; it remounts each time we re-enter the working state. The
  *  timer is tabular so the row never shifts as digits change. */
-function WorkingIndicator({ label, since }: { label: string; since?: string }) {
-  const [elapsed, setElapsed] = useState(0);
+function WorkingIndicator({ label, since, stepSince = null }: { label: string; since?: string; stepSince?: string | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  const [shownAt] = useState(() => Date.now());
   useEffect(() => {
-    const sent = since ? Date.parse(since) : NaN;
-    // A prompt's time ahead of this clock (skew) or long gone (a turn that
-    // never ended) is no start to count from.
-    const startedAt = Number.isFinite(sent) && sent <= Date.now() && Date.now() - sent < 6 * 3_600_000 ? sent : Date.now();
-    const id = setInterval(() => setElapsed(Date.now() - startedAt), 100);
+    const id = setInterval(() => setNow(Date.now()), 100);
     return () => clearInterval(id);
-  }, [since]);
+  }, []);
+  // A time ahead of this clock (skew) or long gone (a turn that never ended)
+  // is no start to count from.
+  const from = (at: string | null | undefined) => {
+    const t = at ? Date.parse(at) : NaN;
+    return Number.isFinite(t) && t <= now && now - t < 6 * 3_600_000 ? t : shownAt;
+  };
+  const turn = now - from(since);
+  // The step's own clock, once it has run a while: a long think, or a long
+  // tool, says how long it has been at it, not only the turn.
+  const step = stepSince ? now - from(stepSince) : 0;
   return (
     <div role="status" className="flex items-center gap-2.5 py-1 text-[13px] text-muted-foreground">
       <DotMatrix rows={3} cols={3} cell={3} gap={1.5} />
       <span>{label}</span>
       {/* The timer ticks ten times a second, so it stays out of the live
-          region; "Working" is the announcement, once. */}
+          region; the label is the announcement, once per step. */}
       <TickingFact className="font-mono text-[11px] tabular-nums text-muted-foreground/70">
-        {workingElapsed(elapsed)}
+        {step >= 10_000 && turn - step >= 1_000 ? `${workingElapsed(step)} · ${workingElapsed(turn)} turn` : workingElapsed(turn)}
       </TickingFact>
     </div>
   );

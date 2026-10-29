@@ -13,6 +13,7 @@ import {
   type LocalTarget,
 } from "@/lib/desktop/local-runtime";
 import { SessionUrls, WorkspaceSummary } from "@/lib/runtime/agent-protocol";
+import { keptStreamUrls } from "@/lib/session/kept-streams";
 import { keepSessionUrls, takeWarmUrls } from "@/lib/session/warm-session";
 
 /**
@@ -122,6 +123,16 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
         const fetchedAt = Date.now();
         // A fresh attach is one because the last URLs failed: they're not kept.
         if (fresh) attachedWith.current = null;
+        // The stream this page left still open (lib/session/kept-streams.ts):
+        // its URLs, so the page takes up that socket rather than attaching.
+        const kept = fresh ? null : keptStreamUrls(workspaceId);
+        if (kept) {
+          attachedWith.current = null;
+          setUrls(kept);
+          setAttachId((n) => n + 1);
+          setStatus("attached");
+          return;
+        }
         const warm = fresh ? null : await takeWarmUrls(workspaceId);
         if (controller.signal.aborted) return;
         if (warm) {

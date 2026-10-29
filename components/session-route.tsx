@@ -4,7 +4,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo } from "react";
 
 import { useAppData } from "@/components/app-data";
-import { RouteLoading, RouteMessage } from "@/components/route-states";
+import { RouteMessage, SessionLoading } from "@/components/route-states";
 import { useServerAnswer } from "@/components/server-answer";
 import { SessionDeleted } from "@/components/session-deleted";
 import { WorkspaceStudio } from "@/components/workspace-studio";
@@ -34,10 +34,13 @@ export function SessionRoute({ server }: { server: React.ReactNode }) {
   // page opens on the row the create call answered with, rather than waiting
   // for the server to say what the page already knows.
   const pending = usePendingSession(id);
-  const fromSidebar = listed ?? (pending ? sessionViewOf(pending, data) : null);
+  const fromSidebar = listed ?? (pending ? sessionViewOf(pending.workspace, data) : null);
   const [answer, slot] = useServerAnswer<SessionAnswer>(server);
   const gone = answer && "gone" in answer ? answer.gone : null;
-  const view = newerSessionView(id, fromSidebar, answer && !("gone" in answer) ? answer : null);
+  // No such session, unless this tab is starting it: the server's read may
+  // have come before its row was made.
+  const missing = answer !== null && "missing" in answer && !pending && !sidebarHasIt;
+  const view = newerSessionView(id, fromSidebar, answer && "workspace" in answer ? answer : null);
   // Deleted from the sidebar while this page was kept for going back to.
   const deleted = useDeletedSession(id);
 
@@ -66,6 +69,21 @@ export function SessionRoute({ server }: { server: React.ReactNode }) {
     <>
       {deleted ? (
         <RouteMessage title="Session deleted" detail="This session and its worktree are gone." />
+      ) : pending?.refused ? (
+        // Started here and refused by the server: this page gives way to the
+        // new-session screen, which says the same and gives the prompt back.
+        <RouteMessage
+          title="Couldn't start the session"
+          detail={pending.refused}
+          actions={[{ label: "Back to New Session", href: "/new", primary: true }]}
+        />
+      ) : missing ? (
+        // As app/(app)/not-found.tsx says it.
+        <RouteMessage
+          title="Nothing at this link"
+          detail="It may be out of date, or belong to another account."
+          actions={[{ label: "Back to sessions", href: "/", primary: true }]}
+        />
       ) : gone ? (
         // Ahead of a sidebar list from before the delete.
         <SessionDeleted workspace={gone.workspace} pullRequest={gone.pullRequest} pullRequests={gone.pullRequests} />
@@ -79,7 +97,7 @@ export function SessionRoute({ server }: { server: React.ReactNode }) {
           initialAttachmentIds={initialAttachmentIds}
         />
       ) : (
-        <RouteLoading label="Opening session" />
+        <SessionLoading />
       )}
       {slot}
     </>

@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
+import { useAppData } from "@/components/app-data";
 import type { AgentId } from "@/lib/agents/registry";
 import { LocalAgentAuthError, signInLocalAgent } from "@/lib/desktop/local-agent-auth";
 import {
@@ -23,9 +24,24 @@ import {
   takesEffort,
 } from "@/lib/runtime/session-models";
 import type { Project, Workspace } from "@/lib/runtime/types";
-import { firstPromptQuery, newFirstPrompt, rememberFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
+import {
+  firstPromptQuery,
+  forgetFirstPrompt,
+  newFirstPrompt,
+  rememberedFirstPrompt,
+  rememberFirstPrompt,
+  tabStorage,
+} from "@/lib/session/first-prompt";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
-import { rememberPendingSession } from "@/lib/session/pending-sessions";
+import {
+  FAILED_CREATE,
+  type FailedCreate,
+  forgetRefusedSessions,
+  optimisticSession,
+  refusePendingSession,
+  rememberPendingSession,
+  useFailedCreate,
+} from "@/lib/session/pending-sessions";
 import { rememberEffort } from "@/lib/session/picked-effort";
 
 type CreateResponse = {
@@ -42,7 +58,8 @@ function startingEffort(model: SessionModel | undefined, effort: Effort | null):
   return model && effort && takesEffort(model) ? effort : null;
 }
 
-/** Same shape as the server's generated branches (runtime/<time>-<id>). */
+/** Same shape as the server's generated branches (runtime/<time>-<id>): a
+ *  local session's, and a cloud session's named on Send. */
 function localBranch(workspaceId: string): string {
   return `runtime/${Date.now().toString(36)}-${workspaceId.slice(0, 8)}`;
 }
@@ -70,12 +87,28 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
   // `refusal` points at what is in the way, and opening it starts nothing.
   const [messageAction, setMessageAction] = useState<{ label: string; href: string; kind: "step" | "refusal" } | null>(null);
   const [isCreating, startCreating] = useTransition();
+  // The id the next session made here takes, and its page's frame fetched
+  // ahead (router.prefetch): Send then opens that page without a round trip.
+  const [nextId, setNextId] = useState<string | null>(null);
+  useEffect(() => {
+    if (nextId) router.prefetch(`/workspaces/${nextId}`);
+  }, [nextId, router]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setNextId(crypto.randomUUID());
+  }, []);
 
   const known = useMemo(
     () => [...projects, ...connected.filter((c) => !projects.some((p) => p.id === c.id))],
     [projects, connected],
   );
   const selected = known.find((project) => project.id === projectId);
+  // One of the user's sessions, for who they are and where their sessions
+  // run, which the row made up on Send carries until the server's replaces it.
+  const ownSession = useAppData()?.workspaces[0];
+  // A session started from here that the server then refused: said here, its
+  // prompt given back, until the next is started.
+  const failedCreate = useFailedCreate();
 
   /** Run in `project`; one the page doesn't list yet was just connected. */
   function selectProject(project: Project) {
@@ -86,9 +119,16 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     router.refresh();
   }
 
-  /** Create a cloud session and open it: at once, on its setup progress, which
-   *  the server runs after answering. Resolves false when it could not be
-   *  created (the message says why), so the composer keeps the prompt. */
+  /**
+   * Create a cloud session and open it, at once: its page opens on Send, on a
+   * row this screen makes for it with an id of its own, and the sidebar lists
+   * it, while the server makes it behind them (lib/session/pending-sessions.ts).
+   * The create call's answer then stands in for the made-up row. Should the
+   * server refuse it, the session goes from the sidebar, its page gives way to
+   * this screen again, and the screen says why, with the prompt given back
+   * (useFailedCreate). Resolves false only when nothing was started: no
+   * repository is picked.
+   */
   function create(
     prompt: string,
     attachmentIds: string[] = [],
@@ -102,22 +142,62 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
   ): Promise<boolean> {
     if (!selected) return Promise.resolve(false);
     const effort = startingEffort(model, pickedEffort);
-    return new Promise((resolve) => startCreating(async () => {
-      setMessage(null);
-      setMessageAction(null);
+    setMessage(null);
+    setMessageAction(null);
+    FAILED_CREATE.set(null);
+    forgetRefusedSessions();
+
+    const id = nextId ?? crypto.randomUUID();
+    setNextId(crypto.randomUUID());
+    // Named here, in the server's own shape, so the page shows the branch it
+    // will work on from the start rather than none until the server answers.
+    const branch = localBranch(id);
+    const first = newFirstPrompt(prompt, attachmentIds);
+    // Before the push: its page and the sidebar open on this row.
+    rememberPendingSession(
+      optimisticSession({
+        id,
+        project: selected,
+        prompt,
+        branch,
+        agent: agentOf(model?.provider ?? "claude", model ? agent : undefined),
+        ownerId: ownSession?.ownerId ?? "",
+        provider: ownSession?.provider ?? "daytona",
+      }),
+      false,
+    );
+    // The prompt and attachments are not delivered from here: the session has
+    // no box yet. They wait in this tab for it to be ready
+    // (lib/session/first-prompt.ts); only where the tab won't keep them do
+    // they ride the URL instead, which then isn't the one fetched ahead.
+    rememberFirstPrompt(tabStorage(), id, first);
+    const kept = rememberedFirstPrompt(tabStorage(), id) !== null;
+    // None picked: the server's default, which on the user's Claude runs at
+    // DEFAULT_EFFORT (a model that takes none doesn't show it).
+    rememberEffort(id, model ? effort : DEFAULT_EFFORT);
+    const href = `/workspaces/${id}`;
+    router.push(kept ? href : `${href}${firstPromptQuery(first)}`);
+
+    const failed = (error: string, action: FailedCreate["action"] = null) => {
+      refusePendingSession(id, error);
+      forgetFirstPrompt(tabStorage(), id);
+      FAILED_CREATE.set({ prompt, message: error, action });
+      // Still on its page: back to this screen, which says why. Elsewhere,
+      // the screen says so when next opened.
+      if (window.location.pathname === href) router.replace("/new");
+    };
+    void (async () => {
       let response: Response;
       try {
         response = await fetch(`/api/projects/${selected.id}/workspaces`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          // The prompt and attachments are not delivered from here: the
-          // workspace has no box yet. They ride the redirect, and wait in this
-          // tab for the session to be ready (lib/session/first-prompt.ts). The
-          // prompt goes along only to name the session at once.
-          // The model picked on this screen, who serves it, and its effort;
-          // none, the server starts it on the menu's default.
+          // The prompt goes along only to name the session at once. The model
+          // picked on this screen, who serves it, and its effort; none, the
+          // server starts it on the menu's default.
           body: JSON.stringify({
-            branch: "",
+            id,
+            branch,
             prompt,
             ...(model && { provider: model.provider, model: model.id }),
             ...(effort && { effort }),
@@ -126,33 +206,31 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           }),
         });
       } catch {
-        setMessage("Could not reach Outrunner. Please try again.");
-        resolve(false);
+        failed("Could not reach Outrunner. Please try again.");
         return;
       }
       const result = (await response.json().catch(() => ({}))) as CreateResponse;
       if (!response.ok || !result.workspace) {
-        setMessage(result.error ?? "Could not start the session. Please try again.");
         // The server names the page that fixes it, when one does (a missing
         // GitHub grant is fixed by signing in again; a taken branch, by
         // opening the session that holds it).
-        if (result.settingsHref) setMessageAction({ label: "Open settings", href: result.settingsHref, kind: "step" });
-        else if (result.sessionHref) setMessageAction({ label: "Open that session", href: result.sessionHref, kind: "refusal" });
-        resolve(false);
+        failed(
+          result.error ?? "Could not start the session. Please try again.",
+          result.settingsHref
+            ? { label: "Open settings", href: result.settingsHref, kind: "step" }
+            : result.sessionHref
+              ? { label: "Open that session", href: result.sessionHref, kind: "refusal" }
+              : null,
+        );
         return;
       }
-      const first = newFirstPrompt(prompt, attachmentIds);
-      // Before the push: its page opens on this row, rather than on the
-      // server's read of the same one (lib/session/pending-sessions.ts).
+      // The server's row now, until the sidebar's own list has it: the
+      // standings poll re-reads that list when a session it hasn't got
+      // appears (components/app-frame.tsx), and the page re-reads it once
+      // setup ends (hooks/use-workspace-setup.ts).
       rememberPendingSession(result.workspace);
-      rememberFirstPrompt(tabStorage(), result.workspace.id, first);
-      // None picked: the server's default, which on the user's Claude runs at
-      // DEFAULT_EFFORT (a model that takes none doesn't show it).
-      rememberEffort(result.workspace.id, model ? effort : DEFAULT_EFFORT);
-      router.push(`/workspaces/${result.workspace.id}${firstPromptQuery(first)}`);
-      router.refresh();
-      resolve(true);
-    }));
+    })();
+    return Promise.resolve(true);
   }
 
   /**
@@ -182,6 +260,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
       setMessageAction(null);
+      FAILED_CREATE.set(null);
       const workspaceId = crypto.randomUUID();
       const target = localTarget(workspaceId);
       const agent = agentOf(model?.provider ?? "claude");
@@ -240,5 +319,17 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     }));
   }
 
-  return { projects: known, projectId, selectProject, selected, isCreating, message, messageAction, create, createLocal };
+  return {
+    projects: known,
+    projectId,
+    selectProject,
+    selected,
+    isCreating,
+    message: message ?? failedCreate?.message ?? null,
+    messageAction: message ? messageAction : (failedCreate?.action ?? null),
+    /** The prompt of a session the server refused, for the composer. */
+    refusedPrompt: failedCreate?.prompt ?? null,
+    create,
+    createLocal,
+  };
 }

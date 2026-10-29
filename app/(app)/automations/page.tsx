@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
-import { Automations } from "@/components/automations";
-import { AutomationsLoading } from "@/components/automations-loading";
+import { KeptAutomations, ServedAutomations } from "@/components/kept-automations";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { TRIGGER_KINDS, type TriggerKind } from "@/lib/automations/rules";
 import { AUTOMATION_TEMPLATES } from "@/lib/automations/templates";
@@ -36,12 +35,16 @@ export const unstable_instant = {
  * session on their own, such as a code review on every pull request. Their
  * GitHub triggers come through the Outrunner GitHub App, which the org's
  * admins install in Settings → Org → GitHub, and which posts as its bot.
+ *
+ * While they are read, what the page last showed stands in for them
+ * (components/kept-automations.tsx): a visit paints at once, and the server's
+ * answer replaces it as it lands.
  */
 type SearchParams = Promise<{ trigger?: string }>;
 
 export default function AutomationsPage({ searchParams }: { searchParams: SearchParams }) {
   return (
-    <Suspense fallback={<AutomationsLoading />}>
+    <Suspense fallback={<KeptAutomations />}>
       <AutomationsSection searchParams={searchParams} />
     </Suspense>
   );
@@ -88,7 +91,7 @@ async function AutomationsSection({ searchParams }: { searchParams: SearchParams
     }),
   ]);
   return (
-    <Automations
+    <ServedAutomations
       org={active}
       appSlug={config ? await appSlug(config) : null}
       installations={installations?.map((i) => ({ login: i.accountLogin, suspended: i.suspended })) ?? null}

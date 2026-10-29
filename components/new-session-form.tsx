@@ -69,7 +69,7 @@ export function NewSessionForm({
    *  composer, and the session is linked to it. */
   workItemId?: string;
 }) {
-  const { projects, projectId, selectProject, selected, isCreating, message, messageAction, create, createLocal } =
+  const { projects, projectId, selectProject, selected, isCreating, message, messageAction, refusedPrompt, create, createLocal } =
     useCreateSession(listed, initialProjectId);
   // The model the session starts on, picked in the composer as in a session;
   // none picked, what it starts on anyway: the user's Claude, on
@@ -304,7 +304,8 @@ export function NewSessionForm({
           }
           allowAttachments={!local}
           focusSignal={focusAsks}
-          prefill={workItem?.prompt ?? null}
+          // A session the server refused gives its prompt back here.
+          prefill={refusedPrompt ?? workItem?.prompt ?? null}
         />
       </div>
     </div>

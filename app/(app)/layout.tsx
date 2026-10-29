@@ -12,7 +12,7 @@ import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/li
 import { GROUPING_COOKIE, readGrouping } from "@/lib/nav/status-groups";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/active";
 import { getOrgContext } from "@/lib/orgs/server";
-import { readStandings } from "@/lib/db/session-standing";
+import { readStandingRows, standingsFrom } from "@/lib/db/session-standing";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { sessionPullRequests } from "@/lib/session/session-view";
 
@@ -73,17 +73,31 @@ async function ChromeData() {
 }
 
 async function SidebarData() {
+  // Who is signed in and which orgs are theirs, read together: the org query
+  // runs under the same session cookie, and RLS answers it as that user.
+  // The sidebar is auxiliary: a failed load shows an empty list, never an
+  // error page in place of the session the user opened.
+  const orgsRead = getOrgContext().then(
+    (context) => ({ context }),
+    (error: unknown) => ({ error }),
+  );
   const owner = await getOwnerSafe();
+  // Nobody signed in (a prerender among them): the orgs' answer is no one's.
   if (!owner) return null;
+  const read = await orgsRead;
+  if ("error" in read) console.error("Sidebar: could not load orgs", read.error);
+  const orgs = "context" in read ? read.context : null;
 
-  // The active org's projects and the user's sessions in it (lib/orgs/active.ts).
-  // The sidebar is auxiliary: a failed load shows an empty list, never an error
-  // page in place of the session the user opened.
-  const orgs = await getOrgContext().catch((error: unknown) => {
-    console.error("Sidebar: could not load orgs", error);
-    return null;
-  });
+  // The active org's projects and the user's sessions in it
+  // (lib/orgs/active.ts), and what waits in its triage that the user may see
+  // — a member of their own org, as getOrgContext read it.
   const orgId = orgs?.active.id;
+  const triageCount = (orgId ? triageActor(owner.id, orgId, true).then((actor) => (actor ? countTriage(actor) : 0)) : Promise.resolve(0)).catch(
+    (error: unknown): number => {
+      console.error("Sidebar: could not count triage", error);
+      return 0;
+    },
+  );
   const [listed, workspaces] = await Promise.all([
     listProjectsOnce(orgId).catch((error: unknown): Project[] => {
       console.error("Sidebar: could not load repositories", error);
@@ -94,26 +108,24 @@ async function SidebarData() {
       return [];
     }),
   ]);
-  const [hidden, pullRequests, triageCount] = await Promise.all([
+  // Everything that needs only the sessions' ids, at once: their pull
+  // requests, the repositories they're in that the list hides, and what
+  // places each in its group. Placed by the page's own poll
+  // (hooks/use-standings.ts) if that can't be read now.
+  const [hidden, pullRequests, standingRows] = await Promise.all([
     hiddenSessionProjects(listed, workspaces),
     listWorkspacePullRequests(workspaces.map((w) => w.id)).catch((error: unknown): WorkspacePullRequest[] => {
       console.error("Sidebar: could not load pull requests", error);
       return [];
     }),
-    // What waits in the active org's triage that the user may see.
-    (orgId ? triageActor(owner.id, orgId).then((actor) => (actor ? countTriage(actor) : 0)) : Promise.resolve(0)).catch((error: unknown): number => {
-      console.error("Sidebar: could not count triage", error);
-      return 0;
+    readStandingRows(owner.id, workspaces.map((w) => w.id)).catch((error: unknown) => {
+      console.error("Sidebar: could not read where sessions stand", error);
+      return undefined;
     }),
   ]);
 
   const picked = sessionPullRequests(workspaces, pullRequests);
-  // Where each stands, for the sidebar's groups; placed by the page's own
-  // poll (hooks/use-standings.ts) if it can't be read now.
-  const standings = await readStandings(owner.id, workspaces, picked).catch((error: unknown) => {
-    console.error("Sidebar: could not read where sessions stand", error);
-    return undefined;
-  });
+  const standings = standingRows ? standingsFrom(owner.id, workspaces, picked, standingRows) : undefined;
 
   return (
     <ServerAnswer<FrameData>
@@ -129,7 +141,7 @@ async function SidebarData() {
         ownerAvatarUrl: owner.avatarUrl,
         orgs: orgs?.orgs ?? [],
         activeOrgId: orgId ?? null,
-        triageCount,
+        triageCount: await triageCount,
       }}
     />
   );
