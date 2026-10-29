@@ -17,6 +17,7 @@ import { DiffSize, PullRequestChip, RunnerGlyph, UnreadDot } from "@/components/
 import { Spinner } from "@/components/ui/loaders";
 import { SkeletonRows } from "@/components/ui/skeleton-swap";
 import { refreshMissions, useMission } from "@/hooks/use-missions";
+import { rememberRunnerDetail, useKeptRunnerDetail, type RunnerDetailView } from "@/lib/missions/kept-missions";
 import { MAX_RUNNERS } from "@/lib/missions/rules";
 import { RUNNER_GROUPS, type RunnerView } from "@/lib/missions/view";
 import { cn } from "@/lib/utils";
@@ -178,12 +179,10 @@ function RunnerRow({ runner, onOpen }: { runner: RunnerView; onOpen: () => void 
   );
 }
 
-type Detail = { brief: string | null; latestResponse: string | null; live: boolean; status: string };
-
 /** One Ship, opened in the pane: its latest response, its pull requests,
  *  its brief, and a box to message it. */
 function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner: RunnerView; onBack: () => void }) {
-  const [detail, setDetail] = useState<Detail | null>(null);
+  const [read, setRead] = useState<RunnerDetailView | null>(null);
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -192,11 +191,17 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
   // The message being written, for Escape to leave alone wherever focus is.
   const draft = useRef("");
   const back = useRef<HTMLButtonElement>(null);
+  // This Ship as it was last read here, so opening it again paints at once;
+  // this look's answer replaces it as it lands (lib/missions/kept-missions.ts).
+  const kept = useKeptRunnerDetail(runner.id);
+  const detail = read ?? kept;
 
   const load = useCallback(async () => {
     const response = await fetch(`/api/missions/${missionId}/runners/${runner.id}`, { cache: "no-store" }).catch(() => null);
     if (response?.ok) {
-      setDetail((await response.json()) as Detail);
+      const answer = (await response.json()) as RunnerDetailView;
+      setRead(answer);
+      rememberRunnerDetail(runner.id, answer);
       setReadError(null);
     } else {
       setReadError("Its latest response couldn't be read. Trying again.");

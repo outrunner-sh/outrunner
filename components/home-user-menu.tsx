@@ -14,8 +14,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/loaders";
+import { clearMissions } from "@/lib/missions/kept-missions";
 import { clearAppDataCache } from "@/lib/session/app-data-cache";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
+import { clearKeptTriage } from "@/lib/triage/kept-triage";
 
 /**
  * The bottom-of-sidebar user pill (the sidebar draws the divider above it),
@@ -52,7 +54,7 @@ export function HomeUserMenu({
 
 /** Log out, staying open with its icon turning until the redirect lands (the
  *  menu would otherwise close at once, with nothing to say it worked). The
- *  conversations and the sidebar's list this browser kept go with the user. */
+ *  conversations and the lists this browser kept go with the user. */
 function SignOutItem() {
   const { pending } = useFormStatus();
   return (
@@ -65,6 +67,8 @@ function SignOutItem() {
         onClick={() => {
           CONVERSATIONS.clear();
           clearAppDataCache();
+          clearMissions();
+          clearKeptTriage();
         }}
       >
         {pending ? <Spinner /> : <LogOut />}

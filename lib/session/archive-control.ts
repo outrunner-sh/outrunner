@@ -1,3 +1,4 @@
+import { forgetKeptMission } from "@/lib/missions/kept-missions";
 import { onRuntimeComputer, type Workspace } from "@/lib/runtime/types";
 
 /**
@@ -69,7 +70,12 @@ export async function archiveSession(id: string, fetchImpl: typeof fetch = fetch
   } catch {
     throw new Error("Could not reach Outrunner. Check your connection and try again.");
   }
-  if (res.ok) return;
+  if (res.ok) {
+    // A Mission archived is kept no longer: what was shown of it is what it was
+    // before this, and a reload must not paint that (lib/missions/kept-missions.ts).
+    forgetKeptMission(id);
+    return;
+  }
   const body = (await res.json().catch(() => ({}))) as { error?: unknown };
   throw new Error(typeof body.error === "string" ? body.error : "Could not archive this session. Please try again.");
 }
