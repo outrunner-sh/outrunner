@@ -204,3 +204,17 @@ func TestARestoreContinuesWhenASideChatCantBeRestored(t *testing.T) {
 		t.Fatalf("main chat session = %q, want %s", f.ClaudeSessionID, main)
 	}
 }
+
+func TestRefusedArchiveLeavesTheSessionAndChatsRunning(t *testing.T) {
+	s, id, key := chatSession(t, ChatInput{From: MainChat})
+	sessions := s.tmux.(*fakeSessions)
+	sessions.running[sessionName(id)] = true
+	sessions.running[sessionName(key)] = true
+	_, err := s.Archive(context.Background(), id, protocol.ArchiveWorkspaceRequest{Chats: []protocol.ArchiveChat{{ChatID: "c1"}}})
+	if err == nil || !strings.Contains(err.Error(), "unspent fork handoff") {
+		t.Fatalf("archive refusal: %v", err)
+	}
+	if !sessions.running[sessionName(id)] || !sessions.running[sessionName(key)] {
+		t.Fatal("refused archive stopped a running conversation")
+	}
+}

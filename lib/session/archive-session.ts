@@ -20,7 +20,7 @@ import {
   readRuntimeComputerSecret,
   transitionWorkspace,
 } from "@/lib/db/repositories";
-import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_CHAT_SNAPSHOTS, AGENT_FEATURE_MULTI_REPO_SNAPSHOTS } from "@/lib/runtime/agent-protocol";
 import { withRuntimeAgentRecovery } from "@/lib/runtime/agent-recovery";
 import { requireFeature } from "@/lib/runtime/box-features";
@@ -235,5 +235,6 @@ function archiveFailure(error: unknown): { status: number; error: string } {
   const refused = isPlanLimitError(error);
   if (refused) return { status: 403, error: refused.message };
   if (error instanceof OutdatedComputerError) return { status: 409, error: error.message };
+  if (error instanceof AgentRequestError && error.error?.message) return { status: 502, error: error.error.message };
   return { status: 502, error: archiveError() };
 }
