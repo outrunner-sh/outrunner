@@ -123,7 +123,7 @@ export function NewMissionDialog({
             <label htmlFor="mission-prompt" className="mb-1.5 block text-[12px] text-[#8f8f8f]">
               What it owns, and what to start on
             </label>
-            <div className="rounded-md border border-white/10 bg-black/20 focus-within:border-white/25">
+            <div className="rounded-md border border-white/10 bg-transparent focus-within:border-white/25">
               <textarea
                 ref={text}
                 id="mission-prompt"

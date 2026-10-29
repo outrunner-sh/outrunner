@@ -66,7 +66,7 @@ export function CodexConnection({ active = true }: { active?: boolean }) {
         <span className="font-medium">Connection belongs to</span>
         <select
           aria-label="Connection belongs to"
-          className="block w-full rounded-md border bg-background px-3 py-2"
+          className="block w-full rounded-md border bg-transparent px-3 py-2"
           value={scope}
           onChange={(event) => setScope(event.target.value)}
         >

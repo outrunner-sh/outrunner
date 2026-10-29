@@ -330,7 +330,7 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
       </div>
       <div className="shrink-0 border-t border-white/[0.06] p-3">
         {error && <p className="mb-2 text-[12px] text-[#ffa198]">{error}</p>}
-        <div className="rounded-md border border-white/10 bg-black/20 focus-within:border-white/25">
+        <div className="rounded-md border border-white/10 bg-transparent focus-within:border-white/25">
           <textarea
             value={message}
             onChange={(e) => {

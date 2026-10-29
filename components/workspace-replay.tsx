@@ -102,7 +102,7 @@ export function WorkspaceReplay({
         </label>
         <select
           id="snapshot"
-          className="h-7 rounded-md border border-white/10 bg-black px-2 text-xs text-foreground"
+          className="h-7 rounded-md border border-white/10 bg-transparent px-2 text-xs text-foreground"
           value={selectedId ?? ""}
           onChange={(e) => {
             // Another Snapshot may not hold the chat shown.
@@ -123,7 +123,7 @@ export function WorkspaceReplay({
             </label>
             <select
               id="replay-chat"
-              className="h-7 rounded-md border border-white/10 bg-black px-2 text-xs text-foreground"
+              className="h-7 rounded-md border border-white/10 bg-transparent px-2 text-xs text-foreground"
               value={chatId}
               onChange={(e) => setChatId(e.target.value)}
             >
