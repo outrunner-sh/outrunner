@@ -98,7 +98,8 @@ func TestActivityTakesOnlyTheListingTokenAndCountsWrites(t *testing.T) {
 
 	// Where the platform exposes a box-lifetime ID, a new runtime-agent reads
 	// the same persisted interval rather than using its later boot time.
-	if _, err := os.Stat(filepath.Join(root, "runtime-agent-activity-unknown-since")); err == nil {
+	markerPath := filepath.Join(root, "runtime-agent-activity-unknown-since")
+	if _, err := os.Stat(markerPath); err == nil {
 		resumedSessions := &activitySessions{err: sessions.err}
 		resumed := New(secret, workspace.NewServiceWithSessions(root, resumedSessions))
 		resumed.startedAt = unknownAt.Add(time.Minute)
@@ -108,6 +109,10 @@ func TestActivityTakesOnlyTheListingTokenAndCountsWrites(t *testing.T) {
 		if resumedActivity.LastActivity != unknown.LastActivity {
 			t.Errorf("resumed activity = %q, want persisted unknown time %q", resumedActivity.LastActivity, unknown.LastActivity)
 		}
+	} else if errors.Is(err, os.ErrNotExist) {
+		t.Log("skipping persisted-marker restart assertion: no marker is available in this environment")
+	} else {
+		t.Fatalf("stat persisted unknown activity marker: %v", err)
 	}
 
 	// ...a control call that changes something does, even one that fails.
