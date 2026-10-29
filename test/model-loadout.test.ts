@@ -61,10 +61,10 @@ test("picking, unpicking and ordering", () => {
   assert.deepEqual(toggleEntry(loadout, GLM).models[1], GLM, "a model that takes no effort is added without one");
   loadout = toggleEntry(loadout, LUNA);
   loadout = moveEntry(loadout, LUNA, -1);
-  assert.deepEqual(loadout.models, [{ ...LUNA, effort: "high" }, opusHigh]);
+  assert.deepEqual(loadout.models, [LUNA, opusHigh]);
   assert.deepEqual(moveEntry(loadout, LUNA, -1), loadout, "nothing before the first");
   loadout = toggleEntry(loadout, OPUS);
-  assert.deepEqual(loadout, { models: [{ ...LUNA, effort: "high" }], default: null }, "the default goes with its model");
+  assert.deepEqual(loadout, { models: [LUNA], default: null }, "the default goes with its model");
 });
 
 test("search finds a model by its name or its id", () => {
@@ -102,11 +102,11 @@ test("each loadout model keeps the effort it runs at, where it takes one", () =>
     models: [
       { ...OPUS, effort: "xhigh" },
       { ...LUNA, effort: "ultra" }, // not a level
-      { ...HAIKU, effort: "high" }, // takes none
+      { ...HAIKU, effort: "high" }, // current alias supports effort
       { ...GLM, effort: "high" }, // a gateway's runs at its own
     ],
   });
-  assert.deepEqual(loadout.models, [{ ...OPUS, effort: "xhigh" }, LUNA, HAIKU, GLM]);
+  assert.deepEqual(loadout.models, [{ ...OPUS, effort: "xhigh" }, LUNA, { ...HAIKU, effort: "high" }, GLM]);
   assert.equal(loadoutEffort(loadout, OPUS), "xhigh");
   assert.equal(loadoutEffort(loadout, LUNA), undefined);
 
@@ -114,12 +114,13 @@ test("each loadout model keeps the effort it runs at, where it takes one", () =>
   // there, and high where it isn't in the loadout.
   assert.equal(effortOnPick(loadout, OPUS), "xhigh");
   assert.equal(effortOnPick(loadout, LUNA), null);
-  assert.equal(effortOnPick(loadout, { provider: "codex", id: "gpt-6-sol" }), "high");
+  assert.equal(effortOnPick(loadout, { provider: "codex", id: "gpt-6-sol" }), null);
   assert.equal(effortOnPick(undefined, OPUS), "high");
 
-  const set = setEntryEffort(loadout, LUNA, "low");
+  const knownLuna = { ...LUNA, efforts: ["low" as const] };
+  const set = setEntryEffort(loadout, knownLuna, "low");
   assert.equal(loadoutEffort(set, LUNA), "low");
-  assert.deepEqual(setEntryEffort(set, LUNA, null).models[1], LUNA, "null goes back to the model's own");
-  assert.deepEqual(setEntryEffort(loadout, HAIKU, "max"), loadout, "a model that takes none is left");
+  assert.deepEqual(setEntryEffort(set, knownLuna, null).models[1], LUNA, "null goes back to the model's own");
+  assert.deepEqual(setEntryEffort(loadout, GLM, "max"), loadout, "a model that takes none is left");
   assert.deepEqual(setEntryEffort(loadout, { provider: "codex", id: "gpt-6-sol" }, "max"), loadout, "nor one not in it");
 });

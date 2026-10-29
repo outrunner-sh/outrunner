@@ -57,21 +57,21 @@ import {
   type FirstPrompt,
 } from "@/lib/session/first-prompt";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
-import { isProviderId } from "@/lib/providers/registry";
 import { EMPTY_LOADOUT } from "@/lib/runtime/model-loadout";
 import {
   defaultModel,
   type Effort,
   modelGroups,
+  compatibleEffort,
+  matchModel,
   type ModelProvider,
   parseAgentConnections,
   type RecordedModel,
   runsOnOwnAccount,
   type SessionModel,
-  takesEffort,
 } from "@/lib/runtime/session-models";
 import { sessionTitle } from "@/lib/nav/session-title";
-import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
+import { rememberEffort } from "@/lib/session/picked-effort";
 import { chatRoute, chatStateKey, MAIN_CHAT } from "@/lib/session/chats";
 import { followUpRoute } from "@/lib/session/chat-preferences";
 import { editQueued, moveQueued, type QueuedPrompt, queueDrains, readQueue, writeQueue } from "@/lib/session/prompt-queue";
@@ -107,10 +107,11 @@ const COMPACT_WAIT_MS = 5 * 60_000;
 type SendHow = { mode?: SessionMode; dismiss?: boolean };
 
 const MENU_UNTIL_ANSWERED: OutrunnerModels = {
-  outrunner: true,
+  outrunner: false,
   allowance: false,
   keys: [],
-  available: true,
+  available: false,
+  codexModels: [],
   loadout: EMPTY_LOADOUT,
   agents: parseAgentConnections(undefined),
 };
@@ -357,13 +358,13 @@ export function WorkspaceSession({
   const menu = useOutrunnerModels() ?? MENU_UNTIL_ANSWERED;
   // Whose entry the menu ticks when a model is offered by two: the one last
   // picked here, else the one a new session starts on.
-  const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => pickedProvider(stateKey));
+  const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(null);
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
   // The effort it runs at, as last put on from here (lib/session/picked-effort.ts);
   // none put on from here (a session started from onboarding, or another
   // browser), as its row records. Undefined until either says.
   const [effortHere, setEffortHere] = useState<Effort | null | undefined>(
-    () => rememberedEffort(stateKey) ?? undefined,
+    undefined,
   );
   const effort = effortHere !== undefined ? effortHere : (recorded?.effort ?? null);
   const repliedSincePick =
@@ -881,7 +882,11 @@ export function WorkspaceSession({
   // agent is already running on this Mac, so its own login there counts.
   const accounts = accountsHere(menu.agents, local, null);
   const modelChoice: ModelChoice = {
-    groups: modelGroups(menu, accounts, agent),
+    groups: modelGroups(local ? (menu.localMenu ?? { ...menu, keys: [], codexModels: [] }) : menu, accounts, agent),
+    agent,
+    selectedModel: matchModel(modelGroups(menu, accounts, agent), shownModel, providerPicked ?? recorded?.model.provider)
+      ?? (recorded && recorded.model.id === shownModel ? recorded.model : undefined),
+    harnessChoice: { available: [agent], disabledReason: "This chat keeps its harness to preserve its conversation. Choose another harness in a new session." },
     // The session's own agent's account, where it isn't connected here.
     connect: accounts.includes(agent) ? [] : [agent],
     effort,
@@ -899,7 +904,7 @@ export function WorkspaceSession({
           : null,
     onChange: (model, pickedEffort) => {
       // What the agent is told: an effort goes only with a model that takes one.
-      const next = takesEffort(model) ? pickedEffort : null;
+      const next = compatibleEffort(model, pickedEffort);
       setSwitching(true);
       setSendError(null);
       setSwitchError(null);
@@ -1519,21 +1524,6 @@ async function stopCloudTurn(workspaceId: string, chatId: string): Promise<void>
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't stop the turn. Please try again.");
-}
-
-/** Who served a session's model when it was last picked here (a convenience:
- *  the reply names only the model, the same from either provider). */
-function pickedProvider(workspaceId: string): ModelProvider | null {
-  try {
-    const saved = window.localStorage.getItem(`outrunner:model-key:${workspaceId}`);
-    // Saved before providers: "own" was the user's OpenRouter key, and
-    // "neev" Outrunner's, before the rename.
-    if (saved === "own") return "openrouter";
-    if (saved === "neev") return "outrunner";
-    return saved === "outrunner" || saved === "claude" || saved === "codex" || isProviderId(saved) ? saved : null;
-  } catch {
-    return null;
-  }
 }
 
 function rememberPickedProvider(workspaceId: string, provider: ModelProvider): void {

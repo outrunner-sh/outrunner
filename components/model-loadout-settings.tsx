@@ -18,9 +18,11 @@ import {
   moveEntry,
   sameEntry,
   setEntryEffort,
+  setEntryAgent,
   toggleEntry,
 } from "@/lib/runtime/model-loadout";
-import { type ModelGroup, type ModelProvider, type SessionModel, takesEffort } from "@/lib/runtime/session-models";
+import { AGENTS, type AgentId } from "@/lib/agents/registry";
+import { agentsFor, compatibleEffort, effortsFor, type ModelGroup, type ModelProvider, type SessionModel, takesEffort } from "@/lib/runtime/session-models";
 import { cn } from "@/lib/utils";
 
 /** A model's mark: its agent's for Claude Code's and Codex's own, its
@@ -107,6 +109,14 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
         </p>
       </div>
 
+      {loadout.default && agentsFor(loadout.default.provider).length > 1 && <label className="flex items-center gap-3 text-sm">
+        Default harness
+        <select aria-label="Default harness" className="rounded border bg-background p-2" value={loadout.default.agent ?? agentsFor(loadout.default.provider)[0]}
+          onChange={(event) => change(setEntryAgent(loadout, loadout.default!, event.target.value as AgentId))}>
+          {agentsFor(loadout.default.provider).map((agent) => <option key={agent} value={agent}>{AGENTS[agent].label}</option>)}
+        </select>
+      </label>}
+
       <div className="space-y-3">
         <div className="space-y-1">
           <h2 className="text-sm font-medium text-foreground">Loadout</h2>
@@ -129,7 +139,7 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
                 <li key={`${m.provider}:${m.id}`} className="group relative border-r border-b border-border/60 bg-background">
                   <button
                     type="button"
-                    onClick={() => change({ ...loadout, default: { provider: m.provider, id: m.id } })}
+                    onClick={() => change({ ...loadout, default: loadout.models.find((e) => sameEntry(e, m)) ?? m })}
                     aria-pressed={isDefault}
                     title={isDefault ? "The default" : "Make it the default"}
                     className={cn(
@@ -151,9 +161,10 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
                   {takesEffort(m) ? (
                     <span className="absolute bottom-3 left-3">
                       <EffortPicker
-                        effort={loadoutEffort(loadout, m) ?? null}
+                        effort={compatibleEffort(m, loadoutEffort(loadout, m))}
                         onChange={(effort) => change(setEntryEffort(loadout, m, effort))}
                         label={`${m.label} effort`}
+                        levels={effortsFor(m)}
                       />
                     </span>
                   ) : null}

@@ -379,6 +379,7 @@ export async function putOnDefaultModel(workspaceId: string): Promise<void> {
  *  and the user's loadout (Settings → Default models). */
 export type OutrunnerModels = ModelMenu & {
   available: boolean;
+  localMenu?: ModelMenu;
   loadout: ModelLoadout;
   /** Where sessions can run on the user's own Claude, and Codex. */
   agents: Record<AgentId, AgentConnection>;
@@ -419,6 +420,9 @@ function parseOutrunnerModels(data: Record<string, unknown>): OutrunnerModels {
   return {
     outrunner,
     allowance: data.allowance === true,
+    harnesses: Array.isArray(data.harnesses) ? data.harnesses as AgentId[] : [],
+    codexModels: Array.isArray(data.codexModels) ? data.codexModels as SessionModel[] : [],
+    localMenu: data.localMenu as ModelMenu | undefined,
     keys,
     available: data.available === true,
     // A server from before loadouts sends none.

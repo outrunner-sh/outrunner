@@ -20,8 +20,8 @@ function answer(body: unknown) {
   return looks;
 }
 
-/** A server from before connections, said nothing of: all assumed. */
-const ALL_CONNECTED = { claude: { cloud: true, local: true }, codex: { cloud: true, local: true } };
+/** A server from before connections, said nothing of: none assumed. */
+const ALL_CONNECTED = { claude: { cloud: false, local: false }, codex: { cloud: false, local: false } };
 
 test("the menu reads the user's keys, dropping any provider this page doesn't know", async () => {
   answer({ outrunner: true, allowance: true, keys: ["zai", "made-up", 7], available: true });
@@ -30,6 +30,9 @@ test("the menu reads the user's keys, dropping any provider this page doesn't kn
     allowance: true,
     keys: ["zai"],
     available: true,
+    harnesses: [],
+    codexModels: [],
+    localMenu: undefined,
     loadout: { models: [], default: null },
     agents: ALL_CONNECTED,
   });
@@ -42,6 +45,9 @@ test("a server from before providers still gives a menu: its OpenRouter key, and
     allowance: false,
     keys: ["openrouter"],
     available: true,
+    harnesses: [],
+    codexModels: [],
+    localMenu: undefined,
     loadout: { models: [], default: null },
     agents: ALL_CONNECTED,
   });

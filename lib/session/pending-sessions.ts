@@ -1,5 +1,6 @@
 "use client";
 
+import type { RecordedModel } from "@/lib/runtime/session-models";
 import type { AgentId } from "@/lib/agents/registry";
 import { store, useStore } from "@/lib/client/store";
 import { sessionTitle } from "@/lib/nav/session-title";
@@ -49,6 +50,7 @@ export function optimisticSession(input: {
   /** The branch it is asked for. */
   branch: string;
   agent: AgentId;
+  model?: RecordedModel | null;
   /** Who is starting it, as far as the screen knows; "" when it doesn't. */
   ownerId: string;
   /** Where the user's sessions run, as far as the screen knows. */
@@ -76,7 +78,7 @@ export function optimisticSession(input: {
     environmentId: null,
     checkouts: null,
     agent: input.agent,
-    model: null,
+    model: input.model ?? null,
     mode: "build",
     lastActiveAt: at,
     errorMessage: null,

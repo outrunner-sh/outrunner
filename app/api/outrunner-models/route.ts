@@ -1,5 +1,10 @@
+import { codexModelsFor } from "@/lib/codex/model-catalog.deps";
 import { NextResponse } from "next/server";
 
+import { getSandboxSettings, ownSandboxKeys } from "@/lib/db/credentials";
+import { providerForNewSessions } from "@/lib/runtime/sandbox-choice";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
+import { optionalEnv } from "@/lib/env";
 import type { AgentConnection, AgentId } from "@/lib/agents/registry";
 import { agentConnection, type AgentAuthStore } from "@/lib/agents/resolve";
 import { getOwner } from "@/lib/auth/owner";
@@ -33,8 +38,11 @@ export async function GET() {
   const orgId = await activeOrgId().catch(() => undefined);
   const own = agentAuthStore(owner.id);
   const withOrg = orgId ? agentAuthStore(owner.id, orgId) : own;
-  const [menu, loadout, claude, codex] = await Promise.all([
+  const [menu, localMenu, catalog, localCatalog, loadout, claude, codex] = await Promise.all([
     modelMenu(owner.id, orgId),
+    modelMenu(owner.id),
+    codexModelsFor(withOrg),
+    codexModelsFor(own),
     // Where they set no default, the org's (lib/orgs/defaults.ts).
     Promise.all([getModelLoadout(owner.id), orgDefaultsFor(orgId)]).then(([mine, org]) =>
       withOrgDefault(mine, org.defaultModel),
@@ -44,12 +52,15 @@ export async function GET() {
   ]);
   return NextResponse.json({
     ...menu,
+    codexModels: catalog,
+    harnesses: await newSessionHarnesses(owner.id),
+    localMenu: { ...localMenu, codexModels: localCatalog },
     loadout,
     agents: { claude, codex },
     available: offersModels(menu),
     ownKey: menu.keys.includes("openrouter"),
     serverModels: menu.outrunner,
-  });
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }
 
 /** Where `agent` runs on an account: on a box with the org's keys too, on
@@ -57,4 +68,11 @@ export async function GET() {
 async function connection(own: AgentAuthStore, withOrg: AgentAuthStore, agent: AgentId): Promise<AgentConnection> {
   const [mine, cloud] = await Promise.all([agentConnection(own, agent), agentConnection(withOrg, agent)]);
   return { cloud: cloud.cloud, local: mine.local };
+}
+
+async function newSessionHarnesses(user: string): Promise<AgentId[]> {
+  try {
+    const provider = providerForNewSessions(await getSandboxSettings(user), ownSandboxKeys(user));
+    return isComputerProvider(provider) && optionalEnv("RUNTIME_ENGINE") !== "jcode" ? ["claude", "codex"] : ["claude"];
+  } catch { return []; }
 }

@@ -7,7 +7,6 @@ import { savingSettings } from "@/lib/http/settings-save";
 import { orgCaller } from "@/lib/orgs/routes";
 import { isBoxSizeId } from "@/lib/runtime/box-sizes";
 import { parseLoadoutEntry } from "@/lib/runtime/model-loadout";
-import { DEFAULT_EFFORT, takesEffort } from "@/lib/runtime/session-models";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -49,8 +48,6 @@ export async function PUT(request: Request, context: RouteContext) {
   if (body?.archiveOnClose !== undefined && typeof body.archiveOnClose !== "boolean") {
     return NextResponse.json({ error: "Archiving on close is on or off." }, { status: 400 });
   }
-  // A model that takes an effort starts at the usual one.
-  if (defaultModel && takesEffort(defaultModel) && !defaultModel.effort) defaultModel.effort = DEFAULT_EFFORT;
   const defaults = {
     defaultModel,
     boxSize: isBoxSizeId(body?.boxSize) ? body.boxSize : null,

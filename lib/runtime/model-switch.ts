@@ -163,7 +163,12 @@ export async function recordedModelRequest(
   keyFor: (holder: KeyHolder) => Promise<string>,
 ): Promise<SetModelRequest> {
   try {
-    return await setModelRequest(recorded.model, keyFor, recorded.effort);
+    // Persisted effort is an explicit session choice, not a newly inferred
+    // capability. Preserve it on restore; the runtime may refuse an obsolete
+    // value, but must not silently launch at a different saved effort.
+    const model = recorded.model.provider === "codex" && recorded.effort
+      ? { ...recorded.model, efforts: [recorded.effort] } : recorded.model;
+    return await setModelRequest(model, keyFor, recorded.effort);
   } catch (error) {
     if (error instanceof NoProviderKeyError) throw new SessionKeyRemovedError(recorded.model, error);
     throw error;

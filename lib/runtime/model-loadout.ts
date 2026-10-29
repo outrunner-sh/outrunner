@@ -8,9 +8,10 @@
  * Imports only the menu, so the browser and the tests use it as is.
  */
 
-import { AGENTS, type AgentId } from "@/lib/agents/registry";
+import { AGENTS, isAgentId, type AgentId } from "@/lib/agents/registry";
 import {
   CLAUDE_MODELS,
+  agentsFor,
   CODEX_MODELS,
   DEFAULT_EFFORT,
   type Effort,
@@ -20,11 +21,12 @@ import {
   type ModelProvider,
   type SessionModel,
   takesEffort,
+  compatibleEffort,
 } from "@/lib/runtime/session-models";
 
 /** One model in the loadout: whose, which, and the effort it runs at when
  *  picked (none: the model's own; only on a model that takes one). */
-export type LoadoutEntry = { provider: ModelProvider; id: string; effort?: Effort };
+export type LoadoutEntry = { provider: ModelProvider; id: string; effort?: Effort; agent?: AgentId };
 
 export type ModelLoadout = {
   /** In the order the picker shows them. */
@@ -46,12 +48,13 @@ export function sameEntry(a: LoadoutEntry | null | undefined, b: LoadoutEntry | 
  *  choice is; null for anything else. */
 export function parseLoadoutEntry(raw: unknown): LoadoutEntry | null {
   if (!raw || typeof raw !== "object") return null;
-  const { provider, id, effort } = raw as { provider?: unknown; id?: unknown; effort?: unknown };
+  const { provider, id, effort, agent } = raw as { provider?: unknown; id?: unknown; effort?: unknown; agent?: unknown };
   const model = modelChoice(provider, id);
   if (!model) return null;
   const entry: LoadoutEntry = { provider: model.provider, id: model.id };
+  if (isAgentId(agent) && agentsFor(model.provider).includes(agent)) entry.agent = agent;
   // An effort the model doesn't take is dropped, not kept to mislead.
-  if (isEffort(effort) && takesEffort(model)) entry.effort = effort;
+  if (isEffort(effort) && (takesEffort(model) || model.provider === "codex")) entry.effort = effort;
   return entry;
 }
 
@@ -99,33 +102,35 @@ export function loadoutEffort(loadout: ModelLoadout, model: LoadoutEntry): Effor
 /** The effort `model` runs at when picked: the loadout's for it (null: the
  *  model's own, as Settings shows it), else DEFAULT_EFFORT. Only a model that
  *  takes one gets it (takesEffort). */
-export function effortOnPick(loadout: ModelLoadout | undefined, model: LoadoutEntry): Effort | null {
+export function effortOnPick(loadout: ModelLoadout | undefined, model: LoadoutEntry & Partial<Pick<SessionModel, "efforts" | "defaultEffort">>): Effort | null {
   const entry = loadout?.models.find((e) => sameEntry(e, model));
-  return entry ? (entry.effort ?? null) : DEFAULT_EFFORT;
+  return compatibleEffort(model, entry ? (entry.effort ?? null) : (model.defaultEffort ?? DEFAULT_EFFORT));
 }
 
 /** `entry` set to run at `effort`, or at its own with null. A model not in
  *  the loadout, or one that takes no effort, is left as it is. */
-export function setEntryEffort(loadout: ModelLoadout, entry: LoadoutEntry, effort: Effort | null): ModelLoadout {
+export function setEntryEffort(loadout: ModelLoadout, entry: LoadoutEntry & Partial<Pick<SessionModel, "efforts">>, effort: Effort | null): ModelLoadout {
   if (!takesEffort(entry) || !loadout.models.some((e) => sameEntry(e, entry))) return loadout;
   const models = loadout.models.map((e): LoadoutEntry => {
     if (!sameEntry(e, entry)) return e;
-    const bare = { provider: e.provider, id: e.id };
+    const { effort: _effort, ...bare } = e;
+    void _effort;
     return effort ? { ...bare, effort } : bare;
   });
-  return { ...loadout, models };
+  return { ...loadout, models, default: models.find((e) => sameEntry(e, loadout.default)) ?? loadout.default };
 }
 
 /** `entry` added at the end, at DEFAULT_EFFORT where it takes one, or taken
  *  out; the default goes with it. */
-export function toggleEntry(loadout: ModelLoadout, entry: LoadoutEntry): ModelLoadout {
+export function toggleEntry(loadout: ModelLoadout, entry: LoadoutEntry & Partial<Pick<SessionModel, "efforts" | "defaultEffort">>): ModelLoadout {
   if (loadout.models.some((e) => sameEntry(e, entry))) {
     const models = loadout.models.filter((e) => !sameEntry(e, entry));
     return { models, default: sameEntry(loadout.default, entry) ? null : loadout.default };
   }
   if (loadout.models.length >= LOADOUT_MAX) return loadout;
   const added: LoadoutEntry = { provider: entry.provider, id: entry.id };
-  if (takesEffort(entry)) added.effort = DEFAULT_EFFORT;
+  const effort = effortOnPick(undefined, entry);
+  if (effort) added.effort = effort;
   // The first model picked is the default until another is made it.
   return { models: [...loadout.models, added], default: loadout.default ?? added };
 }
@@ -175,4 +180,11 @@ export function connectOffers(connect: AgentId[], query: string, matched: number
   return connect.filter(
     (agent) => AGENTS[agent].label.toLowerCase().includes(q) || searchModels(AGENT_MODELS[agent], q).length > 0,
   );
+}
+
+/** Keep the harness with the model preference in the existing JSON loadout. */
+export function setEntryAgent(loadout: ModelLoadout, entry: LoadoutEntry, agent: AgentId): ModelLoadout {
+  if (!agentsFor(entry.provider).includes(agent)) return loadout;
+  const models = loadout.models.map((m) => sameEntry(m, entry) ? { ...m, agent } : m);
+  return { models, default: sameEntry(loadout.default, entry) ? models.find((m) => sameEntry(m, entry))! : loadout.default };
 }
