@@ -52,7 +52,11 @@ for (const [mode, event, refType, publish] of [
       assert.match(upload, /if: steps\.version\.outputs\.release == 'none'/);
       assert.match(upload, /retention-days: 3\b/);
       assert.match(upload, /if-no-files-found: error/);
-      assert.ok(workflow.indexOf("- name: Verify signature, notarization and bundle") < workflow.indexOf("- name: Collect release files"));
+      const verifyAt = workflow.indexOf("- name: Verify signature, notarization and bundle");
+      const collectAt = workflow.indexOf("- name: Collect release files");
+      assert.ok(verifyAt >= 0, "missing signature verification step");
+      assert.ok(collectAt >= 0, "missing release collection step");
+      assert.ok(verifyAt < collectAt, "verify signatures before collecting release files");
 
       const dmg = join(dir, "app.dmg");
       const update = join(dir, "app.tar.gz");
@@ -63,7 +67,7 @@ for (const [mode, event, refType, publish] of [
       run("Collect release files", dir, { VERSION: "1.2.3", DMG: dmg, UPDATE: update, OUT: out });
       const assets = ["Outrunner_1.2.3_universal.app.tar.gz", "Outrunner_1.2.3_universal.app.tar.gz.sig", "Outrunner_1.2.3_universal.dmg", "SHA256SUMS"];
       assert.deepEqual(readdirSync(out).sort(), assets);
-      execFileSync("sha256sum", ["-c", "SHA256SUMS"], { cwd: out });
+      execFileSync("shasum", ["-a", "256", "-c", "SHA256SUMS"], { cwd: out });
       if (mode === "none") return;
 
       const releaseStep = mode === "draft" ? "Attach to a draft release" : "Publish the release";
