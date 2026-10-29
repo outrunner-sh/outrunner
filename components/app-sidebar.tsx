@@ -9,7 +9,7 @@ import {
   Folder,
   GitPullRequest,
   Inbox,
-  LayoutList,
+  MessageSquare,
   Slack,
   Laptop,
   PanelLeft,
@@ -185,8 +185,8 @@ export function AppSidebar({
   };
 
   return (
-    <aside className="flex h-full min-h-0 flex-col gap-5 border-r border-border/60 bg-sidebar px-3 pb-3 pt-5">
-      <div className="flex min-w-0 items-center gap-1 px-1">
+    <aside className="flex h-full min-h-0 flex-col gap-5 border-r border-border/60 bg-sidebar px-4 pb-3 pt-5">
+      <div className="flex min-w-0 items-center gap-1.5 px-1">
         {/* The org being shown, which switches orgs; before they've loaded
             (or with none, before orgs), the app's mark, home. */}
         {orgs.length > 0 ? (
@@ -196,7 +196,7 @@ export function AppSidebar({
             <Terminal className="size-4" />
           </Link>
         )}
-        <div className="flex shrink-0 items-center gap-1.5" role="group" aria-label="Workspace navigation">
+        <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Workspace navigation">
           <HeaderActionLink
             href="/triage"
             label="Triage"
@@ -211,7 +211,7 @@ export function AppSidebar({
             label="Sessions"
             count={needingYou}
             countDescription="need you"
-            icon={<LayoutList />}
+            icon={<MessageSquare />}
             active={pathname === "/workspaces"}
           />
           <button
@@ -222,13 +222,13 @@ export function AppSidebar({
             aria-pressed={searching}
             title="Search sessions (⌘K)"
             className={cn(
-              "relative grid size-6 shrink-0 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+              "relative grid size-7 shrink-0 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
               searching
                 ? "bg-accent text-foreground"
                 : "text-muted-foreground hover:bg-accent hover:text-foreground",
             )}
           >
-            <Search className="size-4" />
+            <Search className="size-4 stroke-[1.75]" />
           </button>
         </div>
         <button
@@ -236,9 +236,9 @@ export function AppSidebar({
           onClick={onCollapse}
           aria-label="Collapse sidebar"
           title="Collapse sidebar"
-          className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
-          <PanelLeft className="size-4" />
+          <PanelLeft className="size-4 stroke-[1.75]" />
         </button>
       </div>
 
@@ -250,6 +250,7 @@ export function AppSidebar({
           icon={<Plus />}
           label="New Session"
           hint="⌘N"
+          primary
           active={pathname === "/" || pathname === "/new"}
         />
         <NavLink
@@ -278,7 +279,7 @@ export function AppSidebar({
         ) : null}
       </nav>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="-mx-4 min-h-0 flex-1 overflow-y-auto border-t border-border/60 px-4 pt-4">
         <SidebarMissions active={active} projects={projects} />
         <div className="flex items-center justify-between px-2">
           <GroupingSwitch value={grouping} onChange={chooseGrouping} />
@@ -574,6 +575,7 @@ function NavLink({
   label,
   hint,
   active,
+  primary = false,
 }: {
   href: string;
   onClick?: () => void;
@@ -582,6 +584,9 @@ function NavLink({
   /** Its keyboard shortcut, shown at the row's end on hover. */
   hint?: string;
   active: boolean;
+  /** The sidebar's first action (New Session): in the foreground, a step
+   *  above the destinations under it, which stay muted until hovered. */
+  primary?: boolean;
 }) {
   return (
     <Link
@@ -592,7 +597,12 @@ function NavLink({
       className={cn(
         SIDEBAR_ROW,
         "group/nav",
-        active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+        primary && "font-medium",
+        active
+          ? "bg-accent text-foreground"
+          : primary
+            ? "text-foreground hover:bg-accent"
+            : "text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
     >
       {icon}
@@ -628,7 +638,7 @@ function HeaderActionLink({
       aria-current={active ? "page" : undefined}
       title={`${label}${count > 0 ? ` (${count} ${countDescription})` : ""}${shortcut ? ` · ${shortcut}` : ""}`}
       className={cn(
-        "relative grid size-6 shrink-0 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&_svg]:size-4",
+        "relative grid size-7 shrink-0 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&_svg]:size-4 [&_svg]:stroke-[1.75]",
         active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
     >

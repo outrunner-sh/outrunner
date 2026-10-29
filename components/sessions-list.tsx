@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, Check, ChevronDown, GitMerge, GitPullRequest, LayoutList, Search, Trash2, X } from "lucide-react";
+import { Archive, Check, ChevronDown, GitMerge, GitPullRequest, MessageSquare, Search, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAppData } from "@/components/app-data";
@@ -161,7 +161,7 @@ export function SessionsList() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-3">
-        <LayoutList className="size-4 text-muted-foreground" />
+        <MessageSquare className="size-4 text-muted-foreground" />
         <h1 className="text-sm font-medium">Sessions</h1>
         {cloud && <span className="text-[12px] tabular-nums text-muted-foreground">{entries.length}</span>}
       </header>

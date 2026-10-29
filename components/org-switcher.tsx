@@ -74,7 +74,7 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
     <div className="relative min-w-0 flex-1">
       <DropdownMenu onOpenChange={(open) => open && setError(null)}>
         <DropdownMenuTrigger
-          className="-ml-1 flex min-w-0 max-w-full items-center gap-2 rounded-md px-1 py-1 text-sm font-semibold text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent"
+          className="-ml-1 flex min-w-0 max-w-full items-center gap-2 rounded-md px-1 py-1 text-[15px] font-semibold text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent"
           aria-label={`Org: ${active.name}. Switch org`}
           title={active.name}
         >
