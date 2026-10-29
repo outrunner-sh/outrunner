@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { getWorkspace } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { previewDomain } from "@/lib/previews/host";
 import { createSessionPreview, listSessionPreviews } from "@/lib/previews/manage";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -21,7 +22,9 @@ export async function GET(_request: Request, context: RouteContext) {
   if (!workspace) return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   const listed = await listSessionPreviews({ kind: "user", user: owner }, workspace);
   if (!listed.ok) return NextResponse.json({ error: listed.message }, { status: listed.status });
-  return NextResponse.json({ previews: listed.value });
+  // `enabled` false: this Outrunner serves no previews, and the panel
+  // offers none.
+  return NextResponse.json({ previews: listed.value, enabled: previewDomain() !== null });
 }
 
 /** Make a preview of a port (`{ port, label?, mode? }`), or hand back the
