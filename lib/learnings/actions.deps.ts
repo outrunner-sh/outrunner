@@ -7,7 +7,7 @@
 import { type AuditActor } from "@/lib/audit/actions";
 import { recordAudit } from "@/lib/audit/record";
 import { learningStore } from "@/lib/db/learnings";
-import { memberRole } from "@/lib/db/orgs";
+import { getOrg, memberRole } from "@/lib/db/orgs";
 import type { LearningDeps } from "@/lib/learnings/actions";
 import type { LearningActor } from "@/lib/learnings/rules";
 
@@ -22,6 +22,7 @@ export function learningDeps(actor: AuditActor): LearningDeps {
         action,
         resource: { type: "learning", id: learning.id, label: learning.title },
       }),
+    personalOrg: async (orgId) => (await getOrg(orgId))?.personal ?? false,
   };
 }
 

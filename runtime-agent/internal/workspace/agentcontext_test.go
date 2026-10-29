@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -99,5 +100,37 @@ func TestWithoutAgentContextBlock(t *testing.T) {
 		if got := withoutAgentContextBlock(in); got != want {
 			t.Errorf("withoutAgentContextBlock(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A CLAUDE.md that links into the user's dotfiles stays a link, its target
+// taking the block, and an owner-only one stays owner-only.
+func TestAgentContextKeepsTheUsersLinkAndMode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	s := NewService(t.TempDir())
+	dotfiles := filepath.Join(t.TempDir(), "CLAUDE.md")
+	writeTestFile(t, dotfiles, "mine\n")
+	if err := os.Chmod(dotfiles, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	claudeMD := filepath.Join(home, ".claude", "CLAUDE.md")
+	if err := os.MkdirAll(filepath.Dir(claudeMD), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dotfiles, claudeMD); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAgentContext("Use pnpm."); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(claudeMD); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("CLAUDE.md is no longer a link: %v", err)
+	}
+	if got := readFile(dotfiles); !strings.HasPrefix(got, "mine\n\n"+agentContextStart) {
+		t.Errorf("the link's target = %q", got)
+	}
+	if info, _ := os.Stat(dotfiles); info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600", info.Mode().Perm())
 	}
 }

@@ -18,7 +18,9 @@ export async function sessionAgentContext(ownerId: string, workspaceId: string):
     if (error) throw error;
     if (!data) return undefined;
     const [org, learnings] = await Promise.all([getOrg(data.org_id), sessionLearnings(learningStore, ownerId, data.org_id)]);
-    return renderAgentContext({ orgName: org && !org.personal ? org.name : null, learnings });
+    // A personal org has no learnings of its own (lib/learnings/actions.ts).
+    const loaded = org?.personal ? { ...learnings, org: [] } : learnings;
+    return renderAgentContext({ orgName: org && !org.personal ? org.name : null, learnings: loaded });
   } catch (error) {
     console.error(`Session ${workspaceId}: couldn't read its learnings; its box keeps what it had`, error);
     return undefined;

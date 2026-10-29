@@ -221,3 +221,10 @@ test("a Codex session's box with MCP servers to load is upgraded first when its 
     assert.ok(!JSON.stringify(warned).includes("Codex"), JSON.stringify(warned));
   }
 });
+
+test("a box that refuses the learnings' block still starts the session", async () => {
+  const b = box([...all, "agent-context"]);
+  const client = { ...b.client, setAgentContext: async () => Promise.reject(new Error("400 INVALID_REQUEST: too large")) };
+  await deliverSessionSetup(client, { environment, agentConfig: null, agentContext: "# Outrunner learnings", downloadUrl });
+  assert.deepEqual(b.sent.map(([kind]) => kind), ["environment"]);
+});

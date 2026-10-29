@@ -54,8 +54,10 @@ async function suggestLearning(
   args: Record<string, unknown>,
   deps: SessionToolDeps,
 ): Promise<SessionToolAnswer> {
-  const where = learningScope(args.scope ?? "personal");
+  let where = learningScope(args.scope ?? "personal");
   if (!where) return refuse(400, "A learning is for the user (personal) or the org.");
+  // A personal org's learnings are its person's own.
+  if (where === "org" && (await deps.learnings.personalOrg?.(scope.orgId))) where = "personal";
   const text = parseLearningText(args);
   if (typeof text === "string") return refuse(400, text.replaceAll("`", ""));
   try {

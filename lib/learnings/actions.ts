@@ -14,6 +14,7 @@ import {
   type LearningStatus,
   learningRights,
   MAX_LEARNINGS,
+  MAX_PENDING_SUGGESTIONS,
   newLearningStatus,
 } from "@/lib/learnings/rules";
 
@@ -43,6 +44,9 @@ export type LearningDeps = {
   store: LearningStore;
   /** Record a change to an org's learning; a person's own aren't audited. */
   audit?(action: LearningAuditAction, learning: Learning): Promise<void>;
+  /** Whether an org is a person's own: it has no learnings of its own, as
+   *  its person's are already in every session of theirs. */
+  personalOrg?(orgId: string): Promise<boolean>;
 };
 
 /** Why a learning couldn't be read or changed, said as the routes answer. */
@@ -88,15 +92,23 @@ export async function createLearning(
   deps: LearningDeps,
   input: { scope: LearningScope; title: string; body: string; suggested?: boolean; suggestedIn?: string | null },
 ): Promise<Learning> {
-  const where = scopeOf(actor, input.scope);
-  const existing = await deps.store.list(where);
-  if (existing.length >= MAX_LEARNINGS) {
+  if (input.scope === "org" && (await deps.personalOrg?.(actor.orgId))) {
+    throw new LearningError(400, "A personal org has only your own learnings: add it with scope personal.");
+  }
+  const existing = await deps.store.list(scopeOf(actor, input.scope));
+  const status = newLearningStatus(actor, input.scope, input.suggested ?? false);
+  if (status === "active" && existing.filter((l) => l.status === "active").length >= MAX_LEARNINGS) {
     throw new LearningError(
       409,
       `${input.scope === "org" ? "The org has" : "You have"} ${MAX_LEARNINGS} learnings, the most there can be. Delete one first.`,
     );
   }
-  const status = newLearningStatus(actor, input.scope, input.suggested ?? false);
+  if (status === "suggested" && existing.filter((l) => l.status === "suggested" && l.createdBy === actor.userId).length >= MAX_PENDING_SUGGESTIONS) {
+    throw new LearningError(
+      409,
+      `${MAX_PENDING_SUGGESTIONS} suggestions of yours are already waiting${input.scope === "org" ? " for the org's admins" : ""}. Accept or dismiss some in Settings → Learnings first.`,
+    );
+  }
   const learning = await deps.store.insert({
     orgId: input.scope === "org" ? actor.orgId : null,
     userId: input.scope === "personal" ? actor.userId : null,
@@ -125,6 +137,12 @@ export async function updateLearning(
     throw new LearningError(400, "An accepted learning can't go back to being a suggestion. Delete it instead.");
   }
   const accepting = patch.status === "active" && learning.status === "suggested";
+  if (accepting) {
+    const active = (await deps.store.list(scopeOf(actor, learning.scope))).filter((l) => l.status === "active");
+    if (active.length >= MAX_LEARNINGS) {
+      throw new LearningError(409, `There are ${MAX_LEARNINGS} learnings already, the most there can be. Delete one first.`);
+    }
+  }
   const updated = await deps.store.update(id, patch);
   if (!updated) throw new LearningError(404, NOT_FOUND);
   if (updated.scope === "org") await deps.audit?.(accepting ? "learning.accepted" : "learning.changed", updated);

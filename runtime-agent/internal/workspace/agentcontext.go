@@ -109,11 +109,27 @@ func withAgentContextBlock(path, content string) error {
 		}
 		return nil
 	}
+	// Written where the file really is, with its own mode: a CLAUDE.md that
+	// links into the user's dotfiles stays a link, and its target is what
+	// changes; an owner-only one stays owner-only.
+	mode := os.FileMode(0o644)
+	if existed {
+		if target, err := filepath.EvalSymlinks(path); err == nil {
+			path = target
+		}
+		if info, err := os.Stat(path); err == nil {
+			mode = info.Mode().Perm()
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	tmp := path + ".outrunner-tmp"
-	if err := os.WriteFile(tmp, []byte(next), 0o644); err != nil {
+	if err := os.WriteFile(tmp, []byte(next), mode); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, mode); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, path)

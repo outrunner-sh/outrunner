@@ -11,9 +11,9 @@
 
 import type { Learning } from "@/lib/learnings/rules";
 
-/** The most the block may hold: the box refuses more. Past it, the newest
- *  learnings are left out, said. */
-export const MAX_AGENT_CONTEXT_CHARS = 48 * 1024;
+/** The most the block may hold, in UTF-8 bytes as the box counts them (it
+ *  refuses more than 64 KB). Past it, whole learnings are left out, said. */
+export const MAX_AGENT_CONTEXT_BYTES = 48 * 1024;
 
 export type AgentContextInput = {
   /** The org the session is in, by name; null for a person's own org. */
@@ -21,30 +21,57 @@ export type AgentContextInput = {
   learnings: { org: Learning[]; personal: Learning[] };
 };
 
-function section(heading: string, intro: string, learnings: Learning[]): string {
-  const items = learnings.map((l) => `### ${l.title}\n\n${l.body}`);
-  return [`## ${heading}`, intro, ...items].join("\n\n");
+const encoder = new TextEncoder();
+
+/** Text's size as the box measures it. */
+export function utf8Bytes(text: string): number {
+  return encoder.encode(text).length;
 }
 
-/** The block's Markdown; empty when there's nothing to load, and the box
- *  then removes any block an earlier session left. */
+const HEAD =
+  "# Outrunner learnings\n\n" +
+  "Standing instructions, kept in Outrunner (Settings → Learnings) and loaded into every session. " +
+  "Follow them; where one conflicts with what the user asks in this session, the user's message wins.";
+
+function item(learning: Learning): string {
+  return `### ${learning.title}\n\n${learning.body}`;
+}
+
+/** The first learnings whose items fit in `budget` bytes, whole. */
+function fitting(learnings: Learning[], budget: number): { items: string[]; used: number } {
+  const items: string[] = [];
+  let used = 0;
+  for (const learning of learnings) {
+    const text = item(learning);
+    const size = utf8Bytes(text) + 2;
+    if (used + size > budget) break;
+    items.push(text);
+    used += size;
+  }
+  return { items, used };
+}
+
+/**
+ * The block's Markdown; empty when there's nothing to load, and the box then
+ * removes any block an earlier session left. Learnings go in whole or not at
+ * all, never cut partway through an instruction. When they don't all fit, the
+ * user's own get half the room first, so a long org list can't push them all
+ * out, then the org's take what's left, and the user's the rest.
+ */
 export function renderAgentContext({ orgName, learnings }: AgentContextInput): string {
-  const sections: string[] = [];
-  if (learnings.org.length > 0) {
-    sections.push(section(orgName ? `${orgName}'s learnings` : "Your org's learnings", "Kept by the org's admins for every session.", learnings.org));
-  }
-  if (learnings.personal.length > 0) {
-    sections.push(section("The user's learnings", "Kept by the user for every session of theirs.", learnings.personal));
-  }
-  if (sections.length === 0) return "";
-  const head =
-    "# Outrunner learnings\n\n" +
-    "Standing instructions, kept in Outrunner (Settings → Learnings) and loaded into every session. " +
-    "Follow them; where one conflicts with what the user asks in this session, the user's message wins.";
-  let text = [head, ...sections].join("\n\n");
-  if (text.length > MAX_AGENT_CONTEXT_CHARS) {
-    const note = "\n\n(Some learnings were left out: there are more than a session can load.)";
-    text = text.slice(0, MAX_AGENT_CONTEXT_CHARS - note.length).replace(/\n[^\n]*$/, "") + note;
-  }
-  return text;
+  if (learnings.org.length === 0 && learnings.personal.length === 0) return "";
+  const orgHeading = `## ${orgName ? `${orgName}'s learnings` : "Your org's learnings"}\n\nKept by the org's admins for every session.`;
+  const personalHeading = "## The user's learnings\n\nKept by the user for every session of theirs.";
+  const note = "(Some learnings were left out: there are more than a session can load.)";
+  const budget = MAX_AGENT_CONTEXT_BYTES - utf8Bytes(HEAD) - utf8Bytes(orgHeading) - utf8Bytes(personalHeading) - utf8Bytes(note) - 16;
+
+  const personalFirst = fitting(learnings.personal, Math.floor(budget / 2));
+  const org = fitting(learnings.org, budget - personalFirst.used);
+  const personal = fitting(learnings.personal, budget - org.used);
+
+  const sections: string[] = [HEAD];
+  if (org.items.length > 0) sections.push([orgHeading, ...org.items].join("\n\n"));
+  if (personal.items.length > 0) sections.push([personalHeading, ...personal.items].join("\n\n"));
+  if (org.items.length < learnings.org.length || personal.items.length < learnings.personal.length) sections.push(note);
+  return sections.join("\n\n");
 }

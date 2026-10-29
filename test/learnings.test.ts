@@ -11,8 +11,8 @@ import {
   type LearningDeps,
   type LearningStore,
 } from "@/lib/learnings/actions";
-import { type Learning, type LearningActor, learningRights, MAX_LEARNINGS, parseLearningText } from "@/lib/learnings/rules";
-import { MAX_AGENT_CONTEXT_CHARS, renderAgentContext } from "@/lib/runtime/agent-context";
+import { type Learning, type LearningActor, learningRights, MAX_LEARNINGS, MAX_PENDING_SUGGESTIONS, parseLearningText } from "@/lib/learnings/rules";
+import { MAX_AGENT_CONTEXT_BYTES, renderAgentContext, utf8Bytes } from "@/lib/runtime/agent-context";
 import { boxRequestSignature, boxRequestValid, gitCredentialSignature } from "@/lib/runtime/git-credential";
 import { callSessionTool } from "@/lib/session-tools/tools";
 
@@ -109,6 +109,9 @@ test("a scope holds at most so many learnings", async () => {
   const d = deps();
   for (let i = 0; i < MAX_LEARNINGS; i++) await createLearning(member, d, { scope: "personal", title: `L${i}`, body: "x" });
   await assert.rejects(createLearning(member, d, { scope: "personal", title: "one more", body: "x" }), (e) => e instanceof LearningError && e.status === 409);
+  // A suggestion still waits, but can't be accepted past the bound.
+  const waiting = await createLearning(member, d, { scope: "personal", title: "waiting", body: "x", suggested: true });
+  await assert.rejects(updateLearning(member, d, waiting.id, { status: "active" }), (e) => e instanceof LearningError && e.status === 409);
   // The org's are counted apart.
   await createLearning(admin, d, { scope: "org", title: "Team", body: "x" });
 });
@@ -126,10 +129,40 @@ test("a session loads its org's and its user's active learnings, as a block", as
   assert.doesNotMatch(block, /Pending/);
   assert.equal(renderAgentContext({ orgName: null, learnings: { org: [], personal: [] } }), "");
 
-  const many = Array.from({ length: 100 }, (_, i) => ({ ...learnings.personal[0], title: `T${i}`, body: "x".repeat(1999) }));
-  const cut = renderAgentContext({ orgName: null, learnings: { org: [], personal: many } });
-  assert.ok(cut.length <= MAX_AGENT_CONTEXT_CHARS);
-  assert.match(cut, /left out/);
+});
+
+test("past the bound, whole learnings are left out, measured in bytes, and the user's own keep room", () => {
+  const at = "2026-11-03T00:00:00.000Z";
+  const learning = (title: string, body: string, scope: "org" | "personal"): Learning => ({
+    id: title, scope, orgId: scope === "org" ? ORG : null, userId: scope === "personal" ? "u" : null, title, body,
+    status: "active", createdBy: "u", suggestedIn: null, createdAt: at, updatedAt: at,
+  });
+  // Three bytes a character: 100 of them is far past the bound in bytes, not in characters.
+  const org = Array.from({ length: 100 }, (_, i) => learning(`Org ${i}`, "規則".repeat(999), "org"));
+  const personal = Array.from({ length: 10 }, (_, i) => learning(`Mine ${i}`, `Rule ${i}: end of rule.`, "personal"));
+  const block = renderAgentContext({ orgName: "Acme", learnings: { org, personal } });
+  assert.ok(utf8Bytes(block) <= MAX_AGENT_CONTEXT_BYTES, `${utf8Bytes(block)} bytes`);
+  assert.match(block, /left out/);
+  // Every org learning shown is whole, and every one of the user's is there.
+  const bodies = [...block.matchAll(/### Org \d+\n\n([規則]+)/g)].map((m) => m[1]);
+  assert.ok(bodies.length > 0 && bodies.length < 100);
+  for (const body of bodies) assert.equal(body, "規則".repeat(999));
+  for (let i = 0; i < 10; i++) assert.match(block, new RegExp(`Rule ${i}: end of rule\\.`));
+});
+
+test("suggestions are held to a few waiting per person, apart from the learnings' own bound", async () => {
+  const d = deps();
+  for (let i = 0; i < MAX_PENDING_SUGGESTIONS; i++) await createLearning(member, d, { scope: "org", title: `S${i}`, body: "x" });
+  await assert.rejects(createLearning(member, d, { scope: "org", title: "one more", body: "x" }), /already waiting/);
+  // Another member, and an admin's own, aren't held by them.
+  await createLearning({ userId: "u-other", orgId: ORG, role: "member" }, d, { scope: "org", title: "theirs", body: "x" });
+  await createLearning(admin, d, { scope: "org", title: "Real", body: "x" });
+});
+
+test("a personal org has no learnings of its own", async () => {
+  const d = { ...deps(), personalOrg: async () => true };
+  await assert.rejects(createLearning(admin, d, { scope: "org", title: "T", body: "x" }), (e) => e instanceof LearningError && e.status === 400);
+  await createLearning(admin, d, { scope: "personal", title: "T", body: "x" });
 });
 
 test("an agent's suggestion is filed for its user to accept, in its session's org", async () => {
@@ -153,6 +186,10 @@ test("an agent's suggestion is filed for its user to accept, in its session's or
   assert.equal(d.rows[1].status, "suggested");
 
   assert.equal((await callSessionTool(scope, "suggest_learning", { title: "" }, toolDeps)).status, 400);
+  // In a personal org, --org is the user's own.
+  const personalOrgDeps = { ...toolDeps, learnings: { ...d, personalOrg: async () => true } };
+  await callSessionTool(scope, "suggest_learning", { scope: "org", title: "Mine", body: "x" }, personalOrgDeps);
+  assert.equal(d.rows.at(-1)?.scope, "personal");
   assert.equal((await callSessionTool(scope, "erase_everything", {}, toolDeps)).status, 404);
   assert.equal((await callSessionTool({ ...scope, userId: "u-gone" }, "suggest_learning", { title: "T", body: "x" }, toolDeps)).status, 403);
 });

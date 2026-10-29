@@ -103,7 +103,13 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
     const takes = content
       ? await supports(client, AGENT_FEATURE_AGENT_CONTEXT, "load your learnings")
       : (await client.features()).includes(AGENT_FEATURE_AGENT_CONTEXT);
-    if (takes) await client.setAgentContext({ content });
+    // Never what keeps a session from starting: it launches with what the
+    // box had.
+    if (takes) {
+      await client.setAgentContext({ content }).catch((error: unknown) => {
+        console.error("The box didn't take the session's learnings; it starts without them", error);
+      });
+    }
   }
 
   const environment = setup.environment;

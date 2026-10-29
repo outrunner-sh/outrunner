@@ -20,9 +20,14 @@ export const LEARNING_STATUSES: readonly LearningStatus[] = ["active", "suggeste
 export const MAX_TITLE_CHARS = 120;
 export const MAX_BODY_CHARS = 2000;
 
-/** The most learnings a scope holds, suggestions included: each is in every
- *  session's prompt, so a long list costs every turn. */
+/** The most active learnings a scope holds: each is in every session's
+ *  prompt, so a long list costs every turn. */
 export const MAX_LEARNINGS = 100;
+
+/** The most suggestions one person (or their agents) may have waiting in a
+ *  scope: an agent stuck in a loop can't bury the page, or crowd out a real
+ *  learning. */
+export const MAX_PENDING_SUGGESTIONS = 10;
 
 export type Learning = {
   id: string;
