@@ -8,7 +8,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-/** One of the owner's Missions, with its Runners grouped (the Runners pane). */
+/** One of the owner's Runners, with its Ships grouped (the Ships pane). */
 export async function GET(_request: Request, context: RouteContext) {
   const owner = await getOwner();
   if (!owner) return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
@@ -18,7 +18,7 @@ export async function GET(_request: Request, context: RouteContext) {
   return NextResponse.json({ mission }, { headers: { "cache-control": "no-store" } });
 }
 
-/** Rename the Mission, or give it another icon from the set. */
+/** Rename the Runner, or give it another icon from the set. */
 export async function PATCH(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   const owner = await getOwner();

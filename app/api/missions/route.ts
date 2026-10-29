@@ -11,10 +11,10 @@ import { createCloudSession, type SessionRequest } from "@/lib/session/create-cl
 export const maxDuration = 60;
 
 /**
- * Start a Mission (docs/missions.md): a cloud session of the chosen project
+ * Start a Runner (docs/missions.md): a cloud session of the chosen project
  * (an `environments` row), set up as any session is, whose box also gets the
- * Mission's tools, notes and instructions (lib/missions/setup.ts). Its first
- * message names it, as a session's does. Claude Code only: the Mission's
+ * Runner's tools, notes and instructions (lib/missions/setup.ts). Its first
+ * message names it, as a session's does. Claude Code only: the Runner's
  * tools reach its agent through Claude Code's MCP config.
  */
 export async function POST(request: Request) {
@@ -50,8 +50,8 @@ export async function POST(request: Request) {
   });
 }
 
-/** The owner's Missions in the org the sidebar shows, with their Runners
- *  (lib/missions/view.ts): the sidebar and the Runners pane poll it. */
+/** The owner's Runners in the org the sidebar shows, with their Ships
+ *  (lib/missions/view.ts): the sidebar and the Ships pane poll it. */
 export async function GET() {
   const owner = await getOwner();
   if (!owner) return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
