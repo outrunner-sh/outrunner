@@ -15,6 +15,7 @@ export type SessionChats = {
   chats: SessionChat[];
   loaded: boolean;
   error: string | null;
+  reportError: (message: string) => void;
   start: (how: NewChat) => Promise<SessionChat>;
   rename: (chatId: string, name: string) => Promise<void>;
   remove: (chatId: string) => Promise<void>;
@@ -99,5 +100,5 @@ export function useSessionChats(workspaceId: string, main: SessionChat, enabled:
     [workspaceId],
   );
 
-  return { loaded: !enabled || loadedWorkspace === workspaceId, error, chats: [mainName ? { ...main, name: mainName } : main, ...others], start, rename, remove };
+  return { loaded: !enabled || loadedWorkspace === workspaceId, error, reportError: setError, chats: [mainName ? { ...main, name: mainName } : main, ...others], start, rename, remove };
 }

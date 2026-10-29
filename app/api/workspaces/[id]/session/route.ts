@@ -248,16 +248,16 @@ async function startChat(
   ready: boolean,
 ): Promise<NextResponse | null> {
   try {
-    await startChatOnBox({
-      ready: async (recreated) => { if (ready || recreated) await readyChatRelaunch(agent, identity, upgrade, workspace, chat, ownerId); },
-      start: () => agent.startWorkspace(identity, chat.id),
-      missing: chatMissingOnBox,
-      recreate: async () => {
         await requireFeature(
           { features: async () => (await agent.health(identity)).features ?? [], upgrade },
           AGENT_FEATURE_CHATS,
           "run several chats in a session",
         );
+    await startChatOnBox({
+      ready: async (recreated) => { if (ready || recreated) await readyChatRelaunch(agent, identity, upgrade, workspace, chat, ownerId); },
+      start: () => agent.startWorkspace(identity, chat.id),
+      missing: chatMissingOnBox,
+      recreate: async () => {
         await createChatWithSourceFallback((withSource) => agent.createChat(identity, {
           chatId: chat.id, agent: chat.agent, noStart: true,
           ...(withSource && chat.forkedFrom && {

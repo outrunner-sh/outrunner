@@ -131,7 +131,7 @@ export function WorkspaceStudio({
   // The chat it is about carries on with its turn.
   const askAside = async (question: string): Promise<boolean> => {
     try {
-      return await askSideChat({
+      const accepted = await askSideChat({
         create: () => chats.start({ from: current.id, side: true, question }),
         send: async (side) => (await fetch(chatRoute(workspace.id, side.id, "message"), {
           method: "POST",
@@ -141,8 +141,11 @@ export function WorkspaceStudio({
         remove: (side) => chats.remove(side.id),
         pick,
       });
+      if (!accepted) chats.reportError("Couldn't send the side-chat question. Please try again.");
+      return accepted;
     } catch (error) {
       console.warn(`Side chat: couldn't ask in ${workspace.id}`, error);
+      chats.reportError(error instanceof Error ? error.message : "Couldn't start the chat. Please try again.");
       return false;
     }
   };

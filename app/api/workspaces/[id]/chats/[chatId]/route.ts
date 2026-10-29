@@ -1,3 +1,5 @@
+import { probeStatus } from "@/lib/supabase/probe";
+
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
@@ -12,6 +14,11 @@ type RouteContext = { params: Promise<{ id: string; chatId: string }> };
 
 /** Rename one of the session's chats, its main one too. */
 export async function PATCH(request: Request, context: RouteContext) {
+  try { return await patchChat(request, context); }
+  catch (error) { return chatMutationFailure(error); }
+}
+
+async function patchChat(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
@@ -26,7 +33,9 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (!workspace) return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   const named = await chatNamed(chatId, workspace);
   if (!named.ok) return named.response;
-  await renameChat(workspace.id, named.chat.id, name);
+  try {
+    await renameChat(workspace.id, named.chat.id, name);
+  } catch (error) { return chatMutationFailure(error); }
   return NextResponse.json({ chat: { ...named.chat, name } });
 }
 
@@ -37,6 +46,11 @@ export async function PATCH(request: Request, context: RouteContext) {
  * loses the chat from the list; what it has of it goes with the session.
  */
 export async function DELETE(request: Request, context: RouteContext) {
+  try { return await deleteChat(request, context); }
+  catch (error) { return chatMutationFailure(error); }
+}
+
+async function deleteChat(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
@@ -50,6 +64,9 @@ export async function DELETE(request: Request, context: RouteContext) {
   if (named.chat.id === MAIN_CHAT) {
     return NextResponse.json({ error: "The main chat is the session itself: archive or delete the session instead." }, { status: 400 });
   }
+  try {
+    await deleteChatRow(workspace.id, named.chat.id);
+  } catch (error) { return chatMutationFailure(error); }
   const reach = await reachWorkspaceAgent(id, owner.id, { label: "Chat delete", needsComputer: "" });
   if (reach.ok) {
     const { agent, identity } = reach.reached;
@@ -57,6 +74,12 @@ export async function DELETE(request: Request, context: RouteContext) {
       console.warn(`Chat delete: the box kept ${named.chat.id} of ${workspace.id}`, error),
     );
   }
-  await deleteChatRow(workspace.id, named.chat.id);
   return NextResponse.json({ result: "deleted" });
+}
+
+function chatMutationFailure(error: unknown): NextResponse {
+  console.error("Chat mutation failed", error);
+  const status = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? probeStatus({ code: error.code }) : "unreachable";
+  const unavailable = status === "missing" || status === "outdated";
+  return NextResponse.json({ error: unavailable ? "Chats aren't available yet. Please try again after the database update." : "Couldn't update the chat. Please try again." }, { status: unavailable ? 503 : 502 });
 }
