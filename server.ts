@@ -14,6 +14,7 @@ import next from "next";
 import { billingMode } from "./lib/billing/mode.ts";
 import { previewDomain, previewDomainOf } from "./lib/previews/host.ts";
 import { createPreviewProxy, loopbackGate } from "./lib/previews/proxy.ts";
+import { previewSigningKey, sessionUser } from "./lib/previews/tokens.ts";
 import { GATE_PATH, GATE_SECRET_ENV, GATE_SECRET_HEADER } from "./lib/previews/wire.ts";
 import { createNeevRelay } from "./lib/runtime/sandbox/neev-relay.ts";
 
@@ -37,6 +38,11 @@ const upgradeNext = app.getUpgradeHandler();
 const relay = createNeevRelay();
 const previews = createPreviewProxy({
   domain: () => previewDomain(),
+  appHost: () => (process.env.RUNTIME_BASE_URL ? new URL(process.env.RUNTIME_BASE_URL).host : null),
+  sessionValid: (slug, session) => {
+    const credentials = process.env.CREDENTIALS_ENCRYPTION_KEY;
+    return !!credentials && sessionUser(previewSigningKey(credentials), session, slug) !== null;
+  },
   gate: loopbackGate(port, gateSecret, GATE_SECRET_HEADER, GATE_PATH),
 });
 const previewsOff = previewDomainOf();

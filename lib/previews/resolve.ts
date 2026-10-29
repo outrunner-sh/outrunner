@@ -39,6 +39,7 @@ export type GateDeps = {
   workspace(id: string): Promise<Workspace | null>;
   box(workspace: Workspace): Promise<RuntimeComputer | null>;
   projectLevel(userId: string, projectId: string): Promise<AccessLevel | null>;
+  isMember(userId: string, orgId: string): Promise<boolean>;
   /** Where this server reaches the box's port; null where it can't. */
   upstream(workspace: Workspace, sandboxId: string, port: number): Promise<PreviewUpstream | null>;
   now?: () => number;
@@ -48,14 +49,15 @@ const ENDED: readonly WorkspaceStatus[] = ["destroying", "destroyed"];
 const ASLEEP: readonly WorkspaceStatus[] = ["suspending", "suspended", "archiving", "archived"];
 const STARTING: readonly WorkspaceStatus[] = ["creating", "provisioning", "resuming", "restoring"];
 
-/** Whether `userId` may see a session's previews: its owner, or a member
- *  of its org who can read its repository. */
+/** Whether `userId` may see a session's previews: its owner while still a
+ *  member of its org (as they may see the session itself), or a member who
+ *  can read its repository. */
 export async function mayView(
-  deps: Pick<GateDeps, "projectLevel">,
+  deps: Pick<GateDeps, "projectLevel" | "isMember">,
   userId: string,
-  workspace: Pick<Workspace, "ownerId" | "projectId">,
+  workspace: Pick<Workspace, "ownerId" | "projectId" | "orgId">,
 ): Promise<boolean> {
-  if (userId === workspace.ownerId) return true;
+  if (userId === workspace.ownerId) return !!workspace.orgId && (await deps.isMember(userId, workspace.orgId));
   return allows(await deps.projectLevel(userId, workspace.projectId), "read");
 }
 
@@ -104,7 +106,7 @@ export async function resolvePreview(deps: GateDeps, slug: string, session: stri
     return page(502, "unavailable", WAIT_TTL_MS);
   }
   if (!upstream) return page(501, "unsupported", GONE_TTL_MS);
-  return { kind: "proxy", upstream, ttlMs: ALLOW_TTL_MS };
+  return { kind: "proxy", upstream, mode: preview.mode, ttlMs: ALLOW_TTL_MS };
 }
 
 /** Whether `session` signs in the owner of the session `slug` previews,

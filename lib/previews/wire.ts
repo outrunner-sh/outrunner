@@ -20,7 +20,7 @@ export type PreviewPage = "missing" | "ended" | "denied" | "asleep" | "starting"
 
 export type GateDecision =
   /** Let the visitor through to the box. */
-  | { kind: "proxy"; upstream: PreviewUpstream; ttlMs: number }
+  | { kind: "proxy"; upstream: PreviewUpstream; mode: "login" | "public"; ttlMs: number }
   /** Send the visitor to sign in: to `signInUrl`, with the path to come
    *  back to as `r`. */
   | { kind: "login"; signInUrl: string; ttlMs: number }

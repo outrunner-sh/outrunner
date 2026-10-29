@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { projectLevel } from "@/lib/db/org-access";
+import { memberRole } from "@/lib/db/orgs";
 import { previewBySlug, workspaceForPreview } from "@/lib/db/previews";
 import { previewKey } from "@/lib/previews/gate.deps";
 import { PREVIEW_PATH_PREFIX, PREVIEW_SLUG, previewDomain, previewOrigin, safeReturnPath } from "@/lib/previews/host";
@@ -51,7 +52,8 @@ export async function GET(request: Request, context: RouteContext) {
   if (!preview || !workspace) {
     return refusal(404, "No such preview", "This preview link was deleted, or never was. Ask whoever shared it for a new one.");
   }
-  if (!(await mayView({ projectLevel }, owner.id, workspace))) {
+  const isMember = async (userId: string, orgId: string) => (await memberRole(orgId, userId)) !== null;
+  if (!(await mayView({ projectLevel, isMember }, owner.id, workspace))) {
     return refusal(
       403,
       "You can't open this preview",

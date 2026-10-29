@@ -73,7 +73,7 @@ test("the session cookie is a __Host- cookie on https", () => {
 
 test("a visitor is only ever sent back to a path on the preview itself", () => {
   assert.equal(safeReturnPath("/callback?code=1&state=2"), "/callback?code=1&state=2");
-  for (const bad of [null, "", "https://evil.com/", "//evil.com", "/\\evil.com", "evil", "/__outrunner/wake"]) {
+  for (const bad of [null, "", "https://evil.com/", "//evil.com", "/\\evil.com", "/\t/evil.com", "/\n/evil.com", "/a\\b", "evil", "/__outrunner/wake"]) {
     assert.equal(safeReturnPath(bad), "/", String(bad));
   }
 });

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { memberRole } from "@/lib/db/orgs";
 import { workspaceForPreview } from "@/lib/db/previews";
 import { isUuid } from "@/lib/ids";
 import { previewRequestValid } from "@/lib/previews/box-request";
@@ -54,6 +55,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "That session isn't on this box." }, { status: 404 });
   }
 
+  // Still theirs: an owner removed from the org since makes nothing.
+  if (!workspace.orgId || !(await memberRole(workspace.orgId, workspace.ownerId))) {
+    return NextResponse.json({ error: "The session's owner is no longer a member of its org." }, { status: 403 });
+  }
   const made = await createSessionPreview({ kind: "agent" }, workspace, { port: asked.port, label: asked.label, mode: "login" });
   if (!made.ok) return NextResponse.json({ error: made.message }, { status: made.status });
   return NextResponse.json({ preview: made.value }, { status: made.status ?? 200, headers: { "cache-control": "no-store" } });

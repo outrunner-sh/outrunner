@@ -118,8 +118,22 @@ export function isOriginFormPath(url: string | undefined): url is string {
 }
 
 /** A path to bring a visitor back to after signing in: on the preview's
- *  own host, a path and query, or the root. */
+ *  own host, a path and query, or the root. No backslash or control
+ *  character anywhere: a browser drops a tab or a newline from a URL, and
+ *  reads a backslash as a slash, either of which can make `/\t/evil.com`
+ *  another site. */
 export function safeReturnPath(value: string | null | undefined): string {
-  if (!value || !isOriginFormPath(value) || value.startsWith("/\\") || value.startsWith(PREVIEW_PATH_PREFIX)) return "/";
+  if (!value || !isOriginFormPath(value) || /[\u0000-\u001f\u007f\\]/.test(value) || value.startsWith(PREVIEW_PATH_PREFIX)) return "/";
   return value.length > 2048 ? "/" : value;
+}
+
+/** Whether a host is under the preview domain (a preview's or not): none
+ *  of it is ever the app's to serve. The bare domain isn't, being the app's
+ *  own host in development. */
+export function onPreviewDomain(hostHeader: string | undefined | null, domain: PreviewDomain): boolean {
+  if (!hostHeader) return false;
+  let host = hostHeader.trim().toLowerCase();
+  if (host.endsWith(".")) host = host.slice(0, -1);
+  if (!/:\d+$/.test(domain.host)) host = host.replace(/:\d+$/, "");
+  return host.endsWith(`.${domain.host}`);
 }

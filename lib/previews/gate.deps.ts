@@ -4,6 +4,7 @@
  */
 
 import { projectLevel } from "@/lib/db/org-access";
+import { memberRole } from "@/lib/db/orgs";
 import { boxForPreview, previewBySlug, workspaceForPreview } from "@/lib/db/previews";
 import { requireEnv } from "@/lib/env";
 import type { GateDeps } from "@/lib/previews/resolve";
@@ -14,9 +15,10 @@ import { resolveProvider } from "@/lib/runtime/resolve";
 import type { Workspace } from "@/lib/runtime/types";
 
 /** How long a way to a box's port is kept: the provider is asked once in a
- *  while, not on every visitor's every few seconds. A box that moves (a new
- *  sandbox on waking) has a new id, so a new entry. */
-const UPSTREAM_TTL_MS = 5 * 60_000;
+ *  while, not on every visitor's every few seconds. Well inside the hour a
+ *  Daytona link to it lasts. A box that moves (a new sandbox on waking) has
+ *  a new id, so a new entry. */
+const UPSTREAM_TTL_MS = 10 * 60_000;
 
 const store = globalThis as { __outrunnerPreviewUpstreams?: Map<string, { at: number; target: Promise<PreviewUpstream | null> }> };
 const upstreams = (store.__outrunnerPreviewUpstreams ??= new Map());
@@ -49,6 +51,7 @@ export function gateDeps(): GateDeps {
     workspace: workspaceForPreview,
     box: boxForPreview,
     projectLevel,
+    isMember: async (userId, orgId) => (await memberRole(orgId, userId)) !== null,
     upstream,
   };
 }

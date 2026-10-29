@@ -6,6 +6,7 @@ import {
   PREVIEW_PATH_PREFIX,
   type PreviewDomain,
   isOriginFormPath,
+  onPreviewDomain,
   previewCookieName,
   previewOrigin,
   safeReturnPath,
@@ -42,6 +43,12 @@ import type { GateDecision, GateRequest, PreviewUpstream, RedeemAnswer, WakeAnsw
 export type PreviewProxyDeps = {
   /** The preview domain, or null when previews are off (lib/previews/host.ts). */
   domain: () => PreviewDomain | null;
+  /** The app's own host (RUNTIME_BASE_URL's), which is never a preview's
+   *  whatever a request's headers say. */
+  appHost: () => string | null;
+  /** Whether a session cookie is well signed for `slug` (lib/previews/tokens.ts):
+   *  one that isn't is no session, and costs the gate nothing. */
+  sessionValid: (slug: string, session: string) => boolean;
   /** Ask the app's gate (wire.ts); a throw is an app that didn't answer. */
   gate: (request: GateRequest) => Promise<unknown>;
   now?: () => number;
@@ -78,15 +85,21 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
 
   /** What the gate says of `slug` and `session`, kept as long as it says to:
    *  a page's dozens of assets ask once between them. */
-  function decide(slug: string, session: string | null): Promise<GateDecision> {
+  function decide(slug: string, cookie: string | null): Promise<GateDecision> {
+    const session = cookie && deps.sessionValid(slug, cookie) ? cookie : null;
     const key = `${slug}\n${session ?? ""}`;
     const kept = decisions.get(key);
     if (kept && kept.until > now()) return kept.decision;
     const decision = deps.gate({ op: "resolve", slug, session }).then((answer) => answer as GateDecision);
     if (decisions.size >= MAX_DECISIONS) {
       for (const [k, v] of decisions) if (v.until <= now()) decisions.delete(k);
-      if (decisions.size >= MAX_DECISIONS) decisions.clear();
+      // Still full: the oldest go (a Map keeps the order they came in).
+      for (const k of decisions.keys()) {
+        if (decisions.size < MAX_DECISIONS) break;
+        decisions.delete(k);
+      }
     }
+    decisions.delete(key);
     // Held while asked, so requests meanwhile wait on the same answer, then
     // for as long as the answer says; a failure isn't kept.
     decisions.set(key, { until: now() + 60_000, decision });
@@ -101,23 +114,31 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
     return decision;
   }
 
-  /** The preview a request is for, and its domain; null for the app's own. */
-  function previewOf(req: IncomingMessage): { slug: string; domain: PreviewDomain; host: string } | null {
+  /** The preview a request is for, and its domain; "none" for a host under
+   *  the preview domain that names no preview; null for the app's own. */
+  function previewOf(req: IncomingMessage): { slug: string; domain: PreviewDomain; host: string } | "none" | null {
     const domain = deps.domain();
     if (!domain) return null;
     // The Cloudflare Worker names the host it was asked for (cloudflare/worker.ts);
     // straight to Node, the Host header does. Either is the visitor's to
-    // choose, and only picks which preview they're asking.
+    // choose, and only picks which preview they're asking, but never on
+    // the app's own host: a preview's page there would be the app's.
     const named = req.headers["x-outrunner-preview-host"];
-    const host = (typeof named === "string" && named) || req.headers.host;
+    const own = (req.headers.host ?? "").toLowerCase() === deps.appHost()?.toLowerCase();
+    const host = (!own && typeof named === "string" && named) || req.headers.host;
     const slug = slugFromHost(host, domain);
-    return slug ? { slug, domain, host: `${slug}.${domain.host}` } : null;
+    if (slug) return { slug, domain, host: `${slug}.${domain.host}` };
+    return onPreviewDomain(host, domain) ? "none" : null;
   }
 
   /** Take a request for a preview; false for anything else, for Next. */
   function handle(req: IncomingMessage, res: ServerResponse): boolean {
     const found = previewOf(req);
     if (!found) return false;
+    if (found === "none") {
+      sendPage(res, 404, "missing");
+      return true;
+    }
     void serve(req, res, found).catch((error: unknown) => {
       console.error(`Preview ${found.slug}: request failed`, error);
       if (!res.headersSent) sendPage(res, 502, "error");
@@ -144,7 +165,7 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
       return redirect(res, `${decision.signInUrl}?r=${encodeURIComponent(safeReturnPath(path))}`);
     }
     if (decision.kind === "page") return sendPage(res, decision.status, decision.page, { canWake: decision.canWake, path });
-    forward(req, res, at, decision.upstream, path);
+    forward(req, res, at, decision, path);
   }
 
   /** Outrunner's own paths on a preview's host. */
@@ -188,7 +209,13 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
   }
 
   /** Pass the request to the box's server, and its answer back. */
-  function forward(req: IncomingMessage, res: ServerResponse, at: { slug: string; domain: PreviewDomain; host: string }, upstream: PreviewUpstream, path: string) {
+  function forward(
+    req: IncomingMessage,
+    res: ServerResponse,
+    at: { slug: string; domain: PreviewDomain; host: string },
+    { upstream, mode }: Extract<GateDecision, { kind: "proxy" }>,
+    path: string,
+  ) {
     const target = new URL(upstream.baseUrl);
     const client = target.protocol === "https:" ? https : http;
     const outbound = client.request({
@@ -204,7 +231,11 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
       agent: target.protocol === "https:" ? httpsAgent : httpAgent,
     });
     outbound.on("response", (answer) => {
-      res.writeHead(answer.statusCode ?? 502, answer.statusMessage, responseHeaders(answer.headers, at, target));
+      const headers = responseHeaders(answer.headers, at, target);
+      // What a signed-in visitor was let see is theirs: no cache between
+      // them and here may keep it for the next.
+      if (mode === "login") headers["cache-control"] = privateCaching(headers["cache-control"]);
+      res.writeHead(answer.statusCode ?? 502, answer.statusMessage, headers);
       answer.pipe(res);
       answer.on("error", () => res.destroy());
     });
@@ -227,6 +258,10 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
   function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): boolean {
     const found = previewOf(req);
     if (!found) return false;
+    if (found === "none") {
+      refuse(socket, 404);
+      return true;
+    }
     void tunnel(req, socket, head, found).catch((error: unknown) => {
       console.error(`Preview ${found.slug}: WebSocket failed`, error);
       refuse(socket, 502);
@@ -295,9 +330,13 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
     outbound.on("response", (answer) => {
       socket.off("close", abandon);
       const status = answer.statusCode ?? 502;
-      socket.write(`HTTP/1.1 ${status} ${STATUS_CODES[status] ?? ""}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-      answer.resume();
-      socket.end();
+      const lines = [`HTTP/1.1 ${status} ${STATUS_CODES[status] ?? ""}`, "Connection: close"];
+      for (const [name, value] of Object.entries(responseHeaders(answer.headers, at, target))) {
+        if (name === "content-length") continue;
+        for (const v of Array.isArray(value) ? value : [value]) lines.push(`${name}: ${v}`);
+      }
+      socket.write(`${lines.join("\r\n")}\r\n\r\n`);
+      answer.pipe(socket);
     });
     outbound.on("error", () => refuse(socket, 502));
     outbound.end();
@@ -393,6 +432,18 @@ export function responseHeaders(
     out[name] = value;
   }
   return out;
+}
+
+/** A Cache-Control that keeps a response out of shared caches. */
+export function privateCaching(value: string | string[] | undefined): string {
+  const given = (Array.isArray(value) ? value.join(", ") : (value ?? "")).trim();
+  if (!given) return "private";
+  if (/\b(private|no-store)\b/i.test(given)) return given;
+  const rest = given
+    .split(",")
+    .map((d) => d.trim())
+    .filter((d) => d && !/^(public|s-maxage=)/i.test(d));
+  return ["private", ...rest].join(", ");
 }
 
 /** A redirect to the provider's host goes to the preview's instead. */

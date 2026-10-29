@@ -80,7 +80,9 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
 const READY_BOX = { status: "ready", daytonaSandboxId: "sandbox-1" } as RuntimeComputer;
 const UPSTREAM = { baseUrl: "https://3000-sandbox-1.proxy.daytona.works", headers: { "x-daytona-preview-token": "t" }, hostHeader: "upstream" as const };
 
-function deps(o: { preview?: Preview | null; workspace?: Workspace | null; box?: RuntimeComputer | null; levels?: Record<string, AccessLevel> } = {}): GateDeps & { asked: string[] } {
+function deps(
+  o: { preview?: Preview | null; workspace?: Workspace | null; box?: RuntimeComputer | null; levels?: Record<string, AccessLevel>; members?: string[] } = {},
+): GateDeps & { asked: string[] } {
   const asked: string[] = [];
   return {
     asked,
@@ -91,6 +93,7 @@ function deps(o: { preview?: Preview | null; workspace?: Workspace | null; box?:
     workspace: async () => (o.workspace === undefined ? workspace() : o.workspace),
     box: async () => (o.box === undefined ? READY_BOX : o.box),
     projectLevel: async (userId) => o.levels?.[userId] ?? null,
+    isMember: async (userId) => (o.members ?? [OWNER, MEMBER]).includes(userId),
     upstream: async (_w, sandboxId, port) => {
       asked.push(`${sandboxId}:${port}`);
       return UPSTREAM;
@@ -111,10 +114,15 @@ test("a login preview lets in its owner and members who can read the repository,
   const d = deps({ levels: { [MEMBER]: "read" } });
   assert.equal((await resolvePreview(d, SLUG, as(OWNER))).kind, "proxy");
   const member = await resolvePreview(d, SLUG, as(MEMBER));
-  assert.deepEqual(member, { kind: "proxy", upstream: UPSTREAM, ttlMs: 10_000 });
+  assert.deepEqual(member, { kind: "proxy", upstream: UPSTREAM, mode: "login", ttlMs: 10_000 });
   assert.deepEqual(d.asked, ["sandbox-1:3000", "sandbox-1:3000"]);
   const stranger = await resolvePreview(d, SLUG, as(STRANGER));
   assert.equal(stranger.kind === "page" && stranger.page, "denied");
+});
+
+test("an owner removed from the org is shut out of their session's login previews", async () => {
+  const decision = await resolvePreview(deps({ members: [MEMBER] }), SLUG, as(OWNER));
+  assert.equal(decision.kind === "page" && decision.page, "denied");
 });
 
 test("a public preview lets in anyone, signed in or not, with access or not", async () => {

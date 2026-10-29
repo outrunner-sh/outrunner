@@ -6,7 +6,15 @@ import { after, test } from "node:test";
 import WebSocket, { WebSocketServer } from "ws";
 
 import type { PreviewDomain } from "@/lib/previews/host";
-import { createPreviewProxy, forwardHeaders, readCookie, rewriteLocation, rewriteSetCookie, stripCookie } from "@/lib/previews/proxy";
+import {
+  createPreviewProxy,
+  forwardHeaders,
+  privateCaching,
+  readCookie,
+  rewriteLocation,
+  rewriteSetCookie,
+  stripCookie,
+} from "@/lib/previews/proxy";
 import type { GateDecision, GateRequest } from "@/lib/previews/wire";
 
 const DOMAIN: PreviewDomain = { host: "preview.test", secure: true };
@@ -55,11 +63,14 @@ const upstreamPort = await listen(upstream);
 const asked: GateRequest[] = [];
 const proxy = createPreviewProxy({
   domain: () => DOMAIN,
+  appHost: () => "app.test",
+  sessionValid: (_slug, session) => session === "member-session" || session === "owner-session",
   gate: async (req) => {
     asked.push(req);
     const through = (hostHeader: "preview" | "upstream"): GateDecision => ({
       kind: "proxy",
       upstream: { baseUrl: `http://127.0.0.1:${upstreamPort}`, headers: { "x-daytona-preview-token": "box-credential" }, hostHeader },
+      mode: hostHeader === "preview" ? "public" : "login",
       ttlMs: 0,
     });
     if (req.op === "redeem") return req.ticket === "good-ticket" ? { ok: true, cookie: "member-session", maxAge: 600 } : { ok: false };
@@ -103,9 +114,24 @@ function call(slug: string | null, path: string, options: { method?: string; hea
   });
 }
 
-test("a request for any other host is left to Next", async () => {
+test("a request for the app's host is left to Next, whatever it names", async () => {
   assert.equal((await call(null, "/")).body, "Next");
-  assert.equal((await call("not-a-slug", "/")).body, "Next");
+  const named = await call(null, "/", { headers: { "x-outrunner-preview-host": `${PUBLIC}.preview.test` } });
+  assert.equal(named.body, "Next", "a preview's page is never served on the app's host");
+});
+
+test("a host under the preview domain that names no preview is never the app's", async () => {
+  for (const label of ["www", "not-a-slug"]) {
+    const answer = await call(label, "/");
+    assert.equal(answer.status, 404, label);
+    assert.match(answer.body, /No such preview/);
+  }
+});
+
+test("a session cookie that isn't well signed is no session, and isn't asked about", async () => {
+  asked.length = 0;
+  await call(LOGIN, "/", { headers: { cookie: `${COOKIE}=junk-${Math.random()}` } });
+  assert.deepEqual(asked, [{ op: "resolve", slug: LOGIN, session: null }]);
 });
 
 test("a signed-out visitor's page load goes to sign in, with the path to come back to; a script's fetch gets a 401", async () => {
@@ -153,6 +179,8 @@ test("a signed-in visitor's request reaches the box as asked, without the previe
   assert.match(String(seen.headers.forwarded), new RegExp(`host="${LOGIN}\\.preview\\.test";proto=https`));
   // Through a provider's proxy, the Host is the proxy's, which routes by it.
   assert.equal(seen.headers.host, `127.0.0.1:${upstreamPort}`);
+  // What a signed-in visitor sees stays out of shared caches.
+  assert.equal(answer.headers["cache-control"], "private");
 });
 
 test("straight to the port, the box's server is told the preview's own host", async () => {
@@ -241,6 +269,9 @@ test("cookies and headers are read and rewritten exactly", () => {
   assert.equal(rewriteLocation("/relative", at, target), "/relative");
   assert.equal(rewriteSetCookie("sid=1; Domain=.preview.test; Path=/", at), "sid=1; Path=/", "never to every preview");
   assert.equal(rewriteSetCookie(`${COOKIE}=x; Path=/`, at), null);
+  assert.equal(privateCaching(undefined), "private");
+  assert.equal(privateCaching("public, max-age=600, s-maxage=3600"), "private, max-age=600");
+  assert.equal(privateCaching("no-store"), "no-store");
 
   const headers = forwardHeaders(
     {

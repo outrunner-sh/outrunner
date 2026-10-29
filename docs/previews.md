@@ -26,7 +26,7 @@ browser ─▶ <slug>.<preview domain> ─▶ Cloudflare Worker ─▶ container
                                                              │   app/api/previews/gate (loopback)
                                                              ▼
                                                the box's port, through Daytona's preview
-                                               proxy (token in a header) or Neev's tunnel
+                                               proxy (a link signed for that port) or Neev's tunnel
 ```
 
 `server.ts` takes every request whose host is a preview's, HTTP and
@@ -38,7 +38,10 @@ ways as they are, so pages, assets, server-sent events and WebSockets
 (hot reload) all work. On Cloudflare the Worker routes the preview domain's
 wildcard to the same container and names the host it was asked for
 (`x-outrunner-preview-host`, `cloudflare/preview-host.ts`), stripping one a
-visitor sent; straight to Node, the Host header does the same.
+visitor sent; straight to Node, the Host header does the same. Neither ever
+makes a request to the app's own host a preview's, and a host under the
+preview domain that names no preview (`www.`, a bad slug) gets a 404, never
+the app.
 
 Signing in, for a login preview:
 
@@ -69,7 +72,9 @@ What the box's server is sent:
 
 What comes back: the box's answer, but a redirect to the provider's host is
 pointed at the preview's, every cookie is made host-only (a `Domain`
-dropped), and a cookie named as the preview's session is dropped.
+dropped), a cookie named as the preview's session is dropped, and on a
+login preview `Cache-Control` is made `private`, so no shared cache keeps
+what one signed-in visitor saw for the next.
 
 OAuth callbacks need the provider to allow
 `https://<slug>.<domain>/<callback path>`. A callback that's a page load
@@ -92,7 +97,7 @@ which resumes the session as them, as opening it would.
 | Anyone on the internet | Sent to sign in; nothing of the box's | The port's server, as any visitor |
 | Signed-in user outside the org, or without read on the repository | A "can't open" page | The port's server |
 | Org member with read on the repository | The port's server | The port's server |
-| The session's owner | The port's server; may wake an asleep session | Same |
+| The session's owner, while a member of the org | The port's server; may wake an asleep session | Same |
 
 Nobody, through any preview, reaches the agent's own port (8080) or the
 provider's daemon's (2280, 22220, 22222, 33333; `lib/runtime/box-ports.ts`):
@@ -138,9 +143,12 @@ is good for a minute, once (kept spent in the process), and travels with
 sessions are signed with a key derived from `CREDENTIALS_ENCRYPTION_KEY`,
 each for its own purpose.
 
-**The provider's credential.** The proxy reaches Daytona with the standard
-preview link and its token in a header, from the server; neither is ever
-sent to a browser. A visitor's own `x-daytona-*` headers are dropped.
+**The provider's credential.** The proxy reaches Daytona with a link signed
+for the one port (an hour, renewed every ten minutes), never the sandbox's
+standard preview token, which opens every port, the agent's among them:
+were the box's server to show the headers or host it was sent, that would
+reach nothing a visitor couldn't already. Neither is ever sent to a
+browser. A visitor's own `x-daytona-*` headers are dropped.
 
 **The gate.** `app/api/previews/gate` answers only a call carrying the
 secret `server.ts` makes at each start (`OUTRUNNER_PREVIEW_GATE_SECRET`,
@@ -155,7 +163,8 @@ in its process alone); to anything else it's a 404.
   ~10 seconds.
 - **Take a member's access away** (remove them from the org, or their read
   on the repository): the gate asks Roles & access on every check, so their
-  session stops working within ~10 seconds.
+  session stops working within ~10 seconds. That holds for the session's
+  owner too, removed from the org.
 - **Delete the session**: its previews are deleted with it (the foreign
   key); an ended session's are refused before that.
 - **Pause or archive the session**: its previews show the asleep page; the
@@ -163,6 +172,14 @@ in its process alone); to anything else it's a 404.
 
 A WebSocket opened before a revocation stays open until it closes; the
 gate is asked when one opens.
+
+**Headers a visitor could send.** Straight to Node (no Cloudflare in
+front), a visitor can name a preview with `x-outrunner-preview-host` as
+well as with Host, which picks only which preview they ask for, never on
+the app's own host; and `CF-Connecting-IP`, which only sets the
+`X-Real-IP` and `Forwarded` the box's server is told. Behind Cloudflare,
+the Worker and Cloudflare set both. The gate keeps a session cookie that
+isn't well signed from costing it anything.
 
 ## Setting it up
 

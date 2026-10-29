@@ -17,6 +17,9 @@ import {
 const CREATE_TIMEOUT_SECONDS = 180;
 /** Signed WS preview lifetime; refreshed on reconnect (Spike 1 finding). */
 const SIGNED_URL_TTL_SECONDS = 300;
+/** How long a preview's way to its port lasts: longer than the gate keeps
+ *  it (lib/previews/gate.deps.ts), so it never expires in use. */
+const PREVIEW_TARGET_TTL_SECONDS = 60 * 60;
 /**
  * How long one command on a box may run. The SDK puts no deadline on a
  * command given none, so a call Daytona never answers held a session's setup
@@ -322,18 +325,17 @@ export function box(sandbox: Sandbox): SandboxBox {
         return url.toString();
       },
     },
-    // A preview's requests come from this server, so the standard link, its
-    // token a header no browser sees. Its proxy routes by host, and would
+    // The signed link, its credential good for this one port, and for an
+    // hour: the standard link's token is the sandbox's, good for every
+    // port, the agent's among them, and a header the box's server might
+    // be sent and show. Daytona's proxy routes by the host, and would
     // show browsers its own warning page before the user's server without
     // the skip header.
-    previewTarget: async (port) => {
-      const preview = await sandbox.getPreviewLink(port);
-      return {
-        baseUrl: preview.url,
-        headers: { "x-daytona-preview-token": preview.token, "x-daytona-skip-preview-warning": "true" },
-        hostHeader: "upstream",
-      };
-    },
+    previewTarget: async (port) => ({
+      baseUrl: (await sandbox.getSignedPreviewUrl(port, PREVIEW_TARGET_TTL_SECONDS)).url,
+      headers: { "x-daytona-skip-preview-warning": "true" },
+      hostHeader: "upstream",
+    }),
   };
 }
 
