@@ -1,33 +1,18 @@
 import { NextResponse } from "next/server";
 
-import { getOwner, type Owner } from "@/lib/auth/owner";
-import { sessionPlan } from "@/lib/billing/entitlements";
-import { cloudBoxStartGate, CloudLimitError, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
-import { getSandboxSettings } from "@/lib/db/credentials";
-import { orgDefaultsFor } from "@/lib/db/org-defaults";
-import {
-  getProject,
-  getWorkspaceComputer,
-  getWorkspace,
-  markRuntimeComputerStoppedIfReady,
-  readRuntimeComputerSecret,
-} from "@/lib/db/repositories";
-import { optionalGitToken, sessionGitAs } from "@/lib/github/identity.deps";
+import { getOwner } from "@/lib/auth/owner";
+import { getWorkspaceComputer, getWorkspace, readRuntimeComputerSecret } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { newBoxSize } from "@/lib/orgs/defaults";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
 import { withRuntimeAgentRecovery } from "@/lib/runtime/agent-recovery";
-import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
-import { scopeOf } from "@/lib/runtime/computer-scope";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
-import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
-import { boxSizeOn, computerMadeBy, endedBoxOf, sandboxOf } from "@/lib/runtime/sandbox-choice";
 import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
-import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
-import type { RuntimeComputer, Workspace } from "@/lib/runtime/types";
+import { boxUpgrade } from "@/lib/runtime/session-environment";
+import { bringBack } from "@/lib/session/bring-back-box";
+import { bringBackFailure } from "@/lib/session/box-failure";
 import { relaunchFailure } from "@/lib/session/relaunch-failure";
-import { BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
 
 // May ensure/boot a Runtime Computer before minting session tokens; give it the
 // same 60s cap as provisioning (serverless hosts only; a no-op on Railway).
@@ -100,14 +85,9 @@ export async function POST(request: Request, context: RouteContext) {
     try {
       computer = (await bringBack(provider, workspace, computer, owner)) ?? computer;
     } catch (error) {
-      if (error instanceof CloudLimitError) return NextResponse.json(error.denial, { status: 403 });
-      const refused = isPlanLimitError(error);
-      if (refused) return NextResponse.json({ error: refused.message, settingsHref: UPGRADE_HREF }, { status: 403 });
-      console.error(`Session attach: could not bring back the box for ${workspace.id}`, error);
-      return NextResponse.json(
-        { error: "Couldn't restart this session's box. Try again.", code: BOX_RESTORE_FAILED },
-        { status: 503 },
-      );
+      const failure = bringBackFailure(error);
+      if (failure.status !== 403) console.error(`Session attach: could not bring back the box for ${workspace.id}`, error);
+      return NextResponse.json(failure.body, { status: failure.status });
     }
   }
   if (!computer || !computer.daytonaSandboxId) {
@@ -228,51 +208,4 @@ export async function POST(request: Request, context: RouteContext) {
     ...(summary && { summary }),
   };
   return NextResponse.json(SessionUrls.parse(body));
-}
-
-/**
- * The session's computer (its own box, or its project's shared one) once its
- * box is up again, when that box ended or another request is bringing it
- * back; null when there's nothing to do (it is up, or it is another
- * provider's). The claim lets one request restore it; the others wait for it.
- */
-async function bringBack(
-  provider: ComputerRuntimeProvider,
-  workspace: Workspace,
-  computer: RuntimeComputer,
-  owner: Owner,
-): Promise<RuntimeComputer | null> {
-  if (computerMadeBy(computer) !== provider.name) return null;
-  let ended = endedBoxOf(computer, provider.name);
-  if (computer.status === "ready" && computer.daytonaSandboxId) {
-    if (await provider.computerAlive(computer.daytonaSandboxId)) return null;
-    await markRuntimeComputerStoppedIfReady(computer.id, computer.daytonaSandboxId);
-    ended = computer.daytonaSandboxId;
-  } else if (!ended && computer.status !== "provisioning") {
-    return null;
-  }
-  const project = await getProject(computer.projectId);
-  if (!project) throw new Error(`Project ${computer.projectId} not found`);
-  // A box is about to start: the plan's hours and box count get their say,
-  // and the claim in the database enforces the cap.
-  const scope = scopeOf(workspace, computer);
-  const gate = await cloudBoxStartGate(owner, project.orgId, provider.name, scope);
-  if ("denial" in gate) throw new CloudLimitError(gate.denial);
-  const ensured = await ensureComputer(provider, {
-    scope,
-    repoFullName: project.fullName,
-    // A review box's mirror as the App, as on create: never its user's token.
-    githubToken: await optionalGitToken(owner.id, project, await sessionGitAs(workspace.id)),
-    sessionEnv: await runtimeSessionEnvironment(owner.id, workspace.id),
-    // The owner's size now, as a new box on this provider would get, within
-    // their plan on Outrunner's: Modal sizes a box as it starts, restored or not.
-    size: boxSizeOn(
-      sandboxOf(provider.name),
-      newBoxSize(await getSandboxSettings(owner.id), (await orgDefaultsFor(project.orgId)).boxSize),
-      await sessionPlan(owner.id, project.orgId),
-    ),
-    previousSandboxId: ended,
-    maxLiveComputers: gate.cap,
-  });
-  return ensured.computer;
 }

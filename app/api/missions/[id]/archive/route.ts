@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { archiveMission } from "@/lib/missions/archive";
+import { archiveMission, unsavedNote } from "@/lib/missions/archive";
 import { missionArchiveDeps } from "@/lib/missions/archive.deps";
 import { ownsMission } from "@/lib/missions/view.deps";
 
@@ -24,7 +24,11 @@ export async function POST(request: Request, context: RouteContext) {
   if (!mission) return NextResponse.json({ error: "Runner not found." }, { status: 404 });
   const result = await archiveMission(mission, missionArchiveDeps());
   if (!result.archived) {
-    return NextResponse.json({ error: result.why, ships: result.ships, left: result.left, more: result.more }, { status: 409 });
+    // Ships archived without their files on an ask that ran out of time
+    // (`more`) are said once the last ask ends: the browser keeps the note.
+    const note = result.more && result.unsaved ? { note: unsavedNote(result.unsaved) } : {};
+    return NextResponse.json({ error: result.why, ships: result.ships, left: result.left, more: result.more, ...note }, { status: 409 });
   }
-  return NextResponse.json({ ok: true, ships: result.ships });
+  // `note`: Ships archived without their files, their boxes out of reach.
+  return NextResponse.json({ ok: true, ships: result.ships, ...(result.note && { note: result.note }) });
 }

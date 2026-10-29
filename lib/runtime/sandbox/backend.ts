@@ -33,9 +33,27 @@ export interface SandboxBox {
    *  credential in it: for the session's editor. Absent where the provider
    *  can't make one. */
   browserUrl?(port: number, ttlSeconds: number): Promise<string>;
+  /** Its desktop, where the provider has one (Daytona). Absent elsewhere. */
+  readonly desktop?: BoxDesktop;
   /** The vCPUs it runs with, where the provider says: a resumed box keeps
    *  the size it was made at, whatever the user's setting is now. */
   readonly cpu?: number;
+}
+
+/**
+ * A box's desktop: a virtual display with a window manager, which the agent's
+ * desktop tools drive and the session's owner watches in the Desktop tab. Off
+ * until something asks for it, so an idle box doesn't run a display server
+ * nobody looks at.
+ */
+export interface BoxDesktop {
+  /** Start it, or leave it running if it is: resolves once it's up. */
+  start(): Promise<void>;
+  /** The WebSocket a browser's VNC client connects to, its credential in the
+   *  URL and good for `ttlSeconds`: long enough to open the socket, which
+   *  stays open after it lapses. It reaches the desktop's VNC server and
+   *  nothing else on the box. */
+  viewerUrl(ttlSeconds: number): Promise<string>;
 }
 
 /** CPU and memory a new box boots with. */

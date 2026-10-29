@@ -594,7 +594,9 @@
         "multi-repo-warm",
         "plan-mode",
         "compact",
-        "files"
+        "files",
+        "environment-skills",
+        "codex-mcp"
       ]
     }
   ],
@@ -730,6 +732,22 @@
     },
     {}
   ],
+  "SetSkillsRequest": [
+    {
+      "sources": [
+        { "repo": "anthropics/skills", "skills": ["pdf"] },
+        { "repo": "acme/skills-registry", "ref": "main", "token": "ghs_0123456789abcdef" }
+      ]
+    },
+    { "sources": [] }
+  ],
+  "SetSkillsResponse": [
+    {
+      "installed": ["deploy", "pdf"],
+      "failed": [{ "repo": "acme/skills-registry", "skill": "review", "error": "a skill of yours has this name: yours is kept" }]
+    },
+    { "installed": [] }
+  ],
   "EditorResponse": [
     {
       "port": 8443,
@@ -773,6 +791,14 @@
       22220,
       22222,
       33333
+    ]
+  ],
+  "DesktopPorts": [
+    [
+      5900,
+      5901,
+      6080,
+      19222
     ]
   ]
 }

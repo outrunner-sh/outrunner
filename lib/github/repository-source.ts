@@ -19,7 +19,9 @@ import {
   GitHubAppError,
   githubAppConfig,
   installationToken,
+  mintInstallationToken,
   type GitHubAppConfig,
+  type InstallationToken,
 } from "@/lib/github/app";
 import {
   getGitHubRepository,
@@ -44,6 +46,12 @@ export type SourceAccess = {
   list(): Promise<GitHubRepositoryList>;
   /** A repository by id or `owner/name`, or null when the source can't reach it. */
   lookup(ref: number | string): Promise<GitHubRepository | null>;
+  /** A token that reads `owner/name` alone, for an hour, for a box to
+   *  download it with (a project's private skill registry): the App's, on
+   *  the installation on its owner's account. Null where the App doesn't
+   *  reach it, and always for a member's own sign-in: their token reads
+   *  everything they can, and a box runs agent code, so it never gets one. */
+  readToken(fullName: string): Promise<string | null>;
 };
 
 /**
@@ -80,8 +88,16 @@ export async function repositorySource(userId: string, orgId: string | undefined
     source: { kind: "user", key: `user:${userId}` },
     list: () => listGitHubRepositories(token),
     lookup: (ref) => getGitHubRepository(token, ref),
+    // The member's token reads all they can: never handed to a box.
+    readToken: async () => null,
   };
 }
+
+/** Read tokens of the App's, one repository each, kept until 5 minutes
+ *  before they expire: every new session of a project with a private
+ *  registry asks for one. */
+const readTokens = new Map<string, InstallationToken>();
+const READ_TOKEN_MARGIN_MS = 5 * 60 * 1000;
 
 function appSource(config: GitHubAppConfig, orgId: string, installations: OrgInstallation[]): SourceAccess {
   const usable = installations.filter((i) => !i.suspended);
@@ -156,6 +172,23 @@ function appSource(config: GitHubAppConfig, orgId: string, installations: OrgIns
       }
       if (failure) throw failure;
       return null;
+    },
+    async readToken(fullName) {
+      const [owner, name] = fullName.split("/");
+      const installation = usable.find((i) => i.accountLogin.toLowerCase() === owner?.toLowerCase());
+      if (!installation || !name) return null;
+      const key = `${installation.id}/${name.toLowerCase()}`;
+      const kept = readTokens.get(key);
+      if (kept && kept.expiresAt.getTime() - READ_TOKEN_MARGIN_MS > Date.now()) return kept.token;
+      try {
+        const minted = await mintInstallationToken(config, installation.id, [name], fetch, { contents: "read", metadata: "read" });
+        readTokens.set(key, minted);
+        return minted.token;
+      } catch (error) {
+        // Not one of the repositories its owner let the App reach.
+        if (error instanceof GitHubAppError && (error.status === 422 || error.status === 404)) return null;
+        throw error;
+      }
     },
   };
 }

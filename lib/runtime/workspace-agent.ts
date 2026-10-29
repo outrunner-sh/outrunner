@@ -17,20 +17,34 @@ export type WorkspaceAgent = {
   identity: WorkspaceIdentity;
 };
 
+/** A cloud session's box, reached: no further than the provider knows it,
+ *  the agent on it not asked. */
+export type WorkspaceComputer = {
+  workspace: Workspace;
+  provider: ComputerRuntimeProvider;
+  computerId: string;
+  sandboxId: string;
+};
+
+type Fail = { ok: false; response: NextResponse };
+const fail = (error: string, status: number): Fail => ({ ok: false, response: NextResponse.json({ error }, { status }) });
+
 /**
- * The agent on the box a cloud session runs on, for `userId`, or the response
- * saying why it can't be reached: no such workspace, a provider without boxes
- * (`needsComputer` says what needs one), a box not ready, or not answering.
- * `label` names the route in the log.
+ * The box a cloud session runs on, or the response saying why there isn't
+ * one to use: no such workspace, one `admit` turns away (checked first,
+ * before anything else is read), a provider without boxes (`needsComputer`
+ * says what needs one), or a box not ready. For what is done to the box
+ * itself (its desktop), which the agent on it has no part in: a wedged
+ * agent doesn't stand in its way.
  */
-export async function reachWorkspaceAgent(
+export async function reachWorkspaceComputer(
   workspaceId: string,
-  userId: string,
-  { label, needsComputer }: { label: string; needsComputer: string },
-): Promise<{ ok: true; reached: WorkspaceAgent } | { ok: false; response: NextResponse }> {
-  const fail = (error: string, status: number) => ({ ok: false as const, response: NextResponse.json({ error }, { status }) });
+  { needsComputer, admit }: { needsComputer: string; admit?: (workspace: Workspace) => NextResponse | null },
+): Promise<{ ok: true; reached: WorkspaceComputer } | Fail> {
   const workspace = await getWorkspace(workspaceId);
   if (!workspace) return fail("Workspace not found.", 404);
+  const refused = admit?.(workspace);
+  if (refused) return { ok: false, response: refused };
 
   const resolution = resolveProvider(workspace);
   if (!resolution.ok) return { ok: false, response: providerErrorResponse(resolution) };
@@ -41,12 +55,29 @@ export async function reachWorkspaceAgent(
   if (!computer || !computer.daytonaSandboxId || computer.status !== "ready") {
     return fail("Runtime Computer is not ready.", 409);
   }
-  const secret = await readRuntimeComputerSecret(computer.id);
+  return { ok: true, reached: { workspace, provider, computerId: computer.id, sandboxId: computer.daytonaSandboxId } };
+}
+
+/**
+ * The agent on the box a cloud session runs on, for `userId`, or the response
+ * saying why it can't be reached: no such workspace, a provider without boxes
+ * (`needsComputer` says what needs one), a box not ready, or not answering.
+ * `label` names the route in the log.
+ */
+export async function reachWorkspaceAgent(
+  workspaceId: string,
+  userId: string,
+  { label, needsComputer }: { label: string; needsComputer: string },
+): Promise<{ ok: true; reached: WorkspaceAgent } | Fail> {
+  const box = await reachWorkspaceComputer(workspaceId, { needsComputer });
+  if (!box.ok) return box;
+  const { workspace, provider, computerId, sandboxId } = box.reached;
+  const secret = await readRuntimeComputerSecret(computerId);
   if (!secret) return fail("Runtime Computer secret missing.", 500);
 
   let target;
   try {
-    target = await provider.agentTarget(computer.daytonaSandboxId, secret);
+    target = await provider.agentTarget(sandboxId, secret);
   } catch (error) {
     console.error(`${label}: agentTarget failed for ${workspace.id}`, error);
     return fail("Could not reach the Runtime Computer.", 503);
@@ -56,10 +87,10 @@ export async function reachWorkspaceAgent(
     reached: {
       workspace,
       provider,
-      sandboxId: computer.daytonaSandboxId,
+      sandboxId,
       secret,
       agent: new AgentClient(target),
-      identity: { workspaceId: workspace.id, projectId: workspace.projectId, computerId: computer.id, userId },
+      identity: { workspaceId: workspace.id, projectId: workspace.projectId, computerId, userId },
     },
   };
 }
