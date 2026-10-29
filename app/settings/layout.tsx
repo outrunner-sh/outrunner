@@ -1,4 +1,4 @@
-import { SettingsNav } from "@/components/settings-nav";
+import { SettingsFrame } from "@/components/settings-frame";
 
 /** Two-pane settings: a section nav on the left, the selected section on the
  *  right. It reads nothing, so it shows at once. Owner-gated like the rest of
@@ -11,12 +11,5 @@ export default function SettingsLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <div className="grid h-dvh grid-cols-[264px_1fr] overflow-hidden bg-background">
-      <SettingsNav />
-      <main className="min-h-0 overflow-y-auto px-10 py-10">
-        <div className="mx-auto max-w-2xl">{children}</div>
-      </main>
-    </div>
-  );
+  return <SettingsFrame>{children}</SettingsFrame>;
 }
