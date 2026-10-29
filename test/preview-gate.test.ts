@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { Preview } from "@/lib/db/previews";
+import { renderPreviewPage } from "@/lib/previews/proxy-pages";
 import { askedMode, previewLabel, previewMode, previewPort, previewsSupported } from "@/lib/previews/rules";
 import { type GateDeps, resolvePreview, wakeTarget } from "@/lib/previews/resolve";
 import { mintSession, mintTicket, previewSigningKey, sessionUser, SESSION_TTL_SECONDS, TicketLedger, TICKET_TTL_SECONDS } from "@/lib/previews/tokens";
@@ -164,7 +165,11 @@ test("an asleep session shows its page, offering its owner alone to wake it", as
   // session, restores an archived one): no button that can only fail.
   assert.equal(stopped.kind === "page" && stopped.canWake, false);
   const failed = await resolvePreview(deps({ workspace: workspace({ status: "failed" }) }), SLUG, as(OWNER));
-  assert.equal(failed.kind === "page" && `${failed.page} ${failed.canWake}`, "asleep false");
+  assert.equal(failed.kind === "page" && `${failed.page} ${Boolean(failed.canWake)}`, "failed false");
+  const failedPage = renderPreviewPage("failed");
+  assert.match(failedPage, /This session stopped working/);
+  assert.match(failedPage, /needs to inspect it in Outrunner/);
+  assert.doesNotMatch(failedPage, /Wake the session/);
   const suspending = await resolvePreview(deps({ workspace: workspace({ status: "suspending" }) }), SLUG, as(OWNER));
   assert.equal(suspending.kind === "page" && suspending.canWake, false);
   const waking = await resolvePreview(deps({ workspace: workspace({ status: "resuming" }) }), SLUG, as(OWNER));

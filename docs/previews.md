@@ -86,11 +86,13 @@ cross-site `POST` (`response_mode=form_post`) doesn't (SameSite=Lax), so it
 needs a public preview; so do webhooks, which come from a server, not a
 signed-in browser.
 
-A session asleep (paused or archived), waking or failed shows a page saying
-so instead of an error, which loads itself again. To the session's owner,
-when it's paused or archived (what can be woken), it offers to wake it: a
-form on the preview's own host (its Origin checked), which resumes or
-restores the session as them, as opening it would.
+A session asleep (paused or archived) or waking shows a page saying so
+instead of an error, which loads itself again. A failed session gets a
+separate page explaining that its owner needs to inspect it in Outrunner;
+it has no wake button. To the session's owner, when it's paused or archived
+(what can be woken), it offers to wake it: a form on the preview's own host
+(its Origin checked), which resumes or restores the session as them, as
+opening it would.
 
 ## Threat model
 

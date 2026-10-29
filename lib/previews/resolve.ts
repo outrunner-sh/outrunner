@@ -101,9 +101,8 @@ export async function resolvePreview(deps: GateDeps, slug: string, session: stri
     wakeable(workspace.status) &&
     (preview.mode === "login" || (await mayView(deps, viewer, workspace)));
   if (ASLEEP.includes(workspace.status)) return page(503, "asleep", WAIT_TTL_MS, canWake);
-  if (STARTING.includes(workspace.status) || workspace.status === "failed") {
-    return workspace.status === "failed" ? page(503, "asleep", WAIT_TTL_MS, canWake) : page(503, "starting", WAIT_TTL_MS);
-  }
+  if (workspace.status === "failed") return page(503, "failed", WAIT_TTL_MS);
+  if (STARTING.includes(workspace.status)) return page(503, "starting", WAIT_TTL_MS);
   const box = await deps.box(workspace);
   if (!box?.daytonaSandboxId || box.status !== "ready") {
     return box?.status === "provisioning"

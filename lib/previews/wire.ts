@@ -16,7 +16,7 @@ export type PreviewUpstream = {
 };
 
 /** One of the pages the proxy shows in place of the box's (proxy-pages.ts). */
-export type PreviewPage = "missing" | "ended" | "denied" | "asleep" | "starting" | "unsupported" | "unavailable" | "error";
+export type PreviewPage = "missing" | "ended" | "denied" | "asleep" | "failed" | "starting" | "unsupported" | "unavailable" | "error";
 
 export type GateDecision =
   /** Let the visitor through to the box. */

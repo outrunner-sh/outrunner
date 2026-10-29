@@ -24,6 +24,10 @@ const COPY: Record<PreviewPage, { title: string; message: string }> = {
     title: "This session is asleep",
     message: "Its sandbox is paused, so the server this preview shows isn't running. It wakes when its owner opens the session in Outrunner.",
   },
+  failed: {
+    title: "This session stopped working",
+    message: "Its sandbox failed, so this server isn't running. The session's owner needs to inspect it in Outrunner. This page checks again in a few seconds.",
+  },
   starting: {
     title: "This session is waking up",
     message: "Its sandbox is starting. This page tries again in a few seconds.",
@@ -47,7 +51,7 @@ function escape(text: string): string {
 }
 
 /** How often a page that says to wait loads itself again, in seconds. */
-const REFRESH: Partial<Record<PreviewPage, number>> = { asleep: 15, starting: 4, unavailable: 5, error: 5 };
+const REFRESH: Partial<Record<PreviewPage, number>> = { asleep: 15, failed: 15, starting: 4, unavailable: 5, error: 5 };
 
 export function renderPreviewPage(
   page: PreviewPage | "expired" | "woke",
