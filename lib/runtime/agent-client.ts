@@ -32,6 +32,7 @@ import {
   type RuntimeTokenClaims,
   SendMessageRequest,
   SetAgentConfigRequest,
+  SetAgentContextRequest,
   SetAuthRequest,
   SetEnvironmentRequest,
   SetSkillsRequest,
@@ -274,6 +275,12 @@ export class AgentClient {
    *  what it couldn't. */
   async setSkills(identity: WorkspaceIdentity, req: SetSkillsRequest): Promise<SetSkillsResponse> {
     return SetSkillsResponse.parse(await this.post("/skills", identity, SetSkillsRequest.parse(req), AGENT_LIFECYCLE_TIMEOUT_MS));
+  }
+
+  /** Give every session on the computer what it reads besides its
+   *  orientation: the user's and org's learnings (lib/runtime/agent-context.ts). */
+  setAgentContext(identity: WorkspaceIdentity, req: SetAgentContextRequest): Promise<unknown> {
+    return this.post("/agent-context", identity, SetAgentContextRequest.parse(req));
   }
 
   /** Give the session its project's environment, before it launches. */

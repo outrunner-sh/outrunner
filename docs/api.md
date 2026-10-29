@@ -333,6 +333,25 @@ letters, digits, `-` and `_`; those starting with `outrunner` are kept for
 Outrunner's own servers. Changing them needs write access to the project,
 and remakes its ready boxes.
 
+### Learnings
+
+```sh
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \\
+  "$OUTRUNNER/api/v1/learnings" -d '{ "scope": "org", "title": "Conventional Commits", "body": "Use Conventional Commits for every commit message and PR title." }'
+```
+
+```json
+{ "id": "…", "scope": "org", "org_id": "…", "title": "Conventional Commits", "body": "Use Conventional Commits…", "status": "active", "created_by": "…", "suggested_in": null, "can_edit": true, "created_at": "…", "updated_at": "…" }
+```
+
+Learnings are short standing instructions every new session loads, in
+Claude's `CLAUDE.md` and Codex's `AGENTS.md`. `scope` is `org` (the key's
+org's, which its admins change) or `personal` (the key's maker's own, in
+every org; the default). A member's learning for the org, or any sent with
+`"suggest": true`, is `suggested` until someone who may change it accepts it
+(`PATCH` with `"status": "active"`) or dismisses it (`DELETE`). A title is at
+most 120 characters, a body 2,000, and a scope holds at most 100.
+
 ## CLI
 
 The `outrunner` CLI drives sessions through this API, signed in with

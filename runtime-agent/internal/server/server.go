@@ -138,6 +138,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
 	mux.HandleFunc("POST /config", s.authed(s.setAgentConfig))
 	mux.HandleFunc("POST /skills", s.authed(s.setSkills))
+	mux.HandleFunc("POST /agent-context", s.authed(s.setAgentContext))
 	mux.HandleFunc("POST /warm", s.authed(s.startWarm))
 	mux.HandleFunc("GET /warm", s.authed(s.warmStatus))
 	mux.HandleFunc("GET /pty", s.pty)
@@ -166,7 +167,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext},
 	})
 }
 
@@ -1138,6 +1139,22 @@ func (s *Server) setSkills(w http.ResponseWriter, r *http.Request) {
 		failed = append(failed, protocol.SkillFailure{Repo: f.Repo, Skill: f.Skill, Error: f.Error})
 	}
 	writeJSON(w, http.StatusOK, protocol.SetSkillsResponse{Installed: result.Installed, Failed: failed})
+}
+
+// setAgentContext puts what every session reads besides its orientation (the
+// user's and org's learnings) in Claude's CLAUDE.md and Codex's AGENTS.md,
+// in a block of its own.
+func (s *Server) setAgentContext(w http.ResponseWriter, r *http.Request) {
+	var req protocol.SetAgentContextRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	err := s.ws.SetAgentContext(req.Content)
+	if errors.Is(err, workspace.ErrInvalidAgentContext) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	respond(w, "set", err)
 }
 
 // validAuth checks a session credential as set or restored: a known kind, and

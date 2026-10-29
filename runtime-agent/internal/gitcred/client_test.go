@@ -130,3 +130,15 @@ func TestConfigFromEnv(t *testing.T) {
 		}
 	}
 }
+
+// A request is signed for its purpose, as the control plane checks it
+// (lib/runtime/git-credential.ts's boxRequestSignature, whose test holds the
+// same value): a credential's signature isn't a session tool's.
+func TestSignForIsTheControlPlanes(t *testing.T) {
+	if got := SignFor("session-tools", "secret", "sbx", "1700000000", []byte(`{}`)); got != "sha256=6db278af454dc928998566c548682c1a4361681913f9c351d2946ffdb39fe8cc" {
+		t.Fatalf("SignFor = %s", got)
+	}
+	if Sign("secret", "sbx", "1700000000", []byte(`{}`)) == SignFor("session-tools", "secret", "sbx", "1700000000", []byte(`{}`)) {
+		t.Fatal("a credential's signature is a session tool's too")
+	}
+}

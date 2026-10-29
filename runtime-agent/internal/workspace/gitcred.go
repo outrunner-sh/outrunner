@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"runtime-agent/internal/gitcred"
+	"runtime-agent/internal/sessiontools"
 )
 
 // On a Runtime Computer the control plane can give the sessions GitHub
@@ -60,9 +61,13 @@ func (s *Service) UseGitCredential(client *gitcred.Client) error {
 	}
 	s.gitToken = token
 	s.gitTokens = gitcred.NewCache(client, s.refreshLiveSecrets)
+	s.controlPlane = client
 	if err := s.writeGhWrapper(); err != nil {
 		// git still pushes; gh runs on the box's own token.
 		log.Printf("runtime-agent: gh runs without fresh GitHub tokens: %v", err)
+	}
+	if err := s.writeSessionToolsWrapper(); err != nil {
+		log.Printf("runtime-agent: sessions have no %s: %v", sessiontools.CommandName, err)
 	}
 	s.env = gitCredentialEnv(s.env, s.RelayExecutable, s.Root, s.gitBinDir())
 	return nil

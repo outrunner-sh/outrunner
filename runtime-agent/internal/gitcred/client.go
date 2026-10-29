@@ -98,40 +98,18 @@ func (c *Client) Fetch(ctx context.Context, repo string) (Credential, error) {
 	if err != nil {
 		return Credential{}, err
 	}
-	now := time.Now
-	if c.Now != nil {
-		now = c.Now
-	}
-	timestamp := strconv.FormatInt(now().Unix(), 10)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.AppURL+route, bytes.NewReader(body))
-	if err != nil {
-		return Credential{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Outrunner-Sandbox", c.SandboxID)
-	req.Header.Set("X-Outrunner-Timestamp", timestamp)
-	req.Header.Set("X-Outrunner-Signature", Sign(c.Secret, c.SandboxID, timestamp, body))
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: fetchTimeout}
-	}
-	resp, err := client.Do(req)
+	status, data, err := c.Post(ctx, route, "git-credential", body)
 	if err != nil {
 		return Credential{}, fmt.Errorf("couldn't reach Outrunner for a GitHub token: %w", err)
 	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return Credential{}, fmt.Errorf("couldn't read Outrunner's GitHub token: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
+	if status != http.StatusOK {
 		var refusal struct {
 			Error string `json:"error"`
 		}
 		if json.Unmarshal(data, &refusal) == nil && refusal.Error != "" {
-			return Credential{}, &Error{Status: resp.StatusCode, Message: refusal.Error}
+			return Credential{}, &Error{Status: status, Message: refusal.Error}
 		}
-		return Credential{}, &Error{Status: resp.StatusCode, Message: "Outrunner refused a GitHub token: " + resp.Status}
+		return Credential{}, &Error{Status: status, Message: "Outrunner refused a GitHub token: " + http.StatusText(status)}
 	}
 	var answer struct {
 		Token     string  `json:"token"`
@@ -152,12 +130,51 @@ func (c *Client) Fetch(ctx context.Context, repo string) (Credential, error) {
 	return cred, nil
 }
 
-// Sign is the X-Outrunner-Signature of a request: an HMAC-SHA256, keyed by
-// the agent's secret, over its purpose, the box, the time and the body, so
-// a signature can't be replayed for another box, purpose or request.
+// Post sends body to the control plane's route, signed for purpose (SignFor),
+// and returns its status and answer, read up to a bound. Other requests than
+// a credential's go this way too (a session's tools, package sessiontools),
+// each signed for its own purpose.
+func (c *Client) Post(ctx context.Context, route, purpose string, body []byte) (int, []byte, error) {
+	now := time.Now
+	if c.Now != nil {
+		now = c.Now
+	}
+	timestamp := strconv.FormatInt(now().Unix(), 10)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.AppURL+route, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Outrunner-Sandbox", c.SandboxID)
+	req.Header.Set("X-Outrunner-Timestamp", timestamp)
+	req.Header.Set("X-Outrunner-Signature", SignFor(purpose, c.Secret, c.SandboxID, timestamp, body))
+	client := c.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: fetchTimeout}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, data, nil
+}
+
+// Sign is the X-Outrunner-Signature of a credential's request (SignFor).
 func Sign(secret, sandboxID, timestamp string, body []byte) string {
+	return SignFor("git-credential", secret, sandboxID, timestamp, body)
+}
+
+// SignFor is the X-Outrunner-Signature of a request: an HMAC-SHA256, keyed
+// by the agent's secret, over its purpose, the box, the time and the body,
+// so a signature can't be replayed for another box, purpose or request.
+func SignFor(purpose, secret, sandboxID, timestamp string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte("git-credential\n" + sandboxID + "\n" + timestamp + "\n"))
+	mac.Write([]byte(purpose + "\n" + sandboxID + "\n" + timestamp + "\n"))
 	mac.Write(body)
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }

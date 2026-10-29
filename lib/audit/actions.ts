@@ -33,6 +33,11 @@ export type AuditAction =
   | "webhook.changed"
   | "webhook.secret_rotated"
   | "defaults.changed"
+  | "learning.created"
+  | "learning.suggested"
+  | "learning.changed"
+  | "learning.accepted"
+  | "learning.deleted"
   | "usage.changed"
   | "github.installed"
   | "github.removed"
@@ -144,6 +149,16 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `revoked the API key ${what}${text(d.hint) ? ` (…${text(d.hint)})` : ""}`;
     case "defaults.changed":
       return `set the org's defaults: model ${text(d.defaultModel) ?? "Outrunner's"}, box ${text(d.boxSize) ?? "Outrunner's"}`;
+    case "learning.created":
+      return `added the learning ${what}`;
+    case "learning.suggested":
+      return `suggested the learning ${what}`;
+    case "learning.changed":
+      return `changed the learning ${what}`;
+    case "learning.accepted":
+      return `accepted the learning ${what}`;
+    case "learning.deleted":
+      return `deleted the learning ${what}`;
     case "usage.changed": {
       const limit = text(d.limitPercent);
       const alerts = Array.isArray(d.alertThresholds) ? d.alertThresholds.map(text).filter(Boolean) : [];

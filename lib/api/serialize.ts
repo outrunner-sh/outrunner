@@ -5,6 +5,7 @@
  */
 
 import type { Environment } from "@/lib/db/environments";
+import { type Learning, type LearningActor, learningRights } from "@/lib/learnings/rules";
 import type { Project, Workspace, WorkspaceSource, WorkspaceStatus } from "@/lib/runtime/types";
 import type { TriageItem } from "@/lib/triage/work-items";
 import { itemHref, itemKey } from "@/lib/triage/work-items";
@@ -153,6 +154,23 @@ export function triageItemJson(item: TriageItem, base: string): Record<string, u
     triaged_at: item.triagedAt,
     created_at: item.createdAt,
     updated_at: item.updatedAt,
+  };
+}
+
+/** A learning (lib/learnings), with what the caller may do with it. */
+export function learningJson(learning: Learning, actor: LearningActor): Record<string, unknown> {
+  return {
+    id: learning.id,
+    scope: learning.scope,
+    org_id: learning.orgId,
+    title: learning.title,
+    body: learning.body,
+    status: learning.status,
+    created_by: learning.createdBy,
+    suggested_in: learning.suggestedIn,
+    can_edit: learningRights(actor, learning).write,
+    created_at: learning.createdAt,
+    updated_at: learning.updatedAt,
   };
 }
 

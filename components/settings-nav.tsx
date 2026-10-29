@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, BarChart3, Blocks, Box, Building2, Code, CreditCard, Gauge, Info, KeyRound, Layers, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Terminal, User, Users, X } from "lucide-react";
+import { ArrowLeft, BarChart3, Blocks, Box, Building2, Code, CreditCard, Gauge, Info, KeyRound, Layers, Lightbulb, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Terminal, User, Users, X } from "lucide-react";
 
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PROVIDERS_SETTINGS_HREF, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
@@ -59,6 +59,9 @@ const groups = [
       { href: PROVIDERS_SETTINGS_HREF, label: "Providers (BYOK)", icon: KeyRound },
       // The models the chat picker shows first, and the one new sessions start on.
       { href: "/settings/models", label: "Default models", icon: Layers },
+      // Standing instructions every new session loads: the org's and the user's
+      // own, and what agents suggest adding to them.
+      { href: "/settings/learnings", label: "Learnings", icon: Lightbulb },
       // Where cloud sessions run; a create that needs a Daytona key points here.
       { href: "/settings/sandbox", label: "Sandbox", icon: Box },
     ],

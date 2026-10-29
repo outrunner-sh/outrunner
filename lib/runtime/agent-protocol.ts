@@ -150,6 +150,14 @@ export const AGENT_FEATURE_SKILLS = "environment-skills";
  *  Claude alone. */
 export const AGENT_FEATURE_CODEX_MCP = "codex-mcp";
 
+/** POST /agent-context: what every session on the computer reads besides
+ *  its orientation, as Markdown placed in a block in agent instruction files. */
+export const SetAgentContextRequest = z.object({ content: z.string().max(64 * 1024) }).strict();
+export type SetAgentContextRequest = z.infer<typeof SetAgentContextRequest>;
+
+/** The agent takes POST /agent-context. */
+export const AGENT_FEATURE_AGENT_CONTEXT = "agent-context";
+
 /** The agent takes a session's environment (POST /workspaces/{id}/environment). */
 export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
 
@@ -861,6 +869,7 @@ export const PROTOCOL_SCHEMAS = {
   SetAgentConfigRequest,
   SetSkillsRequest,
   SetSkillsResponse,
+  SetAgentContextRequest,
   EditorResponse,
   PortsResponse,
   FilesResponse,

@@ -29,6 +29,7 @@ import (
 	"runtime-agent/internal/media"
 	"runtime-agent/internal/preview"
 	"runtime-agent/internal/server"
+	"runtime-agent/internal/sessiontools"
 	"runtime-agent/internal/workspace"
 )
 
@@ -79,6 +80,13 @@ func main() {
 	// the root.
 	if len(os.Args) > 1 && os.Args[1] == "preview" {
 		os.Exit(preview.Main(context.Background(), os.Args[2:], os.Stdout, os.Stderr, workspace.AskPaths, nil))
+	}
+
+	// `runtime-agent session-tool …` is a session's `outrunner-session`
+	// (package sessiontools): it asks the agent it finds under the root to
+	// reach Outrunner for the session.
+	if len(os.Args) > 1 && os.Args[1] == "session-tool" {
+		os.Exit(sessionTool(os.Args[2:]))
 	}
 
 	secret := os.Getenv("RUNTIME_AGENT_SECRET")
@@ -299,6 +307,22 @@ func gitCredentialHelper(args []string) int {
 		return 2
 	}
 	return gitcred.Helper(context.Background(), flags.Arg(0), os.Stdin, os.Stdout, os.Stderr, localAgent(*root), os.Getenv("GH_TOKEN"))
+}
+
+// sessionTool runs a session's command (`session-tool --root R <command> …`).
+func sessionTool(args []string) int {
+	flags := flag.NewFlagSet("session-tool", flag.ContinueOnError)
+	root := flags.String("root", "", "the runtime-agent's root")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *root == "" {
+		fmt.Fprintln(os.Stderr, "session-tool: --root is required")
+		return 2
+	}
+	addrFile, tokenFile := workspace.GitCredentialPaths(*root)
+	local := sessiontools.Local{AddrFile: addrFile, TokenFile: tokenFile}
+	return sessiontools.Main(context.Background(), flags.Args(), os.Getenv, os.Stdin, os.Stdout, os.Stderr, local)
 }
 
 // githubToken prints a GitHub token for the gh command after "--"

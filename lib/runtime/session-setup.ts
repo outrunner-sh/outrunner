@@ -13,6 +13,7 @@ import type { AgentConfig } from "@/lib/db/agent-config";
 import type { EnvironmentSetup } from "@/lib/db/environments";
 import {
   AGENT_FEATURE_AGENT_CONFIG,
+  AGENT_FEATURE_AGENT_CONTEXT,
   AGENT_FEATURE_CODEX_MCP,
   AGENT_FEATURE_ENVIRONMENT,
   AGENT_FEATURE_GIT_CREDENTIAL,
@@ -21,6 +22,7 @@ import {
   AGENT_FEATURE_WARM_HOOKS,
   type AgentName,
   type SetAgentConfigRequest,
+  type SetAgentContextRequest,
   type SetEnvironmentRequest,
   type SetSkillsRequest,
   type SetSkillsResponse,
@@ -32,6 +34,7 @@ import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 export type SetupClient = FeatureClient & {
   setEnvironment(req: SetEnvironmentRequest): Promise<unknown>;
   setAgentConfig(req: SetAgentConfigRequest): Promise<unknown>;
+  setAgentContext(req: SetAgentContextRequest): Promise<unknown>;
   setSkills(req: SetSkillsRequest): Promise<SetSkillsResponse>;
 };
 
@@ -42,6 +45,9 @@ export type SessionSetup = {
    *  (lib/environments/skills.ts skillSources); none for a project with no
    *  skills. */
   skills?: SkillSource[];
+  /** What every session reads besides its orientation; undefined leaves the
+   *  current block untouched and empty clears one left by an earlier setup. */
+  agentContext?: string;
   /** Its user works on GitHub as the Outrunner App, whose tokens the box
    *  must ask for as it goes (lib/github/identity.ts). */
   appIdentity?: boolean;
@@ -90,6 +96,14 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
     } catch (error) {
       console.warn("The project's skills couldn't be installed; the session starts without them.", error);
     }
+  }
+
+  if (setup.agentContext !== undefined) {
+    const content = setup.agentContext;
+    const takes = content
+      ? await supports(client, AGENT_FEATURE_AGENT_CONTEXT, "load your learnings")
+      : (await client.features()).includes(AGENT_FEATURE_AGENT_CONTEXT);
+    if (takes) await client.setAgentContext({ content });
   }
 
   const environment = setup.environment;

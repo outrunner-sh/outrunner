@@ -321,6 +321,19 @@ type ComposerPromptHistoryRow = {
   created_at: string;
 };
 
+type LearningRow = {
+  id: string;
+  org_id: string | null;
+  user_id: string | null;
+  title: string;
+  body: string;
+  status: "active" | "suggested";
+  created_by: string | null;
+  suggested_in: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type JobRow = {
   id: string;
   owner_id: string;
@@ -1827,6 +1840,12 @@ export type Database = {
         Row: ComposerPromptHistoryRow;
         Insert: Insert<ComposerPromptHistoryRow, "owner_id" | "text">;
         Update: Partial<ComposerPromptHistoryRow>;
+        Relationships: [];
+      };
+      learnings: {
+        Row: LearningRow;
+        Insert: Insert<LearningRow, "title" | "body">;
+        Update: Partial<LearningRow>;
         Relationships: [];
       };
     };
