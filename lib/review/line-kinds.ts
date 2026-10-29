@@ -112,3 +112,9 @@ export function countLines(files: readonly { path: string; kind?: LineKind; addi
 
 /** Order of review: the code first, then its tests, what a tool wrote last. */
 export const KIND_ORDER: readonly LineKind[] = ["code", "test", "generated"];
+
+/** Files in that order, by path within each kind: the files view's order,
+ *  and the guided tour's when it has no better one. */
+export function byKindThenPath(a: { kind: LineKind; path: string }, b: { kind: LineKind; path: string }): number {
+  return KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.path.localeCompare(b.path);
+}

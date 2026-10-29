@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import { Delta, KindIcon, LineCountsSummary } from "@/components/review/line-counts";
 import type { DiffLine } from "@/lib/runtime/diff";
 import { type Hunk, type PullFile, splitHunks } from "@/lib/review/hunks";
-import { KIND_ORDER, type LineCounts } from "@/lib/review/line-kinds";
+import { byKindThenPath, type LineCounts } from "@/lib/review/line-kinds";
 import { cn } from "@/lib/utils";
 
 function rowClass(type: DiffLine["type"]): string {
@@ -105,7 +105,7 @@ export function PullFiles({
   changedFiles: number;
 }) {
   const ordered = useMemo(
-    () => [...(files ?? [])].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.path.localeCompare(b.path)),
+    () => [...(files ?? [])].sort(byKindThenPath),
     [files],
   );
   const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
