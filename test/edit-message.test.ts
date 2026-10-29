@@ -60,3 +60,22 @@ test("a prompt in the log can be edited; its echo, not yet there, can't", () => 
   assert.equal(prompts[0].kind === "prompt" && prompts[0].uuid, "u1");
   assert.equal(prompts[1].kind === "prompt" && prompts[1].uuid, undefined);
 });
+
+test("an unknown-cut reset discards stale history and all seen IDs", () => {
+  const seen = new Set(["100", "200"]);
+  assert.deepEqual(appendEvent([state, prompt("old", "obsolete")], { t: "rewind", at: 0, uuid: "", rewinds: 0, reset: true }, "0", seen), [state]);
+  assert.equal(seen.size, 0);
+  const { entries } = conversationFrom([
+    { id: "100", data: JSON.stringify(prompt("old", "obsolete")) },
+    { id: "0", data: JSON.stringify({ t: "rewind", at: 0, uuid: "", rewinds: 0, reset: true }) },
+    { id: "100", data: JSON.stringify(prompt("new", "restored")) },
+  ]);
+  assert.deepEqual(entries.map((item) => item.event.t === "message" && item.event.uuid), ["new"]);
+});
+
+test("editing a files-only prompt cannot resend the raw attachment header", async () => {
+  const { editPromptText } = await import("@/lib/session/edit-message");
+  const { promptWithAttachments } = await import("@/lib/runtime/attachments");
+  assert.equal(editPromptText(promptWithAttachments("", ["a.png"])), "");
+  assert.equal(editPromptText(promptWithAttachments("Look here", ["a.png"])), "Look here");
+});

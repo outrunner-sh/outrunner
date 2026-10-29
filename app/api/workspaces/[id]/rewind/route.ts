@@ -55,7 +55,7 @@ export async function POST(request: Request, context: RouteContext) {
       return NextResponse.json({ error: error.error.message }, { status: 409 });
     }
     if (error instanceof AgentRequestError && error.error?.code === "INVALID_REQUEST") {
-      return NextResponse.json({ error: error.error.message }, { status: 400 });
+      return NextResponse.json({ error: error.error.message, code: "INVALID_REQUEST" }, { status: 400 });
     }
     console.error(`Edit: rewinding ${workspace.id} failed`, error);
     return NextResponse.json({ error: "Couldn't edit the message. Please try again." }, { status: 502 });

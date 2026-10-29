@@ -68,7 +68,8 @@ export class ConversationCache {
     const seenIds = new Set(entry.seenIds);
     this.set(id, {
       events: appendEvent(entry.events, event, eventId, seenIds),
-      lastEventId: eventId && eventId !== "0" ? eventId : entry.lastEventId,
+      lastEventId: event.t === "rewind" ? (eventId && eventId !== "0" ? eventId : null) : eventId && eventId !== "0" ? eventId : entry.lastEventId,
+      rewinds: event.t === "rewind" ? event.rewinds : entry.rewinds,
       seenIds,
     });
   }

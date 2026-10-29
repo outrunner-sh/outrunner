@@ -42,6 +42,10 @@ export function appendEvent(
     return [...withoutState, event];
   }
   if (event.t === "rewind") {
+    if (event.reset) {
+      seenIds.clear();
+      return prev.filter((item) => item.t === "state");
+    }
     for (const seen of [...seenIds]) if (Number(seen) > event.at) seenIds.delete(seen);
     return rewound(prev, event.uuid);
   }

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"time"
 
 	"runtime-agent/internal/conversation"
 )
@@ -87,6 +89,13 @@ func (s *Service) Rewind(ctx context.Context, key, uuid string) (Rewound, error)
 		return Rewound{}, err
 	}
 	codexChat := f.Agent == AgentCodex
+	handoff := ""
+	if codexChat && cut > 0 {
+		handoff, err = s.editHandoffBefore(key, log, cut)
+		if err != nil {
+			return Rewound{}, err
+		}
+	}
 	if !codexChat {
 		// Launched again by id, on this log: never "the newest" in a folder
 		// another chat's may be newer in.
@@ -95,29 +104,47 @@ func (s *Service) Rewind(ctx context.Context, key, uuid string) (Rewound, error)
 	// The agent holds its log open: it goes before the cut, and the
 	// conversation's collector with it, to be begun again on what is left.
 	if running {
-		_ = s.tmux.KillSession(base, name)
+		stopCtx, cancelStop := context.WithTimeout(base, switchCheckTimeout)
+		defer cancelStop()
+		if err := s.tmux.KillSession(stopCtx, name); err != nil {
+			return Rewound{}, fmt.Errorf("%w (its session could not be stopped: %v)", ErrSessionUnchecked, err)
+		}
+		for {
+			alive, err := s.tmux.SessionExists(stopCtx, name)
+			if err != nil {
+				return Rewound{}, fmt.Errorf("%w (check stopped session: %v)", ErrSessionUnchecked, err)
+			}
+			if !alive {
+				break
+			}
+			select {
+			case <-stopCtx.Done():
+				return Rewound{}, fmt.Errorf("%w (session did not stop)", ErrSessionUnchecked)
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
 	}
+	s.stopCodexTail(key)
 	s.endSummary(key)
 	s.summariesMu.Lock()
 	delete(s.summaries, key)
 	s.summariesMu.Unlock()
 
 	rewinds := f.Rewinds + 1
-	if err := cutLog(log, cut, rewinds); err != nil {
-		return Rewound{}, err
+	rolloutBackup := ""
+	if codexChat && f.CodexRollout != "" {
+		rolloutBackup = fmt.Sprintf("%s.rewound-%d", f.CodexRollout, rewinds)
+		if err := os.Rename(f.CodexRollout, rolloutBackup); err != nil {
+			return Rewound{}, fmt.Errorf("put the old rollout aside: %w", err)
+		}
 	}
-	handoff := ""
-	if codexChat {
-		if cut > 0 {
-			handoff, err = s.editHandoff(key, log)
-			if err != nil {
-				return Rewound{}, err
+	if err := cutLog(log, cut, rewinds); err != nil {
+		if rolloutBackup != "" {
+			if rollback := os.Rename(rolloutBackup, f.CodexRollout); rollback != nil {
+				return Rewound{}, fmt.Errorf("%v; restore the rollout: %w", err, rollback)
 			}
 		}
-		// Put aside, so a new conversation's rollout is the one found.
-		if f.CodexRollout != "" {
-			_ = os.Rename(f.CodexRollout, fmt.Sprintf("%s.rewound-%d", f.CodexRollout, rewinds))
-		}
+		return Rewound{}, err
 	}
 	s.updateFacts(key, func(f *workspaceFacts) {
 		f.Rewinds, f.RewoundAt, f.RewoundUUID = rewinds, cut, uuid
@@ -211,4 +238,32 @@ func (s *Service) editHandoff(key, log string) (string, error) {
 	}
 	note.WriteString(handoffClose + "\n\n")
 	return note.String(), nil
+}
+
+// Prepare the Codex handoff before making any destructive change. Only the
+// bounded tail before the cut is copied; the original log stays untouched.
+func (s *Service) editHandoffBefore(key, log string, cut int64) (string, error) {
+	source, err := os.Open(log)
+	if err != nil {
+		return "", err
+	}
+	defer source.Close()
+	prefix, err := os.CreateTemp("", "outrunner-edit-prefix-*.jsonl")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(prefix.Name())
+	start := int64(0)
+	if cut > handoffReadLimit {
+		start = cut - handoffReadLimit
+	}
+	_, copyErr := io.Copy(prefix, io.NewSectionReader(source, start, cut-start))
+	closeErr := prefix.Close()
+	if copyErr != nil {
+		return "", copyErr
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	return s.editHandoff(key, prefix.Name())
 }

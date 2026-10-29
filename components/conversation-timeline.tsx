@@ -55,6 +55,7 @@ import type { ConversationPlaceholder } from "@/lib/session/conversation-placeho
 import { lineRange, parseCommentQuotes } from "@/lib/session/diff-comments";
 import { FOLLOW_SLACK_PX, followsAfterScroll, USER_SCROLL_MS } from "@/lib/session/follow-scroll";
 import { isLive } from "@/lib/session/streaming";
+import { editPromptText } from "@/lib/session/edit-message";
 import { cn } from "@/lib/utils";
 
 /** Long enough for any smooth scroll back to a turn to finish. */
@@ -422,7 +423,7 @@ function NodeRow({
           carried={node.carried}
           onEdit={
             uuid && onEdit
-              ? () => onEdit(uuid, parseCommentQuotes(promptAttachments(node.text).text).text || node.text)
+              ? () => onEdit(uuid, editPromptText(node.text))
               : undefined
           }
         />

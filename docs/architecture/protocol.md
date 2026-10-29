@@ -74,9 +74,13 @@ agent on what is left: Claude on its own session, Codex on a new one whose
 next prompt carries the conversation before the edit. It answers
 `RewindResponse` (`at`, `uuid`, `rewinds`). Files and git state are not rolled
 back. Every conversation stream of the chat then sends `ConversationRewound`
-(`{ "t": "rewind", "at", "uuid", "rewinds" }`, its id the cut): drop that
-prompt and everything after it, and read on from `at`. A client says the
-edits it has seen with `?rewinds=` and is told only of newer ones.
+(`{ "t": "rewind", "at", "uuid", "rewinds" }`): drop that prompt and
+all following events. Resume from the frame's id, the lesser of the prior
+cursor and the cut, so a client behind the cut skips nothing. A client says
+the edits it has seen with `?rewinds=`. If multiple edits were missed, or a
+restore reset the counter, the frame adds `reset: true`, `at: 0`, and an empty
+`uuid`: discard cached history and replay from zero. A reset may carry
+`rewinds: 0`; clients replace their counter even when it decreases.
 
 ## Conversation events (agent → Next/browser)
 

@@ -490,7 +490,7 @@ export function SessionComposer({
           ]}
         >
           Editing a message · Sending replaces it and everything after it in this chat. Files and git changes are not
-          rolled back, and attachments aren&apos;t carried over.
+          rolled back, and attachments and diff comments aren&apos;t carried over.
         </InlineMessage>
       )}
       {sendError && !sending && (

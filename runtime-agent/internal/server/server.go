@@ -1654,11 +1654,9 @@ func (s *Server) streamEvents(
 		if n == rewinds {
 			return true
 		}
-		rewinds = n
-		if at < cursor {
-			cursor = at
-		}
-		payload, _ := json.Marshal(protocol.ConversationRewound{T: "rewind", At: at, UUID: uuid, Rewinds: n})
+		frame, resume := rewindForClient(n, rewinds, at, cursor, uuid)
+		rewinds, cursor = n, resume
+		payload, _ := json.Marshal(frame)
 		if !writeEvent(cursor, payload) {
 			return false
 		}
@@ -1907,4 +1905,17 @@ func checkouts(repos []protocol.RepoCheckout) []workspace.Checkout {
 		out[i] = workspace.Checkout{Name: r.Checkout, FullName: r.FullName, BaseBranch: r.BaseBranch}
 	}
 	return out
+}
+
+// A client that missed multiple edits, or reconnected to restored facts,
+// cannot identify the oldest cut. Replay the log instead of retaining a stale tail.
+func rewindForClient(n, known int, at, cursor int64, uuid string) (protocol.ConversationRewound, int64) {
+	reset := n < known || n-known > 1
+	if reset {
+		at, uuid = 0, ""
+	}
+	if at < cursor {
+		cursor = at
+	}
+	return protocol.ConversationRewound{T: "rewind", At: at, UUID: uuid, Rewinds: n, Reset: reset}, cursor
 }

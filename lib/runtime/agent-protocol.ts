@@ -922,7 +922,8 @@ export const ConversationRewound = z.object({
   t: z.literal("rewind"),
   at: z.number().int().nonnegative(),
   uuid: z.string(),
-  rewinds: z.number().int().positive(),
+  rewinds: z.number().int().nonnegative(),
+  reset: z.boolean().optional(),
 });
 export type ConversationRewound = z.infer<typeof ConversationRewound>;
 

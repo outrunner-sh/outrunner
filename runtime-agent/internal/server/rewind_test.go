@@ -77,3 +77,16 @@ func TestAStreamIsToldOfAnEditAndReadsOnFromItsCut(t *testing.T) {
 		t.Errorf("rewinding a reply = %d, want 400", code)
 	}
 }
+
+func TestRewindFramesResetClientsWithUnknownOlderCuts(t *testing.T) {
+	for _, counts := range [][2]int{{3, 0}, {0, 3}, {1, 4}} {
+		frame, cursor := rewindForClient(counts[0], counts[1], 500, 900, "unknown")
+		if !frame.Reset || frame.At != 0 || frame.UUID != "" || cursor != 0 {
+			t.Fatalf("counts %v: %+v at %d", counts, frame, cursor)
+		}
+	}
+	frame, cursor := rewindForClient(1, 0, 500, 100, "u2")
+	if frame.Reset || frame.At != 500 || cursor != 100 {
+		t.Fatalf("behind-cut client skips records: %+v, %d", frame, cursor)
+	}
+}

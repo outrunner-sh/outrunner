@@ -180,7 +180,8 @@ export function subscribeEventsWs(
     // The connect-time state event carries the synthetic id "0" and a later
     // one the current cursor; only real events advance the resume cursor
     // (mirrors subscribeEvents / the SSE `id:` semantics).
-    if (id && id !== "0") lastId = id;
+    if (parsed.data.t === "rewind") lastId = id && id !== "0" ? id : null;
+    else if (id && id !== "0") lastId = id;
     onEvent(parsed.data, id);
   });
 

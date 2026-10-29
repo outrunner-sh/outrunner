@@ -131,3 +131,109 @@ func TestACodexChatsEditStartsANewConversationWithTheOneBeforeIt(t *testing.T) {
 		t.Errorf("the edited prompt goes as %q", text)
 	}
 }
+
+type rewindKillFailure struct{ Sessions }
+
+func (rewindKillFailure) KillSession(context.Context, string) error {
+	return errors.New("kill refused")
+}
+
+func TestARewindDoesNotCutWhenStoppingTheSessionFails(t *testing.T) {
+	s, _, id, log := rewindSession(t)
+	s.tmux = rewindKillFailure{s.tmux}
+	if _, err := s.Rewind(context.Background(), id, "u2"); !errors.Is(err, ErrSessionUnchecked) {
+		t.Fatalf("got %v", err)
+	}
+	data, _ := os.ReadFile(log)
+	if string(data) != twoTurns {
+		t.Fatal("log cut while agent could still write")
+	}
+	if n, _, _ := s.LogRewind(id); n != 0 {
+		t.Fatal("failed stop recorded an edit")
+	}
+}
+
+type settlingRewindSessions struct {
+	Sessions
+	killed bool
+	probes int
+	log    string
+	t      *testing.T
+}
+
+func (s *settlingRewindSessions) KillSession(ctx context.Context, name string) error {
+	s.killed = true
+	return s.Sessions.KillSession(ctx, name)
+}
+func (s *settlingRewindSessions) SessionExists(ctx context.Context, name string) (bool, error) {
+	if s.killed && s.probes < 2 {
+		s.probes++
+		data, _ := os.ReadFile(s.log)
+		if string(data) != twoTurns {
+			s.t.Error("log cut before session exit was observed")
+		}
+		return true, nil
+	}
+	return s.Sessions.SessionExists(ctx, name)
+}
+func TestARewindWaitsForTheStoppedSessionBeforeCutting(t *testing.T) {
+	s, _, id, log := rewindSession(t)
+	sessions := &settlingRewindSessions{Sessions: s.tmux, log: log, t: t}
+	s.tmux = sessions
+	if _, err := s.Rewind(context.Background(), id, "u2"); err != nil {
+		t.Fatal(err)
+	}
+	if sessions.probes != 2 {
+		t.Fatal("did not wait for exit")
+	}
+}
+
+func TestACodexRewindLeavesTheLogIntactWhenPreparationFails(t *testing.T) {
+	for _, failure := range []string{"handoff", "rollout"} {
+		t.Run(failure, func(t *testing.T) {
+			s, _ := cloudSession(t, CreateInput{WorkspaceID: "ws-cx-fail", Branch: "b", BaseBranch: "main", Agent: AgentCodex})
+			id := "ws-cx-fail"
+			log := conversationPath(s.Root, id)
+			if err := os.MkdirAll(filepath.Dir(log), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(log, []byte(twoTurns), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if failure == "handoff" {
+				path := filepath.Dir(s.handoffPath(id, MainChat+"-before-edit"))
+				_ = os.MkdirAll(filepath.Dir(path), 0o755)
+				if err := os.WriteFile(path, []byte("not a directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				s.updateFacts(id, func(f *workspaceFacts) { f.CodexRollout = filepath.Join(t.TempDir(), "gone.jsonl") })
+			}
+			if _, err := s.Rewind(context.Background(), id, "u2"); err == nil {
+				t.Fatal("expected preparation failure")
+			}
+			data, _ := os.ReadFile(log)
+			if string(data) != twoTurns {
+				t.Fatal("preparation failure cut the conversation")
+			}
+			if n, _, _ := s.LogRewind(id); n != 0 {
+				t.Fatal("preparation failure recorded a cut")
+			}
+		})
+	}
+}
+
+func TestAFailedEditRelaunchStillRecordsTheCutForStreams(t *testing.T) {
+	s, fake, id, log := rewindSession(t)
+	fake.newErrs = []error{errors.New("launch failed"), errors.New("launch failed"), errors.New("launch failed")}
+	if _, err := s.Rewind(context.Background(), id, "u2"); err == nil {
+		t.Fatal("expected relaunch failure")
+	}
+	if n, _, uuid := s.LogRewind(id); n != 1 || uuid != "u2" {
+		t.Fatal("completed cut was not recorded")
+	}
+	data, _ := os.ReadFile(log)
+	if strings.Contains(string(data), "Now make it blue") {
+		t.Fatal("log not cut")
+	}
+}

@@ -603,6 +603,8 @@ export function WorkspaceSession({
           )
         : await rewindCloudChat(workspaceId, chatId, uuid);
     } catch (error) {
+      if ((error instanceof Error && "code" in error && error.code === "INVALID_REQUEST") ||
+          (error instanceof LocalRuntimeError && error.reason?.includes("isn't one of this chat's prompts"))) setEditing(null);
       setSendError({ message: local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't edit the message." });
       return false;
     }
@@ -669,6 +671,9 @@ export function WorkspaceSession({
   // A sent message being edited (its pencil): its text in the composer,
   // which sends the edit in its place.
   const [editing, setEditing] = useState<{ uuid: string; text: string } | null>(null);
+  useEffect(() => {
+    if (editing && !conversation.events.some((event) => event.t === "message" && event.uuid === editing.uuid)) setEditing(null);
+  }, [editing, conversation.events]);
   const editMessage = (uuid: string, text: string) => {
     setEditing({ uuid, text });
     setReviseSignal((n) => n + 1);
@@ -1445,7 +1450,7 @@ async function rewindCloudChat(workspaceId: string, chatId: string, uuid: string
   });
   const data = (await res.json().catch(() => ({}))) as unknown;
   if (res.ok) return RewindResponse.parse(data);
-  throw new Error((data as { error?: string }).error ?? "Couldn't edit the message. Please try again.");
+  throw Object.assign(new Error((data as { error?: string }).error ?? "Couldn't edit the message. Please try again."), { code: (data as { code?: string }).code });
 }
 
 /** Stop a cloud session's turn. The server reaches the session's agent, as

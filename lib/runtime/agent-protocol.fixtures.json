@@ -304,7 +304,8 @@
   "RewindResponse": [{ "at": 48213, "uuid": "4c1f0d2e-9b8a-4f7e-a6d5-c4b3a2918070", "rewinds": 1 }],
   "ConversationRewound": [
     { "t": "rewind", "at": 48213, "uuid": "4c1f0d2e-9b8a-4f7e-a6d5-c4b3a2918070", "rewinds": 1 },
-    { "t": "rewind", "at": 0, "uuid": "codex-019a-1200", "rewinds": 2 }
+    { "t": "rewind", "at": 0, "uuid": "codex-019a-1200", "rewinds": 2 },
+    { "t": "rewind", "at": 0, "uuid": "", "rewinds": 0, "reset": true }
   ],
   "CompactRequest": [
     {},

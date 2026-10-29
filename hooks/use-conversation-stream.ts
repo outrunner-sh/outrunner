@@ -85,10 +85,12 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     });
   }, [workspaceId, events]);
   const rewind = useCallback((cut: { at: number; uuid: string; rewinds: number }) => {
-    if (cut.rewinds <= rewindsRef.current) return;
+    if (cut.rewinds === rewindsRef.current) return;
+    const reset = cut.rewinds < rewindsRef.current;
+    const frame = reset ? { ...cut, at: 0, uuid: "", reset: true } : cut;
     rewindsRef.current = cut.rewinds;
-    lastEventIdRef.current = cut.at > 0 ? String(cut.at) : null;
-    setEvents((prev) => appendEvent(prev, { t: "rewind", ...cut }, String(cut.at), seenIdsRef.current));
+    lastEventIdRef.current = frame.at > 0 ? String(frame.at) : null;
+    setEvents((prev) => appendEvent(prev, { t: "rewind", ...frame }, String(frame.at), seenIdsRef.current));
   }, []);
   // Consecutive failed reconnects (reset by any received frame). A ref, not
   // reducer state, so the onClose closure reads the live count, not a stale one.
@@ -118,8 +120,8 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
         if (event.t === "rewind") {
           // An edit cut the log: the stream reads on from the cut, behind
           // the cursor, and says so once.
-          if (event.rewinds > rewindsRef.current) rewindsRef.current = event.rewinds;
-          lastEventIdRef.current = event.at > 0 ? String(event.at) : null;
+          rewindsRef.current = event.rewinds;
+          lastEventIdRef.current = id && id !== "0" ? id : null;
           setEvents((prev) => appendEvent(prev, event, id, seenIdsRef.current));
           reconnectAttemptsRef.current = 0;
           return;
@@ -166,7 +168,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
             ? { kind: "protocol-error", ref: err.ref }
             : { kind: "error", message: err.message },
         ),
-    });
+    }, rewindsRef.current);
 
     return () => {
       active = false;

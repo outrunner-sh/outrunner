@@ -756,6 +756,7 @@ type ConversationRewound struct {
 	At      int64  `json:"at"`
 	UUID    string `json:"uuid"`
 	Rewinds int    `json:"rewinds"`
+	Reset   bool   `json:"reset,omitempty"`
 }
 
 type WorkspaceStateChanged struct {

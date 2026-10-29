@@ -113,6 +113,12 @@ export function conversationFrom(frames: readonly SseFrame[]): { entries: Conver
       continue;
     }
     if (event.t === "rewind") {
+      if (event.reset) {
+        entries.length = 0;
+        byUuid.clear();
+        seen.clear();
+        continue;
+      }
       // An edit cut the log here: what followed its prompt is gone.
       const at = byUuid.get(event.uuid);
       if (at !== undefined) {
