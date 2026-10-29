@@ -25,6 +25,7 @@ export const unstable_instant = {
         { name: "sidebar-folded", value: null },
         { name: "sidebar-grouping", value: null },
         { name: "get-started-skipped", value: null },
+        { name: "outrunner_org", value: null },
       ],
     },
   ],

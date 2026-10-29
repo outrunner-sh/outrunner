@@ -29,10 +29,11 @@ export const SIDEBAR_COOKIE = "sidebar-collapsed";
 export const FOLDED_PROJECTS_COOKIE = "sidebar-folded";
 
 /**
- * These two, the sidebar's grouping (lib/nav/status-groups.ts) and the
- * get-started flag (lib/nav/get-started.ts), are all read by the app layout
- * for the frame, so every instant page under it has to name all four in its
- * `unstable_instant` samples or the build stops. The names are repeated there
+ * These two, the sidebar's grouping (lib/nav/status-groups.ts), the get-started
+ * flag (lib/nav/get-started.ts) and the org the browser picked
+ * (lib/orgs/active.ts), are all read by the app layout for the frame, so every
+ * instant page under it has to name all five in its `unstable_instant` samples
+ * or the build stops (test/instant-samples.test.ts says so first). The names are repeated there
  * rather than imported from here: a segment config is read by static analysis,
  * which cannot follow a constant. Declared absent, which is the shell's case —
  * it is prerendered once, for nobody in particular, and each visitor's own
