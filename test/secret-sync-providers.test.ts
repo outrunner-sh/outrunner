@@ -318,3 +318,30 @@ test("a secret named __proto__ is kept as a key, and counted as skipped, not los
   assert.deepEqual(outcomes.get("doppler")?.skipped, ["__proto__"]);
   assert.deepEqual(outcomes.get("infisical")?.skipped, ["__proto__"]);
 });
+
+test("a host lookup that never answers is given up on at the sync's time limit", async () => {
+  hostAddresses.lookup = () => new Promise<string[]>(() => {});
+  const seen = answer(() => json({ accessToken: "at" }));
+  // The lookup holds no handle: keep the event loop open until the limit.
+  const open = setInterval(() => {}, 1_000);
+  try {
+    const started = Date.now();
+    await assert.rejects(checkInfisical(SITE, CREDS, { projectId: null, environment: null }, AbortSignal.timeout(200)), (e: SyncError) => {
+      assert.ok(e instanceof SyncError && !e.refused);
+      assert.match(e.message, /didn't answer in time/);
+      return true;
+    });
+    assert.ok(Date.now() - started < 2_000);
+    assert.equal(seen.length, 0);
+  } finally {
+    clearInterval(open);
+  }
+});
+
+test("a sync already out of time doesn't look the host up", async () => {
+  const controller = new AbortController();
+  controller.abort(new DOMException("timed out", "TimeoutError"));
+  answer(() => json({}));
+  await assert.rejects(checkInfisical(SITE, CREDS, { projectId: null, environment: null }, controller.signal), /didn't answer in time/);
+  assert.deepEqual(looked, []);
+});

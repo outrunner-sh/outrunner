@@ -57,12 +57,19 @@ const UNREACHABLE_SITE = "Couldn't reach Infisical at its site URL from Outrunne
  *  before every call, not only when the URL was saved: a name can point
  *  anywhere later. (A name that changes between this lookup and the
  *  connection's own isn't caught; that window is a lookup's length.) */
-async function requirePublicHost(url: string): Promise<void> {
+async function requirePublicHost(url: string, signal: AbortSignal): Promise<void> {
   const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
   let addresses: string[];
   try {
-    addresses = await hostAddresses.lookup(host);
+    // Raced against the sync's time limit: getaddrinfo can't be aborted, and
+    // a slow resolver's retries would otherwise hold the session's start.
+    signal.throwIfAborted();
+    addresses = await Promise.race([
+      hostAddresses.lookup(host),
+      new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true })),
+    ]);
   } catch {
+    if (signal.aborted) throw new SyncError("Infisical didn't answer in time.", false);
     throw new SyncError(UNREACHABLE_SITE, false);
   }
   if (addresses.length === 0 || addresses.some(isPrivateAddress)) throw new SyncError(UNREACHABLE_SITE, true);
@@ -71,7 +78,7 @@ async function requirePublicHost(url: string): Promise<void> {
 /** `fetch`, with what went wrong on the way said as a {@link SyncError}.
  *  An Infisical call's host is checked first: its site URL is an admin's. */
 async function call(label: string, url: string, init: RequestInit, signal: AbortSignal): Promise<Response> {
-  if (label === "Infisical") await requirePublicHost(url);
+  if (label === "Infisical") await requirePublicHost(url, signal);
   try {
     return await fetch(url, { ...init, signal, redirect: "error" });
   } catch (error) {
