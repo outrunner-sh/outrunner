@@ -7,10 +7,10 @@ import { modelMenu } from "@/lib/db/credentials";
 import { getOnboardingUser } from "@/lib/onboarding/server";
 
 /**
- * First-run onboarding: the coding agent, the repositories, a first session
+ * First-run onboarding: the coding agent, then the repositories
  * (components/onboarding/onboarding-flow.tsx). Home sends a new user here
- * (see app/(app)/page.tsx); it is done once they start that session, go home
- * from its last step, or skip it.
+ * (see app/(app)/page.tsx); it is done once they finish it, which opens the
+ * new-session screen, or skip it.
  *
  * ONBOARDING_PREVIEW=1 serves it on mock data with no sign-in, for working on
  * the screens. Never in production.

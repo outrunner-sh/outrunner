@@ -5,11 +5,9 @@ import { useEffect, useState } from "react";
 
 import { AgentStep } from "@/components/onboarding/agent-step";
 import { ReposStep } from "@/components/onboarding/repos-step";
-import { StartStep } from "@/components/onboarding/start-step";
 import { Stepper } from "@/components/onboarding/stepper";
 import { resumeAt } from "@/lib/onboarding/rules";
 import type { AgentPick, AgentStatus, OnboardingEnv, OnboardingStep as Step } from "@/lib/onboarding/types";
-import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /** What's taken as connected when it can't be checked: nothing. */
@@ -18,23 +16,22 @@ const NOTHING_CONNECTED: AgentStatus = { claude: { subscription: false, last4: n
 const STEPS: { id: Step; label: string }[] = [
   { id: "agent", label: "Agent" },
   { id: "repos", label: "Repositories" },
-  { id: "start", label: "Start" },
 ];
 
 /**
- * First run, as Replicas' onboarding: the coding agent signed in, the
- * repositories to work on connected, a first session started. Each step
- * ticks once done. It opens where the user left it in this browser (after
- * installing the GitHub App, say), and past the Agent step when an agent is
- * connected already (from `npx outrunner` in the terminal, in a tab it
- * opened): lib/onboarding/rules.ts resumeAt.
+ * First run, as Replicas' onboarding: the coding agent signed in and the
+ * repositories to work on connected, then the new-session screen, on the
+ * first of them and the agent picked, to start a first session from. Each
+ * step ticks once done. It opens where the user left it in this browser
+ * (after installing the GitHub App, say), and past the Agent step when an
+ * agent is connected already (from `npx outrunner` in the terminal, in a tab
+ * it opened): lib/onboarding/rules.ts resumeAt.
  * Teams come in as a step of their own later.
  */
 export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: (href: string) => void }) {
   const [step, setStep] = useState<Step>("agent");
   const [status, setStatus] = useState<AgentStatus | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
-  // What the first session runs on, as the Agent step left it.
+  // What the first session starts on, as the Agent step left it.
   const [runOn, setRunOn] = useState<AgentPick>("outrunner");
   const [done, setDone] = useState<Set<Step>>(new Set());
   const [skipping, setSkipping] = useState(false);
@@ -129,15 +126,8 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
               />
             )}
             {step === "repos" && (
-              <ReposStep
-                env={env}
-                onDone={(picked) => {
-                  setProjects(picked);
-                  finish("repos", "start");
-                }}
-              />
+              <ReposStep env={env} onDone={(picked) => env.finish(picked[0]?.id, runOn).then(onLeave)} />
             )}
-            {step === "start" && <StartStep env={env} projects={projects} runOn={runOn} onLeave={onLeave} />}
           </>
         )}
       </main>

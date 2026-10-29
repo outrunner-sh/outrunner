@@ -1,5 +1,6 @@
 import { BackButton } from "@/components/back-button";
 import { NewSessionForm } from "@/components/new-session-form";
+import type { StartingPick } from "@/lib/onboarding/rules";
 import type { Project } from "@/lib/runtime/types";
 
 /**
@@ -13,6 +14,7 @@ export function NewSessionCreator({
   initialProjectId,
   openPicker = false,
   focusComposer = false,
+  initialPick,
   showBack = false,
   workItemId,
 }: {
@@ -24,6 +26,8 @@ export function NewSessionCreator({
   openPicker?: boolean;
   /** Focuses the composer as the form mounts. */
   focusComposer?: boolean;
+  /** What the session starts on until another is picked. */
+  initialPick?: StartingPick;
   /** /new is reached from somewhere and needs a way back where the sidebar is
    *  hidden (narrow windows); home is home already. */
   showBack?: boolean;
@@ -43,6 +47,7 @@ export function NewSessionCreator({
         initialProjectId={initialProjectId}
         openPicker={openPicker}
         focusComposer={focusComposer}
+        initialPick={initialPick}
         workItemId={workItemId}
       />
     </div>
