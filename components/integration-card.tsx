@@ -1,12 +1,13 @@
 import Link from "next/link";
-import { Plus, Settings } from "lucide-react";
+import { Check, ChevronRight } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { DashedFrame } from "@/components/ui/dashed-frame";
+import { cn } from "@/lib/utils";
 
 /**
- * One service on Settings → Org → Integrations: its mark and name; when
- * connected, a green dot and what it's connected to, else what it does; and
- * Configure, or Install (an app) or Connect (credentials pasted in).
+ * One service on Settings → Org → Integrations, in the same dashed frame as
+ * onboarding's agent cards. The whole card opens its destination; a service
+ * with no available action stays informational.
  */
 export function IntegrationCard({
   icon,
@@ -24,39 +25,43 @@ export function IntegrationCard({
   action: { kind: "configure" | "install" | "connect"; href: string; external?: boolean } | null;
 }) {
   const label = action?.kind === "configure" ? "Configure" : action?.kind === "connect" ? "Connect" : "Install";
-  const icon2 = action?.kind === "configure" ? <Settings /> : <Plus />;
-  return (
-    <div className="flex items-center gap-3 border-border/60 p-4">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40 [&_svg]:size-6">
-        {icon}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-foreground">{name}</p>
-        {connected ? (
-          <p className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
-            <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" aria-label="Connected" />
-            {connected}
-          </p>
-        ) : (
-          <p className="truncate text-xs text-muted-foreground">{description}</p>
+  const className = cn(
+    "relative flex min-h-48 min-w-0 flex-col rounded-xl p-5 text-left",
+    action && "group transition-colors hover:bg-accent/20 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring",
+  );
+  const content = (
+    <>
+      <DashedFrame />
+      <span className="flex items-start justify-between gap-3">
+        <span className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/30 [&_svg]:size-6">
+          {icon}
+        </span>
+        {connected && (
+          <span className="flex shrink-0 items-center gap-1 text-xs text-amber-500">
+            <Check aria-hidden className="size-3" strokeWidth={3} /> Connected
+          </span>
         )}
-      </div>
-      {action &&
-        (action.external ? (
-          <Button asChild size="sm" variant="outline">
-            <a href={action.href}>
-              {icon2}
-              {label}
-            </a>
-          </Button>
-        ) : (
-          <Button asChild size="sm" variant="outline">
-            <Link href={action.href}>
-              {icon2}
-              {label}
-            </Link>
-          </Button>
-        ))}
-    </div>
+      </span>
+      <span className="mt-5 block space-y-1">
+        <span className="block text-base font-medium text-foreground">{name}</span>
+        <span className="block text-xs leading-relaxed text-muted-foreground">{description}</span>
+        {connected && <span className="block break-words text-xs text-muted-foreground">{connected}</span>}
+      </span>
+      {action && (
+        <span className="mt-auto flex items-center gap-1.5 pt-4 text-xs text-muted-foreground group-hover:text-foreground">
+          {label}
+          <ChevronRight aria-hidden className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+        </span>
+      )}
+    </>
+  );
+
+  if (!action) return <div className={className}>{content}</div>;
+
+  const CardLink = action.external ? "a" : Link;
+  return (
+    <CardLink href={action.href} aria-label={`${label} ${name}`} className={className}>
+      {content}
+    </CardLink>
   );
 }

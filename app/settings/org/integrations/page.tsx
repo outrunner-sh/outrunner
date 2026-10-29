@@ -57,7 +57,7 @@ async function IntegrationsSection() {
   const install = slackInstallUrl();
 
   return (
-    <section className="space-y-6">
+    <section className="@container space-y-6">
       <div className="space-y-1">
         <h1 className="text-lg font-semibold text-foreground">Integrations</h1>
         <p className="text-sm text-muted-foreground">
@@ -68,7 +68,7 @@ async function IntegrationsSection() {
         </Link>
       </div>
 
-      <div className="grid grid-cols-1 overflow-hidden rounded-lg border border-border/60 sm:grid-cols-2 [&>*]:border-border/60 sm:[&>*:nth-child(odd)]:border-r">
+      <div className="grid grid-cols-1 gap-4 @md:grid-cols-2">
         <IntegrationCard
           icon={<GitHubIcon />}
           name="GitHub"

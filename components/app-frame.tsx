@@ -269,13 +269,13 @@ export function AppFrame({
     >
       <div
         className={cn(
-          "grid h-dvh grid-cols-1 overflow-hidden bg-background",
+          "grid h-dvh grid-cols-1 overflow-hidden bg-background [--app-sidebar-width:360px]",
           !studio && "max-sm:grid-rows-[auto_minmax(0,1fr)]",
           railless
             ? "sm:grid-cols-1"
             : collapsed
               ? "sm:grid-cols-[48px_minmax(0,1fr)]"
-              : "sm:grid-cols-[280px_minmax(0,1fr)]",
+              : "sm:grid-cols-[var(--app-sidebar-width)_minmax(0,1fr)]",
         )}
       >
         {drawerOpen && <div aria-hidden className="fixed inset-0 z-40 bg-black/60 sm:hidden" onClick={closeDrawer} />}
@@ -293,7 +293,7 @@ export function AppFrame({
             className={cn(
               "min-h-0 sm:block",
               drawerOpen
-                ? "fixed inset-y-0 left-0 z-50 w-[min(280px,85vw)] shadow-2xl shadow-black/60 sm:static sm:w-auto sm:shadow-none"
+                ? "fixed inset-y-0 left-0 z-50 w-[min(var(--app-sidebar-width),85vw)] shadow-2xl shadow-black/60 sm:static sm:w-auto sm:shadow-none"
                 : "hidden",
             )}
           >
