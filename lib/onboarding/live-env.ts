@@ -1,10 +1,8 @@
-import type { AgentId } from "@/lib/agents/registry";
 import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
-import { parseProgress } from "@/lib/onboarding/rules";
+import { newSessionAfterOnboarding, parseProgress } from "@/lib/onboarding/rules";
 import type {
   AgentChoices,
-  AgentPick,
   AgentStatus,
   GitHubAccess,
   OnboardingEnv,
@@ -12,13 +10,6 @@ import type {
   OnboardingUser,
   RepositoryList,
 } from "@/lib/onboarding/types";
-import {
-  CLAUDE_DEFAULT_MODEL,
-  CODEX_MODELS,
-  DEFAULT_EFFORT,
-  type Effort,
-  OUTRUNNER_MODELS,
-} from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 
 /** A failure the page can show, with where to fix it when there's a place. */
@@ -49,18 +40,6 @@ async function call<T>(method: "GET" | "POST" | "PUT", url: string, body?: unkno
     throw new OnboardingError(json?.error ?? "Something went wrong. Please try again.", json?.settingsHref, json?.reconnect === true);
   }
   return json as T;
-}
-
-/** The model a first session starts on, by the agent picked: the user's own
- *  Claude or Codex, at DEFAULT_EFFORT, as the new-session screen starts them;
- *  or Outrunner's first model, in Codex where that is the pick (Claude Code
- *  would be its default). Always named: with no model, a user whose Claude is
- *  connected would start on it, not on the Outrunner's models they picked. */
-export function firstModel(runOn: AgentPick): { provider: string; model: string; effort?: Effort; agent?: AgentId } {
-  if (runOn === "claude") return { provider: "claude", model: CLAUDE_DEFAULT_MODEL.id, effort: DEFAULT_EFFORT };
-  if (runOn === "codex") return { provider: "codex", model: CODEX_MODELS[0].id, effort: DEFAULT_EFFORT };
-  const outrunner = { provider: "outrunner", model: OUTRUNNER_MODELS[0].id };
-  return runOn === "codex-outrunner" ? { ...outrunner, agent: "codex" } : outrunner;
 }
 
 /** Mark onboarding done, so home stops sending the user here. A failure is
@@ -148,15 +127,10 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
       return projects;
     },
 
-    async startSession(projectId, runOn) {
-      const { workspace } = await call<{ workspace?: { id: string } }>("POST", `/api/projects/${projectId}/workspaces`, {
-        branch: "",
-        ...firstModel(runOn),
-      });
-      if (!workspace) throw new OnboardingError("The session didn't start. Please try again.");
+    async finish(projectId, runOn) {
       await markOnboarded();
       progress.write(null);
-      return `/workspaces/${workspace.id}`;
+      return newSessionAfterOnboarding(projectId, runOn);
     },
     async skip() {
       await markOnboarded();

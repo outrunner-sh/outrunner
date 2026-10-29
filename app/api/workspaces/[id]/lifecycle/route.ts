@@ -2,6 +2,7 @@ import { after, NextResponse } from "next/server";
 
 import { resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import { getOwner, type Owner } from "@/lib/auth/owner";
+import { deleteCachedBoxImages } from "@/lib/db/chat-images";
 import { projectOrgId } from "@/lib/db/work-items";
 import { cloudBoxStartGate, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
@@ -579,6 +580,10 @@ async function endWorkspace(workspace: Workspace, teardown?: () => Promise<void>
   await deleteWorkspaceSnapshots(workspace.id).catch((error: unknown) =>
     console.error(`Could not delete snapshots for ${workspace.id}`, error),
   );
+  // And the copies the chat kept of its box's images (lib/db/chat-images.ts).
+  await deleteCachedBoxImages(workspace.id).catch((error: unknown) =>
+    console.error(`Could not delete kept box images for ${workspace.id}`, error),
+  );
 
   const completed = await completeTransition({
     id: workspace.id,
@@ -713,6 +718,9 @@ async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider)
     );
     return NextResponse.json({ error: lifecycleError("destroy") }, { status: 502 });
   }
+  await deleteCachedBoxImages(workspace.id).catch((error: unknown) =>
+    console.error(`Could not delete kept box images for ${workspace.id}`, error),
+  );
 
   try {
     const completed = await completeTransition({

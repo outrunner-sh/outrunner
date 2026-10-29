@@ -6,6 +6,7 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_BYTES,
 } from "@/lib/runtime/attachments";
+import { dropPreview, keepPreview } from "@/lib/session/attachment-previews";
 
 export type PendingAttachment = {
   /** Stable key for the list; becomes the server id once uploaded. */
@@ -17,6 +18,8 @@ export type PendingAttachment = {
   /** Object URL for an image preview; revoked when the item goes away. */
   previewUrl: string | null;
   status: "uploading" | "ready" | "error";
+  /** How much of it has uploaded, 0 to 1, while it uploads. */
+  progress?: number;
   error?: string;
 };
 
@@ -76,7 +79,7 @@ export function useAttachments() {
           setItem(key, { status: "error", error: `It's over ${mb} MB, the most one file can be.` });
           continue;
         }
-        void uploadAttachment(file).then(
+        void uploadAttachment(file, (progress) => setItem(key, { progress })).then(
           (attachment) => {
             const entry = staged.current.get(key);
             if (!entry) {
@@ -85,7 +88,10 @@ export function useAttachments() {
               return;
             }
             entry.id = attachment.id;
-            setItem(key, { id: attachment.id, filename: attachment.filename, status: "ready" });
+            // The message it goes with shows it from its own bytes
+            // (attachment-previews.ts), which keeps the object URL from here.
+            keepPreview(attachment.id, { filename: attachment.filename, contentType: file.type, url: entry.previewUrl });
+            setItem(key, { id: attachment.id, filename: attachment.filename, status: "ready", progress: 1 });
           },
           (err: unknown) =>
             setItem(key, { status: "error", error: err instanceof Error ? err.message : "Couldn't upload it. Remove it and attach it again." }),
@@ -99,26 +105,41 @@ export function useAttachments() {
   const remove = useCallback((key: string) => {
     const entry = staged.current.get(key);
     staged.current.delete(key);
-    if (entry?.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+    if (entry?.id) dropPreview(entry.id);
+    else if (entry?.previewUrl) URL.revokeObjectURL(entry.previewUrl);
     // Best-effort server cleanup: the user has already seen it go, and a
     // leftover row is invisible to them.
     if (entry?.id) void fetch(`/api/attachments/${entry.id}`, { method: "DELETE" }).catch(() => {});
     setItems((prev) => prev.filter((item) => item.key !== key));
   }, []);
 
-  /** Forget the attachments with these ids, without deleting them server-side:
-   *  they were sent, while anything staged since stays. */
-  const forget = useCallback((ids: readonly string[]) => {
+  /** Take the attachments with these ids off the composer, without deleting
+   *  them server-side: they are being sent, while anything staged since
+   *  stays. Their previews live on in attachment-previews.ts, for the message
+   *  they went with. Returns them, for {@link restore} if the send fails. */
+  const forget = useCallback((ids: readonly string[]): PendingAttachment[] => {
     const sent = new Set(ids);
-    const keys: string[] = [];
+    const keys = new Set<string>();
     for (const [key, entry] of staged.current) {
       if (entry.id && sent.has(entry.id)) {
-        keys.push(key);
-        if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+        keys.add(key);
         staged.current.delete(key);
       }
     }
-    if (keys.length > 0) setItems((prev) => prev.filter((item) => !keys.includes(item.key)));
+    const taken = items.filter((item) => keys.has(item.key));
+    if (keys.size > 0) setItems((prev) => prev.filter((item) => !keys.has(item.key)));
+    return taken;
+  }, [items]);
+
+  /** Put attachments {@link forget} took back on the composer, ahead of any
+   *  staged since: the send they went with didn't go. */
+  const restore = useCallback((taken: readonly PendingAttachment[]) => {
+    const back = taken.filter((item) => !staged.current.has(item.key));
+    if (back.length === 0) return;
+    const rest = new Map(staged.current);
+    staged.current = new Map(back.map((item) => [item.key, { id: item.id, previewUrl: item.previewUrl }]));
+    for (const [key, entry] of rest) staged.current.set(key, entry);
+    setItems((prev) => [...back, ...prev.filter((item) => !back.some((b) => b.key === item.key))]);
   }, []);
 
   /** Ids to send. Excludes anything still uploading or failed. */
@@ -127,21 +148,40 @@ export function useAttachments() {
   );
   const busy = items.some((item) => item.status === "uploading");
 
-  return { items, add, remove, forget, readyIds, busy };
+  return { items, add, remove, forget, restore, readyIds, busy };
 }
 
-/** Upload one file. A failure reads as a sentence, never a parser error: the
- *  server (or a proxy in front of it) may answer with an HTML page. */
-export async function uploadAttachment(file: File): Promise<{ id: string; filename: string }> {
+/** Upload one file, saying how far along it is as it goes (`onProgress`, 0
+ *  to 1): XHR, as fetch tells nothing of an upload's progress. A failure
+ *  reads as a sentence, never a parser error: the server (or a proxy in front
+ *  of it) may answer with an HTML page. */
+export function uploadAttachment(
+  file: File,
+  onProgress?: (progress: number) => void,
+): Promise<{ id: string; filename: string }> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch("/api/attachments", { method: "POST", body: form });
-  const data = (await res.json().catch(() => ({}))) as {
-    attachment?: { id: string; filename: string };
-    error?: string;
-  };
-  if (res.ok && data.attachment) return data.attachment;
-  throw new Error(
-    data.error ?? (res.status === 413 ? "It's too large to upload." : "Couldn't upload it. Remove it and attach it again."),
-  );
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/attachments");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) onProgress?.(Math.min(1, event.loaded / event.total));
+    };
+    xhr.onload = () => {
+      let data: { attachment?: { id: string; filename: string }; error?: string } = {};
+      try {
+        data = JSON.parse(xhr.responseText) as typeof data;
+      } catch {
+        // Not JSON (a proxy's page): the status says what happened.
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && data.attachment) return resolve(data.attachment);
+      reject(
+        new Error(
+          data.error ?? (xhr.status === 413 ? "It's too large to upload." : "Couldn't upload it. Remove it and attach it again."),
+        ),
+      );
+    };
+    xhr.onerror = () => reject(new Error("Couldn't upload it. Check your connection, then attach it again."));
+    xhr.send(form);
+  });
 }

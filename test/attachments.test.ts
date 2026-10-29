@@ -8,6 +8,8 @@ import {
   restoreDraft,
   MAX_ATTACHMENTS_PER_MESSAGE,
   isImage,
+  isImageName,
+  promptAttachments,
   promptWithAttachments,
   promptWithoutAttachments,
   safeFilename,
@@ -139,6 +141,33 @@ test("promptWithoutAttachments leaves alone text that only looks like the header
   assert.equal(promptWithoutAttachments(typed), typed);
   const later = `fix this\nI've attached a file:\n- ${ATTACHMENT_DIR}/x.png`;
   assert.equal(promptWithoutAttachments(later), later);
+});
+
+test("promptWithAttachments mentions images, so Claude Code puts them in front of the model", () => {
+  const out = promptWithAttachments("what is this?", ["shot.png", "log.txt", { name: "photo", image: true }]);
+  assert.ok(out.includes(`- @${ATTACHMENT_DIR}/shot.png`));
+  assert.ok(out.includes(`- ${ATTACHMENT_DIR}/log.txt`));
+  assert.ok(!out.includes(`@${ATTACHMENT_DIR}/log.txt`));
+  assert.ok(out.includes(`- @${ATTACHMENT_DIR}/photo`));
+});
+
+test("promptAttachments splits a logged prompt into its words and its files", () => {
+  const sent = promptWithAttachments("compare\nthese", ["a.png", "notes.md"]);
+  assert.deepEqual(promptAttachments(sent), {
+    text: "compare\nthese",
+    files: [`${ATTACHMENT_DIR}/a.png`, `${ATTACHMENT_DIR}/notes.md`],
+  });
+  // As sessions from before the mentions logged it.
+  assert.deepEqual(promptAttachments(`I've attached a file:\n- ${ATTACHMENT_DIR}/old.png\n\nhi`), {
+    text: "hi",
+    files: [`${ATTACHMENT_DIR}/old.png`],
+  });
+  assert.deepEqual(promptAttachments("just words"), { text: "just words", files: [] });
+});
+
+test("isImageName reads the images the model can see from their names", () => {
+  for (const name of ["a.png", "b.JPG", "c.jpeg", "d.gif", "e.webp"]) assert.ok(isImageName(name), name);
+  for (const name of ["a.svg", "b.pdf", "png", "c.png.txt"]) assert.ok(!isImageName(name), name);
 });
 
 test("attachNotice says files cannot go to a session on this Mac", () => {
