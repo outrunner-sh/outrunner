@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { getWorkspaceComputer, getWorkspace, readRuntimeComputerSecret } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { startChatOnBox } from "@/lib/session/chat-actions";
+import { createChatWithSourceFallback, startChatOnBox } from "@/lib/session/chat-actions";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_CHATS, SessionUrls } from "@/lib/runtime/agent-protocol";
 import { withRuntimeAgentRecovery } from "@/lib/runtime/agent-recovery";
@@ -258,10 +258,13 @@ async function startChat(
           AGENT_FEATURE_CHATS,
           "run several chats in a session",
         );
-        await agent.createChat(identity, {
+        await createChatWithSourceFallback((withSource) => agent.createChat(identity, {
           chatId: chat.id, agent: chat.agent, noStart: true,
-          ...(chat.kind === "side" && chat.forkedFrom && { side: true, from: chat.forkedFrom }),
-        });
+          ...(withSource && chat.forkedFrom && {
+            from: chat.forkedFrom,
+            ...(chat.kind === "side" && { side: true }),
+          }),
+        }), Boolean(chat.forkedFrom), chatMissingOnBox);
       },
     });
     return null;

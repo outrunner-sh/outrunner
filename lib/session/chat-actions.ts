@@ -33,3 +33,16 @@ export async function askSideChat<T>(steps: {
     if (!sent) await steps.remove(chat).catch((error: unknown) => console.warn("Couldn't remove an empty side chat", error));
   }
 }
+
+/** A missing source must not prevent reopening a chat on a replacement box. */
+export async function createChatWithSourceFallback(
+  create: (withSource: boolean) => Promise<unknown>,
+  hasSource: boolean,
+  missing: (error: unknown) => boolean,
+): Promise<void> {
+  try { await create(hasSource); }
+  catch (error) {
+    if (!hasSource || !missing(error)) throw error;
+    await create(false);
+  }
+}

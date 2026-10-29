@@ -38,3 +38,15 @@ test("an accepted side question selects its chat and keeps it", async () => {
   }), true);
   assert.deepEqual(calls, ["side"]);
 });
+
+test("a recreated fork uses its source and falls back only when the source is missing", async () => {
+  const { createChatWithSourceFallback } = await import("@/lib/session/chat-actions");
+  const missing = new Error("source missing");
+  const calls: boolean[] = [];
+  await createChatWithSourceFallback(async (source) => {
+    calls.push(source);
+    if (source) throw missing;
+  }, true, (error) => error === missing);
+  assert.deepEqual(calls, [true, false]);
+  await assert.rejects(createChatWithSourceFallback(async () => { throw new Error("network"); }, true, () => false), /network/);
+});
