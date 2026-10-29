@@ -75,7 +75,10 @@ export function registryRepo(input: unknown): string {
   return fullName;
 }
 
-/** A SKILL.md's front matter: its name and description, where it has them. */
+/** A SKILL.md's front matter: its name and description, where it has them.
+ *  Top-level keys only (a nested `name:` under another key is that key's),
+ *  the last of each where there are several, as the box reads the name
+ *  (runtime-agent/internal/workspace/skills.go skillManifestName). */
 export function skillFrontMatter(text: string): { name: string | null; description: string | null } {
   const lines = text.split(/\r?\n/);
   if (lines[0]?.trim() !== "---") return { name: null, description: null };
@@ -113,7 +116,9 @@ export function skillFoldersIn(paths: string[]): SkillFolder[] {
     if (found.some((f) => f.path !== "" && dir.startsWith(`${f.path}/`))) continue;
     found.push({ path: dir, folder: dir.split("/").pop() ?? "" });
   }
-  return found;
+  // A repository that is a skill and holds others is taken for a collection
+  // of them, as the box does: its root would copy every one of them twice.
+  return found.length > 1 && found[0].path === "" ? found.slice(1) : found;
 }
 
 /** A skill folder's SKILL.md. */

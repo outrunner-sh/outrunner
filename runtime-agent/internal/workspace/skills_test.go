@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -225,5 +226,112 @@ func TestSetSkillsRefusesWhatIsNotASkillSource(t *testing.T) {
 	}
 	if fileExists(filepath.Join(home, "escape")) || anyExists(skillDirs(home, "escape")) {
 		t.Error("a path out of the repository was unpacked")
+	}
+}
+
+// A skill that can't be installed for both agents (Codex's folder isn't one
+// here) is said like any other, the rest go on, and the state is written:
+// nothing installed goes unrecorded, and the next set installs it.
+func TestSetSkillsRecordsWhatItInstalledWhenOneFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	hub := newSkillHub(t)
+	hub.archives["/acme/skills/tar.gz/HEAD"] = repoArchive(t, map[string]string{"lint/SKILL.md": skillMD("lint")})
+	hub.archives["/acme/more/tar.gz/HEAD"] = repoArchive(t, map[string]string{"fmt/SKILL.md": skillMD("fmt")})
+	writeTestFile(t, filepath.Join(home, ".agents", "skills"), "not a folder")
+	s := NewService(t.TempDir())
+	ctx := context.Background()
+
+	result, err := s.SetSkills(ctx, []SkillSource{{Repo: "acme/skills"}, {Repo: "acme/more"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Installed) != 0 || len(result.Failed) != 2 {
+		t.Fatalf("installed %q, failed %+v", result.Installed, result.Failed)
+	}
+	if fileExists(filepath.Join(home, ".claude", "skills", "lint")) {
+		t.Error("half an install (Claude's copy alone) was left behind")
+	}
+	if !fileExists(skillsStatePath(home)) {
+		t.Fatal("the state wasn't written")
+	}
+
+	if err := os.Remove(filepath.Join(home, ".agents", "skills")); err != nil {
+		t.Fatal(err)
+	}
+	result, err = s.SetSkills(ctx, []SkillSource{{Repo: "acme/skills"}, {Repo: "acme/more"}})
+	if err != nil || !slices.Equal(result.Installed, []string{"fmt", "lint"}) || len(result.Failed) > 0 {
+		t.Fatalf("installed %q, failed %+v, %v", result.Installed, result.Failed, err)
+	}
+}
+
+// When the user's own import takes over a name the project installed, the
+// project's copy for Codex goes too, and the state no longer has it.
+func TestSetSkillsGivesUpANameTheUserTakesOver(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	hub := newSkillHub(t)
+	hub.archives["/acme/skills/tar.gz/HEAD"] = repoArchive(t, map[string]string{"review/SKILL.md": skillMD("review")})
+	s := NewService(t.TempDir())
+	ctx := context.Background()
+	if _, err := s.SetSkills(ctx, []SkillSource{{Repo: "acme/skills"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	writeTestFile(t, filepath.Join(home, ".claude", "skills", "review", "SKILL.md"), "mine")
+	if err := writeJSONFile(agentConfigStatePath(home), agentConfigState{Version: "v", Items: []string{".claude/skills/review"}}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetSkills(ctx, []SkillSource{{Repo: "acme/skills"}}); err != nil {
+		t.Fatal(err)
+	}
+	if fileExists(filepath.Join(home, ".agents", "skills", "review")) {
+		t.Error("the project's copy for Codex outlived the user's taking the name")
+	}
+	if readFile(filepath.Join(home, ".claude", "skills", "review", "SKILL.md")) != "mine" {
+		t.Error("the user's skill was touched")
+	}
+	if _, owned := readSkillsState(home).Skills["review"]; owned {
+		t.Error("the state still has the user's skill as the project's")
+	}
+}
+
+// A repository that is a skill and holds others installs the others alone,
+// not its root as well (which would copy them all twice).
+func TestSetSkillsTakesARootSkillWithOthersForACollection(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	hub := newSkillHub(t)
+	hub.archives["/acme/skills/tar.gz/HEAD"] = repoArchive(t, map[string]string{
+		"SKILL.md":             skillMD("collection"),
+		"skills/lint/SKILL.md": skillMD("lint"),
+	})
+	hub.archives["/acme/one/tar.gz/HEAD"] = repoArchive(t, map[string]string{"SKILL.md": skillMD("one"), "notes.md": "x"})
+	s := NewService(t.TempDir())
+	result, err := s.SetSkills(context.Background(), []SkillSource{{Repo: "acme/skills"}, {Repo: "acme/one"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(result.Installed, []string{"lint", "one"}) {
+		t.Fatalf("installed %q, failed %+v", result.Installed, result.Failed)
+	}
+}
+
+// The name a skill installs as is its front matter's top-level `name:`, the
+// last where there are several; a nested one is its parent's. The same case
+// is in test/environment-skills.test.ts, so the page and the box agree.
+func TestSkillManifestNameIsTheTopLevelLastOne(t *testing.T) {
+	dir := t.TempDir()
+	for text, want := range map[string]string{
+		"---\nname: first\nmetadata:\n  name: nested\nname: \"last\"\n---\nname: body\n": "last",
+		"---\ndescription: x\nmetadata:\n  name: nested\n---\n":                          "",
+		"# no front matter\nname: x\n":                                                   "",
+		"---\r\nname: 'crlf'\r\n---\r\n":                                                 "crlf",
+	} {
+		path := filepath.Join(dir, "SKILL.md")
+		writeTestFile(t, path, text)
+		if got := skillManifestName(path); got != want {
+			t.Errorf("%q: name = %q, want %q", text, got, want)
+		}
 	}
 }

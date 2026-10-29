@@ -57,6 +57,11 @@ test("a SKILL.md's name and description are read from its front matter", () => {
     description: "Fill PDF forms.",
   });
   assert.deepEqual(skillFrontMatter("# No front matter\nname: x\n"), { name: null, description: null });
+  // Top-level keys only, the last one winning: the same case as the box's
+  // TestSkillManifestNameIsTheTopLevelLastOne.
+  assert.equal(skillFrontMatter('---\nname: first\nmetadata:\n  name: nested\nname: "last"\n---\nname: body\n').name, "last");
+  assert.equal(skillFrontMatter("---\ndescription: x\nmetadata:\n  name: nested\n---\n").name, null);
+  assert.equal(skillFrontMatter("---\r\nname: 'crlf'\r\n---\r\n").name, "crlf");
   // A folded description isn't on its line: none, rather than ">".
   assert.equal(skillFrontMatter("---\nname: x\ndescription: >\n  long\n---\n").description, null);
 });
@@ -76,11 +81,10 @@ test("skills are found as the box finds them: folders with a SKILL.md, not in a 
     { path: "skills/docx", folder: "docx" },
     { path: "skills/pdf", folder: "pdf" },
   ]);
-  // A repository that is one skill holds it at its root, and may hold more.
-  assert.deepEqual(skillFoldersIn(["SKILL.md", "extra/SKILL.md"]), [
-    { path: "", folder: "" },
-    { path: "extra", folder: "extra" },
-  ]);
+  // A repository that is one skill holds it at its root; one that is a
+  // skill and holds others is a collection of the others.
+  assert.deepEqual(skillFoldersIn(["SKILL.md", "notes.md"]), [{ path: "", folder: "" }]);
+  assert.deepEqual(skillFoldersIn(["SKILL.md", "extra/SKILL.md"]), [{ path: "extra", folder: "extra" }]);
   assert.equal(installName("vercel-react-best-practices", "react-best-practices"), "vercel-react-best-practices");
   assert.equal(installName("has spaces", "folder"), "folder");
   assert.equal(installName(null, ""), null);

@@ -21,9 +21,10 @@ export const maxDuration = 60;
  * A project's skill registries: GitHub repositories whose every skill a new
  * session installs. GET lists them with the skills GitHub shows in each now
  * (`error` for one it wouldn't list); POST adds one, `{url}` (owner/name or
- * its github.com address), read as the org's repositories are: the GitHub
- * App where the org has it, else the member's own sign-in. A public
- * repository needs neither.
+ * its github.com address). A public repository is read by anyone; a private
+ * one only through the org's GitHub App, whose token for it reads that one
+ * repository and nothing else: a member's own sign-in reads all they can,
+ * and a session's box, which downloads the registry, runs agent code.
  */
 
 /** Where the org reaches GitHub, or null for nowhere (a public repository
@@ -86,11 +87,20 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
   const repo = { fullName: found.fullName, defaultBranch: found.defaultBranch, private: found.private };
+  // Refused now rather than failing at every session's start.
+  const token = repo.private ? await source?.readToken(repo.fullName).catch(() => null) : null;
+  if (repo.private && !token) {
+    return NextResponse.json(
+      {
+        error: `${repo.fullName} is private: Outrunner reads a private registry only through the org's GitHub App. Install it on ${repo.fullName.split("/")[0]} with access to this repository, or use a public one.`,
+      },
+      { status: 400 },
+    );
+  }
 
   return savingSettings("project skill registries", async () => {
     try {
       const registry = await addSkillRegistry(c.owner.id, id, repo);
-      const token = repo.private ? await source?.readToken(repo.fullName).catch(() => null) : null;
       const skills = await registrySkills(token, registry.fullName, registry.defaultBranch);
       // Ready boxes were made without its skills: made again.
       after(() => refillAfterChange(c.owner.id, id));

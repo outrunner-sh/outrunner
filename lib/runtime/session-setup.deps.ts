@@ -85,11 +85,11 @@ async function sessionEnvironment(
 
 /**
  * The repositories the project's skills install from, a private registry's
- * with a token that reads it alone: the org's GitHub App's where it has one,
- * else the session's user's own sign-in, as its repositories are listed
- * (lib/github/repository-source.ts). A registry no token reaches is still
- * sent, without one: the box says it couldn't read it, and the session
- * starts with the rest. Skills unread start the session without any.
+ * with the org's GitHub App's token for it, which reads it alone (never a
+ * member's own: lib/github/repository-source.ts readToken). A registry no
+ * token reaches is still sent, without one: the box says it couldn't read
+ * it, and the session starts with the rest. Skills unread start the session
+ * without any.
  */
 async function sessionSkills(ownerId: string, environmentId: string): Promise<SkillSource[] | undefined> {
   try {

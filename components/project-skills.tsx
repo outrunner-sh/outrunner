@@ -233,7 +233,7 @@ function Registries({
         <SectionHeader title="Registries" />
         <p className="text-xs text-muted-foreground">
           GitHub repositories of skills: every skill in one is installed, as its default branch has it when the session starts.
-          A private one is read with the org&apos;s GitHub App, or your own GitHub sign-in where the org has none. Up to{" "}
+          A private one needs the org&apos;s GitHub App installed with access to it. Up to{" "}
           {MAX_REGISTRIES}.
         </p>
       </div>

@@ -46,9 +46,11 @@ export type SourceAccess = {
   list(): Promise<GitHubRepositoryList>;
   /** A repository by id or `owner/name`, or null when the source can't reach it. */
   lookup(ref: number | string): Promise<GitHubRepository | null>;
-  /** A token that reads `owner/name`, for a box to download it with (a
-   *  project's skill registry); null when the source has none that reaches
-   *  it. The App's reads that one repository alone, for an hour. */
+  /** A token that reads `owner/name` alone, for an hour, for a box to
+   *  download it with (a project's private skill registry): the App's, on
+   *  the installation on its owner's account. Null where the App doesn't
+   *  reach it, and always for a member's own sign-in: their token reads
+   *  everything they can, and a box runs agent code, so it never gets one. */
   readToken(fullName: string): Promise<string | null>;
 };
 
@@ -86,7 +88,8 @@ export async function repositorySource(userId: string, orgId: string | undefined
     source: { kind: "user", key: `user:${userId}` },
     list: () => listGitHubRepositories(token),
     lookup: (ref) => getGitHubRepository(token, ref),
-    readToken: async () => token,
+    // The member's token reads all they can: never handed to a box.
+    readToken: async () => null,
   };
 }
 

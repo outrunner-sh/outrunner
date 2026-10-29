@@ -204,7 +204,19 @@ func (s *Service) SetSkills(ctx context.Context, sources []SkillSource) (SkillsR
 				continue
 			}
 			if err := installSkill(home, skill.dir, skill.name); err != nil {
-				return result, err
+				// Said like any other skill not installed, and the rest go on:
+				// the state is written whatever happens, so nothing installed
+				// goes unrecorded. What a half-done install left (Claude's
+				// copy, not Codex's) is taken away; what can't be is kept in
+				// the state, for the next set to replace or remove.
+				fail(err.Error())
+				for _, dir := range skillDirs(home, skill.name) {
+					_ = os.RemoveAll(dir)
+				}
+				if anyExists(skillDirs(home, skill.name)) {
+					next.Skills[skill.name] = source.Repo
+				}
+				continue
 			}
 			next.Skills[skill.name] = source.Repo
 			result.Installed = append(result.Installed, skill.name)
@@ -219,7 +231,13 @@ func (s *Service) SetSkills(ctx context.Context, sources []SkillSource) (SkillsR
 	// What the project no longer has goes; what a repository that failed
 	// just now installed before stays, until it can be read again.
 	for name, repo := range previous.Skills {
-		if next.Skills[name] != "" || users[name] {
+		if next.Skills[name] != "" {
+			continue
+		}
+		if users[name] {
+			// The user's own took the name over: theirs is in ~/.claude, and
+			// the project's copy for Codex goes, untracked from now on.
+			_ = os.RemoveAll(skillDirs(home, name)[1])
 			continue
 		}
 		if failedRepos[repo] {
@@ -465,10 +483,19 @@ func findSkills(root string) []foundSkill {
 		}
 		return filepath.SkipDir
 	})
+	// A repository that is a skill and holds others is taken for a
+	// collection of them: installing its root too would copy every one of
+	// them twice.
+	if len(found) > 1 && found[0].folder == "" {
+		found = found[1:]
+	}
 	return found
 }
 
-// skillManifestName is the `name:` of a SKILL.md's front matter, or "".
+// skillManifestName is the `name:` of a SKILL.md's front matter, or "": a
+// top-level key only (a nested `name:` under another key is that key's),
+// the last one where it has several, as lib/environments/skills.ts reads it
+// for the page.
 func skillManifestName(path string) string {
 	file, err := os.Open(path)
 	if err != nil {
@@ -476,20 +503,29 @@ func skillManifestName(path string) string {
 	}
 	defer file.Close()
 	scanner := bufio.NewScanner(io.LimitReader(file, 64<<10))
+	name := ""
 	for i := 0; scanner.Scan(); i++ {
-		line := strings.TrimSpace(scanner.Text())
-		if i == 0 {
-			if line != "---" {
-				return ""
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "---" {
+			if i == 0 {
+				continue
 			}
-			continue
+			return name
 		}
-		if line == "---" {
+		if i == 0 {
 			return ""
 		}
 		if value, ok := strings.CutPrefix(line, "name:"); ok {
-			return strings.Trim(strings.TrimSpace(value), `"'`)
+			name = unquote(strings.TrimSpace(value))
 		}
 	}
-	return ""
+	return name
+}
+
+// unquote takes the quotes off a YAML scalar quoted whole.
+func unquote(value string) string {
+	if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
+		return value[1 : len(value)-1]
+	}
+	return value
 }

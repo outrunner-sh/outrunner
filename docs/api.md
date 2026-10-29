@@ -273,8 +273,9 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 Only catalog skills kept on GitHub install (`github: true` in a search
 result); enabling one twice is `conflict`. A registry is a GitHub repository,
 `owner/name` or its address, whose every skill installs from its default
-branch as it is when a session starts. A private one is read with the org's
-GitHub App, or the member's own GitHub sign-in in an org without one.
+branch as it is when a session starts. A private one needs the org's GitHub
+App installed with access to it: a session's box downloads the registry with
+a token of the App's that reads it alone, never a member's own.
 `repo-skills` lists what the project's repositories commit under `.claude`
 and `.agents`: sessions get those with the checkout.
 

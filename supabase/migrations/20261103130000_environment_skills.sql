@@ -7,7 +7,7 @@
 -- - environment_skills: one skill picked from the skills.sh catalog, by its
 --   catalog id (owner/repo/skill), installed from that GitHub repository.
 -- - environment_skill_registries: a GitHub repository whose every skill
---   installs, read with the org's GitHub App or the member's own token.
+--   installs: a public one, or a private one through the org's GitHub App.
 --
 -- Neither holds a secret, but both follow environment_repos: in the
 -- project's org, taken from the project and never chosen, gone with it, and
