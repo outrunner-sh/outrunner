@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/loaders";
+import { clearAppDataCache } from "@/lib/session/app-data-cache";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
 
 /**
@@ -51,7 +52,7 @@ export function HomeUserMenu({
 
 /** Log out, staying open with its icon turning until the redirect lands (the
  *  menu would otherwise close at once, with nothing to say it worked). The
- *  conversations this browser kept go with the user. */
+ *  conversations and the sidebar's list this browser kept go with the user. */
 function SignOutItem() {
   const { pending } = useFormStatus();
   return (
@@ -61,7 +62,10 @@ function SignOutItem() {
         className="w-full"
         aria-busy={pending || undefined}
         disabled={pending}
-        onClick={() => CONVERSATIONS.clear()}
+        onClick={() => {
+          CONVERSATIONS.clear();
+          clearAppDataCache();
+        }}
       >
         {pending ? <Spinner /> : <LogOut />}
         Log out

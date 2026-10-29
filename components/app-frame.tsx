@@ -13,6 +13,7 @@ import { useNotificationsFeed } from "@/hooks/use-notifications";
 import { standingsNow, useStandingsFeed } from "@/hooks/use-standings";
 import { activeSessionId, isStudioPath, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import type { Grouping } from "@/lib/nav/status-groups";
+import { cachedListFor, rememberAppData, useCachedAppData } from "@/lib/session/app-data-cache";
 import { nextNeedingYou } from "@/lib/session/standing";
 import { startNewSession } from "@/lib/session/new-session-reset";
 import type { Org } from "@/lib/orgs/active";
@@ -47,6 +48,10 @@ export type FrameChrome = {
   getStartedSkipped: boolean;
   /** How the sidebar lists sessions, by status or by project, from its cookie. */
   grouping: Grouping;
+  /** The org the switcher last set (its cookie), or null before any switch:
+   *  which org's list the cache may stand in for
+   *  (lib/session/app-data-cache.ts). */
+  pickedOrgId: string | null;
 };
 
 /** Where the choice was kept before the cookie, read once to carry it over. */
@@ -90,17 +95,35 @@ export function AppFrame({
   // The collapse the user toggled here; else the cookie's, once read.
   const [collapsedChoice, setCollapsed] = useState<boolean | null>(null);
   const collapsed = collapsedChoice ?? look?.collapsed ?? false;
-  // The pages render from what the sidebar has: a click shows its session at once.
-  const appData = frame?.appData ?? null;
+  // The pages render from what the sidebar has: a click shows its session at
+  // once. Until the server's list lands, that is the list kept from the last
+  // time the user was here (lib/session/app-data-cache.ts): a reload, a deep
+  // link or the app's relaunch shows its session rather than a placeholder.
+  // The server's own list always wins over it.
+  const cached = useCachedAppData();
+  const appData: AppData | null = frame?.appData ?? cachedListFor(cached, look?.pickedOrgId);
   const sidebarProjects = useMemo(
     () => (appData ? [...appData.projects, ...appData.hiddenProjects] : []),
     [appData],
   );
+  // Keep what the layout sent, for the next cold start. Only the server's own
+  // list is kept: nothing derived here, and nothing about where sessions stand.
+  // Whose it is comes from the chrome's cookie, the same signal a later page
+  // compares it against (lib/session/app-data-cache.ts).
+  useEffect(() => {
+    if (frame) rememberAppData(look?.pickedOrgId ?? null, frame.appData);
+  }, [frame, look?.pickedOrgId]);
   const router = useRouter();
   const pathname = usePathname();
   // Decided by the path, not by the studio being on screen: the rail must not
   // flash in while one session's page loads in place of another's.
   const railless = collapsed && isStudioPath(pathname);
+  // The sidebar shows the kept list at once too — except where a list landing
+  // late would move the rows on screen. Grouped by status it would: the
+  // server's standings are what place each session in its group
+  // (lib/nav/status-groups.ts), and the kept list doesn't carry them. Grouped
+  // by project the rows are the projects', which the kept list does carry.
+  const sidebarFromCache = appData !== null && (look?.grouping ?? "status") === "projects";
   // Bumped by ⌘K: the sidebar opens its search field on each change.
   const [searchSignal, setSearchSignal] = useState(0);
 
@@ -114,7 +137,9 @@ export function AppFrame({
     ids: cloudIds,
     onScreen,
     onListChanged: () => {
-      if (appData) router.refresh();
+      // The server's own list, not the one kept from last time: the marks and
+      // the standings are read against it.
+      if (frame) router.refresh();
     },
   });
   // Turns finished, questions, errors and pull requests, shown as they come
@@ -200,7 +225,7 @@ export function AppFrame({
               </div>
             ) : (
               <AppSidebar
-                loading={frame === null}
+                loading={frame === null && !sidebarFromCache}
                 projects={sidebarProjects}
                 workspaces={appData?.workspaces ?? NO_WORKSPACES}
                 ownerLogin={frame?.ownerLogin ?? ""}
