@@ -334,6 +334,15 @@ type LearningRow = {
   updated_at: string;
 };
 
+type MemoryRow = {
+  id: string;
+  user_id: string;
+  org_id: string | null;
+  body: string;
+  workspace_id: string | null;
+  created_at: string;
+};
+
 type JobRow = {
   id: string;
   owner_id: string;
@@ -1846,6 +1855,12 @@ export type Database = {
         Row: LearningRow;
         Insert: Insert<LearningRow, "title" | "body">;
         Update: Partial<LearningRow>;
+        Relationships: [];
+      };
+      memories: {
+        Row: MemoryRow;
+        Insert: Insert<MemoryRow, "user_id" | "body">;
+        Update: Partial<MemoryRow>;
         Relationships: [];
       };
     };

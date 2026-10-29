@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, BarChart3, Blocks, Box, Building2, Code, CreditCard, Gauge, Info, KeyRound, Layers, Lightbulb, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Terminal, User, Users, X } from "lucide-react";
+import { ArrowLeft, BarChart3, Blocks, Box, Brain, Building2, Code, CreditCard, Gauge, Info, KeyRound, Layers, Lightbulb, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Terminal, User, Users, X } from "lucide-react";
 
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PROVIDERS_SETTINGS_HREF, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
@@ -62,6 +62,8 @@ const groups = [
       // Standing instructions every new session loads: the org's and the user's
       // own, and what agents suggest adding to them.
       { href: "/settings/learnings", label: "Learnings", icon: Lightbulb },
+      // What agents noted to remember across sessions, to read and delete.
+      { href: "/settings/memory", label: "Memory", icon: Brain },
       // Where cloud sessions run; a create that needs a Daytona key points here.
       { href: "/settings/sandbox", label: "Sandbox", icon: Box },
     ],
