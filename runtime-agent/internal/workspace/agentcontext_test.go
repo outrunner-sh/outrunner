@@ -134,3 +134,46 @@ func TestAgentContextKeepsTheUsersLinkAndMode(t *testing.T) {
 		t.Errorf("mode = %v, want 0600", info.Mode().Perm())
 	}
 }
+
+func TestAgentContextClearKeepsAndCleansTheUsersLink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	s := NewService(t.TempDir())
+	dotfiles := filepath.Join(t.TempDir(), "CLAUDE.md")
+	writeTestFile(t, dotfiles, "mine\n")
+	claudeMD := filepath.Join(home, ".claude", "CLAUDE.md")
+	if err := os.MkdirAll(filepath.Dir(claudeMD), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dotfiles, claudeMD); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAgentContext("Use pnpm."); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAgentContext(""); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(claudeMD); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("CLAUDE.md is no longer a link after clearing: %v", err)
+	}
+	if got := readFile(dotfiles); got != "mine\n" {
+		t.Errorf("the link's target after clearing = %q", got)
+	}
+}
+
+func TestAgentContextContinuesAfterOneFileFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	s := NewService(t.TempDir())
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "CLAUDE.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAgentContext("Use pnpm."); err != nil {
+		t.Fatalf("SetAgentContext stopped on the first agent file: %v", err)
+	}
+	codex := readFile(filepath.Join(home, ".codex", "AGENTS.md"))
+	if !strings.Contains(codex, "Use pnpm.") {
+		t.Errorf("Codex context was skipped after Claude failed: %q", codex)
+	}
+}

@@ -3,6 +3,7 @@ package workspace
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,7 +76,9 @@ func applyAgentContext(home string) error {
 	content := strings.TrimSpace(string(data))
 	for _, path := range agentContextFiles(home) {
 		if err := withAgentContextBlock(path, content); err != nil {
-			return err
+			// One unwritable agent file must not stop the other file or make
+			// an agent-config import fail before its MCP settings are installed.
+			log.Printf("apply Outrunner agent context to %s: %v", path, err)
 		}
 	}
 	return nil
@@ -103,7 +106,7 @@ func withAgentContextBlock(path, content string) error {
 	if next == string(data) {
 		return nil
 	}
-	if strings.TrimSpace(next) == "" {
+	if strings.TrimSpace(next) == "" && !isSymlink(path) {
 		if existed {
 			return os.Remove(path)
 		}
@@ -113,26 +116,52 @@ func withAgentContextBlock(path, content string) error {
 	// links into the user's dotfiles stays a link, and its target is what
 	// changes; an owner-only one stays owner-only.
 	mode := os.FileMode(0o644)
+	writePath := path
 	if existed {
 		if target, err := filepath.EvalSymlinks(path); err == nil {
-			path = target
+			writePath = target
 		}
-		if info, err := os.Stat(path); err == nil {
+		if info, err := os.Stat(writePath); err == nil {
 			mode = info.Mode().Perm()
 		}
 	}
+	if err := writeAgentContextFile(writePath, next, mode); err == nil {
+		return nil
+	} else if writePath == path {
+		return err
+	} else {
+		// Dotfile targets can be read-only (for example, in /nix/store).
+		// Keep the old import behaviour in that case by replacing the link.
+		if strings.TrimSpace(next) == "" {
+			return os.Remove(path)
+		}
+		return writeAgentContextFile(path, next, mode)
+	}
+}
+
+func isSymlink(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode()&os.ModeSymlink != 0
+}
+
+func writeAgentContextFile(path, text string, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	tmp := path + ".outrunner-tmp"
-	if err := os.WriteFile(tmp, []byte(next), mode); err != nil {
+	if err := os.WriteFile(tmp, []byte(text), mode); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Chmod(tmp, mode); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // withoutAgentContextBlock is a file's text with any block taken out, and
