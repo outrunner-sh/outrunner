@@ -170,7 +170,7 @@ export function ReposStep({
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search repositories"
             aria-label="Search repositories"
-            className="h-12 rounded-none border-0 bg-transparent pl-11 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
+            className="h-12 rounded-none rounded-t-xl border-0 bg-transparent pl-11 text-sm shadow-none focus-visible:ring-2 focus-visible:ring-inset dark:bg-transparent"
           />
         </div>
         <DashedRule />
