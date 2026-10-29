@@ -285,6 +285,20 @@ export const FilesResponse = z.object({
 });
 export type FilesResponse = z.infer<typeof FilesResponse>;
 
+/** The agent shows a session's Canvas (GET /workspaces/{id}/canvas and
+ *  /canvas/file?path=): the folder its agent writes plans, reports, pages,
+ *  diagrams and images in for the user. */
+export const AGENT_FEATURE_CANVAS = "canvas";
+
+/** A session's Canvas: `dir` the folder on the box, `files` by path in it,
+ *  newest first. `truncated` where there were more than the agent lists. */
+export const CanvasResponse = z.object({
+  dir: z.string(),
+  files: z.array(z.object({ path: z.string().min(1), size: z.number().int().nonnegative(), modifiedAt: z.string() })),
+  truncated: z.boolean().optional(),
+});
+export type CanvasResponse = z.infer<typeof CanvasResponse>;
+
 /** One changed file's bounded diff (GET /workspaces/{id}/changes?path=). */
 export const ChangedFileDiffResponse = z.object({ diff: z.string() });
 
@@ -850,6 +864,7 @@ export const PROTOCOL_SCHEMAS = {
   EditorResponse,
   PortsResponse,
   FilesResponse,
+  CanvasResponse,
   /** The provider's own ports on every box (lib/runtime/box-ports.ts and the
    *  agent's ports package each hold the list, checked against this). */
   ProviderPorts: z.array(z.number().int()),

@@ -23,6 +23,7 @@ import {
   PlanActionResponse,
   EditorResponse,
   ErrorResponse,
+  CanvasResponse,
   FilesResponse,
   LISTING_WORKSPACE_ID,
   PortsResponse,
@@ -194,6 +195,19 @@ export class AgentClient {
    *  first. An agent from before this answers 404 with no error envelope. */
   async listFiles(identity: WorkspaceIdentity): Promise<FilesResponse> {
     return FilesResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/files`, identity));
+  }
+
+  /** The session's Canvas: its folder on the box, and its files. An agent
+   *  from before it answers 404 with no error envelope. */
+  async listCanvas(identity: WorkspaceIdentity): Promise<CanvasResponse> {
+    return CanvasResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/canvas`, identity));
+  }
+
+  /** One file of the session's Canvas, as bytes: 400 INVALID_REQUEST for a
+   *  path that names none, 404 NOT_FOUND for none, 413 TOO_LARGE past 5 MB. */
+  async readCanvasFile(identity: WorkspaceIdentity, path: string): Promise<Uint8Array> {
+    const response = await this.send("GET", `/workspaces/${identity.workspaceId}/canvas/file?path=${encodeURIComponent(path)}`, identity);
+    return new Uint8Array(await response.arrayBuffer());
   }
 
   /** One changed file's bounded diff, from the same base: 400 INVALID_REQUEST
@@ -416,6 +430,18 @@ export class AgentClient {
     body?: unknown,
     timeoutMs: number = AGENT_REQUEST_TIMEOUT_MS,
   ): Promise<unknown> {
+    return safeJson(await (await this.send(method, path, identity, body, timeoutMs)).text());
+  }
+
+  /** The agent's answer to a call, once it's a success: its refusal is
+   *  thrown as an AgentRequestError. */
+  private async send(
+    method: "GET" | "POST",
+    path: string,
+    identity: WorkspaceIdentity,
+    body?: unknown,
+    timeoutMs: number = AGENT_REQUEST_TIMEOUT_MS,
+  ): Promise<Response> {
     const token = mintRuntimeToken(identity, this.target.secret);
     const response = await this.fetchFn(
       `${this.target.controlBaseUrl.replace(/\/$/, "")}${path}`,
@@ -432,12 +458,11 @@ export class AgentClient {
       },
     );
 
-    const text = await response.text();
     if (!response.ok) {
-      const parsed = ErrorResponse.safeParse(safeJson(text));
+      const parsed = ErrorResponse.safeParse(safeJson(await response.text()));
       throw new AgentRequestError(response.status, parsed.success ? parsed.data.error : undefined);
     }
-    return safeJson(text);
+    return response;
   }
 }
 

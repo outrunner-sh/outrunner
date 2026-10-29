@@ -9,6 +9,7 @@ import {
   GitPullRequest,
   Globe,
   PanelRightClose,
+  PanelsTopLeft,
   Plus,
   ScanSearch,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { SessionMediaRows } from "@/components/session-media";
 import { EnvRow } from "@/components/studio-env-row";
 import { Spinner } from "@/components/ui/loaders";
+import { WorkspaceCanvas } from "@/components/workspace-canvas";
 import { WorkspaceChanges } from "@/components/workspace-changes";
 import type { SessionSender } from "@/components/workspace-session";
 import { uploadAttachment } from "@/hooks/use-attachments";
@@ -26,7 +28,7 @@ import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-wor
 import { openPendingTab, TAB_BLOCKED } from "@/lib/client/pending-tab";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { PullRequestStatus } from "@/lib/github/client";
-import { opensInBrowser, type ProviderName, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
+import { onRuntimeComputer, opensInBrowser, type ProviderName, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { changeTotals, environmentSummary } from "@/lib/session/environment";
 import { PR_INSTRUCTIONS_FILENAME, PR_PROMPT, prInstructions } from "@/lib/session/pr-instructions";
 import { evidenceToolsFor } from "@/lib/session/pr-template";
@@ -63,15 +65,19 @@ export function WorkspaceEnvironment({
   /** Closes the panel; shown where the panel covers the chat (narrow windows). */
   onClose: () => void;
 }) {
-  const [view, setView] = useState<"overview" | "changes">("overview");
+  const [view, setView] = useState<"overview" | "changes" | "canvas">("overview");
   // Focus follows the view: into the list's back arrow on the way in, back to
   // the Changes row on the way out, so the keyboard is never left on nothing.
   const changesRow = useRef<HTMLButtonElement>(null);
+  const canvasRow = useRef<HTMLButtonElement>(null);
+  const returnTo = useRef<"changes" | "canvas">("changes");
   const backButton = useRef<HTMLButtonElement>(null);
   const returning = useRef(false);
   useEffect(() => {
-    if (view === "changes") backButton.current?.focus();
-    else if (returning.current) changesRow.current?.focus();
+    if (view !== "overview") {
+      returnTo.current = view;
+      backButton.current?.focus();
+    } else if (returning.current) (returnTo.current === "canvas" ? canvasRow : changesRow).current?.focus();
     returning.current = false;
   }, [view]);
   const backToOverview = () => {
@@ -99,7 +105,12 @@ export function WorkspaceEnvironment({
           />
         </div>
       )}
-      <div hidden={view === "changes"} className="studio-env-body">
+      {view === "canvas" && (
+        <div className="studio-env-body">
+          <WorkspaceCanvas workspaceId={workspace.id} active={isReady} onBack={backToOverview} backRef={backButton} />
+        </div>
+      )}
+      <div hidden={view !== "overview"} className="studio-env-body">
         <div className="studio-env-label">
           <button type="button" onClick={onClose} className="studio-env-close" title="Hide environment" aria-label="Hide environment">
             <PanelRightClose />
@@ -119,6 +130,14 @@ export function WorkspaceEnvironment({
         >
           Changes
         </EnvRow>
+
+        {/* What the agent wrote for the user to read: a cloud session's,
+            off its box. */}
+        {!local && onRuntimeComputer(workspace.provider) && (
+          <EnvRow ref={canvasRow} onClick={() => setView("canvas")} icon={<PanelsTopLeft />} right={<ChevronRight />}>
+            Canvas
+          </EnvRow>
+        )}
 
         <EnvRow
           onClick={() => setBranchOpen((current) => !current)}
