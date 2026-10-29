@@ -29,12 +29,14 @@ export const SIDEBAR_COOKIE = "sidebar-collapsed";
 export const FOLDED_PROJECTS_COOKIE = "sidebar-folded";
 
 /**
- * Both are read by the app layout for the frame, so every instant page under
- * it has to name them in its `unstable_instant` samples or the build stops.
- * The names are repeated there rather than imported from here: a segment
- * config is read by static analysis, which cannot follow a constant. Declared
- * absent, which is the shell's case — it is prerendered once, for nobody in
- * particular, and each visitor's own values stream in.
+ * These two, the sidebar's grouping (lib/nav/status-groups.ts) and the
+ * get-started flag (lib/nav/get-started.ts), are all read by the app layout
+ * for the frame, so every instant page under it has to name all four in its
+ * `unstable_instant` samples or the build stops. The names are repeated there
+ * rather than imported from here: a segment config is read by static analysis,
+ * which cannot follow a constant. Declared absent, which is the shell's case —
+ * it is prerendered once, for nobody in particular, and each visitor's own
+ * values stream in.
  */
 /** A cookie holds about 4 KB; folder paths are long. The latest folds win. */
 const MAX_FOLDED = 40;
