@@ -706,6 +706,23 @@ type AttachmentRow = {
   created_at: string;
 };
 
+// supabase/migrations/20261103170000_media.sql
+type MediaRow = {
+  id: string;
+  public_id: string;
+  org_id: string;
+  owner_id: string;
+  workspace_id: string | null;
+  name: string;
+  content_type: string;
+  size_bytes: number;
+  access: "public" | "private";
+  storage_path: string;
+  status: "pending" | "ready";
+  created_at: string;
+  ready_at: string | null;
+};
+
 /** Columns the client may supply on insert (defaults fill the rest). */
 // Signing in from the terminal (`outrunner login`): one-time codes the
 // browser hands the CLI, and the tokens the CLI trades them for. Hashes only.
@@ -1422,6 +1439,15 @@ export type Database = {
         Update: Partial<AttachmentRow>;
         Relationships: [];
       };
+      media: {
+        Row: MediaRow;
+        Insert: Insert<
+          MediaRow,
+          "public_id" | "org_id" | "owner_id" | "name" | "content_type" | "size_bytes" | "storage_path"
+        >;
+        Update: Partial<MediaRow>;
+        Relationships: [];
+      };
       cli_login_codes: {
         Row: CliLoginCodeRow;
         Insert: Insert<CliLoginCodeRow, "code_hash" | "user_id" | "code_challenge" | "device_name" | "expires_at">;
@@ -1748,6 +1774,25 @@ export type Database = {
         Returns: string;
       };
       // supabase/migrations/20261102120000_api_keys.sql
+      // supabase/migrations/20261103170000_media.sql
+      reserve_media_upload: {
+        Args: {
+          media_id: string;
+          media_public_id: string;
+          media_org_id: string;
+          media_owner_id: string;
+          media_workspace_id: string | null;
+          media_name: string;
+          media_content_type: string;
+          media_size_bytes: number;
+          media_access: "public" | "private";
+          media_storage_path: string;
+          max_per_day: number;
+          max_bytes: number;
+        };
+        /** Why not ('daily', 'storage'), or null when reserved. */
+        Returns: string | null;
+      };
       api_key_call_counts: {
         Args: { key_ids: string[]; since: string };
         Returns: { key_id: string; calls: number }[];

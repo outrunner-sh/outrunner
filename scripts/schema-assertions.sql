@@ -2425,3 +2425,38 @@ begin
   delete from environments where id = env;
   raise notice 'ok: an org connects each provider once, and disconnecting unlinks its projects';
 end $$;
+
+-- 58. Media (20261103170000_media.sql): an org's uploads are capped by count
+-- a day and by bytes kept, a pending upload counts for three hours, members can't
+-- write rows themselves, and only the server reserves.
+do $$
+declare
+  org constant uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  owner constant uuid := '11111111-1111-1111-1111-111111111111';
+  refused text;
+begin
+  refused := reserve_media_upload(gen_random_uuid(), repeat('a', 43), org, owner, null, 'Before', 'image/png', 100, 'public', 'o/1', 2, 250);
+  if refused is not null then raise exception 'FAIL: the first upload was refused (%)', refused; end if;
+  refused := reserve_media_upload(gen_random_uuid(), repeat('b', 43), org, owner, null, 'After', 'image/png', 200, 'public', 'o/2', 2, 250);
+  if refused is distinct from 'storage' then raise exception 'FAIL: an upload past the bytes cap was %', refused; end if;
+  refused := reserve_media_upload(gen_random_uuid(), repeat('b', 43), org, owner, null, 'After', 'image/png', 100, 'public', 'o/2', 2, 250);
+  if refused is not null then raise exception 'FAIL: an upload within both caps was refused (%)', refused; end if;
+  refused := reserve_media_upload(gen_random_uuid(), repeat('c', 43), org, owner, null, 'Again', 'image/png', 1, 'public', 'o/3', 2, 250);
+  if refused is distinct from 'daily' then raise exception 'FAIL: an upload past the daily cap was %', refused; end if;
+  -- A pending upload from over three hours ago no longer holds bytes.
+  update media set created_at = now() - interval '4 hours' where org_id = org;
+  refused := reserve_media_upload(gen_random_uuid(), repeat('d', 43), org, owner, null, 'Later', 'image/png', 240, 'public', 'o/4', 10, 250);
+  if refused is not null then raise exception 'FAIL: unfinished uploads still held their bytes (%)', refused; end if;
+  begin
+    insert into media (public_id, org_id, owner_id, name, content_type, size_bytes, storage_path)
+    values (repeat('e', 43), org, owner, 'Page', 'text/html', 1, 'o/5');
+    raise exception 'FAIL: a type that isn''t an image or video was kept';
+  exception when check_violation then null;
+  end;
+  if has_table_privilege('authenticated', 'media', 'insert') or has_table_privilege('authenticated', 'media', 'update')
+    or has_function_privilege('authenticated', 'reserve_media_upload(uuid, text, uuid, uuid, uuid, text, text, bigint, text, text, integer, bigint)', 'execute') then
+    raise exception 'FAIL: members can write media rows themselves';
+  end if;
+  delete from media where org_id = org;
+  raise notice 'ok: media uploads are capped per org, and only the server writes them';
+end $$;

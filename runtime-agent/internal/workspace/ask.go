@@ -127,7 +127,7 @@ func (s *Service) claudeAskArgs(workspaceID string) []string {
 	}
 	return []string{
 		"--mcp-config", path,
-		"--allowedTools", ask.QualifiedToolName, ask.QualifiedSecretsToolName,
+		"--allowedTools", ask.QualifiedToolName, ask.QualifiedSecretsToolName, ask.QualifiedMediaToolName,
 		"--disallowedTools", "AskUserQuestion",
 	}
 }

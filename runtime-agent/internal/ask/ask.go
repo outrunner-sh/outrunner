@@ -30,6 +30,14 @@ const (
 // and permission rules.
 const QualifiedToolName = "mcp__" + ServerName + "__" + ToolName
 
+// MediaToolName is the relay's tool that uploads a screenshot or recording
+// for a pull request (package media, through the agent), and
+// QualifiedMediaToolName the tool as Claude names it.
+const (
+	MediaToolName          = "upload_media"
+	QualifiedMediaToolName = "mcp__" + ServerName + "__" + MediaToolName
+)
+
 // Limits are AskUserQuestion's: a few questions of a few options, each with an
 // "Other" the browser always adds.
 const (
