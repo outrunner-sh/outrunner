@@ -75,6 +75,7 @@ const JUMP_MS = 1500;
 export function ConversationTimeline({
   events,
   placeholder = null,
+  agentLabel = "Claude Code",
   working = claudeIsWorking(events),
   compacting = false,
   plansInProse = false,
@@ -82,6 +83,8 @@ export function ConversationTimeline({
   onEdit,
 }: {
   events: AgentEvent[];
+  /** The actual selected harness, including before its first reply. */
+  agentLabel?: string;
   /** Whether Claude is mid-turn, for the working indicator; read from the
    *  events where the caller knows no better (a stopped turn it can't see). */
   working?: boolean;
@@ -253,13 +256,13 @@ export function ConversationTimeline({
           {placeholder === "connecting" && (
             <div role="status" className="conversation-placeholder">
               <DotMatrix rows={6} cols={9} />
-              <span>Connecting to Claude</span>
+              <span>Connecting to {agentLabel}</span>
             </div>
           )}
           {placeholder === "ready" && (
             <div className="conversation-placeholder is-ready">
               <span>Ready when you are</span>
-              <span className="text-muted-foreground/60">Claude is connected. Send a prompt to start.</span>
+              <span className="text-muted-foreground/60">{agentLabel} is connected. Send a prompt to start.</span>
             </div>
           )}
           {/* Under a placeholder there is only the session's state to show,

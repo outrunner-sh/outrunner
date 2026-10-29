@@ -124,3 +124,16 @@ test("session menus keep their own workspace scope instead of inheriting the act
   assert.deepEqual(second.keys, ["deepseek"]);
   assert.deepEqual(urls, ["/api/outrunner-models?workspace=first", "/api/outrunner-models?workspace=second"]);
 });
+
+
+test("new-session menus use the selected repository scope independently of workspace menus", async () => {
+  const urls: string[] = [];
+  globalThis.fetch = (async (url: string) => {
+    urls.push(url);
+    return Response.json({ outrunner: true, allowance: false, keys: [], harnesses: ["codex"], codexModels: [] });
+  }) as typeof fetch;
+  await workspaceModelMenu(undefined, "repo-first").ensure();
+  await workspaceModelMenu(undefined, "repo-second").ensure();
+  await workspaceModelMenu(undefined, "repo-first").ensure();
+  assert.deepEqual(urls, ["/api/outrunner-models?project=repo-first", "/api/outrunner-models?project=repo-second"]);
+});

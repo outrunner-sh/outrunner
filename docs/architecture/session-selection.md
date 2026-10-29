@@ -19,6 +19,7 @@ opens `/settings/models`.
 Own-account eligibility and billing ownership remain in `agentAuthStore` and
 `resolveAgentAuth`: personal selections/credentials take precedence over shared
 organization credentials, including the existing personal OpenAI-key precedence.
+New-session menus use the selected repository’s organization.
 Existing chats request a workspace-scoped model menu, independent of the
 organization currently selected in the sidebar. Organization default
 configuration discovers only shared Codex credentials,

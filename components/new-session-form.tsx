@@ -72,7 +72,7 @@ export function NewSessionForm({
     useCreateSession(listed, initialProjectId);
   // Explicit session selection, then personal/org preferences, then the
   // eligible runtime default. The server uses the same selection rules.
-  const menu = useOutrunnerModels();
+  const menu = useOutrunnerModels(undefined, selected?.id);
   // The model picked in the composer, else the loadout's default: its agent
   // decides what this Mac needs for a local session (Claude Code, or Codex).
   const [picked, setPicked] = useState<SessionModel | null>(initialPick?.model ?? null);

@@ -358,8 +358,8 @@ export function WorkspaceSession({
   // actually ran.
   const [switching, setSwitching] = useState(false);
   // What the model menu offers: Outrunner's models, the user's own keys
-  // (Settings → Providers), and their Claude. Until the first answer, as if
-  // all were on offer.
+  // (Settings → Providers), and connected accounts. Before the verified
+  // menu arrives, keep the recorded selection without offering guessed models.
   const menu = useOutrunnerModels(local ? undefined : workspaceId) ?? MENU_UNTIL_ANSWERED;
   // Whose entry the menu ticks when a model is offered by two: the one last
   // picked here, else the one a new session starts on.
@@ -1151,12 +1151,13 @@ export function WorkspaceSession({
         />
       )}
 
-      <section className="studio-convo-panel" aria-label="Claude conversation">
+      <section className="studio-convo-panel" aria-label={`${AGENTS[agent].label} conversation`}>
         <div className="studio-convo-body">
           {/* Images Claude shows by path are on a cloud session's box; this
               Mac's are out of the server's reach. */}
           <ImageBoxContext value={local ? null : workspaceId}>
             <ConversationTimeline
+              agentLabel={AGENTS[agent].label}
               events={timelineEvents}
               working={working && !compacting}
               compacting={compacting}

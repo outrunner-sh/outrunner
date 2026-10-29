@@ -252,9 +252,11 @@
    bordered box of one height, the send button among them. */
 .studio-composer-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px; border-top:1px solid var(--studio-border); }
 .studio-composer-footer > span { display:flex; align-items:center; gap:8px; min-width:0; }
+.studio-composer-footer > span:first-child { flex:1; }
+.studio-composer-footer > span:last-child, .studio-composer-footer > span > button { flex-shrink:0; }
 .studio-composer-footer button, .studio-composer-model { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:30px; min-width:30px; padding:0 10px; border:1px solid var(--studio-border); border-radius:3px; color:var(--studio-text); background:transparent; font:13px var(--font-geist-sans); white-space:nowrap; }
 .studio-composer-footer button { padding:0 7px; cursor:pointer; transition: background-color .15s, border-color .15s; }
-.studio-composer-footer .studio-composer-model-picker { padding:0 10px 0 12px; }
+.studio-composer-footer .studio-composer-model-picker { min-width:0; flex-shrink:1; padding:0 10px 0 12px; }
 .studio-composer-footer button:hover:not(:disabled) { color:var(--studio-text); border-color:rgba(255,255,255,.24); background:var(--studio-hover); }
 .studio-composer-footer button:disabled { color:#555; cursor:not-allowed; }
 .studio-composer-footer svg { width:14px; height:14px; flex-shrink:0; }

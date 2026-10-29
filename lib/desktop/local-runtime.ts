@@ -409,7 +409,16 @@ export const OUTRUNNER_MODELS = modelMenuResource("/api/outrunner-models");
 const workspaceMenus = new Map<string, ReturnType<typeof modelMenuResource>>();
 /** A running session uses its own org's credentials, even while another org
  * is active in the sidebar. New sessions use the active-org resource. */
-export function workspaceModelMenu(workspaceId?: string) {
+export function workspaceModelMenu(workspaceId?: string, projectId?: string) {
+  if (projectId && !workspaceId) {
+    const key = `project:${projectId}`;
+    let menu = workspaceMenus.get(key);
+    if (!menu) {
+      menu = modelMenuResource(`/api/outrunner-models?project=${encodeURIComponent(projectId)}`);
+      workspaceMenus.set(key, menu);
+    }
+    return menu;
+  }
   if (!workspaceId) return OUTRUNNER_MODELS;
   let menu = workspaceMenus.get(workspaceId);
   if (!menu) {

@@ -40,6 +40,11 @@ test("new composer preserves draft and attachment across harnesses and sends exa
 });
 test("existing composer applies only model-supported effort and keeps a draft while switching", async ({ page }) => {
   const state = await fixture(page); await open(page, "/workspaces/preview-0");
+  await expect(page.getByText("Codex is connected. Send a prompt to start.", { exact: true })).toBeVisible();
+  const sendBounds = await page.getByRole("button", { name: "Send", exact: true }).boundingBox();
+  expect(sendBounds!.x + sendBounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  const selectorBounds = await page.getByRole("button", { name: /^Harness:/ }).boundingBox();
+  expect(selectorBounds!.x + selectorBounds!.width).toBeLessThan(sendBounds!.x);
   await page.getByRole("textbox", { name: "Message Codex" }).fill("Draft remains");
   await menu(page, "Model"); await page.getByRole("menuitem", { name: "All models…", exact: true }).click();
   await page.getByRole("menuitemradio", { name: "Account text model", exact: true }).click();

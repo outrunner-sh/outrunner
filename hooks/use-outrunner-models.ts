@@ -11,8 +11,8 @@ import { workspaceModelMenu, type OutrunnerModels } from "@/lib/desktop/local-ru
  * out of date (forgetOutrunnerModels). Null until the first answer; none on
  * offer when that look failed.
  */
-export function useOutrunnerModels(workspaceId?: string): OutrunnerModels | null {
-  const resource = workspaceModelMenu(workspaceId);
+export function useOutrunnerModels(workspaceId?: string, projectId?: string): OutrunnerModels | null {
+  const resource = workspaceModelMenu(workspaceId, projectId);
   const models = useSharedResource(resource);
   useEffect(() => {
     void resource.ensure().catch(() => {});

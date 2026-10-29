@@ -931,9 +931,9 @@ function ModelPicker({ model, choice, uploading }: { model?: string; choice: Mod
           >
             {/* Both labels share one cell, so the footer holds still while the
                 name gives way to "Switching" and back. */}
-            <span className="grid place-items-center">
-              <span className={cn("col-start-1 row-start-1 inline-flex items-center gap-2", choice.switching && "invisible")}>
-                <span className="max-w-48 truncate">{harness} · {name}</span>
+            <span className="grid min-w-0 place-items-center">
+              <span className={cn("col-start-1 row-start-1 inline-flex min-w-0 items-center gap-2", choice.switching && "invisible")}>
+                <span className="min-w-0 max-w-48 truncate">{harness} · {name}</span>
                 {(effort !== undefined || savedEffort) && <EffortMeter effort={effort ?? savedEffort} />}
               </span>
               <span

@@ -1,7 +1,7 @@
 import { codexModelsFor } from "@/lib/codex/model-catalog.deps";
 import { NextResponse } from "next/server";
 
-import { getWorkspace } from "@/lib/db/repositories";
+import { getProject, getWorkspace } from "@/lib/db/repositories";
 import { resolveProvider } from "@/lib/runtime/resolve";
 import type { Workspace } from "@/lib/runtime/types";
 import { isUuid } from "@/lib/ids";
@@ -42,8 +42,10 @@ export async function GET(request: Request) {
   const askedWorkspace = new URL(request.url).searchParams.get("workspace");
   // getWorkspace is scoped through RLS. A pending optimistic ID may not exist
   // yet; its creation context is the active org until its row arrives.
+  const askedProject = new URL(request.url).searchParams.get("project");
+  const project = askedProject && isUuid(askedProject) ? await getProject(askedProject) : null;
   const workspace = askedWorkspace && isUuid(askedWorkspace) ? await getWorkspace(askedWorkspace) : null;
-  const orgId = workspace ? workspace.orgId : await activeOrgId().catch(() => undefined);
+  const orgId = workspace ? workspace.orgId : project ? project.orgId : await activeOrgId().catch(() => undefined);
   const own = agentAuthStore(owner.id);
   const withOrg = orgId ? agentAuthStore(owner.id, orgId) : own;
   const [menu, localMenu, catalog, localCatalog, loadout, claude, codex] = await Promise.all([
