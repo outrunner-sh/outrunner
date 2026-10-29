@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -225,10 +226,14 @@ func TestTheFirstToolStartsTheDesktopAndAScreenshotIsSeenAndKept(t *testing.T) {
 		t.Errorf(".gitignore = %q", ignore)
 	}
 
-	// Running now: not started again.
+	// Running now: not started again, and its size, which doesn't change,
+	// not asked again.
 	c.tool(ToolScreenshot, nil)
 	if fake.called("POST /computeruse/start") != 1 {
 		t.Fatalf("started twice: %v", fake.calls)
+	}
+	if n := fake.called("GET /computeruse/display/info"); n != 1 {
+		t.Errorf("display size asked %d times", n)
 	}
 }
 
@@ -323,19 +328,79 @@ func TestARecordingIsKeptInTheSessionFolderUnderItsLabel(t *testing.T) {
 	}
 }
 
-func TestARecordingLeftRunningStopsByItselfAndIsStillHanded(t *testing.T) {
-	_, toolbox := newFakeToolbox(t)
+// The time limit is kept by a watchdog of its own, not by the server: a
+// server restarted mid-recording (a new one, without the first's state)
+// still hands over the recording its watchdog stopped.
+func TestARecordingLeftRunningStopsAtItsLimitWhateverHappensToTheServer(t *testing.T) {
+	fake, toolbox := newFakeToolbox(t)
 	cfg, session := testConfig(t, toolbox.URL)
 	cfg.MaxRecording = 50 * time.Millisecond
-	c := startServer(t, cfg)
-	c.tool(ToolRecordStart, nil)
+	var watched []string
+	var mu sync.Mutex
+	cfg.Watchdog = func(id string, until time.Time) error {
+		mu.Lock()
+		watched = append(watched, id)
+		mu.Unlock()
+		if d := time.Until(until); d <= 0 || d > time.Second {
+			t.Errorf("watchdog until %s from now", d)
+		}
+		// Another process in the real thing: here, one the server can't stop.
+		go func() { _ = CapRecording(context.Background(), &Toolbox{Base: toolbox.URL}, id, until) }()
+		return nil
+	}
+	first := startServer(t, cfg)
+	if text, r := first.tool(ToolRecordStart, map[string]any{"label": "Flow"}); isError(r) {
+		t.Fatal(text)
+	}
+	first.in.Close() // the CLI restarts its servers
 	time.Sleep(300 * time.Millisecond)
-	text, result := c.tool(ToolRecordStop, nil)
-	if isError(result) || !strings.Contains(text, "stopped by itself") {
+	if n := fake.called("POST /computeruse/recordings/stop"); n != 1 {
+		t.Fatalf("stopped %d times at its limit", n)
+	}
+
+	cfg.Watchdog = nil
+	second := startServer(t, cfg)
+	text, result := second.tool(ToolRecordStop, nil)
+	if isError(result) || !strings.Contains(text, "reached its 50ms limit and stopped by itself") {
 		t.Fatalf("record_stop = %q", text)
 	}
-	if _, err := os.Stat(filepath.Join(session, ".context", "desktop", "recording-20261029-093015-123.mp4")); err != nil {
+	path := filepath.Join(session, ".context", "desktop", "recording-20261029-093015-123-flow.mp4")
+	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
+	}
+	if structured := result["structuredContent"].(map[string]any); structured["path"] != path {
+		t.Errorf("structured = %v", structured)
+	}
+	if len(watched) != 1 || watched[0] != "rec-1" {
+		t.Errorf("watched = %v", watched)
+	}
+}
+
+func TestNoRecordingRunsWithoutItsWatchdog(t *testing.T) {
+	fake, toolbox := newFakeToolbox(t)
+	cfg, _ := testConfig(t, toolbox.URL)
+	cfg.Watchdog = func(string, time.Time) error { return errors.New("fork: no more processes") }
+	c := startServer(t, cfg)
+	if text, r := c.tool(ToolRecordStart, nil); !isError(r) || !strings.Contains(text, "time limit couldn't be set") {
+		t.Fatalf("record_start = %q", text)
+	}
+	if fake.called("POST /computeruse/recordings/stop") != 1 {
+		t.Errorf("the recording was left running: %v", fake.calls)
+	}
+}
+
+func TestAWatchdogLeavesARecordingAlreadyStopped(t *testing.T) {
+	fake, toolbox := newFakeToolbox(t)
+	cfg, _ := testConfig(t, toolbox.URL)
+	c := startServer(t, cfg)
+	cfg.MaxRecording = time.Hour
+	c.tool(ToolRecordStart, nil)
+	c.tool(ToolRecordStop, nil)
+	if err := CapRecording(context.Background(), cfg.Toolbox, "rec-1", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if n := fake.called("POST /computeruse/recordings/stop"); n != 1 {
+		t.Errorf("stopped %d times", n)
 	}
 }
 
@@ -375,6 +440,13 @@ func TestWebAddresses(t *testing.T) {
 		" http://localhost:5173": "http://localhost:5173",
 		"HTTPS://Example.com":    "HTTPS://Example.com",
 		"example.com:8443/a":     "https://example.com:8443/a",
+		"0.0.0.0:8080":           "http://0.0.0.0:8080",
+		"localhost":              "http://localhost",
+		"localhost/a?b#c":        "http://localhost/a?b#c",
+		// Hosts on the internet, whatever their names start with.
+		"localhost.example.com": "https://localhost.example.com",
+		"localhostfoo.com/x":    "https://localhostfoo.com/x",
+		"127.0.0.1.nip.io":      "https://127.0.0.1.nip.io",
 	} {
 		if got, err := webURL(in); err != nil || got != want {
 			t.Errorf("webURL(%q) = %q, %v", in, got, err)

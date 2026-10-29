@@ -96,13 +96,10 @@ func (t *Toolbox) Status(ctx context.Context) (string, error) {
 	return res.Status, nil
 }
 
-// Start starts what of the desktop isn't running, unless all of it is: a
-// start with everything up is a no-op on Daytona's side too, but asked first
-// it costs nothing.
+// Start starts what of the desktop isn't running and leaves what is: a
+// start with everything up is a no-op on Daytona's side. The caller asks
+// Status first (ensureDesktop), so it isn't asked again here.
 func (t *Toolbox) Start(ctx context.Context) error {
-	if status, err := t.Status(ctx); err == nil && status == "active" {
-		return nil
-	}
 	return t.do(ctx, http.MethodPost, "/computeruse/start", map[string]any{}, nil)
 }
 

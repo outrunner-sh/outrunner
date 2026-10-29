@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"time"
 
 	"runtime-agent/internal/codex"
 	"runtime-agent/internal/desktop"
@@ -42,6 +43,10 @@ func withoutOwnServers(servers map[string]json.RawMessage) map[string]json.RawMe
 	for name, server := range servers {
 		if !slices.Contains(ownServers, name) {
 			out[name] = server
+		} else {
+			// Only when the control plane's own check on names was got
+			// past: said, so a server gone missing has a reason on record.
+			log.Printf("agent setup: dropped MCP server %q, a name the box keeps for its own", name)
 		}
 	}
 	return out
@@ -59,13 +64,32 @@ func (s *Service) desktopReady(workspaceID string) bool {
 	if f, _ := s.getFacts(workspaceID); f.InPlace {
 		return false
 	}
+	return s.hasDesktop()
+}
+
+// desktopNotFoundFor is how long a box found without a desktop is taken at
+// its word. A launch asks twice (its orientation and its arguments), which
+// must agree; and a box on another provider shouldn't be asked every launch.
+// Short, so one asked while its desktop's toolbox was still coming up asks
+// again soon.
+const desktopNotFoundFor = time.Minute
+
+// hasDesktop is whether the box has a desktop: known for good once found,
+// and not found for desktopNotFoundFor.
+func (s *Service) hasDesktop() bool {
 	if s.desktopFound.Load() {
 		return true
+	}
+	s.desktopMu.Lock()
+	defer s.desktopMu.Unlock()
+	if time.Since(s.desktopNotFoundAt) < desktopNotFoundFor {
+		return false
 	}
 	if desktop.Available(context.Background(), s.DesktopToolbox) {
 		s.desktopFound.Store(true)
 		return true
 	}
+	s.desktopNotFoundAt = time.Now()
 	return false
 }
 

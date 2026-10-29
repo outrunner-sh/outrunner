@@ -482,7 +482,9 @@ func (b *Browser) Click(ctx context.Context, ref string) (string, error) {
 	}
 	b.setTarget(t.ID)
 	// A click that navigates starts loading a moment later.
-	time.Sleep(300 * time.Millisecond)
+	if err := pause(ctx, 300*time.Millisecond); err != nil {
+		return "", err
+	}
 	c.settle(ctx, 10*time.Second)
 	title, address := c.pageInfo(ctx)
 	return fmt.Sprintf("Clicked %s. Page: %s (%s). Take a browser_snapshot to see what changed.", ref, title, address), nil
@@ -561,7 +563,9 @@ func (b *Browser) Fill(ctx context.Context, ref, text string, submit bool) (stri
 	if err := c.pressKey(ctx, "Enter", "Enter", 13, "\r"); err != nil {
 		return "", err
 	}
-	time.Sleep(300 * time.Millisecond)
+	if err := pause(ctx, 300*time.Millisecond); err != nil {
+		return "", err
+	}
 	c.settle(ctx, 10*time.Second)
 	title, address := c.pageInfo(ctx)
 	return fmt.Sprintf("Filled %s and pressed Enter. Page: %s (%s). Take a browser_snapshot to see what changed.", ref, title, address), nil

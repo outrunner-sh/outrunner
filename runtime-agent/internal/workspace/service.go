@@ -166,8 +166,11 @@ type Service struct {
 	// DesktopToolbox is where the box's desktop is driven from (desktop.go);
 	// empty launches sessions without the desktop tools.
 	DesktopToolbox string
-	// desktopFound is set once the box is found to have a desktop.
-	desktopFound atomic.Bool
+	// desktopFound is set once the box is found to have a desktop, and
+	// desktopNotFoundAt when it was last found not to (desktop.go).
+	desktopFound      atomic.Bool
+	desktopMu         sync.Mutex
+	desktopNotFoundAt time.Time
 }
 
 // UseJcode switches the service to the jcode engine, driving workspaces through

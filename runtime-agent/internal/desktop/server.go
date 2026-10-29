@@ -21,8 +21,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -94,6 +96,36 @@ type Config struct {
 	// StartSettle is how long a desktop just started is given before it's
 	// used: two seconds but in tests.
 	StartSettle time.Duration
+	// Watchdog holds a recording to MaxRecording (see Watchdog); nil keeps
+	// the cap in this process, which only tests do.
+	Watchdog Watchdog
+}
+
+// Watchdog sees that recording id stops at `until` if it is still running
+// then, from a process of its own: the agent's CLI may restart this server,
+// or the session end, mid-recording, and a cap kept in this process would go
+// with it while the recording ran on, filling the disk. runtime-agent's is
+// `desktop-mcp --stop-recording` (CapRecording), detached.
+type Watchdog func(id string, until time.Time) error
+
+// CapRecording waits until `until`, then stops recording id if it is still
+// running. Its file stays in the toolbox's folder, where the next
+// record_stop finds it and keeps it.
+func CapRecording(ctx context.Context, tb *Toolbox, id string, until time.Time) error {
+	if err := pause(ctx, time.Until(until)); err != nil {
+		return err
+	}
+	recordings, err := tb.Recordings(ctx)
+	if err != nil {
+		return err
+	}
+	for _, rec := range recordings {
+		if rec.ID == id && rec.Status == "recording" {
+			_, err := tb.StopRecording(ctx, id)
+			return err
+		}
+	}
+	return nil
 }
 
 // protocolVersions are the MCP versions the server speaks; a client asking
@@ -132,6 +164,12 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, cfg Config) error {
 	if cfg.StartSettle == 0 {
 		cfg.StartSettle = 2 * time.Second
 	}
+	if cfg.Watchdog == nil {
+		cfg.Watchdog = func(id string, until time.Time) error {
+			go func() { _ = CapRecording(context.Background(), cfg.Toolbox, id, until) }()
+			return nil
+		}
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s := &server{cfg: cfg, out: out}
@@ -162,11 +200,8 @@ type server struct {
 	// callMu runs the tools one at a time.
 	callMu sync.Mutex
 
-	recMu sync.Mutex
-	// autoStopped is the file of a recording that ran out its time and was
-	// stopped by itself, for the record_stop that comes after.
-	autoStopped *savedRecording
-	timer       *time.Timer
+	sizeMu        sync.Mutex
+	width, height int
 }
 
 func (s *server) send(resp rpcResponse) {
@@ -429,7 +464,13 @@ func webURL(raw string) (string, error) {
 		}
 		return raw, nil
 	}
-	if strings.HasPrefix(raw, "localhost") || strings.HasPrefix(raw, "127.0.0.1") {
+	// This computer by name, compared whole: localhost.example.com is a
+	// host on the internet like any other, and gets https.
+	host := raw
+	if i := strings.IndexAny(host, ":/?#"); i >= 0 {
+		host = host[:i]
+	}
+	if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" {
 		return "http://" + raw, nil
 	}
 	return "https://" + raw, nil
@@ -520,13 +561,26 @@ func (s *server) screenshot(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	size := "the desktop"
-	if w, h, err := s.cfg.Toolbox.DisplaySize(ctx); err == nil && w > 0 {
+	if w, h := s.displaySize(ctx); w > 0 {
 		size = fmt.Sprintf("the %d×%d desktop (coordinates are its pixels)", w, h)
 	}
 	return map[string]any{"content": []any{
 		map[string]any{"type": "text", "text": fmt.Sprintf("Screenshot of %s, saved to %s.", size, path)},
 		map[string]any{"type": "image", "data": base64.StdEncoding.EncodeToString(image), "mimeType": "image/jpeg"},
 	}}, nil
+}
+
+// displaySize is the desktop's size, asked once: a box's display keeps the
+// size it started at. Zero when it couldn't be read, to be asked again.
+func (s *server) displaySize(ctx context.Context) (int, int) {
+	s.sizeMu.Lock()
+	defer s.sizeMu.Unlock()
+	if s.width == 0 {
+		if w, h, err := s.cfg.Toolbox.DisplaySize(ctx); err == nil && w > 0 {
+			s.width, s.height = w, h
+		}
+	}
+	return s.width, s.height
 }
 
 // savedRecording is a recording moved into the files folder.
@@ -591,23 +645,11 @@ func (s *server) recordStart(ctx context.Context, label string) (map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	s.recMu.Lock()
-	s.autoStopped = nil
-	if s.timer != nil {
-		s.timer.Stop()
+	if err := s.cfg.Watchdog(rec.ID, time.Now().Add(s.cfg.MaxRecording)); err != nil {
+		// Never a recording without its cap.
+		_, _ = s.cfg.Toolbox.StopRecording(ctx, rec.ID)
+		return nil, fmt.Errorf("couldn't record: its time limit couldn't be set (%v)", err)
 	}
-	s.timer = time.AfterFunc(s.cfg.MaxRecording, func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		s.callMu.Lock()
-		defer s.callMu.Unlock()
-		if saved, err := s.stopAndKeep(stopCtx, rec.ID, label); err == nil {
-			s.recMu.Lock()
-			s.autoStopped = &saved
-			s.recMu.Unlock()
-		}
-	})
-	s.recMu.Unlock()
 	return map[string]any{
 		"content": []any{map[string]any{"type": "text", "text": fmt.Sprintf(
 			"Recording the desktop. Call record_stop when you're done; it stops by itself after %s.", s.cfg.MaxRecording)}},
@@ -615,37 +657,45 @@ func (s *server) recordStart(ctx context.Context, label string) (map[string]any,
 	}, nil
 }
 
+// recordStop stops the recording running and keeps it; with none running,
+// it keeps the one its watchdog stopped at the time limit, still in the
+// toolbox's folder (CapRecording), whichever run of this server started it.
 func (s *server) recordStop(ctx context.Context) (map[string]any, error) {
-	current, err := s.running(ctx)
+	recordings, err := s.cfg.Toolbox.Recordings(ctx)
 	if err != nil {
 		return nil, err
 	}
-	s.recMu.Lock()
-	if s.timer != nil {
-		s.timer.Stop()
-		s.timer = nil
+	var current, stopped *Recording
+	for i := range recordings {
+		rec := &recordings[i]
+		switch {
+		case rec.Status == "recording":
+			current = rec
+		case stopped == nil || rec.StartTime > stopped.StartTime:
+			stopped = rec
+		}
 	}
-	auto := s.autoStopped
-	s.autoStopped = nil
-	s.recMu.Unlock()
 	var saved savedRecording
+	text := ""
 	switch {
 	case current != nil:
-		saved, err = s.stopAndKeep(ctx, current.ID, labelOf(current))
+		rec, err := s.cfg.Toolbox.StopRecording(ctx, current.ID)
 		if err != nil {
 			return nil, err
 		}
-	case auto != nil:
-		saved = *auto
+		if saved, err = s.keep(ctx, rec, labelOf(current)); err != nil {
+			return nil, err
+		}
+	case stopped != nil:
+		if saved, err = s.keep(ctx, *stopped, labelOf(stopped)); err != nil {
+			return nil, err
+		}
+		text = fmt.Sprintf("The recording reached its %s limit and stopped by itself. ", s.cfg.MaxRecording)
 	default:
 		return nil, errors.New("no recording is running: call record_start first")
 	}
-	text := saved.describe()
-	if current == nil {
-		text = fmt.Sprintf("The recording ran %s and stopped by itself. %s", s.cfg.MaxRecording, text)
-	}
 	return map[string]any{
-		"content":           []any{map[string]any{"type": "text", "text": text}},
+		"content":           []any{map[string]any{"type": "text", "text": text + saved.describe()}},
 		"structuredContent": saved,
 	}, nil
 }
@@ -661,13 +711,9 @@ func labelOf(rec *Recording) string {
 	return ""
 }
 
-// stopAndKeep stops a recording and moves its file into the files folder,
-// named by when it stopped and its label.
-func (s *server) stopAndKeep(ctx context.Context, id, label string) (savedRecording, error) {
-	rec, err := s.cfg.Toolbox.StopRecording(ctx, id)
-	if err != nil {
-		return savedRecording{}, err
-	}
+// keep moves a stopped recording's file into the files folder, named by
+// when it was kept and its label.
+func (s *server) keep(ctx context.Context, rec Recording, label string) (savedRecording, error) {
 	dir, err := s.folder()
 	if err != nil {
 		return savedRecording{}, err
@@ -684,7 +730,22 @@ func (s *server) stopAndKeep(ctx context.Context, id, label string) (savedRecord
 	if info, err := os.Stat(path); err == nil {
 		size = info.Size()
 	}
-	return savedRecording{Path: path, DurationSeconds: rec.DurationSeconds, SizeBytes: size}, nil
+	duration := rec.DurationSeconds
+	if duration <= 0 {
+		// The toolbox's list doesn't say how long one it stopped ran.
+		duration = videoSeconds(ctx, path)
+	}
+	return savedRecording{Path: path, DurationSeconds: duration, SizeBytes: size}, nil
+}
+
+// videoSeconds is a video's length as ffprobe reads it, 0 when it can't.
+func videoSeconds(ctx context.Context, path string) float64 {
+	out, err := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path).Output()
+	if err != nil {
+		return 0
+	}
+	seconds, _ := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	return seconds
 }
 
 // moveFile renames from to `to`, or copies it across filesystems.
@@ -710,6 +771,17 @@ func moveFile(from, to string) error {
 		return err
 	}
 	return os.Remove(from)
+}
+
+// pause waits d, or until ctx ends: a call cancelled or out of time doesn't
+// hold the tools (callMu) while it waits.
+func pause(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
 }
 
 func decodeBase64(s string) ([]byte, error) {

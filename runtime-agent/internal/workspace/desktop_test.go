@@ -8,7 +8,9 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"runtime-agent/internal/desktop"
 )
@@ -151,5 +153,35 @@ func TestTheDesktopServerIsTheLaunchsLastLayer(t *testing.T) {
 	// control plane adds, comes through.
 	if got := withoutOwnServers(map[string]json.RawMessage{"outrunner": nil, "outrunner-mission": nil, desktop.ServerName: nil}); len(got) != 2 {
 		t.Errorf("withoutOwnServers = %v", got)
+	}
+}
+
+// A launch asks whether the box has a desktop for its orientation and for
+// its arguments: one answer for both, and a box without one isn't asked at
+// every launch.
+func TestABoxWithoutADesktopIsAskedOnceAWhile(t *testing.T) {
+	var mu sync.Mutex
+	probes := 0
+	notDesktop := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		probes++
+		mu.Unlock()
+		http.NotFound(w, r)
+	}))
+	defer notDesktop.Close()
+	s, worktree := cloudSession(t, CreateInput{WorkspaceID: "ws-a", Branch: "b", BaseBranch: "main"})
+	s.RelayExecutable = "/opt/runtime-agent"
+	s.DesktopToolbox = notDesktop.URL
+	claudeAgent{s}.command("ws-a", worktree, false)
+	claudeAgent{s}.command("ws-a", worktree, true)
+	if probes != 1 {
+		t.Errorf("asked %d times for two launches", probes)
+	}
+
+	// Asked again once the minute is up: its toolbox may have come up since.
+	s.desktopNotFoundAt = time.Now().Add(-desktopNotFoundFor)
+	claudeAgent{s}.command("ws-a", worktree, false)
+	if probes != 2 {
+		t.Errorf("asked %d times", probes)
 	}
 }
