@@ -32,6 +32,14 @@ export function useSessionChats(workspaceId: string, main: SessionChat, enabled:
   const [others, setOthers] = useState<SessionChat[]>([]);
   const [mainName, setMainName] = useState<string | null>(null);
 
+  const [stateWorkspace, setStateWorkspace] = useState(workspaceId);
+  if (stateWorkspace !== workspaceId) {
+    setStateWorkspace(workspaceId);
+    setOthers([]);
+    setMainName(null);
+    setError(null);
+  }
+
   useEffect(() => {
     if (!enabled) return;
     let live = true;
