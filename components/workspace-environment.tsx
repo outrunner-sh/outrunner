@@ -22,12 +22,14 @@ import { EnvRow } from "@/components/studio-env-row";
 import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceCanvas } from "@/components/workspace-canvas";
 import { WorkspaceChanges } from "@/components/workspace-changes";
+import { WorkspacePreviews } from "@/components/workspace-previews";
 import type { SessionSender } from "@/components/workspace-session";
 import { uploadAttachment } from "@/hooks/use-attachments";
 import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-workspace-changes";
 import { openPendingTab, TAB_BLOCKED } from "@/lib/client/pending-tab";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { PullRequestStatus } from "@/lib/github/client";
+import { previewsSupported } from "@/lib/previews/rules";
 import { onRuntimeComputer, opensInBrowser, type ProviderName, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { changeTotals, environmentSummary } from "@/lib/session/environment";
 import { PR_INSTRUCTIONS_FILENAME, PR_PROMPT, prInstructions } from "@/lib/session/pr-instructions";
@@ -205,6 +207,8 @@ export function WorkspaceEnvironment({
         {/* What the session's agent uploaded to show its work: screenshots
             and GIFs for its pull request. */}
         {!local && <SessionMediaRows workspaceId={workspace.id} />}
+        {/* Links to those servers that can be shared, behind sign-in or not. */}
+        {!local && previewsSupported(workspace.provider) && <WorkspacePreviews workspaceId={workspace.id} active={isReady} />}
       </div>
     </>
   );
