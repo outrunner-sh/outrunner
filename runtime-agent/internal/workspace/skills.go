@@ -181,6 +181,14 @@ func (s *Service) SetSkills(ctx context.Context, sources []SkillSource) (SkillsR
 		for _, name := range source.Skills {
 			wanted[name] = true
 		}
+		// Registries install every skill they hold. When a registry's root
+		// is also a skill, keep only its children to avoid copying the same
+		// collection into each installed skill. Catalog sources name the
+		// skill they want, so retain a matching root skill even when it has
+		// nested SKILL.md files (for example, templates).
+		if len(wanted) == 0 && len(found) > 1 && found[0].folder == "" {
+			found = found[1:]
+		}
 		matched := map[string]bool{}
 		for _, skill := range found {
 			if len(wanted) > 0 {
@@ -483,12 +491,6 @@ func findSkills(root string) []foundSkill {
 		}
 		return filepath.SkipDir
 	})
-	// A repository that is a skill and holds others is taken for a
-	// collection of them: installing its root too would copy every one of
-	// them twice.
-	if len(found) > 1 && found[0].folder == "" {
-		found = found[1:]
-	}
 	return found
 }
 

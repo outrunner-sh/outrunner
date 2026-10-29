@@ -101,7 +101,7 @@ export type SkillFolder = { path: string; folder: string };
 
 /** The skills in a repository from its files' paths: each folder holding a
  *  SKILL.md, not inside another skill, not in a folder the box skips. */
-export function skillFoldersIn(paths: string[]): SkillFolder[] {
+export function skillFoldersIn(paths: string[], includeRootWithNested = false): SkillFolder[] {
   const dirs = paths
     .filter((p) => p === "SKILL.md" || p.endsWith("/SKILL.md"))
     .map((p) => p.slice(0, -"SKILL.md".length).replace(/\/$/, ""))
@@ -116,9 +116,10 @@ export function skillFoldersIn(paths: string[]): SkillFolder[] {
     if (found.some((f) => f.path !== "" && dir.startsWith(`${f.path}/`))) continue;
     found.push({ path: dir, folder: dir.split("/").pop() ?? "" });
   }
-  // A repository that is a skill and holds others is taken for a collection
-  // of them, as the box does: its root would copy every one of them twice.
-  return found.length > 1 && found[0].path === "" ? found.slice(1) : found;
+  // Registries install every skill, so a root skill with nested skills is
+  // treated as their collection. A specifically selected catalog skill can
+  // keep its root even when the repository also has template skills.
+  return !includeRootWithNested && found.length > 1 && found[0].path === "" ? found.slice(1) : found;
 }
 
 /** A skill folder's SKILL.md. */

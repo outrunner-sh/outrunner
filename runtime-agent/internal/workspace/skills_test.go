@@ -317,6 +317,32 @@ func TestSetSkillsTakesARootSkillWithOthersForACollection(t *testing.T) {
 	}
 }
 
+// A catalog selection names the skill to install. Keep a matching root skill
+// even when its repository also contains nested template skills.
+func TestSetSkillsKeepsASelectedRootSkillWithNestedSkills(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	hub := newSkillHub(t)
+	hub.archives["/acme/skills/tar.gz/HEAD"] = repoArchive(t, map[string]string{
+		"SKILL.md":            skillMD("vercel-react-best-practices"),
+		"template/SKILL.md":   skillMD("template"),
+		"template/example.md": "example",
+	})
+	s := NewService(t.TempDir())
+	result, err := s.SetSkills(context.Background(), []SkillSource{{
+		Repo: "acme/skills", Skills: []string{"vercel-react-best-practices"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(result.Installed, []string{"vercel-react-best-practices"}) || len(result.Failed) != 0 {
+		t.Fatalf("installed %q, failed %+v", result.Installed, result.Failed)
+	}
+	if !fileExists(filepath.Join(home, ".claude", "skills", "vercel-react-best-practices", "template", "SKILL.md")) {
+		t.Error("the selected repository-root skill was not installed")
+	}
+}
+
 // The name a skill installs as is its front matter's top-level `name:`, the
 // last where there are several; a nested one is its parent's. The same case
 // is in test/environment-skills.test.ts, so the page and the box agree.

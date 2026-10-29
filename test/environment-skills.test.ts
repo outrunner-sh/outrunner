@@ -85,6 +85,10 @@ test("skills are found as the box finds them: folders with a SKILL.md, not in a 
   // skill and holds others is a collection of the others.
   assert.deepEqual(skillFoldersIn(["SKILL.md", "notes.md"]), [{ path: "", folder: "" }]);
   assert.deepEqual(skillFoldersIn(["SKILL.md", "extra/SKILL.md"]), [{ path: "extra", folder: "extra" }]);
+  assert.deepEqual(skillFoldersIn(["SKILL.md", "extra/SKILL.md"], true), [
+    { path: "", folder: "" },
+    { path: "extra", folder: "extra" },
+  ]);
   assert.equal(installName("vercel-react-best-practices", "react-best-practices"), "vercel-react-best-practices");
   assert.equal(installName("has spaces", "folder"), "folder");
   assert.equal(installName(null, ""), null);
