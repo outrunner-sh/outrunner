@@ -21,8 +21,8 @@ test("a Canvas file's images are named from its own folder, and never out of the
 });
 
 test("a visual says its height, and its frame keeps to bounds", () => {
-  assert.match(VISUAL_EMBED_SCRIPT, new RegExp(`^<script>.*${VISUAL_HEIGHT_MESSAGE}.*</script>$`));
-  // It parses, and measures the content (a range over the body), not the root a 100vh body stretches.
+  assert.match(VISUAL_EMBED_SCRIPT, new RegExp(`^<script>.*${VISUAL_HEIGHT_MESSAGE}.*</script>$`, "s"));
+  // The injected browser program parses independently of the app bundle.
   assert.doesNotThrow(() => new Function(VISUAL_EMBED_SCRIPT.replace(/^<script>|<\/script>$/g, "")));
   assert.match(VISUAL_EMBED_SCRIPT, /selectNodeContents/);
   assert.doesNotMatch(VISUAL_EMBED_SCRIPT, /scrollHeight/);

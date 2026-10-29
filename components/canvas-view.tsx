@@ -70,7 +70,7 @@ export function CanvasView({
  *  file that isn't the image its name says, or gone since it was listed). */
 function CanvasImage({ url, path }: { url: string; path: string }) {
   const [failed, setFailed] = useState<string | null>(null);
-  if (failed) return <div className="canvas-message">{failed}</div>;
+  if (failed) return <div className="canvas-message">{path}: {failed}</div>;
   return (
     // eslint-disable-next-line @next/next/no-img-element -- a file off the box, sized by itself
     <img
@@ -78,6 +78,7 @@ function CanvasImage({ url, path }: { url: string; path: string }) {
       alt={path}
       className="canvas-image"
       onError={() => {
+        setFailed("This image couldn't be shown.");
         void fetch(url, { cache: "no-store" })
           .then((response) => response.json() as Promise<{ error?: string }>)
           .then((body) => setFailed(body.error ?? "This image couldn't be shown."))
