@@ -196,5 +196,7 @@ func (s *Service) canvasNote(workspaceID string) string {
 		"self-contained pages, dashboards and comparison tables as HTML (.html, inline styles and scripts, images as data: URIs; it runs sandboxed, with no access to the app or to other files); " +
 		"diagrams as Mermaid (.mmd); tables of data as CSV (.csv); and images (.png, .jpg, .gif, .webp, .svg). " +
 		"Use short, descriptive file names (rollout-plan.md, benchmark-results.html), and tell the user what you put there. " +
+		"To show an HTML visual or an image in your reply itself, embed it from the Canvas by its full path with Markdown image syntax, for example `![Latency by model](" + dir + "/latency.html)`: " +
+		"the user sees it inline, a page in its own sandbox. Reach for a visual when your answer compares options or numbers, lays out a timeline, or explains how parts of a system connect, rather than drawing ASCII art. " +
 		"A file over 5 MB is listed but not shown. Keep source code and project files in the repository, not the Canvas."
 }

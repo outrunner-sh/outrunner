@@ -12,6 +12,14 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 
 import { boxImageUrl, localImagePath } from "@/lib/runtime/chat-image";
+import {
+  canvasFileUrl,
+  canvasKind,
+  canvasPathFrom,
+  canvasPathIn,
+  VISUAL_HEIGHT_MESSAGE,
+  visualHeight,
+} from "@/lib/session/canvas";
 import { cn } from "@/lib/utils";
 
 /**
@@ -21,6 +29,13 @@ import { cn } from "@/lib/utils";
  * this Mac, a replay), and such an image says it can't be shown.
  */
 export const ImageBoxContext = createContext<string | null>(null);
+
+/**
+ * The Canvas file Markdown is shown from (a plan in the Canvas panel), so an
+ * image it names from its own folder (`![chart](chart.png)`) loads from the
+ * Canvas too; null for a reply.
+ */
+export const CanvasDocContext = createContext<{ workspaceId: string; path: string } | null>(null);
 
 /**
  * Renders assistant/user prose as GitHub-flavored Markdown with syntax-
@@ -124,8 +139,8 @@ function reservedSize(size: { width: number; height: number }): React.CSSPropert
   return { width: `${width}px`, aspectRatio: `${size.width} / ${size.height}` };
 }
 
-/** An image in a reply: a URL as is, a path on the session's box through the
- *  image route; it opens full size in a tab unless it's a link's already.
+/** A reply image loads through its Canvas or box route; Canvas HTML renders
+ *  as an InlineVisual. An image it opens full size in a tab unless it's a link's already.
  *  While it loads it holds a placeholder's space (its own, where it was
  *  shown before), so the reply doesn't jump as it arrives. One that fails is
  *  tried again a few times (RETRY_DELAYS_MS), then says it couldn't be
@@ -133,11 +148,16 @@ function reservedSize(size: { width: number; height: number }): React.CSSPropert
  *  at once, not lazily: an image not fetched yet would look like one that
  *  failed. */
 function MarkdownImage({ src, alt }: { src?: string | Blob; alt?: string }) {
-  const workspaceId = useContext(ImageBoxContext);
+  const boxWorkspaceId = useContext(ImageBoxContext);
+  const doc = useContext(CanvasDocContext);
   const inLink = useContext(InLink);
   const raw = typeof src === "string" ? src : undefined;
   const path = localImagePath(raw);
-  const url = path ? (workspaceId ? boxImageUrl(workspaceId, path) : null) : raw;
+  const workspaceId = doc?.workspaceId ?? boxWorkspaceId;
+  const inCanvas = path && workspaceId ? (doc && canvasPathFrom(doc.path, path)) || canvasPathIn(path, workspaceId) : null;
+  const boxUrl = path && boxWorkspaceId ? boxImageUrl(boxWorkspaceId, path) : null;
+  let url: string | null | undefined = path ? boxUrl : raw;
+  if (inCanvas && workspaceId) url = canvasFileUrl(workspaceId, inCanvas);
   // Per URL, so a new one (a streamed reply's src changing) gets its own tries.
   const [state, setState] = useState<Tries>({ url: null, round: 0, failures: 0, failed: false, loaded: false });
   const current: Tries = state.url === url ? state : { url: url ?? null, round: 0, failures: 0, failed: false, loaded: false };
@@ -178,6 +198,9 @@ function MarkdownImage({ src, alt }: { src?: string | Blob; alt?: string }) {
     // Once per URL, on mount: later failures come through onError.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
+  if (inCanvas && workspaceId && canvasKind(inCanvas) === "html") {
+    return <InlineVisual workspaceId={workspaceId} path={inCanvas} title={alt || inCanvas} />;
+  }
   if (!url || current.failed) {
     const retry =
       url &&
@@ -227,5 +250,49 @@ function MarkdownImage({ src, alt }: { src?: string | Blob; alt?: string }) {
     <a href={url} target="_blank" rel="noreferrer" className={className}>
       {img}
     </a>
+  );
+}
+
+/**
+ * An HTML visual from the session's Canvas, in the reply that shows it: a
+ * frame with no same-origin (its page runs in an origin of its own, as the
+ * route serves it too), as tall as the page says it is (VISUAL_HEIGHT_MESSAGE,
+ * taken from that frame alone, within bounds; asked for once this listens,
+ * and when it loads), with its title and a link to open it in a tab.
+ */
+function InlineVisual({ workspaceId, path, title }: { workspaceId: string; path: string; title: string }) {
+  const frame = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(360);
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== frame.current?.contentWindow) return;
+      const said = (event.data as Record<string, unknown> | null)?.[VISUAL_HEIGHT_MESSAGE];
+      if (said !== undefined) setHeight(visualHeight(said));
+    };
+    window.addEventListener("message", onMessage);
+    // A frame that loaded before this listened has said its height already.
+    frame.current?.contentWindow?.postMessage(VISUAL_HEIGHT_MESSAGE, "*");
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+  const url = canvasFileUrl(workspaceId, path);
+  return (
+    <span className="md-visual">
+      <span className="md-visual-head">
+        <span className="truncate">{title}</span>
+        <a href={url} target="_blank" rel="noreferrer">
+          Open
+        </a>
+      </span>
+      <iframe
+        ref={frame}
+        src={`${url}&embed=1`}
+        title={title}
+        sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+        referrerPolicy="no-referrer"
+        loading="lazy"
+        onLoad={(event) => event.currentTarget.contentWindow?.postMessage(VISUAL_HEIGHT_MESSAGE, "*")}
+        style={{ height }}
+      />
+    </span>
   );
 }
