@@ -300,6 +300,8 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 			argv = append(append([]string{"env"}, env...), argv...)
 		}
 	}
+	// Its own flags, after the env prefix the secrets may have put first.
+	argv = append(argv, s.claudeDesktopArgs(workspaceID, worktree)...)
 	if f.Gateway != claude.NoGateway {
 		// The model rides in the gateway file: --model refuses a gateway's names.
 		argv = claude.WithEnvFile(argv, s.gatewayEnvPath(workspaceID))
