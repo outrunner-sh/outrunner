@@ -72,6 +72,7 @@ func CodexLogin(ctx context.Context, binary string, out io.Writer) (json.RawMess
 		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, binary, "login", "--device-auth")
+	configureCodexLoginProcess(cmd)
 	cmd.WaitDelay = time.Second
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")

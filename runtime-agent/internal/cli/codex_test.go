@@ -61,7 +61,11 @@ func TestCodexCanceledLoginRemovesItsTemporaryHome(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "codex")
 	marker := filepath.Join(dir, "home")
-	script := "#!/bin/sh\nprintf '%s' \"$CODEX_HOME\" > '" + marker + "'\nexec sleep 30\n"
+	escaped := filepath.Join(dir, "escaped-child")
+	// Match npm's wrapper/native-child shape, rather than exec'ing sleep in
+	// place: killing only the wrapper leaves its native child running.
+	script := "#!/bin/sh\nprintf '%s' \"$CODEX_HOME\" > '" + marker + "'\n(sleep 1; printf survived > '" + escaped + "') &\nwait\n"
+
 	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +79,11 @@ func TestCodexCanceledLoginRemovesItsTemporaryHome(t *testing.T) {
 	if _, err := os.Stat(string(home)); !os.IsNotExist(err) {
 		t.Fatal("canceled temporary home remains")
 	}
+	time.Sleep(1200 * time.Millisecond)
+	if _, err := os.Stat(escaped); !os.IsNotExist(err) {
+		t.Fatal("canceled wrapper left its native login child running")
+	}
+
 }
 func TestCodexConnectUploadsOnlyToExplicitOrganization(t *testing.T) {
 	dir := t.TempDir()
