@@ -46,6 +46,20 @@ bootstrap ticket is exchanged for an HttpOnly test session and erased from the
 address bar. The preview also requires a Replicas login. Issuing a new link
 invalidates old test-launcher sessions; it preserves any Codex connection.
 
+To continue automatically after owner approval without changing an in-progress
+login or handoff, start this optional one-shot operator service:
+
+```sh
+replicas service start codex-live-auto-verify "node scripts/codex-live/auto-verify.mjs" --cwd "$PWD"
+```
+
+It waits for the actual encrypted org connection, starts (or observes) the
+prepared launcher checks, then disconnects the isolated connection and checks
+retained-grant revocation after success. It never starts device authorization.
+Results are shown in launcher status and the private `auto-verification.json`;
+the final disconnect check is in the service log. Failures stop without retrying
+provider turns. A durable claim prevents duplicate runs after service restart.
+
 Preparation refuses to overwrite an existing directory or adopt existing test
 containers. To resume an existing setup, keep its directory/keys and start the
 five services again; do not rerun preparation. It never reads `.env*`. Children
@@ -73,8 +87,9 @@ and RLS (including service-only access to Codex credentials).
    ChatGPT's security settings if the provider asks. Codes expire in ten minutes;
    select Start again if needed. No installation or terminal command is needed
    on the owner's computer.
-4. When Connected, select **Run inference and refresh checks**, or let the agent
-   run `node scripts/codex-live/run-verify.mjs` in this workspace.
+4. When Connected, the optional automatic service runs the live checks and
+   disconnect/revocation check. Otherwise select **Run inference and refresh
+   checks**, or run `node scripts/codex-live/run-verify.mjs` in this workspace.
 
 The CLI runs **in this isolated workspace**, with a new private temporary
 `CODEX_HOME`, not in the owner's existing Codex home. Its actual command is the
@@ -118,11 +133,12 @@ Outrunner-side revocation; use the provider's own security controls for provider
 side revocation. Unrelated personal logins are not read, modified or logged out.
 
 When testing is complete, the operator should first disconnect and verify denial,
-then stop only these five services and delete only the isolated Supabase project:
+then stop these services (including the optional watcher) and delete only the isolated Supabase project:
 
 ```sh
 node scripts/codex-live/run-verify.mjs --cleanup
 replicas service stop codex-live-gateway
+replicas service stop codex-live-auto-verify
 replicas service stop codex-live-app
 replicas service stop codex-live-runtime
 replicas service stop codex-live-runtime-member
