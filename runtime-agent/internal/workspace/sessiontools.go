@@ -72,11 +72,6 @@ func (s *Service) SessionTool(ctx context.Context, call sessiontools.Call) (int,
 	return status, answer, nil
 }
 
-// sessionEnv names the session to its own commands, in its launch's env.
-func sessionEnv(env []string, workspaceID string) []string {
-	return append(append([]string(nil), env...), sessiontools.SessionEnv+"="+workspaceID)
-}
-
 // sessionToolsNote tells the agent about the commands, in its orientation,
 // where it has them.
 func (s *Service) sessionToolsNote() string {
