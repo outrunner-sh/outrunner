@@ -186,6 +186,10 @@ function takesNoSessionAuth(error: unknown): boolean {
  * another account. Neither has one to take away.
  */
 export async function deliverSessionAuth(client: SessionAuthClient, agent: AgentId, auth: ResolvedAuth): Promise<void> {
+  // Delivery is also used without readyBox (resume/switch). Keep its own
+  // capability check: create pays a second health request rather than reusing
+  // a preflight result across intervening runtime/restore operations. A failed
+  // readyBox throws before creation reaches this boundary.
   await readyCredential(client, auth);
   if (!auth.credential) {
     try {
