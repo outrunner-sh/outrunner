@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { canvasPathFrom, canvasPathIn, VISUAL_EMBED_SCRIPT, VISUAL_HEIGHT_MESSAGE, visualHeight } from "@/lib/session/canvas";
+import { canvasFileError, canvasPathFrom, canvasPathIn, VISUAL_EMBED_SCRIPT, VISUAL_HEIGHT_MESSAGE, visualHeight } from "@/lib/session/canvas";
 
 test("a reply's image is the Canvas's when it names a file in the session's own Canvas", () => {
   assert.equal(canvasPathIn("/home/runtime/.outrunner/canvas/ws-1/latency.html", "ws-1"), "latency.html");
@@ -31,4 +31,24 @@ test("a visual says its height, and its frame keeps to bounds", () => {
   assert.equal(visualHeight(100_000), 900);
   assert.equal(visualHeight("700"), 360);
   assert.equal(visualHeight(Number.NaN), 360);
+});
+
+test("inline page failures keep the route's reason", async (t) => {
+  t.mock.method(globalThis, "fetch", async (url: string) => {
+    const status = Number(url);
+    return new Response(JSON.stringify({ error: `Route error ${status}` }), { status });
+  });
+  for (const status of [404, 413, 502]) {
+    assert.equal(await canvasFileError(String(status)), `Route error ${status}`);
+  }
+});
+
+test("inline page preflight cancels successful bodies and handles non-JSON errors", async (t) => {
+  let canceled = false;
+  t.mock.method(globalThis, "fetch", async (url: string) => url === "ok"
+    ? new Response(new ReadableStream({ cancel() { canceled = true; } }))
+    : new Response("Bad gateway", { status: 502 }));
+  assert.equal(await canvasFileError("ok"), null);
+  assert.equal(canceled, true);
+  assert.equal(await canvasFileError("bad"), "Couldn't read that file (502).");
 });
