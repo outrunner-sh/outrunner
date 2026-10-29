@@ -151,7 +151,7 @@ export function AppFrame({
         // and in the workspace it was started in, as the page's own buttons
         // do (components/triage/triage-view.tsx).
         const params = pathname === "/triage" ? new URLSearchParams(window.location.search) : null;
-        router.push(captureHref({ item: params?.get("item"), project: params?.get("project") }));
+        router.push(captureHref({ item: params?.get("item"), project: params?.get("project") }), { scroll: false });
       } else if (key === "j") {
         event.preventDefault();
         const standings = standingsNow();
