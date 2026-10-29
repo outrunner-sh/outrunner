@@ -101,7 +101,7 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &WarmStatus{})
 	case "ProvideSecretsRequest":
 		return json.Unmarshal(raw, &ProvideSecretsRequest{})
-	case "ProviderPorts":
+	case "ProviderPorts", "DesktopPorts":
 		return json.Unmarshal(raw, &[]int{})
 	case "ReservedEnv":
 		return json.Unmarshal(raw, &[]string{})

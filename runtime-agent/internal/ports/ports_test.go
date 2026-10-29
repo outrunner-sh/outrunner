@@ -45,7 +45,9 @@ func TestTheServersOnTheBoxAreListedWithTheirProgram(t *testing.T) {
 			line("00000000:0016", "0A", "555")+ // 22: privileged
 			line("0100007F:0BB9", "01", "666"), // 3001: a connection, not a listener
 		line("00000000000000000000000000000000:08E8", "0A", "777")+ // 2280: Daytona's
-			line("00000000000000000000000000000000:0BB8", "0A", "888"), // 3000 again, on IPv6
+			line("00000000000000000000000000000000:0BB8", "0A", "888")+ // 3000 again, on IPv6
+			line("00000000000000000000000000000000:17C0", "0A", "999")+ // 6080: the desktop's noVNC
+			line("0100007F:4B16", "0A", "1000"), // 19222: the agent's browser's DevTools
 	)
 	got, err := Listening(root, 8080, 8443)
 	if err != nil {
@@ -88,7 +90,7 @@ func TestARealListenerIsFound(t *testing.T) {
 	t.Fatalf("port %d not listed in %+v", port, got)
 }
 
-func TestProviderPortsMatchTheSharedList(t *testing.T) {
+func TestProviderAndDesktopPortsMatchTheSharedLists(t *testing.T) {
 	dir, _ := os.Getwd()
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "lib", "runtime", "agent-protocol.fixtures.json")); err == nil {
@@ -103,15 +105,24 @@ func TestProviderPortsMatchTheSharedList(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(dir, "lib", "runtime", "agent-protocol.fixtures.json"))
 	var fixtures struct {
 		ProviderPorts [][]int `json:"ProviderPorts"`
+		DesktopPorts  [][]int `json:"DesktopPorts"`
 	}
-	if err != nil || json.Unmarshal(data, &fixtures) != nil || len(fixtures.ProviderPorts) != 1 {
-		t.Fatalf("read the shared list: %v", err)
+	if err != nil || json.Unmarshal(data, &fixtures) != nil || len(fixtures.ProviderPorts) != 1 || len(fixtures.DesktopPorts) != 1 {
+		t.Fatalf("read the shared lists: %v", err)
 	}
-	got := append([]int{}, ProviderPorts...)
-	want := append([]int{}, fixtures.ProviderPorts[0]...)
-	sort.Ints(got)
-	sort.Ints(want)
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ProviderPorts = %v, the shared list = %v", got, want)
+	for _, c := range []struct {
+		name      string
+		got, want []int
+	}{
+		{"ProviderPorts", ProviderPorts, fixtures.ProviderPorts[0]},
+		{"DesktopPorts", DesktopPorts, fixtures.DesktopPorts[0]},
+	} {
+		got := append([]int{}, c.got...)
+		want := append([]int{}, c.want...)
+		sort.Ints(got)
+		sort.Ints(want)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s = %v, the shared list = %v", c.name, got, want)
+		}
 	}
 }
