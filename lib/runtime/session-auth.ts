@@ -40,14 +40,16 @@ export type SessionAuthClient = {
 };
 
 /** The session's view of its box's agent; `upgrade` brings its agent up to
- *  date (ComputerRuntimeProvider.upgradeAgent). */
+ *  date (ComputerRuntimeProvider.upgradeAgent). With `chat`, the view of one
+ *  of its chats', whose credential is its own. */
 export function sessionAuthClient(
   client: AgentClient,
   identity: WorkspaceIdentity,
   upgrade?: () => Promise<void>,
+  chat?: string,
 ): SessionAuthClient {
   return {
-    setAuth: (credential) => client.setAuth(identity, credential),
+    setAuth: (credential) => client.setAuth(identity, credential, chat),
     agents: async () => (await client.health(identity)).agents ?? null,
     ...(upgrade && { upgrade }),
   };

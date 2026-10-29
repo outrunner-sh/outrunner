@@ -11,6 +11,7 @@ import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { agentChat, chatMissingOnBox, requestedChat } from "@/lib/session/chat-target";
 import { attachmentsUnavailable } from "@/lib/runtime/worktree-access";
 import { abandonedBefore, firstPromptKey, gateFirstPrompt } from "@/lib/session/first-prompt-claim";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
@@ -76,14 +77,20 @@ export async function POST(request: Request, context: RouteContext) {
   });
   if (!reach.ok) return reach.response;
   const { workspace, provider, sandboxId, secret, agent, identity } = reach.reached;
+  // One of the session's chats (?chat=), or its main one: everything that
+  // names none (Slack, a Mission, the API) goes there.
+  const named = await requestedChat(request, workspace);
+  if (!named.ok) return named.response;
+  const chat = agentChat(named.chat);
 
   const noFiles = attachmentsUnavailable(attachmentIds.length, workspace.worktreePath);
   if (noFiles) return NextResponse.json({ error: noFiles }, { status: 409 });
 
   // Claimed before anything reaches the box, so a repeat copies no files
   // either; let go on any failure below, so a retry still sends.
+  // A session's first prompt is its main chat's.
   const gate = await gateFirstPrompt(
-    firstPromptKey(body?.firstPromptKey),
+    chat ? null : firstPromptKey(body?.firstPromptKey),
     {
       claim: (key) => claimFirstPrompt(workspace.id, key, abandonedBefore(new Date())),
       renew: (key, claimedAt) => renewFirstPrompt(workspace.id, key, claimedAt),
@@ -150,7 +157,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
-    await agent.sendMessage(identity, prompt, { ...(asked && { mode: asked }), ...(dismiss && { dismiss }) });
+    await agent.sendMessage(identity, prompt, { ...(asked && { mode: asked }), ...(dismiss && { dismiss }) }, chat);
   } catch (error) {
     console.error(`Message: send failed for ${workspace.id}`, error);
     // Released on any failure, an unclear one too (a timeout, a reset after
@@ -167,6 +174,12 @@ export async function POST(request: Request, context: RouteContext) {
     // agent's own words say what to do.
     if (error instanceof AgentRequestError && (error.error?.code === "CONFLICT" || error.error?.code === "UNSUPPORTED")) {
       return NextResponse.json({ error: error.error.message }, { status: 409 });
+    }
+    if (chat && chatMissingOnBox(error)) {
+      return NextResponse.json(
+        { error: "This chat isn't running on the session's computer. Reload the page to start it again." },
+        { status: 409 },
+      );
     }
     if (error instanceof AgentRequestError && error.status === 404 && error.error?.message === "unknown workspace") {
       return NextResponse.json(
@@ -185,6 +198,9 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
   await gate.sent();
+  // What follows is the session's: its main chat's turn, mode, Slack thread
+  // and title. A chat's own turn is followed on its page.
+  if (chat) return NextResponse.json({ result: "sent", titled: false });
   // A person's word (typed here, or said in Slack or on GitHub), not CI
   // failing: the CI follow-ups of its pull requests count their turns from
   // none again (lib/github/followups.ts).

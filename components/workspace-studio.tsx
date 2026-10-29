@@ -2,10 +2,11 @@
 
 import { Archive, MessageSquarePlus, PanelRight, PanelRightClose } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons, MobileNavButton } from "@/components/app-frame";
+import { ChatSwitcher } from "@/components/chat-switcher";
 import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
 import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
 import { MissionHeader } from "@/components/missions/mission-header";
@@ -24,8 +25,11 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 import { useMission } from "@/hooks/use-missions";
 import { useModalPanel } from "@/hooks/use-modal-panel";
 import { useQueuedFirstPrompt } from "@/hooks/use-queued-first-prompt";
+import { useSessionChats } from "@/hooks/use-session-chats";
 import { useRestoreOnOpen } from "@/hooks/use-restore-on-open";
 import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
+import { AGENT_IDS } from "@/lib/agents/registry";
+import { replaceAddressBar } from "@/lib/client/address-bar";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import { missionArchiveOffer } from "@/lib/missions/archive";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
@@ -33,6 +37,8 @@ import { workspaceLabel } from "@/lib/nav/session-title";
 import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { archiveOffer } from "@/lib/session/archive-control";
 import { type InspectorTabId, inspectorTabs, shownTab } from "@/lib/session/inspector-tabs";
+import { chatRoute, MAIN_CHAT, mainChatOf, parseChatId, type SessionChat } from "@/lib/session/chats";
+import { askSideChat } from "@/lib/session/chat-actions";
 import { cn } from "@/lib/utils";
 
 /** The session itself: a header across the top, then the chat, with its
@@ -106,6 +112,49 @@ export function WorkspaceStudio({
   const tabs = inspectorTabs(workspace, isLocal);
   const [chosenTab, setChosenTab] = useState<InspectorTabId>("environment");
   const tab = shownTab(tabs, chosenTab);
+  // The chat shown (?chat=): the session's main one unless another is
+  // picked. A local session, and a Mission, have the main one alone.
+  const chatsOffered = hasLiveSession && !isLocal && !isMission;
+  const main = mainChatOf(workspace);
+  const chats = useSessionChats(workspace.id, main, chatsOffered);
+  const search = useSearchParams();
+  const [chatId, setChatId] = useState(() => parseChatId(search.get("chat")) ?? MAIN_CHAT);
+  const [shownSession, setShownSession] = useState(workspace.id);
+  if (shownSession !== workspace.id) {
+    setShownSession(workspace.id);
+    setChatId(parseChatId(search.get("chat")) ?? MAIN_CHAT);
+  }
+  const current = chats.chats.find((chat) => chat.id === chatId) ?? main;
+  const pick = (chat: SessionChat) => {
+    if (!chats.isCurrent()) return;
+    setChatId(chat.id);
+    const url = new URL(window.location.href);
+    if (chat.id === MAIN_CHAT) url.searchParams.delete("chat");
+    else url.searchParams.set("chat", chat.id);
+    replaceAddressBar(url.toString());
+  };
+  // `/btw`: a side chat about the one shown, asked at once, then shown.
+  // The chat it is about carries on with its turn.
+  const askAside = async (question: string): Promise<boolean> => {
+    try {
+      const accepted = await askSideChat({
+        create: () => chats.start({ from: current.id, side: true, question }),
+        send: async (side) => (await fetch(chatRoute(workspace.id, side.id, "message"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ content: question }),
+        })).ok,
+        remove: (side) => chats.remove(side.id),
+        pick,
+      });
+      if (!accepted) chats.reportError("Couldn't send the side-chat question. Please try again.");
+      return accepted;
+    } catch (error) {
+      console.warn(`Side chat: couldn't ask in ${workspace.id}`, error);
+      chats.reportError(error instanceof Error ? error.message : "Couldn't start the chat. Please try again.");
+      return false;
+    }
+  };
 
   return (
     <div
@@ -132,6 +181,7 @@ export function WorkspaceStudio({
               />
               <h2>{local ? localSessionLabel(local) : workspaceLabel(workspace)}</h2>
               {place && <span className="studio-title-place">{place}</span>}
+              {chatsOffered && <ChatSwitcher chats={chats} current={current} agents={AGENT_IDS} onPick={pick} />}
             </>
           )}
         </div>
@@ -181,19 +231,28 @@ export function WorkspaceStudio({
       )}
 
       <section className="studio-chat">
-        {hasLiveSession ? (
+        {hasLiveSession && chatId !== MAIN_CHAT && !chats.loaded && !chats.chats.some((chat) => chat.id === chatId) ? (
+          <div className="studio-offline"><div className="studio-empty-chat" role="status"><Spinner /> Loading chat…</div></div>
+        ) : hasLiveSession && chatId !== MAIN_CHAT && !chats.chats.some((chat) => chat.id === chatId) ? (
+          <div className="studio-offline"><div className="studio-empty-chat" role="alert"><h3>{chats.error ?? "This chat is no longer available."}</h3></div></div>
+        ) : hasLiveSession ? (
           <WorkspaceSession
+            // Each chat its own page state: its conversation, queue, picks.
+            key={current.id}
             workspaceId={workspace.id}
+            chatId={current.id}
             projectId={isLocal ? undefined : workspace.projectId}
-            agent={workspace.agent}
-            recorded={workspace.model}
-            initialMode={workspace.mode}
+            agent={current.agent}
+            recorded={current.model}
+            initialMode={current.id === MAIN_CHAT ? workspace.mode : "build"}
             local={isLocal}
-            untitled={!isLocal && !workspace.title}
-            initialPrompt={initialPrompt}
-            initialPromptKey={initialPromptKey}
-            initialAttachmentIds={initialAttachmentIds}
+            untitled={!isLocal && !workspace.title && current.id === MAIN_CHAT}
+            // The session's first prompt is its main chat's.
+            initialPrompt={current.id === MAIN_CHAT ? initialPrompt : undefined}
+            initialPromptKey={current.id === MAIN_CHAT ? initialPromptKey : undefined}
+            initialAttachmentIds={current.id === MAIN_CHAT ? initialAttachmentIds : undefined}
             onSender={setSender}
+            onSideChat={chatsOffered ? askAside : undefined}
           />
         ) : setup !== "ended" ? (
           <div className="studio-offline">

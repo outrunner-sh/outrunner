@@ -83,3 +83,9 @@ test("a probe that throws leaves that table unreachable", async () => {
     console.error = original;
   }
 });
+
+test("the chat-name migration is required before the database probes ready", async () => {
+  assert.ok(RUNTIME_COLUMNS.workspaces.includes("main_chat_name"));
+  const { client } = fakeDatabase({ ...complete, workspaces: complete.workspaces.filter((column) => column !== "main_chat_name") });
+  assert.equal((await probeRuntimeDatabase(client)).workspaces, "outdated");
+});

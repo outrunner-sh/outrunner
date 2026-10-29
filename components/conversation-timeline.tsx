@@ -9,6 +9,7 @@ import {
   FilePlus,
   FoldVertical,
   FileText,
+  GitFork,
   Globe,
   ListChecks,
   ListTodo,
@@ -399,7 +400,7 @@ function NodeRow({ node, plan }: { node: ConversationNode; plan?: PlanActions })
         const { events, rest } = parseRunnerEvents(node.text);
         if (events.length > 0) return <RunnerEventCards events={events} note={rest || undefined} />;
       }
-      return <Prompt text={node.text} mode={node.mode} at={node.at} images={node.images} />;
+      return <Prompt text={node.text} mode={node.mode} at={node.at} images={node.images} carried={node.carried} />;
     }
     case "worked":
       return (
@@ -425,7 +426,19 @@ function NodeRow({ node, plan }: { node: ConversationNode; plan?: PlanActions })
 /** The user's prompt: the files it carried as thumbnails above its words,
  *  not the paths written for the agent, and the comments on the diff
  *  (withComments) as quotes under them, not the blocks. */
-function Prompt({ text, mode, at, images }: { text: string; mode?: "plan"; at?: string; images?: PromptImage[] }) {
+function Prompt({
+  text,
+  mode,
+  at,
+  images,
+  carried,
+}: {
+  text: string;
+  mode?: "plan";
+  at?: string;
+  images?: PromptImage[];
+  carried?: ("handoff" | "side")[];
+}) {
   const workspaceId = useContext(ImageBoxContext);
   const { typed, files } = useMemo(() => {
     const { text: typed, files: paths } = promptAttachments(text);
@@ -439,12 +452,29 @@ function Prompt({ text, mode, at, images }: { text: string; mode?: "plan"; at?: 
   }, [text, images, workspaceId]);
   const { text: words, quotes } = useMemo(() => parseCommentQuotes(typed), [typed]);
   const attached = files.length > 0 && <MessageAttachments files={files} />;
-  // Sent in plan mode: said, quietly, above its words.
-  const planned = mode === "plan" && (
-    <span className="timeline-prompt-mode">
-      <ListChecks aria-hidden />
-      Plan mode
-    </span>
+  // Sent in plan mode: said, quietly, above its words; and so is what a
+  // chat's prompt carried from another chat, which the agent was given.
+  const planned = (mode === "plan" || carried) && (
+    <>
+      {mode === "plan" && (
+        <span className="timeline-prompt-mode">
+          <ListChecks aria-hidden />
+          Plan mode
+        </span>
+      )}
+      {carried?.includes("handoff") && (
+        <span className="timeline-prompt-mode" title="Sent with the conversation this chat continues: a transcript in .context/chats and its latest turns">
+          <GitFork aria-hidden />
+          With the forked chat&apos;s history
+        </span>
+      )}
+      {carried?.includes("side") && (
+        <span className="timeline-prompt-mode" title="Sent with the newest turns of the chat this side chat is about">
+          <MessageCircleQuestionMark aria-hidden />
+          With the source chat&apos;s newest turns
+        </span>
+      )}
+    </>
   );
   if (quotes.length === 0)
     return (

@@ -11,7 +11,7 @@ export const unstable_instant = {
   samples: [
     {
       params: { id: "sample" },
-      searchParams: { prompt: null },
+      searchParams: { prompt: null, chat: null },
       cookies: [
         { name: "sidebar-collapsed", value: null },
         { name: "sidebar-folded", value: null },

@@ -4,6 +4,7 @@ import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { agentChat, requestedChat } from "@/lib/session/chat-target";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -28,9 +29,12 @@ export async function POST(request: Request, context: RouteContext) {
   });
   if (!reach.ok) return reach.response;
   const { workspace, agent, identity } = reach.reached;
+  const named = await requestedChat(request, workspace);
+  if (!named.ok) return named.response;
+  const chat = agentChat(named.chat);
 
   try {
-    await agent.interrupt(identity);
+    await agent.interrupt(identity, chat);
   } catch (error) {
     // The agent couldn't confirm the stop: its message says to try again.
     if (error instanceof AgentRequestError && error.error?.code === "CONFLICT") {

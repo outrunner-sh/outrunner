@@ -34,7 +34,7 @@ export type Conversation = {
 };
 
 /** The box's event stream URL, while its box is up; null when it isn't. */
-async function liveEventsUrl(workspace: Workspace): Promise<string | null> {
+async function liveEventsUrl(workspace: Workspace, chat?: string): Promise<string | null> {
   if (workspace.status !== "ready" && workspace.status !== "idle") return null;
   const resolution = resolveProvider(workspace);
   if (!resolution.ok || !isComputerProvider(resolution.provider)) return null;
@@ -50,13 +50,13 @@ async function liveEventsUrl(workspace: Workspace): Promise<string | null> {
     projectId: workspace.projectId,
     computerId: computer.id,
     userId: workspace.ownerId,
-  });
+  }, chat);
 }
 
-/** The session's conversation as its box has it now, or null when its box
- *  is down or doesn't answer. */
-export async function readLiveConversation(workspace: Workspace): Promise<Conversation | null> {
-  const url = await liveEventsUrl(workspace).catch((error: unknown) => {
+/** The session's conversation as its box has it now (its main chat's, or
+ *  `chat`'s), or null when its box is down or doesn't answer. */
+export async function readLiveConversation(workspace: Workspace, chat?: string): Promise<Conversation | null> {
+  const url = await liveEventsUrl(workspace, chat).catch((error: unknown) => {
     console.warn(`API: couldn't find ${workspace.id}'s box`, error);
     return null;
   });
@@ -78,10 +78,12 @@ export async function readLiveConversation(workspace: Workspace): Promise<Conver
 }
 
 /** The session's conversation: live where its box is up, else its latest
- *  snapshot's, else none. */
-export async function readConversation(workspace: Workspace): Promise<Conversation> {
-  const live = await readLiveConversation(workspace);
+ *  snapshot's, else none. A chat other than the main one (`chat`) is read
+ *  live only: a snapshot holds the main chat's. */
+export async function readConversation(workspace: Workspace, chat?: string): Promise<Conversation> {
+  const live = await readLiveConversation(workspace, chat);
   if (live) return live;
+  if (chat) return { entries: [], state: null, from: "none" };
   const snapshot = (await listWorkspaceSnapshots(workspace.id))[0];
   if (!snapshot) return { entries: [], state: null, from: "none" };
   const events = await assembleConversation({

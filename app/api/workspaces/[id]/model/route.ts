@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { AGENTS } from "@/lib/agents/registry";
 import { getOwner } from "@/lib/auth/owner";
+import { recordChatModel } from "@/lib/db/chats";
 import { agentAuthStore, modelKey } from "@/lib/db/credentials";
 import {
   getWorkspaceComputer,
@@ -17,6 +18,7 @@ import { requireFeature } from "@/lib/runtime/box-features";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { switchFailure } from "@/lib/runtime/model-switch";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { agentChat, requestedChat } from "@/lib/session/chat-target";
 import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
 import {
@@ -65,10 +67,15 @@ export async function POST(request: Request, context: RouteContext) {
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
-  // A session keeps its agent: its conversation is that agent's.
-  if (!agentsFor(model.provider).includes(workspace.agent)) {
+  // The chat it switches (?chat=), its main one unless it names another.
+  const named = await requestedChat(request, workspace);
+  if (!named.ok) return named.response;
+  const chatAgent = named.chat.agent;
+  const chat = agentChat(named.chat);
+  // A chat keeps its agent: its conversation is that agent's.
+  if (!agentsFor(model.provider).includes(chatAgent)) {
     return NextResponse.json(
-      { error: `This session runs ${AGENTS[workspace.agent].label}. Start a new session to use ${AGENTS[agentOf(model.provider)].label}.` },
+      { error: `This chat runs ${AGENTS[chatAgent].label}. Fork it to use ${AGENTS[agentOf(model.provider)].label}.` },
       { status: 409 },
     );
   }
@@ -126,13 +133,13 @@ export async function POST(request: Request, context: RouteContext) {
     // Checked before signing in, which may take the session's own key away
     // (a model on Outrunner's key needs none): a switch refused here must
     // leave the session as it was.
-    if (onCodexGateway(workspace.agent, model)) {
+    if (onCodexGateway(chatAgent, model)) {
       const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
       await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
     }
     await signInSession(
-      sessionAuthClient(agent, identity, upgrade),
-      workspace.agent,
+      sessionAuthClient(agent, identity, upgrade, chat),
+      chatAgent,
       agentAuthStore(owner.id, workspace.orgId),
       runsOnOwnAccount(model),
     );
@@ -144,14 +151,15 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
-    checkEffortApplied(req, await agent.setModel(identity, req));
+    checkEffortApplied(req, await agent.setModel(identity, req, chat));
   } catch (error) {
     const { status, message } = switchFailure(error, model);
     if (status >= 500) console.error(`Model: switch failed for ${workspace.id}`, error);
     return NextResponse.json({ error: message }, { status });
   }
   // So its next relaunch goes back on it, its key fetched again.
-  await recordWorkspaceModel(workspace.id, { model, effort: req.effort ?? null });
+  if (chat) await recordChatModel(workspace.id, chat, { model, effort: req.effort ?? null });
+  else await recordWorkspaceModel(workspace.id, { model, effort: req.effort ?? null });
   return NextResponse.json({ model: req.model, effort: req.effort ?? null });
 }
 

@@ -13,6 +13,7 @@ import {
   type LocalTarget,
 } from "@/lib/desktop/local-runtime";
 import { SessionUrls, WorkspaceSummary } from "@/lib/runtime/agent-protocol";
+import { chatRoute, MAIN_CHAT } from "@/lib/session/chats";
 import { keptStreamUrls } from "@/lib/session/kept-streams";
 import { keepSessionUrls, takeWarmUrls } from "@/lib/session/warm-session";
 
@@ -80,9 +81,17 @@ async function localSessionUrls(target: LocalTarget, agent: AgentId): Promise<Se
 /**
  * `local` marks a session run by the Outrunner app on this Mac; otherwise the
  * URLs come from the server as for any cloud session. `agent` is the coding
- * agent the session runs.
+ * agent the session runs. `chatId` is the chat shown: the session's main one
+ * unless another (a cloud session's) is picked, which the server starts
+ * beside it.
  */
-export function useSessionAttachment(workspaceId: string, local = false, agent: AgentId = "claude"): SessionAttachment {
+export function useSessionAttachment(
+  workspaceId: string,
+  local = false,
+  agent: AgentId = "claude",
+  chatId: string = MAIN_CHAT,
+): SessionAttachment {
+  const main = chatId === MAIN_CHAT;
   const [urls, setUrls] = useState<SessionUrls | null>(null);
   const [status, setStatus] = useState<SessionAttachmentStatus>("idle");
   const [error, setError] = useState<{ message: string; code: string | null; reason: string | null } | null>(null);
@@ -123,9 +132,9 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
         const fetchedAt = Date.now();
         // A fresh attach is one because the last URLs failed: they're not kept.
         if (fresh) attachedWith.current = null;
-        // The stream this page left still open (lib/session/kept-streams.ts):
-        // its URLs, so the page takes up that socket rather than attaching.
-        const kept = fresh ? null : keptStreamUrls(workspaceId);
+        // A main chat can take up its still-open stream or a warm-up. Side
+        // chats need URLs attached specifically to that chat.
+        const kept = fresh || !main ? null : keptStreamUrls(workspaceId);
         if (kept) {
           // A warm-up under way would stream beside the socket taken up here.
           void takeWarmUrls(workspaceId);
@@ -135,7 +144,7 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
           setStatus("attached");
           return;
         }
-        const warm = fresh ? null : await takeWarmUrls(workspaceId);
+        const warm = fresh || !main ? null : await takeWarmUrls(workspaceId);
         if (controller.signal.aborted) return;
         if (warm) {
           // When the warm-up fetched them isn't known here: kept as of now
@@ -146,7 +155,7 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
           setStatus("attached");
           return;
         }
-        const res = await fetch(`/api/workspaces/${workspaceId}/session${fresh ? "?fresh=1" : ""}`, {
+        const res = await fetch(chatRoute(workspaceId, chatId, `session${fresh ? "?fresh=1" : ""}`), {
           method: "POST",
           signal: controller.signal,
         });
@@ -161,7 +170,7 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
         if (!parsed.success) {
           throw new Error("Malformed session response from server");
         }
-        attachedWith.current = { urls: parsed.data, at: fetchedAt };
+        attachedWith.current = main ? { urls: parsed.data, at: fetchedAt } : null;
         setUrls(parsed.data);
         setAttachId((n) => n + 1);
         setStatus("attached");
@@ -180,7 +189,7 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
         if (inflight.current === controller) inflight.current = null;
       }
     })();
-  }, [workspaceId, local, agent]);
+  }, [workspaceId, local, agent, chatId, main]);
   const refresh = useCallback(() => attach(true), [attach]);
 
   const reconnect = useCallback(() => {

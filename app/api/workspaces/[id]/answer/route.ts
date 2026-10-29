@@ -5,6 +5,7 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { AnswerRequest } from "@/lib/runtime/agent-protocol";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { agentChat, requestedChat } from "@/lib/session/chat-target";
 import { watchSent } from "@/lib/session/watch";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -34,9 +35,12 @@ export async function POST(request: Request, context: RouteContext) {
   });
   if (!reach.ok) return reach.response;
   const { workspace, agent, identity } = reach.reached;
+  const named = await requestedChat(request, workspace);
+  if (!named.ok) return named.response;
+  const chat = agentChat(named.chat);
 
   try {
-    await agent.answer(identity, parsed.data);
+    await agent.answer(identity, parsed.data, chat);
   } catch (error) {
     // The question is over (answered, given up, or from before a restart), or
     // the answer doesn't fit it: the agent's message says which.
@@ -50,6 +54,7 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Couldn't send your answer. Please try again." }, { status: 502 });
   }
   // No longer waiting on the user: working again, and watched.
-  after(() => watchSent(workspace.id, workspace.ownerId));
+  // The sidebar follows the main chat's turn: a chat's own is its page's.
+  if (!chat) after(() => watchSent(workspace.id, workspace.ownerId));
   return NextResponse.json({ result: "answered" });
 }

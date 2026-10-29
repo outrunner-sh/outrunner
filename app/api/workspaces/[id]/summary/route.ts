@@ -9,6 +9,7 @@ import {
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { agentChat, requestedChat } from "@/lib/session/chat-target";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -23,7 +24,7 @@ type RouteContext = { params: Promise<{ id: string }> };
  * The initial browser attach receives the Summary inline via
  * POST /api/workspaces/[id]/session; this route is the polling surface.
  */
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const owner = await getOwner();
   if (!owner) {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
@@ -34,6 +35,10 @@ export async function GET(_request: Request, context: RouteContext) {
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
+
+  // One of its chats' (?chat=), or its main one's.
+  const named = await requestedChat(request, workspace);
+  if (!named.ok) return named.response;
 
   const resolution = resolveProvider(workspace);
   if (!resolution.ok) return providerErrorResponse(resolution);
@@ -77,7 +82,7 @@ export async function GET(_request: Request, context: RouteContext) {
   };
 
   try {
-    const summary = await new AgentClient(target).workspaceSummary(identity);
+    const summary = await new AgentClient(target).workspaceSummary(identity, agentChat(named.chat));
     return NextResponse.json(summary);
   } catch (error) {
     console.error(`Summary: fetch failed for ${workspace.id}`, error);
