@@ -21,7 +21,7 @@ test("a Mission tells the user what needs them, not its every turn", () => {
 
 test("a pull request ready is a kind of its own, on by default, worded for each way it goes", () => {
   assert.ok(DEFAULT_PREFERENCES.kinds.includes("pr_ready"));
-  assert.equal(KIND_LABEL.pr_ready, "A Mission's pull request is ready to review");
+  assert.equal(KIND_LABEL.pr_ready, "A Ship's pull request is ready to review");
   const draft = readyNotification({
     ownerId: "u1",
     missionId: "m1",
