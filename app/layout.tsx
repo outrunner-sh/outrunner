@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
 
+import { FileDropGuard } from "@/components/file-drop-guard";
 import { ThemeProvider } from "@/components/theme-provider";
 
 const geistSans = Geist({
@@ -40,6 +41,7 @@ export default function RootLayout({
             surface here), and the session screen has no light palette. A
             theme chosen earlier in Settings no longer applies. */}
         <ThemeProvider attribute="class" forcedTheme="dark" disableTransitionOnChange>
+          <FileDropGuard />
           {children}
         </ThemeProvider>
       </body>

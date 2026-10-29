@@ -5,6 +5,7 @@
  */
 
 import type { RunnerState } from "@/lib/missions/rules";
+import type { ProviderName } from "@/lib/runtime/types";
 import { REASON_LABEL, type SessionStanding } from "@/lib/session/standing";
 
 export type RunnerCheck = { name: string; status: string; conclusion: string | null; url: string | null };
@@ -69,6 +70,8 @@ export type MissionView = {
   environment: { id: string; name: string } | null;
   /** Its own session's status (archived, asleep, …). */
   sessionStatus: string;
+  /** Its own session's provider: whether it can be archived. */
+  provider: ProviderName;
   /** Where its own session stands (lib/session/standing.ts). */
   standing: SessionStanding | null;
   runners: RunnerView[];

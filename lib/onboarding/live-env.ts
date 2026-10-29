@@ -1,14 +1,15 @@
-import type { AgentId } from "@/lib/agents/registry";
 import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
-import type { AgentPick, AgentStatus, GitHubAccess, OnboardingEnv, OnboardingUser, RepositoryList } from "@/lib/onboarding/types";
-import {
-  CLAUDE_DEFAULT_MODEL,
-  CODEX_MODELS,
-  DEFAULT_EFFORT,
-  type Effort,
-  OUTRUNNER_MODELS,
-} from "@/lib/runtime/session-models";
+import { newSessionAfterOnboarding, parseProgress } from "@/lib/onboarding/rules";
+import type {
+  AgentChoices,
+  AgentStatus,
+  GitHubAccess,
+  OnboardingEnv,
+  OnboardingProgress,
+  OnboardingUser,
+  RepositoryList,
+} from "@/lib/onboarding/types";
 import type { Project } from "@/lib/runtime/types";
 
 /** A failure the page can show, with where to fix it when there's a place. */
@@ -41,18 +42,6 @@ async function call<T>(method: "GET" | "POST" | "PUT", url: string, body?: unkno
   return json as T;
 }
 
-/** The model a first session starts on, by the agent picked: the user's own
- *  Claude or Codex, at DEFAULT_EFFORT, as the new-session screen starts them;
- *  or Outrunner's first model, in Codex where that is the pick (Claude Code
- *  would be its default). Always named: with no model, a user whose Claude is
- *  connected would start on it, not on the Outrunner's models they picked. */
-export function firstModel(runOn: AgentPick): { provider: string; model: string; effort?: Effort; agent?: AgentId } {
-  if (runOn === "claude") return { provider: "claude", model: CLAUDE_DEFAULT_MODEL.id, effort: DEFAULT_EFFORT };
-  if (runOn === "codex") return { provider: "codex", model: CODEX_MODELS[0].id, effort: DEFAULT_EFFORT };
-  const outrunner = { provider: "outrunner", model: OUTRUNNER_MODELS[0].id };
-  return runOn === "codex-outrunner" ? { ...outrunner, agent: "codex" } : outrunner;
-}
-
 /** Mark onboarding done, so home stops sending the user here. A failure is
  *  logged only: onboarding just shows again. */
 async function markOnboarded(): Promise<void> {
@@ -63,11 +52,37 @@ async function markOnboarded(): Promise<void> {
   }
 }
 
+/** Where this browser keeps the user's onboarding progress: localStorage,
+ *  so a tab the CLI opens finds it too. Storage that fails (private mode,
+ *  full) only means onboarding opens at its start. */
+function progressStore(userId: string) {
+  const key = `outrunner:onboarding:${userId}`;
+  return {
+    read(): OnboardingProgress | null {
+      try {
+        const raw = window.localStorage.getItem(key);
+        return raw ? parseProgress(JSON.parse(raw)) : null;
+      } catch {
+        return null;
+      }
+    },
+    write(progress: OnboardingProgress | null) {
+      try {
+        if (progress) window.localStorage.setItem(key, JSON.stringify(progress));
+        else window.localStorage.removeItem(key);
+      } catch {
+        // Kept only for next time; nothing to tell.
+      }
+    },
+  };
+}
+
 /**
  * Onboarding on the live app: the same APIs Settings → Providers, the
  * repository picker and the new-session form use, not copies of them.
  */
 export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean }): OnboardingEnv {
+  const progress = progressStore(user.id);
   const agentStatus = async (): Promise<AgentStatus> => {
     const [claude, providers] = await Promise.all([
       call<{ connected: boolean; last4: string | null }>("GET", "/api/settings/claude"),
@@ -95,6 +110,10 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
       forgetOutrunnerModels();
       return agentStatus();
     },
+    async agentChoices() {
+      const { choices } = await call<{ choices: Partial<AgentChoices> }>("GET", "/api/settings/agents");
+      return { claude: choices.claude ?? null, codex: choices.codex ?? null };
+    },
     async chooseMethod(agent, method) {
       await call("PUT", "/api/settings/agents", { agent, method });
       forgetOutrunnerModels();
@@ -108,18 +127,18 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
       return projects;
     },
 
-    async startSession(projectId, runOn) {
-      const { workspace } = await call<{ workspace?: { id: string } }>("POST", `/api/projects/${projectId}/workspaces`, {
-        branch: "",
-        ...firstModel(runOn),
-      });
-      if (!workspace) throw new OnboardingError("The session didn't start. Please try again.");
+    async finish(projectId, runOn) {
       await markOnboarded();
-      return `/workspaces/${workspace.id}`;
+      progress.write(null);
+      return newSessionAfterOnboarding(projectId, runOn);
     },
     async skip() {
       await markOnboarded();
+      progress.write(null);
       return "/";
     },
+
+    savedProgress: () => progress.read(),
+    saveProgress: (next) => progress.write(next),
   };
 }

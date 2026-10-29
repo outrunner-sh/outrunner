@@ -2380,3 +2380,48 @@ begin
   delete from workspaces where id in (runner, mission);
   raise notice 'ok: a Runner''s parent is a Mission, and a pull request ready is told on it';
 end $$;
+
+-- 57. Secret sync (20261103140000_secret_sync.sql): an org connects each
+-- provider once, a project links to each at most once, disconnecting
+-- unlinks every project, and members can't read either table directly.
+do $$
+declare
+  org uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  env uuid;
+  integration uuid;
+begin
+  insert into environments (owner_id, name, org_id) values ('11111111-1111-1111-1111-111111111111', 'synced', org)
+    returning id into env;
+  insert into org_secret_integrations (org_id, provider, credentials_ciphertext, label)
+    values (org, 'doppler', 'v1.sealed', 'backend / dev') returning id into integration;
+  begin
+    insert into org_secret_integrations (org_id, provider, credentials_ciphertext, label)
+      values (org, 'doppler', 'v1.sealed', 'again');
+    raise exception 'FAIL: an org connected Doppler twice';
+  exception when unique_violation then null;
+  end;
+  begin
+    insert into org_secret_integrations (org_id, provider, credentials_ciphertext, label)
+      values (org, 'vault', 'v1.sealed', 'x');
+    raise exception 'FAIL: an unknown provider was connected';
+  exception when check_violation then null;
+  end;
+  insert into environment_secret_links (environment_id, integration_id, org_id, provider)
+    values (env, integration, org, 'doppler');
+  begin
+    insert into environment_secret_links (environment_id, integration_id, org_id, provider)
+      values (env, integration, org, 'doppler');
+    raise exception 'FAIL: a project linked to Doppler twice';
+  exception when unique_violation then null;
+  end;
+  if has_table_privilege('authenticated', 'org_secret_integrations', 'select')
+    or has_table_privilege('authenticated', 'environment_secret_links', 'select') then
+    raise exception 'FAIL: members can read secret sync directly';
+  end if;
+  delete from org_secret_integrations where id = integration;
+  if exists (select 1 from environment_secret_links where environment_id = env) then
+    raise exception 'FAIL: disconnecting left a project linked';
+  end if;
+  delete from environments where id = env;
+  raise notice 'ok: an org connects each provider once, and disconnecting unlinks its projects';
+end $$;

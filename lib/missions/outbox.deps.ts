@@ -1,12 +1,12 @@
 /**
  * The outbox's real wiring (lib/missions/outbox.ts): the claim functions in
- * the database, and a send that wakes or restores the Mission through its
- * lifecycle route as its owner, then hands the delivery to its box's agent
- * with the delivery's id as the message's key.
+ * the database, and a send that wakes the Mission through its lifecycle
+ * route as its owner, then hands the delivery to its box's agent with the
+ * delivery's id as the message's key.
  */
 
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
-import { reachBox, writeBoxFile } from "@/lib/missions/box";
+import { reachBox } from "@/lib/missions/box";
 import type { MissionEvent, MissionEventPayload } from "@/lib/missions/events";
 import {
   DELIVERY_LEASE_SECONDS,
@@ -15,8 +15,7 @@ import {
   drainMissionEvents,
   type OutboxDeps,
 } from "@/lib/missions/outbox";
-import { NOTES_FILE } from "@/lib/missions/rules";
-import { readNotes, sessionById } from "@/lib/missions/store";
+import { sessionById } from "@/lib/missions/store";
 import { AGENT_FEATURE_MESSAGE_KEYS } from "@/lib/runtime/agent-protocol";
 import type { Workspace } from "@/lib/runtime/types";
 import { asBrowser } from "@/lib/slack/research";
@@ -27,10 +26,11 @@ function db() {
   return createSupabaseAdminClient();
 }
 
-/** Bring an asleep or archived session's box up, as its owner opening it
- *  would; throws when it can't be. */
+/** Bring an asleep session's box up, as its owner opening it would; throws
+ *  when it can't be. One archived since the outbox looked stays archived: the
+ *  send fails, and its next try drops the news (lib/missions/outbox.ts). */
 export async function wakeSession(session: Workspace): Promise<Workspace> {
-  const action = session.status === "suspended" ? "resume" : session.status === "archived" ? "restore" : null;
+  const action = session.status === "suspended" ? "resume" : null;
   if (action) {
     const response = await actAsUser(session.ownerId, () =>
       lifecyclePOST(asBrowser(`/api/workspaces/${session.id}/lifecycle`, { action }), { params: Promise.resolve({ id: session.id }) }),
@@ -47,12 +47,6 @@ export async function wakeSession(session: Workspace): Promise<Workspace> {
 
 async function sendOnce(mission: Workspace, text: string, key: string): Promise<void> {
   const awake = await wakeSession(mission);
-  // Restored, its worktree is fresh: its saved notes go back on it before it
-  // reads the news.
-  if (mission.status === "archived") {
-    const notes = await readNotes(mission.id).catch(() => null);
-    if (notes?.body) await writeBoxFile(awake, NOTES_FILE, notes.body).catch(() => false);
-  }
   const reached = await reachBox(awake);
   if (!reached) throw new Error("its box didn't answer");
   const features = (await reached.agent.health(reached.identity).catch(() => null))?.features ?? [];

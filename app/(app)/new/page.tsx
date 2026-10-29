@@ -13,7 +13,7 @@ export const unstable_instant = {
   prefetch: "static",
   samples: [
     {
-      searchParams: { project: null, folder: null, pick: null, focus: null, triage: null },
+      searchParams: { project: null, folder: null, pick: null, focus: null, triage: null, start: null },
       cookies: [
         { name: "sidebar-collapsed", value: null },
         { name: "sidebar-folded", value: null },
@@ -23,7 +23,7 @@ export const unstable_instant = {
       ],
     },
     {
-      searchParams: { project: "sample", folder: null, pick: null, focus: null, triage: null },
+      searchParams: { project: "sample", folder: null, pick: null, focus: null, triage: null, start: null },
       cookies: [
         { name: "sidebar-collapsed", value: null },
         { name: "sidebar-folded", value: null },

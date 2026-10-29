@@ -2,6 +2,7 @@
 
 import { ArrowUp, ListChecks, MessageSquareText, Paperclip, X } from "lucide-react";
 
+import { attachmentFiles } from "@/components/attachment-thumbnails";
 import { parseCommentQuotes } from "@/lib/session/diff-comments";
 import type { QueuedPrompt } from "@/lib/session/prompt-queue";
 
@@ -53,12 +54,7 @@ export function QueuedPrompts({
                   {quotes.length}
                 </span>
               )}
-              {prompt.attachmentIds.length > 0 && (
-                <span className="studio-queue-files" title={`${prompt.attachmentIds.length} attached`}>
-                  <Paperclip aria-hidden />
-                  {prompt.attachmentIds.length}
-                </span>
-              )}
+              {prompt.attachmentIds.length > 0 && <QueuedFiles ids={prompt.attachmentIds} />}
               <button
                 type="button"
                 onClick={() => onSendNow(prompt)}
@@ -77,5 +73,27 @@ export function QueuedPrompts({
         })}
       </ol>
     </section>
+  );
+}
+
+/** A queued prompt's files: its images as small thumbnails from this page's
+ *  copies, the rest counted. */
+function QueuedFiles({ ids }: { ids: string[] }) {
+  const files = attachmentFiles(ids);
+  const images = files.filter((file) => file.image && file.src).slice(0, 3);
+  const others = files.length - images.length;
+  return (
+    <span className="studio-queue-files" title={`${files.length} attached`}>
+      {images.map((file) => (
+        // eslint-disable-next-line @next/next/no-img-element -- a local object URL
+        <img key={file.key} src={file.src!} alt={file.name} className="studio-queue-thumb" />
+      ))}
+      {others > 0 && (
+        <>
+          <Paperclip aria-hidden />
+          {others}
+        </>
+      )}
+    </span>
   );
 }

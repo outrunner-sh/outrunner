@@ -81,6 +81,8 @@ import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useDiffComments } from "@/hooks/use-diff-comments";
 import { withComments } from "@/lib/session/diff-comments";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
+import { attachmentFilenames, promptWithAttachments } from "@/lib/runtime/attachments";
+import { previewOf } from "@/lib/session/attachment-previews";
 
 /** A send that didn't go: why, and how to try it again. `retry` is set only
  * where its text never was in the composer's box (a session's first prompt),
@@ -227,13 +229,17 @@ export function WorkspaceSession({
   ) => {
     const trimmed = text.trim();
     const pendingId = crypto.randomUUID();
-    if (trimmed) {
+    // Files alone are a message too: their bubble shows them.
+    if (trimmed || attachmentIds.length > 0) {
       setPending((prev) => {
         // Drop items the stream has already caught up on, then queue this one.
         // Trimming here (not in an effect) keeps the list bounded without a
         // setState-in-effect cascade.
         const live = livePrompts(prev, userPromptCount(conversation.events));
-        return [...live, { id: pendingId, text: trimmed, expect: null }];
+        return [
+          ...live,
+          { id: pendingId, text: trimmed, expect: null, ...(attachmentIds.length > 0 && { attachmentIds }) },
+        ];
       });
     }
     setSendError(null);
@@ -828,7 +834,9 @@ export function WorkspaceSession({
         parentUuid: null,
         role: "user",
         timestamp: new Date().toISOString(),
-        content: [{ type: "text", text: p.text }],
+        // Its files named as the server will name them, so it shows them as
+        // the logged prompt will, from this page's own copies.
+        content: [{ type: "text", text: echoText(p) }],
       }));
     return optimistic.length ? [...conversation.events, ...optimistic] : conversation.events;
   }, [conversation.events, pending]);
@@ -1402,4 +1410,17 @@ function rememberPickedProvider(workspaceId: string, provider: ModelProvider): v
   } catch {
     // Blocked storage only costs the tick going back to the default.
   }
+}
+
+/** A bubble's prompt as the session will log it: with its files' header
+ *  (promptWithAttachments), named from what this page knows of them. */
+function echoText(pending: PendingPrompt): string {
+  const ids = pending.attachmentIds ?? [];
+  if (ids.length === 0) return pending.text;
+  const known = ids.map((id) => ({ id, preview: previewOf(id) }));
+  const names = attachmentFilenames(known.map(({ id, preview }) => ({ id, filename: preview?.filename ?? "attachment" })));
+  return promptWithAttachments(
+    pending.text,
+    names.map((name, i) => ({ name, image: known[i].preview ? known[i].preview.url !== null : false })),
+  );
 }

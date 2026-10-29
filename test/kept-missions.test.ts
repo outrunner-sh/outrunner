@@ -83,6 +83,7 @@ function mission(id: string, overrides: Partial<MissionView> = {}): MissionView 
     liveRunners: 1,
     environment: { id: "e1", name: "Project" },
     sessionStatus: "ready",
+    provider: "daytona",
     standing,
     runners: [runner(`${id}-r1`)],
     createdAt: "2026-01-01T00:00:00.000Z",

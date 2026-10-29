@@ -7,7 +7,7 @@
  */
 
 import { getAttachments, markMaterialized, readAttachmentBytes } from "@/lib/db/attachments";
-import { attachmentFilenames, promptWithAttachments } from "@/lib/runtime/attachments";
+import { attachmentFilenames, isImage, promptWithAttachments } from "@/lib/runtime/attachments";
 import type { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 
 /**
@@ -51,5 +51,8 @@ export async function materializeAttachments(input: {
     input.workspaceId,
   );
 
-  return promptWithAttachments(input.prompt, names);
+  return promptWithAttachments(
+    input.prompt,
+    names.map((name, index) => ({ name, image: isImage(attachments[index].contentType) })),
+  );
 }

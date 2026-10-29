@@ -456,7 +456,7 @@ type TokenUsageAmounts struct {
 }
 
 // ContentBlock is one block inside a ConversationMessage.
-// type ∈ {text, thinking, tool_use, tool_result}.
+// type ∈ {text, thinking, tool_use, tool_result, image}.
 type ContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
@@ -465,7 +465,25 @@ type ContentBlock struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"toolUseId,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"`
+	// Source is an image block's picture, as Claude logs one pasted into its
+	// prompt: the bytes in base64 and their type. Data is left out past
+	// MaxImageBlockData, so one huge paste can't swell every frame; the
+	// timeline then shows that there was an image, without it.
+	Source *ImageSource `json:"source,omitempty"`
 }
+
+// ImageSource is an image block's picture (ContentBlock.Source), in Claude's
+// own shape: Type "base64", MediaType "image/png" and the like.
+type ImageSource struct {
+	Type      string `json:"type,omitempty"`
+	MediaType string `json:"media_type,omitempty"`
+	Data      string `json:"data,omitempty"`
+}
+
+// MaxImageBlockData is the most base64 an image block carries to the
+// timeline (about 1.5 MB of image). Claude Code scales a pasted image down
+// well below it.
+const MaxImageBlockData = 2 << 20
 
 // ConversationMessage is a structured turn derived from Claude's JSONL.
 type ConversationMessage struct {
