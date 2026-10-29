@@ -135,7 +135,7 @@ func withAgentContextBlock(path, content string) error {
 		if strings.TrimSpace(next) == "" {
 			return os.Remove(path)
 		}
-		return writeAgentContextFile(path, next, mode)
+		return writeAgentContextFile(path, next, 0o644)
 	}
 }
 

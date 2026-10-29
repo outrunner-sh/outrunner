@@ -2,10 +2,12 @@
  * Learnings in the database (20261103110000_learnings.sql), as the store
  * lib/learnings/actions.ts works on. Service role only: the table has no
  * policies, and the actions check who may do what. Before the migration
- * applies, a read finds none and a write says the database isn't updated
- * (lib/http/database-not-updated.ts).
+ * applies, a read finds none and a write is refused. Settings routes explain
+ * that the database isn't updated (lib/http/database-not-updated.ts); public
+ * API and MCP callers receive a generic 500, session tools a 502.
  */
 
+import { learningPages, learningPageFilter } from "@/lib/learnings/pages";
 import { isUuid } from "@/lib/ids";
 import type { LearningStore, NewLearningRow } from "@/lib/learnings/actions";
 import type { Learning } from "@/lib/learnings/rules";
@@ -46,21 +48,20 @@ function learningOf(row: Row): Learning {
 export const learningStore: LearningStore = {
   async list(where, status) {
     const client = createSupabaseAdminClient();
-    const learnings: Learning[] = [];
-    const pageSize = 500;
-    for (let offset = 0; ; offset += pageSize) {
+    const rows = await learningPages<Row>(async (cursor, pageSize) => {
       let query = client.from("learnings").select(COLUMNS);
       query = "orgId" in where ? query.eq("org_id", where.orgId) : query.eq("user_id", where.userId);
       if (status) query = query.eq("status", status);
+      if (cursor) query = query.or(learningPageFilter(cursor));
       const { data, error } = await query
         .order("created_at", { ascending: true })
         .order("id", { ascending: true })
-        .range(offset, offset + pageSize - 1);
+        .limit(pageSize);
       if (error && probeStatus(error) === "missing") return [];
       if (error) throw error;
-      learnings.push(...(data ?? []).map((row) => learningOf(row as Row)));
-      if (!data || data.length < pageSize) return learnings;
-    }
+      return (data ?? []) as Row[];
+    });
+    return rows.map(learningOf);
   },
 
   async count(where, { status, createdBy }) {

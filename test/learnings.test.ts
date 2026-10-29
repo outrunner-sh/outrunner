@@ -28,7 +28,7 @@ function deps(): LearningDeps & { rows: Learning[]; audited: string[] } {
   const audited: string[] = [];
   let n = 0;
   const store: LearningStore = {
-    list: async (where) => rows.filter((l) => ("orgId" in where ? l.orgId === where.orgId : l.userId === where.userId)),
+    list: async (where, status) => rows.filter((l) => ("orgId" in where ? l.orgId === where.orgId : l.userId === where.userId) && (!status || l.status === status)),
     count: async (where, { status, createdBy }) => rows.filter((l) =>
       ("orgId" in where ? l.orgId === where.orgId : l.userId === where.userId) &&
       l.status === status && (createdBy === undefined || l.createdBy === createdBy)
@@ -236,4 +236,27 @@ test("a box's request is signed for its purpose, as its agent signs it", () => {
   const request = { sandboxId: "sbx", timestamp: String(now), signature, body: "{}" };
   assert.equal(boxRequestValid("git-credential", "secret", request, now), true);
   assert.equal(boxRequestValid("session-tools", "secret", request, now), false);
+});
+
+
+test("keyset learning pages retain later rows when an earlier row is deleted", async () => {
+  const { learningPages, learningPageFilter } = await import("@/lib/learnings/pages");
+  const rows = Array.from({ length: 710 }, (_, i) => ({
+    id: String(i).padStart(4, "0"), created_at: "2026-11-03T00:00:00Z",
+  }));
+  let calls = 0;
+  const got = await learningPages(async (cursor, limit) => {
+    calls++;
+    if (cursor) {
+      rows.shift();
+      assert.equal(learningPageFilter(cursor),
+        "created_at.gt.2026-11-03T00:00:00Z,and(created_at.eq.2026-11-03T00:00:00Z,id.gt.0499)");
+    }
+    return rows.filter((r) => !cursor || r.created_at > cursor.created_at ||
+      (r.created_at === cursor.created_at && r.id > cursor.id)).slice(0, limit);
+  });
+  assert.equal(calls, 2);
+  assert.equal(got.length, 710);
+  assert.equal(got[500].id, "0500");
+  assert.equal(got[709].id, "0709");
 });

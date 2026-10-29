@@ -177,3 +177,29 @@ func TestAgentContextContinuesAfterOneFileFails(t *testing.T) {
 		t.Errorf("Codex context was skipped after Claude failed: %q", codex)
 	}
 }
+
+func TestAgentContextReadOnlyLinkFallbackIsWritable(t *testing.T) {
+	// procfs provides an unwritable target even when tests run as root.
+	target := "/proc/version"
+	before, err := os.ReadFile(target)
+	if err != nil {
+		t.Skip("requires Linux procfs")
+	}
+	path := filepath.Join(t.TempDir(), "CLAUDE.md")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := withAgentContextBlock(path, "Use pnpm."); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o644 {
+		t.Fatalf("fallback must be a writable regular file: %v, %v", info, err)
+	}
+	if got := readFile(path); !strings.Contains(got, "Use pnpm.") || !strings.HasPrefix(got, strings.TrimRight(string(before), "\n")) {
+		t.Errorf("fallback lost original content or learning: %q", got)
+	}
+	if after, err := os.ReadFile(target); err != nil || string(after) != string(before) {
+		t.Fatalf("read-only target changed: %v", err)
+	}
+}
