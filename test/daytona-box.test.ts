@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { Sandbox } from "@daytonaio/sdk";
 
-import { box, daytonaSnapshotFor, EXEC_TIMEOUT_SECONDS, relabel } from "@/lib/runtime/sandbox/daytona";
+import { box, daytonaSnapshotFor, EXEC_TIMEOUT_SECONDS, relabel, settled } from "@/lib/runtime/sandbox/daytona";
 
 /** A sandbox whose executeCommand records the timeout it was given. */
 function recording(): { sandbox: Sandbox; timeouts: (number | undefined)[] } {
@@ -59,4 +59,30 @@ test("a sized box is Daytona's largest size within its vCPUs, the base box below
   assert.equal(daytonaSnapshotFor({ cpu: 2, memoryGb: 4 }), "daytona-medium");
   assert.equal(daytonaSnapshotFor({ cpu: 4, memoryGb: 8 }), "daytona-large");
   assert.equal(daytonaSnapshotFor({ cpu: 8, memoryGb: 16 }), "daytona-large");
+});
+
+/** A sandbox that reports `states` in turn, one per refresh. */
+function going(states: string[]) {
+  let at = 0;
+  const sandbox = {
+    id: "box-1",
+    state: states[0],
+    refreshData: async () => {
+      at = Math.min(at + 1, states.length - 1);
+      sandbox.state = states[at];
+    },
+  };
+  return sandbox as unknown as Pick<Sandbox, "id" | "state" | "refreshData">;
+}
+
+test("a box still archiving is waited out, so it's started again rather than taken for gone", async () => {
+  assert.equal(await settled(going(["archiving", "archiving", "archived"]), 5, 1), "archived");
+  assert.equal(await settled(going(["stopping", "stopped"]), 5, 1), "stopped");
+  // Settled already: answered as it is, without asking again.
+  assert.equal(await settled(going(["started"]), 5, 1), "started");
+  assert.equal(await settled(going(["destroyed"]), 5, 1), "destroyed");
+});
+
+test("a box that never finishes going down is an error to try again, not a new box", async () => {
+  await assert.rejects(settled(going(["archiving"]), 0.01, 1), /box-1 is still archiving/);
 });

@@ -49,7 +49,9 @@ import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter"
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { archiveCloudSession, daytonaAgent } from "@/lib/session/archive-session";
+import { bringBack } from "@/lib/session/bring-back-box";
 import { canDestroy } from "@/lib/session/provisioning";
+import { resumeFailure, type ResumeStage } from "@/lib/session/resume-failure";
 
 // resume/restore ensure a Runtime Computer (provision + agent boot, ~15s+), and
 // archive/restore move snapshot artifacts; keep the same 60s cap as provisioning
@@ -456,7 +458,14 @@ async function resumeDaytonaWorkspace(
   }
   const transitioned = await startTransition(workspace, ["suspended"], "resuming");
   if (!transitioned) return lifecycleConflict();
+  let stage: ResumeStage = "box";
   try {
+    // Nothing runs on a suspended session's box, so it is paused once idle
+    // (lib/billing/reconcile.ts), or the provider may have stopped, archived
+    // or deleted it: brought back first, as opening the session does.
+    const computer = await getWorkspaceComputer(workspace);
+    if (computer && provider.restoresBoxes) await bringBack(provider, workspace, computer, owner);
+    stage = "relaunch";
     const { agent, identity, upgrade, sandboxId, secret } = await daytonaAgent(workspace, provider, owner);
     // Signed in as the user picks now, and on its model's key as it is now,
     // before it relaunches.
@@ -468,13 +477,12 @@ async function resumeDaytonaWorkspace(
       },
     );
   } catch (error) {
-    const failure = signInFailure(error);
-    if (!failure) console.error(`Workspace ${workspace.id} resume failed`, error);
-    const message = failure?.error ?? lifecycleError("resume");
-    await restoreAfterFailure(workspace, "resuming", message).catch(
+    const failure = resumeFailure(error, stage);
+    if (failure.status !== 403 && failure.status !== 409) console.error(`Workspace ${workspace.id} resume failed`, error);
+    await restoreAfterFailure(workspace, "resuming", failure.body.error).catch(
       (updateError: unknown) => console.error("Could not persist resume failure", updateError),
     );
-    return NextResponse.json(failure ?? { error: message }, { status: failure ? 409 : 502 });
+    return NextResponse.json(failure.body, { status: failure.status });
   }
   const completed = await completeTransition({
     id: workspace.id,

@@ -124,7 +124,11 @@ export class DaytonaBackend implements SandboxBackend {
       if (error instanceof DaytonaNotFoundError) return null;
       throw error;
     }
-    const state = sandbox.state ?? "unknown";
+    // Still going down: stopping, or archiving, which Daytona does to a box
+    // stopped a week. Its disk is kept, so it's waited out and started, not
+    // taken for gone (that started a new box, and the session's files were
+    // left on this one).
+    const state = await settled(sandbox, CREATE_TIMEOUT_SECONDS);
     if (STOPPED_STATES.has(state)) {
       try {
         await sandbox.start(CREATE_TIMEOUT_SECONDS);
@@ -174,9 +178,33 @@ export function daytonaSnapshotFor(size: BoxResources): string | undefined {
   return DAYTONA_SNAPSHOTS.find((s) => s.cpu <= size.cpu)?.name;
 }
 
-/** States a box is started again from, and ones it's on its way up in. */
+/** States a box is started again from, ones it's on its way up in, and
+ *  ones it's on its way down in, keeping its disk. */
 const STOPPED_STATES = new Set(["stopped", "archived"]);
 const STARTING_STATES = new Set(["starting", "restoring", "creating"]);
+const SETTLING_STATES = new Set(["stopping", "archiving"]);
+/** How often a box going down is looked at again. */
+const SETTLE_POLL_MS = 2_000;
+
+/**
+ * The box's state once it's no longer on its way down (SETTLING_STATES),
+ * looked at again every `pollMs`. Throws when it still is after
+ * `timeoutSeconds`: the box is there, so trying again later is the way on,
+ * never a new box. Exported for tests.
+ */
+export async function settled(
+  sandbox: Pick<Sandbox, "id" | "state" | "refreshData">,
+  timeoutSeconds: number,
+  pollMs = SETTLE_POLL_MS,
+): Promise<string> {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  while (SETTLING_STATES.has(sandbox.state ?? "unknown")) {
+    if (Date.now() >= deadline) throw new Error(`Daytona box ${sandbox.id} is still ${sandbox.state}`);
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    await sandbox.refreshData();
+  }
+  return sandbox.state ?? "unknown";
+}
 
 /** A box's commands and files, from its sandbox. Exported for tests. */
 export function box(sandbox: Sandbox): SandboxBox {
