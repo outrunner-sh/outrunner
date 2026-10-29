@@ -128,6 +128,9 @@ test("the Code Review template says how to post line comments so their bodies ar
   assert.match(prompt, /-F body=@\/tmp\/code-review\.XXXXXX\/comment\.md -f path=<path> -F line=<line>/);
   assert.match(prompt, /`-f body=@\/tmp\/code-review\.XXXXXX\/comment\.md` posts the text "@\/tmp\/code-review\.XXXXXX\/comment\.md" itself/);
   assert.match(prompt, /mktemp -d \/tmp\/code-review\.XXXXXX/);
+  assert.match(prompt, /JSON serializer.*quotes, backslashes and newlines/);
+  assert.match(prompt, /removed lines use `side: "LEFT"` and the original file line number/);
+  assert.match(prompt, /set `start_side` to the side of its first line/);
   assert.match(prompt, /422, read the validation error/);
   assert.match(prompt, /move its feedback into the top-level summary and remove it from the review/);
   assert.match(prompt, /A rejected review posts none of its comments; submit the corrected review again/);
