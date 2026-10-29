@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { KeyRound, Vault } from "lucide-react";
 import { Suspense } from "react";
 
 import { GitHubIcon, SlackIcon } from "@/components/brand-icons";
@@ -7,6 +8,7 @@ import { IntegrationCard } from "@/components/integration-card";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { listOrgInstallations } from "@/lib/db/github-installations";
+import { orgSecretIntegrations } from "@/lib/db/secret-sync";
 import { orgSlack } from "@/lib/db/slack-org";
 import { githubAppConfig } from "@/lib/github/app";
 import { getOrgContext } from "@/lib/orgs/server";
@@ -17,7 +19,8 @@ export const unstable_instant = { prefetch: "static" };
 
 /**
  * Settings → Org → Integrations: the services the org connects for its
- * agents and automations (GitHub, Slack), whether each is connected, and the
+ * agents and automations (GitHub, Slack, and Doppler and Infisical for
+ * projects' secrets), whether each is connected, and the
  * way to install or configure it. Each member's own Slack account is under
  * Account → Connections.
  */
@@ -43,10 +46,11 @@ async function IntegrationsSection() {
     );
   }
   const admin = org.role === "admin";
-  const [installations, slack] = await Promise.all([
+  const [installations, slack, secrets] = await Promise.all([
     // What's recorded counts whether or not this server can install more.
     listOrgInstallations(org.id).catch(() => []),
     orgSlack(org.id).catch(() => null),
+    orgSecretIntegrations(org.id).catch(() => ({ doppler: null, infisical: null })),
   ]);
   const github = installations.filter((i) => !i.suspended).map((i) => i.accountLogin);
   const slackTeams = (slack?.workspaces ?? []).filter((w) => w.installed).map((w) => w.teamName ?? w.teamId);
@@ -89,6 +93,22 @@ async function IntegrationsSection() {
               : install
                 ? { kind: "install", href: install, external: true }
                 : null
+          }
+        />
+        <IntegrationCard
+          icon={<KeyRound />}
+          name="Doppler"
+          description="Sync a Doppler config's secrets into projects' sessions."
+          connected={secrets.doppler?.label ?? null}
+          action={secrets.doppler || admin ? { kind: secrets.doppler ? "configure" : "connect", href: "/settings/org/integrations/doppler" } : null}
+        />
+        <IntegrationCard
+          icon={<Vault />}
+          name="Infisical"
+          description="Sync Infisical secrets into projects' sessions, and its CLI."
+          connected={secrets.infisical?.label ?? null}
+          action={
+            secrets.infisical || admin ? { kind: secrets.infisical ? "configure" : "connect", href: "/settings/org/integrations/infisical" } : null
           }
         />
       </div>

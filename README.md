@@ -126,6 +126,7 @@ See [`docs/missions.md`](docs/missions.md).
 
 - API — [`docs/api.md`](docs/api.md)
 - Missions and Runners — [`docs/missions.md`](docs/missions.md)
+- Doppler and Infisical secret sync — [`docs/secret-sync.md`](docs/secret-sync.md)
 - Architecture — [`docs/architecture/runtime-v1-plan.md`](docs/architecture/runtime-v1-plan.md)
 - Agent & protocol — [`runtime-agent.md`](docs/architecture/runtime-agent.md), [`protocol.md`](docs/architecture/protocol.md)
 - Validation report — [`spike4-runtime-report.md`](docs/architecture/spike4-runtime-report.md)

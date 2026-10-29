@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { GitHubIcon } from "@/components/brand-icons";
+import { failedLinks, SecretSyncPanel } from "@/components/secret-sync-panel";
 import { SectionHeader } from "@/components/settings-details";
 import { Button } from "@/components/ui/button";
 import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
@@ -15,9 +16,11 @@ import { InlineMessage } from "@/components/ui/notice";
 import { SELECT_OPTIONS } from "@/components/ui/select-options";
 import { Textarea } from "@/components/ui/textarea";
 import type { Environment } from "@/lib/db/environments";
+import type { EnvironmentSecretSync } from "@/lib/db/secret-sync";
 import { MAX_REPOS, parseDotenv, type SecretsEdit } from "@/lib/environments/rules";
 import { requestJson } from "@/lib/http/request-json";
 import { newSessionHref } from "@/lib/nav/sidebar";
+import { PROVIDER_LABELS } from "@/lib/secret-sync/rules";
 import { cn } from "@/lib/utils";
 
 const SECTIONS = [
@@ -42,10 +45,21 @@ function isSection(tab: string | null): tab is SectionId {
  * can be linked to: "add it under Environment variables".
  *
  * Variables and files are write-only: the page knows their names and paths,
- * never their values, and a change goes out as an edit (set, remove).
+ * never their values, and a change goes out as an edit (set, remove). So
+ * are the Doppler and Infisical secrets synced in (`secretSync`, null before
+ * its migration): the page knows each link's names at its last sync, and
+ * says on every section when one failed.
  */
-export function ProjectSettings({ initial }: { initial: Environment }) {
+export function ProjectSettings({
+  initial,
+  secretSync: initialSync = null,
+}: {
+  initial: Environment;
+  secretSync?: EnvironmentSecretSync | null;
+}) {
   const [environment, setEnvironment] = useState(initial);
+  const [secretSync, setSecretSync] = useState(initialSync);
+  const failed = failedLinks(secretSync);
   const router = useRouter();
   const pathname = usePathname();
   const tab = useSearchParams().get("tab");
@@ -103,12 +117,23 @@ export function ProjectSettings({ initial }: { initial: Environment }) {
                 access.
               </InlineMessage>
             )}
+            {failed.length > 0 && section !== "variables" && (
+              <InlineMessage
+                tone="warning"
+                actions={[{ label: "View", onClick: () => setSection("variables") }]}
+              >
+                {failed.map((l) => PROVIDER_LABELS[l.provider]).join(" and ")}&apos;s last sync failed: new sessions start
+                without {failed.length > 1 ? "their" : "its"} secrets.
+              </InlineMessage>
+            )}
             <fieldset disabled={readOnly} className="min-w-0">
               {section === "general" && <GeneralSection environment={environment} onSaved={setEnvironment} />}
               {section === "variables" && (
                 <VariablesSection
                   environment={environment}
                   onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))}
+                  secretSync={secretSync}
+                  onSyncChange={setSecretSync}
                 />
               )}
               {section === "setup" && <SetupSection environment={environment} onSaved={setEnvironment} />}
@@ -368,7 +393,17 @@ function GeneralSection({ environment, onSaved }: { environment: Environment; on
   );
 }
 
-function VariablesSection({ environment, onSaved }: { environment: Environment; onSaved: (kept: Kept) => void }) {
+function VariablesSection({
+  environment,
+  onSaved,
+  secretSync,
+  onSyncChange,
+}: {
+  environment: Environment;
+  onSaved: (kept: Kept) => void;
+  secretSync: EnvironmentSecretSync | null;
+  onSyncChange: (sync: EnvironmentSecretSync) => void;
+}) {
   const [text, setText] = useState("");
   const [skipped, setSkipped] = useState<string[]>([]);
   const save = useSave();
@@ -433,6 +468,14 @@ function VariablesSection({ environment, onSaved }: { environment: Environment; 
           </ul>
         )}
       </Panel>
+      {secretSync && (
+        <SecretSyncPanel
+          environmentId={environment.id}
+          sync={secretSync}
+          ownNames={environment.envNames}
+          onChange={onSyncChange}
+        />
+      )}
     </section>
   );
 }
