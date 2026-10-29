@@ -2,9 +2,11 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 
 	"runtime-agent/internal/codex"
@@ -18,6 +20,32 @@ import (
 // of the desktop's toolbox at each launch until it answers, and then known:
 // a box doesn't lose its desktop. A session in the user's own folder (the
 // Mac) never gets the tools.
+
+// The desktop server is one of Outrunner's own, under a name the control
+// plane keeps from users and projects ("outrunner…"), and like the Mission's
+// it goes over every other server. Unlike the Mission's, which the control
+// plane adds to the setup it sends, it is added here, on the box: whether a
+// box has a desktop is the box's to know, and the server is the session's,
+// launched on its folder, where the setup is the computer's. So it is the
+// launch's last layer: a server of the setup by its name is dropped as the
+// setup arrives (withoutOwnServers), its Claude config is given after the
+// setup's (Claude takes the last --mcp-config to name a server), and Codex
+// gets it as -c overrides, which win over its config.toml.
+
+// ownServers are the MCP servers this box adds to a launch itself.
+var ownServers = []string{desktop.ServerName}
+
+// withoutOwnServers is a setup's MCP servers without any by the name of one
+// of the box's own.
+func withoutOwnServers(servers map[string]json.RawMessage) map[string]json.RawMessage {
+	out := make(map[string]json.RawMessage, len(servers))
+	for name, server := range servers {
+		if !slices.Contains(ownServers, name) {
+			out[name] = server
+		}
+	}
+	return out
+}
 
 // desktopToolTimeoutSeconds bounds one desktop tool call for the agent's CLI:
 // past the longest the server lets a call run (a page that loads slowly).

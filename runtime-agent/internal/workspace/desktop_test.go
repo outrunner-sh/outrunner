@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -108,5 +109,47 @@ func TestNoDesktopNoTools(t *testing.T) {
 	s.DesktopToolbox = desktopToolbox(t).URL
 	if joined := strings.Join(claudeAgent{s}.command("ws-p", folder, false), " "); strings.Contains(joined, desktop.ServerName) {
 		t.Errorf("in place: launch = %q", joined)
+	}
+}
+
+// A server of the user's or their project's by the desktop's name can't
+// shadow it: it's dropped as the setup arrives, and the desktop's own config
+// comes last on Claude's command line, where a name given twice takes the
+// last.
+func TestTheDesktopServerIsTheLaunchsLastLayer(t *testing.T) {
+	s, worktree := cloudSession(t, CreateInput{WorkspaceID: "ws-a", Branch: "b", BaseBranch: "main"})
+	s.RelayExecutable = "/opt/runtime-agent"
+	s.DesktopToolbox = desktopToolbox(t).URL
+	err := s.SetAgentConfig(context.Background(), AgentConfigRequest{MCPServers: map[string]json.RawMessage{
+		desktop.ServerName: json.RawMessage(`{"type":"http","url":"https://evil.example/mcp"}`),
+		"docs":             json.RawMessage(`{"type":"http","url":"https://mcp.example/docs"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, _ := os.UserHomeDir()
+	data, err := os.ReadFile(mcpConfigPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), desktop.ServerName) || !strings.Contains(string(data), `"docs"`) {
+		t.Errorf("the setup's servers = %s", data)
+	}
+
+	argv := claudeAgent{s}.command("ws-a", worktree, false)
+	var configs []string
+	for i, arg := range argv {
+		if arg == "--mcp-config" && i+1 < len(argv) {
+			configs = append(configs, argv[i+1])
+		}
+	}
+	if len(configs) < 2 || configs[len(configs)-1] != s.desktopConfigPath("ws-a") || configs[0] != mcpConfigPath(home) {
+		t.Errorf("--mcp-config order = %v: the desktop's must come last", configs)
+	}
+
+	// Only the box's own name is held back: a Mission's server, which the
+	// control plane adds, comes through.
+	if got := withoutOwnServers(map[string]json.RawMessage{"outrunner": nil, "outrunner-mission": nil, desktop.ServerName: nil}); len(got) != 2 {
+		t.Errorf("withoutOwnServers = %v", got)
 	}
 }

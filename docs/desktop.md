@@ -16,6 +16,22 @@ Sessions on Modal, Neev and the Mac don't get the tools. At each launch, the
 runtime-agent checks whether Daytona's toolbox answers on the box's loopback
 (`127.0.0.1:2280`).
 
+`outrunner_desktop` is one of Outrunner's own servers, like the Mission's
+`outrunner-mission`: names starting with `outrunner` are kept from users and
+projects. A session's servers are layered in this order, each over the last:
+
+1. the project's servers;
+2. the user's own;
+3. Outrunner's servers that the control plane adds (the Mission's);
+4. the desktop's, added by the box. Only the box knows it has a desktop, and
+   the server runs on the session's folder.
+
+The box drops any server named `outrunner_desktop` from the setup it
+receives. Claude is given the desktop's config last; when two `--mcp-config`
+files name the same server, Claude uses the last one. Codex is given it as
+`-c mcp_servers.outrunner_desktop.*` overrides, which win over its
+`config.toml`.
+
 ## Tools
 
 The names and outputs below are a contract. The agent's instructions name the
