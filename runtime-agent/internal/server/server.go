@@ -172,7 +172,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots, protocol.FeatureRewind},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots, protocol.FeatureRewind, protocol.FeatureCodexAccessToken, protocol.FeatureCodexAccount},
 	})
 }
 
@@ -1362,7 +1362,7 @@ func validAuth(req protocol.SetAuthRequest) error {
 	if !workspace.ValidAuthKind(req.Kind) {
 		return fmt.Errorf("unknown credential kind %q", req.Kind)
 	}
-	if (req.Kind == workspace.AuthNone) != (req.Token == "") || (req.Token != "" && !claude.ValidGatewayToken(req.Token)) {
+	if (req.Kind == workspace.AuthNone) != (req.Token == "") || (req.Token != "" && !workspace.ValidAuthToken(req.Kind, req.Token)) {
 		return errors.New("a credential needs a valid token, and none takes one")
 	}
 	return nil

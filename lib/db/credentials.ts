@@ -1,3 +1,4 @@
+import { accountForSession, inferenceGrant } from "@/lib/codex/grant";
 /**
  * Per-user third-party credentials — the multi-user replacement for the
  * server-wide GITHUB_PAT and shared Anthropic token.
@@ -712,11 +713,14 @@ export function agentAuthStore(userId: string, orgId?: string): AgentAuthStore {
       if (slot) sealed.set("claude-slot", slot.data?.anthropic_key_ciphertext ?? null);
       for (const row of keys?.data ?? []) sealed.set(row.provider, row.key_ciphertext);
 
+      const account = agent === "codex" && (!choices.codex || choices.codex === "codex-account")
+        ? await accountForSession(userId, orgId, !!sealed.get("openai"), choices.codex === "codex-account") : null;
       const opened = new Map<string, string | null>();
       return {
         choice: choices[agent],
         open(credential: AuthCredential) {
           if (credential.kind === "own-login") return null;
+          if (credential.kind === "codex-account") return account ? inferenceGrant(userId, orgId, account) : null;
           const which = credential.kind === "claude-slot" ? "claude-slot" : credential.provider;
           if (!opened.has(which)) {
             // The slot is logged as "anthropic", as getAnthropicKey does.

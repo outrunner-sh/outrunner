@@ -73,44 +73,60 @@ func downloads(srv *httptest.Server, artifacts ...string) []protocol.RestoreDown
 }
 
 func TestACodexSessionIsRestoredWithItsRolloutAndCredential(t *testing.T) {
-	s, fake := restoringService(t)
-	rollout := fixtureRollout(t, "/work/repo")
-	var conversation []byte
-	tr := codex.NewTranslator()
-	offset := int64(0)
-	for _, line := range bytes.SplitAfter(rollout, []byte("\n")) {
-		for _, rec := range append(tr.Line(offset, line), tr.Flush()...) {
-			conversation = append(conversation, rec.Line...)
-		}
-		offset += int64(len(line))
-	}
-	srv := snapshotServer(t, map[string][]byte{"/conversation": conversation, "/rollout": rollout})
-	id := fixtureSessionID
-	_, err := s.Restore(context.Background(), "ws-r", protocol.RestoreWorkspaceRequest{
-		Branch: "feature", BaseBranch: "main", SessionID: &id, Agent: AgentCodex,
-		Auth:      &protocol.SetAuthRequest{Kind: AuthOpenAIAPIKey, Token: testOpenAIKey},
-		Downloads: downloads(srv, "bundle", "patch", "conversation", "rollout"),
-	}, nil)
-	if err != nil {
-		t.Fatalf("Restore: %v", err)
-	}
-	f, _ := s.getFacts("ws-r")
-	sessions := filepath.Join(s.codexHome("ws-r"), "sessions")
-	if f.Agent != AgentCodex || f.Auth != AuthOpenAIAPIKey || f.CodexSessionID != id ||
-		!strings.HasPrefix(f.CodexRollout, sessions) || !strings.HasSuffix(f.CodexRollout, "-"+id+".jsonl") {
-		t.Fatalf("facts = %+v, want Codex on its key, its rollout in its own home", f)
-	}
-	if got := readFileString(t, f.CodexRollout); got != string(rollout) {
-		t.Error("the restored rollout differs")
-	}
-	argv := fake.lastLaunch()
-	if !slices.Contains(argv, "CODEX_HOME="+s.codexHome("ws-r")) || !slices.Contains(argv, "resume") || !slices.Contains(argv, id) {
-		t.Errorf("launch = %q, want codex resume <id> in its own home", argv)
-	}
-	// The tail started with the session finds the log already whole.
-	s.stopCodexTail("ws-r")
-	if got := readFileString(t, conversationPath(s.Root, "ws-r")); got != string(conversation) {
-		t.Errorf("the restored conversation was written to again:\n%s", got)
+	for _, credential := range []protocol.SetAuthRequest{
+		{Kind: AuthOpenAIAPIKey, Token: testOpenAIKey},
+		{Kind: AuthCodexAccessToken, Token: "synthetic-workspace-access-token"},
+	} {
+		t.Run(credential.Kind, func(t *testing.T) {
+			s, fake := restoringService(t)
+			login := &loginRecorder{}
+			s.runCommand = login.run
+			rollout := fixtureRollout(t, "/work/repo")
+			var conversation []byte
+			tr := codex.NewTranslator()
+			offset := int64(0)
+			for _, line := range bytes.SplitAfter(rollout, []byte("\n")) {
+				for _, rec := range append(tr.Line(offset, line), tr.Flush()...) {
+					conversation = append(conversation, rec.Line...)
+				}
+				offset += int64(len(line))
+			}
+			srv := snapshotServer(t, map[string][]byte{"/conversation": conversation, "/rollout": rollout})
+			id := fixtureSessionID
+			_, err := s.Restore(context.Background(), "ws-r", protocol.RestoreWorkspaceRequest{
+				Branch: "feature", BaseBranch: "main", SessionID: &id, Agent: AgentCodex,
+				Auth:      &credential,
+				Downloads: downloads(srv, "bundle", "patch", "conversation", "rollout"),
+			}, nil)
+			if err != nil {
+				t.Fatalf("Restore: %v", err)
+			}
+			f, _ := s.getFacts("ws-r")
+			sessions := filepath.Join(s.codexHome("ws-r"), "sessions")
+			if f.Agent != AgentCodex || f.Auth != credential.Kind || f.CodexSessionID != id ||
+				!strings.HasPrefix(f.CodexRollout, sessions) || !strings.HasSuffix(f.CodexRollout, "-"+id+".jsonl") {
+				t.Fatalf("facts = %+v, want Codex on its key, its rollout in its own home", f)
+			}
+			if got := readFileString(t, f.CodexRollout); got != string(rollout) {
+				t.Error("the restored rollout differs")
+			}
+			argv := fake.lastLaunch()
+			if !slices.Contains(argv, "CODEX_HOME="+s.codexHome("ws-r")) || !slices.Contains(argv, "resume") || !slices.Contains(argv, id) {
+				t.Errorf("launch = %q, want codex resume <id> in its own home", argv)
+			}
+			// The tail started with the session finds the log already whole.
+			s.stopCodexTail("ws-r")
+			if got := readFileString(t, conversationPath(s.Root, "ws-r")); got != string(conversation) {
+				t.Errorf("the restored conversation was written to again:\n%s", got)
+			}
+			flag := "--with-api-key"
+			if credential.Kind == AuthCodexAccessToken {
+				flag = "--with-access-token"
+			}
+			if len(login.calls) != 1 || !slices.Contains(login.calls[0].argv, flag) || login.calls[0].stdin != credential.Token+"\n" {
+				t.Fatal("restore did not log in with the provided credential's own mode")
+			}
+		})
 	}
 }
 

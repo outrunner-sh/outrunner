@@ -357,7 +357,7 @@ func sessionEnvironment(base []string) ([]string, []string) {
 		switch key {
 		case "RUNTIME_AGENT_SECRET", "RUNTIME_AGENT_ROOT", "PORT", "RUNTIME_SANDBOX_ID", "OUTRUNNER_APP_URL":
 			continue
-		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN":
+		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OUTRUNNER_CODEX_GRANT", "GH_TOKEN":
 			if value != "" {
 				secrets = append(secrets, value)
 				hasGitHub = hasGitHub || key == "GH_TOKEN"
@@ -385,7 +385,7 @@ var githubCredentialEnv = []string{
 // a browser in terminal output.
 func (s *Service) RedactionSecrets() []string {
 	secrets := append(append([]string(nil), s.secrets...), s.gatewayFiles().tokens()...)
-	secrets = append(append(secrets, s.authFiles().tokens()...), s.envTokens()...)
+	secrets = append(append(secrets, s.authSecrets()...), s.envTokens()...)
 	secrets = append(append(secrets, s.providedTokens()...), s.credentialTokens()...)
 	return append(secrets, agentConfigTokens()...)
 }
@@ -396,7 +396,7 @@ func (s *Service) RedactionSecrets() []string {
 func (s *Service) refreshLiveSecrets() {
 	s.liveMu.Lock()
 	defer s.liveMu.Unlock()
-	s.liveSecrets.Set(append(s.providedTokens(), s.credentialTokens()...))
+	s.liveSecrets.Set(append(append(s.providedTokens(), s.credentialTokens()...), s.authSecrets()...))
 }
 
 // LiveSecrets are secrets that arrive after a redactor is made: an open
@@ -2275,4 +2275,14 @@ func (s *Service) snapshotCheckouts(checkouts []Checkout) []snapshot.Checkout {
 		out = append(out, snapshot.Checkout{Name: c.Name, FullName: c.FullName, BaseBranch: c.BaseBranch, MirrorPath: RepoMirrorPath(s.Root, c.Name)})
 	}
 	return out
+}
+
+func (s *Service) authSecrets() []string {
+	tokens := s.authFiles().tokens()
+	for _, value := range append([]string(nil), tokens...) {
+		if bearer := codex.AccountBearer(value); bearer != "" {
+			tokens = append(tokens, bearer)
+		}
+	}
+	return tokens
 }

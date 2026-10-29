@@ -21,6 +21,7 @@ const usage = `Usage: outrunner [--url <app>] [--account <id>] [--version] [comm
 Commands:
   (none)   Sign in if needed, then continue setting up in your browser
   login    Sign this terminal in to Outrunner
+  codex-auth [--org <UUID>]  Connect a ChatGPT account through official Codex device login
   claude   Connect your Claude subscription (runs claude setup-token),
            signing in first if needed
   logout   Sign this terminal out
@@ -99,6 +100,12 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return logout(ctx, url, path, config, stdout, stderr)
 	case "whoami":
 		return whoami(ctx, url, config, stdout, stderr)
+	case "codex-auth":
+		config, code := ensureSignedIn(ctx, url, path, config, *account, stdout, stderr)
+		if code != 0 {
+			return code
+		}
+		return connectCodex(ctx, url, config, flags.Args()[1:], stdout, stderr)
 	case "claude":
 		// The command onboarding's subscription page shows: that page is
 		// open already and moves on by itself, so no browser opens after.

@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { ApiKeyCard, type ProviderKeys } from "@/components/api-key-card";
 import { AuthMethodCards } from "@/components/auth-method-cards";
+import { CodexConnection } from "@/components/codex-connection";
 import { ClaudeConnection } from "@/components/claude-connection";
 import { LocalAgentConnection } from "@/components/local-agent-connection";
 import { SectionHeader } from "@/components/settings-details";
@@ -137,7 +138,9 @@ export function AgentAuthPanel({
           through a look at another card. */}
       {methods.map(({ id, credential }) => (
         <div key={id} hidden={id !== shown}>
-          {credential.kind === "claude-slot" ? (
+          {credential.kind === "codex-account" ? (
+            <CodexConnection active={active && id === shown} />
+          ) : credential.kind === "claude-slot" ? (
             <ClaudeConnection meta={claude} onChange={onClaude} active={active && id === shown} />
           ) : credential.kind === "provider-key" ? (
             <ApiKeyCard

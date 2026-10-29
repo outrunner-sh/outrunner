@@ -12,6 +12,7 @@ import type { AuthMethod, AuthMethodId } from "@/lib/agents/registry";
 const ICONS: Record<AuthMethodId, ComponentType<{ className?: string; "aria-hidden"?: boolean }>> = {
   subscription: ClaudeIcon,
   chatgpt: OpenAIIcon,
+  "codex-account": OpenAIIcon,
   local: Terminal,
   "api-key": KeyRound,
 };

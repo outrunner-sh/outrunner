@@ -557,6 +557,10 @@
   ],
   "SetAuthRequest": [
     {
+      "kind": "codex-access-token",
+      "token": "synthetic-workspace-access-token-for-tests"
+    },
+    {
       "kind": "openai-api-key",
       "token": "sk-proj-0123456789abcdef0123456789"
     },
@@ -670,7 +674,8 @@
         "environment-skills",
         "codex-mcp",
         "canvas",
-        "agent-context"
+        "agent-context",
+        "codex-access-token"
       ]
     },
     {
@@ -711,7 +716,7 @@
         "rewind",
         "environment-skills",
         "codex-mcp",
-        "canvas"
+        "canvas", "codex-access-token", "codex-account"
       ]
     }
   ],
