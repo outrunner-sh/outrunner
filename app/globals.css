@@ -190,6 +190,10 @@
 .studio-queue-item button:disabled { cursor: not-allowed; opacity: .5; }
 .studio-queue-item button:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
 .studio-queue-item button svg { width: 13px; height: 13px; }
+/* A queued prompt's actions: the moves and the edit as icons, the sends named. */
+.studio-queue-actions { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; }
+.studio-queue-actions button[aria-label="Move up"], .studio-queue-actions button[aria-label="Move down"], .studio-queue-actions button[aria-label="Edit"] { padding: 0 6px; border-color: transparent; color: #8a8a8a; }
+.studio-queue-edit { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid var(--studio-border); border-radius: 3px; color: var(--studio-text); background: transparent; font: 13px var(--font-geist-sans); resize: none; outline: none; }
 .studio-composer textarea { display:block; width:100%; resize:none; min-height:56px; padding:14px 16px 10px; border:0; outline:0; color:var(--studio-text); background:transparent; font:14px var(--font-geist-sans); }
 .studio-composer textarea::placeholder { color:#6f6f6f !important; opacity:1; }
 .studio-composer textarea:disabled { cursor:not-allowed; opacity:.7; }

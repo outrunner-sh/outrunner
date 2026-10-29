@@ -346,6 +346,13 @@ type MemoryRow = {
   created_at: string;
 };
 
+/** How a person's chats take what's sent mid-turn (20261103100100). */
+type UserChatPreferencesRow = {
+  user_id: string;
+  steer_follow_ups: boolean;
+  updated_at: string;
+};
+
 /** One of a session's chats other than its main one (20261103100000). */
 type WorkspaceChatRow = {
   id: string;
@@ -1881,6 +1888,12 @@ export type Database = {
         Row: MemoryRow;
         Insert: Insert<MemoryRow, "user_id" | "body">;
         Update: Partial<MemoryRow>;
+        Relationships: [];
+      };
+      user_chat_preferences: {
+        Row: UserChatPreferencesRow;
+        Insert: Insert<UserChatPreferencesRow, "user_id"> & Partial<Pick<UserChatPreferencesRow, "updated_at">>;
+        Update: Partial<UserChatPreferencesRow>;
         Relationships: [];
       };
       workspace_chats: {
