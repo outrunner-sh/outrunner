@@ -87,10 +87,13 @@ test("a compaction is a row, and /compact's own records are not prompts", () => 
   const nodes = conversationNodes([prompt("fix it"), said("done"), compacted, command, printed, model]);
   assert.deepEqual(
     nodes.map((node) => node.kind),
-    ["prompt", "prose", "compact", "command"],
+    ["prompt", "prose", "compact", "meta", "meta", "meta"],
   );
   assert.deepEqual(nodes[2], { kind: "compact", key: nodes[2].key, trigger: "manual", preTokens: 45231 });
-  assert.equal(nodes[3].kind === "command" && nodes[3].text, "/model opus");
+  assert.deepEqual(
+    nodes.slice(3).map((node) => node.kind === "meta" ? node.label : node.kind),
+    ["Command", "Command output", "Command"],
+  );
   // Neither a compaction nor a command Claude ran itself is a turn at work.
   assert.equal(claudeIsWorking([prompt("fix it"), said("done"), compacted]), false);
   assert.equal(claudeIsWorking([prompt("fix it"), said("done"), compacted, command, printed]), false);
