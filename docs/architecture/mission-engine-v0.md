@@ -1,3 +1,6 @@
+> **Status: Superseded by Missions ([`docs/missions.md`](../missions.md)).** Kept as the design it was;
+> Missions and Runners are what was built instead.
+
 # Mission Engine v0 — Design
 
 > **This document is intentionally blocked on Runtime M3. It is a design document only.

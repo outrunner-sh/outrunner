@@ -28,6 +28,7 @@ import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import { GetStarted } from "@/components/get-started";
 import { HomeUserMenu } from "@/components/home-user-menu";
+import { SidebarMissions } from "@/components/missions/sidebar-missions";
 import { OutrunnerAllowance } from "@/components/outrunner-allowance";
 import { RowTail, SessionMenu, StatusSections } from "@/components/sidebar-status";
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
@@ -252,6 +253,7 @@ export function AppSidebar({
       </nav>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+        <SidebarMissions active={active} projects={projects} />
         <div className="flex items-center justify-between px-2">
           <GroupingSwitch value={grouping} onChange={chooseGrouping} />
           {/* Opens the new-session screen with its GitHub repository picker

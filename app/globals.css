@@ -625,3 +625,14 @@
 .studio-composer-context .ring-track { stroke: var(--studio-border); }
 .studio-composer-context .ring-fill { stroke: #8a8a8a; transition: stroke-dasharray .3s; }
 .studio-composer-context.is-full .ring-fill { stroke: var(--studio-amber); }
+/* Missions (components/missions): a status at work breathes, slowly; a
+   row that changes group fades into its new place. */
+@keyframes mission-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.mission-pulse { animation: mission-pulse 1.8s ease-in-out infinite; }
+@keyframes mission-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+.mission-in { animation: mission-in .22s cubic-bezier(.23, 1, .32, 1) both; }
+@media (prefers-reduced-motion: reduce) { .mission-pulse, .mission-in { animation: none; } }
+/* A Mission's page: its Runners pane is wider than a session's Environment,
+   ruled off from the chat. */
+.studio-runners { display: flex; flex-direction: column; height: 100%; min-height: 0; border-left: 1px solid var(--studio-line); background: var(--studio-bg); }
+@media (min-width: 1101px) { .studio-shell.is-mission:not(.no-inspector) { grid-template-columns: minmax(0, 1fr) 380px; } }

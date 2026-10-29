@@ -150,7 +150,10 @@ export function buildSidebarGroups(
   } = {},
 ): SidebarGroup[] {
   const known = new Set(projects.map((p) => p.id));
-  const cloud: SidebarGroup[] = buildNavGroups(projects, workspaces).map(({ project, items }) => ({
+  // Missions and their Runners are listed in the Missions section instead
+  // (components/missions/sidebar-missions.tsx).
+  const sessions = workspaces.filter((w) => w.kind !== "mission" && !w.parentMissionId);
+  const cloud: SidebarGroup[] = buildNavGroups(projects, sessions).map(({ project, items }) => ({
     key: `cloud:${project.id}`,
     label: project.name,
     detail: project.fullName,
