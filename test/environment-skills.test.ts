@@ -116,11 +116,17 @@ test("what a repository commits for its agents is listed by kind", () => {
   );
 });
 
-test("a session downloads each catalog repository once, and a registry whole", () => {
+test("a session sends selected skills beside a registry of the same repository", () => {
   const skill = (source: string, name: string) => ({ slug: `${source}/${name}`, name, source, skill: name });
   assert.deepEqual(
     skillSources(
-      [skill("anthropics/skills", "pdf"), skill("anthropics/skills", "docx"), skill("acme/skills", "lint"), skill("other/x", "y")],
+      [
+        skill("anthropics/skills", "pdf"),
+        skill("anthropics/skills", "docx"),
+        skill("acme/skills", "lint"),
+        skill("acme/skills", "vercel-react-best-practices"),
+        skill("other/x", "y"),
+      ],
       [
         { fullName: "Acme/Skills", branch: "main", token: "ghs_x" },
         { fullName: "acme/public", branch: "trunk" },
@@ -128,6 +134,7 @@ test("a session downloads each catalog repository once, and a registry whole", (
     ),
     [
       { repo: "anthropics/skills", skills: ["pdf", "docx"] },
+      { repo: "Acme/Skills", ref: "main", token: "ghs_x", skills: ["lint", "vercel-react-best-practices"] },
       { repo: "other/x", skills: ["y"] },
       { repo: "Acme/Skills", ref: "main", token: "ghs_x" },
       { repo: "acme/public", ref: "trunk" },

@@ -205,6 +205,12 @@ func (s *Service) SetSkills(ctx context.Context, sources []SkillSource) (SkillsR
 				fail("a skill of yours has this name: yours is kept")
 				continue
 			case next.Skills[skill.name] != "":
+				if strings.EqualFold(next.Skills[skill.name], source.Repo) {
+					// A catalog pick and its repository's registry can both
+					// name this skill. Keep the first copy without reporting
+					// the same project skill as a collision.
+					continue
+				}
 				fail("another of the project's skills has this name")
 				continue
 			case !owned && anyExists(skillDirs(home, skill.name)):

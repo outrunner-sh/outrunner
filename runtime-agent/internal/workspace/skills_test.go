@@ -330,16 +330,19 @@ func TestSetSkillsKeepsASelectedRootSkillWithNestedSkills(t *testing.T) {
 	})
 	s := NewService(t.TempDir())
 	result, err := s.SetSkills(context.Background(), []SkillSource{{
-		Repo: "acme/skills", Skills: []string{"vercel-react-best-practices"},
-	}})
+		Repo: "acme/skills", Skills: []string{"vercel-react-best-practices", "template"},
+	}, {Repo: "acme/skills"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(result.Installed, []string{"vercel-react-best-practices"}) || len(result.Failed) != 0 {
+	if !slices.Equal(result.Installed, []string{"template", "vercel-react-best-practices"}) || len(result.Failed) != 0 {
 		t.Fatalf("installed %q, failed %+v", result.Installed, result.Failed)
 	}
 	if !fileExists(filepath.Join(home, ".claude", "skills", "vercel-react-best-practices", "template", "SKILL.md")) {
 		t.Error("the selected repository-root skill was not installed")
+	}
+	if !fileExists(filepath.Join(home, ".claude", "skills", "template", "SKILL.md")) {
+		t.Error("the registry's nested skill was not installed")
 	}
 }
 

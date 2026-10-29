@@ -163,17 +163,22 @@ export type RegistrySource = { fullName: string; branch: string; token?: string 
 /**
  * What a new session's box downloads (POST /skills): a registry's
  * repository whole, and each other repository for the catalog skills picked
- * from it. A catalog skill of a repository that is also a registry comes
- * with the registry's.
+ * from it. When a picked skill's repository is also a registry, send both:
+ * the named pick preserves a selected root skill, and the registry installs
+ * the rest. The box deduplicates skills present in both sources.
  */
 export function skillSources(skills: CatalogSkill[], registries: RegistrySource[]): SkillSource[] {
   const sources: SkillSource[] = [];
-  const registryRepos = new Set(registries.map((r) => r.fullName.toLowerCase()));
+  const registriesByRepo = new Map(registries.map((r) => [r.fullName.toLowerCase(), r]));
   const picked = new Map<string, SkillSource & { skills: string[] }>();
   for (const skill of skills) {
     const key = skill.source.toLowerCase();
-    if (registryRepos.has(key)) continue;
-    const source = picked.get(key) ?? { repo: skill.source, skills: [] };
+    const registry = registriesByRepo.get(key);
+    const source =
+      picked.get(key) ??
+      (registry
+        ? { repo: registry.fullName, ref: registry.branch, ...(registry.token && { token: registry.token }), skills: [] }
+        : { repo: skill.source, skills: [] });
     if (!source.skills.includes(skill.skill)) source.skills.push(skill.skill);
     picked.set(key, source);
   }
