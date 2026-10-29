@@ -9,7 +9,7 @@
 import { listOrgProjects } from "@/lib/db/org-access";
 import { getPullRequestStatus } from "@/lib/github/client";
 import { appSlug, githubAppConfig } from "@/lib/github/app";
-import { type FileCounts, inboxFileCounts, pullFiles } from "@/lib/review/files";
+import { type FileCounts, filesReadComplete, inboxFileCounts, pullFiles } from "@/lib/review/files";
 import type { PullFile } from "@/lib/review/hunks";
 import { countLines, type LineCounts } from "@/lib/review/line-kinds";
 import { githubGetResult } from "@/lib/github/rest";
@@ -359,7 +359,7 @@ export async function pullDetail(actor: TriageActor, fullName: string, number: n
     files: files?.files ?? null,
     // Every file read: the pages ran out, or as many came as GitHub counts
     // (a PR of exactly the cap's number of files).
-    filesComplete: !!files && (files.complete || files.files.length >= (pull.changed_files ?? Number.POSITIVE_INFINITY)),
+    filesComplete: filesReadComplete(files, pull.changed_files ?? Number.POSITIVE_INFINITY),
     lines: files ? countLines(files.files) : null,
     checks: mergeStatus?.checks ?? { passing: 0, failing: 0, pending: 0 },
     mergeableState: mergeStatus?.mergeableState ?? "unknown",

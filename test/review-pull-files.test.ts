@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-import { inboxFileCounts, pullFiles } from "@/lib/review/files";
+import { filesReadComplete, inboxFileCounts, pullFiles } from "@/lib/review/files";
 import { byKindThenPath, countLines } from "@/lib/review/line-kinds";
 
 const realFetch = globalThis.fetch;
@@ -38,11 +38,22 @@ test("files GitHub didn't list say so, rather than read as none", async () => {
   assert.deepEqual([partial?.files.length, partial?.complete], [100, false]);
 });
 
-test("the inbox reads one page, partial past it", async () => {
-  const asked = serve([page(100), page(100, 100)]);
-  const read = await pullFiles("t", "acme/repo", 7, 1);
-  assert.deepEqual([read?.files.length, read?.complete], [100, false]);
-  assert.deepEqual(asked, [1]);
+test("the five-page pull read stops at the cap, even if the next page has more", async () => {
+  const asked = serve([page(100), page(100, 100), page(100, 200), page(100, 300), page(100, 400), page(1, 500)]);
+  const read = await pullFiles("t", "acme/repo", 7);
+  assert.deepEqual([read?.files.length, read?.complete], [500, false]);
+  assert.deepEqual(asked, [1, 2, 3, 4, 5]);
+});
+
+test("file completeness handles an exact cap and partial failed reads", async () => {
+  const atCap = { files: page(500) as never[], complete: false };
+  assert.equal(filesReadComplete(atCap, 500), true);
+  assert.equal(filesReadComplete(atCap, 501), false);
+  assert.equal(filesReadComplete(null, 0), false);
+
+  serve([page(100), null]);
+  const partial = await pullFiles("t", "acme/repo", 7);
+  assert.equal(filesReadComplete(partial, 101), false);
 });
 
 test("counting takes a file's kind as already worked out", () => {
@@ -92,6 +103,28 @@ test("the inbox shows no counts when GitHub doesn't answer", async () => {
     throw new Error("offline");
   }) as typeof fetch;
   assert.equal((await inboxFileCounts("t", "acme/repo", [7])).size, 0);
+});
+
+test("inbox count queries are chunked, and one failed group leaves the others", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const query = (JSON.parse(String(init?.body)) as { query: string }).query;
+    calls.push(query);
+    if (calls.length === 2) return new Response("{}", { status: 502 });
+    const numbers = [...query.matchAll(/p(\d+): pullRequest/g)].map((m) => Number(m[1]));
+    return new Response(
+      JSON.stringify({
+        data: {
+          repository: Object.fromEntries(numbers.map((n) => [`p${n}`, { files: { pageInfo: { hasNextPage: false }, nodes: [{ path: `lib/${n}.ts`, additions: n, deletions: 0 }] } }])),
+        },
+      }),
+    );
+  }) as typeof fetch;
+  const counts = await inboxFileCounts("t", "acme/repo", Array.from({ length: 21 }, (_, i) => i + 1));
+  assert.equal(calls.length, 3);
+  assert.equal(counts.has(1), true);
+  assert.equal(counts.has(11), false);
+  assert.equal(counts.has(21), true);
 });
 
 test("files sort code, then tests, then generated, by path in one locale", () => {
