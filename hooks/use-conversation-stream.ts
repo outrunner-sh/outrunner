@@ -85,9 +85,11 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     });
   }, [workspaceId, events]);
   const rewind = useCallback((cut: { at: number; uuid: string; rewinds: number }) => {
-    if (cut.rewinds === rewindsRef.current) return;
-    const reset = cut.rewinds < rewindsRef.current;
-    const frame = reset ? { ...cut, at: 0, uuid: "", reset: true } : cut;
+    // A lower counter belongs to a restored history. Only the stream can
+    // reset and replay it; applying that reset locally would erase history
+    // while leaving the existing socket at its old cursor.
+    if (cut.rewinds <= rewindsRef.current) return;
+    const frame = cut;
     rewindsRef.current = cut.rewinds;
     lastEventIdRef.current = frame.at > 0 ? String(frame.at) : null;
     setEvents((prev) => appendEvent(prev, { t: "rewind", ...frame }, String(frame.at), seenIdsRef.current));

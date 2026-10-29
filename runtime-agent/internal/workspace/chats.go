@@ -360,6 +360,10 @@ func (s *Service) handoff(workspaceID, chatID, from, fromName string, side bool)
 // tools used named rather than quoted, the box's secrets masked. A long log
 // gives its most recent part, which the transcript says.
 func (s *Service) writeTranscript(workspaceID, log, title, path string) ([]turn, error) {
+	return s.writeTranscriptPart(workspaceID, log, title, path, log, false)
+}
+
+func (s *Service) writeTranscriptPart(workspaceID, log, title, path, sourceLog string, truncated bool) ([]turn, error) {
 	turns, partial, err := readTurns(log, handoffReadLimit)
 	if err != nil {
 		return nil, err
@@ -369,8 +373,8 @@ func (s *Service) writeTranscript(workspaceID, log, title, path string) ([]turn,
 	s.makeContextDir(context.Background(), workspaceID, s.worktreePath(workspaceID))
 	var doc strings.Builder
 	fmt.Fprintf(&doc, "# %s\n\n", title)
-	if partial {
-		fmt.Fprintf(&doc, "Only the most recent part of a long conversation is here; all of it is in %s.\n\n", log)
+	if partial || truncated {
+		fmt.Fprintf(&doc, "Only the most recent part of a long conversation is here; all of it is in %s.\n\n", sourceLog)
 	}
 	for _, t := range turns {
 		fmt.Fprintf(&doc, "## %s\n\n%s\n\n", t.heading(), mask(t.text))

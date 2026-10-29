@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -219,13 +220,13 @@ func cutLog(log string, at int64, rewinds int) error {
 // editHandoff is what a Codex chat's edited prompt goes with: the
 // conversation before it, which its new Codex conversation hasn't had, as a
 // transcript and its latest turns.
-func (s *Service) editHandoff(key, log string) (string, error) {
+func (s *Service) editHandoff(key, log, sourceLog string, partial bool) (string, error) {
 	parent, chatID := s.owner(key), MainChat
 	if parent != key {
 		chatID = strings.TrimPrefix(key, parent+"_")
 	}
 	path := s.handoffPath(parent, chatID+"-before-edit")
-	turns, err := s.writeTranscript(parent, log, "This chat before its edit", path)
+	turns, err := s.writeTranscriptPart(parent, log, "This chat before its edit", path, sourceLog, partial)
 	if err != nil {
 		return "", err
 	}
@@ -257,6 +258,22 @@ func (s *Service) editHandoffBefore(key, log string, cut int64) (string, error) 
 	if cut > handoffReadLimit {
 		start = cut - handoffReadLimit
 	}
+	partial := start > 0
+	if partial {
+		var previous [1]byte
+		if _, err := source.ReadAt(previous[:], start-1); err != nil {
+			prefix.Close()
+			return "", err
+		}
+		if previous[0] != '\n' {
+			fragment, err := bufio.NewReader(io.NewSectionReader(source, start, cut-start)).ReadBytes('\n')
+			if err != nil && err != io.EOF {
+				prefix.Close()
+				return "", err
+			}
+			start += int64(len(fragment))
+		}
+	}
 	_, copyErr := io.Copy(prefix, io.NewSectionReader(source, start, cut-start))
 	closeErr := prefix.Close()
 	if copyErr != nil {
@@ -265,5 +282,5 @@ func (s *Service) editHandoffBefore(key, log string, cut int64) (string, error) 
 	if closeErr != nil {
 		return "", closeErr
 	}
-	return s.editHandoff(key, prefix.Name())
+	return s.editHandoff(key, prefix.Name(), log, partial)
 }

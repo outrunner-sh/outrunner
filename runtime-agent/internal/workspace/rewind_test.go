@@ -237,3 +237,27 @@ func TestAFailedEditRelaunchStillRecordsTheCutForStreams(t *testing.T) {
 		t.Fatal("log not cut")
 	}
 }
+
+func TestEditHandoffAlignsALongPrefixAndNamesItsOriginalLog(t *testing.T) {
+	s, _, id, log := rewindSession(t)
+	data := strings.Repeat(" ", int(handoffReadLimit)+123) + `{"type":"user","message":{"role":"user","content":"partial-record-must-not-leak"}}` + "\n" + twoTurns
+	if err := os.WriteFile(log, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.editHandoffBefore(id, log, int64(len(data))); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := os.ReadFile(s.handoffPath(id, MainChat+"-before-edit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(doc), "partial-record-must-not-leak") {
+		t.Fatal("leading partial record entered the handoff")
+	}
+	if !strings.Contains(string(doc), "Only the most recent part") || !strings.Contains(string(doc), log) {
+		t.Fatalf("missing truncation warning and original log: %s", doc)
+	}
+	if !strings.Contains(string(doc), "Now make it blue") {
+		t.Fatal("complete recent record was lost")
+	}
+}
