@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/loaders";
 import { refreshMissions } from "@/hooks/use-missions";
+import { useDraftText } from "@/lib/client/drafts";
 import { askPermission } from "@/lib/notifications/show";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import { firstPromptQuery, newFirstPrompt } from "@/lib/session/first-prompt";
@@ -31,7 +32,7 @@ export function NewMissionDialog({
 }) {
   const router = useRouter();
   const [projectId, setProjectId] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useDraftText("mission:new");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const text = useRef<HTMLTextAreaElement>(null);

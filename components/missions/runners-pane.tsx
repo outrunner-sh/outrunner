@@ -17,6 +17,7 @@ import { DiffSize, PullRequestChip, RunnerGlyph, UnreadDot } from "@/components/
 import { Spinner } from "@/components/ui/loaders";
 import { SkeletonRows } from "@/components/ui/skeleton-swap";
 import { refreshMissions, useMission } from "@/hooks/use-missions";
+import { useDraftText } from "@/lib/client/drafts";
 import { rememberRunnerDetail, useKeptRunnerDetail, type RunnerDetailView } from "@/lib/missions/kept-missions";
 import { MAX_RUNNERS } from "@/lib/missions/rules";
 import { RUNNER_GROUPS, type RunnerView } from "@/lib/missions/view";
@@ -183,13 +184,16 @@ function RunnerRow({ runner, onOpen }: { runner: RunnerView; onOpen: () => void 
  *  its brief, and a box to message it. */
 function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner: RunnerView; onBack: () => void }) {
   const [read, setRead] = useState<RunnerDetailView | null>(null);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useDraftText(`runner:${runner.id}`);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
   // The message being written, for Escape to leave alone wherever focus is.
-  const draft = useRef("");
+  const draft = useRef(message);
+  useEffect(() => {
+    draft.current = message;
+  }, [message]);
   const back = useRef<HTMLButtonElement>(null);
   // This Ship as it was last read here, so opening it again paints at once;
   // this look's answer replaces it as it lands (lib/missions/kept-missions.ts).
@@ -246,7 +250,6 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? "It didn't send. Try again.");
       setMessage("");
-      draft.current = "";
       setSent(true);
       void refreshMissions();
       setTimeout(() => setSent(false), 2500);
@@ -332,7 +335,6 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
             value={message}
             onChange={(e) => {
               setMessage(e.target.value);
-              draft.current = e.target.value;
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {

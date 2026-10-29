@@ -4,6 +4,7 @@ import { useFormStatus } from "react-dom";
 
 import { LoadingButton } from "@/components/ui/loading-button";
 import { clearKeptPages } from "@/lib/client/kept-page";
+import { clearDrafts } from "@/lib/client/drafts";
 import { clearMissions } from "@/lib/missions/kept-missions";
 import { clearAppDataCache } from "@/lib/session/app-data-cache";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
@@ -25,6 +26,7 @@ export function SignOutButton() {
         clearMissions();
         clearKeptTriage();
         clearKeptPages();
+        clearDrafts();
       }}
       variant="outline"
       status={pending ? "pending" : "idle"}

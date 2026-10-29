@@ -8,6 +8,7 @@ import { dropQuote, usePickedQuote } from "@/components/review/quote-store";
 import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { useDraftText } from "@/lib/client/drafts";
 import type { LineQuote } from "@/lib/review/change";
 import { isImeKeydown } from "@/lib/session/composing";
 
@@ -74,7 +75,7 @@ function QuoteChip({ quote, onDrop }: { quote: LineQuote; onDrop?: () => void })
  */
 export function ReviewChat({ repo, number, canChange }: { repo: string; number: number; canChange: boolean }) {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useDraftText(`review:${repo}#${number}`);
   const [busy, setBusy] = useState<"ask" | "change" | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [quote, setQuote] = useState<LineQuote | null>(null);

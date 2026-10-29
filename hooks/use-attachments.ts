@@ -1,146 +1,139 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback } from "react";
 
+import { DRAFTS, type PendingAttachment, useDraft } from "@/lib/client/drafts";
 import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_BYTES,
 } from "@/lib/runtime/attachments";
 import { dropPreview, keepPreview } from "@/lib/session/attachment-previews";
 
-export type PendingAttachment = {
-  /** Stable key for the list; becomes the server id once uploaded. */
-  key: string;
-  id: string | null;
-  filename: string;
-  contentType: string;
-  sizeBytes: number;
-  /** Object URL for an image preview; revoked when the item goes away. */
-  previewUrl: string | null;
-  status: "uploading" | "ready" | "error";
-  /** How much of it has uploaded, 0 to 1, while it uploads. */
-  progress?: number;
-  error?: string;
-};
+export type { PendingAttachment } from "@/lib/client/drafts";
+
+const NONE: PendingAttachment[] = [];
+let seq = 0;
 
 /**
- * Files staged on the composer.
+ * Files staged on the composer, kept in its draft (lib/client/drafts.ts) at
+ * `draftKey`: they are still there, uploading or uploaded, when the composer
+ * comes back after going away.
  *
  * Uploading starts the moment a file is picked rather than on send, so the cost
  * is paid while the user is still typing and sending stays instant. The
  * consequence is that a file removed before sending has to be deleted
  * server-side, which {@link remove} does.
  */
-export function useAttachments() {
-  const [items, setItems] = useState<PendingAttachment[]>([]);
-  const seq = useRef(0);
-  // What is staged, kept here as well as in state: a state updater may run
-  // after the call that queued it (or twice, in development), so it can neither
-  // report which files fit nor be where previews are revoked and uploads
-  // deleted. Keyed like `items`.
-  const staged = useRef(new Map<string, { id: string | null; previewUrl: string | null }>());
-
-  const setItem = useCallback((key: string, patch: Partial<PendingAttachment>) => {
-    setItems((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)));
-  }, []);
+export function useAttachments(draftKey: string) {
+  const items = useDraft(draftKey)?.attachments ?? NONE;
 
   /**
    * Stage files and start uploading them. Returns how many were left out for
    * want of room (MAX_ATTACHMENTS_PER_MESSAGE), so the caller can say so; the
-   * uploads carry on in the background.
+   * uploads carry on in the background, the composer there or not.
    */
   const add = useCallback(
     (files: File[]): number => {
       if (files.length === 0) return 0;
-      const room = Math.max(0, MAX_ATTACHMENTS_PER_MESSAGE - staged.current.size);
+      const staged = DRAFTS.get(draftKey)?.attachments.length ?? 0;
+      const room = Math.max(0, MAX_ATTACHMENTS_PER_MESSAGE - staged);
       const accepted = files.slice(0, room).map((file) => {
-        seq.current += 1;
-        const key = `pending-${seq.current}`;
+        seq += 1;
+        const key = `pending-${Date.now().toString(36)}-${seq}`;
         const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : null;
-        staged.current.set(key, { id: null, previewUrl });
         return { file, key, previewUrl };
       });
-      setItems((prev) => [
-        ...prev,
-        ...accepted.map(({ file, key, previewUrl }) => ({
-          key,
-          id: null,
-          filename: file.name,
-          contentType: file.type,
-          sizeBytes: file.size,
-          previewUrl,
-          status: "uploading" as const,
-        })),
-      ]);
+      DRAFTS.update(draftKey, (draft) => ({
+        ...draft,
+        attachments: [
+          ...draft.attachments,
+          ...accepted.map(({ file, key, previewUrl }) => ({
+            key,
+            id: null,
+            filename: file.name,
+            contentType: file.type,
+            sizeBytes: file.size,
+            previewUrl,
+            status: "uploading" as const,
+          })),
+        ],
+      }));
 
-      for (const { file, key } of accepted) {
+      for (const { file, key, previewUrl } of accepted) {
         if (file.size > MAX_ATTACHMENT_BYTES) {
           const mb = Math.round(MAX_ATTACHMENT_BYTES / (1024 * 1024));
-          setItem(key, { status: "error", error: `It's over ${mb} MB, the most one file can be.` });
+          setItem(draftKey, key, { status: "error", error: `It's over ${mb} MB, the most one file can be.` });
           continue;
         }
-        void uploadAttachment(file, (progress) => setItem(key, { progress })).then(
+        // What the preview is after a reload, the object URL gone with the page.
+        if (previewUrl) void thumbnailOf(file).then((thumbnail) => thumbnail && setItem(draftKey, key, { thumbnail }));
+        void uploadAttachment(file, (progress) => setItem(draftKey, key, { progress })).then(
           (attachment) => {
-            const entry = staged.current.get(key);
-            if (!entry) {
-              // Removed while uploading: nothing shows it, so do not keep it.
+            if (!setItem(draftKey, key, { id: attachment.id, filename: attachment.filename, status: "ready", progress: 1 })) {
+              // Removed while uploading (or the draft went): nothing shows
+              // it, so do not keep it.
+              if (previewUrl) URL.revokeObjectURL(previewUrl);
               void fetch(`/api/attachments/${attachment.id}`, { method: "DELETE" }).catch(() => {});
               return;
             }
-            entry.id = attachment.id;
             // The message it goes with shows it from its own bytes
             // (attachment-previews.ts), which keeps the object URL from here.
-            keepPreview(attachment.id, { filename: attachment.filename, contentType: file.type, url: entry.previewUrl });
-            setItem(key, { id: attachment.id, filename: attachment.filename, status: "ready", progress: 1 });
+            keepPreview(attachment.id, { filename: attachment.filename, contentType: file.type, url: previewUrl });
           },
           (err: unknown) =>
-            setItem(key, { status: "error", error: err instanceof Error ? err.message : "Couldn't upload it. Remove it and attach it again." }),
+            setItem(draftKey, key, {
+              status: "error",
+              error: err instanceof Error ? err.message : "Couldn't upload it. Remove it and attach it again.",
+            }),
         );
       }
       return files.length - accepted.length;
     },
-    [setItem],
+    [draftKey],
   );
 
-  const remove = useCallback((key: string) => {
-    const entry = staged.current.get(key);
-    staged.current.delete(key);
-    if (entry?.id) dropPreview(entry.id);
-    else if (entry?.previewUrl) URL.revokeObjectURL(entry.previewUrl);
-    // Best-effort server cleanup: the user has already seen it go, and a
-    // leftover row is invisible to them.
-    if (entry?.id) void fetch(`/api/attachments/${entry.id}`, { method: "DELETE" }).catch(() => {});
-    setItems((prev) => prev.filter((item) => item.key !== key));
-  }, []);
+  const remove = useCallback(
+    (key: string) => {
+      const entry = DRAFTS.get(draftKey)?.attachments.find((item) => item.key === key);
+      if (!entry) return;
+      if (entry.id) dropPreview(entry.id);
+      else revoke(entry);
+      // Best-effort server cleanup: the user has already seen it go, and a
+      // leftover row is invisible to them.
+      if (entry.id) void fetch(`/api/attachments/${entry.id}`, { method: "DELETE" }).catch(() => {});
+      DRAFTS.update(draftKey, (draft) => ({ ...draft, attachments: draft.attachments.filter((item) => item.key !== key) }));
+    },
+    [draftKey],
+  );
 
   /** Take the attachments with these ids off the composer, without deleting
    *  them server-side: they are being sent, while anything staged since
    *  stays. Their previews live on in attachment-previews.ts, for the message
    *  they went with. Returns them, for {@link restore} if the send fails. */
-  const forget = useCallback((ids: readonly string[]): PendingAttachment[] => {
-    const sent = new Set(ids);
-    const keys = new Set<string>();
-    for (const [key, entry] of staged.current) {
-      if (entry.id && sent.has(entry.id)) {
-        keys.add(key);
-        staged.current.delete(key);
-      }
-    }
-    const taken = items.filter((item) => keys.has(item.key));
-    if (keys.size > 0) setItems((prev) => prev.filter((item) => !keys.has(item.key)));
-    return taken;
-  }, [items]);
+  const forget = useCallback(
+    (ids: readonly string[]): PendingAttachment[] => {
+      const sent = new Set(ids);
+      const taken = (DRAFTS.get(draftKey)?.attachments ?? []).filter((item) => item.id && sent.has(item.id));
+      if (taken.length === 0) return [];
+      const keys = new Set(taken.map((item) => item.key));
+      DRAFTS.update(draftKey, (draft) => ({ ...draft, attachments: draft.attachments.filter((item) => !keys.has(item.key)) }));
+      return taken;
+    },
+    [draftKey],
+  );
 
-  /** Put attachments {@link forget} took back on the composer, ahead of any
-   *  staged since: the send they went with didn't go. */
-  const restore = useCallback((taken: readonly PendingAttachment[]) => {
-    const back = taken.filter((item) => !staged.current.has(item.key));
-    if (back.length === 0) return;
-    const rest = new Map(staged.current);
-    staged.current = new Map(back.map((item) => [item.key, { id: item.id, previewUrl: item.previewUrl }]));
-    for (const [key, entry] of rest) staged.current.set(key, entry);
-    setItems((prev) => [...back, ...prev.filter((item) => !back.some((b) => b.key === item.key))]);
-  }, []);
+  /** Put attachments {@link forget} took back in the draft, ahead of any
+   *  staged since: the send they went with didn't go. The composer there or
+   *  not, they land in the draft it left. */
+  const restore = useCallback(
+    (taken: readonly PendingAttachment[]) => {
+      DRAFTS.update(draftKey, (draft) => {
+        const back = taken.filter((item) => !draft.attachments.some((a) => a.key === item.key));
+        return back.length === 0 ? draft : { ...draft, attachments: [...back, ...draft.attachments] };
+      });
+    },
+    [draftKey],
+  );
 
   /** Ids to send. Excludes anything still uploading or failed. */
   const readyIds = items.flatMap((item) =>
@@ -149,6 +142,45 @@ export function useAttachments() {
   const busy = items.some((item) => item.status === "uploading");
 
   return { items, add, remove, forget, restore, readyIds, busy };
+}
+
+/** Patch the staged file `key` in the draft at `draftKey`; false when it is
+ *  no longer there. */
+function setItem(draftKey: string, key: string, patch: Partial<PendingAttachment>): boolean {
+  if (!DRAFTS.get(draftKey)?.attachments.some((item) => item.key === key)) return false;
+  DRAFTS.update(draftKey, (draft) => ({
+    ...draft,
+    attachments: draft.attachments.map((item) => (item.key === key ? { ...item, ...patch } : item)),
+  }));
+  return true;
+}
+
+function revoke(item: PendingAttachment): void {
+  if (item.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(item.previewUrl);
+}
+
+/** The longest side of a kept preview, in pixels. */
+const THUMBNAIL_SIZE = 256;
+/** The most a kept preview may take, in characters: a larger one isn't kept,
+ *  and the file shows without its picture after a reload. */
+const THUMBNAIL_CHARS = 80_000;
+
+/** A small data URL of an image, for its preview to outlive the page; null
+ *  where the browser can't draw it. */
+async function thumbnailOf(file: File): Promise<string | null> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, THUMBNAIL_SIZE / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const url = canvas.toDataURL("image/webp", 0.8);
+    return url.length <= THUMBNAIL_CHARS ? url : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Upload one file, saying how far along it is as it goes (`onProgress`, 0

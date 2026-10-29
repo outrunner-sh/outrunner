@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/loaders";
 import { clearKeptPages } from "@/lib/client/kept-page";
+import { clearDrafts } from "@/lib/client/drafts";
 import { clearMissions } from "@/lib/missions/kept-missions";
 import { clearAppDataCache } from "@/lib/session/app-data-cache";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
@@ -73,6 +74,7 @@ function SignOutItem() {
           clearMissions();
           clearKeptTriage();
           clearKeptPages();
+          clearDrafts();
         }}
       >
         {pending ? <Spinner /> : <LogOut />}

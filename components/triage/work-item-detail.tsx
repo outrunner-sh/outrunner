@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/loaders";
 import { useNow } from "@/hooks/use-now";
+import { useDraftText } from "@/lib/client/drafts";
 import { relativeTime } from "@/lib/nav/sidebar";
 import { rememberTriageDetail, useKeptDetail } from "@/lib/triage/kept-triage";
 import {
@@ -607,7 +608,7 @@ function Activity({
   now: number;
   onAdded: (note: WorkItemNote) => void;
 }) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useDraftText(`triage:note/${item.id}`);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
