@@ -381,7 +381,7 @@ async function restoreDaytonaWorkspace(
       );
     }
     // Before the restore, which launches the session at once.
-    await setUpSession(agent, identity, upgrade, owner.id, project.id, workspace.environmentId);
+    await setUpSession(agent, identity, upgrade, owner.id, project.id, workspace.environmentId, { agent: workspace.agent });
     const bundleRef = tree.kind === "git-bundle+patch" && tree.ref && tree.ref !== workspace.branch ? tree.ref : undefined;
     let restoredWorktree: string | undefined;
     await restoreSignedIn(sessionAuthClient(agent, identity, upgrade), workspace.agent, auth, async (credential) => {

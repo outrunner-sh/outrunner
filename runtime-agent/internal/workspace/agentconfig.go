@@ -20,13 +20,16 @@ import (
 
 // The user's own agent setup, imported from their Mac: CLAUDE.md, skills,
 // subagents and slash commands under the computer's ~/.claude, Codex's
-// ~/.codex/AGENTS.md, and Claude's MCP servers and plugin settings. It is the
+// ~/.codex/AGENTS.md, and the MCP servers and Claude's plugin settings. It is the
 // computer's, shared by its sessions (one user's, one project's), as it was
 // on the Mac. The files come as an archive, installed item by item over what
 // an earlier import installed (anything else under ~/.claude is left alone);
 // the MCP servers and settings are files of their own, given to each Claude
 // launch with --mcp-config and --settings, never merged into ~/.claude.json,
-// which Claude rewrites as it runs.
+// which Claude rewrites as it runs. A Codex session in a home of its own gets
+// the same MCP servers in its config.toml (codex_auth.go); the servers are
+// the user's own with their project's under them and Outrunner's over both,
+// merged by the control plane.
 
 // ErrInvalidAgentConfig is a setup the computer can't take.
 var ErrInvalidAgentConfig = errors.New("invalid agent setup")
@@ -308,6 +311,26 @@ func withAgentConfig(argv []string) []string {
 		argv = append(argv, "--settings", settingsPath(home))
 	}
 	return argv
+}
+
+// agentMCPServers are the MCP servers a Claude launch is given, by name, for
+// a Codex launch to be given too; none when there are none.
+func agentMCPServers() map[string]json.RawMessage {
+	home, err := agentConfigHome()
+	if err != nil {
+		return nil
+	}
+	data, err := os.ReadFile(mcpConfigPath(home))
+	if err != nil {
+		return nil
+	}
+	var config struct {
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if json.Unmarshal(data, &config) != nil {
+		return nil
+	}
+	return config.MCPServers
 }
 
 // agentConfigTokens are the imported MCP servers' keys, for masking: their

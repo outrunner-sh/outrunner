@@ -115,6 +115,41 @@ export type SetAgentConfigRequest = z.infer<typeof SetAgentConfigRequest>;
 /** The agent takes the user's own setup (POST /config). */
 export const AGENT_FEATURE_AGENT_CONFIG = "agent-config";
 
+/** POST /skills: a project's skills for the computer, from the GitHub
+ *  repositories they install from, each downloaded as it is now into
+ *  ~/.claude/skills (Claude) and ~/.agents/skills (Codex). `skills` names
+ *  the ones to install (a SKILL.md's name, or its folder's), none every one
+ *  the repository holds; `ref` is a branch, none its default; `token` reads
+ *  a private one. None removes the skills installed before. */
+export const SkillSource = z
+  .object({
+    repo: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/),
+    ref: z.string().regex(/^[A-Za-z0-9._/-]{1,255}$/).optional(),
+    token: z.string().min(1).optional(),
+    skills: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/)).optional(),
+  })
+  .strict();
+export type SkillSource = z.infer<typeof SkillSource>;
+
+export const SetSkillsRequest = z.object({ sources: z.array(SkillSource).max(50) }).strict();
+export type SetSkillsRequest = z.infer<typeof SetSkillsRequest>;
+
+/** What POST /skills installed, by name, and what it couldn't: a
+ *  repository it couldn't download, or one skill of it. */
+export const SetSkillsResponse = z.object({
+  installed: z.array(z.string()),
+  failed: z.array(z.object({ repo: z.string(), skill: z.string().optional(), error: z.string() })).optional(),
+});
+export type SetSkillsResponse = z.infer<typeof SetSkillsResponse>;
+
+/** The agent installs a project's skills (POST /skills). */
+export const AGENT_FEATURE_SKILLS = "environment-skills";
+
+/** A Codex session loads the computer's MCP servers (SetAgentConfigRequest's
+ *  `mcpServers`), as a Claude one always has; an older agent gives them to
+ *  Claude alone. */
+export const AGENT_FEATURE_CODEX_MCP = "codex-mcp";
+
 /** The agent takes a session's environment (POST /workspaces/{id}/environment). */
 export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
 
@@ -810,6 +845,8 @@ export const PROTOCOL_SCHEMAS = {
   ProvideSecretsRequest,
   SetEnvironmentRequest,
   SetAgentConfigRequest,
+  SetSkillsRequest,
+  SetSkillsResponse,
   EditorResponse,
   PortsResponse,
   FilesResponse,

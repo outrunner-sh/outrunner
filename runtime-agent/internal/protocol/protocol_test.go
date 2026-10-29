@@ -44,7 +44,7 @@ func TestTheNewestHealthFixtureNamesEveryFeature(t *testing.T) {
 		t.Fatal(err)
 	}
 	newest := groups.AgentHealth[len(groups.AgentHealth)-1].Features
-	for _, feature := range []string{FeatureImports, FeatureEnvironment, FeatureAgentConfig, FeatureRestoreModel, FeatureEditor, FeaturePorts, FeatureCodexGateway, FeatureWarmHooks, FeatureMultiRepo, FeatureMultiRepoSnapshots, FeatureGitCredential, FeatureMultiRepoWarm, FeaturePlanMode, FeatureCompact, FeatureFiles} {
+	for _, feature := range []string{FeatureImports, FeatureEnvironment, FeatureAgentConfig, FeatureRestoreModel, FeatureEditor, FeaturePorts, FeatureCodexGateway, FeatureWarmHooks, FeatureMultiRepo, FeatureMultiRepoSnapshots, FeatureGitCredential, FeatureMultiRepoWarm, FeaturePlanMode, FeatureCompact, FeatureFiles, FeatureSkills, FeatureCodexMCP} {
 		if !slices.Contains(newest, feature) {
 			t.Errorf("the newest AgentHealth fixture lacks %s: %q", feature, newest)
 		}
@@ -93,6 +93,10 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &RestoreWorkspaceRequest{})
 	case "SetAgentConfigRequest":
 		return json.Unmarshal(raw, &SetAgentConfigRequest{})
+	case "SetSkillsRequest":
+		return json.Unmarshal(raw, &SetSkillsRequest{})
+	case "SetSkillsResponse":
+		return json.Unmarshal(raw, &SetSkillsResponse{})
 	case "SetEnvironmentRequest":
 		return json.Unmarshal(raw, &SetEnvironmentRequest{})
 	case "WarmRequest":

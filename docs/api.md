@@ -88,6 +88,18 @@ counted apart. The budget refills continuously: every answer carries
 | POST | `/api/v1/workspaces/{id}/resume` | Wake it (or restore it, if archived) |
 | POST | `/api/v1/workspaces/{id}/archive` | Snapshot it and let its box go |
 | GET | `/api/v1/workspaces/{id}/pull-requests` | Its pull request in each of its repositories, with GitHub's status |
+| GET | `/api/v1/environments/{id}/skills` | The skills.sh catalog skills enabled on a project |
+| POST | `/api/v1/environments/{id}/skills` | Enable a catalog skill: `name`, `slug`, `source` |
+| DELETE | `/api/v1/environments/{id}/skills/{skill_id}` | Disable one |
+| GET | `/api/v1/environments/{id}/skill-registries` | Its skill registries, with the skills in each |
+| POST | `/api/v1/environments/{id}/skill-registries` | Add a GitHub repository as a registry: `url` |
+| DELETE | `/api/v1/environments/{id}/skill-registries/{registry_id}` | Remove one |
+| GET | `/api/v1/environments/{id}/repo-skills` | The skills, subagents and commands its repositories commit |
+| GET | `/api/v1/skills/search` | Search the skills.sh catalog: `q` |
+| GET | `/api/v1/environments/{id}/mcp-servers` | A project's MCP servers, with their variables' and headers' names |
+| POST | `/api/v1/environments/{id}/mcp-servers` | Add one: stdio `command`, `args`, `env`, or http `url`, `headers` |
+| PATCH | `/api/v1/environments/{id}/mcp-servers/{server_id}` | Change one: `set_env`, `remove_env`, `set_headers`, `remove_headers`, … |
+| DELETE | `/api/v1/environments/{id}/mcp-servers/{server_id}` | Remove one |
 | GET | `/api/v1/triage/items` | The org's work items: `status`, `project_id` (`none` for Unsorted) |
 | POST | `/api/v1/triage/items` | File a work item |
 | GET | `/api/v1/triage/items/{id}` | One work item |
@@ -244,6 +256,56 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 A work item lands in triage, in the repository `project_id` names (an id or
 `owner/name`), or Unsorted. A `source_ref` an item of the org already has
 makes it a note on that one instead (`"created": false`).
+
+### Project skills
+
+A project's skills install on every new session's box, for Claude Code
+(`~/.claude/skills`) and Codex (`~/.agents/skills`); a skill of the user's
+own by the same name is kept instead. Changing them needs write access to
+the project, and remakes its ready boxes.
+
+```sh
+curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/skills/search?q=pdf"
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
+  "$OUTRUNNER/api/v1/environments/$ID/skills" -d '{ "name": "pdf", "slug": "anthropics/skills/pdf", "source": "anthropics/skills" }'
+```
+
+```json
+{ "id": "…", "slug": "anthropics/skills/pdf", "name": "pdf", "source": "anthropics/skills", "skill": "pdf", "created_at": "…", "updated_at": "…" }
+```
+
+Only catalog skills kept on GitHub install (`github: true` in a search
+result); enabling one twice is `conflict`. A registry is a GitHub repository,
+`owner/name` or its address, whose every skill installs from its default
+branch as it is when a session starts. A private one needs the org's GitHub
+App installed with access to it: a session's box downloads the registry with
+a token of the App's that reads it alone, never a member's own.
+`repo-skills` lists what the project's repositories commit under `.claude`
+and `.agents`: sessions get those with the checkout.
+
+### Project MCP servers
+
+Every session of a project loads its MCP servers, in Claude Code and in
+Codex, beside the user's own; the user's win on a name both have. A server
+is `stdio` (a command the session's box runs) or `http` (a URL):
+
+```sh
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
+  "$OUTRUNNER/api/v1/environments/$ID/mcp-servers" \
+  -d '{ "name": "linear", "transport": "http", "url": "https://mcp.linear.app/mcp", "headers": { "Authorization": "Bearer lin_…" } }'
+```
+
+```json
+{ "id": "…", "name": "linear", "transport": "http", "command": null, "args": [], "url": "https://mcp.linear.app/mcp", "env_names": [], "header_names": ["Authorization"], "created_at": "…", "updated_at": "…" }
+```
+
+Variables' and headers' values are encrypted and never answered back. A
+change sets values by name (`set_env`, `set_headers`) and removes them
+(`remove_env`, `remove_headers`); `name`, `command`, `args` and `url` replace
+what's there, and a new `transport` takes its own fields. Names are up to 64
+letters, digits, `-` and `_`; those starting with `outrunner` are kept for
+Outrunner's own servers. Changing them needs write access to the project,
+and remakes its ready boxes.
 
 ## CLI
 

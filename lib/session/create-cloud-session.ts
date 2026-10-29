@@ -708,6 +708,7 @@ async function provisionWorkspace({
       await deliverSessionAuth(signIn, agentId, auth);
       // And with the user's own setup and its project's environment.
       await setUpSession(agent, identity, upgrade, owner.id, project.id, workspace.environmentId, {
+        agent: agentId,
         appIdentity: as !== undefined,
       });
       // Before the first launch, so Claude starts on it rather than switching.
