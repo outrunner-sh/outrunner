@@ -4,9 +4,9 @@
  *
  * - a delivery is claimed under a lease (claim_mission_delivery), so racing
  *   ticks and watches send it once, and a claimer that dies is taken over;
- * - the Mission is woken (or restored) first, then sent the delivery as one
- *   message: mid-turn it's folded into the turn running, otherwise it starts
- *   a new one;
+ * - the Mission is woken first, then sent the delivery as one message:
+ *   mid-turn it's folded into the turn running, otherwise it starts a new
+ *   one (one archived hears nothing more);
  * - the message carries the delivery's id as its key, which the box sends
  *   once (FeatureMessageKeys), so sending it again after a crash between
  *   sending and recording it is no second message;
@@ -14,9 +14,9 @@
  */
 
 import { formatDelivery, type MissionEvent } from "@/lib/missions/events";
-import type { Workspace } from "@/lib/runtime/types";
+import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 
-/** A claim's lease: long enough to restore an archived Mission and send. */
+/** A claim's lease: long enough to wake the Mission and send. */
 export const DELIVERY_LEASE_SECONDS = 10 * 60;
 /** Events wait this long for others arriving with them... */
 export const DELIVERY_SETTLE_SECONDS = 3;
@@ -27,13 +27,18 @@ export type OutboxDeps = {
   claim(missionId: string): Promise<{ deliveryId: string; attempt: number } | null>;
   eventsOf(deliveryId: string): Promise<MissionEvent[]>;
   session(id: string): Promise<Workspace | null>;
-  /** Wake or restore the Mission, then send `text` with `key`; throws when
-   *  it didn't go. */
+  /** Wake the Mission, then send `text` with `key`; throws when it didn't
+   *  go. */
   send(mission: Workspace, text: string, key: string): Promise<void>;
   complete(deliveryId: string): Promise<void>;
   fail(deliveryId: string, reason: string): Promise<void>;
   log?(message: string, error?: unknown): void;
 };
+
+/** A Mission in one of these hears nothing more: its events are dropped.
+ *  (One being archived is tried again, as any send that fails: if its
+ *  archive fails, it hears them.) */
+const PUT_AWAY: readonly WorkspaceStatus[] = ["archived", "destroying", "destroyed"];
 
 export type DeliveryOutcome = "delivered" | "nothing" | "failed" | "dropped";
 
@@ -44,8 +49,10 @@ export async function deliverMissionEvents(missionId: string, deps: OutboxDeps):
   const events = await deps.eventsOf(claim.deliveryId);
   const mission = await deps.session(missionId);
   // A Mission deleted meanwhile has no one to tell: done with, so the outbox
-  // empties. One archived or asleep is woken by the send.
-  if (!mission || mission.kind !== "mission" || mission.status === "destroyed" || mission.status === "destroying" || events.length === 0) {
+  // empties. So with one archived: its owner put it away with its Ships
+  // (lib/missions/archive.ts), and a pull request of theirs merging later
+  // mustn't bring it back. One asleep is woken by the send.
+  if (!mission || mission.kind !== "mission" || PUT_AWAY.includes(mission.status) || events.length === 0) {
     await deps.complete(claim.deliveryId);
     return "dropped";
   }

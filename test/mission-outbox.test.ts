@@ -140,14 +140,21 @@ test("a failed send waits, then is tried again; nothing is dropped", async () =>
   assert.equal(w.box.said.length, 1);
 });
 
-test("an asleep or archived Mission is woken, then told", async () => {
-  for (const status of ["suspended", "archived"] as const) {
-    const w = world(status);
-    w.record("a");
-    assert.equal(await deliverMissionEvents("m1", w.deps), "delivered");
-    assert.equal(w.box.woken, 1);
-    assert.equal(w.box.said.length, 1);
-  }
+test("an asleep Mission is woken, then told", async () => {
+  const w = world("suspended");
+  w.record("a");
+  assert.equal(await deliverMissionEvents("m1", w.deps), "delivered");
+  assert.equal(w.box.woken, 1);
+  assert.equal(w.box.said.length, 1);
+});
+
+test("an archived Mission isn't brought back: its news is dropped", async () => {
+  const w = world("archived");
+  w.record("a", "r1", "merged");
+  assert.equal(await deliverMissionEvents("m1", w.deps), "dropped");
+  assert.equal(w.box.woken, 0);
+  assert.equal(w.box.said.length, 0);
+  assert.equal(w.events[0].delivered, true);
 });
 
 test("racing deliverers: one sends", async () => {

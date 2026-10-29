@@ -29,7 +29,8 @@
     "{\"type\":\"system\",\"subtype\":\"api_error\",\"uuid\":\"u12\",\"timestamp\":\"t12\"}",
     "{\"type\":\"assistant\",\"uuid\":\"codex-s1-500\",\"parentUuid\":null,\"timestamp\":\"t13\",\"message\":{\"role\":\"assistant\",\"model\":\"gpt-6-luna\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}],\"usage\":{\"input_tokens\":3,\"output_tokens\":6,\"cache_creation_input_tokens\":166,\"cache_read_input_tokens\":17979},\"context_window\":258400,\"context_tokens\":18148}}",
     "{\"parentUuid\":null,\"logicalParentUuid\":\"u9\",\"isSidechain\":false,\"userType\":\"external\",\"cwd\":\"/work/repo\",\"sessionId\":\"s1\",\"version\":\"2.1.304\",\"gitBranch\":\"main\",\"type\":\"system\",\"subtype\":\"compact_boundary\",\"content\":\"Conversation compacted\",\"isMeta\":false,\"timestamp\":\"t14\",\"uuid\":\"u14\",\"level\":\"info\",\"compactMetadata\":{\"trigger\":\"manual\",\"preTokens\":152318,\"userContext\":\"\",\"messagesSummarized\":41,\"postTokens\":9876,\"durationMs\":21345}}",
-    "{\"parentUuid\":\"u14\",\"isSidechain\":false,\"type\":\"assistant\",\"uuid\":\"u15\",\"timestamp\":\"t15\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-opus-5-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_plan\",\"name\":\"ExitPlanMode\",\"input\":{\"plan\":\"## Dark mode\\n\\n1. Add the toggle\",\"planFilePath\":\"/home/runtime/.claude/plans/dark-mode.md\"}}]}}"
+    "{\"parentUuid\":\"u14\",\"isSidechain\":false,\"type\":\"assistant\",\"uuid\":\"u15\",\"timestamp\":\"t15\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-opus-5-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_plan\",\"name\":\"ExitPlanMode\",\"input\":{\"plan\":\"## Dark mode\\n\\n1. Add the toggle\",\"planFilePath\":\"/home/runtime/.claude/plans/dark-mode.md\"}}]}}",
+    "{\"type\":\"user\",\"uuid\":\"img-1\",\"parentUuid\":null,\"timestamp\":\"2026-10-29T00:00:00Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"iVBORw0KGgo=\"}},{\"type\":\"text\",\"text\":\"what is this?\"}]}}"
   ],
   "events": [
     {
@@ -346,6 +347,27 @@
             "plan": "## Dark mode\n\n1. Add the toggle",
             "planFilePath": "/home/runtime/.claude/plans/dark-mode.md"
           }
+        }
+      ]
+    },
+    {
+      "t": "message",
+      "uuid": "img-1",
+      "parentUuid": null,
+      "role": "user",
+      "timestamp": "2026-10-29T00:00:00Z",
+      "content": [
+        {
+          "type": "image",
+          "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "iVBORw0KGgo="
+          }
+        },
+        {
+          "type": "text",
+          "text": "what is this?"
         }
       ]
     }

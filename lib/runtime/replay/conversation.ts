@@ -17,7 +17,9 @@ import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
 
 /** Block types the timeline renders; anything else is dropped (matches the live
  *  AgentEvent schema in agent-protocol.ts). */
-const KNOWN_BLOCK_TYPES = new Set(["text", "thinking", "tool_use", "tool_result"]);
+const KNOWN_BLOCK_TYPES = new Set(["text", "thinking", "tool_use", "tool_result", "image"]);
+/** The most base64 an image block keeps (the Go MaxImageBlockData). */
+const MAX_IMAGE_BLOCK_DATA = 2 << 20;
 /** String content-block fields the Go struct marshals with `omitempty`. */
 const STRING_KEYS = ["text", "id", "name", "toolUseId"] as const;
 /** Raw-JSON content-block fields (json.RawMessage on the Go side). */
@@ -47,6 +49,17 @@ function cleanBlock(raw: Record<string, unknown>): ContentBlock {
   }
   for (const key of RAW_KEYS) {
     if (key in raw) out[key] = raw[key];
+  }
+  // An image's picture, as the Go rawBlock keeps it: its source's string
+  // fields, the data only up to the cap.
+  if (raw.type === "image" && isObject(raw.source)) {
+    const source: Record<string, string> = {};
+    for (const key of ["type", "media_type", "data"] as const) {
+      const value = raw.source[key];
+      if (typeof value === "string" && value !== "") source[key] = value;
+    }
+    if ((source.data?.length ?? 0) > MAX_IMAGE_BLOCK_DATA) delete source.data;
+    out.source = source;
   }
   return out as ContentBlock;
 }
@@ -155,8 +168,8 @@ function decodeQueuedPrompt(rec: Record<string, unknown>): AgentEvent | null {
  */
 function contentOf(rawContent: unknown): ContentBlock[] | null {
   if (Array.isArray(rawContent) && rawContent.every(isObject)) {
-    // Drop block types the timeline can't model (redacted_thinking, image, a
-    // newer Claude type) so replay matches the live schema, which does the same —
+    // Drop block types the timeline can't model (redacted_thinking, a
+    // document, a newer Claude type) so replay matches the live schema, which does the same —
     // otherwise an archived turn can leave an unrenderable block stuck.
     return rawContent.map(cleanBlock).filter((b) => KNOWN_BLOCK_TYPES.has(b.type));
   }

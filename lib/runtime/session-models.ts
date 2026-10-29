@@ -15,8 +15,9 @@ import { isProviderId, PROVIDER_IDS, PROVIDERS, type ProviderId } from "@/lib/pr
 export type ModelProvider = "outrunner" | "claude" | "codex" | ProviderId;
 
 /** `id` is the provider's name for the model: a Claude alias, an OpenRouter
- *  slug, or a provider's own. */
-export type SessionModel = { id: string; label: string; provider: ModelProvider };
+ *  slug, or a provider's own. `supportsImages` says whether it can see an
+ *  image it is sent; absent where that isn't known (an id typed in). */
+export type SessionModel = { id: string; label: string; provider: ModelProvider; supportsImages?: boolean };
 
 /** `custom`: the group takes a model id typed in, as well as its list. */
 export type ModelGroup = { label: string; provider: ModelProvider; models: SessionModel[]; custom: boolean };
@@ -25,9 +26,10 @@ export type ModelGroup = { label: string; provider: ModelProvider; models: Sessi
  *  new session's default. Exact OpenRouter slugs, so the menu ticks what a
  *  reply reports. Only these run on it: the allowance pays for them. */
 export const OUTRUNNER_MODELS: SessionModel[] = [
-  { id: "z-ai/glm-5.3", label: "GLM 5.3", provider: "outrunner" },
-  { id: "moonshotai/kimi-k3", label: "Kimi K3", provider: "outrunner" },
-  { id: "deepseek/deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash", provider: "outrunner" },
+  // Images as OpenRouter's input_modalities say, as of 2026-10-29.
+  { id: "z-ai/glm-5.3", label: "GLM 5.3", provider: "outrunner", supportsImages: false },
+  { id: "moonshotai/kimi-k3", label: "Kimi K3", provider: "outrunner", supportsImages: true },
+  { id: "deepseek/deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash", provider: "outrunner", supportsImages: true },
 ];
 
 /** What each of Outrunner's models costs, as a multiple of the default's
@@ -50,14 +52,14 @@ export function costHint(model: SessionModel): string | null {
 
 /** What a session on the user's Claude runs when no model is picked: the
  *  newest Opus, at DEFAULT_EFFORT, rather than Claude Code's own default. */
-export const CLAUDE_DEFAULT_MODEL: SessionModel = { id: "opus", label: "Opus", provider: "claude" };
+export const CLAUDE_DEFAULT_MODEL: SessionModel = { id: "opus", label: "Opus", provider: "claude", supportsImages: true };
 
 /** The user's own Claude. Aliases, so each is the newest of its family without
  *  a release here. */
 export const CLAUDE_MODELS: SessionModel[] = [
   CLAUDE_DEFAULT_MODEL,
-  { id: "sonnet", label: "Sonnet", provider: "claude" },
-  { id: "haiku", label: "Haiku", provider: "claude" },
+  { id: "sonnet", label: "Sonnet", provider: "claude", supportsImages: true },
+  { id: "haiku", label: "Haiku", provider: "claude", supportsImages: true },
 ];
 
 /** Codex's models, on however the user signs Codex in (Settings → Providers →
@@ -292,6 +294,16 @@ export function requestedModel(
  *  "claude-opus-4-5-20250115" reads as "claude-opus-4-5". */
 export function modelLabel(model: string): string {
   return model.replace(/-\d{8}$/, "");
+}
+
+/** An image-capable model to offer in place of `current`, which can't see
+ *  images: the first that can from its own provider (on the same key and
+ *  bill), else from Outrunner's, else from any group. Null when the menu has
+ *  none. */
+export function imageModelFor(groups: ModelGroup[], current: SessionModel): SessionModel | null {
+  const sees = (m: SessionModel) => m.supportsImages === true;
+  const from = (provider: ModelProvider) => groups.filter((g) => g.provider === provider).flatMap((g) => g.models).find(sees);
+  return from(current.provider) ?? from("outrunner") ?? groups.flatMap((g) => g.models).find(sees) ?? null;
 }
 
 /** Which offered model a reported one is: an exact id (a provider's name, or

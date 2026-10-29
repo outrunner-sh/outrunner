@@ -6,13 +6,14 @@ import { useMemo, useState } from "react";
 import { OnboardingFlow } from "@/components/onboarding/onboarding-flow";
 import type { RepositoryListing } from "@/lib/github/listing";
 import { OnboardingError } from "@/lib/onboarding/live-env";
+import { newSessionAfterOnboarding } from "@/lib/onboarding/rules";
 import type { AgentStatus, OnboardingEnv } from "@/lib/onboarding/types";
 import type { Project } from "@/lib/runtime/types";
 
 /**
  * The onboarding flow on mock data, with a panel to switch the situation it
  * meets: Claude already connected or not, the Mac app or a browser, repos or
- * none, a session that starts or fails. For building the screens without an
+ * none. For building the screens without an
  * account; served only with ONBOARDING_PREVIEW=1 outside production.
  */
 export function OnboardingPreview() {
@@ -35,7 +36,6 @@ type Scenario = {
   surface: "browser" | "desktop";
   claude: "none" | "subscription" | "api-key" | "connects-from-terminal";
   repos: "some" | "none" | "github-error";
-  start: "starts" | "fails";
   outrunnerModels: "yes" | "no";
 };
 
@@ -43,7 +43,6 @@ const DEFAULT_SCENARIO: Scenario = {
   surface: "browser",
   claude: "connects-from-terminal",
   repos: "some",
-  start: "starts",
   outrunnerModels: "yes",
 };
 
@@ -59,7 +58,6 @@ const OPTIONS: { [K in keyof Scenario]: { label: string; values: [Scenario[K], s
     ],
   },
   repos: { label: "GitHub", values: [["some", "Repositories"], ["none", "None"], ["github-error", "Token refused"]] },
-  start: { label: "Session", values: [["starts", "Starts"], ["fails", "Fails"]] },
   outrunnerModels: { label: "Outrunner models", values: [["yes", "On the server"], ["no", "Not set up"]] },
 };
 
@@ -150,13 +148,7 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
       await wait(600);
       return REPOS.filter((r) => ids.includes(r.githubRepoId)).map(project);
     },
-    async startSession(projectId, runOn) {
-      await wait(800);
-      if (scenario.start === "fails") {
-        throw new OnboardingError("Your plan's 2 concurrent cloud sessions are already running.", "/upgrade");
-      }
-      return `/workspaces/new-on-${projectId}-${runOn}`;
-    },
+    finish: async (projectId, runOn) => (await wait(300), newSessionAfterOnboarding(projectId, runOn)),
     skip: async () => (await wait(300), "/"),
     // Each run starts over: the panel's restart is the preview's reload.
     savedProgress: () => null,

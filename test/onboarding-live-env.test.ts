@@ -2,19 +2,22 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
 import type { RepositoryListing } from "@/lib/github/listing";
-import { firstModel, liveEnv, OnboardingError } from "@/lib/onboarding/live-env";
+import { liveEnv, OnboardingError } from "@/lib/onboarding/live-env";
 import {
   CLI_DEFAULT_URL,
   connectClaudeCommand,
   connectedAgent,
   filterRepositories,
   freeModelsOffer,
+  newSessionAfterOnboarding,
+  parseAgentPick,
   parseProgress,
   resumeAt,
   sortRepositories,
+  startingPick,
 } from "@/lib/onboarding/rules";
 import type { AgentStatus } from "@/lib/onboarding/types";
-import { CODEX_MODELS, OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
+import { CLAUDE_DEFAULT_MODEL, CODEX_MODELS, OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
 
 const user = { id: "u1", name: "Ada Lovelace", login: "ada", avatarUrl: null };
 const realFetch = globalThis.fetch;
@@ -78,22 +81,11 @@ test("picking repositories connects just those, as the repository picker does", 
   assert.equal(projects[0].id, "p1");
 });
 
-test("starting the first session marks onboarding done and opens the session", async () => {
-  const calls = stubFetch({
-    "POST /api/projects/p1/workspaces": () => [202, { workspace: { id: "w1" } }],
-    "POST /api/onboarding/complete": () => [200, { ok: true }],
-  });
-  assert.equal(await env().startSession("p1", "claude"), "/workspaces/w1");
-  assert.deepEqual(calls[0].body, { branch: "", provider: "claude", model: "opus", effort: "high" });
-  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), ["POST /api/projects/p1/workspaces", "POST /api/onboarding/complete"]);
-});
-
-test("a session refused says why and where to fix it, and onboarding isn't marked done", async () => {
-  const calls = stubFetch({
-    "POST /api/projects/p1/workspaces": () => [403, { error: "Your plan's 2 sessions are running.", settingsHref: "/upgrade" }],
-  });
-  await assert.rejects(env().startSession("p1", "outrunner"), (e: unknown) => e instanceof OnboardingError && e.href === "/upgrade");
-  assert.equal(calls.some((c) => c.url === "/api/onboarding/complete"), false);
+test("finishing marks onboarding done and opens the new-session screen on the repository and agent picked", async () => {
+  const calls = stubFetch({ "POST /api/onboarding/complete": () => [200, { ok: true }] });
+  assert.equal(await env().finish("p1", "claude"), "/new?project=p1&focus=composer&start=claude");
+  // No session is started from onboarding: the user starts it, with a prompt.
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), ["POST /api/onboarding/complete"]);
 });
 
 test("skipping marks onboarding done and goes home", async () => {
@@ -102,21 +94,21 @@ test("skipping marks onboarding done and goes home", async () => {
 });
 
 test("the first session starts on the agent picked: the user's own at High, or Outrunner's, named", () => {
-  assert.deepEqual(firstModel("claude"), { provider: "claude", model: "opus", effort: "high" });
-  assert.deepEqual(firstModel("codex"), { provider: "codex", model: CODEX_MODELS[0].id, effort: "high" });
+  assert.deepEqual(startingPick("claude"), { model: CLAUDE_DEFAULT_MODEL, effort: "high" });
+  assert.deepEqual(startingPick("codex"), { model: CODEX_MODELS[0], effort: "high" });
   // Named, so a user whose Claude is connected still starts on what they picked.
-  assert.deepEqual(firstModel("outrunner"), { provider: "outrunner", model: OUTRUNNER_MODELS[0].id });
+  assert.deepEqual(startingPick("outrunner"), { model: OUTRUNNER_MODELS[0], effort: null });
+  // In Codex, not Claude Code (Outrunner's models' default agent).
+  assert.deepEqual(startingPick("codex-outrunner"), { model: OUTRUNNER_MODELS[0], effort: null, agent: "codex" });
 });
 
-test("Codex on Outrunner's models starts Codex on Outrunner's first model, not Claude Code", async () => {
-  const first = firstModel("codex-outrunner");
-  assert.deepEqual(first, { provider: "outrunner", model: OUTRUNNER_MODELS[0].id, agent: "codex" });
-  const calls = stubFetch({
-    "POST /api/projects/p1/workspaces": () => [202, { workspace: { id: "w1" } }],
-    "POST /api/onboarding/complete": () => [200, { ok: true }],
-  });
-  await env().startSession("p1", "codex-outrunner");
-  assert.deepEqual(calls[0].body, { branch: "", provider: "outrunner", model: OUTRUNNER_MODELS[0].id, agent: "codex" });
+test("the agent picked rides the new-session link and is read back; anything else is ignored", () => {
+  const href = newSessionAfterOnboarding(undefined, "codex-outrunner");
+  // No repository connected: the form picks its own.
+  assert.equal(href, "/new?focus=composer&start=codex-outrunner");
+  assert.equal(parseAgentPick(new URL(href, "http://x").searchParams.get("start")), "codex-outrunner");
+  assert.equal(parseAgentPick("gpt"), undefined);
+  assert.equal(parseAgentPick(null), undefined);
 });
 
 test("Outrunner's models are offered as the Free plan gives them", () => {
@@ -151,13 +143,10 @@ test("GitHub's refusal is carried as reconnect, and other errors aren't", async 
   await assert.rejects(env().repositories(), (e: unknown) => e instanceof OnboardingError && !e.reconnect);
 });
 
-test("a refused onboarding mark is logged, and the session still opens", async (t) => {
+test("a refused onboarding mark is logged, and the new-session screen still opens", async (t) => {
   const logged = t.mock.method(console, "error", () => {});
-  stubFetch({
-    "POST /api/projects/p1/workspaces": () => [202, { workspace: { id: "w1" } }],
-    "POST /api/onboarding/complete": () => [500, { error: "db down" }],
-  });
-  assert.equal(await env().startSession("p1", "outrunner"), "/workspaces/w1");
+  stubFetch({ "POST /api/onboarding/complete": () => [500, { error: "db down" }] });
+  assert.equal(await env().finish("p1", "outrunner"), "/new?project=p1&focus=composer&start=outrunner");
   assert.equal(logged.mock.callCount(), 1);
 });
 
@@ -212,15 +201,13 @@ test("onboarding opens where it was left, and a user gone back to the Agent step
     done: ["agent"],
     runOn: "outrunner",
   });
-  // Start needs the repositories just picked: their step again.
-  assert.equal(resumeAt({ step: "start", done: ["agent", "repos"], runOn: "codex" }, agents({}, true), none).step, "repos");
   const back = resumeAt({ step: "agent", done: ["agent", "repos"], runOn: "outrunner" }, agents({ subscription: true }), none);
   assert.equal(back.step, "agent");
   assert.equal(back.save, undefined);
 });
 
 test("an Agent step done on the user's own agent that can't run now is the Agent step again", () => {
-  assert.deepEqual(resumeAt({ step: "start", done: ["agent", "repos"], runOn: "claude" }, agents(), none), {
+  assert.deepEqual(resumeAt({ step: "repos", done: ["agent", "repos"], runOn: "claude" }, agents(), none), {
     step: "agent",
     done: ["repos"],
     runOn: "outrunner",
@@ -238,6 +225,12 @@ test("an Agent step done on the user's own agent that can't run now is the Agent
 
 test("saved progress is only taken as it should be", () => {
   assert.deepEqual(parseProgress({ step: "repos", done: ["repos", "agent", "x"], runOn: "codex" }), {
+    step: "repos",
+    done: ["agent", "repos"],
+    runOn: "codex",
+  });
+  // Saved when there was a Start step: onboarding now ends on Repositories.
+  assert.deepEqual(parseProgress({ step: "start", done: ["agent", "repos", "start"], runOn: "codex" }), {
     step: "repos",
     done: ["agent", "repos"],
     runOn: "codex",
@@ -268,6 +261,9 @@ test("progress is kept per account in this browser, and dropped once onboarding 
 
   stubFetch({ "POST /api/onboarding/complete": () => [200, { ok: true }] });
   await env().skip();
+  assert.equal(env().savedProgress(), null);
+  env().saveProgress({ ...progress, done: [...progress.done] });
+  await env().finish("p1", "claude");
   assert.equal(env().savedProgress(), null);
 });
 

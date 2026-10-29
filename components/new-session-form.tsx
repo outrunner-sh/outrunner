@@ -26,6 +26,7 @@ import {
   modelGroups,
   type SessionModel,
 } from "@/lib/runtime/session-models";
+import type { StartingPick } from "@/lib/onboarding/rules";
 import type { Project } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { newSessionDetails } from "@/lib/session/new-session-target";
@@ -48,6 +49,7 @@ export function NewSessionForm({
   initialProjectId,
   openPicker = false,
   focusComposer = false,
+  initialPick,
   workItemId,
 }: {
   projects: Project[];
@@ -59,6 +61,10 @@ export function NewSessionForm({
   openPicker?: boolean;
   /** Focuses the composer: as the form mounts, or as it turns true. */
   focusComposer?: boolean;
+  /** What the session starts on until another is picked in the composer (the
+   *  agent picked in onboarding), as though picked there. Read once, as the
+   *  form mounts: the route drops it from the URL straight after. */
+  initialPick?: StartingPick;
   /** The triage item to start from (Start session): its prompt fills the
    *  composer, and the session is linked to it. */
   workItemId?: string;
@@ -71,10 +77,14 @@ export function NewSessionForm({
   const menu = useOutrunnerModels();
   // The model picked in the composer, else the loadout's default: its agent
   // decides what this Mac needs for a local session (Claude Code, or Codex).
-  const [picked, setPicked] = useState<SessionModel | null>(null);
+  const [picked, setPicked] = useState<SessionModel | null>(initialPick?.model ?? null);
   // The effort picked in the composer; undefined until one is, when the
   // loadout's for its default model shows, else DEFAULT_EFFORT.
-  const [pickedEffort, setPickedEffort] = useState<Effort | null | undefined>(undefined);
+  const [pickedEffort, setPickedEffort] = useState<Effort | null | undefined>(initialPick ? initialPick.effort : undefined);
+  // The agent asked for (Codex on Outrunner's models), kept across model
+  // picks: it runs those it can (agentOf), and a cloud session only. Kept
+  // from the mount, as the pick is: the route drops `?start=` straight after.
+  const [askedAgent] = useState(initialPick?.agent);
   // Asked to open the picker, until it has been shut once: the cloud picker
   // can give way to the Mac's as this Mac's agent answers, and that one opens
   // in its place.
@@ -128,6 +138,9 @@ export function NewSessionForm({
   const chosenDefault = menu ? (loadoutDefault(menu.loadout, groups) ?? null) : null;
   const startsOn = picked ?? chosenDefault ?? (menu ? (onDefault ? defaultModel(menu) : CLAUDE_DEFAULT_MODEL) : null);
   const startModel = picked ?? chosenDefault ?? undefined;
+  // Named only where the agent asked for isn't the model's own default.
+  const startAgent =
+    startModel && askedAgent && agentOf(startModel.provider, askedAgent) !== agentOf(startModel.provider) ? askedAgent : undefined;
   // What the session is started at: none picked, the loadout's default goes
   // with its effort, and the user's Claude with DEFAULT_EFFORT (the server's
   // and createLocal's for it).
@@ -240,7 +253,18 @@ export function NewSessionForm({
                 // fails keeps the prompt, and the session isn't started.
                 environment
                   .keep()
-                  .then((kept) => kept && create(text, attachmentIds, startModel, effort, workItem?.id))
+                  .then(
+                    (kept) =>
+                      kept &&
+                      create(
+                        text,
+                        attachmentIds,
+                        startModel,
+                        effort,
+                        workItem?.id,
+                        startAgent,
+                      ),
+                  )
           }
           model={startsOn?.id}
           modelChoice={

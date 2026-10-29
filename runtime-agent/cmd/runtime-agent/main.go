@@ -20,6 +20,7 @@ import (
 	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/localimport"
+	"runtime-agent/internal/preview"
 	"runtime-agent/internal/server"
 	"runtime-agent/internal/workspace"
 )
@@ -49,6 +50,13 @@ func main() {
 		os.Exit(githubToken(os.Args[2:]))
 	}
 
+	// `runtime-agent preview …` is a session's agent making a preview of a
+	// server it runs (package preview), through the agent it finds under
+	// the root.
+	if len(os.Args) > 1 && os.Args[1] == "preview" {
+		os.Exit(preview.Main(context.Background(), os.Args[2:], os.Stdout, os.Stderr, workspace.AskPaths, nil))
+	}
+
 	secret := os.Getenv("RUNTIME_AGENT_SECRET")
 	if secret == "" {
 		log.Fatal("RUNTIME_AGENT_SECRET is required")
@@ -73,6 +81,8 @@ func main() {
 		if err := svc.UseGitCredential(&gitcred.Client{Config: cfg}); err != nil {
 			log.Printf("runtime-agent: sessions keep the GitHub token they were launched with: %v", err)
 		}
+		// The same means make the sessions' previews.
+		svc.UsePreviews(&preview.Client{AppURL: cfg.AppURL, SandboxID: cfg.SandboxID, Secret: cfg.Secret})
 	}
 	if raw := os.Getenv("RUNTIME_DEFAULT_PERMISSION_MODE"); raw != "" {
 		mode, err := claude.ParsePermissionMode(raw)

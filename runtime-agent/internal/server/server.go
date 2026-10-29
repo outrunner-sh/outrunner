@@ -28,6 +28,7 @@ import (
 	"runtime-agent/internal/editor"
 	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/ports"
+	"runtime-agent/internal/preview"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/ptyx"
 	"runtime-agent/internal/redact"
@@ -120,6 +121,9 @@ func (s *Server) Handler() http.Handler {
 	// a Runtime token (package ask).
 	mux.HandleFunc("POST /workspaces/{id}/ask", s.ask)
 	mux.HandleFunc("POST /workspaces/{id}/ask-secrets", s.askSecrets)
+	// `runtime-agent preview` asks, with the session's ask token too
+	// (package preview).
+	mux.HandleFunc("POST /workspaces/{id}/preview", s.createPreview)
 	mux.HandleFunc("POST /workspaces/{id}/secrets", s.authed(s.provideSecrets))
 	// git's credential helper and the gh wrapper on this box ask, with the
 	// agent's credential token (package gitcred).
@@ -736,6 +740,44 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 // request_secrets call) until the user answers it in the browser, or the
 // relay gives the call up. The request names variables; no value comes this
 // way.
+// createPreview makes a preview of a server the session runs, for its
+// agent's `runtime-agent preview`: the control plane's refusal (a port it
+// won't preview, previews off) comes back as its own status and sentence.
+func (s *Server) createPreview(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !validWorkspaceID(id) || !s.ws.AskAuthorized(id, bearer(r)) {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "this session can't make previews here")
+		return
+	}
+	if !s.ws.PreviewsEnabled() {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Previews are for Outrunner's cloud sessions.")
+		return
+	}
+	var req preview.LocalRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "malformed request: "+err.Error())
+		return
+	}
+	if req.Port < 1 || req.Port > 65535 || len(req.Label) > 200 {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "a preview needs a port, and a short label at most")
+		return
+	}
+	made, err := s.ws.CreatePreview(r.Context(), id, req.Port, req.Label)
+	var refusal *preview.Error
+	switch {
+	case errors.As(err, &refusal):
+		status := refusal.Status
+		if status < 400 || status > 599 {
+			status = http.StatusBadGateway
+		}
+		writeError(w, status, "REFUSED", refusal.Message)
+	case err != nil:
+		writeError(w, http.StatusBadGateway, "UNAVAILABLE", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, preview.LocalResponse{Preview: made})
+	}
+}
+
 func (s *Server) askSecrets(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !validWorkspaceID(id) || !s.ws.AskAuthorized(id, bearer(r)) {

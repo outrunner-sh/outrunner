@@ -4,8 +4,12 @@ import { EXIT_PLAN_MODE, planOf } from "@/lib/runtime/pending-plan";
 import { between } from "@/lib/runtime/turn-timing";
 import { parseCommentQuotes } from "@/lib/session/diff-comments";
 import { isEcho } from "@/lib/session/optimistic-echo";
+import { isImageName, promptAttachments } from "@/lib/runtime/attachments";
 
 type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
+
+/** An image a prompt carries in its log (ConversationNode's `images`). */
+export type PromptImage = { mediaType: string; data: string };
 
 const TYPED_COMPACT = /^\/compact(\s|$)/;
 
@@ -18,7 +22,17 @@ export type ConversationNode =
   /** `mode` "plan": sent in plan mode. `at` is when it was sent; none on the
    *  echo of one still on its way. `continuation`: Runner news absorbed into
    *  the running turn, so it starts neither a clock nor a turn-rail tick. */
-  | { kind: "prompt"; key: string; text: string; mode?: "plan"; at?: string; continuation?: true }
+  | {
+      kind: "prompt";
+      key: string;
+      text: string;
+      mode?: "plan";
+      at?: string;
+      continuation?: true;
+      /** Images pasted into the agent's own prompt (its terminal), which
+       *  its log keeps with the words: base64, by type. */
+      images?: PromptImage[];
+    }
   /** Claude's own injected record (a skill's instructions, a reminder): folded
    *  behind a disclosure rather than shown inline. `label` names it in a word. */
   | { kind: "meta"; key: string; label: string; text: string }
@@ -138,6 +152,16 @@ export function conversationNodes(
       if (line && !/^\/compact\b/.test(line)) nodes.push({ kind: "command", key: `${event.uuid}-${ei}`, text: line });
       return;
     }
+    // Images pasted into the prompt go with its words, on their row.
+    let images: PromptImage[] | null =
+      event.role === "user"
+        ? event.content.flatMap((block) =>
+            block.type === "image" && block.source?.data
+              ? [{ mediaType: block.source.media_type ?? "image/png", data: block.source.data }]
+              : [],
+          )
+        : null;
+    if (images?.length === 0) images = null;
     event.content.forEach((block, bi) => {
       const key = `${event.uuid}-${ei}-${bi}`;
       switch (block.type) {
@@ -160,7 +184,9 @@ export function conversationNodes(
               ...(event.mode && { mode: event.mode }),
               ...(!isEcho(event.uuid) && { at: event.timestamp }),
               ...(continuation && { continuation: true }),
+              ...(images && { images }),
             });
+            images = null;
           } else {
             lastWords = { index: nodes.length, uuid: event.uuid };
             nodes.push({ kind: "prose", key, text: block.text, at: event.timestamp });
@@ -175,6 +201,7 @@ export function conversationNodes(
           return;
         }
         case "tool_result":
+        case "image":
           return;
       }
     });
@@ -271,12 +298,23 @@ export function conversationTurns(nodes: ConversationNode[]): ConversationTurn[]
   return turns;
 }
 
-/** A prompt as the turn rail names it: its words, without the comments on
- *  the diff it carried; one of comments alone says so. */
-function promptPreview(text: string): string {
-  const { text: words, quotes } = parseCommentQuotes(text);
-  if (quotes.length === 0 || words.trim()) return plainText(words);
-  return quotes.length === 1 ? "1 comment on the diff" : `${quotes.length} comments on the diff`;
+/** A prompt as the turn rail names it: its words, without the files it
+ *  carried or the comments on the diff; one of files or comments alone
+ *  says so. */
+export function promptPreview(text: string): string {
+  const { text: typed, files } = promptAttachments(text);
+  const { text: words, quotes } = parseCommentQuotes(typed);
+  if (words.trim()) return plainText(words);
+  if (quotes.length > 0) return quotes.length === 1 ? "1 comment on the diff" : `${quotes.length} comments on the diff`;
+  if (files.length > 0) return filesPreview(files);
+  return plainText(words);
+}
+
+/** Files alone, in a word or two: "Image", "3 images", "2 files". */
+function filesPreview(files: string[]): string {
+  const images = files.every((file) => isImageName(file));
+  if (files.length === 1) return images ? "Image" : "File";
+  return `${files.length} ${images ? "images" : "files"}`;
 }
 
 /**
