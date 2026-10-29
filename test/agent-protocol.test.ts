@@ -11,6 +11,7 @@ import {
   AGENT_FEATURE_CHATS,
   AGENT_FEATURE_CODEX_GATEWAY,
   AGENT_FEATURE_CODEX_MCP,
+  AGENT_FEATURE_CODEX_ACCESS_TOKEN,
   AGENT_FEATURE_COMPACT,
   AGENT_FEATURE_EDITOR,
   AGENT_FEATURE_ENVIRONMENT,
@@ -109,6 +110,20 @@ test("a session credential fits its kind, and none takes no token", () => {
   assert.equal(SetAuthRequest.safeParse({ kind: "chatgpt", token: key }).success, false);
 });
 
+test("Codex workspace access tokens remain distinct from bounded Platform API keys", () => {
+  const token = "synthetic-workspace-token-" + "a".repeat(800);
+  const { SetAuthRequest, RestoreWorkspaceRequest } = PROTOCOL_SCHEMAS;
+  assert.equal(SetAuthRequest.safeParse({ kind: "codex-access-token", token }).success, true);
+  assert.equal(SetAuthRequest.safeParse({ kind: "openai-api-key", token }).success, false);
+  for (const invalid of [undefined, "short", token + "\n", token + "'", "a".repeat(16385)]) {
+    assert.equal(SetAuthRequest.safeParse({ kind: "codex-access-token", token: invalid }).success, false);
+  }
+  assert.equal(RestoreWorkspaceRequest.safeParse({
+    branch: "b", sessionId: null, agent: "codex", auth: { kind: "codex-access-token", token },
+    downloads: ["bundle", "patch", "conversation"].map((artifact) => ({ artifact, url: `https://s.example/${artifact}` })),
+  }).success, true);
+});
+
 test("a rollout may join an archive or a restore, but never replace what they need", () => {
   const upload = (artifact: string) => ({ artifact, url: `https://s.example/${artifact}` });
   const six = ["conversation", "cast", "bundle", "patch", "summary", "manifest"];
@@ -175,6 +190,7 @@ test("the newest health fixture names every feature the agent and the control pl
     AGENT_FEATURE_CHATS,
     AGENT_FEATURE_CHAT_SNAPSHOTS,
     AGENT_FEATURE_REWIND,
+    AGENT_FEATURE_CODEX_ACCESS_TOKEN,
   ]) {
     assert.ok(newest.includes(feature), `the newest AgentHealth fixture lacks ${feature}`);
   }

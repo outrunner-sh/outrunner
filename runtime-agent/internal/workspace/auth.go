@@ -10,7 +10,8 @@ import (
 )
 
 // A session's own credential — a Claude login token, an Anthropic or OpenAI
-// API key — rather than whatever its agent is logged in with on the computer.
+// API key, or a Codex workspace token — rather than whatever its agent is
+// logged in with on the computer.
 // It is kept like a gateway key (keyFiles): owner-only under $ROOT/auth, and
 // applied at the session's next launch. A Claude session sources it; a Codex
 // session logs its own Codex home in with it (codex_auth.go).
@@ -23,6 +24,7 @@ const (
 	AuthClaudeOAuthToken = "claude-oauth-token"
 	AuthAnthropicAPIKey  = "anthropic-api-key"
 	AuthOpenAIAPIKey     = "openai-api-key"
+	AuthCodexAccessToken = "codex-access-token"
 )
 
 // authAgent is the agent each kind of credential is for.
@@ -30,6 +32,7 @@ var authAgent = map[string]string{
 	AuthClaudeOAuthToken: AgentClaude,
 	AuthAnthropicAPIKey:  AgentClaude,
 	AuthOpenAIAPIKey:     AgentCodex,
+	AuthCodexAccessToken: AgentCodex,
 }
 
 // ValidAuthKind accepts a kind of credential a session can be given.
@@ -50,7 +53,25 @@ var (
 )
 
 // authKeyEnvs are the variables a session's credential is exported in.
-var authKeyEnvs = []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"}
+var authKeyEnvs = []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN"}
+
+// ValidAuthToken keeps API-key bounds unchanged, while accepting the longer
+// opaque credentials issued for Codex workspace automation. Both go into a
+// shell-sourced file, so whitespace, quotes and backslashes remain forbidden.
+func ValidAuthToken(kind, token string) bool {
+	if kind != AuthCodexAccessToken {
+		return claude.ValidGatewayToken(token)
+	}
+	if len(token) < 20 || len(token) > 16384 {
+		return false
+	}
+	for _, r := range token {
+		if r <= ' ' || r > '~' || r == '\'' || r == '\\' {
+			return false
+		}
+	}
+	return true
+}
 
 func (s *Service) authFiles() keyFiles {
 	return keyFiles{dir: filepath.Join(s.Root, "auth"), envs: authKeyEnvs}
@@ -67,7 +88,9 @@ func authEnvFile(kind, token string) string {
 	case AuthAnthropicAPIKey:
 		return "unset CLAUDE_CODE_OAUTH_TOKEN\nexport ANTHROPIC_API_KEY=" + quoted + "\n"
 	case AuthOpenAIAPIKey:
-		return "export OPENAI_API_KEY=" + quoted + "\n"
+		return "unset CODEX_ACCESS_TOKEN\nexport OPENAI_API_KEY=" + quoted + "\n"
+	case AuthCodexAccessToken:
+		return "unset OPENAI_API_KEY\nexport CODEX_ACCESS_TOKEN=" + quoted + "\n"
 	}
 	return ""
 }
@@ -75,7 +98,7 @@ func authEnvFile(kind, token string) string {
 // SetAuth gives a session its own credential, or with AuthNone takes it away;
 // either applies at the session's next launch, a running one keeps what it
 // started with. The credential it replaces stays masked (keyFiles.retire).
-// Callers validate kind (ValidAuthKind) and token (claude.ValidGatewayToken).
+// Callers validate kind (ValidAuthKind) and token (ValidAuthToken).
 func (s *Service) SetAuth(ctx context.Context, workspaceID, kind, token string) error {
 	if err := s.CheckAuth(kind); err != nil {
 		return err
@@ -99,7 +122,7 @@ func (s *Service) SetAuth(ctx context.Context, workspaceID, kind, token string) 
 	if err := s.authFiles().put(workspaceID, content); err != nil {
 		return err
 	}
-	if kind != AuthOpenAIAPIKey {
+	if (kind != AuthOpenAIAPIKey && kind != AuthCodexAccessToken) || f.Auth != kind {
 		// The Codex home logged in with a key no longer the session's must
 		// not keep a copy of it.
 		if err := os.Remove(filepath.Join(s.codexHome(workspaceID), "auth.json")); err != nil && !os.IsNotExist(err) {

@@ -55,6 +55,8 @@ func TestASessionsCredentialFitsItsAgent(t *testing.T) {
 		{"", AuthAnthropicAPIKey, testAnthropic, nil, // a session recorded before agents is Claude's
 			[]string{"export ANTHROPIC_API_KEY='" + testAnthropic + "'"}},
 		{AgentClaude, AuthOpenAIAPIKey, testOpenAIKey, ErrAuthMismatch, nil},
+		{AgentClaude, AuthCodexAccessToken, testOpenAIKey, ErrAuthMismatch, nil},
+		{AgentCodex, AuthCodexAccessToken, "synthetic-workspace-access-token", nil, []string{"unset OPENAI_API_KEY", "export CODEX_ACCESS_TOKEN='synthetic-workspace-access-token'"}},
 		{AgentCodex, AuthOpenAIAPIKey, testOpenAIKey, nil, []string{"export OPENAI_API_KEY='" + testOpenAIKey + "'"}},
 		{AgentCodex, AuthClaudeOAuthToken, testOAuthToken, ErrAuthMismatch, nil},
 		{AgentCodex, AuthAnthropicAPIKey, testAnthropic, ErrAuthMismatch, nil},
@@ -226,7 +228,7 @@ func TestACodexSessionWithAKeyRunsInItsOwnLoggedInHome(t *testing.T) {
 	if !slices.Contains(call.env, "CODEX_HOME="+home) || slices.Contains(call.env, "CODEX_HOME=/Users/user/.codex") || slices.Contains(call.env, "OPENAI_API_KEY=the-computers-key") {
 		t.Errorf("login env = %q, want only the session's home", call.env)
 	}
-	want := []string{"env", "-u", "OPENAI_API_KEY", "CODEX_HOME=" + home, "codex"}
+	want := []string{"env", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN", "CODEX_HOME=" + home, "codex"}
 	if got := fake.lastLaunch(); !slices.Equal(got[:len(want)], want) || strings.Contains(strings.Join(got, " "), testOpenAIKey) {
 		t.Errorf("launch = %q, want codex in its own home, the key off the command line", got)
 	}

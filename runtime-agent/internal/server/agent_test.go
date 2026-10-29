@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"slices"
+	"strings"
 	"testing"
 
 	"runtime-agent/internal/protocol"
@@ -63,6 +64,10 @@ func TestASessionsAgentIsChosenAtCreateAndItsCredentialMustFitIt(t *testing.T) {
 		{"ws-c", map[string]string{"kind": "openai-api-key", "token": openAIKey}, http.StatusBadRequest},
 		{"ws-x", map[string]string{"kind": "openai-api-key", "token": openAIKey}, http.StatusNotFound},
 		{"ws-a", map[string]string{"kind": "openai-api-key", "token": openAIKey}, http.StatusOK},
+		{"ws-a", map[string]string{"kind": "codex-access-token", "token": "synthetic-workspace-token-" + strings.Repeat("a", 800)}, http.StatusOK},
+		{"ws-a", map[string]string{"kind": "codex-access-token"}, http.StatusBadRequest},
+		{"ws-a", map[string]string{"kind": "codex-access-token", "token": openAIKey + "\n"}, http.StatusBadRequest},
+		{"ws-c", map[string]string{"kind": "codex-access-token", "token": openAIKey}, http.StatusBadRequest},
 		{"ws-a", map[string]string{"kind": "none"}, http.StatusOK},
 		{"ws-c", map[string]string{"kind": "anthropic-api-key", "token": "sk-ant-api03-0123456789abcdef0123"}, http.StatusOK},
 	} {
@@ -100,6 +105,9 @@ func TestHealthSaysWhichAgentsTheComputerRuns(t *testing.T) {
 	}
 	if !slices.Contains(body.Features, protocol.FeatureCodexGateway) {
 		t.Errorf("health features = %q, want %s: Outrunner's models in Codex", body.Features, protocol.FeatureCodexGateway)
+	}
+	if !slices.Contains(body.Features, protocol.FeatureCodexAccessToken) {
+		t.Error("health omits Codex access-token capability")
 	}
 	_, err = exec.LookPath("codex")
 	if hasCodex := slices.Contains(body.Agents, "codex"); hasCodex != (err == nil) {

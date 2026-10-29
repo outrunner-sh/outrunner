@@ -357,7 +357,7 @@ func sessionEnvironment(base []string) ([]string, []string) {
 		switch key {
 		case "RUNTIME_AGENT_SECRET", "RUNTIME_AGENT_ROOT", "PORT", "RUNTIME_SANDBOX_ID", "OUTRUNNER_APP_URL":
 			continue
-		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN":
+		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "GH_TOKEN":
 			if value != "" {
 				secrets = append(secrets, value)
 				hasGitHub = hasGitHub || key == "GH_TOKEN"

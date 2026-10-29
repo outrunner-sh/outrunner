@@ -23,7 +23,7 @@ import { providerSettingsHref } from "@/lib/settings-links";
 
 /** A credential handed to the agent for one session (POST /workspaces/{id}/auth). */
 export type SessionCredential = {
-  kind: "claude-oauth-token" | "anthropic-api-key" | "openai-api-key";
+  kind: "claude-oauth-token" | "anthropic-api-key" | "openai-api-key" | "codex-access-token";
   token: string;
 };
 

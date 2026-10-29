@@ -20,6 +20,31 @@ import { SessionKeyRemovedError } from "@/lib/runtime/model-switch";
 const KEY: ResolvedAuth["credential"] = { kind: "openai-api-key", token: "sk-proj-" + "o".repeat(40) };
 const TOKEN: ResolvedAuth["credential"] = { kind: "claude-oauth-token", token: "sk-ant-oat01-" + "t".repeat(40) };
 
+test("Codex access tokens require the advertised capability before delivery or restore", async () => {
+  const auth: ResolvedAuth = { method: null, credential: { kind: "codex-access-token", token: "synthetic-workspace-access-token" }, picked: false };
+  const { c, given } = client(ok, async () => ["claude", "codex"]);
+  let restored = 0;
+  await assert.rejects(readyBox(c, "codex", auth), OutdatedComputerError);
+  await assert.rejects(deliverSessionAuth(c, "codex", auth), OutdatedComputerError);
+  await assert.rejects(restoreSignedIn(c, "codex", auth, async () => { restored++; }), OutdatedComputerError);
+  assert.deepEqual(given, []);
+  assert.equal(restored, 0);
+
+  let features: string[] = [];
+  let upgrades = 0;
+  c.features = async () => features;
+  c.upgrade = async () => { upgrades++; features = ["codex-access-token"]; };
+  await readyBox(c, "codex", auth);
+  await deliverSessionAuth(c, "codex", auth);
+  await restoreSignedIn(c, "codex", auth, async (credential) => {
+    assert.deepEqual(credential, auth.credential);
+    restored++;
+  });
+  assert.equal(upgrades, 1);
+  assert.deepEqual(given, [auth.credential]);
+  assert.equal(restored, 1);
+});
+
 /** A client whose /auth answers `answer`, recording what it was given. */
 function client(answer: () => Promise<unknown>, agents: SessionAuthClient["agents"] = async () => ["claude"]) {
   const given: unknown[] = [];

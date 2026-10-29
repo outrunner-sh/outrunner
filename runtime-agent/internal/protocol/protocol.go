@@ -119,7 +119,7 @@ type SetModelRequest struct {
 
 // SetAuthRequest gives a workspace's session its own credential, applied at
 // its next launch: Kind is "claude-oauth-token" or "anthropic-api-key" for a
-// Claude session, "openai-api-key" for a Codex one, or "none" to take it
+// Claude session, "openai-api-key" or "codex-access-token" for a Codex one, or "none" to take it
 // away (the agent's own login applies again), which carries no Token.
 type SetAuthRequest struct {
 	Kind  string `json:"kind"`
@@ -421,6 +421,10 @@ type SetAgentContextRequest struct {
 
 // FeatureAgentContext is POST /agent-context.
 const FeatureAgentContext = "agent-context"
+
+// FeatureCodexAccessToken accepts a Codex workspace access token, separately
+// from an OpenAI Platform API key.
+const FeatureCodexAccessToken = "codex-access-token"
 
 // FeatureEnvironment is POST /workspaces/{id}/environment.
 const FeatureEnvironment = "session-environment"
