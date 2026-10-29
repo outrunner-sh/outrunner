@@ -269,7 +269,7 @@ export function PullFiles({
           Files <span className="text-muted-foreground">{changedFiles}</span>
         </h2>
         <span className="flex items-center gap-3 text-[12px]">
-          {lines && <LineCountsSummary counts={lines} />}
+          {lines && complete && <LineCountsSummary counts={lines} />}
           {files !== null && <StartTourButton tour={tour} />}
         </span>
       </div>
@@ -279,7 +279,7 @@ export function PullFiles({
       ) : (
         !complete && (
           <p className="text-[12px] text-muted-foreground">
-            Showing {files.length} of {changedFiles} files.
+            Showing {files.length} of {changedFiles} files, so their lines by kind are left out.
           </p>
         )
       )}

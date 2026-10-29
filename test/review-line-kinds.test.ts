@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { countLines, lineKind } from "@/lib/review/line-kinds";
+import { byKindThenPath, countLines, lineKind } from "@/lib/review/line-kinds";
+
+test("the shared file order uses a fixed locale", () => {
+  const files = [
+    { kind: "code" as const, path: "lib/z.ts" },
+    { kind: "test" as const, path: "test/a.test.ts" },
+    { kind: "generated" as const, path: "pnpm-lock.yaml" },
+    { kind: "code" as const, path: "lib/s.ts" },
+  ];
+  assert.deepEqual([...files].sort(byKindThenPath).map((f) => f.path), ["lib/s.ts", "lib/z.ts", "test/a.test.ts", "pnpm-lock.yaml"]);
+});
 
 test("lockfiles anywhere in the tree are generated", () => {
   for (const path of ["pnpm-lock.yaml", "web/package-lock.json", "yarn.lock", "go.sum", "Cargo.lock", "api/poetry.lock", "Gemfile.lock", "infra/.terraform.lock.hcl"]) {
