@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
 import type { AgentId } from "@/lib/agents/registry";
 import { requestJson } from "@/lib/http/request-json";
@@ -43,12 +43,12 @@ export function useSessionChats(workspaceId: string, main: SessionChat, enabled:
   }
 
   const shown = useRef<string | null>(workspaceId);
-  useEffect(() => {
+  useLayoutEffect(() => {
     shown.current = workspaceId;
     return () => { shown.current = null; };
   }, [workspaceId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!enabled) return;
     let live = true;
     requestJson<{ chats: SessionChat[] }>(`/api/workspaces/${workspaceId}/chats`, { has: (d) => Array.isArray(d.chats) })
