@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +14,8 @@ import (
 	"runtime-agent/internal/conversation"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/redact"
+	"runtime-agent/internal/snapshot"
+	"runtime-agent/internal/transcript"
 )
 
 // A session can hold several chats: conversations of their own, each its own
@@ -551,4 +554,120 @@ func (s *Service) handedOff(key string) {
 		return
 	}
 	s.updateFacts(key, func(f *workspaceFacts) { f.Handoff = "" })
+}
+
+// snapshotChats are the chats an archive captures beside the main
+// conversation: those the control plane names (asked) that the session has,
+// with their logs, a Codex chat's rollout, and the session id each resumes
+// by. The agent is the chat's own, whatever the request says.
+func (s *Service) snapshotChats(workspaceID string, asked []protocol.ArchiveChat) ([]snapshot.ChatInput, error) {
+	var chats []snapshot.ChatInput
+	for _, chat := range asked {
+		if !ValidChatID(chat.ChatID) {
+			return nil, fmt.Errorf("invalid chat id %q", chat.ChatID)
+		}
+		if !s.HasChat(workspaceID, chat.ChatID) {
+			// Never started on this box (a restore that lost it, say): the
+			// control plane keeps its record, and there is no log to keep.
+			continue
+		}
+		key := ChatKey(workspaceID, chat.ChatID)
+		f, _ := s.getFacts(key)
+		// A pending fork handoff lives outside the conversation log. Until
+		// snapshots carry that artifact, refuse to discard its source context.
+		if f.Handoff != "" {
+			return nil, fmt.Errorf("chat %s has an unspent fork handoff; send its first prompt or delete the chat before archiving", chat.ChatID)
+		}
+		chat.Agent = agentOrClaude(f.Agent)
+		chats = append(chats, snapshot.ChatInput{
+			ArchiveChat:      chat,
+			ConversationPath: s.SessionLog(key),
+			RolloutPath:      f.CodexRollout,
+			SessionID:        s.sessionID(key),
+		})
+	}
+	return chats, nil
+}
+
+// restoreChats brings a restored session's other chats back beside it, each
+// with its conversation where its agent resumes it: a Claude chat's under
+// its session id in the worktree's project folder, a Codex chat's
+// translation, and its rollout when the Snapshot has one. They aren't
+// launched: a chat starts when it is opened. The main chat is named by its
+// id (mainSession) first, so its relaunch never takes a chat's conversation
+// for the newest in the folder.
+func (s *Service) restoreChats(ctx context.Context, workspaceID, mainSession string, chats []protocol.RestoreChat) {
+	if f, _ := s.getFacts(workspaceID); f.Agent != AgentCodex && mainSession != "" {
+		s.updateFacts(workspaceID, func(f *workspaceFacts) { f.ClaudeSessionID = mainSession })
+	}
+	for _, chat := range chats {
+		if err := s.restoreChat(ctx, workspaceID, chat); err != nil {
+			log.Printf("restore %s: chat %s not restored: %v", workspaceID, chat.ChatID, err)
+		}
+	}
+}
+
+func (s *Service) restoreChat(ctx context.Context, workspaceID string, chat protocol.RestoreChat) error {
+	if !ValidChatID(chat.ChatID) {
+		return fmt.Errorf("invalid chat id %q", chat.ChatID)
+	}
+	if chat.Kind != "" && chat.Kind != "chat" && chat.Kind != "side" {
+		return fmt.Errorf("invalid chat kind %q", chat.Kind)
+	}
+	sideOf := ""
+	if chat.Kind == "side" {
+		if chat.ForkedFrom == nil {
+			return fmt.Errorf("side chat has no source chat")
+		}
+		from := *chat.ForkedFrom
+		if from != MainChat && !ValidChatID(from) {
+			return fmt.Errorf("invalid source chat %q", from)
+		}
+		sideOf = ChatKey(workspaceID, from)
+	}
+	sessionID := ""
+	if chat.SessionID != nil {
+		sessionID = *chat.SessionID
+	}
+	if sessionID != "" && !validSessionID(sessionID) {
+		return fmt.Errorf("invalid session id %q", sessionID)
+	}
+	if err := s.CreateChat(ctx, workspaceID, ChatInput{ChatID: chat.ChatID, Agent: chat.Agent}); err != nil {
+		return err
+	}
+	key := ChatKey(workspaceID, chat.ChatID)
+	f, _ := s.getFacts(key)
+	if sideOf != "" {
+		s.updateFacts(key, func(f *workspaceFacts) { f.SideOf = sideOf })
+	}
+	if f.Agent == AgentCodex {
+		dest := conversationPath(s.Root, key)
+		if err := snapshot.DownloadArtifact(ctx, chat.Conversation, dest); err != nil {
+			return fmt.Errorf("download its conversation: %w", err)
+		}
+		if chat.Rollout == "" || sessionID == "" {
+			return nil // no rollout: a new Codex conversation, its history kept
+		}
+		rollout := restoredRolloutPath(filepath.Join(s.codexHomeFor(key), "sessions"), sessionID)
+		if err := snapshot.DownloadArtifact(ctx, chat.Rollout, rollout); err != nil {
+			return fmt.Errorf("download its rollout: %w", err)
+		}
+		if meta, err := transcript.ReadRolloutMeta(rollout); err != nil || meta.ID != sessionID {
+			return fmt.Errorf("its rollout is not session %s", sessionID)
+		}
+		s.updateFacts(key, func(f *workspaceFacts) { f.CodexRollout, f.CodexSessionID = rollout, sessionID })
+		return nil
+	}
+	if sessionID == "" {
+		return nil // it never said anything: nothing to bring back
+	}
+	dest, err := s.conversationDest(s.worktreePath(workspaceID), sessionID)
+	if err != nil {
+		return err
+	}
+	if err := snapshot.DownloadArtifact(ctx, chat.Conversation, dest); err != nil {
+		return fmt.Errorf("download its conversation: %w", err)
+	}
+	s.updateFacts(key, func(f *workspaceFacts) { f.ClaudeSessionID = sessionID })
+	return nil
 }

@@ -192,6 +192,51 @@ type ArchiveUpload struct {
 type ArchiveWorkspaceRequest struct {
 	ArchivedAt string          `json:"archivedAt"`
 	Uploads    []ArchiveUpload `json:"uploads"`
+	// Chats are the session's chats other than its main one
+	// (FeatureChatSnapshots): each one's conversation is captured too, to the
+	// upload URLs it names, and the manifest lists them with what the control
+	// plane knows of them (their names, their models).
+	Chats []ArchiveChat `json:"chats,omitempty"`
+}
+
+// FeatureChatSnapshots marks an agent whose Snapshots keep every chat: an
+// archive captures each chat's conversation (ArchiveWorkspaceRequest.Chats)
+// and a restore brings each back (RestoreWorkspaceRequest.Chats).
+const FeatureChatSnapshots = "chat-snapshots"
+
+// ChatModel is a chat's model as the control plane records it.
+type ChatModel struct {
+	Provider string  `json:"provider"`
+	ID       string  `json:"id"`
+	Effort   *string `json:"effort"`
+}
+
+// ArchiveChat is one chat an archive captures: the control plane's record of
+// it, echoed into the manifest, and where its conversation (and a Codex
+// chat's raw rollout) go.
+type ArchiveChat struct {
+	ChatID       string     `json:"chatId"`
+	Name         string     `json:"name"`
+	Kind         string     `json:"kind"`
+	ForkedFrom   *string    `json:"forkedFrom"`
+	Agent        string     `json:"agent"`
+	Model        *ChatModel `json:"model"`
+	Conversation string     `json:"conversation"`
+	Rollout      string     `json:"rollout,omitempty"`
+}
+
+// RestoreChat is one chat a restore brings back: its kind and source chat,
+// agent, session id, and artifact download URLs. Kind and ForkedFrom are
+// optional for older control planes; a side chat uses them to resume its
+// context without replaying its spent fork handoff.
+type RestoreChat struct {
+	ChatID       string  `json:"chatId"`
+	Kind         string  `json:"kind,omitempty"`
+	ForkedFrom   *string `json:"forkedFrom,omitempty"`
+	Agent        string  `json:"agent,omitempty"`
+	SessionID    *string `json:"sessionId"`
+	Conversation string  `json:"conversation"`
+	Rollout      string  `json:"rollout,omitempty"`
 }
 
 // RestoreDownload is one signed download URL for a Snapshot artifact the agent
@@ -211,6 +256,9 @@ type RestoreDownload struct {
 // conversation JSONL. The agent materializes, VERIFIES, and only then relaunches
 // Claude — a failed verification aborts without booting Claude.
 type RestoreWorkspaceRequest struct {
+	// Chats are the session's other chats, brought back beside it
+	// (FeatureChatSnapshots).
+	Chats      []RestoreChat     `json:"chats,omitempty"`
 	Branch     string            `json:"branch"`
 	BaseBranch string            `json:"baseBranch,omitempty"`
 	SessionID  *string           `json:"sessionId"`

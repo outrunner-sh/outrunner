@@ -14,6 +14,8 @@ import type { AgentEvent, WorkspaceSummary } from "@/lib/runtime/agent-protocol"
 import type { Cast } from "@/lib/runtime/replay/cast";
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type { WorkspaceSnapshot } from "@/lib/runtime/snapshot/types";
+import { AGENTS } from "@/lib/agents/registry";
+import { MAIN_CHAT, MAIN_CHAT_NAME } from "@/lib/session/chats";
 
 type ReplayData = {
   snapshotId: string;
@@ -40,7 +42,13 @@ export function WorkspaceReplay({
   const [selectedId, setSelectedId] = useState<string | null>(
     snapshots[0]?.id ?? null,
   );
+  // The chat whose conversation shows: the main one unless another of the
+  // Snapshot's is picked.
+  const [chatId, setChatId] = useState<string>(MAIN_CHAT);
   const [data, setData] = useState<ReplayData | null>(null);
+  // From the row's copy of the manifest, so the picker stays put while a
+  // chat's conversation loads.
+  const snapshotChats = snapshots.find((s) => s.id === selectedId)?.manifest.chats ?? [];
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -54,8 +62,9 @@ export function WorkspaceReplay({
       setLoading(true);
       setError(null);
       try {
+        const chat = chatId === MAIN_CHAT ? "" : `&chat=${encodeURIComponent(chatId)}`;
         const res = await fetch(
-          `/api/workspaces/${workspaceId}/replay?snapshotId=${selectedId}`,
+          `/api/workspaces/${workspaceId}/replay?snapshotId=${selectedId}${chat}`,
         );
         const body = (await res.json()) as ReplayData & { error?: string };
         if (!active) return;
@@ -75,7 +84,7 @@ export function WorkspaceReplay({
     return () => {
       active = false;
     };
-  }, [workspaceId, selectedId]);
+  }, [workspaceId, selectedId, chatId]);
 
   if (snapshots.length === 0) {
     return (
@@ -95,7 +104,11 @@ export function WorkspaceReplay({
           id="snapshot"
           className="h-7 rounded-md border border-white/10 bg-black px-2 text-xs text-foreground"
           value={selectedId ?? ""}
-          onChange={(e) => setSelectedId(e.target.value)}
+          onChange={(e) => {
+            // Another Snapshot may not hold the chat shown.
+            setChatId(MAIN_CHAT);
+            setSelectedId(e.target.value);
+          }}
         >
           {snapshots.map((s) => (
             <option key={s.id} value={s.id}>
@@ -103,6 +116,26 @@ export function WorkspaceReplay({
             </option>
           ))}
         </select>
+        {snapshotChats.length > 0 && (
+          <>
+            <label className="text-muted-foreground text-xs" htmlFor="replay-chat">
+              Chat
+            </label>
+            <select
+              id="replay-chat"
+              className="h-7 rounded-md border border-white/10 bg-black px-2 text-xs text-foreground"
+              value={chatId}
+              onChange={(e) => setChatId(e.target.value)}
+            >
+              <option value={MAIN_CHAT}>{MAIN_CHAT_NAME}</option>
+              {snapshotChats.map((chat) => (
+                <option key={chat.id} value={chat.id}>
+                  {chat.name} · {AGENTS[chat.agent].label}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         {loading && <Spinner className="text-muted-foreground size-4" />}
       </div>
 

@@ -554,10 +554,50 @@ export type ArchiveUpload = z.infer<typeof ArchiveUpload>;
  * the full set here prevents an incomplete Snapshot (a manifest pointing at
  * missing objects) from ever being persisted as an archived workspace.
  */
+/** The agent's Snapshots keep every chat (AGENT_FEATURE_CHATS): an archive
+ *  captures each chat's conversation (ArchiveWorkspaceRequest.chats) and a
+ *  restore brings each back (RestoreWorkspaceRequest.chats). */
+export const AGENT_FEATURE_CHAT_SNAPSHOTS = "chat-snapshots";
+
+/** One chat an archive captures beside the main conversation: the control
+ *  plane's record of it (echoed into the manifest) and the signed upload URLs
+ *  its conversation, and a Codex chat's rollout, go to. */
+export const ArchiveChat = z
+  .object({
+    chatId: ChatId,
+    name: z.string().min(1).max(80),
+    kind: z.enum(["chat", "side"]),
+    forkedFrom: z.string().min(1).nullable(),
+    agent: z.enum(["claude", "codex"]),
+    model: z.object({ provider: z.string().min(1), id: z.string().min(1), effort: z.string().min(1).nullable() }).nullable(),
+    conversation: z.string().url(),
+    rollout: z.string().url().optional(),
+  })
+  .strict();
+export type ArchiveChat = z.infer<typeof ArchiveChat>;
+
+/** One chat a restore brings back: its agent, the session id it resumes by,
+ *  and its artifacts' signed download URLs. */
+export const RestoreChat = z
+  .object({
+    chatId: ChatId,
+    /** Preserve side-chat context when the chat resumes. */
+    kind: z.enum(["chat", "side"]).optional(),
+    forkedFrom: z.string().min(1).nullable().optional(),
+    agent: z.enum(["claude", "codex"]).optional(),
+    sessionId: z.string().min(1).nullable(),
+    conversation: z.string().url(),
+    rollout: z.string().url().optional(),
+  })
+  .strict();
+export type RestoreChat = z.infer<typeof RestoreChat>;
+
 export const ArchiveWorkspaceRequest = z
   .object({
     archivedAt: z.string().min(1),
     uploads: z.array(ArchiveUpload),
+    /** The session's other chats (AGENT_FEATURE_CHAT_SNAPSHOTS). */
+    chats: z.array(ArchiveChat).optional(),
   })
   .refine((v) => coversExactly(v.uploads.map((u) => u.artifact), ARCHIVE_ARTIFACTS, OPTIONAL_ARTIFACTS), {
     message: "archive uploads must cover exactly the six Snapshot artifacts (and may add a rollout)",
@@ -616,6 +656,9 @@ export const RestoreWorkspaceRequest = z
     /** A session of several repositories (AGENT_FEATURE_MULTI_REPO_SNAPSHOTS):
      *  each restored in its folder off its mirror, on the box already. */
     repos: CreateWorkspaceRequest.shape.repos,
+    /** The session's other chats, brought back beside it
+     *  (AGENT_FEATURE_CHAT_SNAPSHOTS). */
+    chats: z.array(RestoreChat).optional(),
   })
   .refine((v) => coversExactly(v.downloads.map((d) => d.artifact), RESTORE_ARTIFACTS, OPTIONAL_ARTIFACTS), {
     message: "restore downloads must cover exactly bundle, patch, and conversation (and may add a rollout)",

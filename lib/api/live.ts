@@ -79,18 +79,23 @@ export async function readLiveConversation(workspace: Workspace, chat?: string):
 
 /** The session's conversation: live where its box is up, else its latest
  *  snapshot's, else none. A chat other than the main one (`chat`) is read
- *  live only: a snapshot holds the main chat's. */
+ *  the same way, from the latest snapshot that holds it. */
 export async function readConversation(workspace: Workspace, chat?: string): Promise<Conversation> {
   const live = await readLiveConversation(workspace, chat);
   if (live) return live;
-  if (chat) return { entries: [], state: null, from: "none" };
-  const snapshot = (await listWorkspaceSnapshots(workspace.id))[0];
+  // The latest snapshot's; a chat's from the latest that holds it (one
+  // archived before Snapshots kept every chat has the main chat's alone).
+  const snapshots = await listWorkspaceSnapshots(workspace.id);
+  const snapshot = chat ? snapshots.find((s) => s.manifest.chats?.some((c) => c.id === chat)) : snapshots[0];
   if (!snapshot) return { entries: [], state: null, from: "none" };
-  const events = await assembleConversation({
-    snapshot,
-    ownerId: workspace.ownerId,
-    storage: supabaseSnapshotStorage(),
-    fetchBytes: fetchSnapshotBytes,
-  });
+  const events = await assembleConversation(
+    {
+      snapshot,
+      ownerId: workspace.ownerId,
+      storage: supabaseSnapshotStorage(),
+      fetchBytes: fetchSnapshotBytes,
+    },
+    chat,
+  );
   return { ...entriesFromEvents(events), from: "archive" };
 }

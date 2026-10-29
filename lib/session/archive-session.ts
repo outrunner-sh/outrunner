@@ -13,14 +13,15 @@ import { after } from "next/server";
 import type { Owner } from "@/lib/auth/owner";
 import { CloudLimitError, isPlanLimitError } from "@/lib/billing/limits";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
+import { listChatsOf } from "@/lib/db/chats";
 import {
   createWorkspaceSnapshot,
   getWorkspaceComputer,
   readRuntimeComputerSecret,
   transitionWorkspace,
 } from "@/lib/db/repositories";
-import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { AGENT_FEATURE_MULTI_REPO_SNAPSHOTS } from "@/lib/runtime/agent-protocol";
+import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { AGENT_FEATURE_CHAT_SNAPSHOTS, AGENT_FEATURE_MULTI_REPO_SNAPSHOTS } from "@/lib/runtime/agent-protocol";
 import { withRuntimeAgentRecovery } from "@/lib/runtime/agent-recovery";
 import { requireFeature } from "@/lib/runtime/box-features";
 import type { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
@@ -32,6 +33,7 @@ import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { ARCHIVED_UNSAVED, type ArchiveSave, saveForArchive } from "@/lib/session/archive-save";
 import { bringBack } from "@/lib/session/bring-back-box";
 import { bringBackFailure, MissingBoxProjectError } from "@/lib/session/box-failure";
+import { archiveChat, chatUploadPaths } from "@/lib/session/chat-snapshots";
 
 /** The agent on a session's box, to ask it things as its owner. */
 export async function daytonaAgent(
@@ -132,6 +134,9 @@ export async function archiveCloudSession(
       workspace.agent === "codex" ? ["rollout"] : [],
     );
     const uploads = urls.map((u) => ({ artifact: u.artifact, url: u.signedUrl }));
+    // Its other chats, each captured beside the main conversation: a
+    // Snapshot that lost them would lose their history.
+    const chats = await listChatsOf(workspace.id);
 
     save = await saveForArchive({
       bringBack: async () => {
@@ -146,14 +151,30 @@ export async function archiveCloudSession(
           await withRuntimeAgentRecovery(
             { provider, sandboxId, secret, agent, identity, upgrade, workspaceId: workspace.id },
             async (current) => {
-              // A session of several repositories is archived by an agent
-              // that can (its box upgraded in place first where it can be):
-              // after the transition, so two clicks don't both upgrade it.
+              // A session of several repositories, or chats, is archived by
+              // an agent that can (its box upgraded in place first where it
+              // can): after the transition, so two clicks don't both upgrade it.
+              const features = { features: async () => (await current.health(identity)).features ?? [], upgrade };
               if (workspace.checkouts) {
-                const features = { features: async () => (await current.health(identity)).features ?? [], upgrade };
                 await requireFeature(features, AGENT_FEATURE_MULTI_REPO_SNAPSHOTS, "archive a session of several repositories");
               }
-              return current.archiveWorkspace(identity, { archivedAt, uploads });
+              if (chats.length > 0) {
+                await requireFeature(features, AGENT_FEATURE_CHAT_SNAPSHOTS, "archive a session with several chats");
+              }
+              const storage = supabaseSnapshotStorage();
+              const chatUploads = await Promise.all(
+                chats.map(async (chat) => {
+                  const paths = chatUploadPaths(prefix, chat);
+                  const conversation = (await storage.createSignedUploadUrl(paths.conversation)).signedUrl;
+                  const rollout = paths.rollout ? (await storage.createSignedUploadUrl(paths.rollout)).signedUrl : undefined;
+                  return archiveChat(chat, { conversation, ...(rollout && { rollout }) });
+                }),
+              );
+              return current.archiveWorkspace(identity, {
+                archivedAt,
+                uploads,
+                ...(chatUploads.length > 0 && { chats: chatUploads }),
+              });
             },
           )
         ).result,
@@ -214,5 +235,6 @@ function archiveFailure(error: unknown): { status: number; error: string } {
   const refused = isPlanLimitError(error);
   if (refused) return { status: 403, error: refused.message };
   if (error instanceof OutdatedComputerError) return { status: 409, error: error.message };
+  if (error instanceof AgentRequestError && error.error?.message) return { status: 502, error: error.error.message };
   return { status: 502, error: archiveError() };
 }

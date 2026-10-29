@@ -1602,6 +1602,11 @@ func (s *Service) SessionName(workspaceID string) string { return sessionName(wo
 // revive it. Archive is idempotent — re-archiving a stopped session simply
 // re-captures and re-uploads.
 func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.ArchiveWorkspaceRequest) (*snapshot.Manifest, error) {
+	chats, err := s.snapshotChats(workspaceID, req.Chats)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := s.Stop(ctx, workspaceID); err != nil {
 		return nil, err
 	}
@@ -1610,6 +1615,7 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 	summary.State = "archived" // the Snapshot captures the archived session
 
 	f, _ := s.getFacts(workspaceID)
+
 	return snapshot.Produce(ctx, snapshot.Input{
 		WorkspaceID:      workspaceID,
 		Worktree:         s.worktreePath(workspaceID),
@@ -1622,6 +1628,7 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 		ArchivedAt:       req.ArchivedAt,
 		Uploads:          req.Uploads,
 		ClaudeVersion:    snapshot.ClaudeVersion(ctx),
+		Chats:            chats,
 	})
 }
 
@@ -1710,6 +1717,9 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 			return "", fmt.Errorf("cannot restore: the snapshot's rollout is not session %s", sessionID)
 		}
 		s.updateFacts(workspaceID, func(f *workspaceFacts) { f.CodexRollout, f.CodexSessionID = in.RolloutDest, sessionID })
+	}
+	if len(req.Chats) > 0 {
+		s.restoreChats(ctx, workspaceID, sessionID, req.Chats)
 	}
 	// Verified — safe to boot the agent, continuing the restored session.
 	return s.Resume(ctx, workspaceID, "")

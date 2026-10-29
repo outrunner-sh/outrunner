@@ -76,3 +76,8 @@ test("an archive asks the lifecycle route, and a refusal says why", async () => 
     message: "Could not reach Outrunner. Check your connection and try again.",
   });
 });
+
+test("an archive refusal shows the actionable pending-handoff reason", async () => {
+  const reason = "chat c1 has an unspent fork handoff; send its first prompt or delete the chat before archiving";
+  await assert.rejects(archiveSession("w", (async () => Response.json({ error: reason }, { status: 502 })) as typeof fetch), { message: reason });
+});

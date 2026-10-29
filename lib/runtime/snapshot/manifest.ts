@@ -124,6 +124,47 @@ export const SnapshotOrigin = z
   .strict();
 export type SnapshotOrigin = z.infer<typeof SnapshotOrigin>;
 
+/** Where a chat's artifacts sit in a Snapshot: under chats/<id>/, by the
+ *  artifact's own filename (runtime-agent snapshot.ChatConversationName). */
+export function chatArtifactName(chatId: string, artifact: "conversation" | "rollout"): string {
+  const file = artifact === "conversation" ? SNAPSHOT_ARTIFACTS.conversation : OPTIONAL_SNAPSHOT_ARTIFACTS.rollout;
+  return `chats/${chatId}/${file}`;
+}
+
+const CHAT_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** A chat's model as its row records it (workspace_chats.model_*). */
+const SnapshotChatModel = z
+  .object({ provider: z.string().min(1), id: z.string().min(1), effort: z.string().min(1).nullable() })
+  .strict();
+
+/**
+ * One of a Snapshot's chats other than its main one (lib/session/chats.ts):
+ * what the control plane knew of it when it was archived (its name, kind, the
+ * chat it forked, its model), its agent, the session id a restore resumes its
+ * conversation by, and its artifacts, pointers like the rest.
+ */
+export const SnapshotChat = z
+  .object({
+    id: z.string().regex(CHAT_ID),
+    name: z.string().min(1).max(80),
+    kind: z.enum(["chat", "side"]),
+    forkedFrom: z.string().min(1).nullable(),
+    agent: z.enum(["claude", "codex"]),
+    model: SnapshotChatModel.nullable(),
+    sessionId: z.string().min(1).nullable(),
+    conversation: z.string(),
+    rollout: z.string().optional(),
+  })
+  .strict()
+  .refine(
+    (chat) =>
+      chat.conversation === chatArtifactName(chat.id, "conversation") &&
+      (chat.rollout === undefined || chat.rollout === chatArtifactName(chat.id, "rollout")),
+    { message: "a chat's artifacts sit under chats/<its id>/" },
+  );
+export type SnapshotChat = z.infer<typeof SnapshotChat>;
+
 /** How a stored artifact is encoded, by filename; absent is as is. */
 export const SnapshotEncodings = z.record(z.string(), z.literal("gzip"));
 
@@ -151,6 +192,9 @@ export const SnapshotManifest = z
     summary: z.literal(SNAPSHOT_ARTIFACTS.summary),
     /** The raw Codex rollout, when the Snapshot has one. */
     rollout: z.literal(OPTIONAL_SNAPSHOT_ARTIFACTS.rollout).optional(),
+    /** The session's chats other than its main one, each with its own
+     *  conversation; absent for a session of one chat, and from before chats. */
+    chats: z.array(SnapshotChat).optional(),
 
     // Integrity — keyed by artifact filename, of the bytes as stored.
     checksums: z.record(z.string(), Sha256),

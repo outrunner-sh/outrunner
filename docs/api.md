@@ -243,9 +243,10 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 { "data": [{ "id": "main", "name": "Main", "kind": "main", "coding_agent": "claude", "forked_from": null, "model": null, "created_at": "…" }, { "id": "6f1c…", "name": "Fork of Main", "kind": "chat", "coding_agent": "codex", "forked_from": "main", "model": null, "created_at": "…" }] }
 ```
 
-A chat's conversation is read from the session's box while it's up; an
-archived session has its main chat's alone. Webhooks follow the main chat's
-turns.
+A chat's conversation is read from the session's box while it's up, and an
+archived session's from its last snapshot, which keeps every chat (one
+archived before chats were kept has its main chat's alone). Webhooks follow
+the main chat's turns.
 
 ### Pausing, archiving, deleting
 
