@@ -13,6 +13,7 @@ import { missionBoxSetup } from "@/lib/missions/setup.deps";
 import type { AgentClient, WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { deliverSessionSetup } from "@/lib/runtime/session-setup";
 import { mintSnapshotDownloadUrl } from "@/lib/runtime/storage";
+import { syncEnvironmentSecrets } from "@/lib/secret-sync/sync.deps";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 
 /** Set the session up on its box before it launches. */
@@ -52,15 +53,24 @@ export async function setUpSession(
   );
 }
 
-/** The session's project's setup. Before the migration that adds projects,
- *  the repository's environment as it was kept (project_environment). */
+/** The session's project's setup, with the secrets of the Doppler or
+ *  Infisical config it's linked to fetched now (docs/secret-sync.md): a
+ *  provider that fails leaves them out and says so on the project's page,
+ *  and the session starts all the same. Before the migration that adds
+ *  projects, the repository's environment as it was kept
+ *  (project_environment). */
 async function sessionEnvironment(
   ownerId: string,
   projectId: string,
   environmentId: string | null,
 ): Promise<EnvironmentSetup | null> {
   const id = environmentId ?? (await defaultEnvironmentId(ownerId, projectId));
-  if (id) return environmentSetup(ownerId, id);
+  if (id) {
+    const setup = await environmentSetup(ownerId, id);
+    if (!setup) return null;
+    const synced = await syncEnvironmentSecrets(id, { env: setup.env, startHook: setup.hooks?.start ?? null });
+    return { ...setup, env: synced.env, hooks: { warm: setup.hooks?.warm ?? null, start: synced.startHook } };
+  }
   const kept = await getProjectEnvironment(ownerId, projectId);
   return kept && { ...kept, instructions: null };
 }
