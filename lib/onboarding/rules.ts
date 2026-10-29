@@ -5,6 +5,7 @@
 
 import { PLANS } from "@/lib/billing/plans";
 import type { RepositoryListing } from "@/lib/github/listing";
+import type { AgentMethod, AgentPick, AgentStatus, OnboardingProgress, OnboardingStep } from "@/lib/onboarding/types";
 
 /** The repositories a user picks from, most recently pushed first. */
 export function sortRepositories(repositories: RepositoryListing[]): RepositoryListing[] {
@@ -48,4 +49,47 @@ export const CLI_DEFAULT_URL = "https://app.outrunner.sh";
  *  rather than save the token where this page isn't looking. */
 export function connectClaudeCommand(runner: string, origin: string, account?: string): string {
   return `${runner} outrunner@latest --url ${origin}${account ? ` --account ${account}` : ""} claude`;
+}
+
+const STEPS: readonly OnboardingStep[] = ["agent", "repos", "start"];
+const PICKS: readonly AgentPick[] = ["claude", "codex", "outrunner", "codex-outrunner"];
+
+/** Saved progress as read back from storage, or null when it isn't any:
+ *  storage is the browser's, anyone's to write. */
+export function parseProgress(raw: unknown): OnboardingProgress | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { step, done, runOn } = raw as Record<string, unknown>;
+  if (!STEPS.includes(step as OnboardingStep) || !PICKS.includes(runOn as AgentPick) || !Array.isArray(done)) return null;
+  return { step: step as OnboardingStep, done: STEPS.filter((s) => done.includes(s)), runOn: runOn as AgentPick };
+}
+
+/** The agent of the user's own that's connected already, and how, the way
+ *  sessions would pick it: a Claude subscription, then an Anthropic key, then
+ *  an OpenAI key. Null when none is. */
+export function connectedAgent(status: AgentStatus): { agent: "claude" | "codex"; method: AgentMethod } | null {
+  if (status.claude.subscription) return { agent: "claude", method: "subscription" };
+  if (status.claude.apiKey) return { agent: "claude", method: "api-key" };
+  if (status.codex.apiKey) return { agent: "codex", method: "api-key" };
+  return null;
+}
+
+/**
+ * Where onboarding opens: where it was left in this browser, and past the
+ * Agent step when that's not done but an agent is connected already (from
+ * `npx outrunner … claude` in the terminal, say, seen from a tab the CLI
+ * opened), on that agent. `connect` is the agent to run sessions on, then.
+ * Start needs the repositories just picked, which aren't kept, so it opens
+ * on Repositories, their step, ticked as they were. A user who went back to
+ * the Agent step (it's done) stays on it.
+ */
+export function resumeAt(
+  saved: OnboardingProgress | null,
+  status: AgentStatus,
+): OnboardingProgress & { connect?: { agent: "claude" | "codex"; method: AgentMethod } } {
+  const at: OnboardingProgress = saved ?? { step: "agent", done: [], runOn: "outrunner" };
+  if (at.step === "start") return { ...at, step: "repos" };
+  if (at.step !== "agent" || at.done.includes("agent")) return at;
+  const connect = connectedAgent(status);
+  if (!connect) return at;
+  return { step: "repos", done: [...at.done, "agent"], runOn: connect.agent, connect };
 }
