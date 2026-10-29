@@ -189,7 +189,7 @@ export function AppFrame({
             ? "sm:grid-cols-1"
             : collapsed
               ? "sm:grid-cols-[48px_minmax(0,1fr)]"
-              : "sm:grid-cols-[264px_minmax(0,1fr)]",
+              : "sm:grid-cols-[280px_minmax(0,1fr)]",
         )}
       >
         {!railless && (
