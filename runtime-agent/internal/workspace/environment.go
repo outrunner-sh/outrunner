@@ -412,6 +412,7 @@ func (s *Service) envTokens() []string {
 func (s *Service) removeEnvironment(workspaceID string) {
 	s.envFiles().remove(workspaceID)
 	_ = os.Remove(s.instructionsPath(workspaceID))
+	s.removeGuide(workspaceID)
 	_ = os.RemoveAll(s.envRoot(workspaceID))
 	setup := s.setupPath(workspaceID)
 	warm, startHook := s.warmHookPath(workspaceID), s.startHookPath(workspaceID)
