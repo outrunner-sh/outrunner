@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"runtime-agent/internal/protocol"
 )
 
 // Two consecutive assistant lines. Byte offsets (end-of-line, includes '\n'):
@@ -339,5 +341,40 @@ func TestDecodeMarksAPromptSentInPlanMode(t *testing.T) {
 	line = `{"type":"user","uuid":"q","timestamp":"t","permissionMode":"bypassPermissions","message":{"role":"user","content":"Build it"}}`
 	if ev, _ := decode([]byte(line)); ev.Message.Mode != "" {
 		t.Errorf("mode = %q for a prompt in build mode, want none", ev.Message.Mode)
+	}
+}
+
+func TestDecodeKeepsAPastedImage(t *testing.T) {
+	// A screenshot pasted into Claude's prompt is logged as an image block
+	// beside the words: the timeline shows it, so its picture comes along.
+	line := `{"type":"user","uuid":"x","timestamp":"t","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},{"type":"text","text":"what is this?"}]}}`
+	ev, ok := decode([]byte(line))
+	if !ok || ev.Message == nil || len(ev.Message.Content) != 2 {
+		t.Fatalf("expected a prompt of two blocks, got %+v", ev.Message)
+	}
+	img := ev.Message.Content[0]
+	if img.Type != "image" || img.Source == nil || img.Source.MediaType != "image/png" || img.Source.Data != "iVBORw0KGgo=" {
+		t.Fatalf("image block lost its picture: %+v", img)
+	}
+}
+
+func TestDecodeLeavesOutAHugeImagesData(t *testing.T) {
+	data := strings.Repeat("A", protocol.MaxImageBlockData+4)
+	line := `{"type":"user","uuid":"x","timestamp":"t","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"` + data + `"}}]}}`
+	ev, ok := decode([]byte(line))
+	if !ok || len(ev.Message.Content) != 1 {
+		t.Fatalf("expected the image block, got %+v", ev.Message)
+	}
+	src := ev.Message.Content[0].Source
+	if src == nil || src.Data != "" || src.MediaType != "image/jpeg" {
+		t.Fatalf("a huge image should keep its type and lose its data: %+v", src)
+	}
+}
+
+func TestDecodeDropsADocumentsSource(t *testing.T) {
+	line := `{"type":"user","uuid":"x","timestamp":"t","message":{"role":"user","content":[{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0="}}]}}`
+	ev, ok := decode([]byte(line))
+	if !ok || len(ev.Message.Content) != 1 || ev.Message.Content[0].Source != nil {
+		t.Fatalf("only an image carries its source: %+v", ev.Message)
 	}
 }

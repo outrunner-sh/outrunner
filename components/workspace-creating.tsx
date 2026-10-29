@@ -3,6 +3,7 @@
 import { Check, Clock, GitBranch } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { attachmentFiles, MessageAttachments } from "@/components/attachment-thumbnails";
 import { DotMatrix, Spinner } from "@/components/ui/loaders";
 import type { ProvisionPhase } from "@/lib/runtime/types";
 import type { FirstPrompt } from "@/lib/session/first-prompt";
@@ -47,17 +48,19 @@ const FALLBACK_STAGES = [
   { label: "Finalizing setup", at: 46 },
 ] as const;
 
+/** The first prompt, waiting for the box, as the message it will be: its
+ *  files as thumbnails, its words clamped on whole lines. */
 function QueuedPrompt({ first }: { first: FirstPrompt }) {
-  const files = first.attachmentIds.length;
-  const text = first.prompt.trim() || `${files} ${files === 1 ? "file" : "files"}`;
+  const text = first.prompt.trim();
   return (
-    <div className="flex flex-col items-end gap-1">
-      <div className="line-clamp-4 max-w-[90%] whitespace-pre-wrap break-words rounded-3xl bg-foreground/[0.07] px-4 py-2 text-[0.8125rem] leading-relaxed text-foreground">
-        {text}
+    <div className="flex flex-col items-stretch gap-1">
+      <div className="timeline-prompt">
+        <MessageAttachments files={attachmentFiles(first.attachmentIds)} />
+        {text && <div className="line-clamp-6">{text}</div>}
       </div>
-      <span className="text-muted-foreground flex items-center gap-1 px-2 text-[11px]">
+      <span className="text-muted-foreground flex items-center gap-1 self-end px-1 text-[11px]">
         <Clock className="size-3" aria-hidden />
-        Sends when ready{first.prompt.trim() && files > 0 ? ` · ${files} ${files === 1 ? "file" : "files"}` : ""}
+        Sends when ready
       </span>
     </div>
   );
