@@ -31,6 +31,7 @@ import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter"
 import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { ARCHIVED_UNSAVED, type ArchiveSave, saveForArchive } from "@/lib/session/archive-save";
 import { bringBack } from "@/lib/session/bring-back-box";
+import { bringBackFailure, MissingBoxProjectError } from "@/lib/session/box-failure";
 
 /** The agent on a session's box, to ask it things as its owner. */
 export async function daytonaAgent(
@@ -100,6 +101,7 @@ export async function archiveCloudSession(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
   owner: Owner,
+  options: { requireSnapshot?: boolean } = {},
 ): Promise<ArchiveResult> {
   if (!ARCHIVABLE.includes(workspace.status)) {
     return { ok: false, reason: "failed", status: 409, error: "Only an active or paused session can be archived." };
@@ -113,9 +115,12 @@ export async function archiveCloudSession(
 
   // The box the session was on, to tell one bringBack had to start in its
   // place (empty: the old one was deleted).
-  const boxBefore = (await getWorkspaceComputer(workspace).catch(() => null))?.daytonaSandboxId ?? null;
+  let boxBefore: string | null = null;
   let save: ArchiveSave;
   try {
+    // A failed read must fail the archive: an unknown original id must
+    // never make cleanup mistake the original disk for an empty replacement.
+    boxBefore = (await getWorkspaceComputer(workspace))?.daytonaSandboxId ?? null;
     const archivedAt = new Date().toISOString();
     const { prefix, urls } = await mintSnapshotUpload(
       supabaseSnapshotStorage(),
@@ -152,7 +157,7 @@ export async function archiveCloudSession(
             },
           )
         ).result,
-    });
+    }, options);
     if (save.saved) {
       await createWorkspaceSnapshot({
         ownerId: owner.id,
@@ -192,7 +197,7 @@ export async function archiveCloudSession(
   // to start an empty one in its place, which goes.
   after(async () => {
     const boxNow = (await getWorkspaceComputer(workspace).catch(() => null))?.daytonaSandboxId ?? null;
-    await releaseWorkspaceBox(provider, workspace, boxNow !== null && boxNow !== boxBefore);
+    await releaseWorkspaceBox(provider, workspace, boxBefore !== null && boxNow !== null && boxNow !== boxBefore);
   });
   return { ok: true, unsaved: true, note: ARCHIVED_UNSAVED };
 }
@@ -201,6 +206,10 @@ export async function archiveCloudSession(
  *  archive it, or a failure of Outrunner's own (its storage, say), to try
  *  again. */
 function archiveFailure(error: unknown): { status: number; error: string } {
+  if (error instanceof MissingBoxProjectError) {
+    const failure = bringBackFailure(error);
+    return { status: failure.status, error: failure.body.error };
+  }
   if (error instanceof CloudLimitError) return { status: 403, error: error.denial.error };
   const refused = isPlanLimitError(error);
   if (refused) return { status: 403, error: refused.message };

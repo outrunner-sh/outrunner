@@ -49,6 +49,7 @@ import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter"
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { archiveCloudSession, daytonaAgent } from "@/lib/session/archive-session";
+import { ARCHIVED_UNSAVED } from "@/lib/session/archive-save";
 import { canDestroy } from "@/lib/session/provisioning";
 
 // resume/restore ensure a Runtime Computer (provision + agent boot, ~15s+), and
@@ -128,8 +129,11 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   let action: LifecycleAction | null = null;
+  let requireSnapshot = false;
   try {
-    action = actionFor(await request.json());
+    const body: unknown = await request.json();
+    action = actionFor(body);
+    requireSnapshot = typeof body === "object" && body !== null && "requireSnapshot" in body && body.requireSnapshot === true;
   } catch {
     // Handled below as a deliberately generic bad request.
   }
@@ -158,7 +162,7 @@ export async function POST(request: Request, context: RouteContext) {
   const provider = resolution.provider;
 
   if (isComputerProvider(provider)) {
-    return daytonaLifecycle(action, workspace, provider, owner);
+    return daytonaLifecycle(action, workspace, provider, owner, { requireSnapshot });
   }
 
   // Archive/restore operate on the runtime-agent's Session + Snapshot; only the
@@ -179,10 +183,11 @@ async function daytonaLifecycle(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
   owner: Owner,
+  archiveOptions: { requireSnapshot?: boolean } = {},
 ) {
   if (action === "resume") return resumeDaytonaWorkspace(workspace, provider, owner);
   if (action === "suspend") return suspendDaytonaWorkspace(workspace, provider, owner);
-  if (action === "archive") return archiveDaytonaWorkspace(workspace, provider, owner);
+  if (action === "archive") return archiveDaytonaWorkspace(workspace, provider, owner, archiveOptions);
   if (action === "restore") return restoreDaytonaWorkspace(workspace, provider, owner);
   return destroyDaytonaWorkspace(workspace, provider, owner);
 }
@@ -192,8 +197,9 @@ async function archiveDaytonaWorkspace(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
   owner: Owner,
+  options: { requireSnapshot?: boolean } = {},
 ) {
-  const archived = await archiveCloudSession(workspace, provider, owner);
+  const archived = await archiveCloudSession(workspace, provider, owner, options);
   if (archived.ok) {
     // `note`: archived without its files, which the user is told.
     return NextResponse.json({ workspace: { id: workspace.id, status: "archived" }, ...(archived.unsaved && { note: archived.note }) });
@@ -227,8 +233,9 @@ async function restoreDaytonaWorkspace(
     // nothing of its work was kept to restore.
     return NextResponse.json(
       {
-        error:
-          "This session was archived without its files (its box couldn't be reached), so it can't be reopened. Anything pushed to GitHub is kept: continue in a new session.",
+        error: workspace.errorMessage === ARCHIVED_UNSAVED
+          ? "This session was archived without its files (its box couldn't be reached), so it can't be reopened. Anything pushed to GitHub is kept: continue in a new session."
+          : "This workspace has no Snapshot to restore.",
       },
       { status: 409 },
     );

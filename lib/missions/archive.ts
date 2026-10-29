@@ -144,6 +144,7 @@ const toArchive = (ships: Workspace[]) => ships.filter(isLiveRunner);
  */
 export async function archiveMission(mission: Workspace, deps: MissionArchiveDeps): Promise<MissionArchiveResult> {
   const started = deps.now();
+  const unsaved: ShipUnsaved[] = [];
   const refuse = (ships: number, left: ShipLeft[]): MissionArchiveResult => {
     const refused = left.filter((s) => s.why !== NOT_REACHED);
     const toGo = left.length - refused.length;
@@ -157,7 +158,6 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
         (unsaved.length > 0 ? ` ${unsavedNote(unsaved)}` : "");
     return { archived: false, ships, left, why, more, ...(unsaved.length > 0 && { unsaved }) };
   };
-  const unsaved: ShipUnsaved[] = [];
 
   const live = toArchive(await deps.runners(mission.id));
   const blocked = live.flatMap((ship) => {

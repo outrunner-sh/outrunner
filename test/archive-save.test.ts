@@ -6,6 +6,7 @@ import { AgentRequestError } from "@/lib/runtime/agent-client";
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 import { saveForArchive, type ArchiveSaveDeps } from "@/lib/session/archive-save";
+import { MissingBoxProjectError } from "@/lib/session/box-failure";
 
 const manifest = { sessionId: "s-1" } as unknown as SnapshotManifest;
 
@@ -20,6 +21,7 @@ function box(fail: { bringBack?: unknown; connect?: unknown; capture?: unknown }
   };
   const deps: ArchiveSaveDeps<string> = {
     bringBack: step("bringBack", undefined),
+    waitToRetry: step("wait", undefined),
     connect: step("connect", "agent"),
     capture: step("capture", manifest),
   };
@@ -37,7 +39,7 @@ test("a box that didn't come back is tried once more, then archived without its 
   const unstarted = new Error("failed to resolve container IP after 3 attempts");
   const twice = box({ bringBack: unstarted });
   assert.deepEqual(await saveForArchive(twice.deps), { saved: false, cause: unstarted });
-  assert.deepEqual(twice.asked, ["bringBack", "bringBack"]);
+  assert.deepEqual(twice.asked, ["bringBack", "wait", "bringBack"]);
   // A box that came back on the second try has its work saved.
   const once = box();
   let tries = 0;
@@ -47,6 +49,7 @@ test("a box that didn't come back is tried once more, then archived without its 
     return bringBack();
   };
   assert.deepEqual(await saveForArchive(once.deps), { saved: true, manifest });
+  assert.equal(once.asked[0], "wait", "the retry lets the provider settle first");
   // No computer left to reach.
   assert.equal((await saveForArchive(box({ connect: new Error("Runtime Computer is not available.") }).deps)).saved, false);
   // A box started in place of a deleted one has no record of the session.
@@ -54,6 +57,37 @@ test("a box that didn't come back is tried once more, then archived without its 
   assert.equal((await saveForArchive(box({ capture: unknown }).deps)).saved, false);
   // Its agent never answered, even redeployed.
   assert.equal((await saveForArchive(box({ capture: new DOMException("timed out", "TimeoutError") }).deps)).saved, false);
+});
+
+test("a reachable agent's capture or upload error leaves the session available to retry", async () => {
+  for (const error of [
+    new AgentRequestError(500, { code: "INTERNAL", message: "upload failed: storage unavailable" }),
+    new AgentRequestError(500, { code: "INTERNAL", message: "tar failed" }),
+    new AgentRequestError(404),
+    new AgentRequestError(404, { code: "NOT_FOUND", message: "artifact not found" }),
+    new AgentRequestError(403, { code: "UNAUTHORIZED", message: "unauthorized" }),
+    new Error("invalid Snapshot manifest"),
+  ]) {
+    await assert.rejects(saveForArchive(box({ capture: error }).deps), (caught) => caught === error);
+  }
+});
+
+test("a transport failure after agent recovery can still be archived explicitly without files", async () => {
+  for (const error of [new TypeError("fetch failed"), new DOMException("aborted", "AbortError")]) {
+    assert.deepEqual(await saveForArchive(box({ capture: error }).deps), { saved: false, cause: error });
+  }
+});
+
+test("automatic archive requires a Snapshot, even if the box is unreachable or deleted", async () => {
+  for (const fail of [
+    { bringBack: new Error("box unavailable") },
+    { connect: new Error("Runtime Computer is not available.") },
+    { capture: new AgentRequestError(404, { code: "NOT_FOUND", message: "unknown workspace" }) },
+    { capture: new DOMException("timed out", "TimeoutError") },
+  ]) {
+    await assert.rejects(saveForArchive(box(fail).deps, { requireSnapshot: true }));
+  }
+  assert.deepEqual(await saveForArchive(box().deps, { requireSnapshot: true }), { saved: true, manifest });
 });
 
 test("the plan refusing the box's start, or a box too old to archive, stop the archive: its files are there to save", async () => {
@@ -65,4 +99,7 @@ test("the plan refusing the box's start, or a box too old to archive, stop the a
   await assert.rejects(saveForArchive(box({ bringBack: capped }).deps), /1 box at a time/);
   const old = new OutdatedComputerError("This box's agent is too old to archive a session of several repositories.");
   await assert.rejects(saveForArchive(box({ capture: old }).deps), OutdatedComputerError);
+  const missing = box({ bringBack: new MissingBoxProjectError("project-1") });
+  await assert.rejects(saveForArchive(missing.deps), MissingBoxProjectError);
+  assert.deepEqual(missing.asked, ["bringBack"]);
 });
