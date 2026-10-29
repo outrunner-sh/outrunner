@@ -91,6 +91,20 @@ export function canvasFileUrl(workspaceId: string, path: string): string {
   return `/api/workspaces/${workspaceId}/canvas/file?path=${encodeURIComponent(path)}`;
 }
 
+/** Check an inline page before mounting its opaque frame, where the route's
+ *  HTTP error body can't be read. Successful bodies needn't be downloaded. */
+export async function canvasFileError(url: string, signal?: AbortSignal): Promise<string | null> {
+  const response = await fetch(url, { cache: "no-store", signal });
+  if (response.ok) {
+    if (response.body) await response.body.cancel().catch(() => {});
+    return null;
+  }
+  const body = await response.json().catch(() => null) as { error?: unknown } | null;
+  return typeof body?.error === "string" && body.error.trim()
+    ? body.error
+    : `Couldn't read that file (${response.status}).`;
+}
+
 /** The most rows and columns a CSV shows: past them, the table says so. */
 export const MAX_CSV_ROWS = 1000;
 export const MAX_CSV_COLUMNS = 50;
@@ -154,3 +168,115 @@ export function formatSize(bytes: number): string {
 
 /** The largest file the panel is given: the agent's own bound. */
 export const MAX_CANVAS_FILE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * The path in `workspaceId`'s Canvas that a reply's image names, or null for
+ * one outside it: the agent embeds a visual by its full path,
+ * `![Latency](/home/runtime/.outrunner/canvas/<id>/latency.html)` (or with
+ * `~` for the home). Only the session's own Canvas counts, and nothing that
+ * steps out of it.
+ */
+export function canvasPathIn(path: string, workspaceId: string): string | null {
+  if (!path.startsWith("/") && !path.startsWith("~/")) return null;
+  const marker = `/.outrunner/canvas/${workspaceId}/`;
+  const at = path.indexOf(marker);
+  if (at < 0) return null;
+  return cleanCanvasPath(path.slice(at + marker.length));
+}
+
+/** `ref` as a Canvas file names it (a Markdown plan's `![chart](chart.png)`),
+ *  from the file `from`'s folder; null for one that leaves the Canvas. */
+export function canvasPathFrom(from: string, ref: string): string | null {
+  if (ref.startsWith("/") || ref.startsWith("~")) return null;
+  const folder = from.includes("/") ? from.slice(0, from.lastIndexOf("/") + 1) : "";
+  return cleanCanvasPath(folder + ref);
+}
+
+function cleanCanvasPath(path: string): string | null {
+  const parts: string[] = [];
+  for (const part of path.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === ".." || part.includes("\0")) return null;
+    parts.push(part);
+  }
+  return parts.length > 0 ? parts.join("/") : null;
+}
+
+/**
+ * What a page shown inline in a reply (`?embed=1`) gets after its own HTML:
+ * a script that tells the reply its height as it changes, so the frame fits
+ * it, and again whenever the reply asks (it may load before the reply is
+ * listening). The reply takes the message only from that frame, and only a
+ * number.
+ *
+ * Measurement temporarily removes viewport-sized root/body constraints and
+ * visits the content, including overflowing and positioned descendants. The
+ * original styles are restored before paint. Fixed overlays do not determine
+ * intrinsic height. Measurements are coalesced per animation frame, and a
+ * repeated viewport-growth pattern is stopped for viewport-sized descendants.
+ * Clipped subtrees contribute only their container; mutation measurements
+ * run at most once per 150ms so continuous animations still get updates.
+ */
+export const VISUAL_HEIGHT_MESSAGE = "outrunnerVisualHeight";
+export const VISUAL_EMBED_SCRIPT = `<script>(()=>{
+  const root=document.documentElement;
+  const options={childList:true,subtree:true,attributes:true,characterData:true};
+  let last=-1,lastViewport=-1,lastOverflow=-1,growing=0,queued=false,forceNext=false,mutationTimer=0;
+  const measure=()=>{
+    const body=document.body;if(!body)return 0;
+    const nodes=[root,body],styles=nodes.map(n=>n.getAttribute("style"));
+    mutations.disconnect();
+    try{
+      for(const n of nodes){n.style.setProperty("height","auto","important");n.style.setProperty("min-height","0","important")}
+      let bottom=body.getBoundingClientRect().top;
+      const range=document.createRange();
+      const visit=n=>{
+        if(n.nodeType===1){
+          const style=getComputedStyle(n);
+          if(style.position==="fixed"||style.display==="none")return;
+          bottom=Math.max(bottom,n.getBoundingClientRect().bottom+Math.max(0,parseFloat(style.marginBottom)||0));
+          if(style.overflowY!=="visible")return;
+        }else if(n.nodeType===3&&n.textContent.trim()){
+          range.selectNodeContents(n);bottom=Math.max(bottom,range.getBoundingClientRect().bottom);
+        }
+        for(const child of n.childNodes)visit(child);
+      };
+      for(const child of body.childNodes)visit(child);
+      const style=getComputedStyle(body);
+      return Math.ceil(bottom+scrollY+(parseFloat(style.marginBottom)||0)+(parseFloat(style.paddingBottom)||0));
+    }finally{
+      nodes.forEach((n,i)=>{if(styles[i]===null)n.removeAttribute("style");else n.setAttribute("style",styles[i])});
+      mutations.observe(root,options);
+    }
+  };
+  const post=force=>{
+    clearTimeout(mutationTimer);mutationTimer=0;
+    const h=measure(),viewport=innerHeight,overflow=h-viewport;
+    if(viewport!==lastViewport){
+      growing=Math.abs(viewport-last)<2&&overflow>0&&Math.abs(overflow-lastOverflow)<2?growing+1:0;
+    }
+    if(growing>=2)return;
+    lastViewport=viewport;lastOverflow=overflow;
+    if(!force&&Math.abs(h-last)<2)return;
+    last=h;parent.postMessage({${VISUAL_HEIGHT_MESSAGE}:h},"*");
+  };
+  const schedule=force=>{
+    forceNext=forceNext||force===true;if(queued)return;queued=true;
+    requestAnimationFrame(()=>{queued=false;const force=forceNext;forceNext=false;post(force)});
+  };
+  const mutations=new MutationObserver(()=>{
+    growing=0;
+    if(!mutationTimer)mutationTimer=setTimeout(()=>{mutationTimer=0;schedule()},150);
+  });
+  mutations.observe(root,options);
+  new ResizeObserver(()=>schedule()).observe(root);
+  addEventListener("message",e=>{if(e.source===parent)schedule(true)});
+  addEventListener("load",()=>schedule(true));schedule(true);
+})()</script>`;
+
+/** The height a visual's frame takes for what its page said: within bounds,
+ *  so a page can't push the conversation away. */
+export function visualHeight(said: unknown, fallback = 360): number {
+  if (typeof said !== "number" || !Number.isFinite(said)) return fallback;
+  return Math.min(900, Math.max(80, Math.round(said)));
+}
