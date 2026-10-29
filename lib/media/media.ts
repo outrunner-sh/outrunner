@@ -17,6 +17,15 @@ export const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
 export const MAX_MEDIA_PER_DAY = 500;
 export const MAX_MEDIA_BYTES_PER_ORG = 10 * 1024 * 1024 * 1024;
 
+/**
+ * How long an upload may stay pending: longer than the signed upload URL it
+ * was given lasts (Supabase's last 2 hours), so no box can still write once
+ * its row is swept. Until then its bytes count against the org's storage
+ * (reserve_media_upload uses the same 3 hours), and after it the upload can't
+ * be finished.
+ */
+export const PENDING_UPLOAD_MS = 3 * 60 * 60 * 1000;
+
 /** How often one org's boxes may start an upload (lib/api/rate-limit.ts). */
 export const MEDIA_RATE_LIMIT = { perMinute: 30 };
 

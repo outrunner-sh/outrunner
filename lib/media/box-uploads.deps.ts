@@ -15,13 +15,10 @@ import {
   MAX_MEDIA_BYTES_PER_ORG,
   MAX_MEDIA_PER_DAY,
   MEDIA_RATE_LIMIT,
+  PENDING_UPLOAD_MS,
   SNIFF_BYTES,
 } from "@/lib/media/media";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
-
-/** An upload not finished in this long never will be: its row and any bytes
- *  go at the org's next upload. */
-const UNFINISHED_AFTER_MS = 60 * 60 * 1000;
 
 const limiter = new RateLimiter();
 
@@ -67,11 +64,15 @@ export function boxUploadDeps(requestOrigin: string): BoxUploadDeps {
         .select("id, storage_path")
         .eq("org_id", orgId)
         .eq("status", "pending")
-        .lt("created_at", new Date(Date.now() - UNFINISHED_AFTER_MS).toISOString())
+        // Only once its upload URL has expired: nothing can write it again.
+        .lt("created_at", new Date(Date.now() - PENDING_UPLOAD_MS).toISOString())
         .limit(50);
       if (error) throw error;
       if (!data?.length) return;
-      await bucket.remove(data.map((row) => row.storage_path));
+      // The rows only once their objects are gone: a row left is swept
+      // again next time, an object without one never would be.
+      const { error: removeError } = await bucket.remove(data.map((row) => row.storage_path));
+      if (removeError) throw new Error(`could not remove unfinished uploads: ${removeError.message}`);
       const { error: deleteError } = await admin
         .from("media")
         .delete()
@@ -110,7 +111,7 @@ export function boxUploadDeps(requestOrigin: string): BoxUploadDeps {
     async media(id) {
       const { data, error } = await admin
         .from("media")
-        .select("id, public_id, org_id, owner_id, workspace_id, name, content_type, size_bytes, access, storage_path, status")
+        .select("id, public_id, org_id, owner_id, workspace_id, name, content_type, size_bytes, access, storage_path, status, created_at")
         .eq("id", id)
         .maybeSingle();
       if (error) throw error;
@@ -127,6 +128,7 @@ export function boxUploadDeps(requestOrigin: string): BoxUploadDeps {
         access: data.access,
         storagePath: data.storage_path,
         status: data.status,
+        createdAt: Date.parse(data.created_at),
       } satisfies PendingMedia;
     },
 
@@ -142,20 +144,29 @@ export function boxUploadDeps(requestOrigin: string): BoxUploadDeps {
     },
 
     async markReady(id) {
-      const { error } = await admin
+      const { data, error } = await admin
         .from("media")
         .update({ status: "ready", ready_at: new Date().toISOString() })
         .eq("id", id)
-        .eq("status", "pending");
+        .eq("status", "pending")
+        .select("id");
       if (error) throw error;
+      return (data ?? []).length > 0;
     },
 
     async discard(media) {
-      await bucket.remove([media.storagePath]);
+      // The row only once its object is gone; a row left pending is swept,
+      // and its object with it, later.
+      const { error: removeError } = await bucket.remove([media.storagePath]);
+      if (removeError) {
+        console.error(`Media ${media.id}: couldn't remove its bytes; its sweep will`, removeError);
+        return;
+      }
       const { error } = await admin.from("media").delete().eq("id", media.id);
       if (error) throw error;
     },
 
+    now: () => Date.now(),
     newId: () => randomUUID(),
     newPublicId: () => randomBytes(32).toString("base64url"),
     url: (path) => `${base}${path}`,

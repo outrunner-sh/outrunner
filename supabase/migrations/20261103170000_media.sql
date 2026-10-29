@@ -58,8 +58,9 @@ grant select, insert, update, delete on table media to service_role;
 
 -- Reserve one upload for an org, or say why not: 'daily' when the org has
 -- made `max_per_day` uploads in the last day, 'storage' when its files would
--- pass `max_bytes`. A pending upload counts against storage for an hour, long
--- enough to finish one. Under a lock per org, so two boxes uploading at once
+-- pass `max_bytes`. A pending upload counts against storage for 3 hours,
+-- longer than its signed upload URL lasts (2 hours), and is swept after
+-- (PENDING_UPLOAD_MS in lib/media/media.ts). Under a lock per org, so two boxes uploading at once
 -- can't both slip under a cap. Null when the row was made.
 create or replace function reserve_media_upload(
   media_id uuid,
@@ -93,7 +94,7 @@ begin
   if (
     select coalesce(sum(size_bytes), 0) from media
     where org_id = media_org_id
-      and (status = 'ready' or created_at > now() - interval '1 hour')
+      and (status = 'ready' or created_at > now() - interval '3 hours')
   ) + media_size_bytes > max_bytes then
     return 'storage';
   end if;

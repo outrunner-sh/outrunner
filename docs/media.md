@@ -27,8 +27,10 @@ runtime-agent ──POST /api/runtime/media/complete (signed)──▶ app: chec
   app only ever serves an image or a video.
 - **Caps per org.** 30 uploads a minute (in memory), 500 a day, and 10 GB kept
   (`lib/media/media.ts`). The daily and storage caps are checked under a lock
-  per org in `reserve_media_upload`. An upload not finished within an hour is
-  swept at the org's next upload.
+  per org in `reserve_media_upload`. An upload stays pending for 3 hours,
+  longer than its signed upload URL lasts (2 hours), so no box can write
+  after its row is gone. Its bytes count against storage until then, it
+  can't be finished after, and it is swept at the org's next upload.
 - **Recorded.** Each row has the uploader (the session's owner), the session,
   the org, the size, the type and the time (`media` table).
 

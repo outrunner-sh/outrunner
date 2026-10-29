@@ -9,6 +9,7 @@ import {
   MAX_MEDIA_BYTES,
   mediaMarkdown,
   parseUploadRequest,
+  PENDING_UPLOAD_MS,
   publicIdFromFile,
   publicMediaPath,
   sniffMediaType,
@@ -110,6 +111,7 @@ function fakeBox(overrides: Partial<BoxUploadDeps> = {}, computer: Partial<BoxCo
   const rows = new Map<string, PendingMedia>();
   const objects = new Map<string, Uint8Array>();
   const calls: string[] = [];
+  const clock = { now: Date.now() };
   const deps: BoxUploadDeps = {
     computersFor: async (sandboxId) =>
       sandboxId === "sb-1"
@@ -127,7 +129,7 @@ function fakeBox(overrides: Partial<BoxUploadDeps> = {}, computer: Partial<BoxCo
       calls.push("sweep");
     },
     reserve: async (row) => {
-      rows.set(row.id, { ...row, status: "pending" });
+      rows.set(row.id, { ...row, status: "pending", createdAt: clock.now });
       return null;
     },
     signUpload: async (path) => `https://storage.example/upload/${path}?token=t`,
@@ -137,19 +139,23 @@ function fakeBox(overrides: Partial<BoxUploadDeps> = {}, computer: Partial<BoxCo
       return data ? { size: data.length, head: data.subarray(0, 16) } : null;
     },
     markReady: async (id) => {
-      rows.get(id)!.status = "ready";
+      const row = rows.get(id);
+      if (row?.status !== "pending") return false;
+      row.status = "ready";
+      return true;
     },
     discard: async (media) => {
       rows.delete(media.id);
       objects.delete(media.storagePath);
       calls.push("discard");
     },
+    now: () => clock.now,
     newId: () => MEDIA_ID,
     newPublicId: () => PUBLIC_ID,
     url: (path) => `https://app.example${path}`,
     ...overrides,
   };
-  return { deps, rows, objects, calls };
+  return { deps, rows, objects, calls, clock };
 }
 
 function signed(purpose: "media-upload" | "media-complete", body: unknown, secret = "secret") {
@@ -192,6 +198,25 @@ test("an upload is reserved, put in storage, checked, and then has its link", as
   // Asked again (a retry after a lost answer): the same link.
   const again = await finishUpload(deps, signed("media-complete", { workspaceId: SESSION, id: MEDIA_ID }));
   assert.equal(again.body.url, done.body.url);
+});
+
+test("an upload past the window its URL lasted can't go live", async () => {
+  const { deps, objects, clock } = fakeBox();
+  await startUpload(deps, signed("media-upload", ASK));
+  objects.set(`o1/${MEDIA_ID}`, PNG);
+  clock.now += PENDING_UPLOAD_MS + 1;
+  const done = await finishUpload(deps, signed("media-complete", { workspaceId: SESSION, id: MEDIA_ID }));
+  assert.equal(done.status, 409);
+  assert.match(String(done.body.error), /expired/);
+});
+
+test("an upload swept between its check and going live says so, not a dead link", async () => {
+  const { deps, objects } = fakeBox({ markReady: async () => false });
+  await startUpload(deps, signed("media-upload", ASK));
+  objects.set(`o1/${MEDIA_ID}`, PNG);
+  const done = await finishUpload(deps, signed("media-complete", { workspaceId: SESSION, id: MEDIA_ID }));
+  assert.equal(done.status, 409);
+  assert.equal(done.body.url, undefined);
 });
 
 test("bytes that aren't what was asked for are thrown away", async () => {

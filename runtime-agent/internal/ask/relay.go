@@ -344,7 +344,7 @@ func (r *relay) call(ctx context.Context, raw json.RawMessage) (string, bool) {
 
 	var unreachableSince time.Time
 	for {
-		text, failed, err := r.post(ctx, route, body)
+		text, failed, err := r.post(ctx, params.Name, route, body)
 		if err == nil {
 			return text, failed
 		}
@@ -354,7 +354,7 @@ func (r *relay) call(ctx context.Context, raw json.RawMessage) (string, bool) {
 		if unreachableSince.IsZero() {
 			unreachableSince = time.Now()
 		} else if time.Since(unreachableSince) > r.cfg.RetryFor {
-			return "Outrunner couldn't be reached to show the question (" + err.Error() + "). Ask the user in plain text instead.", true
+			return unavailable(params.Name, "Outrunner couldn't be reached", err), true
 		}
 		select {
 		case <-ctx.Done():
@@ -364,20 +364,36 @@ func (r *relay) call(ctx context.Context, raw json.RawMessage) (string, bool) {
 	}
 }
 
+// unavailable is a tool's text when its call can't reach the agent: what to
+// do instead, which is the tool's own. A question can be asked in the chat;
+// a secret must never be pasted there; an upload can't be done another way,
+// and the user mustn't be asked to do it.
+func unavailable(tool, what string, err error) string {
+	why := what + " (" + err.Error() + ")."
+	switch tool {
+	case SecretsToolName:
+		return why + " Tell the user which secrets you need and where to set them in Outrunner; never ask for a value in the chat."
+	case MediaToolName:
+		return why + " The file wasn't uploaded. Leave it out of the pull request and say under Evidence that it couldn't be uploaded; don't ask the user to upload or paste it."
+	default:
+		return why + " Ask the user in plain text instead."
+	}
+}
+
 // errUnreachable is an agent that isn't there to answer: not started yet,
 // restarting, or gone mid-call. The call is tried again.
 var errUnreachable = errors.New("runtime-agent unreachable")
 
 // post sends the call to the agent once. An error means it should be tried
 // again; an answer, even a refusal, is returned as the tool's text.
-func (r *relay) post(ctx context.Context, route string, body []byte) (string, bool, error) {
+func (r *relay) post(ctx context.Context, tool, route string, body []byte) (string, bool, error) {
 	addr, err := readTrimmed(r.cfg.AddrFile)
 	if err != nil {
 		return "", false, fmt.Errorf("%w: %v", errUnreachable, err)
 	}
 	token, err := readTrimmed(r.cfg.TokenFile)
 	if err != nil {
-		return "This session can't ask questions in Outrunner (" + err.Error() + "). Ask the user in plain text instead.", true, nil
+		return unavailable(tool, "This session can't reach Outrunner", err), true, nil
 	}
 	url := "http://" + addr + "/workspaces/" + r.cfg.WorkspaceID + "/" + route
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))

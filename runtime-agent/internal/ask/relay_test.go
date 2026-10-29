@@ -231,6 +231,23 @@ func TestRelayGivesUpOnAnAgentThatNeverComesBack(t *testing.T) {
 	}
 }
 
+// Each tool says what to do instead: an upload never sends the agent to ask
+// the user for the file, and secrets are never asked for in the chat.
+func TestEachToolHasItsOwnFallbackWhenTheAgentIsGone(t *testing.T) {
+	agent := httptest.NewServer(http.NotFoundHandler())
+	agent.Close()
+	r := startRelay(t, agent, 30*time.Millisecond)
+	r.send(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"upload_media","arguments":{"path":"after.png","name":"After"}}}`)
+	text, failed := toolText(t, r.next())
+	if !failed || !strings.Contains(text, "wasn't uploaded") || strings.Contains(text, "plain text") {
+		t.Fatalf("upload_media's fallback = %q (error %v)", text, failed)
+	}
+	r.send(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"request_secrets","arguments":{"reason":"r","keys":[{"name":"K"}]}}}`)
+	if text, _ := toolText(t, r.next()); !strings.Contains(text, "never ask for a value in the chat") {
+		t.Fatalf("request_secrets' fallback = %q", text)
+	}
+}
+
 // A request for secrets goes to the agent's own route, with its reason and
 // keys, and the agent's text is the tool's result.
 func TestRelayForwardsASecretsRequest(t *testing.T) {

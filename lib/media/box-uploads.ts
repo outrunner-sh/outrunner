@@ -22,6 +22,7 @@ import {
   mediaMarkdown,
   mediaPagePath,
   parseUploadRequest,
+  PENDING_UPLOAD_MS,
   publicMediaPath,
   sniffMediaType,
 } from "@/lib/media/media";
@@ -51,6 +52,8 @@ export type PendingMedia = {
   access: MediaAccess;
   storagePath: string;
   status: "pending" | "ready";
+  /** When it was reserved, in milliseconds since the epoch. */
+  createdAt: number;
 };
 
 export type BoxUploadDeps = {
@@ -61,13 +64,16 @@ export type BoxUploadDeps = {
   allowed(orgId: string): boolean;
   /** Drop the org's uploads that were never finished. Best effort. */
   sweep(orgId: string): Promise<void>;
-  reserve(row: Omit<PendingMedia, "status">): Promise<"daily" | "storage" | null>;
+  reserve(row: Omit<PendingMedia, "status" | "createdAt">): Promise<"daily" | "storage" | null>;
   signUpload(storagePath: string): Promise<string>;
   media(id: string): Promise<PendingMedia | null>;
   /** The stored object's size and first bytes; null when nothing is there. */
   stored(storagePath: string): Promise<{ size: number; head: Uint8Array } | null>;
-  markReady(id: string): Promise<void>;
+  /** Mark a pending upload ready; false when no pending row was there to
+   *  mark (swept or discarded meanwhile). */
+  markReady(id: string): Promise<boolean>;
   discard(media: PendingMedia): Promise<void>;
+  now(): number;
   newId(): string;
   newPublicId(): string;
   /** The app's public origin plus a path. */
@@ -167,13 +173,20 @@ export async function finishUpload(deps: BoxUploadDeps, request: BoxRequest): Pr
   if (!media || media.workspaceId !== session.id) return refuse(404, "No such upload for this session.");
 
   if (media.status === "pending") {
+    // Past the window its URL lasted, it may be swept at any moment: its
+    // bytes no longer count against the org, so it can't go live.
+    if (deps.now() - media.createdAt > PENDING_UPLOAD_MS) {
+      return refuse(409, "That upload took too long and has expired. Upload it again.");
+    }
     const stored = await deps.stored(media.storagePath);
     if (!stored) return refuse(409, "The file wasn't uploaded. Upload it again.");
     if (stored.size !== media.sizeBytes || sniffMediaType(stored.head) !== media.contentType) {
       await deps.discard(media);
       return refuse(422, "What was uploaded isn't the file that was asked for. Upload it again.");
     }
-    await deps.markReady(media.id);
+    if (!(await deps.markReady(media.id))) {
+      return refuse(409, "That upload is gone (it expired or was thrown away). Upload it again.");
+    }
   }
 
   const url = deps.url(publicMediaPath(media.publicId, media.contentType));
