@@ -37,8 +37,11 @@ with a visitor and keeps the answer about ten seconds. Bytes then pass both
 ways as they are, so pages, assets, server-sent events and WebSockets
 (hot reload) all work. On Cloudflare the Worker routes the preview domain's
 wildcard to the same container and names the host it was asked for
-(`x-outrunner-preview-host`, `cloudflare/preview-host.ts`), stripping one a
-visitor sent; straight to Node, the Host header does the same. Neither ever
+(`x-outrunner-preview-host`, signed with a key derived from
+`CREDENTIALS_ENCRYPTION_KEY` in `x-outrunner-preview-host-signature`,
+`cloudflare/preview-host.ts`), stripping any a visitor sent; the proxy
+believes a named host only with that signature, and otherwise goes by the
+Host header, as it does straight to Node. Neither ever
 makes a request to the app's own host a preview's, and a host under the
 preview domain that names no preview (`www.`, a bad slug) gets a 404, never
 the app.
@@ -98,7 +101,7 @@ restores the session as them, as opening it would.
 | Anyone on the internet | Sent to sign in; nothing of the box's | The port's server, as any visitor |
 | Signed-in user outside the org, or without read on the repository | A "can't open" page | The port's server |
 | Org member with read on the repository | The port's server | The port's server |
-| The session's owner, while a member of the org | The port's server; may wake an asleep session | Same |
+| The session's owner, while a member of the org | The port's server; may wake an asleep session | Same (wake still needs membership) |
 
 Nobody, through any preview, reaches the agent's own port (8080) or the
 provider's daemon's (2280, 22220, 22222, 33333; `lib/runtime/box-ports.ts`):
@@ -154,7 +157,10 @@ without Outrunner until the link ends. So a login preview on Daytona is
 only as private as its server's habit of echoing Host, and each link is
 short-lived: signed for 15 minutes, used for 5, expired a minute after the
 next replaces it, and expired at once when its preview is deleted or made
-sign-in only (`lib/previews/upstream.ts`). A visitor's own `x-daytona-*`
+sign-in only (`lib/previews/upstream.ts`). None is let go unexpired to make
+room. That's this process's own links: one kept by a process since gone (a
+restart, a deploy) can't be expired, and ends within its 15 minutes. A
+visitor's own `x-daytona-*`
 headers are dropped. On Neev the box's server is sent the preview's own
 host, and the tunnel holds no credential a page could show.
 
@@ -166,10 +172,14 @@ in its process alone); to anything else it's a 404.
 
 - **Delete the preview** (panel, API, MCP; the owner or an org admin): the
   row goes, and with it the link, for everyone, signed in or not, within
-  the proxy's ~10 seconds; the Daytona link to the port is expired at once.
-  A new preview of the port is a new link.
-- **Switch public to login**: anonymous visitors are sent to sign in within
-  ~10 seconds, and the Daytona link to the port is expired at once.
+  the proxy's ~10 seconds, or at once where the process that answered them
+  holds them; the Daytona link to the port is expired at once (by the
+  process holding it; otherwise within its 15 minutes). A new preview of
+  the port is a new link.
+- **Switch public to login**: the proxy forgets what it decided for the
+  preview, so anonymous visitors are sent to sign in at their next request
+  and signed-in members get a fresh link (never the expired one), and the
+  Daytona link to the port is expired at once, as above.
 - **Take a member's access away** (remove them from the org, or their read
   on the repository): the gate asks Roles & access on every check, so their
   session stops working within ~10 seconds. That holds for the session's
@@ -183,13 +193,12 @@ in its process alone); to anything else it's a 404.
 A WebSocket opened before a revocation stays open until it closes; the
 gate is asked when one opens.
 
-**Headers a visitor could send.** Straight to Node (no Cloudflare in
-front), a visitor can name a preview with `x-outrunner-preview-host` as
-well as with Host, which picks only which preview they ask for, never on
-the app's own host; and `CF-Connecting-IP`, which only sets the
-`X-Real-IP` and `Forwarded` the box's server is told. Behind Cloudflare,
-the Worker and Cloudflare set both. The gate keeps a session cookie that
-isn't well signed from costing it anything.
+**Headers a visitor could send.** An `x-outrunner-preview-host` without the
+Worker's signature, one off the preview domain, or one on the app's own
+host is ignored, and the request goes by its Host. `CF-Connecting-IP` is
+believed only on a request the Worker signed; otherwise the box's server is
+told the connection's address. The gate keeps a session cookie that isn't
+well signed from costing it anything.
 
 ## Setting it up
 

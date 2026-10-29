@@ -183,6 +183,12 @@ test("only the session's owner can wake it from its preview, and only once it's 
   assert.equal(await wakeTarget(d, SLUG, null), null);
   assert.equal(await wakeTarget(deps({ workspace: workspace({ status: "failed" }) }), SLUG, as(OWNER)), null);
   assert.equal((await wakeTarget(deps({ workspace: workspace({ status: "archived" }) }), SLUG, as(OWNER)))?.id, workspace().id);
+  // An owner removed from the org holds a session cookie still, and could
+  // be on a public preview, where no one else's access is asked: no wake.
+  const removed = deps({ preview: preview({ mode: "public" }), workspace: workspace({ status: "suspended" }), members: [MEMBER] });
+  assert.equal(await wakeTarget(removed, SLUG, as(OWNER)), null);
+  const page = await resolvePreview(removed, SLUG, as(OWNER));
+  assert.equal(page.kind === "page" && `${page.page} ${page.canWake}`, "asleep false");
 });
 
 test("what's asked for a preview is read strictly", () => {

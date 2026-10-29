@@ -189,8 +189,9 @@ export async function updateSessionPreview(
   if (!updated) return fail(404, "No preview by that id in this session.");
   if (preview.mode !== updated.mode) {
     // Back to sign-in only: a link to the box an anonymous visitor may have
-    // seen stops working now.
-    if (updated.mode === "login") revokePreviewUpstream(workspace.id, updated.port);
+    // seen stops working now, and the proxy asks again for every visitor,
+    // so members get a fresh way and the anonymous go to sign in.
+    if (updated.mode === "login") revokePreviewUpstream(updated);
     await audit(actor, workspace, updated, updated.mode === "public" ? "preview.made_public" : "preview.made_login");
   }
   return { ok: true, value: previewView(updated, domain.domain) };
@@ -204,7 +205,7 @@ export async function deleteSessionPreview(actor: PreviewActor, workspace: Works
   if (!who || who === "agent") return fail(404, "No session by that id that you can see.");
   const preview = await getPreview(workspace.id, previewId);
   if (!preview || !(await deletePreview(preview.id))) return fail(404, "No preview by that id in this session.");
-  revokePreviewUpstream(workspace.id, preview.port);
+  revokePreviewUpstream(preview);
   await audit(actor, workspace, preview, "preview.deleted");
   return { ok: true, value: null, status: 204 };
 }

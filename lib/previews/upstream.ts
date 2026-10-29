@@ -4,10 +4,11 @@
  * visitor's every few seconds. A Daytona link is signed for the port and
  * lasts a quarter of an hour; it's used for five minutes, and expired a
  * minute after the next one replaces it, or at once when its preview is
- * deleted or made sign-in only (revokePreviewUpstream). A box that moves (a
+ * deleted or made sign-in only (revokePreviewUpstream), by this process. A box that moves (a
  * new sandbox on waking) has a new id, so a new entry.
  */
 
+import { forgetPreviewDecisions } from "@/lib/previews/forget";
 import type { PreviewUpstream } from "@/lib/previews/wire";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { resolveProvider } from "@/lib/runtime/resolve";
@@ -18,6 +19,9 @@ const UPSTREAM_TTL_MS = 5 * 60_000;
 /** How long a replaced link keeps working, for requests the proxy decided
  *  on with it (lib/previews/proxy.ts keeps a decision ten seconds). */
 const REPLACED_GRACE_MS = 60_000;
+
+/** The most ways kept at once: one a preview in use. */
+const MAX_KEPT = 1000;
 
 type Kept = { at: number; target: Promise<PreviewTarget | null> };
 
@@ -36,6 +40,25 @@ function revokeLater(kept: Kept, delayMs: number): void {
   setTimeout(revoke, delayMs).unref?.();
 }
 
+/**
+ * Room for one more: a way past its five minutes, which nothing is given
+ * any more, is expired now; past that, the oldest, after the grace a
+ * replaced one gets. None is ever dropped unexpired, so a preview deleted
+ * later can't leave a link to its port working out its quarter hour.
+ */
+function evict(): void {
+  for (const [key, kept] of upstreams) {
+    if (Date.now() - kept.at < UPSTREAM_TTL_MS) continue;
+    upstreams.delete(key);
+    revokeLater(kept, 0);
+  }
+  for (const [key, kept] of upstreams) {
+    if (upstreams.size < MAX_KEPT) break;
+    upstreams.delete(key);
+    revokeLater(kept, REPLACED_GRACE_MS);
+  }
+}
+
 /** The way to `port` on the session's box; null where the provider has none. */
 export async function previewUpstream(workspace: Workspace, sandboxId: string, port: number): Promise<PreviewUpstream | null> {
   const key = keyOf(workspace.id, workspace.provider, sandboxId, port);
@@ -45,7 +68,7 @@ export async function previewUpstream(workspace: Workspace, sandboxId: string, p
     if (!resolution.ok || !isComputerProvider(resolution.provider)) return null;
     if (kept) revokeLater(kept, REPLACED_GRACE_MS);
     const target = resolution.provider.previewTarget(sandboxId, port);
-    if (upstreams.size > 1000) upstreams.clear();
+    if (upstreams.size >= MAX_KEPT) evict();
     const fresh: Kept = { at: Date.now(), target };
     upstreams.set(key, fresh);
     // A failed lookup isn't kept: the next visitor asks again.
@@ -59,14 +82,23 @@ export async function previewUpstream(workspace: Workspace, sandboxId: string, p
   return target && { baseUrl: target.baseUrl, headers: target.headers, hostHeader: target.hostHeader };
 }
 
-/** End every way kept to `port` of the session's box, now: its preview was
- *  deleted or made sign-in only, so a link that leaked must stop working
- *  with the preview, not when it would have expired. Best effort. */
-export function revokePreviewUpstream(workspaceId: string, port: number): void {
+/**
+ * End every way kept to a preview's port, now: it was deleted or made
+ * sign-in only, so a link that leaked must stop working with the preview,
+ * not when it would have expired. The proxy forgets its answers for the
+ * preview first (lib/previews/forget.ts), so a visitor still let in asks
+ * the gate again and gets a fresh way, never the expired one. Best effort,
+ * and only in this process: a link kept by one gone (a restart, a deploy)
+ * ends when its quarter hour does.
+ */
+export function revokePreviewUpstream(preview: { workspaceId: string; port: number; slug: string }): void {
+  const revoked: Kept[] = [];
   for (const [key, kept] of upstreams) {
-    if (key.startsWith(`${workspaceId}:`) && key.endsWith(`:${port}`)) {
+    if (key.startsWith(`${preview.workspaceId}:`) && key.endsWith(`:${preview.port}`)) {
       upstreams.delete(key);
-      revokeLater(kept, 0);
+      revoked.push(kept);
     }
   }
+  forgetPreviewDecisions(preview.slug);
+  for (const kept of revoked) revokeLater(kept, 0);
 }

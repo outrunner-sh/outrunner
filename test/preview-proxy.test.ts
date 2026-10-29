@@ -15,6 +15,7 @@ import {
   rewriteSetCookie,
   stripCookie,
 } from "@/lib/previews/proxy";
+import { edgeHostSignature, edgeHostSigned } from "@/lib/previews/tokens";
 import type { GateDecision, GateRequest } from "@/lib/previews/wire";
 
 const DOMAIN: PreviewDomain = { host: "preview.test", secure: true };
@@ -22,6 +23,9 @@ const LOGIN = "abcdefghij0123456789";
 const PUBLIC = "publicpreview0000001";
 const ASLEEP = "asleeppreview0000001";
 const COOKIE = "__Host-outrunner-preview";
+const EDGE_KEY = "edge-credentials-key";
+/** The headers the Cloudflare Worker sends naming `host`, signed. */
+const fromWorker = (host: string) => ({ "x-outrunner-preview-host": host, "x-outrunner-preview-host-signature": edgeHostSignature(EDGE_KEY, host) });
 
 const servers: Server[] = [];
 after(() => {
@@ -64,6 +68,7 @@ const asked: GateRequest[] = [];
 const proxy = createPreviewProxy({
   domain: () => DOMAIN,
   appHost: () => "app.test",
+  edgeNamed: (host, signature) => edgeHostSigned(EDGE_KEY, host, signature),
   sessionValid: (_slug, session) => session === "member-session" || session === "owner-session",
   gate: async (req) => {
     asked.push(req);
@@ -116,8 +121,31 @@ function call(slug: string | null, path: string, options: { method?: string; hea
 
 test("a request for the app's host is left to Next, whatever it names", async () => {
   assert.equal((await call(null, "/")).body, "Next");
-  const named = await call(null, "/", { headers: { "x-outrunner-preview-host": `${PUBLIC}.preview.test` } });
+  const named = await call(null, "/", { headers: fromWorker(`${PUBLIC}.preview.test`) });
   assert.equal(named.body, "Next", "a preview's page is never served on the app's host");
+});
+
+test("straight to Node, a named host without the Worker's signature is ignored for the Host the request came to", async () => {
+  // Asked of the public preview, naming the login one: it's the public one.
+  const forgeries: Record<string, string>[] = [
+    { "x-outrunner-preview-host": `${LOGIN}.preview.test` },
+    { "x-outrunner-preview-host": `${LOGIN}.preview.test`, "x-outrunner-preview-host-signature": edgeHostSignature("not-the-key", `${LOGIN}.preview.test`) },
+    { "x-outrunner-preview-host": `${LOGIN}.preview.test`, "x-outrunner-preview-host-signature": edgeHostSignature(EDGE_KEY, `${PUBLIC}.preview.test`) },
+    // A junk name can't push a preview's own request through to Next.
+    { "x-outrunner-preview-host": "junk", "x-outrunner-preview-host-signature": edgeHostSignature(EDGE_KEY, "junk") },
+  ];
+  for (const forged of forgeries) {
+    const answer = await call(PUBLIC, "/", { headers: { ...forged, "cf-connecting-ip": "203.0.113.66" } });
+    assert.equal(answer.status, 200, JSON.stringify(forged));
+    const seen = JSON.parse(answer.body) as { headers: IncomingHttpHeaders };
+    assert.equal(seen.headers.host, `${PUBLIC}.preview.test`, "the public preview, by its Host");
+    // Nor is its CF-Connecting-IP believed: it didn't come through Cloudflare.
+    assert.notEqual(seen.headers["x-real-ip"], "203.0.113.66");
+    assert.equal(seen.headers["x-outrunner-preview-host"], undefined);
+  }
+  // And a forged name on another host is nobody's preview.
+  const elsewhere = await call(null, "/", { headers: { host: "other.test", "x-outrunner-preview-host": `${PUBLIC}.preview.test` } });
+  assert.equal(elsewhere.body, "Next");
 });
 
 test("a host under the preview domain that names no preview is never the app's", async () => {
@@ -227,7 +255,7 @@ test("a request naming another host in its target is refused", async () => {
 
 test("a WebSocket reaches the box (hot reload), as the Worker names the host", async () => {
   const ws = new WebSocket(`ws://127.0.0.1:${frontPort}/_hmr?token=1`, {
-    headers: { "x-outrunner-preview-host": `${LOGIN}.preview.test`, cookie: `${COOKIE}=member-session` },
+    headers: { ...fromWorker(`${LOGIN}.preview.test`), cookie: `${COOKIE}=member-session` },
     perMessageDeflate: false,
   });
   const messages: string[] = [];
@@ -249,7 +277,7 @@ test("a WebSocket reaches the box (hot reload), as the Worker names the host", a
 });
 
 test("a signed-out visitor's WebSocket is refused", async () => {
-  const ws = new WebSocket(`ws://127.0.0.1:${frontPort}/_hmr`, { headers: { "x-outrunner-preview-host": `${LOGIN}.preview.test` } });
+  const ws = new WebSocket(`ws://127.0.0.1:${frontPort}/_hmr`, { headers: fromWorker(`${LOGIN}.preview.test`) });
   const status = await new Promise<number>((resolve) => {
     ws.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
     ws.on("error", () => resolve(-1));
@@ -278,7 +306,7 @@ test("cookies and headers are read and rewritten exactly", () => {
       headers: { connection: "keep-alive, x-secret-hop", "x-secret-hop": "1", "cf-connecting-ip": "203.0.113.9", "x-forwarded-for": "203.0.113.9", te: "trailers" },
       socket: { remoteAddress: "10.0.0.1" } as never,
     },
-    at,
+    { ...at, edge: true },
     { baseUrl: "https://3000-box.proxy.daytona.works", headers: { "X-Daytona-Preview-Token": "t" }, hostHeader: "upstream" },
     false,
   );
@@ -289,6 +317,15 @@ test("cookies and headers are read and rewritten exactly", () => {
   assert.equal(headers["x-real-ip"], "203.0.113.9");
   assert.equal(headers.host, "3000-box.proxy.daytona.works");
   assert.equal(headers["x-daytona-preview-token"], "t");
+  // Not through the Worker: the connection's address, not the header's.
+  const direct = forwardHeaders(
+    { headers: { "cf-connecting-ip": "203.0.113.9" }, socket: { remoteAddress: "10.0.0.1" } as never },
+    at,
+    { baseUrl: "https://3000-box.proxy.daytona.works", headers: {}, hostHeader: "upstream" },
+    false,
+  );
+  assert.equal(direct["x-real-ip"], "10.0.0.1");
+  assert.equal(direct["x-forwarded-for"], "10.0.0.1");
 });
 
 test("an answer is acted on for as long as the gate says, then asked again: how long a revoked link lasts", async () => {
@@ -298,6 +335,7 @@ test("an answer is acted on for as long as the gate says, then asked again: how 
   const timed = createPreviewProxy({
     domain: () => DOMAIN,
     appHost: () => "app.test",
+    edgeNamed: () => false,
     sessionValid: () => false,
     now: () => clock,
     gate: async () => {
@@ -336,4 +374,12 @@ test("an answer is acted on for as long as the gate says, then asked again: how 
   clock += 1_001;
   assert.equal(await get(), 404);
   assert.equal(calls, 2);
+
+  // Its link expired (the app's forgetPreviewDecisions): the next request
+  // asks again at once, rather than use what was decided with that link.
+  open = true;
+  assert.equal(await get(), 404, "still the answer kept");
+  timed.forget(PUBLIC);
+  assert.equal(await get(), 200);
+  assert.equal(calls, 3);
 });

@@ -68,6 +68,21 @@ export function mintSession(key: Buffer, slug: string, userId: string, now = Dat
   return mint(key, "session", slug, userId, SESSION_TTL_SECONDS, now);
 }
 
+/** The signature the Cloudflare Worker sends with a preview's host it
+ *  names (cloudflare/preview-host.ts signPreviewHost, which this matches):
+ *  the proxy believes a named host only with it. */
+export function edgeHostSignature(credentialsKey: string, host: string): string {
+  return createHmac("sha256", credentialsKey).update(`outrunner preview host\n${host}`).digest("base64url");
+}
+
+/** Whether `signature` is the Worker's for `host`. */
+export function edgeHostSigned(credentialsKey: string, host: string, signature: string | undefined): boolean {
+  if (!signature) return false;
+  const expected = Buffer.from(edgeHostSignature(credentialsKey, host));
+  const given = Buffer.from(signature);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+
 /** Who a session cookie signs in, for `slug`; null for none, or a bad one. */
 export function sessionUser(key: Buffer, token: string | null | undefined, slug: string, now = Date.now()): string | null {
   return read(key, "session", token, slug, now)?.u ?? null;

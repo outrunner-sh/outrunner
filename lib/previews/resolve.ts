@@ -92,9 +92,11 @@ export async function resolvePreview(deps: GateDeps, slug: string, session: stri
   }
   if (!previewsSupported(workspace.provider)) return page(501, "unsupported", GONE_TTL_MS);
 
-  // Waking costs the owner's hours, so only they are offered it, and only
-  // where the lifecycle route can act (resume: suspended, restore: archived).
-  const canWake = viewer === workspace.ownerId && wakeable(workspace.status);
+  // Waking costs the owner's hours, so only they are offered it, while
+  // still a member of the org (on a public preview mayView hasn't asked),
+  // and only where the lifecycle route can act (resume: suspended,
+  // restore: archived).
+  const canWake = viewer === workspace.ownerId && wakeable(workspace.status) && (await mayView(deps, viewer, workspace));
   if (ASLEEP.includes(workspace.status)) return page(503, "asleep", WAIT_TTL_MS, canWake);
   if (STARTING.includes(workspace.status) || workspace.status === "failed") {
     return workspace.status === "failed" ? page(503, "asleep", WAIT_TTL_MS, canWake) : page(503, "starting", WAIT_TTL_MS);
@@ -117,10 +119,10 @@ export async function resolvePreview(deps: GateDeps, slug: string, session: stri
   return { kind: "proxy", upstream, mode: preview.mode, ttlMs: ALLOW_TTL_MS };
 }
 
-/** The session `slug` previews, when `session` signs in its owner and it
- *  can be woken: for waking it. */
+/** The session `slug` previews, when `session` signs in its owner, still a
+ *  member of its org, and it can be woken: for waking it. */
 export async function wakeTarget(
-  deps: Pick<GateDeps, "key" | "preview" | "workspace" | "now">,
+  deps: Pick<GateDeps, "key" | "preview" | "workspace" | "now" | "projectLevel" | "isMember">,
   slug: string,
   session: string | null,
 ): Promise<Workspace | null> {
@@ -129,5 +131,6 @@ export async function wakeTarget(
   if (!viewer) return null;
   const preview = await deps.preview(slug);
   const workspace = preview ? await deps.workspace(preview.workspaceId) : null;
-  return workspace && workspace.ownerId === viewer && wakeable(workspace.status) ? workspace : null;
+  if (!workspace || workspace.ownerId !== viewer || !wakeable(workspace.status)) return null;
+  return (await mayView(deps, viewer, workspace)) ? workspace : null;
 }

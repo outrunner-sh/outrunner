@@ -357,7 +357,7 @@ const worker = {
     // is elected atomically in Postgres, so sharding to multiple instances later
     // (e.g. by project id) stays safe. Previews' hosts too: the container's
     // server proxies them (lib/previews/proxy.ts), WebSockets and all.
-    return getContainer(env.CONTROL_PLANE).fetch(namePreviewHost(request, env.RUNTIME_PREVIEW_DOMAIN));
+    return getContainer(env.CONTROL_PLANE).fetch(await namePreviewHost(request, env.RUNTIME_PREVIEW_DOMAIN, env.CREDENTIALS_ENCRYPTION_KEY));
   },
 
   /**

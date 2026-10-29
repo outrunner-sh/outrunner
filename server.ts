@@ -14,7 +14,8 @@ import next from "next";
 import { billingMode } from "./lib/billing/mode.ts";
 import { previewDomain, previewDomainOf } from "./lib/previews/host.ts";
 import { createPreviewProxy, loopbackGate } from "./lib/previews/proxy.ts";
-import { previewSigningKey, sessionUser } from "./lib/previews/tokens.ts";
+import { onForgetPreview } from "./lib/previews/forget.ts";
+import { edgeHostSigned, previewSigningKey, sessionUser } from "./lib/previews/tokens.ts";
 import { GATE_PATH, GATE_SECRET_ENV, GATE_SECRET_HEADER } from "./lib/previews/wire.ts";
 import { createNeevRelay } from "./lib/runtime/sandbox/neev-relay.ts";
 
@@ -39,12 +40,18 @@ const relay = createNeevRelay();
 const previews = createPreviewProxy({
   domain: () => previewDomain(),
   appHost: () => (process.env.RUNTIME_BASE_URL ? new URL(process.env.RUNTIME_BASE_URL).host : null),
+  edgeNamed: (host, signature) => {
+    const credentials = process.env.CREDENTIALS_ENCRYPTION_KEY;
+    return !!credentials && edgeHostSigned(credentials, host, signature);
+  },
   sessionValid: (slug, session) => {
     const credentials = process.env.CREDENTIALS_ENCRYPTION_KEY;
     return !!credentials && sessionUser(previewSigningKey(credentials), session, slug) !== null;
   },
   gate: loopbackGate(port, gateSecret, GATE_SECRET_HEADER, GATE_PATH),
 });
+// The app forgets a preview's answers here when its link is expired.
+onForgetPreview(previews.forget);
 const previewsOff = previewDomainOf();
 if (!previewsOff.ok) console.log(`> Previews are off: ${previewsOff.reason}`);
 

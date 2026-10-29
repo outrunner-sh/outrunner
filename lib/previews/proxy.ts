@@ -46,6 +46,9 @@ export type PreviewProxyDeps = {
   /** The app's own host (RUNTIME_BASE_URL's), which is never a preview's
    *  whatever a request's headers say. */
   appHost: () => string | null;
+  /** Whether a host named in `x-outrunner-preview-host` was named by the
+   *  Cloudflare Worker: its signature (cloudflare/preview-host.ts) checks. */
+  edgeNamed: (host: string, signature: string | undefined) => boolean;
   /** Whether a session cookie is well signed for `slug` (lib/previews/tokens.ts):
    *  one that isn't is no session, and costs the gate nothing. */
   sessionValid: (slug: string, session: string) => boolean;
@@ -70,8 +73,13 @@ const HOP_BY_HOP = new Set([
 /** Headers of the edge in front of this server, or of the provider's
  *  proxy, which the box's server has no business being sent by a visitor. */
 function edgeHeader(name: string): boolean {
-  return name.startsWith("cf-") || name.startsWith("x-daytona-") || name === "x-outrunner-preview-host" || name === "cdn-loop";
+  return name.startsWith("cf-") || name.startsWith("x-daytona-") || name.startsWith("x-outrunner-preview-host") || name === "cdn-loop";
 }
+
+/** A request's preview: its slug, the domain, its host, and whether the
+ *  Cloudflare Worker passed it on (whose word on the visitor's address is
+ *  then believed). */
+type Preview = { slug: string; domain: PreviewDomain; host: string; edge: boolean };
 
 const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 256 });
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 256 });
@@ -114,20 +122,33 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
     return decision;
   }
 
+  /** Drop every answer kept for `slug`: its link to the box was expired,
+   *  or it was deleted (lib/previews/forget.ts). */
+  function forget(slug: string): void {
+    for (const key of decisions.keys()) if (key.startsWith(`${slug}\n`)) decisions.delete(key);
+  }
+
   /** The preview a request is for, and its domain; "none" for a host under
    *  the preview domain that names no preview; null for the app's own. */
-  function previewOf(req: IncomingMessage): { slug: string; domain: PreviewDomain; host: string } | "none" | null {
+  function previewOf(req: IncomingMessage): Preview | "none" | null {
     const domain = deps.domain();
     if (!domain) return null;
-    // The Cloudflare Worker names the host it was asked for (cloudflare/worker.ts);
-    // straight to Node, the Host header does. Either is the visitor's to
-    // choose, and only picks which preview they're asking, but never on
-    // the app's own host: a preview's page there would be the app's.
+    // The Cloudflare Worker names the host it was asked for, signed
+    // (cloudflare/preview-host.ts), since the container may not see it as
+    // the Host. A name without the Worker's signature (a visitor's own,
+    // straight to Node) is ignored, as is one off the preview domain, and
+    // any on the app's own host: a preview's page there would be the app's.
     const named = req.headers["x-outrunner-preview-host"];
+    const signature = req.headers["x-outrunner-preview-host-signature"];
     const own = (req.headers.host ?? "").toLowerCase() === deps.appHost()?.toLowerCase();
-    const host = (!own && typeof named === "string" && named) || req.headers.host;
+    const edge =
+      !own &&
+      typeof named === "string" &&
+      onPreviewDomain(named, domain) &&
+      deps.edgeNamed(named.toLowerCase(), typeof signature === "string" ? signature : undefined);
+    const host = edge ? named : req.headers.host;
     const slug = slugFromHost(host, domain);
-    if (slug) return { slug, domain, host: `${slug}.${domain.host}` };
+    if (slug) return { slug, domain, host: `${slug}.${domain.host}`, edge };
     return onPreviewDomain(host, domain) ? "none" : null;
   }
 
@@ -147,7 +168,7 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
     return true;
   }
 
-  async function serve(req: IncomingMessage, res: ServerResponse, at: { slug: string; domain: PreviewDomain; host: string }) {
+  async function serve(req: IncomingMessage, res: ServerResponse, at: Preview) {
     if (!isOriginFormPath(req.url)) return sendText(res, 400, "Bad request.");
     const path = req.url;
     if (path.startsWith(PREVIEW_PATH_PREFIX)) return own(req, res, at, path);
@@ -169,7 +190,7 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
   }
 
   /** Outrunner's own paths on a preview's host. */
-  async function own(req: IncomingMessage, res: ServerResponse, at: { slug: string; domain: PreviewDomain; host: string }, path: string) {
+  async function own(req: IncomingMessage, res: ServerResponse, at: Preview, path: string) {
     const url = new URL(path, "http://preview");
     const back = safeReturnPath(url.searchParams.get("r"));
     const cookieName = previewCookieName(at.domain);
@@ -212,7 +233,7 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
   function forward(
     req: IncomingMessage,
     res: ServerResponse,
-    at: { slug: string; domain: PreviewDomain; host: string },
+    at: Preview,
     { upstream, mode }: Extract<GateDecision, { kind: "proxy" }>,
     path: string,
   ) {
@@ -269,7 +290,7 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
     return true;
   }
 
-  async function tunnel(req: IncomingMessage, socket: Duplex, head: Buffer, at: { slug: string; domain: PreviewDomain; host: string }) {
+  async function tunnel(req: IncomingMessage, socket: Duplex, head: Buffer, at: Preview) {
     if (!isOriginFormPath(req.url) || req.url.startsWith(PREVIEW_PATH_PREFIX)) return refuse(socket, 404);
     const path = req.url;
     const session = readCookie(req.headers.cookie, previewCookieName(at.domain));
@@ -342,7 +363,7 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
     outbound.end();
   }
 
-  return { handle, upgrade };
+  return { handle, upgrade, forget };
 }
 
 /**
@@ -352,7 +373,7 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
  */
 export function forwardHeaders(
   req: Pick<IncomingMessage, "headers" | "socket">,
-  at: { domain: PreviewDomain; host: string },
+  at: { domain: PreviewDomain; host: string; edge?: boolean },
   upstream: PreviewUpstream,
   upgrading: boolean,
 ): Record<string, string | string[]> {
@@ -379,9 +400,10 @@ export function forwardHeaders(
 
   const proto = at.domain.secure ? "https" : "http";
   const port = /:(\d+)$/.exec(at.host)?.[1] ?? (at.domain.secure ? "443" : "80");
-  // The visitor's address: Cloudflare's word for it where it's in front
-  // (it has already added it to X-Forwarded-For), else the connection's.
-  const edgeClient = typeof req.headers["cf-connecting-ip"] === "string" ? req.headers["cf-connecting-ip"] : null;
+  // The visitor's address: Cloudflare's word for it where the Worker passed
+  // the request on (it has already added it to X-Forwarded-For), else the
+  // connection's. Straight to Node, a CF-Connecting-IP is the visitor's own.
+  const edgeClient = at.edge && typeof req.headers["cf-connecting-ip"] === "string" ? req.headers["cf-connecting-ip"] : null;
   const client = edgeClient ?? req.socket.remoteAddress ?? "";
   const before = typeof req.headers["x-forwarded-for"] === "string" ? req.headers["x-forwarded-for"] : "";
   const chain = edgeClient ? before || client : [before, client].filter(Boolean).join(", ");
