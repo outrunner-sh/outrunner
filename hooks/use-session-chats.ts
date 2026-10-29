@@ -15,7 +15,7 @@ export type SessionChats = {
   chats: SessionChat[];
   loaded: boolean;
   error: string | null;
-  reportError: (message: string) => void;
+  reportError: (message: string | null) => void;
   isCurrent: () => boolean;
   start: (how: NewChat) => Promise<SessionChat>;
   rename: (chatId: string, name: string) => Promise<void>;

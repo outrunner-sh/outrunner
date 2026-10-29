@@ -154,9 +154,9 @@ export function ChatSwitcher({
       >
         <Plus />
       </button>
-      {error && (
-        <p role="alert" className="studio-chat-error" onClick={() => setError(null)}>
-          {error}
+      {(error || chats.error) && (
+        <p role="alert" className="studio-chat-error" onClick={() => { setError(null); chats.reportError(null); }}>
+          {error || chats.error}
         </p>
       )}
     </div>
