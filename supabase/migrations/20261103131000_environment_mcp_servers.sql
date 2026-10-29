@@ -43,6 +43,28 @@ create table if not exists environment_mcp_servers (
 create unique index if not exists environment_mcp_servers_name_unique
   on environment_mcp_servers (environment_id, lower(name));
 
+-- At most 20 a project: each starts in every session of it. Held here, not
+-- only by the app, so two servers added at once can't both slip under it.
+create or replace function environment_mcp_servers_limit()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  -- Two added at once would each count nineteen.
+  perform pg_advisory_xact_lock(hashtext('environment_mcp_servers:' || new.environment_id::text));
+  if (select count(*) from environment_mcp_servers where environment_id = new.environment_id) >= 20 then
+    raise exception 'a project holds at most 20 MCP servers' using errcode = 'check_violation';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists environment_mcp_servers_limit on environment_mcp_servers;
+create trigger environment_mcp_servers_limit
+  before insert on environment_mcp_servers
+  for each row execute function environment_mcp_servers_limit();
+
 -- Taken from the project, never chosen (as environment_repos_org).
 create or replace function environment_mcp_servers_org()
 returns trigger

@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -79,7 +80,7 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 		"[projects." + codex.TOMLString(folder) + "]\ntrust_level = \"trusted\"\n" +
 		// The MCP servers a Claude launch is given (agentconfig.go): the
 		// user's own, their project's and Outrunner's, for Codex too.
-		codex.MCPServersConfig(agentMCPServers())
+		codex.MCPServersConfig(agentMCPServers(), s.codexEnvironment(workspaceID))
 	// writeKeysFile: owner-only and atomic, so Codex never reads half of it.
 	if err := writeKeysFile(filepath.Join(home, "config.toml"), config); err != nil {
 		return err
@@ -96,6 +97,62 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 		return fmt.Errorf("codex login: %v: %s", err, msg)
 	}
 	return nil
+}
+
+// codexEnvironment is what a session's Codex runs with, for the ${VAR}s of
+// its MCP servers (codex.MCPServersConfig), in the order its launch makes
+// it: the agent's own environment, less OPENAI_API_KEY and with its Codex
+// home (codexLaunchEnv); the project's variables, which its launch sources
+// (withEnvironment); then what the user provided in the session, which wins
+// (withProvided).
+func (s *Service) codexEnvironment(workspaceID string) func(string) (string, bool) {
+	env := map[string]string{}
+	for _, entry := range withoutEnv(s.env, "OPENAI_API_KEY", "CODEX_HOME") {
+		if name, value, ok := strings.Cut(entry, "="); ok {
+			env[name] = value
+		}
+	}
+	env["CODEX_HOME"] = s.codexHome(workspaceID)
+	for _, line := range strings.Split(s.envFiles().read(workspaceID), "\n") {
+		if name, quoted, ok := strings.Cut(strings.TrimPrefix(line, "export "), "="); ok && strings.HasPrefix(line, "export ") {
+			env[name] = shellUnquote(quoted)
+		}
+	}
+	provided := map[string]string{}
+	if data, err := os.ReadFile(s.providedJSONPath(workspaceID)); err == nil && json.Unmarshal(data, &provided) == nil {
+		for name, value := range provided {
+			env[name] = value
+		}
+	}
+	return func(name string) (string, bool) {
+		value, ok := env[name]
+		return value, ok
+	}
+}
+
+// shellUnquote reads a value back as claude.ShellQuote wrote it: quoted
+// runs, and the \' between them that stands for a quote.
+func shellUnquote(quoted string) string {
+	var b strings.Builder
+	for len(quoted) > 0 {
+		switch {
+		case strings.HasPrefix(quoted, `\'`):
+			b.WriteByte('\'')
+			quoted = quoted[2:]
+		case quoted[0] == '\'':
+			end := strings.IndexByte(quoted[1:], '\'')
+			if end < 0 {
+				b.WriteString(quoted[1:])
+				return b.String()
+			}
+			b.WriteString(quoted[1 : end+1])
+			quoted = quoted[end+2:]
+		default:
+			b.WriteByte(quoted[0])
+			quoted = quoted[1:]
+		}
+	}
+	return b.String()
 }
 
 // codexLaunchEnv is the argv prefix that points a session's Codex at its own

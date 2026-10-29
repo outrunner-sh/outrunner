@@ -161,7 +161,7 @@ test("skills the box couldn't install don't stop the session starting", async ()
   assert.deepEqual(b.sent.map(([kind]) => kind), ["environment"]);
 });
 
-test("a box with MCP servers to load is upgraded first when its Codex wouldn't get them", async () => {
+test("a Codex session's box with MCP servers to load is upgraded first when its Codex wouldn't get them", async () => {
   let features = ["session-environment", "agent-config"];
   const order: string[] = [];
   const b = box([]);
@@ -174,14 +174,29 @@ test("a box with MCP servers to load is upgraded first when its Codex wouldn't g
     },
     setAgentConfig: async () => void order.push("config"),
   };
-  await deliverSessionSetup(client, { environment: null, agentConfig, downloadUrl });
+  await deliverSessionSetup(client, { environment: null, agentConfig, agent: "codex", downloadUrl });
   assert.deepEqual(order, ["upgrade", "config"]);
 
-  // No servers: nothing to upgrade for.
-  let upgraded = false;
-  await deliverSessionSetup(
-    { ...box(all).client, upgrade: async () => void (upgraded = true) },
-    { environment: null, agentConfig: { ...agentConfig, mcpServers: {} }, downloadUrl },
-  );
-  assert.equal(upgraded, false);
+  // No servers, or a Claude session, whose Claude has always had them:
+  // nothing to reboot the agent for, nor any word of Codex in the log.
+  for (const setup of [
+    { agentConfig: { ...agentConfig, mcpServers: {} }, agent: "codex" as const },
+    { agentConfig, agent: "claude" as const },
+    { agentConfig },
+  ]) {
+    let upgraded = false;
+    const warned: unknown[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => void warned.push(args);
+    try {
+      await deliverSessionSetup(
+        { ...box(all).client, upgrade: async () => void (upgraded = true) },
+        { environment: null, ...setup, downloadUrl },
+      );
+    } finally {
+      console.warn = warn;
+    }
+    assert.equal(upgraded, false, JSON.stringify(setup.agent));
+    assert.ok(!JSON.stringify(warned).includes("Codex"), JSON.stringify(warned));
+  }
 });

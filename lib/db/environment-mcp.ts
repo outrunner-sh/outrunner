@@ -122,26 +122,25 @@ function openSecrets(id: string, ciphertext: string | null): McpSecrets {
 }
 
 /** Add a server to the project (already checked by newMcpServer). Refused
- *  past MAX_MCP_SERVERS, and as a conflict for a name it has. */
+ *  past MAX_MCP_SERVERS (by the database), and as a conflict for a name it
+ *  has. */
 export async function createEnvironmentMcpServer(
   userId: string,
   environmentId: string,
   server: NewMcpServer,
 ): Promise<EnvironmentMcpServer> {
   await requireWrite(userId, environmentId);
-  const supabase = createSupabaseAdminClient();
-  const { count, error: countError } = await supabase
-    .from("environment_mcp_servers")
-    .select("id", { count: "exact", head: true })
-    .eq("environment_id", environmentId);
-  if (countError) throw countError;
-  if ((count ?? 0) >= MAX_MCP_SERVERS) throw new EnvironmentRuleError(`A project holds at most ${MAX_MCP_SERVERS} MCP servers.`);
-  const { data, error } = await supabase
+  const { data, error } = await createSupabaseAdminClient()
     .from("environment_mcp_servers")
     .insert({ environment_id: environmentId, created_by: userId, ...columnsOf(server) })
     .select(COLUMNS)
     .single();
   if (error?.code === "23505") throw new McpServerConflictError(`This project has a server named ${server.name} already.`);
+  // The cap is the database's (environment_mcp_servers_limit), so two added
+  // at once can't both slip under it.
+  if (error?.code === "23514" && error.message.includes("at most")) {
+    throw new EnvironmentRuleError(`A project holds at most ${MAX_MCP_SERVERS} MCP servers.`);
+  }
   if (error) throw error;
   await bumpGeneration(userId, environmentId);
   return serverOf(data as Row);

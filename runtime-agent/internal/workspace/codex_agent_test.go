@@ -486,10 +486,28 @@ func TestACodexSessionLoadsTheComputersMCPServers(t *testing.T) {
 	if err := s.SetAuth(ctx, id, AuthOpenAIAPIKey, testOpenAIKey); err != nil {
 		t.Fatalf("SetAuth: %v", err)
 	}
+	// ${VAR}s come from what the Codex process gets: the project's
+	// variables, then what the user provided in the session, which wins.
+	if err := s.SetEnvironment(ctx, id, map[string]string{"DOCS_TOKEN": "the-project's", "QUOTED": "it's 'quoted'", "TRACKER_URL": "https://tracker"}, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(s.providedJSONPath(id), map[string]string{"DOCS_TOKEN": "provided-0123456789"}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mcp["expanded"] = json.RawMessage(`{"type":"http","url":"${TRACKER_URL}/mcp","headers":{"Authorization":"Bearer ${DOCS_TOKEN}","X-Mode":"${MODE:-ro}"}}`)
+	if err := s.SetAgentConfig(ctx, AgentConfigRequest{MCPServers: mcp}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.Start(ctx, id, ""); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	config := readFileString(t, filepath.Join(s.codexHome(id), "config.toml"))
+	if got, _ := s.codexEnvironment(id)("QUOTED"); got != "it's 'quoted'" {
+		t.Errorf("a project variable read back as %q", got)
+	}
+	if want := `url = "https://tracker/mcp"` + "\n" + `http_headers = { "Authorization" = "Bearer provided-0123456789", "X-Mode" = "ro" }`; !strings.Contains(config, want) {
+		t.Errorf("config.toml lacks the expanded server %q:\n%s", want, config)
+	}
 	for _, want := range []string{
 		`[mcp_servers."docs"]`, `url = "https://mcp.example/docs"`, `http_headers = { "Authorization" = "Bearer tok-0123456789abcdef" }`,
 		`[mcp_servers."tracker"]`, `command = "npx"`, `env = { "TRACKER_KEY" = "key-0123456789abcdef" }`,

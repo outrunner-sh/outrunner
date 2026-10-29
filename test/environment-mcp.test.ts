@@ -62,6 +62,9 @@ test("an edit sets and removes values by name, and a new transport starts from i
   assert.deepEqual(http, { name: "db", transport: "http", command: null, args: [], url: "https://mcp.example/", env: {}, headers: { "X-Key": "k" } });
   assert.throws(() => applyMcpEdit(db, mcpServerEdit({ transport: "http" })), EnvironmentRuleError, "http needs its URL");
   assert.throws(() => applyMcpEdit(http, mcpServerEdit({ setEnv: { A: "1" } })), EnvironmentRuleError, "http has no variables");
+  // Removing what a server's transport has none of is refused, not a quiet no-op.
+  assert.throws(() => applyMcpEdit(http, mcpServerEdit({ removeEnv: ["A"] })), EnvironmentRuleError, "http has no variables to remove");
+  assert.throws(() => applyMcpEdit(db, mcpServerEdit({ removeHeaders: ["Authorization"] })), EnvironmentRuleError, "stdio has no headers to remove");
   assert.throws(() => mcpServerEdit({ secrets: {} }), EnvironmentRuleError);
   assert.throws(() => mcpServerEdit({ name: "outrunner-x" }), EnvironmentRuleError);
 });

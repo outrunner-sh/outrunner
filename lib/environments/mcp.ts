@@ -191,7 +191,10 @@ export function applyMcpEdit(current: NewMcpServer, edit: McpServerEdit): NewMcp
     : { ...current, env: { ...current.env }, headers: { ...current.headers } };
   if (edit.name !== undefined) next.name = edit.name;
   if (transport === "stdio") {
-    if (edit.url !== undefined || edit.setHeaders !== undefined) throw new EnvironmentRuleError("A stdio server has no URL or headers.");
+    // Refused, not ignored: a change that would do nothing mustn't read as done.
+    if (edit.url !== undefined || edit.setHeaders !== undefined || edit.removeHeaders !== undefined) {
+      throw new EnvironmentRuleError("A stdio server has no URL or headers.");
+    }
     if (edit.command !== undefined) next.command = edit.command;
     if (edit.args !== undefined) next.args = edit.args;
     if (!next.command) throw new EnvironmentRuleError("A stdio server needs a command to run, on one line, e.g. npx.");
@@ -199,7 +202,7 @@ export function applyMcpEdit(current: NewMcpServer, edit: McpServerEdit): NewMcp
     Object.assign(next.env, edit.setEnv ?? {});
     if (Object.keys(next.env).length > MAX_VALUES) throw new EnvironmentRuleError(`A server takes up to ${MAX_VALUES} variables.`);
   } else {
-    if (edit.command !== undefined || edit.args !== undefined || edit.setEnv !== undefined) {
+    if (edit.command !== undefined || edit.args !== undefined || edit.setEnv !== undefined || edit.removeEnv !== undefined) {
       throw new EnvironmentRuleError("An http server has no command, arguments or variables.");
     }
     if (edit.url !== undefined) next.url = edit.url;
