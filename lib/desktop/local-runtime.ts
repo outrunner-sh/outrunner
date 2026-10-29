@@ -169,7 +169,7 @@ export class LocalRuntimeError extends Error {
 export function localSendFailure(error: unknown): string {
   console.error("Send failed", error);
   if (!(error instanceof LocalRuntimeError)) return SEND_FAILED;
-  if (error.code === "agent" && error.reason !== "unknown workspace") return sendFailureMessage(error.reason);
+  if ((error.code === "agent" || error.code === "agent-invalid-request") && error.reason !== "unknown workspace") return sendFailureMessage(error.reason);
   return error.message;
 }
 
@@ -631,9 +631,10 @@ export function messageForLocalError(error: unknown, agent: AgentId = "claude"):
     case "unknown-artifact":
     case "no-uploads":
       return "The app refused that import. Scan again, then try again.";
-    case "agent": {
+    case "agent":
+    case "agent-invalid-request": {
       // The agent's own message, e.g. a worktree that could not be created.
-      const said = raw.slice("agent:".length).trim();
+      const said = raw.slice(raw.indexOf(":") + 1).trim();
       // Its answer for a session it has no folder for: deleted, or from
       // another Mac.
       if (said === "unknown workspace") return "This session isn't on this Mac any more. It may have been deleted.";

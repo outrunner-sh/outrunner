@@ -93,6 +93,7 @@ export function openStream(
   urls: SessionUrls,
   lastEventId: string | null,
   page: StreamHandlers,
+  rewinds = 0,
 ): StreamHandle {
   const left = streams.get(workspaceId);
   let stream: Stream;
@@ -130,6 +131,7 @@ export function openStream(
       },
       {
         lastEventId,
+        rewinds,
         workspaceId,
         onOpen: () => {
           opened.open = true;

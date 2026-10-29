@@ -806,6 +806,11 @@
 .timeline-prompt { position: relative; }
 .timeline-time { color: #7a7472; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .timeline-prompt > .timeline-time { float: right; margin: 2px 0 0 12px; }
+/* Edit a sent message: its pencil, on hover or focus (components/conversation-timeline.tsx). */
+.timeline-prompt-edit { float: right; display: grid; width: 22px; height: 22px; margin: 0 0 0 8px; place-items: center; border-radius: 5px; color: var(--studio-muted); background: transparent; opacity: 0; cursor: pointer; transition: opacity .12s ease; }
+.timeline-prompt:hover .timeline-prompt-edit, .timeline-prompt-edit:focus-visible { opacity: 1; }
+.timeline-prompt-edit:hover { color: var(--studio-text); background: var(--studio-hover); }
+.timeline-prompt-edit svg { width: 13px; }
 .timeline-worked { display: flex; align-items: center; gap: 6px; padding: 2px 8px; color: #8a8a8a; font-size: 12.5px; }
 .timeline-worked svg { width: 13px; height: 13px; }
 .timeline-worked .timeline-time::before { content: "·"; margin-right: 6px; }

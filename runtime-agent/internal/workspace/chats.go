@@ -333,28 +333,12 @@ func (s *Service) handoff(workspaceID, chatID, from, fromName string, side bool)
 		// Nothing said there yet: there is nothing to carry over.
 		return "", nil
 	}
-	turns, partial, err := readTurns(log, handoffReadLimit)
+	path := s.handoffPath(workspaceID, chatID)
+	turns, err := s.writeTranscript(workspaceID, log, "Transcript of "+fromName, path)
 	if err != nil {
 		return "", fmt.Errorf("read the chat to fork: %w", err)
 	}
 	mask := s.masker()
-	path := s.handoffPath(workspaceID, chatID)
-	// Ignored by git before the transcript is written into it.
-	s.makeContextDir(context.Background(), workspaceID, s.worktreePath(workspaceID))
-	var doc strings.Builder
-	fmt.Fprintf(&doc, "# Transcript of %s\n\n", fromName)
-	if partial {
-		fmt.Fprintf(&doc, "Only the most recent part of a long conversation is here; all of it is in %s.\n\n", log)
-	}
-	for _, t := range turns {
-		fmt.Fprintf(&doc, "## %s\n\n%s\n\n", t.heading(), mask(t.text))
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(path, []byte(doc.String()), 0o600); err != nil {
-		return "", err
-	}
 	var note strings.Builder
 	note.WriteString(handoffOpen + "\n")
 	if side {
@@ -369,6 +353,39 @@ func (s *Service) handoff(workspaceID, chatID, from, fromName string, side bool)
 	}
 	note.WriteString(handoffClose + "\n\n")
 	return note.String(), nil
+}
+
+// writeTranscript writes a conversation log's transcript to path, as a
+// fork's (handoff), and returns its turns: the prompts and the replies, the
+// tools used named rather than quoted, the box's secrets masked. A long log
+// gives its most recent part, which the transcript says.
+func (s *Service) writeTranscript(workspaceID, log, title, path string) ([]turn, error) {
+	return s.writeTranscriptPart(workspaceID, log, title, path, log, false)
+}
+
+func (s *Service) writeTranscriptPart(workspaceID, log, title, path, sourceLog string, truncated bool) ([]turn, error) {
+	turns, partial, err := readTurns(log, handoffReadLimit)
+	if err != nil {
+		return nil, err
+	}
+	mask := s.masker()
+	// Ignored by git before the transcript is written into it.
+	s.makeContextDir(context.Background(), workspaceID, s.worktreePath(workspaceID))
+	var doc strings.Builder
+	fmt.Fprintf(&doc, "# %s\n\n", title)
+	if partial || truncated {
+		fmt.Fprintf(&doc, "Only the most recent part of a long conversation is here; all of it is in %s.\n\n", sourceLog)
+	}
+	for _, t := range turns {
+		fmt.Fprintf(&doc, "## %s\n\n%s\n\n", t.heading(), mask(t.text))
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, []byte(doc.String()), 0o600); err != nil {
+		return nil, err
+	}
+	return turns, nil
 }
 
 // sideContext is what a side chat's prompt is sent with: the newest turns of

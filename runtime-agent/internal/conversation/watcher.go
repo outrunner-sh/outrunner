@@ -104,7 +104,10 @@ func (b rawBlock) block() protocol.ContentBlock {
 // ID is the JSONL byte offset AT THE END of the record that produced this
 // event — the resume cursor the SSE handler emits as `id:`.
 type Event struct {
-	ID      int64
+	ID int64
+	// Start is where the record begins in the file, for Read's callers (an
+	// edit cuts the log there); a Watcher leaves it 0.
+	Start   int64
 	Message *protocol.ConversationMessage
 	Usage   *protocol.TokenUsage
 }
@@ -450,7 +453,7 @@ func Read(path string, from int64) ([]Event, error) {
 			continue
 		}
 		if ev, ok := decode(line); ok {
-			ev.ID = cursor
+			ev.ID, ev.Start = cursor, cursor-int64(len(line))
 			events = append(events, ev)
 		}
 	}

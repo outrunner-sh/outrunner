@@ -130,6 +130,7 @@ export function SessionComposer({
   prefillAttachments = null,
   onPrefillAttachmentsTaken,
   draftKey,
+  editing = null,
   comments,
   listFiles,
 }: {
@@ -198,6 +199,10 @@ export function SessionComposer({
    *  new-session form, `ws:<id>` for a session. Without it, the draft lasts as
    *  long as the page. */
   draftKey?: string;
+  /** A sent message being edited (its pencil in the timeline): its text is
+   *  put in the box, what was typed there kept for Cancel, which `onCancel`
+   *  is told of. The next send replaces it (the caller rewinds first). */
+  editing?: { key: string; text: string; onCancel: () => void } | null;
   /** Comments on the session's diff, waiting to go with the next message:
    *  shown above the box, each removable. The caller adds them to what is
    *  sent (onSend gets the typed text alone). */
@@ -207,11 +212,18 @@ export function SessionComposer({
   listFiles?: () => Promise<FilesResponse>;
 }) {
   const ownKey = `${PAGE_ONLY}composer:${useId()}`;
-  const key = draftKey ?? ownKey;
-  // The prefill, arriving after the form mounted (fetched) or not, shows
-  // until something is typed: the draft, once there is one, is what was.
+  // Editing gets a page-only draft of its own. The ordinary draft (text and
+  // files) stays intact for Cancel and navigation; a reload must not turn
+  // an unfinished edit into a new prompt.
+  const [editSeen, setEditSeen] = useState<string | null>(null);
+  const [editVersion, setEditVersion] = useState(0);
+  if ((editing?.key ?? null) !== editSeen) {
+    setEditSeen(editing?.key ?? null);
+    if (editing) setEditVersion((version) => version + 1);
+  }
+  const key = editing ? `${ownKey}:edit:${editVersion}` : draftKey ?? ownKey;
   const draft = useDraft(key);
-  const value = draft?.text ?? prefill ?? "";
+  const value = draft?.text ?? editing?.text ?? prefill ?? "";
   const setValue = (next: string | ((current: string) => string)) => DRAFTS.setText(key, next);
   const hydrating = useHydrating();
   const [sending, setSending] = useState(false);
@@ -464,6 +476,22 @@ export function SessionComposer({
         <p role="status" className="studio-composer-notice">
           {notice}
         </p>
+      )}
+      {editing && (
+        <InlineMessage
+          className="studio-composer-message"
+          actions={[
+            {
+              label: "Cancel",
+              onClick: () => {
+                editing.onCancel();
+              },
+            },
+          ]}
+        >
+          Editing a message · Sending replaces it and everything after it in this chat. Files and git changes are not
+          rolled back, and attachments and diff comments aren&apos;t carried over.
+        </InlineMessage>
       )}
       {sendError && !sending && (
         <InlineMessage

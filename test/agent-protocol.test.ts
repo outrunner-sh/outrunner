@@ -25,6 +25,7 @@ import {
   AGENT_FEATURE_PORTS,
   AGENT_FEATURE_RESTORE_MODEL,
   AGENT_FEATURE_SKILLS,
+  AGENT_FEATURE_REWIND,
   AGENT_FEATURE_WARM_HOOKS,
   PROTOCOL_SCHEMAS,
   type ProtocolSchemaName,
@@ -173,6 +174,7 @@ test("the newest health fixture names every feature the agent and the control pl
     AGENT_FEATURE_MESSAGE_KEYS,
     AGENT_FEATURE_CHATS,
     AGENT_FEATURE_CHAT_SNAPSHOTS,
+    AGENT_FEATURE_REWIND,
   ]) {
     assert.ok(newest.includes(feature), `the newest AgentHealth fixture lacks ${feature}`);
   }

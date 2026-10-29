@@ -1423,7 +1423,12 @@ async fn agent_call(
             .pointer("/error/message")
             .and_then(|m| m.as_str())
             .unwrap_or("request failed");
-        Err(format!("agent: {message}"))
+        let prefix = if value.pointer("/error/code").and_then(|code| code.as_str()) == Some("INVALID_REQUEST") {
+            "agent-invalid-request"
+        } else {
+            "agent"
+        };
+        Err(format!("{prefix}: {message}"))
     }
 }
 

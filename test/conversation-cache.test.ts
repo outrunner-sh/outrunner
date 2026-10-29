@@ -71,3 +71,16 @@ test("a deleted session's conversation is forgotten", () => {
   cache.forget("w1");
   assert.equal(cache.get("w1"), undefined);
 });
+
+test("a left stream preserves rewind counters and accepts a restored counter reset", () => {
+  const cache = new ConversationCache();
+  cache.set("w", { ...entry(900), rewinds: 4 });
+  cache.append("w", { t: "rewind", at: 0, uuid: "", rewinds: 0, reset: true }, "0");
+  assert.equal(cache.get("w")!.rewinds, 0);
+  assert.equal(cache.get("w")!.lastEventId, null);
+  assert.deepEqual(cache.get("w")!.events, []);
+  cache.append("w", message("restored", "hello"), "100");
+  assert.equal(cache.get("w")!.rewinds, 0);
+  cache.append("w", { t: "rewind", at: 500, uuid: "later", rewinds: 1 }, "100");
+  assert.equal(cache.get("w")!.lastEventId, "100", "the frame cursor can precede the cut");
+});

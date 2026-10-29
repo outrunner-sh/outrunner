@@ -55,6 +55,9 @@ export type EventSubscription = {
 export type EventSubscribeOptions = {
   /** Cursor to resume from; if set, appended as `?lastEventId=<id>`. */
   lastEventId?: string | null;
+  /** The edits of the conversation already seen (`?rewinds=`): the agent
+   *  tells of newer ones only (ConversationRewound). */
+  rewinds?: number;
   /** The session this stream belongs to, so a reported fault can be found in
    *  the server's log. */
   workspaceId?: string;
@@ -113,10 +116,11 @@ export function subscribeEventsWs(
   onEvent: (event: AgentEvent, id: string) => void,
   options: EventSubscribeOptions = {},
 ): EventSubscription {
-  const url =
+  const resumed =
     options.lastEventId != null && options.lastEventId !== ""
       ? appendQuery(eventsUrl, "lastEventId", options.lastEventId)
       : eventsUrl;
+  const url = options.rewinds ? appendQuery(resumed, "rewinds", String(options.rewinds)) : resumed;
 
   const ws = openSocket(url);
   let disposed = false;
@@ -176,7 +180,8 @@ export function subscribeEventsWs(
     // The connect-time state event carries the synthetic id "0" and a later
     // one the current cursor; only real events advance the resume cursor
     // (mirrors subscribeEvents / the SSE `id:` semantics).
-    if (id && id !== "0") lastId = id;
+    if (parsed.data.t === "rewind") lastId = id && id !== "0" ? id : null;
+    else if (id && id !== "0") lastId = id;
     onEvent(parsed.data, id);
   });
 

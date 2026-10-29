@@ -901,11 +901,38 @@ export const WorkspaceStateChanged = z.object({
 });
 export type WorkspaceStateChanged = z.infer<typeof WorkspaceStateChanged>;
 
+/** The agent edits a sent message (AGENT_FEATURE_REWIND): POST
+ *  /workspaces/{id}/rewind cuts a chat's conversation back to just before one
+ *  of its prompts, for the edit to be sent in its place. */
+export const AGENT_FEATURE_REWIND = "rewind";
+
+/** POST /workspaces/{id}/rewind: the prompt an edit replaces. */
+export const RewindRequest = z.object({ uuid: z.string().min(1).max(200) }).strict();
+export type RewindRequest = z.infer<typeof RewindRequest>;
+
+/** Where the edit cut the log: at byte `at`, where prompt `uuid` began, the
+ *  chat's `rewinds`-th edit. */
+export const RewindResponse = z.object({ at: z.number().int().nonnegative(), uuid: z.string(), rewinds: z.number().int().positive() });
+export type RewindResponse = z.infer<typeof RewindResponse>;
+
+/** The log was cut by an edit: prompt `uuid` and everything after it are
+ *  gone, and the stream reads on from `at` (its frame's id). A client says the
+ *  edits it has seen with `?rewinds=`, and is told only of newer ones. */
+export const ConversationRewound = z.object({
+  t: z.literal("rewind"),
+  at: z.number().int().nonnegative(),
+  uuid: z.string(),
+  rewinds: z.number().int().nonnegative(),
+  reset: z.boolean().optional(),
+});
+export type ConversationRewound = z.infer<typeof ConversationRewound>;
+
 /** Everything the agent pushes on the conversation/event channel. */
 export const AgentEvent = z.discriminatedUnion("t", [
   ConversationMessage,
   TokenUsage,
   WorkspaceStateChanged,
+  ConversationRewound,
 ]);
 export type AgentEvent = z.infer<typeof AgentEvent>;
 
@@ -934,6 +961,9 @@ export const PROTOCOL_SCHEMAS = {
   WorkspaceStateChanged,
   SendMessageRequest,
   CreateChatRequest,
+  RewindRequest,
+  RewindResponse,
+  ConversationRewound,
   CompactRequest,
   PlanActionRequest,
   PlanActionResponse,

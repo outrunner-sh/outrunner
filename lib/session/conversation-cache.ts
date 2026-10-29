@@ -10,6 +10,9 @@ export type CachedConversation = {
   lastEventId: string | null;
   /** Event ids already taken in (lib/runtime/conversation-events.ts). */
   seenIds: Set<string>;
+  /** The edits of the conversation taken in (ConversationRewound); none
+   *  until one is. */
+  rewinds?: number;
 };
 
 /** Where conversations are kept past the page (lib/session/kept-conversations.ts):
@@ -65,7 +68,8 @@ export class ConversationCache {
     const seenIds = new Set(entry.seenIds);
     this.set(id, {
       events: appendEvent(entry.events, event, eventId, seenIds),
-      lastEventId: eventId && eventId !== "0" ? eventId : entry.lastEventId,
+      lastEventId: event.t === "rewind" ? (eventId && eventId !== "0" ? eventId : null) : eventId && eventId !== "0" ? eventId : entry.lastEventId,
+      rewinds: event.t === "rewind" ? event.rewinds : entry.rewinds,
       seenIds,
     });
   }

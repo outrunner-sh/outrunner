@@ -355,3 +355,7 @@ test("closing before the relay answers still closes the relay", async () => {
   await tick();
   assert.deepEqual(desktop.sent.at(-1), { cmd: "local_socket_close", args: { id: 9 } });
 });
+
+test("an invalid agent request keeps its message independently of its wording", () => {
+  assert.equal(messageForLocalError("agent-invalid-request: This prompt has gone away."), "This prompt has gone away.");
+});

@@ -3,7 +3,7 @@
 import { RotateCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { type AgentEvent, ChangesResponse, FilesResponse, PlanActionResponse } from "@/lib/runtime/agent-protocol";
+import { type AgentEvent, ChangesResponse, FilesResponse, PlanActionResponse, RewindResponse } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline } from "@/components/conversation-timeline";
 import { ImageBoxContext } from "@/components/markdown";
 import { QueuedPrompts } from "@/components/queued-prompts";
@@ -577,6 +577,7 @@ export function WorkspaceSession({
   // menu first, and goes in the mode the composer is in (Plan revises it,
   // Build approves it with changes).
   const sendOrQueue = (text: string, attachmentIds: string[], sentMode?: SessionMode) => {
+    if (editing) return sendEdit(editing.uuid, text, attachmentIds, sentMode);
     if (queuePaused) {
       // Sending again is going on: the queue first, then this.
       setQueuePaused(false);
@@ -588,6 +589,34 @@ export function WorkspaceSession({
       : send(text, attachmentIds, undefined, undefined, undefined, sentMode ? { mode: sentMode } : {});
   };
 
+  /** The edit of a sent message going in its place: the chat's conversation
+   *  is cut back to just before it first (POST …/rewind), then the edit goes
+   *  as any prompt does, in the same chat. A cut refused (the agent at work)
+   *  leaves the edit in the box. */
+  const sendEdit = async (uuid: string, text: string, attachmentIds: string[], sentMode?: SessionMode): Promise<boolean> => {
+    setSendError(null);
+    let cut: RewindResponse;
+    try {
+      cut = local
+        ? RewindResponse.parse(
+            await localAgentRequest<unknown>(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/rewind`, { uuid }),
+          )
+        : await rewindCloudChat(workspaceId, chatId, uuid);
+    } catch (error) {
+      if ((error instanceof Error && "code" in error && error.code === "INVALID_REQUEST") ||
+          (error instanceof LocalRuntimeError && error.code === "agent-invalid-request")) setEditing(null);
+      setSendError({ message: local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't edit the message." });
+      return false;
+    }
+    conversation.rewind(cut);
+    // What the page counted from the conversation it had (a stop, the echo
+    // of a queued send) counts from the one it has now.
+    setPending([]);
+    setStoppedAt(null);
+    setQueuedAt(null);
+    setEditing(null);
+    return send(text, attachmentIds, undefined, undefined, undefined, sentMode ? { mode: sentMode } : {});
+  };
   /** Answer the plan waiting on approval with a prompt: its card's buttons
    *  are put away while it goes, and back if it doesn't. */
   const answerPlan = (id: string, text: string, attachmentIds: string[], how: SendHow): Promise<boolean> => {
@@ -639,6 +668,13 @@ export function WorkspaceSession({
     );
   };
   const [reviseSignal, setReviseSignal] = useState(0);
+  // A sent message being edited (its pencil): its text in the composer,
+  // which sends the edit in its place.
+  const [editing, setEditing] = useState<{ uuid: string; text: string } | null>(null);
+  const editMessage = (uuid: string, text: string) => {
+    setEditing({ uuid, text });
+    setReviseSignal((n) => n + 1);
+  };
   const planActions =
     plan && waitingOnPlan
       ? {
@@ -1048,6 +1084,9 @@ export function WorkspaceSession({
               compacting={compacting}
               plansInProse={agent === "codex"}
               plan={planActions}
+              // Only between turns: an edit cuts the conversation under the
+              // agent, which must not be writing to it.
+              onEdit={attached && !working && !waitingOnUser && !waitingOnPlan ? editMessage : undefined}
               placeholder={conversationPlaceholder({
                 events: timelineEvents,
                 attachment: attachment.status,
@@ -1153,6 +1192,7 @@ export function WorkspaceSession({
           onSideChat={onSideChat}
           context={contextUsage(conversation.events, shownModel)}
           focusSignal={reviseSignal}
+          editing={editing && { key: editing.uuid, text: editing.text, onCancel: () => setEditing(null) }}
           placeholder={
             waitingOnPlan
               ? `Tell ${AGENTS[agent].label} what to change in the plan…`
@@ -1395,6 +1435,19 @@ async function compactCloudSession(workspaceId: string, chatId: string, body: { 
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't compact the conversation. Please try again.");
+}
+
+/** Cut a cloud chat's conversation back to just before its prompt `uuid`,
+ *  for its edit to go in its place. */
+async function rewindCloudChat(workspaceId: string, chatId: string, uuid: string): Promise<RewindResponse> {
+  const res = await reachOutrunner(chatRoute(workspaceId, chatId, "rewind"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ uuid }),
+  });
+  const data = (await res.json().catch(() => ({}))) as unknown;
+  if (res.ok) return RewindResponse.parse(data);
+  throw Object.assign(new Error((data as { error?: string }).error ?? "Couldn't edit the message. Please try again."), { code: (data as { code?: string }).code });
 }
 
 /** Stop a cloud session's turn. The server reaches the session's agent, as

@@ -55,6 +55,7 @@ import type { ConversationPlaceholder } from "@/lib/session/conversation-placeho
 import { lineRange, parseCommentQuotes } from "@/lib/session/diff-comments";
 import { FOLLOW_SLACK_PX, followsAfterScroll, USER_SCROLL_MS } from "@/lib/session/follow-scroll";
 import { isLive } from "@/lib/session/streaming";
+import { editPromptText } from "@/lib/session/edit-message";
 import { cn } from "@/lib/utils";
 
 /** Long enough for any smooth scroll back to a turn to finish. */
@@ -78,6 +79,7 @@ export function ConversationTimeline({
   compacting = false,
   plansInProse = false,
   plan = null,
+  onEdit,
 }: {
   events: AgentEvent[];
   /** Whether Claude is mid-turn, for the working indicator; read from the
@@ -94,6 +96,9 @@ export function ConversationTimeline({
   /** What an empty conversation says (see conversationPlaceholder); a replay,
    *  which has nothing to connect to, passes none. */
   placeholder?: ConversationPlaceholder;
+  /** Edit a sent prompt (its pencil, on hover): absent while it can't be,
+   *  the agent mid-turn, and in a replay. */
+  onEdit?: (uuid: string, text: string) => void;
 }) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
@@ -261,7 +266,7 @@ export function ConversationTimeline({
               which the placeholder already speaks for. */}
           {!placeholder && nodes.map((node) => (
             <div key={node.key} className="timeline-row" data-turn={node.kind === "prompt" && !node.continuation ? "" : undefined}>
-              <NodeRow node={node} plan={node.kind === "plan" && plan?.id === node.id ? plan : undefined} />
+              <NodeRow node={node} plan={node.kind === "plan" && plan?.id === node.id ? plan : undefined} onEdit={onEdit} />
             </div>
           ))}
           {(working || compacting) && (
@@ -358,7 +363,15 @@ function WorkingIndicator({ label, since, stepSince = null }: { label: string; s
   );
 }
 
-function NodeRow({ node, plan }: { node: ConversationNode; plan?: PlanActions }) {
+function NodeRow({
+  node,
+  plan,
+  onEdit,
+}: {
+  node: ConversationNode;
+  plan?: PlanActions;
+  onEdit?: (uuid: string, text: string) => void;
+}) {
   switch (node.kind) {
     case "plan":
       return <PlanCard text={node.text} actions={plan} />;
@@ -400,7 +413,21 @@ function NodeRow({ node, plan }: { node: ConversationNode; plan?: PlanActions })
         const { events, rest } = parseRunnerEvents(node.text);
         if (events.length > 0) return <RunnerEventCards events={events} note={rest || undefined} />;
       }
-      return <Prompt text={node.text} mode={node.mode} at={node.at} images={node.images} carried={node.carried} />;
+      const uuid = node.uuid;
+      return (
+        <Prompt
+          text={node.text}
+          mode={node.mode}
+          at={node.at}
+          images={node.images}
+          carried={node.carried}
+          onEdit={
+            uuid && onEdit
+              ? () => onEdit(uuid, editPromptText(node.text))
+              : undefined
+          }
+        />
+      );
     }
     case "worked":
       return (
@@ -432,13 +459,28 @@ function Prompt({
   at,
   images,
   carried,
+  onEdit,
 }: {
   text: string;
   mode?: "plan";
   at?: string;
   images?: PromptImage[];
   carried?: ("handoff" | "side")[];
+  onEdit?: () => void;
 }) {
+  // The pencil, on hover: the prompt's words go to the composer, and sending
+  // them replaces it and everything after it.
+  const edit = onEdit && (
+    <button
+      type="button"
+      className="timeline-prompt-edit"
+      onClick={onEdit}
+      title="Edit: sending replaces this message and everything after it (files and git changes aren't rolled back)"
+      aria-label="Edit message"
+    >
+      <Pencil aria-hidden />
+    </button>
+  );
   const workspaceId = useContext(ImageBoxContext);
   const { typed, files } = useMemo(() => {
     const { text: typed, files: paths } = promptAttachments(text);
@@ -463,9 +505,12 @@ function Prompt({
         </span>
       )}
       {carried?.includes("handoff") && (
-        <span className="timeline-prompt-mode" title="Sent with the conversation this chat continues: a transcript in .context/chats and its latest turns">
+        <span
+          className="timeline-prompt-mode"
+          title="Sent with the conversation it continues (a fork's, or this chat's before an edit): a transcript in .context/chats and its latest turns"
+        >
           <GitFork aria-hidden />
-          With the forked chat&apos;s history
+          With the earlier conversation
         </span>
       )}
       {carried?.includes("side") && (
@@ -480,6 +525,7 @@ function Prompt({
     return (
       <div className="timeline-prompt">
         {at && <MessageTime at={at} />}
+        {edit}
         {planned}
         {attached}
         {words}
@@ -488,6 +534,7 @@ function Prompt({
   return (
     <div className="timeline-prompt">
       {at && <MessageTime at={at} />}
+      {edit}
       {planned}
       {attached}
       {words}

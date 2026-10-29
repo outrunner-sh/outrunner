@@ -728,6 +728,37 @@ type TokenUsage struct {
 
 // WorkspaceStateChanged reports a workspace lifecycle transition.
 // state ∈ {starting, running, exited, archived, degraded}.
+// FeatureRewind marks an agent that edits a sent message: POST
+// /workspaces/{id}/rewind cuts a chat's conversation back to just before one
+// of its prompts, and its stream says so (ConversationRewound).
+const FeatureRewind = "rewind"
+
+// RewindRequest names the prompt an edit replaces (POST
+// /workspaces/{id}/rewind): the conversation is cut back to just before it.
+type RewindRequest struct {
+	UUID string `json:"uuid"`
+}
+
+// RewindResponse is where the edit cut the log: at byte At, where the prompt
+// UUID began, the chat's Rewinds-th edit.
+type RewindResponse struct {
+	At      int64  `json:"at"`
+	UUID    string `json:"uuid"`
+	Rewinds int    `json:"rewinds"`
+}
+
+// ConversationRewound tells a conversation stream's client that the log was
+// cut by an edit: the prompt UUID and everything after it are gone, and the
+// stream reads on from At. A client says the edits it has seen with
+// ?rewinds=, so a stream tells it only of newer ones.
+type ConversationRewound struct {
+	T       string `json:"t"` // "rewind"
+	At      int64  `json:"at"`
+	UUID    string `json:"uuid"`
+	Rewinds int    `json:"rewinds"`
+	Reset   bool   `json:"reset,omitempty"`
+}
+
 type WorkspaceStateChanged struct {
 	T           string `json:"t"` // "state"
 	WorkspaceID string `json:"workspaceId"`

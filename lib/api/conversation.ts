@@ -112,6 +112,23 @@ export function conversationFrom(frames: readonly SseFrame[]): { entries: Conver
       state = event.state;
       continue;
     }
+    if (event.t === "rewind") {
+      if (event.reset) {
+        entries.length = 0;
+        byUuid.clear();
+        seen.clear();
+        continue;
+      }
+      // An edit cut the log here: what followed its prompt is gone.
+      const at = byUuid.get(event.uuid);
+      if (at !== undefined) {
+        for (const gone of entries.splice(at)) {
+          if (gone.event.t === "message") byUuid.delete(gone.event.uuid);
+          seen.delete(gone.id);
+        }
+      }
+      continue;
+    }
     const id = frame.id !== null && /^\d{1,15}$/.test(frame.id) ? Number(frame.id) : null;
     if (id === null) continue;
     if (event.t === "message") {
