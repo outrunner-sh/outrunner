@@ -38,6 +38,7 @@ import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRe
 import { archiveOffer } from "@/lib/session/archive-control";
 import { type InspectorTabId, inspectorTabs, shownTab } from "@/lib/session/inspector-tabs";
 import { chatRoute, MAIN_CHAT, mainChatOf, parseChatId, type SessionChat } from "@/lib/session/chats";
+import { askSideChat } from "@/lib/session/chat-actions";
 import { cn } from "@/lib/utils";
 
 /** The session itself: a header across the top, then the chat, with its
@@ -130,14 +131,16 @@ export function WorkspaceStudio({
   // The chat it is about carries on with its turn.
   const askAside = async (question: string): Promise<boolean> => {
     try {
-      const side = await chats.start({ from: current.id, side: true, question });
-      const res = await fetch(chatRoute(workspace.id, side.id, "message"), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ content: question }),
+      return await askSideChat({
+        create: () => chats.start({ from: current.id, side: true, question }),
+        send: async (side) => (await fetch(chatRoute(workspace.id, side.id, "message"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ content: question }),
+        })).ok,
+        remove: (side) => chats.remove(side.id),
+        pick,
       });
-      pick(side);
-      return res.ok;
     } catch (error) {
       console.warn(`Side chat: couldn't ask in ${workspace.id}`, error);
       return false;
@@ -219,7 +222,11 @@ export function WorkspaceStudio({
       )}
 
       <section className="studio-chat">
-        {hasLiveSession ? (
+        {hasLiveSession && chatId !== MAIN_CHAT && !chats.loaded ? (
+          <div className="studio-offline"><Spinner />Loading chat…</div>
+        ) : hasLiveSession && chatId !== MAIN_CHAT && (chats.error || !chats.chats.some((chat) => chat.id === chatId)) ? (
+          <div className="studio-offline">{chats.error ?? "This chat is no longer available."}</div>
+        ) : hasLiveSession ? (
           <WorkspaceSession
             // Each chat its own page state: its conversation, queue, picks.
             key={current.id}

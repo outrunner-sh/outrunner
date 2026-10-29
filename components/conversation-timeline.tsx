@@ -471,7 +471,7 @@ function Prompt({
       {carried?.includes("side") && (
         <span className="timeline-prompt-mode" title="Sent with the newest turns of the chat this side chat is about">
           <MessageCircleQuestionMark aria-hidden />
-          With the main chat&apos;s newest turns
+          With the source chat&apos;s newest turns
         </span>
       )}
     </>

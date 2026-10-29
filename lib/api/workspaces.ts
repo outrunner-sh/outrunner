@@ -211,8 +211,8 @@ export function turnJson(entries: readonly ConversationEntry[], state: string | 
 }
 
 /** The session's turn as its box says now; null while its box isn't up. */
-export async function turnJsonOf(workspace: Workspace): Promise<Record<string, unknown> | null> {
-  const live = await readLiveConversation(workspace);
+export async function turnJsonOf(workspace: Workspace, chat?: string): Promise<Record<string, unknown> | null> {
+  const live = await readLiveConversation(workspace, chat);
   return live ? turnJson(live.entries, live.state) : null;
 }
 
@@ -418,7 +418,7 @@ export async function waitApi(context: ApiContext, id: string): Promise<Response
     const settled = await waitOutcome(workspace, afterEvent, chat);
     if (settled) return Response.json({ ...workspaceJson(workspace, context.base), turn: settled.turn, timed_out: false });
     if (Date.now() + WAIT_EVERY_MS > until || context.request.signal.aborted) {
-      return Response.json({ ...workspaceJson(workspace, context.base), turn: await turnJsonOf(workspace), timed_out: true });
+      return Response.json({ ...workspaceJson(workspace, context.base), turn: await turnJsonOf(workspace, chat), timed_out: true });
     }
     await new Promise((resolve) => setTimeout(resolve, WAIT_EVERY_MS));
     workspace = (await getWorkspace(id)) ?? workspace;

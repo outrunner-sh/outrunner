@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { getWorkspaceComputer, getWorkspace, readRuntimeComputerSecret } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { startChatOnBox } from "@/lib/session/chat-actions";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_CHATS, SessionUrls } from "@/lib/runtime/agent-protocol";
 import { withRuntimeAgentRecovery } from "@/lib/runtime/agent-recovery";
@@ -247,20 +248,22 @@ async function startChat(
   ready: boolean,
 ): Promise<NextResponse | null> {
   try {
-    if (ready) await readyChatRelaunch(agent, identity, upgrade, workspace, chat, ownerId);
-    try {
-      await agent.startWorkspace(identity, chat.id);
-    } catch (error) {
-      if (!chatMissingOnBox(error)) throw error;
-      await requireFeature(
-        { features: async () => (await agent.health(identity)).features ?? [], upgrade },
-        AGENT_FEATURE_CHATS,
-        "run several chats in a session",
-      );
-      await agent.createChat(identity, { chatId: chat.id, agent: chat.agent, noStart: true });
-      await readyChatRelaunch(agent, identity, upgrade, workspace, chat, ownerId);
-      await agent.startWorkspace(identity, chat.id);
-    }
+    await startChatOnBox({
+      ready: async (recreated) => { if (ready || recreated) await readyChatRelaunch(agent, identity, upgrade, workspace, chat, ownerId); },
+      start: () => agent.startWorkspace(identity, chat.id),
+      missing: chatMissingOnBox,
+      recreate: async () => {
+        await requireFeature(
+          { features: async () => (await agent.health(identity)).features ?? [], upgrade },
+          AGENT_FEATURE_CHATS,
+          "run several chats in a session",
+        );
+        await agent.createChat(identity, {
+          chatId: chat.id, agent: chat.agent, noStart: true,
+          ...(chat.kind === "side" && chat.forkedFrom && { side: true, from: chat.forkedFrom }),
+        });
+      },
+    });
     return null;
   } catch (error) {
     const failure = signInFailure(error);

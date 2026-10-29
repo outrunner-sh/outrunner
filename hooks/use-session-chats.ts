@@ -13,6 +13,8 @@ export type NewChat = { agent?: AgentId; from?: string; side?: boolean; question
 export type SessionChats = {
   /** The session's chats, its main one first; just the main one until read. */
   chats: SessionChat[];
+  loaded: boolean;
+  error: string | null;
   start: (how: NewChat) => Promise<SessionChat>;
   rename: (chatId: string, name: string) => Promise<void>;
   remove: (chatId: string) => Promise<void>;
@@ -25,6 +27,8 @@ export type SessionChats = {
  * `enabled` false).
  */
 export function useSessionChats(workspaceId: string, main: SessionChat, enabled: boolean): SessionChats {
+  const [loadedWorkspace, setLoadedWorkspace] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [others, setOthers] = useState<SessionChat[]>([]);
   const [mainName, setMainName] = useState<string | null>(null);
 
@@ -34,10 +38,16 @@ export function useSessionChats(workspaceId: string, main: SessionChat, enabled:
     requestJson<{ chats: SessionChat[] }>(`/api/workspaces/${workspaceId}/chats`, { has: (d) => Array.isArray(d.chats) })
       .then(({ chats }) => {
         if (!live) return;
+        setError(null);
         setOthers(chats.filter((chat) => chat.id !== MAIN_CHAT));
         setMainName(chats.find((chat) => chat.id === MAIN_CHAT)?.name ?? null);
       })
-      .catch((error: unknown) => console.warn(`Chats: couldn't list ${workspaceId}'s`, error));
+      .catch((error: unknown) => {
+        if (!live) return;
+        console.warn(`Chats: couldn't list ${workspaceId}'s`, error);
+        setError("Couldn't load this session's chats. Reload to try again.");
+      })
+      .finally(() => { if (live) setLoadedWorkspace(workspaceId); });
     return () => {
       live = false;
     };
@@ -81,5 +91,5 @@ export function useSessionChats(workspaceId: string, main: SessionChat, enabled:
     [workspaceId],
   );
 
-  return { chats: [mainName ? { ...main, name: mainName } : main, ...others], start, rename, remove };
+  return { loaded: !enabled || loadedWorkspace === workspaceId, error, chats: [mainName ? { ...main, name: mainName } : main, ...others], start, rename, remove };
 }

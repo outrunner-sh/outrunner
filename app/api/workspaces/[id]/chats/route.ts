@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { AGENTS, isAgentId } from "@/lib/agents/registry";
+import { probeStatus } from "@/lib/supabase/probe";
 import { getOwner } from "@/lib/auth/owner";
 import { deleteChatRow, insertChat, listChats } from "@/lib/db/chats";
 import { getWorkspace } from "@/lib/db/repositories";
@@ -77,9 +78,12 @@ export async function POST(request: Request, context: RouteContext) {
 
   const upgrade = boxUpgrade(provider, sandboxId, secret, owner.id, workspace.id);
   try {
-    const health = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
-    await requireFeature(health, AGENT_FEATURE_CHATS, "run several chats in a session");
-    const agents = (await agent.health(identity)).agents ?? ["claude"];
+    let health = await agent.health(identity);
+    await requireFeature({
+      features: async () => health.features ?? [],
+      upgrade: upgrade ? async () => { await upgrade(); health = await agent.health(identity); } : undefined,
+    }, AGENT_FEATURE_CHATS, "run several chats in a session");
+    const agents = health.agents ?? ["claude"];
     if (!agents.includes(chatAgent)) {
       return NextResponse.json({ error: `This session's computer can't run ${AGENTS[chatAgent].label}.` }, { status: 409 });
     }
@@ -92,7 +96,9 @@ export async function POST(request: Request, context: RouteContext) {
   // A chat on its source's agent goes on its model; on another, on that
   // agent's own default until the user picks one.
   const source = from ?? mainChatOf(workspace);
-  const chat = await insertChat({
+  let chat: Awaited<ReturnType<typeof insertChat>>;
+  try {
+    chat = await insertChat({
     id: crypto.randomUUID(),
     workspaceId: workspace.id,
     ownerId: owner.id,
@@ -102,6 +108,11 @@ export async function POST(request: Request, context: RouteContext) {
     forkedFrom: from?.id ?? null,
     model: source.agent === chatAgent ? source.model : null,
   });
+  } catch (error) {
+    console.error(`Chat: couldn't record a chat in ${workspace.id}`, error);
+    const missing = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" && probeStatus({ code: error.code }) === "missing";
+    return NextResponse.json({ error: missing ? "Chats aren't available yet. Please try again after the database update." : "Couldn't start the chat. Please try again." }, { status: missing ? 503 : 502 });
+  }
   try {
     await agent.createChat(identity, {
       chatId: chat.id,

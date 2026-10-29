@@ -33,7 +33,7 @@ export function ChatSwitcher({
 }: {
   chats: SessionChats;
   current: SessionChat;
-  /** The agents the session's box runs: a new chat may be on any of them. */
+  /** Agents offered by the picker; the server checks the box supports the choice before recording a chat. */
   agents: AgentId[];
   onPick: (chat: SessionChat) => void;
 }) {
