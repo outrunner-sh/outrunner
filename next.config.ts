@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { SETTINGS_REDIRECTS } from "./lib/settings-navigation";
 
 const nextConfig: NextConfig = {
   /**
@@ -10,6 +11,10 @@ const nextConfig: NextConfig = {
    * fails if one would.
    */
   cacheComponents: true,
+
+  async redirects() {
+    return SETTINGS_REDIRECTS.map(([source, destination]) => ({ source, destination, permanent: false }));
+  },
 
   // The Daytona SDK loads `form-data` lazily for file uploads. Turbopack
   // cannot transform that dynamic Node require, so leave both packages for

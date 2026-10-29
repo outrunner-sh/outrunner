@@ -218,7 +218,7 @@ test("a chosen provider without a saved key, or an agent older than it, says so"
       model: { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "deepseek" },
       fallback: GLM,
     }),
-    (error: unknown) => error instanceof NoStartingModelError && /Save your DeepSeek key in Settings → Providers/.test(error.message),
+    (error: unknown) => error instanceof NoStartingModelError && /Save your DeepSeek key in Personal → Coding agents/.test(error.message),
   );
   await assert.rejects(
     startingModel({

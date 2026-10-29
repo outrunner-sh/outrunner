@@ -11,7 +11,7 @@ export class DaytonaRuntimeProvider extends ComputerRuntimeProvider {
 /** The key a user's own Daytona is reached on is missing or unreadable. */
 export class NoDaytonaKeyError extends Error {
   constructor() {
-    super("Add your Daytona API key in Settings → Sandbox, or switch to Outrunner's sandbox.");
+    super("The stored Daytona credential is unavailable. Ask your deployment administrator to check runtime configuration.");
     this.name = "NoDaytonaKeyError";
   }
 }

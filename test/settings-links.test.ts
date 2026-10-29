@@ -11,7 +11,7 @@ import {
   withProviderTab,
 } from "@/lib/settings-links";
 
-test("Settings → Providers has the agents first, then every provider whose key is no agent's", () => {
+test("Personal → Coding agents has the agents first, then every provider whose key is no agent's", () => {
   assert.deepEqual(GATEWAY_TABS, PROVIDER_IDS.filter((id) => id !== "anthropic"));
   assert.deepEqual(PROVIDER_TABS, ["claude", "codex", ...GATEWAY_TABS]);
 });
@@ -26,13 +26,13 @@ test("?tab= opens only a tab there is", () => {
 });
 
 test("a link to a tab opens that tab, and an agent's key opens that agent's API key", () => {
-  assert.equal(providerSettingsHref("claude"), "/settings/providers?tab=claude");
-  assert.equal(providerSettingsHref("zai"), "/settings/providers?tab=zai");
-  assert.equal(providerSettingsHref("anthropic"), "/settings/providers?tab=claude&method=api-key");
-  assert.equal(providerSettingsHref("openai"), "/settings/providers?tab=codex&method=api-key");
-  assert.equal(providerSettingsHref("codex", "chatgpt"), "/settings/providers?tab=codex&method=chatgpt");
+  assert.equal(providerSettingsHref("claude"), "/settings/coding-agents?tab=claude");
+  assert.equal(providerSettingsHref("zai"), "/settings/coding-agents?tab=zai");
+  assert.equal(providerSettingsHref("anthropic"), "/settings/coding-agents?tab=claude&method=api-key");
+  assert.equal(providerSettingsHref("openai"), "/settings/coding-agents?tab=codex&method=api-key");
+  assert.equal(providerSettingsHref("codex", "chatgpt"), "/settings/coding-agents?tab=codex&method=chatgpt");
   // A method is an agent's only.
-  assert.equal(providerSettingsHref("zai", "api-key"), "/settings/providers?tab=zai");
+  assert.equal(providerSettingsHref("zai", "api-key"), "/settings/coding-agents?tab=zai");
 });
 
 test("a link from before agents had tabs still lands where its key now is", () => {

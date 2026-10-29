@@ -17,7 +17,7 @@ type SearchParams = Promise<{ tab?: string | string[]; method?: string | string[
  *  user's own keys for model providers, a tab each. */
 export default function ProviderSettings({ searchParams }: { searchParams: SearchParams }) {
   return (
-    <Suspense fallback={<SettingsLoading title="Providers (BYOK)" />}>
+    <Suspense fallback={<SettingsLoading title="Coding agents" />}>
       <ProvidersSection searchParams={searchParams} />
     </Suspense>
   );

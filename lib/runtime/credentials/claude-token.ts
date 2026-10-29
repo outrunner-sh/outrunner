@@ -19,7 +19,7 @@ export function checkClaudeToken(raw: unknown): { token: string } | { error: str
   // An API key is the Anthropic provider's (lib/providers/claude-slot.ts).
   if (token.startsWith("sk-ant-api")) {
     return {
-      error: "That's an Anthropic API key. Add it in Settings → Providers → Anthropic; this is for your Claude subscription.",
+      error: "That's an Anthropic API key. Add it in Personal → Coding agents → Anthropic; this is for your Claude subscription.",
     };
   }
   return { token };

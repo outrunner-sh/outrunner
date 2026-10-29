@@ -7,7 +7,6 @@ import { InlineMessage } from "@/components/ui/notice";
 import type { OrgDefaults } from "@/lib/db/org-defaults";
 import { requestJson } from "@/lib/http/request-json";
 import type { Org } from "@/lib/orgs/active";
-import { BOX_SIZES, boxSize } from "@/lib/runtime/box-sizes";
 import type { ModelProvider } from "@/lib/runtime/session-models";
 
 export type DefaultModelOption = { provider: ModelProvider; id: string; label: string; group: string };
@@ -60,15 +59,11 @@ export function OrgDefaultsSettings({
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Defaults</h1>
+        <h2 className="text-sm font-medium text-foreground">Session defaults</h2>
         <p className="max-w-prose text-sm text-muted-foreground">
           {`For ${org.name}'s members who haven't chosen their own under `}
           <Link href="/settings/models" className="text-foreground underline underline-offset-2">
             Default models
-          </Link>
-          {" and "}
-          <Link href="/settings/sandbox" className="text-foreground underline underline-offset-2">
-            Sandbox
           </Link>
           . A member&apos;s own choice always wins.
         </p>
@@ -109,36 +104,6 @@ export function OrgDefaultsSettings({
           A member who can&apos;t run it (no key for its provider, or no Claude account of their own) starts on
           Outrunner&apos;s default instead.
         </p>
-      </div>
-
-      <div className="space-y-2 border-t border-border/60 pt-6">
-        <label htmlFor="org-box-size" className="text-sm font-medium text-foreground">
-          Size of a new box
-        </label>
-        {admin ? (
-          <select
-            id="org-box-size"
-            className="block w-full max-w-sm rounded-md border border-border bg-background px-2 py-1.5 text-sm"
-            disabled={saving}
-            value={defaults.boxSize ?? ""}
-            onChange={(event) => {
-              const id = BOX_SIZES.find((size) => size.id === event.target.value)?.id ?? null;
-              void save({ ...defaults, boxSize: id });
-            }}
-          >
-            <option value="">Outrunner&apos;s default</option>
-            {BOX_SIZES.map((size) => (
-              <option key={size.id} value={size.id}>
-                {`${size.label} · ${size.cpu} CPU, ${size.memoryGb} GB`}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            {defaults.boxSize ? boxSize(defaults.boxSize).label : "Outrunner's default"}
-          </p>
-        )}
-        <p className="text-xs text-muted-foreground">Never beyond what each member&apos;s plan allows.</p>
       </div>
 
       <div className="space-y-2 border-t border-border/60 pt-6">

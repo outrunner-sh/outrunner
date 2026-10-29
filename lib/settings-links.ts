@@ -23,9 +23,9 @@ export function isProviderTab(value: unknown): value is ProviderTab {
   return PROVIDER_TABS.includes(value as ProviderTab);
 }
 
-export const PROVIDERS_SETTINGS_HREF = "/settings/providers";
+export const PROVIDERS_SETTINGS_HREF = "/settings/coding-agents";
 
-/** Settings → Usage: Outrunner's models, and what the user's own keys spent. */
+/** Personal provider-account usage; shared allowance is /settings/org/usage. */
 export const USAGE_SETTINGS_HREF = "/settings/usage";
 
 /** Where a link to Settings → Providers lands: a tab, and on an agent's tab,

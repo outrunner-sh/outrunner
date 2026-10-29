@@ -179,7 +179,7 @@ export function AgentStep({
           {method === "outrunner" && (
             <p className="text-muted-foreground text-sm">
               {`Sessions run ${AGENT_NAMES[agent]} on these from the start. `}
-              Add your own {AGENT_NAMES[agent]} any time in Settings → Providers.
+              Add your own {AGENT_NAMES[agent]} any time in Personal → Coding agents.
             </p>
           )}
         </div>

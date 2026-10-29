@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
+import OrgDefaults from "@/app/settings/org/defaults/page";
 import { OrgGeneralSettings } from "@/components/org-settings";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
@@ -44,5 +45,5 @@ async function OrgSection() {
   }
   const { active } = context;
   const domain = active.personal ? null : await orgDomain(active.id).catch(() => null);
-  return <OrgGeneralSettings org={active} domain={domain} />;
+  return <div className="space-y-10"><OrgGeneralSettings org={active} domain={domain} />{!active.personal && <OrgDefaults />}</div>;
 }

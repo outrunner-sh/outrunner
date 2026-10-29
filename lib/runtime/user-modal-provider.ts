@@ -4,7 +4,7 @@ import { ModalBackend, type ModalToken } from "@/lib/runtime/sandbox/modal";
 /** The token a user's own Modal is reached on is missing or unreadable. */
 export class NoModalTokenError extends Error {
   constructor() {
-    super("Add your Modal token in Settings → Sandbox, or switch to Outrunner's sandbox.");
+    super("The stored Modal credential is unavailable. Ask your deployment administrator to check runtime configuration.");
     this.name = "NoModalTokenError";
   }
 }

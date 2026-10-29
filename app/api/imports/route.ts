@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ items });
   } catch (error) {
     if (error instanceof ImportError) {
-      return NextResponse.json({ error: error.message, settingsHref: "/settings/sandbox" }, { status: error.status });
+      return NextResponse.json({ error: error.message }, { status: error.status });
     }
     return githubErrorResponse(error, "Could not plan the import. Please try again.");
   }

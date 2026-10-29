@@ -56,6 +56,7 @@ export interface SandboxBox {
   /** The vCPUs it runs with, where the provider says: a resumed box keeps
    *  the size it was made at, whatever the user's setting is now. */
   readonly cpu?: number;
+  readonly memoryGb?: number;
 }
 
 /**
