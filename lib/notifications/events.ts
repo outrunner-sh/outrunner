@@ -9,7 +9,7 @@
  * Pure, so the rules are unit-tested in Node.
  */
 
-import type { TurnState } from "@/lib/session/turn-state";
+import { isErrorPreview, shownPreview, type TurnState } from "@/lib/session/turn-state";
 
 export const NOTIFICATION_KINDS = ["turn_done", "needs_input", "errored", "pr_opened", "pr_merged", "pr_ready"] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
@@ -73,7 +73,7 @@ function fresh(at: string | null, now: number): boolean {
 
 /**
  * What a read of a session's stream changed that's news: a wait that began,
- * or a turn that ended in a reply (with nothing left waiting). A session read
+ * or a turn that ended in a reply or failed (with nothing left waiting). A session read
  * for the first time tells nothing: what it did before is history.
  */
 export function activityNews(
@@ -99,7 +99,11 @@ export function activityNews(
     after.repliedAt !== before.repliedAt &&
     fresh(after.repliedAt, now)
   ) {
-    return [draft("turn_done", after.repliedAt, after.replyPreview || "Finished its turn")];
+    // A turn that failed (an API error, a usage limit) is an error, as the
+    // sidebar files it, and heard by whoever hears of errors.
+    const words = shownPreview(after.replyPreview);
+    if (isErrorPreview(after.replyPreview)) return [draft("errored", after.repliedAt, words ? `Errored: ${words}` : "Errored")];
+    return [draft("turn_done", after.repliedAt, words || "Finished its turn")];
   }
   return [];
 }

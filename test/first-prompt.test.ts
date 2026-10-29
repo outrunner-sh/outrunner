@@ -5,6 +5,7 @@ import {
   firstPromptCutOff,
   firstPromptFromUrl,
   firstPromptQuery,
+  firstPromptSearch,
   forgetFirstPrompt,
   handOverFirstPrompt,
   keepFirstPromptFromUrl,
@@ -261,4 +262,16 @@ test("a cut-off first prompt is still offered after a second reload, until it's 
   // forgotten, and not offered again.
   forgetFirstPrompt(storage, "ws-cut");
   assert.equal(firstPromptCutOff(storage, "ws-cut"), false);
+});
+
+test("a new session's first prompt waits in the tab, not the URL, unless storage refuses it", () => {
+  const storage = memoryStorage();
+  const first = newFirstPrompt("fix the build", ["a"]);
+  assert.equal(firstPromptSearch(storage, "w-new", first), "");
+  assert.deepEqual(rememberedFirstPrompt(storage, "w-new"), first);
+  // Storage refused: the URL is its only way to the page.
+  assert.equal(firstPromptSearch(refusing, "w-new", first), firstPromptQuery(first));
+  assert.equal(firstPromptSearch(null, "w-new", first), firstPromptQuery(first));
+  // Nothing to send, nothing in either.
+  assert.equal(firstPromptSearch(storage, "w-empty", { prompt: " ", attachmentIds: [] }), "");
 });

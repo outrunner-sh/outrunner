@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { PanelLeftOpen, Plus } from "lucide-react";
+import { Menu, PanelLeftOpen, Plus } from "lucide-react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { AppDataProvider, ViewerScopeProvider } from "@/components/app-data";
@@ -10,6 +10,8 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ArchiveNotice } from "@/components/archive-session-dialog";
 import { MissionToasts } from "@/components/missions/mission-toasts";
 import { useServerAnswer } from "@/components/server-answer";
+import { useMediaQuery } from "@/hooks/use-media-query";
+import { useModalPanel } from "@/hooks/use-modal-panel";
 import { useNotificationsFeed } from "@/hooks/use-notifications";
 import { standingsNow, useStandingsFeed } from "@/hooks/use-standings";
 import { activeSessionId, isStudioPath, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
@@ -66,11 +68,16 @@ const LEGACY_KEYS = ["sidebar-collapsed", "home-sidebar-collapsed"];
 
 /** The collapsed sidebar, for whichever header shows its buttons. `railless`
  *  is the stronger case: the rail has stepped aside for a session's header, so
- *  a page that shows no header must put the buttons up itself. */
+ *  a page that shows no header must put the buttons up itself. On a phone the
+ *  sidebar is a drawer: `studio` pages put its menu button in their own
+ *  header, where the frame's bar would take a second row. */
 const CollapsedSidebar = createContext<{
   collapsed: boolean;
   railless: boolean;
   expand: () => void;
+  studio: boolean;
+  drawerOpen: boolean;
+  openDrawer: () => void;
 } | null>(null);
 
 /**
@@ -78,8 +85,10 @@ const CollapsedSidebar = createContext<{
  * than nothing, so no page has to make room for a floating button. A session's
  * page has a header of its own that shows those buttons instead
  * (CollapsedSidebarButtons), so there the rail steps aside and the session
- * runs edge to edge. Below the `sm` breakpoint the sidebar is hidden, as the
- * pages were built for.
+ * runs edge to edge. Below the `sm` breakpoint the sidebar is a drawer instead,
+ * opened from a menu button: in a bar across the top, or in a session's own
+ * header (MobileNavButton). It closes on Esc, on a tap outside it, and as a
+ * link in it is followed.
  *
  * The frame and the page show at once, even on a cold start; what the sidebar
  * lists (`server`, answering {@link FrameData}) streams in, its rows held by a
@@ -143,7 +152,18 @@ export function AppFrame({
   const pathname = usePathname();
   // Decided by the path, not by the studio being on screen: the rail must not
   // flash in while one session's page loads in place of another's.
-  const railless = collapsed && isStudioPath(pathname);
+  const studio = isStudioPath(pathname);
+  const railless = collapsed && studio;
+  // The phone's drawer, open on the page it was opened on: a navigation, a
+  // link's or ⌘J's, closes it. It is a drawer below `sm` only.
+  const wide = useMediaQuery("(min-width: 640px)");
+  const [drawerOn, setDrawerOn] = useState<string | null>(null);
+  const drawerOpen = drawerOn === pathname && !wide;
+  // Closed for good once it stops matching: Back to the page it was opened
+  // on, or a window narrow again, must not open it by itself.
+  if (drawerOn !== null && !drawerOpen) setDrawerOn(null);
+  const closeDrawer = () => setDrawerOn(null);
+  const drawer = useModalPanel(drawerOpen, closeDrawer);
   // The sidebar shows the kept list at once too — grouped by project, and
   // grouped by status when the kept list carries where its sessions stood:
   // the standings place each session in its group (lib/nav/status-groups.ts),
@@ -237,10 +257,20 @@ export function AppFrame({
   }, []);
 
   return (
-    <CollapsedSidebar.Provider value={{ collapsed, railless, expand: () => setAndRemember(false) }}>
+    <CollapsedSidebar.Provider
+      value={{
+        collapsed,
+        railless,
+        expand: () => setAndRemember(false),
+        studio,
+        drawerOpen,
+        openDrawer: () => setDrawerOn(pathname),
+      }}
+    >
       <div
         className={cn(
           "grid h-dvh grid-cols-1 overflow-hidden bg-background",
+          !studio && "max-sm:grid-rows-[auto_minmax(0,1fr)]",
           railless
             ? "sm:grid-cols-1"
             : collapsed
@@ -248,9 +278,26 @@ export function AppFrame({
               : "sm:grid-cols-[280px_minmax(0,1fr)]",
         )}
       >
-        {!railless && (
-          <div className="hidden min-h-0 sm:block">
-            {collapsed ? (
+        {drawerOpen && <div aria-hidden className="fixed inset-0 z-40 bg-black/60 sm:hidden" onClick={closeDrawer} />}
+        {(!railless || drawerOpen) && (
+          <div
+            id="app-sidebar"
+            ref={drawer}
+            role={drawerOpen ? "dialog" : undefined}
+            aria-modal={drawerOpen || undefined}
+            aria-label={drawerOpen ? "Navigation" : undefined}
+            // A link followed closes the drawer, even to the page already open.
+            onClickCapture={(event) => {
+              if (drawerOpen && (event.target as Element).closest("a[href]")) closeDrawer();
+            }}
+            className={cn(
+              "min-h-0 sm:block",
+              drawerOpen
+                ? "fixed inset-y-0 left-0 z-50 w-[min(280px,85vw)] shadow-2xl shadow-black/60 sm:static sm:w-auto sm:shadow-none"
+                : "hidden",
+            )}
+          >
+            {collapsed && !drawerOpen ? (
               <div className="h-full border-r border-border/60 bg-sidebar pt-5">
                 <CollapsedSidebarButtons className="flex flex-col items-center gap-2" />
               </div>
@@ -264,7 +311,9 @@ export function AppFrame({
                 orgs={frame?.orgs ?? NO_ORGS}
                 activeOrgId={frame?.activeOrgId ?? null}
                 triageCount={triageCountAhead ?? frame?.triageCount ?? 0}
-                onCollapse={() => setAndRemember(true)}
+                // In the drawer, its collapse button closes the drawer.
+                onCollapse={drawerOpen ? closeDrawer : () => setAndRemember(true)}
+                collapseLabel={drawerOpen ? "Close menu" : undefined}
                 searchSignal={searchSignal}
                 initialFolded={look?.folded ?? NO_FOLDED}
                 // Null until the cookies land: the checklist waits rather than
@@ -273,6 +322,23 @@ export function AppFrame({
                 initialGrouping={look?.grouping ?? "status"}
               />
             )}
+          </div>
+        )}
+        {!studio && (
+          <div className="flex h-11 items-center gap-1 border-b border-border/60 px-2 sm:hidden">
+            <MobileNavButton />
+            <Link href="/" aria-label="Home" className="px-1.5 text-sm font-medium text-foreground">
+              Outrunner
+            </Link>
+            <Link
+              href="/new"
+              onClick={startNewSession}
+              aria-label="New session"
+              title="New session"
+              className="ml-auto rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <Plus className="size-4" />
+            </Link>
           </div>
         )}
         <main className="relative min-h-0 min-w-0 overflow-y-auto">
@@ -313,12 +379,36 @@ export function CollapsedSidebarButtons({ className }: { className?: string }) {
  */
 export function RaillessSidebarButtons() {
   const sidebar = useContext(CollapsedSidebar);
-  if (!sidebar?.railless) return null;
+  if (!sidebar?.railless && !sidebar?.studio) return null;
   return (
-    <SidebarButtons
-      className="absolute top-2.5 left-3 z-10 flex items-center gap-0.5"
-      expand={sidebar.expand}
-    />
+    <div className="absolute top-2.5 left-3 z-10 flex items-center gap-0.5">
+      {/* A session path has no frame bar on a phone: the drawer opens here,
+          unless this state is inside the studio, whose header has it. */}
+      {sidebar.studio && <MobileNavButton className="railless-menu" />}
+      {sidebar.railless && <SidebarButtons className="flex items-center gap-0.5" expand={sidebar.expand} />}
+    </div>
+  );
+}
+
+/** Opens the sidebar's drawer, below `sm` only (above it the sidebar shows). */
+export function MobileNavButton({ className }: { className?: string }) {
+  const sidebar = useContext(CollapsedSidebar);
+  if (!sidebar) return null;
+  return (
+    <button
+      type="button"
+      onClick={sidebar.openDrawer}
+      aria-label="Open menu"
+      title="Menu"
+      aria-expanded={sidebar.drawerOpen}
+      aria-controls="app-sidebar"
+      className={cn(
+        "shrink-0 rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:hidden",
+        className,
+      )}
+    >
+      <Menu className="size-4" />
+    </button>
   );
 }
 

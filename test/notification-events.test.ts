@@ -9,7 +9,7 @@ import {
   pullRequestNews,
   STALE_AFTER_MS,
 } from "@/lib/notifications/events";
-import { IDLE, type TurnState } from "@/lib/session/turn-state";
+import { ERROR_MARK, IDLE, type TurnState } from "@/lib/session/turn-state";
 
 const NOW = Date.parse("2026-10-28T12:00:00Z");
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -64,4 +64,11 @@ test("email and Slack wait a minute, and skip what's seen or turned off", () => 
   assert.equal(dueFor(due, all, ago(1_000), NOW), "skip", "seen since");
   assert.equal(dueFor(due, all, ago(DELIVERY_GRACE_MS * 2), NOW), "send", "seen before it happened");
   assert.equal(dueFor({ ...due, kind: "pr_opened" }, all, null, NOW), "skip", "a kind turned off");
+});
+
+test("a turn that failed is an error, told in Claude Code's words without the mark that files it", () => {
+  const after: TurnState = { ...IDLE, repliedAt: ago(5_000), replyPreview: `${ERROR_MARK}API Error: 400 bad request` };
+  assert.deepEqual(activityNews({ before: working, after }, session, NOW), [
+    { ...session, kind: "errored", eventKey: ago(5_000), body: "Errored: API Error: 400 bad request" },
+  ]);
 });

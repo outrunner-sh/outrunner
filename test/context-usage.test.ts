@@ -60,3 +60,9 @@ test("after a compaction that says what it left, the ring shows that, out of the
   assert.deepEqual(contextUsage([reply({ usage, contextWindow: 258400 }), compacted]), { used: 9876, window: 258400 });
   assert.deepEqual(contextUsage([compacted], "claude-opus-4-6[1m]"), { used: 9876, window: 1_000_000 });
 });
+
+test("an API error's stand-in reply counts no tokens: the reply before it says", () => {
+  const zero = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+  const failed = reply({ model: "<synthetic>", usage: zero, content: [{ type: "text", text: "API Error: 400 bad request" }] });
+  assert.deepEqual(contextUsage([reply({ usage, model: "claude-opus-5-5" }), failed]), { used: 18543, window: 200_000 });
+});

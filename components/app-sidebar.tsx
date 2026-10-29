@@ -74,6 +74,7 @@ export function AppSidebar({
   activeOrgId = null,
   triageCount = 0,
   onCollapse,
+  collapseLabel = "Collapse sidebar",
   searchSignal = 0,
   initialFolded = [],
   getStartedSkipped = null,
@@ -92,6 +93,8 @@ export function AppSidebar({
   /** Work items waiting in triage, shown beside its link. */
   triageCount?: number;
   onCollapse: () => void;
+  /** The collapse button's name: "Close menu" where the sidebar is a phone's drawer. */
+  collapseLabel?: string;
   /** Changes each time ⌘K is pressed: open the search field. */
   searchSignal?: number;
   /** The projects folded shut, by group key (from their cookie). */
@@ -230,8 +233,8 @@ export function AppSidebar({
         <button
           type="button"
           onClick={onCollapse}
-          aria-label="Collapse sidebar"
-          title="Collapse sidebar"
+          aria-label={collapseLabel}
+          title={collapseLabel}
           className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <PanelLeft className="size-4" />
@@ -678,7 +681,11 @@ function SearchField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Escape") onClose();
+          if (e.key === "Escape") {
+            // The search's Esc: it doesn't also close the phone's drawer.
+            e.preventDefault();
+            onClose();
+          }
         }}
         onBlur={() => {
           if (!value.trim()) onClose();

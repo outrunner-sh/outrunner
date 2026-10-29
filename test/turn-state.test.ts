@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ASK_TOOL } from "@/lib/runtime/pending-question";
 import { SECRETS_TOOL } from "@/lib/runtime/pending-secrets";
-import { foldEvents, IDLE, preview } from "@/lib/session/turn-state";
+import { foldEvents, IDLE, isErrorPreview, preview, shownPreview } from "@/lib/session/turn-state";
 
 let n = 0;
 const at = (minute: number) => `2026-10-28T10:${String(minute).padStart(2, "0")}:00Z`;
@@ -131,4 +131,25 @@ test("a custom command or skill is answered: its record starts a turn, as a prom
     content: [{ type: "text", text: "<command-message>review is running…</command-message>\n<command-name>/review</command-name>" }],
   } as AgentEvent;
   assert.equal(foldEvents(IDLE, [review]).turn, "working");
+});
+
+test("a turn that ends in an API error is kept as one: a reply whose preview is marked so", () => {
+  const synthetic = (text: string, minute: number): AgentEvent =>
+    ({ ...reply(text, minute, "stop_sequence"), model: "<synthetic>" }) as AgentEvent;
+  const failed = foldEvents(IDLE, [user("Describe the image", 1), synthetic("API Error: 400 image input is not supported", 2)]);
+  assert.equal(failed.turn, "idle");
+  assert.equal(failed.repliedAt, at(2));
+  assert.equal(isErrorPreview(failed.replyPreview), true);
+  // The mark is no display text: what shows reads as Claude Code wrote it.
+  assert.equal(shownPreview(failed.replyPreview), "API Error: 400 image input is not supported");
+  // Claude Code's other failures are marked too, a usage limit's reset said, not a raw timestamp.
+  const limited = foldEvents(IDLE, [user("Go on", 1), synthetic("Claude AI usage limit reached|1761746400", 2)]);
+  assert.equal(isErrorPreview(limited.replyPreview), true);
+  assert.equal(shownPreview(limited.replyPreview), "Claude AI usage limit reached, resets 2025-10-29 14:00 UTC");
+  // Its "No response requested." is no failure, and a model's reply is none,
+  // whatever its words: one that starts "API Error" isn't taken for one.
+  assert.equal(isErrorPreview(foldEvents(IDLE, [user("hi", 1), synthetic("No response requested.", 2)]).replyPreview), false);
+  const answered = foldEvents(IDLE, [user("hi", 1), reply("API Error: 400 is what the endpoint returns for a bad id.", 2)]);
+  assert.equal(isErrorPreview(answered.replyPreview), false);
+  assert.equal(shownPreview(answered.replyPreview), "API Error: 400 is what the endpoint returns for a bad id.");
 });

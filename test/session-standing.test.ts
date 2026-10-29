@@ -9,6 +9,7 @@ import {
   type SessionActivity,
   type StandingInput,
 } from "@/lib/session/standing";
+import { ERROR_MARK } from "@/lib/session/turn-state";
 
 const NOW = Date.parse("2026-10-28T12:00:00Z");
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -146,4 +147,23 @@ test("the next session that needs you comes after the one on screen, pinned firs
   assert.equal(nextNeedingYou(sessions, "a"), "d");
   assert.equal(nextNeedingYou(sessions.slice(0, 1), "a"), null, "only the one on screen");
   assert.equal(nextNeedingYou([sessions[2]], undefined), null);
+});
+
+test("a last turn that ended in an API error needs you, read or not", () => {
+  const errored = { ...idle, repliedAt: ago(2 * MIN), replyPreview: `${ERROR_MARK}API Error: 400 image input is not supported` };
+  const unread = standing({ activity: errored });
+  assert.deepEqual([unread.standing, unread.reason], ["needs_you", "error"]);
+  // Its tooltip reads the words, not the mark.
+  assert.equal(unread.replyPreview, "API Error: 400 image input is not supported");
+  // A model's reply that only says "API Error" is no failure.
+  assert.equal(standing({ activity: { ...errored, replyPreview: "API Error: 400 means a bad id." } }).reason, "replied");
+  const read = standing({ activity: errored, mark: { pinnedAt: null, movedTo: null, movedAt: null, seenAt: ago(MIN) } });
+  assert.deepEqual([read.standing, read.reason], ["needs_you", "error"]);
+  // Once the next turn is under way, it's working again.
+  assert.equal(standing({ activity: { ...errored, turn: "working", turnStartedAt: ago(MIN), eventAt: ago(MIN) } }).standing, "working");
+  // Put away, or quiet as long as backlog, it waits no more.
+  assert.equal(standing({ activity: errored, workspace: { status: "archived" } }).standing, "done");
+  const long = ago(BACKLOG_AFTER_MS + MIN);
+  const old = { ...errored, repliedAt: long, eventAt: long };
+  assert.equal(standing({ activity: old, workspace: { createdAt: long, lastActiveAt: long } }).standing, "backlog");
 });

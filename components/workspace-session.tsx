@@ -24,7 +24,7 @@ import {
   putOnModel,
   runnerDidNotStartDetail,
 } from "@/lib/desktop/local-runtime";
-import { claudeIsWorking, firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
+import { claudeIsWorking, firstUserPrompt, replyModel, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
 import { contextUsage } from "@/lib/runtime/context-usage";
 import { pendingPlan } from "@/lib/runtime/pending-plan";
 import { rememberedMode, rememberMode, type SessionMode } from "@/lib/session/session-mode";
@@ -320,13 +320,12 @@ export function WorkspaceSession({
   }, [canSend, onSender]);
 
   // The model of the most recent assistant turn — shown in the composer so it
-  // reflects what's actually running, not a hardcoded label.
+  // reflects what's actually running, not a hardcoded label. Claude Code's
+  // own stand-ins (an API error's `<synthetic>`) name no model, and are passed.
   const activeModel = useMemo<string | undefined>(() => {
     for (let i = conversation.events.length - 1; i >= 0; i--) {
-      const event = conversation.events[i];
-      if (event.t === "message" && event.role === "assistant" && event.model) {
-        return event.model;
-      }
+      const model = replyModel(conversation.events[i]);
+      if (model) return model;
     }
     return undefined;
   }, [conversation.events]);

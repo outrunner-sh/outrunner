@@ -40,6 +40,10 @@ export function ReposStep({
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; reconnect: boolean } | null>(null);
+  // The list itself not read: said in its place, with a retry, rather than
+  // as an empty list with the error under it.
+  const [listError, setListError] = useState<{ message: string; reconnect: boolean } | null>(null);
+  const [attempt, setAttempt] = useState(0);
   // undefined while read; null before orgs (the list alone, as it was).
   const [access, setAccess] = useState<GitHubAccess | null>();
 
@@ -86,13 +90,14 @@ export function ReposStep({
       .repositories()
       .then(({ repositories, connected }) => {
         if (stale) return;
+        setListError(null);
         setList(sortRepositories(repositories));
         setPicked(new Set(connected));
       })
       .catch((e: unknown) => {
         if (stale) return;
         setList([]);
-        setError({
+        setListError({
           message: e instanceof Error ? e.message : "Couldn't read your repositories.",
           reconnect: e instanceof OnboardingError && e.reconnect,
         });
@@ -100,7 +105,13 @@ export function ReposStep({
     return () => {
       stale = true;
     };
-  }, [env, access, unreachable]);
+  }, [env, access, unreachable, attempt]);
+
+  const retryList = () => {
+    setList(null);
+    setListError(null);
+    setAttempt((n) => n + 1);
+  };
 
   async function switchOrg(orgId: string) {
     if (!access || orgId === access.activeOrgId) return;
@@ -112,6 +123,7 @@ export function ReposStep({
     }
     setList(null);
     setError(null);
+    setListError(null);
     setPicked(new Set());
     setAccess({ ...access, activeOrgId: orgId });
   }
@@ -178,6 +190,15 @@ export function ReposStep({
           {list === null || access === undefined ? (
             <div className="text-muted-foreground flex items-center gap-2 px-3 py-5 text-sm">
               <Spinner /> Reading your GitHub repositories…
+            </div>
+          ) : listError ? (
+            <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-5 text-sm">
+              <span className="text-destructive">
+                {listError.message} {listError.reconnect && <GitHubReconnectLink />}
+              </span>
+              <button type="button" onClick={retryList} className="text-foreground underline underline-offset-4">
+                Try again
+              </button>
             </div>
           ) : shown.length === 0 ? (
             <p className="text-muted-foreground px-3 py-5 text-sm">

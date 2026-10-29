@@ -15,7 +15,7 @@ import { Spinner } from "@/components/ui/loaders";
 import { refreshMissions } from "@/hooks/use-missions";
 import { askPermission } from "@/lib/notifications/show";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
-import { firstPromptQuery, newFirstPrompt } from "@/lib/session/first-prompt";
+import { firstPromptSearch, newFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
 import { cn } from "@/lib/utils";
 
 const EXAMPLES = ["Own billing: keep invoices correct and Stripe in step", "Get onboarding from sign-up to first session under a minute"];
@@ -64,7 +64,7 @@ export function NewMissionDialog({
       void refreshMissions();
       onOpenChange(false);
       setPrompt("");
-      router.push(`/workspaces/${body.workspace.id}${firstPromptQuery(newFirstPrompt(prompt.trim(), []))}`);
+      router.push(`/workspaces/${body.workspace.id}${firstPromptSearch(tabStorage(), body.workspace.id, newFirstPrompt(prompt.trim(), []))}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

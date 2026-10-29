@@ -108,7 +108,7 @@ export function SessionComposer({
   onCompact,
   context = null,
   canSend,
-  placeholder = "Ask anything, / for commands, @ for context…",
+  placeholder = "Ask anything, @ for context…",
   disabledPlaceholder = "Read-only — another viewer has the keyboard",
   model,
   modelChoice,

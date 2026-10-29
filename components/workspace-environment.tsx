@@ -95,6 +95,7 @@ export function WorkspaceEnvironment({
             baseBranch={summary.baseBranch}
             onBack={backToOverview}
             backRef={backButton}
+            onClose={onClose}
           />
         </div>
       )}

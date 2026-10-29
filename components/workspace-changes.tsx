@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, ChevronRight, PanelRightClose } from "lucide-react";
 
 import { DiffView } from "@/components/diff-view";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +35,7 @@ export function WorkspaceChanges({
   baseBranch,
   onBack,
   backRef,
+  onClose,
 }: {
   workspaceId: string;
   changes: WorkspaceChangesState;
@@ -42,6 +43,9 @@ export function WorkspaceChanges({
   baseBranch?: string | null;
   onBack: () => void;
   backRef?: React.Ref<HTMLButtonElement>;
+  /** Closes the panel; shown where it covers the chat (narrow windows), as
+   *  the overview's own close is. */
+  onClose?: () => void;
 }) {
   const { files, message, diffs, diffErrors, openPaths, toggle } = changes;
   const hasChanges = !!files && files.length > 0;
@@ -55,6 +59,8 @@ export function WorkspaceChanges({
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation();
+          // Used: it doesn't also close the panel (hooks/use-modal-panel.ts).
+          event.preventDefault();
           onBack();
         }
       }}
@@ -75,6 +81,11 @@ export function WorkspaceChanges({
           </p>
           {baseBranch && <p className="truncate text-[11px] text-muted-foreground">Compared with {baseBranch}</p>}
         </div>
+        {onClose && (
+          <button type="button" onClick={onClose} className="studio-env-close" title="Hide environment" aria-label="Hide environment">
+            <PanelRightClose />
+          </button>
+        )}
       </div>
 
       {!active ? (

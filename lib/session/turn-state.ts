@@ -12,7 +12,7 @@
  */
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
-import { isInterruption, isLocalCommandOutput, messageText } from "@/lib/runtime/conversation-events";
+import { isErrorReply, isInterruption, isLocalCommandOutput, messageText } from "@/lib/runtime/conversation-events";
 import { ASK_TOOL } from "@/lib/runtime/pending-question";
 import { SECRETS_TOOL } from "@/lib/runtime/pending-secrets";
 
@@ -54,6 +54,42 @@ const WAITS_FOR: Record<string, Waiting> = {
 
 /** A reply's opening words, as a notification or a row's tooltip shows them. */
 const PREVIEW_CHARS = 280;
+
+/**
+ * How a turn that failed (an API error, a usage limit) is told from one
+ * answered: the kept preview (session_activity.reply_preview) starts with
+ * this mark, an invisible record separator. Load-bearing: the standing reads
+ * it back to file the session under Needs you (lib/session/standing.ts), so
+ * the failure needs no column of its own. It is no display text: whatever
+ * shows a preview shows shownPreview's, without it.
+ */
+export const ERROR_MARK = "\u001e";
+
+/** Whether a kept reply preview is a failed turn's. */
+export function isErrorPreview(text: string | null | undefined): boolean {
+  return !!text && text.startsWith(ERROR_MARK);
+}
+
+/** A kept reply preview as a notification or a row's tooltip shows it. */
+export function shownPreview(text: string | null | undefined): string | null {
+  if (!text) return null;
+  return isErrorPreview(text) ? text.slice(ERROR_MARK.length) : text;
+}
+
+/** Claude Code's usage-limit reply: "Claude AI usage limit reached|<reset,
+ *  in Unix seconds>". */
+const USAGE_LIMIT = /^(Claude AI usage limit reached)\|(\d{9,})\s*$/;
+
+/** A failed turn's words, as they read: Claude Code's own, but a usage
+ *  limit's reset time said rather than given as a raw timestamp. */
+export function failureText(text: string): string {
+  const limit = USAGE_LIMIT.exec(text.trim());
+  if (!limit) return text || "The turn failed";
+  const resets = new Date(Number(limit[2]) * 1000);
+  return Number.isNaN(resets.getTime())
+    ? limit[1]
+    : `${limit[1]}, resets ${resets.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
 
 export function preview(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim();
@@ -119,6 +155,8 @@ function foldEvent(state: TurnState, event: AgentEvent): TurnState {
   // tool call (claudeIsWorking's rule).
   if (last?.type === "text" && event.stopReason !== "tool_use") {
     const text = messageText(event);
+    // A failure is a reply too (the turn is over), marked as one.
+    if (isErrorReply(event)) return { ...next, turn: "idle", repliedAt: at, replyPreview: ERROR_MARK + preview(failureText(text)) };
     return { ...next, turn: "idle", repliedAt: at, replyPreview: text ? preview(text) : next.replyPreview };
   }
   return {
