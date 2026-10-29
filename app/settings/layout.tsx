@@ -12,7 +12,7 @@ export default function SettingsLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="grid h-dvh grid-cols-[var(--sidebar-width)_1fr] overflow-hidden bg-background">
+    <div className="grid h-dvh grid-cols-1 overflow-hidden bg-background sm:grid-cols-[var(--sidebar-width)_minmax(0,1fr)]">
       <SettingsNav />
       <main className="min-h-0 overflow-y-auto px-10 py-10">
         <div className="mx-auto max-w-2xl">{children}</div>
