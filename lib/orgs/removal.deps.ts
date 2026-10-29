@@ -5,6 +5,7 @@
  */
 
 import { closeIntervalOf, markStoppedIfReady } from "@/lib/billing/metering-store";
+import { deleteCachedBoxImages } from "@/lib/db/chat-images";
 import { ownSandboxKeys } from "@/lib/db/credentials";
 import { type ComputerRuntimeProvider, isComputerProvider } from "@/lib/runtime/computer-provider";
 import { computerMadeBy, providerNamed } from "@/lib/runtime/sandbox-choice";
@@ -92,9 +93,13 @@ function deps(provider: ComputerRuntimeProvider): RemovalDeps {
     },
     async end(sessionId) {
       // As ending a session does (app/api/workspaces/[id]/lifecycle): its
-      // replay index goes, and the row is marked destroyed.
+      // replay index and the copies kept of its box's images go, and the row
+      // is marked destroyed.
       const { error: snapshotError } = await supabase.from("workspace_snapshots").delete().eq("workspace_id", sessionId);
       if (snapshotError) throw snapshotError;
+      await deleteCachedBoxImages(sessionId).catch((error: unknown) =>
+        console.error(`Could not delete kept box images for ${sessionId}`, error),
+      );
       const { error } = await supabase
         .from("workspaces")
         .update({

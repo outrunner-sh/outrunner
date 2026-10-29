@@ -703,6 +703,9 @@ async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider)
     );
     return NextResponse.json({ error: lifecycleError("destroy") }, { status: 502 });
   }
+  await deleteCachedBoxImages(workspace.id).catch((error: unknown) =>
+    console.error(`Could not delete kept box images for ${workspace.id}`, error),
+  );
 
   try {
     const completed = await completeTransition({
