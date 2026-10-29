@@ -43,7 +43,7 @@ test("a pull request GitHub won't merge says why", () => {
 });
 
 test("merged, closed and draft come before anything else", () => {
-  assert.deepEqual(verdict({ state: "merged", mergeableState: "unknown" }), { label: "Merged", tone: "done", canMerge: false, why: "This PR is merged." });
+  assert.deepEqual(verdict({ state: "merged", mergeableState: "unknown" }), { label: "Merged", tone: "merged", canMerge: false, why: "This PR is merged." });
   assert.equal(verdict({ state: "closed" }).label, "Closed");
   assert.equal(verdict({ draft: true }).label, "Draft");
   assert.equal(verdict({ draft: true }).canMerge, false);
