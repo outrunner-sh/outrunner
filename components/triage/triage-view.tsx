@@ -55,8 +55,8 @@ export function TriageView() {
       if (!response.ok || !body.items) throw new Error(body.error ?? "Couldn't load triage.");
       // The server's list always wins over what was kept.
       rememberTriage({ items: body.items, levels: body.projects ?? {}, orgLevel: body.orgLevel ?? null });
-      return body.items;
       setError(null);
+      return body.items;
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Couldn't load triage.");
     }
