@@ -16,7 +16,7 @@ import {
 import { ComposerAttachment } from "@/components/attachment-thumbnails";
 import { Spinner } from "@/components/ui/loaders";
 import { InlineMessage } from "@/components/ui/notice";
-import { useAttachments } from "@/hooks/use-attachments";
+import { type PendingAttachment, useAttachments } from "@/hooks/use-attachments";
 import { attachNotice, isImage, restoreDraft } from "@/lib/runtime/attachments";
 import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
 import { CustomModelDialog } from "@/components/custom-model-dialog";
@@ -59,6 +59,7 @@ import type { FilesResponse } from "@/lib/runtime/agent-protocol";
 import { insertMention, matchFiles, mentionAt, type MentionQuery, mentionSegments } from "@/lib/session/file-mentions";
 import { type Recall, recallStep } from "@/lib/session/prompt-history";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
+import { previewOf } from "@/lib/session/attachment-previews";
 import { providerSettingsHref } from "@/lib/settings-links";
 import { cn } from "@/lib/utils";
 
@@ -120,6 +121,7 @@ export function SessionComposer({
   stop,
   focusSignal = 0,
   prefill = null,
+  prefillAttachments = null,
   comments,
   listFiles,
 }: {
@@ -174,6 +176,10 @@ export function SessionComposer({
    *  the new-session form), editable before it is sent. Never replaces what
    *  has been typed. */
   prefill?: string | null;
+  /** Files to put back on the box, by attachment id: a send the server
+   *  refused after the form had moved on (a new session's create), whose
+   *  files were already taken off. Shown from this page's kept previews. */
+  prefillAttachments?: readonly string[] | null;
   /** Comments on the session's diff, waiting to go with the next message:
    *  shown above the box, each removable. The caller adds them to what is
    *  sent (onSend gets the typed text alone). */
@@ -226,6 +232,16 @@ export function SessionComposer({
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [prefillSeen]);
+
+  // Put back once per set given, as the text is, ahead of anything staged since.
+  const restoredFor = useRef<string | null>(null);
+  const restoreKey = prefillAttachments?.join(",") ?? "";
+  const restoreAttachments = attachments.restore;
+  useEffect(() => {
+    if (!restoreKey || restoreKey === restoredFor.current) return;
+    restoredFor.current = restoreKey;
+    restoreAttachments(restoreKey.split(",").map(restoredAttachment));
+  }, [restoreKey, restoreAttachments]);
 
   const focusedFor = useRef(0);
   useEffect(() => {
@@ -1005,4 +1021,19 @@ function usePageDrop(
       setDragging(false);
     };
   }, [enabled, setDragging, textareaRef]);
+}
+
+/** A sent file put back on the box: uploaded already, shown from what this
+ *  page kept of it (lib/session/attachment-previews.ts). */
+function restoredAttachment(id: string): PendingAttachment {
+  const preview = previewOf(id);
+  return {
+    key: `restored-${id}`,
+    id,
+    filename: preview?.filename ?? "Attachment",
+    contentType: preview?.contentType ?? "",
+    sizeBytes: 0,
+    previewUrl: preview?.url ?? null,
+    status: "ready",
+  };
 }

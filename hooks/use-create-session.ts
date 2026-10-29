@@ -151,7 +151,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     // same — so a first send that landed after all is answered for rather
     // than made twice. Anything changed (the model, its effort, the item) is
     // a new session.
-    const request = JSON.stringify([model?.provider ?? null, model?.id ?? null, effort, workItemId ?? null]);
+    const request = JSON.stringify([model?.provider ?? null, model?.id ?? null, model ? (agent ?? null) : null, effort, workItemId ?? null]);
     const again = sendingAgain(FAILED_CREATE.get()?.unsent, selected.id, request);
     FAILED_CREATE.set(null);
     forgetRefusedSessions();
@@ -188,7 +188,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     const failed = (error: string, action: FailedCreate["action"] = null, unsent: FailedCreate["unsent"] = null) => {
       refusePendingSession(id, error);
       forgetFirstPrompt(tabStorage(), id);
-      FAILED_CREATE.set({ prompt, message: error, action, unsent });
+      FAILED_CREATE.set({ prompt, attachmentIds, message: error, action, unsent });
       // Still on its page: back to this screen, which says why. Elsewhere,
       // the screen says so when next opened.
       if (window.location.pathname === href) router.replace("/new");
@@ -338,8 +338,10 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     isCreating,
     message: message ?? failedCreate?.message ?? null,
     messageAction: message ? messageAction : (failedCreate?.action ?? null),
-    /** The prompt of a session the server refused, for the composer. */
+    /** The prompt of a session the server refused, and its files, for the
+     *  composer to give back. */
     refusedPrompt: failedCreate?.prompt ?? null,
+    refusedAttachments: failedCreate?.attachmentIds ?? null,
     create,
     createLocal,
   };

@@ -132,6 +132,8 @@ export function usePendingSessions(): Record<string, PendingSession> {
  */
 export type FailedCreate = {
   prompt: string;
+  /** The files it went with, given back to the composer with the prompt. */
+  attachmentIds: string[];
   message: string;
   /** The way out, when one page holds it (as the screen's own errors). */
   action: { label: string; href: string; kind: "step" | "refusal" } | null;
