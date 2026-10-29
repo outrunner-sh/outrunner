@@ -9,6 +9,8 @@
 import { listOrgProjects } from "@/lib/db/org-access";
 import { getPullRequestStatus } from "@/lib/github/client";
 import { appSlug, githubAppConfig } from "@/lib/github/app";
+import { type PullFile, toPullFiles } from "@/lib/review/hunks";
+import { countLines, type LineCounts } from "@/lib/review/line-kinds";
 import { githubGet, repoToken } from "@/lib/slack/github";
 import { parseVerdict, type Verdict } from "@/lib/slack/proactive-text";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -26,6 +28,8 @@ export type PullSummary = {
   updatedAt: string;
   url: string;
   checks: Checks | null;
+  /** Its lines by kind (code, tests, generated); null when unread. */
+  lines: LineCounts | null;
   /** The Outrunner session that opened it, and its triage item. */
   sessionId: string | null;
   itemKey: string | null;
@@ -53,6 +57,23 @@ type GitHubPull = {
 /** The org's repositories the viewer may read. */
 async function readableRepos(actor: TriageActor): Promise<{ id: string; fullName: string }[]> {
   return (await listOrgProjects(actor.orgId)).filter((p) => actor.levels.has(p.id));
+}
+
+/** GitHub lists at most this many of a PR's files a page, and the Review
+ *  tab reads at most this many pages (GitHub itself stops at 3,000 files). */
+const FILES_PER_PAGE = 100;
+const MAX_FILE_PAGES = 5;
+
+/** A pull request's changed files, with their patches. */
+export async function pullFiles(token: string, repo: string, number: number): Promise<PullFile[] | null> {
+  const files: PullFile[] = [];
+  for (let page = 1; page <= MAX_FILE_PAGES; page++) {
+    const records = await githubGet<unknown[]>(token, `/repos/${repo}/pulls/${number}/files?per_page=${FILES_PER_PAGE}&page=${page}`);
+    if (!records) return page === 1 ? null : files;
+    files.push(...toPullFiles(records));
+    if (records.length < FILES_PER_PAGE) break;
+  }
+  return files;
 }
 
 /** What Outrunner knows of some pull requests: their sessions and items. */
@@ -86,7 +107,7 @@ async function outrunnerLinks(
 export async function listOpenPulls(actor: TriageActor): Promise<{ pulls: PullSummary[]; unreachable: string[] }> {
   const repos = (await readableRepos(actor)).slice(0, 20);
   const unreachable: string[] = [];
-  const found: (Omit<PullSummary, "checks" | "sessionId" | "itemKey"> & { token: string })[] = [];
+  const found: (Omit<PullSummary, "checks" | "lines" | "sessionId" | "itemKey"> & { token: string })[] = [];
   await Promise.all(
     repos.map(async (repo) => {
       const token = await repoToken(actor.orgId, repo.fullName).catch(() => null);
@@ -112,7 +133,7 @@ export async function listOpenPulls(actor: TriageActor): Promise<{ pulls: PullSu
   );
   found.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const shown = found.slice(0, 60);
-  const [links, checks] = await Promise.all([
+  const [links, checks, lines] = await Promise.all([
     outrunnerLinks(shown),
     // Checks for the first 30: two GitHub calls each.
     Promise.all(
@@ -123,6 +144,13 @@ export async function listOpenPulls(actor: TriageActor): Promise<{ pulls: PullSu
               () => null,
             )
           : Promise.resolve(null),
+      ),
+    ),
+    // And their lines by kind, from their files: a call each (more for a PR
+    // of over 100 files).
+    Promise.all(
+      shown.map((p, i) =>
+        i < 30 ? pullFiles(p.token, p.repo, p.number).then((files) => (files ? countLines(files) : null)) : Promise.resolve(null),
       ),
     ),
   ]);
@@ -139,6 +167,7 @@ export async function listOpenPulls(actor: TriageActor): Promise<{ pulls: PullSu
         updatedAt: p.updatedAt,
         url: p.url,
         checks: checks[i],
+        lines: lines[i],
         sessionId: link?.sessionId ?? null,
         itemKey: link?.itemKey ?? null,
       };
@@ -163,6 +192,9 @@ export type PullDetail = {
   additions: number;
   deletions: number;
   changedFiles: number;
+  /** Its changed files, with their patches, and their lines by kind. */
+  files: PullFile[];
+  lines: LineCounts;
   checks: Checks;
   mergeableState: string;
   reviewers: string[];
@@ -192,7 +224,7 @@ export async function pullDetail(actor: TriageActor, fullName: string, number: n
   const token = await repoToken(actor.orgId, repo.fullName);
   if (!token) return null;
   const base = `/repos/${repo.fullName}`;
-  const [pull, status, reviews, comments, links] = await Promise.all([
+  const [pull, status, reviews, comments, links, files] = await Promise.all([
     githubGet<GitHubPull>(token, `${base}/pulls/${number}`),
     getPullRequestStatus({ token, repoFullName: repo.fullName, number }).catch(() => null),
     githubGet<{ user?: { login?: string }; state: string }[]>(token, `${base}/pulls/${number}/reviews?per_page=50`),
@@ -201,6 +233,7 @@ export async function pullDetail(actor: TriageActor, fullName: string, number: n
       `${base}/issues/${number}/comments?sort=created&direction=desc&per_page=50`,
     ),
     outrunnerLinks([{ projectId: repo.id, number }]),
+    pullFiles(token, repo.fullName, number),
   ]);
   if (!pull) return null;
   // GitHub works out whether a PR merges cleanly only once asked, so a PR no
@@ -243,6 +276,8 @@ export async function pullDetail(actor: TriageActor, fullName: string, number: n
     additions: pull.additions ?? 0,
     deletions: pull.deletions ?? 0,
     changedFiles: pull.changed_files ?? 0,
+    files: files ?? [],
+    lines: countLines(files ?? []),
     checks: mergeStatus?.checks ?? { passing: 0, failing: 0, pending: 0 },
     mergeableState: mergeStatus?.mergeableState ?? "unknown",
     reviewers: (pull.requested_reviewers ?? []).flatMap((r) => (r.login ? [r.login] : [])),
