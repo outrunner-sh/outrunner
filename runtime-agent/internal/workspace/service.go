@@ -66,6 +66,7 @@ type Service struct {
 	activityUnknownSince          time.Time
 	activityUnknownReason         string
 	activityUnknownLogged         time.Time
+	activityUnknownExpiredLogged  bool
 	activityUnknownClearAttempted bool
 
 	// sendLocks serializes prompt delivery per workspace. SendKeys types then
@@ -1829,6 +1830,7 @@ func (s *Service) unknownActivity(reason string) (time.Time, bool) {
 	defer s.activityMu.Unlock()
 	if s.activityUnknownSince.IsZero() {
 		s.activityUnknownClearAttempted = false
+		s.activityUnknownExpiredLogged = false
 		s.activityUnknownSince = s.readUnknownActivitySince()
 		if s.activityUnknownSince.IsZero() {
 			s.activityUnknownSince = now
@@ -1843,6 +1845,10 @@ func (s *Service) unknownActivity(reason string) (time.Time, bool) {
 	}
 	if now.Sub(s.activityUnknownSince) < unknownActivityGrace {
 		return laterOf(s.activityUnknownSince, knownLast), true
+	}
+	if !s.activityUnknownExpiredLogged {
+		log.Printf("runtime-agent: unknown-activity protection window elapsed after %s; falling back to observed summaries and idle state", now.Sub(s.activityUnknownSince).Round(time.Second))
+		s.activityUnknownExpiredLogged = true
 	}
 	// A collector that is still making progress can see activity even when
 	// tmux's session list is unavailable. Keep its normal turn protection.
@@ -1884,6 +1890,7 @@ func (s *Service) clearUnknownActivity() {
 	s.activityUnknownSince = time.Time{}
 	s.activityUnknownReason = ""
 	s.activityUnknownLogged = time.Time{}
+	s.activityUnknownExpiredLogged = false
 	s.activityMu.Unlock()
 }
 
