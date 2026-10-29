@@ -1,7 +1,8 @@
 -- Also create the distinct composer table for databases that already recorded
 -- 20261102230000 before its correction. Repeating it on fresh installs is safe.
--- No data is copied from public.prompt_history: that name belongs to an
--- unrelated legacy schema, which this migration leaves untouched.
+-- No existing history is copied: public.prompt_history may contain unrelated
+-- legacy data or an earlier composer's rows. Leave either intact and start
+-- fresh recall in the distinct table.
 
 create table if not exists public.composer_prompt_history (
   id bigint generated always as identity primary key,

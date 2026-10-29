@@ -312,7 +312,8 @@ type BillingLeaseRow = {
   held_until: string;
 };
 
-/** A prompt a user sent, for the composer to recall (20261102230000). */
+/** A prompt a user sent, for the composer to recall (20261102230000, or
+ *  20261102270000 where the former was recorded before its correction). */
 type ComposerPromptHistoryRow = {
   id: number;
   owner_id: string;
