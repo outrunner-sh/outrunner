@@ -2,7 +2,7 @@
 
 import { GitMerge, ListOrdered } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
@@ -18,7 +18,14 @@ export function MergeButton({ repo, number, headSha, offer }: { repo: string; nu
   const router = useRouter();
   const [busy, setBusy] = useState<MergeAction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Queued just now: shown until the page's refresh says how it stands, and
+  // dropped once it does (the queue may have let it go since).
   const [queued, setQueued] = useState<number | null | undefined>(undefined);
+  const standing = JSON.stringify(offer.primary);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the server's word replaces the stand-in
+    setQueued(undefined);
+  }, [standing]);
   const merge = async (action: MergeAction) => {
     setBusy(action);
     setError(null);

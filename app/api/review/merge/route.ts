@@ -58,6 +58,11 @@ export async function POST(request: Request) {
           return null;
         })
       : null;
+    // Queueing or bypassing goes only by GitHub's word on this branch, never
+    // on a guess: without it, only a plain Merge by the rules is decided.
+    if (!access && action !== "merge") {
+      return NextResponse.json({ error: "Couldn't read this branch's merge rules from GitHub. Please try again." }, { status: 502 });
+    }
     const why = refuseMerge(action, status, access);
     if (why) return NextResponse.json({ error: why }, { status: 409 });
 

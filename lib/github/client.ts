@@ -739,7 +739,7 @@ export async function getMergeAccess(input: {
       } | null;
     }>(input.token, MERGE_ACCESS_QUERY, { owner, name, number: input.number }, "read the pull request's merge rules"),
     fetchGitHub(
-      new URL(`/repos/${input.repoFullName}/rules/branches/${input.baseRef.split("/").map(encodeURIComponent).join("/")}`, GITHUB_API_URL),
+      new URL(`/repos/${input.repoFullName}/rules/branches/${input.baseRef.split("/").map(encodeURIComponent).join("/")}?per_page=100`, GITHUB_API_URL),
       input.token,
     ),
   ]);
@@ -747,6 +747,9 @@ export async function getMergeAccess(input: {
   if (!pr || typeof pr.id !== "string") throw new GitHubSyncError("GitHub returned an invalid pull request record.");
   // The rules are only for the methods: a repository without rulesets, or
   // one GitHub won't show them for, merges by its own settings.
+  if (!rules.ok && rules.status !== 404) {
+    console.error(`GitHub wouldn't list ${input.repoFullName}'s rules for ${input.baseRef}`, { status: rules.status });
+  }
   const ruleList = rules.ok ? ((await rules.json().catch(() => [])) as unknown) : [];
   return {
     pullId: pr.id,
