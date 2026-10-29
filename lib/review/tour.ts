@@ -107,27 +107,63 @@ export function readJsonAnswer(text: string): unknown {
 
 /**
  * What can be saved of an answer cut off before its end (it ran out of
- * tokens): its summary, and every step object that was finished. Null when
- * not even one step was.
+ * tokens or time): its summary, and every step object that was finished.
+ * Null when not even one step was.
+ *
+ * Read by walking the text as JSON is written, knowing when it's inside a
+ * string (and past an escape), so a brace or quote in a step's explanation
+ * (`returns { tour, headSha }`) is only text: each object nested in the
+ * answer that closes is tried, and kept if it names a hunk.
  */
 export function salvageAnswer(text: string): { summary: string; steps: unknown[] } | null {
   const steps: unknown[] = [];
-  for (const match of text.matchAll(/\{[^{}]*"hunk"\s*:[^{}]*\}/g)) {
-    try {
-      steps.push(JSON.parse(match[0]));
-    } catch {
-      // Cut off inside this one.
+  const open: number[] = [];
+  // The strings at the answer's top level, for its "summary" and its value.
+  const topStrings: { start: number; end: number }[] = [];
+  let inString = false;
+  let stringStart = 0;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (c === "\\") escaped = true;
+      else if (c === '"') {
+        inString = false;
+        if (open.length === 1) topStrings.push({ start: stringStart, end: i + 1 });
+      }
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      stringStart = i;
+    } else if (c === "{" || c === "[") {
+      open.push(i);
+    } else if (c === "}" || c === "]") {
+      const start = open.pop();
+      if (start === undefined || c !== "}" || text[start] !== "{" || open.length === 0) continue;
+      try {
+        const value = JSON.parse(text.slice(start, i + 1)) as { hunk?: unknown };
+        if (value && typeof value.hunk === "string") steps.push(value);
+      } catch {
+        // Not JSON after all: left out.
+      }
     }
   }
   if (steps.length === 0) return null;
-  const summary = /"summary"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(text)?.[1];
-  let read = "";
-  try {
-    read = summary ? (JSON.parse(summary) as string) : "";
-  } catch {
-    read = "";
+  let summary = "";
+  for (let k = 0; k + 1 < topStrings.length; k++) {
+    const key = topStrings[k];
+    const value = topStrings[k + 1];
+    if (text.slice(key.start, key.end) !== '"summary"' || !/^\s*:\s*$/.test(text.slice(key.end, value.start))) continue;
+    try {
+      summary = JSON.parse(text.slice(value.start, value.end)) as string;
+    } catch {
+      summary = "";
+    }
+    break;
   }
-  return { summary: read, steps };
+  return { summary, steps };
 }
 
 const clip = (value: unknown, max: number) => (typeof value === "string" ? value.trim().slice(0, max) : "");
@@ -178,39 +214,106 @@ export async function writeTour(
   pr: { title: string; body: string },
   files: readonly PullFile[],
   complete = true,
+  cancel?: AbortSignal,
 ): Promise<Tour> {
   const { hunks, skipped } = tourHunks(files);
   if (hunks.length === 0) return { summary: "", steps: [], skipped, complete };
-  const response = await fetch(COMPLETIONS_URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Outrunner Review" },
-    body: JSON.stringify({
-      model: agentModel(),
-      messages: [{ role: "user", content: tourPrompt(pr, hunks, complete) }],
-      max_tokens: tourTokens(hunks.length),
-      temperature: 0.2,
-    }),
-    signal: AbortSignal.timeout(120_000),
-  });
-  const body = (await response.json().catch(() => null)) as {
-    choices?: { message?: { content?: string | null }; finish_reason?: string }[];
-    error?: { message?: string };
-  } | null;
-  if (!response.ok) throw new Error(`The model call failed (${response.status}): ${body?.error?.message ?? "no detail"}`);
-  const choice = body?.choices?.[0];
-  const text = choice?.message?.content ?? "";
+  const tokens = tourTokens(hunks.length);
+  const { text, finish } = await streamAnswer(key, tourPrompt(pr, hunks, complete), tokens, tourTimeoutMs(tokens), cancel);
   let answer = readJsonAnswer(text);
   if (answer === null) {
-    // Most likely cut off: the steps it finished still have their notes.
+    // Cut off (out of tokens or time), or not JSON: the steps it finished
+    // still have their notes.
     answer = salvageAnswer(text);
     console.warn(
-      `Review: the tour's answer wasn't whole JSON (finish_reason ${choice?.finish_reason ?? "unknown"}, ${text.length} characters, ${hunks.length} hunks); ${answer ? "kept the steps it finished" : "walking the plain order"}`,
+      `Review: the tour's answer wasn't whole JSON (finish_reason ${finish}, ${text.length} characters, ${hunks.length} hunks, ${tokens} tokens allowed); ${answer ? "kept the steps it finished" : "walking the plain order"}`,
     );
   }
   return { ...normalizeTour(answer, hunks, skipped), complete };
 }
 
-/** Tokens the answer may take: about 120 a step (its id, title and a few
+/**
+ * The model's answer, streamed: what it wrote, and why it stopped (its
+ * `finish_reason`, or "timeout"). Streamed so that running out of time
+ * still leaves what was written, for salvageAnswer, rather than nothing.
+ * Throws when the model refuses the call or sends nothing at all.
+ */
+export async function streamAnswer(
+  key: string,
+  prompt: string,
+  maxTokens: number,
+  timeoutMs: number,
+  cancel?: AbortSignal,
+): Promise<{ text: string; finish: string }> {
+  const abort = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abort.abort();
+  }, timeoutMs);
+  const signal = cancel ? AbortSignal.any([abort.signal, cancel]) : abort.signal;
+  let text = "";
+  let finish = "unknown";
+  try {
+    const response = await fetch(COMPLETIONS_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Outrunner Review" },
+      body: JSON.stringify({
+        model: agentModel(),
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: maxTokens,
+        temperature: 0.2,
+        stream: true,
+      }),
+      signal,
+    });
+    if (!response.ok || !response.body) {
+      const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+      throw new Error(`The model call failed (${response.status}): ${body?.error?.message ?? "no detail"}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const data = line.startsWith("data:") ? line.slice(5).trim() : "";
+        if (!data || data === "[DONE]") continue;
+        try {
+          const chunk = JSON.parse(data) as { choices?: { delta?: { content?: string | null }; finish_reason?: string | null }[] };
+          text += chunk.choices?.[0]?.delta?.content ?? "";
+          finish = chunk.choices?.[0]?.finish_reason ?? finish;
+        } catch {
+          // A keep-alive comment, or a line cut at a chunk's edge: skipped.
+        }
+      }
+    }
+  } catch (error) {
+    if (!timedOut) throw error;
+    finish = "timeout";
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!text && finish === "timeout") throw new Error("The model wrote nothing before the tour's time ran out.");
+  return { text, finish };
+}
+
+/** How long the answer may take: a start-up allowance and 40 tokens a
+ *  second (slower than the models usually stream), to a ceiling that
+ *  stays inside the route's maxDuration. */
+export function tourTimeoutMs(tokens: number): number {
+  return Math.min(TOUR_TIMEOUT_CEILING_MS, 30_000 + (tokens / 40) * 1000);
+}
+
+/** The longest a tour may be written for: under app/api/review/tour's
+ *  maxDuration (which is a literal, as Next reads it statically). */
+export const TOUR_TIMEOUT_CEILING_MS = 420_000;
+
+/** Tokens the answer may take: about 150 a step (its id, title and a few
  *  sentences) and some for the summary, up to a ceiling a long PR stays
  *  under by shortening its notes. */
 export function tourTokens(hunks: number): number {

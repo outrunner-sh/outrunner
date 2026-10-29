@@ -6,6 +6,9 @@ import { pullDetail } from "@/lib/review/pulls";
 import { writeTour } from "@/lib/review/tour";
 import { triageCaller } from "@/lib/triage/caller";
 
+/** A long PR's tour is written for up to 7 minutes (tourTimeoutMs). */
+export const maxDuration = 480;
+
 /** "Start tour": a guided walk through a PR's diff, written by Outrunner's
  *  model on the org's budget. Only for a PR the asker may read. */
 export async function POST(request: Request) {
@@ -29,9 +32,10 @@ export async function POST(request: Request) {
     throw error;
   }
   try {
-    const tour = await writeTour(key, { title: pr.title, body: pr.body }, files, pr.filesComplete);
+    const tour = await writeTour(key, { title: pr.title, body: pr.body }, files, pr.filesComplete, request.signal);
     return NextResponse.json({ tour, headSha: pr.headSha });
   } catch (error) {
+    if (request.signal.aborted) return new Response(null, { status: 499 });
     console.error("Review: the tour failed", error);
     return NextResponse.json({ error: "Couldn't write the tour. Please try again." }, { status: 502 });
   }
