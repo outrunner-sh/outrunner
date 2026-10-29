@@ -44,7 +44,7 @@ export function OrgGeneralSettings({ org, domain }: { org: Org; domain: string |
 
   return (
     <section className="space-y-6">
-      <h1 className="text-lg font-semibold text-foreground">Org</h1>
+      <h1 className="text-lg font-semibold text-foreground">General</h1>
 
       <Details>
         <DetailRow term="Org">{org.personal ? "Personal: just you" : "Team"}</DetailRow>

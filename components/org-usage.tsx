@@ -67,7 +67,7 @@ export function OrgUsageSettings({
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Usage</h1>
+        <h1 className="text-lg font-semibold text-foreground">Usage &amp; limits</h1>
         <p className="max-w-prose text-sm text-muted-foreground">
           {`${org.name}'s cloud hours this period, shared by all its members' sessions, against its ${hours.planLabel} plan's.`}
         </p>

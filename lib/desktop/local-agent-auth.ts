@@ -101,7 +101,7 @@ export async function signInLocalAgent(
   const auth = await deliverLocalAgentAuth(workspaceId, agent, ownAccount);
   if (agent === "codex" && !auth.credential && status && localAgentState(status, agent) === "logged-out") {
     throw new LocalAgentAuthError(
-      `Sign ${AGENTS[agent].label} in on this Mac first, in Settings → Providers → ${AGENTS[agent].label}.`,
+      `Sign ${AGENTS[agent].label} in on this Mac first, in Personal → Coding agents → ${AGENTS[agent].label}.`,
       providerSettingsHref(agent, auth.method ?? undefined),
     );
   }

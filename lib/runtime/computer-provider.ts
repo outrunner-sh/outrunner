@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { RESOURCE_PROBE, resourceReading, type ComputerReading } from "@/lib/session/session-info";
 import { optionalEnv } from "@/lib/env";
 import { gitCredentialEnvironment } from "@/lib/runtime/git-credential";
 import type { AgentTarget } from "@/lib/runtime/agent-client";
@@ -571,6 +572,15 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       this.backend.restore !== undefined &&
       optionalEnv("RUNTIME_ENGINE") !== "jcode"
     );
+  }
+
+  /** Inspect an already-running computer. Neither alive/get nor the fixed probe
+   * starts, restores, attaches to or upgrades a box. */
+  async inspectComputer(sandboxId: string): Promise<ComputerReading | null> {
+    if (!await this.backend.alive(sandboxId)) return null;
+    const box = await this.backend.get(sandboxId);
+    const result = await box.io.exec(RESOURCE_PROBE).catch(() => null);
+    return resourceReading(result?.exitCode === 0 ? result.stdout : "", box.cpu, box.memoryGb);
   }
 
   /** The box's vCPUs, where the provider says. */

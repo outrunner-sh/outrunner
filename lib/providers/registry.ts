@@ -216,7 +216,7 @@ function savedUnder(provider: KeyProviderId): string {
 export function keyProblem(provider: KeyProviderId, key: string): string | null {
   const { label, keyPattern, keysPage } = PROVIDERS[provider];
   if (CLAUDE_TOKEN.test(key)) {
-    return "That's a Claude subscription token. Connect it under Settings → Providers → Claude Code → Subscription instead.";
+    return "That's a Claude subscription token. Connect it under Personal → Coding agents → Claude Code → Subscription instead.";
   }
   if (OPENAI_ADMIN_KEY.test(key)) {
     return "That's an OpenAI admin key, which can't run models. Create a project API key at OpenAI → API keys.";

@@ -18,7 +18,7 @@ test("each failure to get a model's key answers what the user can do about it", 
   const missing = await answered(new NoProviderKeyError("zai"));
   assert.deepEqual(missing, {
     status: 409,
-    body: { error: "Save your Z.ai key in Settings → Providers to run models on it.", settingsHref: "/settings/providers?tab=zai" },
+    body: { error: "Save your Z.ai key in Personal → Coding agents to run models on it.", settingsHref: "/settings/coding-agents?tab=zai" },
   });
 
   const spent = await answered(new AllowanceSpentError());

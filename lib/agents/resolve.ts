@@ -72,16 +72,16 @@ function agentAuthMessage(agent: AgentId, method: AuthMethodId, reason: AgentAut
   const { label } = AGENTS[agent];
   const way = authMethod(agent, method);
   if (reason === "local-only") {
-    return `${label} is set to sign in with ${way?.label ?? method}, which works for sessions on your Mac only. Choose API key under Settings → Providers → ${label} for sessions here.`;
+    return `${label} is set to sign in with ${way?.label ?? method}, which works for sessions on your Mac only. Choose API key under Personal → Coding agents → ${label} for sessions here.`;
   }
   const credential = way?.credential;
   if (credential?.kind === "claude-slot") {
-    return `Connect your Claude subscription under Settings → Providers → ${label} to run it.`;
+    return `Connect your Claude subscription under Personal → Coding agents → ${label} to run it.`;
   }
   if (credential?.kind === "provider-key") {
-    return `Save your ${PROVIDERS[credential.provider].label} API key under Settings → Providers → ${label} to run it.`;
+    return `Save your ${PROVIDERS[credential.provider].label} API key under Personal → Coding agents → ${label} to run it.`;
   }
-  return `Sign ${label} in under Settings → Providers → ${label} to run it.`;
+  return `Sign ${label} in under Personal → Coding agents → ${label} to run it.`;
 }
 
 /** The way an agent runs when the user hasn't picked one: as it did before

@@ -122,7 +122,7 @@ function needsClaude(error: string) {
 }
 
 function needsSandbox(error: string) {
-  return NextResponse.json({ error, settingsHref: "/settings/sandbox" }, { status: 409 });
+  return NextResponse.json({ error: `${error} Ask your deployment administrator to check runtime configuration.` }, { status: 409 });
 }
 
 /** What the new-session screen asks for, as it sends it (each checked below). */
@@ -354,20 +354,20 @@ async function createOnce(
   // run Codex.
   if (agentId === "codex" && !isComputerProvider(provider)) {
     return NextResponse.json(
-      { error: "Codex runs on Outrunner's cloud computers. Choose one under Settings → Sandbox.", settingsHref: "/settings/sandbox" },
+      { error: "Codex requires a cloud computer. Ask your deployment administrator to check runtime configuration." },
       { status: 409 },
     );
   }
   // A first message is delivered to a Runtime Computer's agent; no other
   // sandbox takes one from the server.
   if (options.firstMessage && !isComputerProvider(provider)) {
-    return needsSandbox("Sessions the server starts (automations, the API) run on Outrunner's or your Daytona sandboxes. Choose one under Settings → Sandbox.");
+    return needsSandbox("Sessions the server starts (automations, the API) require a cloud computer.");
   }
   // Only a Runtime Computer switches models: on any other sandbox, a session
   // runs on the user's Claude or not at all, whatever the menu offers.
   if (agentId === "claude" && !hasClaude && !isComputerProvider(provider)) {
     return needsClaude(
-      "Sessions on this sandbox run only on your Claude account. Connect Claude in Settings, or choose another sandbox under Settings → Sandbox.",
+      "Sessions on this runtime require your Claude account. Connect it under Personal → Coding agents.",
     );
   }
 
@@ -397,7 +397,7 @@ async function createOnce(
   if (checkouts) {
     if (!isComputerProvider(provider)) {
       return NextResponse.json(
-        { error: "Projects with several repositories run on Outrunner's or your Daytona sandboxes. Choose one in Settings → Sandbox." },
+        { error: "Projects with several repositories require a cloud computer. Ask your deployment administrator to check runtime configuration." },
         { status: 409 },
       );
     }

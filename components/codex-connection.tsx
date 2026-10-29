@@ -5,6 +5,7 @@ import { Check, Copy, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { InlineMessage } from "@/components/ui/notice";
 import { requestJson } from "@/lib/http/request-json";
+import { codexSettingsScope } from "@/lib/codex/settings-scope";
 import type { Org } from "@/lib/orgs/active";
 
 export type CodexMeta = {
@@ -26,9 +27,17 @@ const launcherPath = /^\/[A-Za-z0-9/_-]+$/.test(configuredLauncher)
   : null;
 
 /** Native login stays on the user's computer; this page receives status only. */
-export function CodexConnection({ active = true }: { active?: boolean }) {
+export function CodexConnection({
+  active = true,
+  orgId,
+  onConnected,
+}: {
+  active?: boolean;
+  /** Absent on Personal. Organization pages name the active org explicitly. */
+  orgId?: string;
+  onConnected?: (connected: boolean) => void;
+}) {
   const [scopes, setScopes] = useState<Scopes | null>(null);
-  const [scope, setScope] = useState("");
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let gone = false;
@@ -36,7 +45,6 @@ export function CodexConnection({ active = true }: { active?: boolean }) {
       .then((value) => {
         if (!gone) {
           setScopes(value);
-          setScope(value.activeOrg ?? "");
         }
       })
       .catch(() => {
@@ -59,32 +67,22 @@ export function CodexConnection({ active = true }: { active?: boolean }) {
         )}
       </div>
     );
-  const org = scopes.orgs.find((o) => o.id === scope);
+  const scope = codexSettingsScope(scopes.orgs, orgId);
+  if (scope.kind === "unavailable")
+    return (
+      <InlineMessage>
+        You no longer have access to this organization’s Codex connection.
+        Reload to choose an organization you belong to.
+      </InlineMessage>
+    );
   return (
-    <div className="space-y-4">
-      <label className="block space-y-2 text-sm">
-        <span className="font-medium">Connection belongs to</span>
-        <select
-          aria-label="Connection belongs to"
-          className="block w-full rounded-md border bg-background px-3 py-2"
-          value={scope}
-          onChange={(event) => setScope(event.target.value)}
-        >
-          <option value="">Personal · Only you</option>
-          {scopes.orgs.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name} · Organization
-            </option>
-          ))}
-        </select>
-      </label>
-      <ConnectionScope
-        key={scope}
-        org={org}
-        user={scopes.user}
-        active={active}
-      />
-    </div>
+    <ConnectionScope
+      key={orgId ?? "personal"}
+      org={scope.kind === "org" ? scope.org : undefined}
+      user={scopes.user}
+      active={active}
+      onConnected={onConnected}
+    />
   );
 }
 
@@ -92,10 +90,12 @@ function ConnectionScope({
   org,
   user,
   active,
+  onConnected,
 }: {
   org?: Org;
   user: string;
   active: boolean;
+  onConnected?: (connected: boolean) => void;
 }) {
   const endpoint = `/api/settings/codex${org ? `?org=${org.id}` : ""}`;
   const [meta, setMeta] = useState<CodexMeta | null>(null);
@@ -128,6 +128,7 @@ function ConnectionScope({
             lastPending = value.pending;
             lastUpdatedAt = value.updatedAt;
             setMeta(value);
+            onConnected?.(value.connected && !value.reconnect);
             setError(null);
             setOrigin(window.location.origin);
           }
@@ -145,7 +146,7 @@ function ConnectionScope({
       gone = true;
       if (timer) clearInterval(timer);
     };
-  }, [endpoint, active]);
+  }, [endpoint, active, onConnected]);
   async function change(action: "begin" | "cancel" | "disconnect") {
     setBusy(true);
     setCopied(false);
@@ -158,6 +159,7 @@ function ConnectionScope({
             : { action, attempt: meta?.pending?.id },
       });
       setMeta(value);
+      onConnected?.(value.connected && !value.reconnect);
       setError(null);
       setExpired(false);
     } catch (e) {

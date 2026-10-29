@@ -304,6 +304,7 @@ export function box(sandbox: Sandbox): SandboxBox {
   return {
     id: sandbox.id,
     cpu: sandbox.cpu,
+    memoryGb: sandbox.memory,
     io,
     gitExec,
     // Default images aren't /home/runtime; the agent + mirror hang off $HOME.

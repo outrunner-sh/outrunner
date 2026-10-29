@@ -2,7 +2,7 @@
 export default function GeneralSettings() {
   return (
     <section className="space-y-6">
-      <h1 className="text-lg font-semibold text-foreground">General</h1>
+      <h1 className="text-lg font-semibold text-foreground">Help / About</h1>
 
       <div className="space-y-1">
         <span className="text-lg font-semibold text-foreground">Outrunner</span>
