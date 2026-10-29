@@ -31,6 +31,7 @@ import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter"
 import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { ARCHIVED_UNSAVED, type ArchiveSave, saveForArchive } from "@/lib/session/archive-save";
 import { archiveFailureReport, ArchivePreparationError, type ArchiveStage } from "@/lib/session/archive-failure";
+import { archiveFailureLog } from "@/lib/session/archive-failure-log";
 import { bringBack } from "@/lib/session/bring-back-box";
 import { archiveChat, chatUploadPaths } from "@/lib/session/chat-snapshots";
 
@@ -204,9 +205,9 @@ export async function archiveCloudSession(
     // A box that can't archive it, or a plan that won't start its box, says
     // so; the session stays as it was.
     const said = archiveFailureReport(error, stage, randomUUID());
-    // Enum/number diagnostics and a reference are safe to share with an
-    // operator. Raw agent errors can contain signed URLs or private files.
-    console.error("archive_failed", { workspaceId: workspace.id, ...said.diagnostic });
+    // Server-only legacy operation hints use fixed labels and numbers; the
+    // public/persisted report remains separate. Never log a raw agent error.
+    console.error("archive_failed", { workspaceId: workspace.id, ...archiveFailureLog(error, said.diagnostic) });
     await transitionWorkspace({
       id: workspace.id,
       from: ["archiving"],
