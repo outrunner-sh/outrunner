@@ -17,10 +17,10 @@ import (
 func TestCodexDevicePromptNeverPrintsCredentials(t *testing.T) {
 	var out bytes.Buffer
 	p := &codexPrompt{out: &out, seen: map[string]bool{}}
-	p.Write([]byte("access_token=never-echo-this https://auth.openai.com/codex/device\nABCD-"))
-	p.Write([]byte("EFGHI\nrefresh_token=also-never-echo\n"))
+	p.Write([]byte("access_token=never-echo-this https://auth.openai.com/codex/device\n https://auth.openai.com/codex/device\nABCD-"))
+	p.Write([]byte("EFGHI\nrefresh_token=also-never-echo\nrefresh_token=LEAK-ABCDE\n"))
 	got := out.String()
-	if !strings.Contains(got, "ABCD-EFGHI") || !strings.Contains(got, "https://auth.openai.com/codex/device") || strings.Contains(got, "never-echo") {
+	if !strings.Contains(got, "ABCD-EFGHI") || !strings.Contains(got, "https://auth.openai.com/codex/device") || strings.Contains(got, "never-echo") || strings.Contains(got, "LEAK-ABCDE") {
 		t.Fatal(got)
 	}
 }

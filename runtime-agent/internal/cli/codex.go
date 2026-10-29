@@ -21,8 +21,8 @@ import (
 
 // Only the native device URL and human approval code are printed. Native CLI
 // diagnostics may contain credentials; never echo them on success or failure.
-var codexDeviceURL = regexp.MustCompile(`https://auth\.openai\.com/(?:codex/)?device(?:auth)?(?:/[A-Za-z0-9/_-]*)?`)
-var codexDeviceCode = regexp.MustCompile(`\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\b`)
+var codexDeviceURL = regexp.MustCompile(`^https://auth\.openai\.com/(?:codex/)?device(?:auth)?(?:/[A-Za-z0-9/_-]*)?$`)
+var codexDeviceCode = regexp.MustCompile(`^[A-Z0-9]{4}-[A-Z0-9]{4,5}$`)
 
 type codexPrompt struct {
 	mu      sync.Mutex
@@ -46,7 +46,7 @@ func (p *codexPrompt) Write(b []byte) (int, error) {
 			break
 		}
 		p.pending = rest
-		clean := stripANSI(line)
+		clean := strings.TrimSpace(stripANSI(line))
 		for _, pattern := range []*regexp.Regexp{codexDeviceURL, codexDeviceCode} {
 			for _, value := range pattern.FindAllString(clean, -1) {
 				if !p.seen[value] {
