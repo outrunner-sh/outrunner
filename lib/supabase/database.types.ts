@@ -313,7 +313,7 @@ type BillingLeaseRow = {
 };
 
 /** A prompt a user sent, for the composer to recall (20261102230000). */
-type PromptHistoryRow = {
+type ComposerPromptHistoryRow = {
   id: number;
   owner_id: string;
   text: string;
@@ -1659,10 +1659,10 @@ export type Database = {
         Update: Partial<BillingLeaseRow>;
         Relationships: [];
       };
-      prompt_history: {
-        Row: PromptHistoryRow;
-        Insert: Insert<PromptHistoryRow, "owner_id" | "text">;
-        Update: Partial<PromptHistoryRow>;
+      composer_prompt_history: {
+        Row: ComposerPromptHistoryRow;
+        Insert: Insert<ComposerPromptHistoryRow, "owner_id" | "text">;
+        Update: Partial<ComposerPromptHistoryRow>;
         Relationships: [];
       };
     };

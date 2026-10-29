@@ -2,7 +2,7 @@
  * Recalling the prompts a user has sent, as a shell recalls commands: ↑ in an
  * empty composer steps back through them, newest first, ↓ steps forward again
  * and past the newest gives the box back as it was; Ctrl+R searches them. The
- * history is the user's, across sessions (prompt_history, through
+ * history is the user's, across sessions (composer_prompt_history, through
  * /api/prompt-history); this module is its logic, without React or storage.
  */
 
