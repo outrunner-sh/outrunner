@@ -2,7 +2,7 @@
  * never rewritten when credentials or target eligibility changes. */
 import { AGENT_IDS, type AgentId } from "@/lib/agents/registry";
 import { effortOnPick, loadoutDefault, offeredModel, type ModelLoadout } from "@/lib/runtime/model-loadout";
-import { agentOf, agentsFor, compatibleEffort, type Effort, type ModelGroup, type SessionModel } from "@/lib/runtime/session-models";
+import { agentOf, agentsFor, compatibleEffort, OUTRUNNER_MODELS, type Effort, type ModelGroup, type SessionModel } from "@/lib/runtime/session-models";
 
 export function eligibleHarnesses(groups: ModelGroup[], supported: readonly AgentId[] = AGENT_IDS): AgentId[] {
   return AGENT_IDS.filter((agent) => supported.includes(agent) && groups.some((g) => g.models.length > 0 && agentsFor(g.provider).includes(agent)));
@@ -16,7 +16,12 @@ export function initialSelection(groups: ModelGroup[], loadout: ModelLoadout, ag
   const saved = loadoutDefault(loadout, eligible);
   // With no preference use the runtime catalog's default, then the first
   // eligible model. No implicit Claude account override.
-  const model = saved ?? eligible.flatMap((g) => g.models).find((m) => m.isDefault) ?? eligible[0]?.models[0];
+  const accountModels = agent ? eligible.find((g) => g.provider === agent)?.models : undefined;
+  // Preserve defaultModel's existing own-OpenRouter-before-shared ownership.
+  const ownGatewayDefault = eligible.find((g) => g.provider === "openrouter")?.models.find((m) => m.id === OUTRUNNER_MODELS[0].id);
+  const model = saved ?? accountModels?.find((m) => m.isDefault) ?? accountModels?.[0]
+    ?? ownGatewayDefault ?? eligible.find((g) => g.provider === "outrunner")?.models[0]
+    ?? eligible.flatMap((g) => g.models).find((m) => m.isDefault) ?? eligible[0]?.models[0];
   const preferred = agent ?? (saved ? loadout.default?.agent : undefined);
   const harness = preferred && (!supported || supported.includes(preferred)) ? preferred
     : model ? agentsFor(model.provider).find((a) => !supported || supported.includes(a)) : undefined;

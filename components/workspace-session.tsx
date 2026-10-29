@@ -57,6 +57,7 @@ import {
   type FirstPrompt,
 } from "@/lib/session/first-prompt";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
+import { eligibleHarnesses } from "@/lib/runtime/selection";
 import { EMPTY_LOADOUT } from "@/lib/runtime/model-loadout";
 import {
   defaultModel,
@@ -136,6 +137,7 @@ export function WorkspaceSession({
   initialAttachmentIds,
   onSender,
   onSideChat,
+  onHarnessFork,
 }: {
   workspaceId: string;
   /** The chat it shows (lib/session/chats.ts): its main one unless another
@@ -171,6 +173,8 @@ export function WorkspaceSession({
   /** `/btw <question>`: ask it in a side chat about this one (the studio
    *  starts it and shows it); resolves whether it went. */
   onSideChat?: (question: string) => Promise<boolean>;
+  /** Continue this conversation in another harness using the chat fork API. */
+  onHarnessFork?: (agent: AgentId) => Promise<void>;
 }) {
   // What this page keeps of the chat (its conversation, queue, picks): the
   // session's own keys for its main chat, as before there were others.
@@ -886,14 +890,28 @@ export function WorkspaceSession({
     agent,
     selectedModel: matchModel(modelGroups(menu, accounts, agent), shownModel, providerPicked ?? recorded?.model.provider)
       ?? (recorded && recorded.model.id === shownModel ? recorded.model : undefined),
-    harnessChoice: { available: [agent], disabledReason: "This chat keeps its harness to preserve its conversation. Choose another harness in a new session." },
+    harnessChoice: onHarnessFork ? {
+      available: [...new Set([agent, ...eligibleHarnesses(modelGroups(menu, accounts), menu.harnesses)])],
+      fork: true,
+      disabledReason: "Changing harness creates a fork with the conversation and the same files. Your draft follows it.",
+      onChange: (next) => {
+        if (next === agent || switching) return;
+        setSwitching(true);
+        setSwitchError(null);
+        void onHarnessFork(next).catch((error: unknown) => setSwitchError({
+          label: AGENTS[next].label, message: error instanceof Error ? error.message : "Couldn't fork this chat.",
+        })).finally(() => setSwitching(false));
+      },
+    } : { available: [agent], disabledReason: "This chat's harness is fixed here. A cloud session's chat menu can fork a conversation with another harness; local sessions and Runners use a new session." },
     // The session's own agent's account, where it isn't connected here.
     connect: accounts.includes(agent) ? [] : [agent],
     effort,
     loadout: menu.loadout,
     preferredProvider: providerPicked ?? recorded?.model.provider ?? defaultModel(menu)?.provider,
     switching,
-    disabledReason: !attached
+    disabledReason: editing || queuedEditing
+      ? "Finish or cancel editing the prompt before changing selection"
+      : !attached
       ? "Waiting for the session to connect"
       : waitingOnUser
         ? waitingOnSecrets
@@ -1277,6 +1295,7 @@ export function WorkspaceSession({
           }
           model={shownModel}
           modelChoice={modelChoice}
+          sendDisabledReason={switching ? "Wait for the harness or model change to finish" : undefined}
           allowAttachments={!local}
           sendError={connectionError ? null : (sendError?.message ?? null)}
           sendErrorNoRetry={sendIsDeadEnd(sendError?.code)}

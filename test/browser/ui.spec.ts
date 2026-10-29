@@ -15,6 +15,8 @@ async function stubApis(page: Page) {
         allowance: true,
         available: true,
         keys: [],
+        harnesses: ["claude", "codex"],
+        codexModels: [],
         loadout: { models: [], default: null },
         agents: {
           claude: { cloud: true, local: false },

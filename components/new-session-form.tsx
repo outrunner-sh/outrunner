@@ -70,9 +70,8 @@ export function NewSessionForm({
 }) {
   const { projects, projectId, selectProject, selected, isCreating, message, messageAction, refusedPrompt, refusedAttachments, takeRefusedAttachments, create, createLocal } =
     useCreateSession(listed, initialProjectId);
-  // The model the session starts on, picked in the composer as in a session;
-  // none picked, what it starts on anyway: the user's Claude, on
-  // CLAUDE_DEFAULT_MODEL, where it's connected; otherwise the menu's default.
+  // Explicit session selection, then personal/org preferences, then the
+  // eligible runtime default. The server uses the same selection rules.
   const menu = useOutrunnerModels();
   // The model picked in the composer, else the loadout's default: its agent
   // decides what this Mac needs for a local session (Claude Code, or Codex).
@@ -83,7 +82,7 @@ export function NewSessionForm({
   // The agent asked for (Codex on Outrunner's models), kept across model
   // picks: it runs those it can (agentOf), and a cloud session only. Kept
   // from the mount, as the pick is: the route drops `?start=` straight after.
-  const [askedAgent, setAskedAgent] = useState<AgentId | undefined>(initialPick?.agent);
+  const [askedAgent, setAskedAgent] = useState<AgentId | undefined>(initialPick?.agent ?? (initialPick ? agentOf(initialPick.model.provider) : undefined));
   const remembered = useRef<Partial<Record<AgentId, { model: SessionModel; effort: Effort | null }>>>({});
   // Asked to open the picker, until it has been shut once: the cloud picker
   // can give way to the Mac's as this Mac's agent answers, and that one opens

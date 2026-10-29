@@ -31,5 +31,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "runtime-desktop", "cloudflare"]
+  "exclude": ["node_modules", "runtime-desktop", "cloudflare", "test/browser/.next"]
 }

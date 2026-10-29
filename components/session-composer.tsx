@@ -88,6 +88,8 @@ export type ModelChoice = {
     available: AgentId[];
     onChange?: (agent: AgentId) => void;
     disabledReason?: string;
+    /** Existing chats continue through the runtime's fork lifecycle. */
+    fork?: boolean;
   };
   /** `effort` null runs the model at its own. */
   onChange: (model: SessionModel, effort: Effort | null) => void;
@@ -329,6 +331,7 @@ export function SessionComposer({
   /** Stage files, or say why they cannot be (attachNotice). */
   function addFiles(files: File[]) {
     if (files.length === 0) return;
+    if (modelChoice?.switching) { setNotice("Wait for the selection change to finish before attaching files."); return; }
     const blocked = attachNotice({ allowed: allowAttachments, canSend, skipped: 0 });
     if (blocked) {
       setNotice(blocked);
@@ -766,7 +769,7 @@ export function SessionComposer({
           )}
           {modeChoice && <ModeToggle choice={modeChoice} disabled={!canSend} />}
           {modelChoice ? (
-            <ModelPicker model={model} choice={modelChoice} />
+            <ModelPicker model={model} choice={modelChoice} uploading={uploading} />
           ) : (
             model && <span className="studio-composer-model">{modelLabel(model)}</span>
           )}
@@ -862,7 +865,7 @@ function ModelIcon({ provider }: { provider: ModelProvider }) {
 /** The footer's model, as a menu of the models the session can switch to:
  *  the user's loadout where they have one, else every group, and a search
  *  across all of them either way. */
-function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice }) {
+function ModelPicker({ model, choice, uploading }: { model?: string; choice: ModelChoice; uploading: boolean }) {
   // A group on the user's own key offers the ids they typed in before, and
   // takes another (CustomModelDialog).
   const [customFor, setCustomFor] = useState<TypedModelProvider | null>(null);
@@ -879,12 +882,13 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
   const name = current?.label ?? (model ? modelLabel(model) : "Model");
   // The effort shows only where it does something.
   const effort = current && takesEffort(current) ? choice.effort : undefined;
+  const savedEffort = current?.provider === "codex" && effort === undefined ? choice.effort : null;
   const harness = choice.agent ? AGENTS[choice.agent].label : "Harness";
   const blocked = choice.disabledReason ?? (choice.switching ? "Switching model" : null);
   const label = choice.switching
     ? "Switching model"
     : effort === undefined
-      ? name
+      ? savedEffort ? `${name}, ${effortName(savedEffort)} saved effort` : name
       : `${name}, ${effortName(effort)} effort`;
   const loadout = choice.loadout ? loadoutModels(choice.loadout, groups) : [];
   const searching = query.trim() !== "";
@@ -930,7 +934,7 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
             <span className="grid place-items-center">
               <span className={cn("col-start-1 row-start-1 inline-flex items-center gap-2", choice.switching && "invisible")}>
                 <span className="max-w-48 truncate">{harness} · {name}</span>
-                {effort !== undefined && <EffortMeter effort={effort} />}
+                {(effort !== undefined || savedEffort) && <EffortMeter effort={effort ?? savedEffort} />}
               </span>
               <span
                 aria-hidden
@@ -955,7 +959,7 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
               <span className="flex-1">Model</span><span className="max-w-48 truncate">{name}</span><span aria-hidden>›</span>
             </DropdownMenuItem>
             <DropdownMenuItem disabled={!current || effort === undefined} onSelect={(event) => { event.preventDefault(); setPage("effort"); }}>
-              <span className="flex-1">Effort</span><span>{effort === undefined ? "Runtime default" : effortName(effort)}</span><span aria-hidden>›</span>
+              <span className="flex-1">Effort</span><span>{effort === undefined ? savedEffort ? `${effortName(savedEffort)} (saved)` : "Runtime default" : effortName(effort)}</span><span aria-hidden>›</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild><Link href="/settings/models"><Settings2 />Change defaults</Link></DropdownMenuItem>
@@ -964,10 +968,11 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
           <DropdownMenuLabel>{page === "harness" ? "Harness" : page === "effort" ? "Effort" : "Model"}</DropdownMenuLabel>
           {page === "harness" ? <>
             {(choice.harnessChoice?.available ?? (choice.agent ? [choice.agent] : [])).map((agent) => (
-              <DropdownMenuItem key={agent} role="menuitemradio" aria-checked={agent === choice.agent} disabled={!!blocked || !choice.harnessChoice?.onChange} onSelect={() => choice.harnessChoice?.onChange?.(agent)}>
-                <AgentIcon agent={agent} /><span className="flex-1">{AGENTS[agent].label}</span><Circle aria-hidden className={cn("size-2 fill-current", agent === choice.agent ? "opacity-100" : "opacity-0")} />
+              <DropdownMenuItem key={agent} role="menuitemradio" aria-checked={agent === choice.agent} disabled={!!blocked || !choice.harnessChoice?.onChange || (choice.harnessChoice.fork && (uploading || agent === choice.agent))} onSelect={() => choice.harnessChoice?.onChange?.(agent)}>
+                <AgentIcon agent={agent} /><span className="flex-1">{choice.harnessChoice?.fork && agent !== choice.agent ? `Fork with ${AGENTS[agent].label}` : AGENTS[agent].label}</span><Circle aria-hidden className={cn("size-2 fill-current", agent === choice.agent ? "opacity-100" : "opacity-0")} />
               </DropdownMenuItem>
             ))}
+            {choice.harnessChoice?.fork && uploading && <p className="px-2 py-2 text-xs text-muted-foreground">Wait for attachments to finish uploading before forking.</p>}
             {choice.harnessChoice?.disabledReason && <p className="px-2 py-2 text-xs text-muted-foreground">{choice.harnessChoice.disabledReason}</p>}
             {!choice.harnessChoice?.onChange && <DropdownMenuItem asChild><Link href="/new">Choose a harness for a new session</Link></DropdownMenuItem>}
           </> : page === "effort" ? <>

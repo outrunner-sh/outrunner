@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { chatSelection } from "@/lib/session/chat-selection";
 import { codexCatalog } from "@/lib/codex/model-catalog";
 import { withOrgDefault } from "@/lib/orgs/defaults";
 import { parseLoadout, setEntryAgent, setEntryEffort } from "@/lib/runtime/model-loadout";
@@ -78,4 +79,25 @@ test("unknown capability defaults and resumed explicit effort are honest", async
   const unknown: SessionModel = { id: "custom-model", label: "Custom", provider: "codex" };
   assert.deepEqual(await setModelRequest(unknown, async () => "unused", "max"), { model: "custom-model" });
   assert.deepEqual(await recordedModelRequest({ model: unknown, effort: "high" }, async () => "unused"), { model: "custom-model", effort: "high" });
+});
+
+test("forks keep source selections on the same harness and resolve compatible defaults on another", () => {
+  const source = { agent: "codex" as const, model: { model: catalog[0], effort: "high" as const } };
+  assert.deepEqual(chatSelection(source, "codex", groups, empty), source.model);
+  const fork = chatSelection(source, "claude", groups, preference);
+  assert.equal(fork?.model.provider, "claude");
+  assert.equal(fork?.effort, "high");
+});
+
+test("an org harness default applies when a personal loadout has that model but no default or harness choice", () => {
+  const mine = parseLoadout({ models: [{ provider: "outrunner", id: "z-ai/glm-5.3" }] });
+  const combined = withOrgDefault(mine, { provider: "outrunner", id: "z-ai/glm-5.3", agent: "codex" });
+  assert.equal(initialSelection(groups, combined)?.agent, "codex");
+  assert.equal(mine.models[0].agent, undefined);
+});
+
+test("an unset default preserves canonical own-OpenRouter billing precedence", () => {
+  const offered = modelGroups({ outrunner: true, allowance: true, keys: ["openrouter"], codexModels: catalog }, ["claude", "codex"]);
+  assert.equal(initialSelection(offered, empty)?.model.provider, "openrouter");
+  assert.equal(creationSelection(offered, empty, { defaultEffort: true }).model.provider, "openrouter");
 });
