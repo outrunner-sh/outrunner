@@ -151,8 +151,8 @@ export class AgentClient {
     );
   }
 
-  stopWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/stop`, identity);
+  stopWorkspace(identity: WorkspaceIdentity, chat?: string): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/stop${chatQuery(chat)}`, identity);
   }
 
   /**
@@ -273,9 +273,9 @@ export class AgentClient {
     return this.post(`/workspaces/${identity.workspaceId}/secrets${chatQuery(chat)}`, identity, ProvideSecretsRequest.parse(req));
   }
 
-  resumeWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
+  resumeWorkspace(identity: WorkspaceIdentity, chat?: string): Promise<unknown> {
     return this.post(
-      `/workspaces/${identity.workspaceId}/resume`,
+      `/workspaces/${identity.workspaceId}/resume${chatQuery(chat)}`,
       identity,
       undefined,
       AGENT_START_TIMEOUT_MS,

@@ -679,6 +679,8 @@
         "message-keys",
         "chats",
         "agent-context",
+        "environment-skills",
+        "codex-mcp",
         "canvas"
       ]
     }

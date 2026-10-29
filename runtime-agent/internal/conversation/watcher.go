@@ -11,9 +11,11 @@
 package conversation
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -408,33 +410,49 @@ func IsInterruption(msg *protocol.ConversationMessage) bool {
 // of it (a fork's transcript, an edit finding its message). An offset inside
 // a line starts at the next one.
 func Read(path string, from int64) ([]Event, error) {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	if from < 0 || from > int64(len(data)) {
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if from < 0 || from > info.Size() {
 		from = 0
 	}
-	start := from
-	if start > 0 && data[start-1] != '\n' {
-		next := bytes.IndexByte(data[start:], '\n')
-		if next < 0 {
-			return nil, nil
+	partial := false
+	if from > 0 {
+		var prior [1]byte
+		if _, err := f.ReadAt(prior[:], from-1); err != nil {
+			return nil, err
 		}
-		start += int64(next) + 1
+		partial = prior[0] != '\n'
 	}
+	if _, err := f.Seek(from, io.SeekStart); err != nil {
+		return nil, err
+	}
+	reader := bufio.NewReader(f)
+	cursor := from
 	var events []Event
-	for cursor := start; cursor < int64(len(data)); {
-		idx := bytes.IndexByte(data[cursor:], '\n')
-		if idx < 0 {
-			break // a line still being written
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err == io.EOF {
+			break
 		}
-		end := cursor + int64(idx) + 1
-		if ev, ok := decode(data[cursor:end]); ok {
-			ev.ID = end
+		if err != nil {
+			return nil, err
+		}
+		cursor += int64(len(line))
+		if partial {
+			partial = false
+			continue
+		}
+		if ev, ok := decode(line); ok {
+			ev.ID = cursor
 			events = append(events, ev)
 		}
-		cursor = end
 	}
 	return events, nil
 }

@@ -129,6 +129,7 @@ func (s *Service) CreateChat(ctx context.Context, workspaceID string, in ChatInp
 	if !ValidChatID(in.ChatID) {
 		return fmt.Errorf("invalid chat id %q", in.ChatID)
 	}
+	defer s.lockLifecycle(workspaceID)()
 	parent, ok := s.getFacts(workspaceID)
 	if !ok || parent.Parent != "" {
 		return ErrUnknownWorkspace // a session, not a chat: chats don't nest
@@ -176,15 +177,6 @@ func (s *Service) CreateChat(ctx context.Context, workspaceID string, in ChatInp
 		// Every chat's conversation is named by id: they share a folder.
 		f.ClaudeSessionID = newSessionID()
 	}
-	if sameAgent {
-		f.Model, f.Gateway, f.Effort, f.Auth = parent.Model, parent.Gateway, parent.Effort, parent.Auth
-		if err := s.gatewayFiles().put(key, s.gatewayFiles().read(workspaceID)); err != nil {
-			return err
-		}
-		if err := s.authFiles().put(key, s.authFiles().read(workspaceID)); err != nil {
-			return err
-		}
-	}
 	if from != "" {
 		handoff, err := s.handoff(workspaceID, in.ChatID, from, in.FromName, in.Side)
 		if err != nil {
@@ -195,7 +187,25 @@ func (s *Service) CreateChat(ctx context.Context, workspaceID string, in ChatInp
 			f.SideOf = from
 		}
 	}
+	recorded := false
+	defer func() {
+		if !recorded {
+			s.gatewayFiles().remove(key)
+			s.authFiles().remove(key)
+			_ = os.Remove(s.handoffPath(workspaceID, in.ChatID))
+		}
+	}()
+	if sameAgent {
+		f.Model, f.Gateway, f.Effort, f.Auth = parent.Model, parent.Gateway, parent.Effort, parent.Auth
+		if err := s.gatewayFiles().put(key, s.gatewayFiles().read(workspaceID)); err != nil {
+			return err
+		}
+		if err := s.authFiles().put(key, s.authFiles().read(workspaceID)); err != nil {
+			return err
+		}
+	}
 	s.setFacts(key, f)
+	recorded = true
 	return nil
 }
 
@@ -308,6 +318,7 @@ const (
 // quoting their calls and output, and masks the box's secrets; the raw log
 // stays where the source chat's agent keeps it, named for a search.
 func (s *Service) handoff(workspaceID, chatID, from, fromName string, side bool) (string, error) {
+	fromName = cutAtRune(strings.NewReplacer("<", "", ">", "").Replace(fromName), 200)
 	log := s.SessionLog(from)
 	if fromName == "" {
 		fromName = "the main chat"
@@ -367,7 +378,7 @@ func (s *Service) sideContext(source string) string {
 	}
 	// The newest turns are near the end: a long conversation isn't read whole
 	// for every question.
-	turns, _, err := readTurns(log, 2<<20)
+	turns, _, err := readTurns(log, handoffReadLimit)
 	if err != nil {
 		return ""
 	}
@@ -456,6 +467,8 @@ func turnOf(msg *protocol.ConversationMessage) (turn, bool) {
 			if strings.TrimSpace(text) != "" {
 				parts = append(parts, strings.TrimSpace(text))
 			}
+		case block.Type == "image" && msg.Role == "user":
+			parts = append(parts, "(attached an image)")
 		case block.Type == "tool_use" && msg.Role == "assistant":
 			parts = append(parts, "(used "+block.Name+")")
 		}
@@ -523,11 +536,11 @@ func cutAtRune(text string, n int) string {
 // fork's handoff, until its first prompt lands, and a side chat's context.
 func (s *Service) chatPromptText(key, content string) string {
 	f, _ := s.getFacts(key)
+	if f.Handoff != "" {
+		return f.Handoff + content
+	}
 	if f.SideOf != "" {
 		content = s.sideContext(f.SideOf) + content
-	}
-	if f.Handoff != "" {
-		content = f.Handoff + content
 	}
 	return content
 }

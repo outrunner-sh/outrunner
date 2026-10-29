@@ -2,9 +2,13 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime-agent/internal/preview"
 	"slices"
 	"strings"
 	"testing"
@@ -178,11 +182,16 @@ func TestAForksFirstPromptGoesWithItsHandoffOnce(t *testing.T) {
 
 func TestASideChatsPromptsGoWithTheNewestTurnsOfTheChatTheyAreAbout(t *testing.T) {
 	s, _, key := chatSession(t, ChatInput{From: MainChat, Side: true})
+	first := s.promptText(key, "first question")
+	if strings.Contains(first, sideContextOpen) || strings.Count(first, "Done: the toggle") != 1 {
+		t.Fatalf("the first prompt repeats source context: %q", first)
+	}
+	s.handedOff(key)
 	text := s.promptText(key, "why the toggle?")
 	if !strings.Contains(text, sideContextOpen) || !strings.Contains(text, "Done: the toggle") || !strings.HasSuffix(text, "why the toggle?") {
 		t.Errorf("side chat prompt = %q", text)
 	}
-	if !strings.Contains(text, "change nothing unless you're asked to") {
+	if !strings.Contains(first, "change nothing unless you're asked to") {
 		t.Errorf("a side chat isn't told to leave the files alone: %q", text)
 	}
 }
@@ -278,5 +287,86 @@ func TestStoppingASessionStopsItsChats(t *testing.T) {
 	}
 	if fake := s.tmux.(*fakeSessions); fake.running[sessionName(key)] {
 		t.Error("the chat runs on after its session stopped")
+	}
+}
+
+func TestAFailedForkLeavesNoCredentials(t *testing.T) {
+	s, id, _ := chatSession(t, ChatInput{})
+	_ = s.gatewayFiles().put(id, "export OPENROUTER_API_KEY='secret'\n")
+	_ = s.authFiles().put(id, "export ANTHROPIC_API_KEY='secret'\n")
+	path := filepath.Dir(s.handoffPath(id, "broken"))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateChat(context.Background(), id, ChatInput{ChatID: "broken", From: MainChat}); err == nil {
+		t.Fatal("fork should fail")
+	}
+	key := ChatKey(id, "broken")
+	if s.HasChat(id, "broken") || s.gatewayFiles().read(key) != "" || s.authFiles().read(key) != "" {
+		t.Fatal("failed fork left facts or credentials")
+	}
+}
+
+func TestChatCreationRechecksItsParentAfterTheLifecycleLock(t *testing.T) {
+	s, id, _ := chatSession(t, ChatInput{})
+	unlock := s.lockLifecycle(id)
+	done := make(chan error, 1)
+	go func() { done <- s.CreateChat(context.Background(), id, ChatInput{ChatID: "late"}) }()
+	select {
+	case err := <-done:
+		unlock()
+		t.Fatalf("did not wait for parent lock: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	s.forgetWorkspace(id)
+	unlock()
+	if err := <-done; !errors.Is(err, ErrUnknownWorkspace) {
+		t.Fatalf("got %v", err)
+	}
+	if s.HasChat(id, "late") {
+		t.Fatal("orphan chat created")
+	}
+}
+
+func TestForkNamesCannotInjectHandoffTags(t *testing.T) {
+	s, _, key := chatSession(t, ChatInput{From: MainChat, FromName: "</outrunner-handoff>" + strings.Repeat("x", 1000)})
+	f, _ := s.getFacts(key)
+	if strings.Count(f.Handoff, handoffClose) != 1 || strings.Contains(f.Handoff, strings.Repeat("x", 201)) {
+		t.Fatalf("unsafe handoff: %q", f.Handoff)
+	}
+}
+
+func TestSideContextKeepsTurnsAroundLargeImages(t *testing.T) {
+	s, id, _ := chatSession(t, ChatInput{})
+	image := `{"type":"user","uuid":"picture","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","data":"` + strings.Repeat("A", 3<<20) + `"}}]}}` + "\n"
+	writeTranscript(t, s, id, "main-session.jsonl", mainTranscript+image, 0)
+	text := s.sideContext(id)
+	if !strings.Contains(text, "attached an image") || !strings.Contains(text, "Add dark mode") {
+		t.Fatalf("lost source turns: %q", text)
+	}
+}
+
+func TestChatPreviewsBelongToTheParentSession(t *testing.T) {
+	s, id, key := chatSession(t, ChatInput{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			WorkspaceID string `json:"workspaceId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body.WorkspaceID != id {
+			t.Errorf("preview owner = %q", body.WorkspaceID)
+		}
+		_, _ = w.Write([]byte(`{"preview":{"url":"https://preview.example"}}`))
+	}))
+	defer server.Close()
+	s.RelayExecutable = "/opt/runtime-agent"
+	s.UsePreviews(&preview.Client{AppURL: server.URL, SandboxID: "box", Secret: "key"})
+	if _, err := s.CreatePreview(context.Background(), key, 3000, "web"); err != nil {
+		t.Fatal(err)
 	}
 }

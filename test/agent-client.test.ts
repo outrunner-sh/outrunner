@@ -403,3 +403,16 @@ test("the Canvas is listed as JSON, and a file read as its bytes", async () => {
   assert.equal(seen[1], "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/canvas/file?path=charts%2Fa%20b.png");
   await assert.rejects(client.readCanvasFile(identity, "missing.md"), (e) => e instanceof AgentRequestError && e.status === 404);
 });
+
+test("stop and resume target the selected chat", async () => {
+  const urls: string[] = [];
+  const client = new AgentClient(target, (async (url: string) => {
+    urls.push(url);
+    return Response.json({ ok: true });
+  }) as typeof fetch);
+  await client.stopWorkspace(identity, "aside");
+  await client.resumeWorkspace(identity, "aside");
+  assert.deepEqual(urls.map((url) => new URL(url).pathname + new URL(url).search), [
+    "/workspaces/ws-1/stop?chat=aside", "/workspaces/ws-1/resume?chat=aside",
+  ]);
+});
