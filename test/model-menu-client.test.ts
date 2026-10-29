@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-import { forgetOutrunnerModels, OUTRUNNER_MODELS, outrunnerModels } from "@/lib/desktop/local-runtime";
+import { forgetOutrunnerModels, OUTRUNNER_MODELS, outrunnerModels, workspaceModelMenu } from "@/lib/desktop/local-runtime";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -110,4 +110,17 @@ test("forgetting the menu looks again at once, so a menu shown next has the new 
   // A menu mounting meanwhile shares that look rather than starting another.
   assert.equal((await outrunnerModels()).agents.claude.cloud, true);
   assert.equal(looks.count, 1);
+});
+
+test("session menus keep their own workspace scope instead of inheriting the active org menu", async () => {
+  const urls: string[] = [];
+  globalThis.fetch = (async (url: string) => {
+    urls.push(url);
+    return Response.json({ outrunner: true, allowance: false, keys: url.includes("first") ? ["zai"] : ["deepseek"], harnesses: ["claude"], codexModels: [] });
+  }) as typeof fetch;
+  const first = await workspaceModelMenu("first").ensure();
+  const second = await workspaceModelMenu("second").ensure();
+  assert.deepEqual(first.keys, ["zai"]);
+  assert.deepEqual(second.keys, ["deepseek"]);
+  assert.deepEqual(urls, ["/api/outrunner-models?workspace=first", "/api/outrunner-models?workspace=second"]);
 });

@@ -11,7 +11,7 @@ import { Automations } from "@/components/automations";
 import { AutomationsLoading } from "@/components/automations-loading";
 import { Markdown } from "@/components/markdown";
 import { PullRequestChip } from "@/components/missions/mission-parts";
-import { HomeSessionRoute } from "@/components/new-session-route";
+import { HomeSessionRoute, NewSessionRoute } from "@/components/new-session-route";
 import { OrgGeneralSettings } from "@/components/org-settings";
 import { PageLayout } from "@/components/page-layout";
 import { ProjectSettings } from "@/components/project-settings";
@@ -237,7 +237,7 @@ export function FixturePage() {
         </Dialog>
       </PageLayout>
     );
-  else content = <HomeSessionRoute />;
+  else content = pathname === "/new" ? <NewSessionRoute server={<ServerAnswer value={null} />} /> : <HomeSessionRoute />;
   return (
     <>
       <span hidden data-testid="fixture-ready" data-ready={ready} />

@@ -19,7 +19,9 @@ opens `/settings/models`.
 Own-account eligibility and billing ownership remain in `agentAuthStore` and
 `resolveAgentAuth`: personal selections/credentials take precedence over shared
 organization credentials, including the existing personal OpenAI-key precedence.
-Organization default configuration discovers only shared Codex credentials,
+Existing chats request a workspace-scoped model menu, independent of the
+organization currently selected in the sidebar. Organization default
+configuration discovers only shared Codex credentials,
 never the viewing admin's personal account. Mac menus omit organization keys.
 
 Codex ChatGPT-account suggestions and capabilities come from the selected

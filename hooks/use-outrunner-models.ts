@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 
 import { useSharedResource } from "@/hooks/use-shared-resource";
-import { OUTRUNNER_MODELS, outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
+import { workspaceModelMenu, type OutrunnerModels } from "@/lib/desktop/local-runtime";
 
 /**
  * The user's model menu, from the one answer the page keeps: the last one at
@@ -11,10 +11,11 @@ import { OUTRUNNER_MODELS, outrunnerModels, type OutrunnerModels } from "@/lib/d
  * out of date (forgetOutrunnerModels). Null until the first answer; none on
  * offer when that look failed.
  */
-export function useOutrunnerModels(): OutrunnerModels | null {
-  const models = useSharedResource(OUTRUNNER_MODELS);
+export function useOutrunnerModels(workspaceId?: string): OutrunnerModels | null {
+  const resource = workspaceModelMenu(workspaceId);
+  const models = useSharedResource(resource);
   useEffect(() => {
-    void outrunnerModels();
-  }, []);
+    void resource.ensure().catch(() => {});
+  }, [resource]);
   return models.status === "loading" ? null : models.value;
 }

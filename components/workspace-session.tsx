@@ -58,6 +58,7 @@ import {
 } from "@/lib/session/first-prompt";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { eligibleHarnesses } from "@/lib/runtime/selection";
+import { isProviderId } from "@/lib/providers/registry";
 import { EMPTY_LOADOUT } from "@/lib/runtime/model-loadout";
 import {
   defaultModel,
@@ -72,7 +73,7 @@ import {
   type SessionModel,
 } from "@/lib/runtime/session-models";
 import { sessionTitle } from "@/lib/nav/session-title";
-import { rememberEffort } from "@/lib/session/picked-effort";
+import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
 import { chatRoute, chatStateKey, MAIN_CHAT } from "@/lib/session/chats";
 import { followUpRoute } from "@/lib/session/chat-preferences";
 import { editQueued, moveQueued, type QueuedPrompt, queueDrains, readQueue, writeQueue } from "@/lib/session/prompt-queue";
@@ -359,16 +360,16 @@ export function WorkspaceSession({
   // What the model menu offers: Outrunner's models, the user's own keys
   // (Settings → Providers), and their Claude. Until the first answer, as if
   // all were on offer.
-  const menu = useOutrunnerModels() ?? MENU_UNTIL_ANSWERED;
+  const menu = useOutrunnerModels(local ? undefined : workspaceId) ?? MENU_UNTIL_ANSWERED;
   // Whose entry the menu ticks when a model is offered by two: the one last
   // picked here, else the one a new session starts on.
-  const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(null);
+  const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => local && !recorded ? pickedProvider(stateKey) : null);
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
   // The effort it runs at, as last put on from here (lib/session/picked-effort.ts);
   // none put on from here (a session started from onboarding, or another
   // browser), as its row records. Undefined until either says.
   const [effortHere, setEffortHere] = useState<Effort | null | undefined>(
-    undefined,
+    () => local && !recorded ? rememberedEffort(stateKey) ?? undefined : undefined,
   );
   const effort = effortHere !== undefined ? effortHere : (recorded?.effort ?? null);
   const repliedSincePick =
@@ -1543,6 +1544,17 @@ async function stopCloudTurn(workspaceId: string, chatId: string): Promise<void>
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't stop the turn. Please try again.");
+}
+
+/** Local sessions have no server model row; their last explicit provider is
+ * retained only as a hint. Cloud sessions always prefer the recorded choice. */
+function pickedProvider(workspaceId: string): ModelProvider | null {
+  try {
+    const saved = window.localStorage.getItem(`outrunner:model-key:${workspaceId}`);
+    if (saved === "own") return "openrouter";
+    if (saved === "neev") return "outrunner";
+    return saved === "outrunner" || saved === "claude" || saved === "codex" || isProviderId(saved) ? saved : null;
+  } catch { return null; }
 }
 
 function rememberPickedProvider(workspaceId: string, provider: ModelProvider): void {

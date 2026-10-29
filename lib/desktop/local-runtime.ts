@@ -398,16 +398,26 @@ const NO_MODELS: OutrunnerModels = {
  *  again after Settings → Providers changes a key. One answer for the page:
  *  read it with useSharedResource to show the last one at once. Only an
  *  answer is kept: a failed look, refused or unreachable, is asked again. */
-export const OUTRUNNER_MODELS = sharedResource<OutrunnerModels>(
-  () =>
-    fetch("/api/outrunner-models")
-      .then((res): Promise<Record<string, unknown>> => {
-        if (!res.ok) throw new Error(`outrunner-models answered ${res.status}`);
-        return res.json();
-      })
-      .then(parseOutrunnerModels),
-  NO_MODELS,
-);
+function modelMenuResource(url: string) {
+  return sharedResource<OutrunnerModels>(async () => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`outrunner-models answered ${response.status}`);
+    return parseOutrunnerModels(await response.json());
+  }, NO_MODELS);
+}
+export const OUTRUNNER_MODELS = modelMenuResource("/api/outrunner-models");
+const workspaceMenus = new Map<string, ReturnType<typeof modelMenuResource>>();
+/** A running session uses its own org's credentials, even while another org
+ * is active in the sidebar. New sessions use the active-org resource. */
+export function workspaceModelMenu(workspaceId?: string) {
+  if (!workspaceId) return OUTRUNNER_MODELS;
+  let menu = workspaceMenus.get(workspaceId);
+  if (!menu) {
+    menu = modelMenuResource(`/api/outrunner-models?workspace=${encodeURIComponent(workspaceId)}`);
+    workspaceMenus.set(workspaceId, menu);
+  }
+  return menu;
+}
 
 function parseOutrunnerModels(data: Record<string, unknown>): OutrunnerModels {
   const keys = Array.isArray(data.keys)
@@ -427,7 +437,7 @@ function parseOutrunnerModels(data: Record<string, unknown>): OutrunnerModels {
     available: data.available === true,
     // A server from before loadouts sends none.
     loadout: parseLoadout(data.loadout),
-    // A server from before connections sends none: all are assumed.
+    // Missing connection metadata never implies account access.
     agents: parseAgentConnections(data.agents),
   };
 }
@@ -441,8 +451,10 @@ export function outrunnerModels(): Promise<OutrunnerModels> {
  *  signs in has just changed. Asked at once rather than when a menu next
  *  mounts, so going back to one shows the new answer instead of the old. */
 export function forgetOutrunnerModels(): void {
-  OUTRUNNER_MODELS.invalidate();
-  void OUTRUNNER_MODELS.refresh();
+  for (const menu of [OUTRUNNER_MODELS, ...workspaceMenus.values()]) {
+    menu.invalidate();
+    void menu.refresh().catch(() => {});
+  }
 }
 
 /**

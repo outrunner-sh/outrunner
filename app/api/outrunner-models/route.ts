@@ -1,6 +1,10 @@
 import { codexModelsFor } from "@/lib/codex/model-catalog.deps";
 import { NextResponse } from "next/server";
 
+import { getWorkspace } from "@/lib/db/repositories";
+import { resolveProvider } from "@/lib/runtime/resolve";
+import type { Workspace } from "@/lib/runtime/types";
+import { isUuid } from "@/lib/ids";
 import { getSandboxSettings, ownSandboxKeys } from "@/lib/db/credentials";
 import { providerForNewSessions } from "@/lib/runtime/sandbox-choice";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
@@ -28,14 +32,18 @@ import { activeOrgId } from "@/lib/orgs/server";
  * and `serverModels` are for pages loaded before providers; kept for one
  * release.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const owner = await getOwner();
   if (!owner) {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
   // The org being looked at: its keys reach its cloud sessions, never the
   // Mac's, so its agents' connections are cloud ones only.
-  const orgId = await activeOrgId().catch(() => undefined);
+  const askedWorkspace = new URL(request.url).searchParams.get("workspace");
+  // getWorkspace is scoped through RLS. A pending optimistic ID may not exist
+  // yet; its creation context is the active org until its row arrives.
+  const workspace = askedWorkspace && isUuid(askedWorkspace) ? await getWorkspace(askedWorkspace) : null;
+  const orgId = workspace ? workspace.orgId : await activeOrgId().catch(() => undefined);
   const own = agentAuthStore(owner.id);
   const withOrg = orgId ? agentAuthStore(owner.id, orgId) : own;
   const [menu, localMenu, catalog, localCatalog, loadout, claude, codex] = await Promise.all([
@@ -53,7 +61,7 @@ export async function GET() {
   return NextResponse.json({
     ...menu,
     codexModels: catalog,
-    harnesses: await newSessionHarnesses(owner.id),
+    harnesses: await newSessionHarnesses(owner.id, workspace),
     localMenu: { ...localMenu, codexModels: localCatalog },
     loadout,
     agents: { claude, codex },
@@ -70,9 +78,11 @@ async function connection(own: AgentAuthStore, withOrg: AgentAuthStore, agent: A
   return { cloud: cloud.cloud, local: mine.local };
 }
 
-async function newSessionHarnesses(user: string): Promise<AgentId[]> {
+async function newSessionHarnesses(user: string, workspace: Workspace | null): Promise<AgentId[]> {
   try {
-    const provider = providerForNewSessions(await getSandboxSettings(user), ownSandboxKeys(user));
+    const existing = workspace ? resolveProvider(workspace) : null;
+    if (existing && !existing.ok) return [];
+    const provider = existing?.ok ? existing.provider : providerForNewSessions(await getSandboxSettings(user), ownSandboxKeys(user));
     return isComputerProvider(provider) && optionalEnv("RUNTIME_ENGINE") !== "jcode" ? ["claude", "codex"] : ["claude"];
   } catch { return []; }
 }

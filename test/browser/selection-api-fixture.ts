@@ -23,6 +23,7 @@ export async function stubSelectionApis(page: Page, failedFork = false, menu: Ou
     else if (path === "/api/prompt-history") response = { prompts: [], owner: "fixture" };
     else if (path === "/api/settings/chat") response = { preferences: { steerFollowUps: true } };
     else if (path === "/api/attachments") response = { attachment: { id: "55555555-5555-4555-8555-555555555555", filename: "image.png" } };
+    else if (path.endsWith("/message")) { evidence.push({ stage: "delivered first prompt", body }); response = { sentAt: 0 }; }
     else if (path.endsWith("/session")) response = { ptyUrl: "ws://127.0.0.1:3100/fixture-events", eventsUrl: "ws://127.0.0.1:3100/fixture-events" };
     else if (path.endsWith("/chats") && request.method() === "GET") response = { chats: [] };
     else if ((path.startsWith("/api/projects/") && path.endsWith("/workspaces")) || path.endsWith("/model")) {

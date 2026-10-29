@@ -33,6 +33,8 @@ test("new composer preserves draft and attachment across harnesses and sends exa
   await expect.poll(() => state.stored().effort).toBe("low");
   await expect(page).toHaveURL(/\/workspaces\//);
   await expect(page.getByRole("button", { name: /^Harness: Codex.*Low effort/ })).toBeVisible();
+  await expect.poll(() => state.evidence.some((event) => (event as { stage: string }).stage === "delivered first prompt")).toBe(true);
+  expect(state.evidence).toContainEqual(expect.objectContaining({ stage: "delivered first prompt", body: expect.objectContaining({ attachmentIds: ["55555555-5555-4555-8555-555555555555"] }) }));
   await mkdir(".context/selection", { recursive: true });
   await writeFile(`.context/selection/routing-${info.project.name}.json`, JSON.stringify(state.evidence, null, 2));
 });
@@ -84,3 +86,11 @@ for (const scope of ["personal", "organization"] as const) {
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
   });
 }
+
+test("onboarding's Codex harness choice survives an obsolete suggested model ID", async ({ page }) => {
+  const menuWithClaudeDefault = { ...selectionMenu, loadout: { models: [{ provider: "claude" as const, id: "sonnet", effort: "high" as const }], default: { provider: "claude" as const, id: "sonnet" } } };
+  await fixture(page, false, menuWithClaudeDefault);
+  await open(page, "/new?start=codex");
+  await expect(page).toHaveURL(/\/new$/);
+  await expect(page.getByRole("button", { name: /^Harness: Codex.*Account coding model/ })).toBeVisible();
+});

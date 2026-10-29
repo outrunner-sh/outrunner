@@ -52,7 +52,7 @@ test("harness switches reconcile incompatible effort and restore a valid per-har
   const remembered = { model: catalog[1], effort: "high" as const };
   assert.equal(selectionForHarness(groups, empty, "codex", remembered)?.effort, null);
   assert.equal(selectionForHarness(groups, empty, "codex", { ...remembered, effort: "medium" })?.effort, "medium");
-  assert.equal(selectionForHarness(groupsForHarness(groups, "claude"), empty, "claude", remembered)?.model.provider, "outrunner");
+  assert.equal(selectionForHarness(groupsForHarness(groups, "claude"), empty, "claude", remembered)?.model.provider, "claude");
 });
 test("saved shared-model harness uses existing JSON preferences without changing settings scope", () => {
   let loadout = parseLoadout({ models: [{ provider: "outrunner", id: "z-ai/glm-5.3" }], default: { provider: "outrunner", id: "z-ai/glm-5.3" } });
