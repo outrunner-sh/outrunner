@@ -34,6 +34,7 @@ import (
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/ptyx"
 	"runtime-agent/internal/redact"
+	"runtime-agent/internal/sessiontools"
 	"runtime-agent/internal/workspace"
 )
 
@@ -133,6 +134,7 @@ func (s *Server) Handler() http.Handler {
 	// git's credential helper and the gh wrapper on this box ask, with the
 	// agent's credential token (package gitcred).
 	mux.HandleFunc("POST /git-credential", s.gitCredential)
+	mux.HandleFunc("POST /session-tools", s.sessionTool)
 	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
 	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
 	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
@@ -1112,6 +1114,36 @@ func (s *Server) setAgentConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, "set", err)
+}
+
+// sessionTool passes a session's own command on to the control plane, proven
+// to come from this box as git's credential helper is, and answers as it did.
+func (s *Server) sessionTool(w http.ResponseWriter, r *http.Request) {
+	refuse := func(status int, message string) {
+		writeJSON(w, status, sessiontools.Answer{Error: message})
+	}
+	if !s.ws.SessionToolsEnabled() {
+		refuse(http.StatusNotFound, workspace.ErrNoSessionTools.Error())
+		return
+	}
+	if !s.ws.GitCredentialAuthorized(bearer(r)) {
+		refuse(http.StatusUnauthorized, "invalid credential token")
+		return
+	}
+	var call sessiontools.Call
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10)).Decode(&call); err != nil || !sessiontools.ValidTool(call.Tool) {
+		refuse(http.StatusBadRequest, "malformed request")
+		return
+	}
+	status, answer, err := s.ws.SessionTool(r.Context(), call)
+	switch {
+	case errors.Is(err, workspace.ErrUnknownWorkspace):
+		refuse(http.StatusNotFound, "no such session on this computer")
+	case err != nil:
+		refuse(http.StatusBadGateway, err.Error())
+	default:
+		writeJSON(w, status, answer)
+	}
 }
 
 // setSkills installs a project's skills on this computer. Any session's
