@@ -37,6 +37,10 @@ Sessions (the API, docs/api.md; OUTRUNNER_API_KEY instead of a sign-in):
   delete   Delete a session for good
 
 Each takes --org <name> and --json; outrunner <command> --help for more.
+
+In a session's terminal on its box:
+  media    Show your work in a pull request: outrunner media upload after.png
+           --name "Settings page on a phone, after"; outrunner media gif rec.mp4
 `
 
 // Main runs the command and returns its exit status. stdin is where the
@@ -60,6 +64,11 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	if *version {
 		fmt.Fprintln(stdout, "outrunner", Version)
 		return 0
+	}
+	// A session's media goes through its box's agent, never a sign-in, and
+	// a GIF is made here: neither reads this terminal's config.
+	if flags.Arg(0) == "media" {
+		return mediaCommand(ctx, flags.Args()[1:], stdout, stderr)
 	}
 	url := strings.TrimRight(firstNonEmpty(*base, os.Getenv("OUTRUNNER_URL"), DefaultURL), "/")
 

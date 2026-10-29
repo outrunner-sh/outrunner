@@ -158,6 +158,9 @@ type Service struct {
 	// RelayExecutable is this binary, which a session's agent launches as
 	// its ask_user relay; empty launches sessions without the tool.
 	RelayExecutable string
+	// outrunnerCLI is whether the sessions have `outrunner` on their PATH,
+	// and are launched saying which session they are (outrunner_cli.go).
+	outrunnerCLI bool
 }
 
 // UseJcode switches the service to the jcode engine, driving workspaces through
