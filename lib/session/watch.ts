@@ -143,12 +143,16 @@ async function settle(
   if (!activity || (activity.turn === "idle" && !activity.waiting)) return null;
   const before = rowToTurn(activity);
   const after: TurnState = { ...before, turn: "idle", waiting: null, waitingToolId: null, waitingSince: null };
-  const { error } = await db()
+  // Only the row as read: a send that woke the box meanwhile (watchAfterSend's
+  // "working") isn't undone, nor told as a turn that ended.
+  const { data: settled, error } = await db()
     .from("session_activity")
     .update({ ...turnToRow(after), updated_at: new Date().toISOString() })
     .eq("workspace_id", workspace.id)
-    .eq("updated_at", activity.updated_at);
+    .eq("updated_at", activity.updated_at)
+    .select("workspace_id");
   if (error) throw error;
+  if (!settled?.length) return null;
   return { workspaceId: workspace.id, ownerId: workspace.ownerId, before, after };
 }
 
@@ -221,9 +225,15 @@ export async function watchAfterSend(
   }
 }
 
-/** The sessions the tick reads: every one whose box is up, those sent
- *  something lately, and those still shown working or waiting (so one whose
- *  box stopped mid-turn is settled), most recently active first. */
+/** How many of the tick's reads go first to sessions still shown working or
+ *  waiting, so ones whose box stopped mid-turn are settled however many
+ *  boxes are up. */
+const BUSY_FIRST = 25;
+
+/** The sessions the tick reads: those still shown working or waiting (so one
+ *  whose box stopped mid-turn is settled), longest unchanged first; then
+ *  every one whose box is up, most recently active first; then those sent
+ *  something lately. */
 export async function watchedSessions(limit = 150): Promise<string[]> {
   const { data: live, error } = await db()
     .from("workspaces")
@@ -239,7 +249,12 @@ export async function watchedSessions(limit = 150): Promise<string[]> {
     ids.length ? db().from("runtime_computers").select("workspace_id").eq("status", "ready").in("workspace_id", ids) : { data: [], error: null },
     computerIds.length ? db().from("runtime_computers").select("id").eq("status", "ready").in("id", computerIds) : { data: [], error: null },
     db().from("session_activity").select("workspace_id").gt("watch_until", new Date().toISOString()),
-    db().from("session_activity").select("workspace_id").or("turn.eq.working,waiting.not.is.null").limit(limit),
+    db()
+      .from("session_activity")
+      .select("workspace_id")
+      .or("turn.eq.working,waiting.not.is.null")
+      .order("updated_at", { ascending: true })
+      .limit(Math.min(BUSY_FIRST, limit)),
   ]);
   // A query that failed here would otherwise read as "nothing to read".
   if (byWorkspace.error) throw byWorkspace.error;
@@ -249,8 +264,9 @@ export async function watchedSessions(limit = 150): Promise<string[]> {
   const upOwn = new Set((byWorkspace.data ?? []).map((c) => c.workspace_id));
   const upShared = new Set((byId.data ?? []).map((c) => c.id));
   const up = (live ?? []).filter((w) => upOwn.has(w.id) || (w.computer_id && upShared.has(w.computer_id))).map((w) => w.id);
-  const rest = [...(watched.data ?? []), ...(busy.data ?? [])].map((a) => a.workspace_id);
-  return [...new Set([...up, ...rest])].slice(0, limit);
+  const busyIds = (busy.data ?? []).map((a) => a.workspace_id);
+  const watchedIds = (watched.data ?? []).map((a) => a.workspace_id);
+  return [...new Set([...busyIds, ...up, ...watchedIds])].slice(0, limit);
 }
 
 /** watchAfterSend for a route's after(), telling the user what it sees
