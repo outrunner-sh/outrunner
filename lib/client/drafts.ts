@@ -222,6 +222,16 @@ export class Drafts {
     this.later(key);
   }
 
+  /** Move an unsent composer draft to a newly created chat after its fork
+   * succeeds. Uploads must finish first: their callbacks belong to the source. */
+  move(from: string, to: string): void {
+    if (from === to) return;
+    const draft = this.get(from);
+    if (!draft || draft.attachments.some((item) => item.status === "uploading")) return;
+    this.update(to, () => ({ ...draft }));
+    this.update(from, () => ({ text: "", attachments: [] }));
+  }
+
   /** Set the text at `key`, or change it from what it is. */
   setText(key: string, text: string | ((current: string) => string)): void {
     this.update(key, (draft) => {

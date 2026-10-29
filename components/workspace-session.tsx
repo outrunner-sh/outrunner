@@ -57,18 +57,20 @@ import {
   type FirstPrompt,
 } from "@/lib/session/first-prompt";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
+import { eligibleHarnesses } from "@/lib/runtime/selection";
 import { isProviderId } from "@/lib/providers/registry";
 import { EMPTY_LOADOUT } from "@/lib/runtime/model-loadout";
 import {
   defaultModel,
   type Effort,
   modelGroups,
+  compatibleEffort,
+  matchModel,
   type ModelProvider,
   parseAgentConnections,
   type RecordedModel,
   runsOnOwnAccount,
   type SessionModel,
-  takesEffort,
 } from "@/lib/runtime/session-models";
 import { sessionTitle } from "@/lib/nav/session-title";
 import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
@@ -107,10 +109,11 @@ const COMPACT_WAIT_MS = 5 * 60_000;
 type SendHow = { mode?: SessionMode; dismiss?: boolean };
 
 const MENU_UNTIL_ANSWERED: OutrunnerModels = {
-  outrunner: true,
+  outrunner: false,
   allowance: false,
   keys: [],
-  available: true,
+  available: false,
+  codexModels: [],
   loadout: EMPTY_LOADOUT,
   agents: parseAgentConnections(undefined),
 };
@@ -135,6 +138,7 @@ export function WorkspaceSession({
   initialAttachmentIds,
   onSender,
   onSideChat,
+  onHarnessFork,
 }: {
   workspaceId: string;
   /** The chat it shows (lib/session/chats.ts): its main one unless another
@@ -170,6 +174,8 @@ export function WorkspaceSession({
   /** `/btw <question>`: ask it in a side chat about this one (the studio
    *  starts it and shows it); resolves whether it went. */
   onSideChat?: (question: string) => Promise<boolean>;
+  /** Continue this conversation in another harness using the chat fork API. */
+  onHarnessFork?: (agent: AgentId) => Promise<void>;
 }) {
   // What this page keeps of the chat (its conversation, queue, picks): the
   // session's own keys for its main chat, as before there were others.
@@ -352,18 +358,18 @@ export function WorkspaceSession({
   // actually ran.
   const [switching, setSwitching] = useState(false);
   // What the model menu offers: Outrunner's models, the user's own keys
-  // (Settings → Providers), and their Claude. Until the first answer, as if
-  // all were on offer.
-  const menu = useOutrunnerModels() ?? MENU_UNTIL_ANSWERED;
+  // (Settings → Providers), and connected accounts. Before the verified
+  // menu arrives, keep the recorded selection without offering guessed models.
+  const menu = useOutrunnerModels(local ? undefined : workspaceId) ?? MENU_UNTIL_ANSWERED;
   // Whose entry the menu ticks when a model is offered by two: the one last
   // picked here, else the one a new session starts on.
-  const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => pickedProvider(stateKey));
+  const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => local && !recorded ? pickedProvider(stateKey) : null);
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
   // The effort it runs at, as last put on from here (lib/session/picked-effort.ts);
   // none put on from here (a session started from onboarding, or another
   // browser), as its row records. Undefined until either says.
   const [effortHere, setEffortHere] = useState<Effort | null | undefined>(
-    () => rememberedEffort(stateKey) ?? undefined,
+    () => local && !recorded ? rememberedEffort(stateKey) ?? undefined : undefined,
   );
   const effort = effortHere !== undefined ? effortHere : (recorded?.effort ?? null);
   const repliedSincePick =
@@ -881,14 +887,32 @@ export function WorkspaceSession({
   // agent is already running on this Mac, so its own login there counts.
   const accounts = accountsHere(menu.agents, local, null);
   const modelChoice: ModelChoice = {
-    groups: modelGroups(menu, accounts, agent),
+    groups: modelGroups(local ? (menu.localMenu ?? { ...menu, keys: [], codexModels: [] }) : menu, accounts, agent),
+    agent,
+    selectedModel: matchModel(modelGroups(menu, accounts, agent), shownModel, providerPicked ?? recorded?.model.provider)
+      ?? (recorded && recorded.model.id === shownModel ? recorded.model : undefined),
+    harnessChoice: onHarnessFork ? {
+      available: [...new Set([agent, ...eligibleHarnesses(modelGroups(menu, accounts), menu.harnesses)])],
+      fork: true,
+      disabledReason: "Changing harness creates a fork with the conversation and the same files. Your draft follows it.",
+      onChange: (next) => {
+        if (next === agent || switching) return;
+        setSwitching(true);
+        setSwitchError(null);
+        void onHarnessFork(next).catch((error: unknown) => setSwitchError({
+          label: AGENTS[next].label, message: error instanceof Error ? error.message : "Couldn't fork this chat.",
+        })).finally(() => setSwitching(false));
+      },
+    } : { available: [agent], disabledReason: "This chat's harness is fixed here. A cloud session's chat menu can fork a conversation with another harness; local sessions and Runners use a new session." },
     // The session's own agent's account, where it isn't connected here.
     connect: accounts.includes(agent) ? [] : [agent],
     effort,
     loadout: menu.loadout,
     preferredProvider: providerPicked ?? recorded?.model.provider ?? defaultModel(menu)?.provider,
     switching,
-    disabledReason: !attached
+    disabledReason: editing || queuedEditing
+      ? "Finish or cancel editing the prompt before changing selection"
+      : !attached
       ? "Waiting for the session to connect"
       : waitingOnUser
         ? waitingOnSecrets
@@ -899,7 +923,7 @@ export function WorkspaceSession({
           : null,
     onChange: (model, pickedEffort) => {
       // What the agent is told: an effort goes only with a model that takes one.
-      const next = takesEffort(model) ? pickedEffort : null;
+      const next = compatibleEffort(model, pickedEffort);
       setSwitching(true);
       setSendError(null);
       setSwitchError(null);
@@ -1127,12 +1151,13 @@ export function WorkspaceSession({
         />
       )}
 
-      <section className="studio-convo-panel" aria-label="Claude conversation">
+      <section className="studio-convo-panel" aria-label={`${AGENTS[agent].label} conversation`}>
         <div className="studio-convo-body">
           {/* Images Claude shows by path are on a cloud session's box; this
               Mac's are out of the server's reach. */}
           <ImageBoxContext value={local ? null : workspaceId}>
             <ConversationTimeline
+              agentLabel={AGENTS[agent].label}
               events={timelineEvents}
               working={working && !compacting}
               compacting={compacting}
@@ -1272,6 +1297,7 @@ export function WorkspaceSession({
           }
           model={shownModel}
           modelChoice={modelChoice}
+          sendDisabledReason={switching ? "Wait for the harness or model change to finish" : undefined}
           allowAttachments={!local}
           sendError={connectionError ? null : (sendError?.message ?? null)}
           sendErrorNoRetry={sendIsDeadEnd(sendError?.code)}
@@ -1521,19 +1547,15 @@ async function stopCloudTurn(workspaceId: string, chatId: string): Promise<void>
   throw new Error(data.error ?? "Couldn't stop the turn. Please try again.");
 }
 
-/** Who served a session's model when it was last picked here (a convenience:
- *  the reply names only the model, the same from either provider). */
+/** Local sessions have no server model row; their last explicit provider is
+ * retained only as a hint. Cloud sessions always prefer the recorded choice. */
 function pickedProvider(workspaceId: string): ModelProvider | null {
   try {
     const saved = window.localStorage.getItem(`outrunner:model-key:${workspaceId}`);
-    // Saved before providers: "own" was the user's OpenRouter key, and
-    // "neev" Outrunner's, before the rename.
     if (saved === "own") return "openrouter";
     if (saved === "neev") return "outrunner";
     return saved === "outrunner" || saved === "claude" || saved === "codex" || isProviderId(saved) ? saved : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function rememberPickedProvider(workspaceId: string, provider: ModelProvider): void {

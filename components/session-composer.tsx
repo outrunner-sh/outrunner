@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Check, Hammer, ImagePlus, ListChecks, MessageSquareText, Plus, Search, Settings2, Square, X } from "lucide-react";
+import { ArrowUp, Check, Circle, Hammer, ImagePlus, ListChecks, MessageSquareText, Plus, Search, Settings2, Square, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -38,10 +38,9 @@ import {
 } from "@/lib/runtime/model-loadout";
 import {
   costHint,
-  DEFAULT_EFFORT,
   type Effort,
   EFFORT_LABELS,
-  EFFORTS,
+  effortsFor,
   imageModelFor,
   matchModel,
   modelLabel,
@@ -82,6 +81,16 @@ import { cn } from "@/lib/utils";
  *  where the session allows it. */
 export type ModelChoice = {
   groups: ModelGroup[];
+  /** Exact optimistic/recorded selection, including custom IDs and capabilities. */
+  selectedModel?: SessionModel;
+  agent?: AgentId;
+  harnessChoice?: {
+    available: AgentId[];
+    onChange?: (agent: AgentId) => void;
+    disabledReason?: string;
+    /** Existing chats continue through the runtime's fork lifecycle. */
+    fork?: boolean;
+  };
   /** `effort` null runs the model at its own. */
   onChange: (model: SessionModel, effort: Effort | null) => void;
   /** The effort the session runs at; null for the model's own. */
@@ -114,6 +123,7 @@ export function SessionComposer({
   onSideChat,
   context = null,
   canSend,
+  sendDisabledReason,
   placeholder = "Ask anything, @ for context…",
   disabledPlaceholder = "Read-only — another viewer has the keyboard",
   model,
@@ -152,6 +162,8 @@ export function SessionComposer({
   /** How full the session's context is, for the footer's ring; null hides it. */
   context?: ContextUsage | null;
   canSend: boolean;
+  /** Keep typing and uploads available while selection capabilities load. */
+  sendDisabledReason?: string;
   /** Placeholder shown while the user can type. */
   placeholder?: string;
   /** Placeholder shown when input is disabled (offline, reader, connecting…). */
@@ -295,7 +307,7 @@ export function SessionComposer({
 
   // Named for the agent whose own model it is (Claude Code's, Codex's); one
   // on a key, or not known, is just "Message".
-  const shownModel = modelChoice ? matchModel(modelChoice.groups, model, modelChoice.preferredProvider) : undefined;
+  const shownModel = modelChoice?.selectedModel ?? (modelChoice ? matchModel(modelChoice.groups, model, modelChoice.preferredProvider) : undefined);
   const provider = shownModel?.provider;
   const messageLabel = provider === "claude" || provider === "codex" ? `Message ${AGENTS[provider].label}` : "Message";
 
@@ -319,6 +331,7 @@ export function SessionComposer({
   /** Stage files, or say why they cannot be (attachNotice). */
   function addFiles(files: File[]) {
     if (files.length === 0) return;
+    if (modelChoice?.switching) { setNotice("Wait for the selection change to finish before attaching files."); return; }
     const blocked = attachNotice({ allowed: allowAttachments, canSend, skipped: 0 });
     if (blocked) {
       setNotice(blocked);
@@ -330,7 +343,7 @@ export function SessionComposer({
   usePageDrop(allowAttachments, setDragging, addFiles, textareaRef);
 
   function submit() {
-    if (!canSend || sending || !hasSomethingToSend || uploading || blindModel) return;
+    if (!canSend || sendDisabledReason || sending || !hasSomethingToSend || uploading || blindModel) return;
     let text = value.trim();
     let mode = modeChoice?.mode;
     const command = composerCommand(text);
@@ -756,7 +769,7 @@ export function SessionComposer({
           )}
           {modeChoice && <ModeToggle choice={modeChoice} disabled={!canSend} />}
           {modelChoice ? (
-            <ModelPicker model={model} choice={modelChoice} />
+            <ModelPicker model={model} choice={modelChoice} uploading={uploading} />
           ) : (
             model && <span className="studio-composer-model">{modelLabel(model)}</span>
           )}
@@ -778,9 +791,9 @@ export function SessionComposer({
           <button
             type="submit"
             className="studio-composer-send"
-            disabled={!canSend || sending || !hasSomethingToSend || uploading || blindModel !== null}
+            disabled={!canSend || !!sendDisabledReason || sending || !hasSomethingToSend || uploading || blindModel !== null}
             aria-label="Send"
-            title={blindModel ? `${blindModel.label} can't see images` : undefined}
+            title={sendDisabledReason ?? (blindModel ? `${blindModel.label} can't see images` : undefined)}
           >
             <ArrowUp />
           </button>
@@ -852,46 +865,55 @@ function ModelIcon({ provider }: { provider: ModelProvider }) {
 /** The footer's model, as a menu of the models the session can switch to:
  *  the user's loadout where they have one, else every group, and a search
  *  across all of them either way. */
-function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice }) {
+function ModelPicker({ model, choice, uploading }: { model?: string; choice: ModelChoice; uploading: boolean }) {
   // A group on the user's own key offers the ids they typed in before, and
   // takes another (CustomModelDialog).
   const [customFor, setCustomFor] = useState<TypedModelProvider | null>(null);
   const [query, setQuery] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const [page, setPage] = useState<"main" | "harness" | "model" | "effort">("main");
   const groups = choice.groups.map((group) => {
     const own = group.custom && takesTypedModels(group.provider) ? group.provider : null;
     if (!own) return { ...group, own };
     const typed = rememberedCustomModels(own).filter((m) => !group.models.some((listed) => listed.id === m.id));
     return { ...group, own, models: [...group.models, ...typed] };
   });
-  const current = matchModel(groups, model, choice.preferredProvider);
+  const current = choice.selectedModel ?? matchModel(groups, model, choice.preferredProvider);
   const name = current?.label ?? (model ? modelLabel(model) : "Model");
   // The effort shows only where it does something.
   const effort = current && takesEffort(current) ? choice.effort : undefined;
+  const savedEffort = current?.provider === "codex" && effort === undefined ? choice.effort : null;
+  const harness = choice.agent ? AGENTS[choice.agent].label : "Harness";
+  const blocked = choice.disabledReason ?? (choice.switching ? "Switching model" : null);
   const label = choice.switching
     ? "Switching model"
     : effort === undefined
-      ? name
+      ? savedEffort ? `${name}, ${effortName(savedEffort)} saved effort` : name
       : `${name}, ${effortName(effort)} effort`;
   const loadout = choice.loadout ? loadoutModels(choice.loadout, groups) : [];
   const searching = query.trim() !== "";
   // Searching looks through everything; otherwise the loadout, where there is
   // one, stands in for the groups.
   const flat = searching ? searchModels(groups.flatMap((g) => g.models), query) : loadout;
-  const showGroups = !searching && loadout.length === 0;
+  const showGroups = !searching && (showAll || loadout.length === 0);
   const connect = connectOffers(choice.connect, query, flat.length);
   const isCurrent = (m: SessionModel) => m.id === current?.id && m.provider === current.provider;
   const item = (m: SessionModel) => (
     <DropdownMenuItem
       key={`${m.provider}:${m.id}`}
+      role="menuitemradio"
+      aria-checked={isCurrent(m)}
       // Always sent, even for the ticked family: the session may run an
       // older model of it, and the agent ignores a switch to what it has.
       // The same model keeps its effort; another runs at the loadout's for
       // it, else DEFAULT_EFFORT.
+      disabled={!!blocked}
       onSelect={() => choice.onChange(m, isCurrent(m) ? choice.effort : effortOnPick(choice.loadout, m))}
     >
       <ModelIcon provider={m.provider} />
       {/* The current model in the brand's colour, as a tick would mark it. */}
       <span className={cn("flex-1 truncate", isCurrent(m) && "text-brand")}>{m.label}</span>
+      <Check aria-hidden className={isCurrent(m) ? "opacity-100" : "opacity-0"} />
       <span className={cn("text-xs tabular-nums text-muted-foreground", isCurrent(m) && "text-brand")}>
         {costHint(m)}
       </span>
@@ -899,21 +921,20 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
   );
   return (
     <>
-      <DropdownMenu onOpenChange={(open) => !open && setQuery("")}>
+      <DropdownMenu onOpenChange={(open) => { if (!open) { setQuery(""); setShowAll(false); setPage("main"); } }}>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
             className="studio-composer-model studio-composer-model-picker"
-            disabled={choice.switching || choice.disabledReason !== null}
-            title={choice.disabledReason ?? "Switch model"}
-            aria-label={`Model: ${label}. Switch model`}
+            title={blocked ?? "Choose harness, model and effort"}
+            aria-label={`Harness: ${harness}. Model: ${label}. Choose harness, model and effort`}
           >
             {/* Both labels share one cell, so the footer holds still while the
                 name gives way to "Switching" and back. */}
-            <span className="grid place-items-center">
-              <span className={cn("col-start-1 row-start-1 inline-flex items-center gap-2", choice.switching && "invisible")}>
-                {name}
-                {effort !== undefined && <EffortMeter effort={effort} />}
+            <span className="grid min-w-0 place-items-center">
+              <span className={cn("col-start-1 row-start-1 inline-flex min-w-0 items-center gap-2", choice.switching && "invisible")}>
+                <span className="min-w-0 max-w-48 truncate">{harness} · {name}</span>
+                {(effort !== undefined || savedEffort) && <EffortMeter effort={effort ?? savedEffort} />}
               </span>
               <span
                 aria-hidden
@@ -927,8 +948,41 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
         <DropdownMenuContent
           align="start"
           side="top"
-          className="w-72 border-(--studio-border)"
+          className="w-80 max-w-[calc(100vw-1rem)] border-(--studio-border)"
         >
+          {blocked && <p role="status" className="px-2 py-2 text-xs text-muted-foreground">{blocked}</p>}
+          {page === "main" ? <>
+            <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setPage("harness"); }}>
+              <span className="flex-1">Harness</span><span>{harness}</span><span aria-hidden>›</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setPage("model"); }}>
+              <span className="flex-1">Model</span><span className="max-w-48 truncate">{name}</span><span aria-hidden>›</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={!current || effort === undefined} onSelect={(event) => { event.preventDefault(); setPage("effort"); }}>
+              <span className="flex-1">Effort</span><span>{effort === undefined ? savedEffort ? `${effortName(savedEffort)} (saved)` : "Runtime default" : effortName(effort)}</span><span aria-hidden>›</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild><Link href="/settings/models"><Settings2 />Change defaults</Link></DropdownMenuItem>
+          </> : <>
+          <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setQuery(""); setShowAll(false); setPage("main"); }}>‹ Back</DropdownMenuItem>
+          <DropdownMenuLabel>{page === "harness" ? "Harness" : page === "effort" ? "Effort" : "Model"}</DropdownMenuLabel>
+          {page === "harness" ? <>
+            {(choice.harnessChoice?.available ?? (choice.agent ? [choice.agent] : [])).map((agent) => (
+              <DropdownMenuItem key={agent} role="menuitemradio" aria-checked={agent === choice.agent} disabled={!!blocked || !choice.harnessChoice?.onChange || (choice.harnessChoice.fork && (uploading || agent === choice.agent))} onSelect={() => choice.harnessChoice?.onChange?.(agent)}>
+                <AgentIcon agent={agent} /><span className="flex-1">{choice.harnessChoice?.fork && agent !== choice.agent ? `Fork with ${AGENTS[agent].label}` : AGENTS[agent].label}</span><Circle aria-hidden className={cn("size-2 fill-current", agent === choice.agent ? "opacity-100" : "opacity-0")} />
+              </DropdownMenuItem>
+            ))}
+            {choice.harnessChoice?.fork && uploading && <p className="px-2 py-2 text-xs text-muted-foreground">Wait for attachments to finish uploading before forking.</p>}
+            {choice.harnessChoice?.disabledReason && <p className="px-2 py-2 text-xs text-muted-foreground">{choice.harnessChoice.disabledReason}</p>}
+            {!choice.harnessChoice?.onChange && <DropdownMenuItem asChild><Link href="/new">Choose a harness for a new session</Link></DropdownMenuItem>}
+          </> : page === "effort" ? <>
+            {current && [null, ...effortsFor(current)].map((level) => (
+              <DropdownMenuItem key={level ?? "default"} role="menuitemradio" aria-checked={level === effort} disabled={!!blocked} onSelect={() => choice.onChange(current, level)}>
+                <EffortMeter effort={level} /><span className="flex-1">{level ? EFFORT_LABELS[level] : effortName(null)}</span>
+                <Check aria-hidden className={level === effort ? "opacity-100" : "opacity-0"} />
+              </DropdownMenuItem>
+            ))}
+          </> : <>
           <div className="flex items-center gap-2 px-2 pb-1.5 pt-1">
             <Search className="size-3.5 text-muted-foreground" />
             <input
@@ -958,7 +1012,7 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
                   </DropdownMenuLabel>
                   {group.models.map(item)}
                   {group.own ? (
-                    <DropdownMenuItem onSelect={() => setCustomFor(group.own)}>
+                    <DropdownMenuItem disabled={!!blocked} onSelect={() => setCustomFor(group.own)}>
                       <Check className="opacity-0" />
                       <span className="text-muted-foreground">Other model…</span>
                     </DropdownMenuItem>
@@ -966,6 +1020,7 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
                 </div>
               ))
             : flat.map(item)}
+          {!showGroups && !searching && <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setShowAll(true); }}>All models…</DropdownMenuItem>}
           {searching && flat.length === 0 ? (
             <p className="px-2 py-1.5 text-sm text-muted-foreground">No model matches “{query.trim()}”.</p>
           ) : null}
@@ -974,7 +1029,7 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
           {!showGroups
             ? groups.flatMap((group) =>
                 group.own ? (
-                  <DropdownMenuItem key={`other:${group.provider}`} onSelect={() => setCustomFor(group.own)}>
+                  <DropdownMenuItem key={`other:${group.provider}`} disabled={!!blocked} onSelect={() => setCustomFor(group.own)}>
                     <ModelIcon provider={group.provider} />
                     <span className="text-muted-foreground">Other {typedModelOwner(group.own).label} model…</span>
                   </DropdownMenuItem>
@@ -994,21 +1049,8 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
               ))}
             </>
           ) : null}
-          {current && effort !== undefined ? (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                {current.label} effort
-              </DropdownMenuLabel>
-              {[null, ...EFFORTS].map((level) => (
-                <DropdownMenuItem key={level ?? "default"} onSelect={() => choice.onChange(current, level)}>
-                  <EffortMeter effort={level} />
-                  <span className="flex-1 truncate">{level ? EFFORT_LABELS[level] : effortName(null)}</span>
-                  <Check className={level === effort ? "opacity-100" : "opacity-0"} />
-                </DropdownMenuItem>
-              ))}
-            </>
-          ) : null}
+          </>}
+          </>}
         </DropdownMenuContent>
       </DropdownMenu>
       <CustomModelDialog
@@ -1018,7 +1060,7 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
         }}
         onChoose={(provider, id) => {
           rememberCustomModel(provider, id);
-          choice.onChange({ id, label: id, provider }, DEFAULT_EFFORT);
+          choice.onChange({ id, label: id, provider }, null);
         }}
       />
     </>

@@ -1,7 +1,7 @@
 "use client";
 
 import { GitBranch, GitFork, Inbox } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { ProjectEnvironmentPicker } from "@/components/import-setup-picker";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
@@ -14,14 +14,13 @@ import { useWorkItemPrompt } from "@/hooks/use-work-item-prompt";
 import { type FirstSessionEnvironment, useFirstSessionEnvironment } from "@/hooks/use-first-session-environment";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
-import { AGENT_IDS } from "@/lib/agents/registry";
+import { eligibleHarnesses, groupsForHarness, initialSelection, selectionForHarness } from "@/lib/runtime/selection";
+import { AGENT_IDS, type AgentId } from "@/lib/agents/registry";
 import { accountsHere } from "@/lib/desktop/local-runtime";
-import { effortOnPick, loadoutDefault } from "@/lib/runtime/model-loadout";
+import { effortOnPick, offeredModel } from "@/lib/runtime/model-loadout";
 import {
   agentOf,
-  CLAUDE_DEFAULT_MODEL,
-  DEFAULT_EFFORT,
-  defaultModel,
+  compatibleEffort,
   type Effort,
   modelGroups,
   type SessionModel,
@@ -71,10 +70,9 @@ export function NewSessionForm({
 }) {
   const { projects, projectId, selectProject, selected, isCreating, message, messageAction, refusedPrompt, refusedAttachments, takeRefusedAttachments, create, createLocal } =
     useCreateSession(listed, initialProjectId);
-  // The model the session starts on, picked in the composer as in a session;
-  // none picked, what it starts on anyway: the user's Claude, on
-  // CLAUDE_DEFAULT_MODEL, where it's connected; otherwise the menu's default.
-  const menu = useOutrunnerModels();
+  // Explicit session selection, then personal/org preferences, then the
+  // eligible runtime default. The server uses the same selection rules.
+  const menu = useOutrunnerModels(undefined, selected?.id);
   // The model picked in the composer, else the loadout's default: its agent
   // decides what this Mac needs for a local session (Claude Code, or Codex).
   const [picked, setPicked] = useState<SessionModel | null>(initialPick?.model ?? null);
@@ -84,7 +82,8 @@ export function NewSessionForm({
   // The agent asked for (Codex on Outrunner's models), kept across model
   // picks: it runs those it can (agentOf), and a cloud session only. Kept
   // from the mount, as the pick is: the route drops `?start=` straight after.
-  const [askedAgent] = useState(initialPick?.agent);
+  const [askedAgent, setAskedAgent] = useState<AgentId | undefined>(initialPick?.agent ?? (initialPick ? agentOf(initialPick.model.provider) : undefined));
+  const remembered = useRef<Partial<Record<AgentId, { model: SessionModel; effort: Effort | null }>>>({});
   // Asked to open the picker, until it has been shut once: the cloud picker
   // can give way to the Mac's as this Mac's agent answers, and that one opens
   // in its place.
@@ -105,7 +104,7 @@ export function NewSessionForm({
     if (focusComposer) setFocusAsks(focusAsks + 1);
   }
   const workItem = useWorkItemPrompt(workItemId);
-  const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude"));
+  const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude", askedAgent));
   const local = where.location === "local";
   // A repository's first cloud session can bring its environment from this Mac.
   const environment = useFirstSessionEnvironment(selected, !local);
@@ -126,26 +125,23 @@ export function NewSessionForm({
   const accounts = menu
     ? accountsHere(menu.agents, local, where.runtime.state === "ready" ? where.runtime.status : null)
     : [];
-  const groups = menu ? modelGroups(menu, accounts) : [];
+  const targetMenu = local ? menu?.localMenu : menu;
+  const allGroups = targetMenu ? modelGroups(targetMenu, accounts) : [];
+  const available = eligibleHarnesses(allGroups, targetMenu?.harnesses);
+  const eligibleAsked = askedAgent && available.includes(askedAgent) ? askedAgent : undefined;
+  const fallback = menu ? initialSelection(allGroups, menu.loadout, eligibleAsked, targetMenu?.harnesses) : null;
+  // A stale pick stays in memory for when its credentials return, but cannot be
+  // sent to a target that does not offer it.
+  const offeredPick = picked ? offeredModel(allGroups, picked) : undefined;
+  const startsOn = offeredPick ?? fallback?.model ?? null;
+  const startAgent = startsOn ? agentOf(startsOn.provider, eligibleAsked ?? fallback?.agent) : undefined;
+  const groups = startAgent ? groupsForHarness(allGroups, startAgent) : [];
   const connect = menu ? AGENT_IDS.filter((agent) => !accounts.includes(agent)) : [];
-  // Without the user's Claude here (or on a Mac whose Claude Code isn't
-  // logged in), a session starts on the menu's default: Outrunner's model, or
-  // one on their key.
   const onDefault = !accounts.includes("claude") || (local && where.outrunnerModel);
-  // The loadout's default (Settings → Default models) where the menu offers
-  // it here; else what a session starts on without one: the menu's default,
-  // or, where it starts on the user's Claude, Opus.
-  const chosenDefault = menu ? (loadoutDefault(menu.loadout, groups) ?? null) : null;
-  const startsOn = picked ?? chosenDefault ?? (menu ? (onDefault ? defaultModel(menu) : CLAUDE_DEFAULT_MODEL) : null);
-  const startModel = picked ?? chosenDefault ?? undefined;
-  // Named only where the agent asked for isn't the model's own default.
-  const startAgent =
-    startModel && askedAgent && agentOf(startModel.provider, askedAgent) !== agentOf(startModel.provider) ? askedAgent : undefined;
-  // What the session is started at: none picked, the loadout's default goes
-  // with its effort, and the user's Claude with DEFAULT_EFFORT (the server's
-  // and createLocal's for it).
-  const effort =
-    pickedEffort !== undefined ? pickedEffort : chosenDefault ? effortOnPick(menu?.loadout, chosenDefault) : DEFAULT_EFFORT;
+  const startModel = startsOn ?? undefined;
+  const effort = offeredPick && pickedEffort !== undefined
+    ? compatibleEffort(offeredPick, pickedEffort)
+    : startsOn ? effortOnPick(menu?.loadout, startsOn) : null;
 
   // Either kind of session opens in about a second (a cloud one shows its
   // setup progress on its own page), so the form only waits, disabled; one
@@ -243,6 +239,7 @@ export function NewSessionForm({
                   startModel,
                   where.runtime.state === "ready" ? where.runtime.status : null,
                   effort,
+                  startAgent,
                 )
               : // Kept first, so the session's box starts with it; one that
                 // fails keeps the prompt, and the session isn't started.
@@ -261,14 +258,30 @@ export function NewSessionForm({
                       ),
                   )
           }
+          sendDisabledReason={!menu ? "Loading available harnesses and models" : !startsOn ? "Connect a supported coding agent or provider in Settings" : undefined}
           model={startsOn?.id}
           modelChoice={
             groups.length > 0 || connect.length > 0
               ? {
                   groups,
                   connect,
+                  selectedModel: startsOn ?? undefined,
+                  agent: startAgent,
+                  harnessChoice: {
+                    available,
+                    onChange: (agent) => {
+                      if (!menu) return;
+                      if (startAgent && startsOn) remembered.current[startAgent] = { model: startsOn, effort };
+                      const next = selectionForHarness(allGroups, menu.loadout, agent, remembered.current[agent]);
+                      if (!next) return;
+                      setAskedAgent(agent);
+                      setPicked(next.model);
+                      setPickedEffort(next.effort);
+                    },
+                  },
                   effort,
                   onChange: (model, effort) => {
+                    setAskedAgent(agentOf(model.provider, startAgent));
                     setPicked(model);
                     setPickedEffort(effort);
                   },

@@ -19,7 +19,10 @@ export function newBoxSize(own: { boxSize: BoxSizeId; boxSizeChosen: boolean }, 
 export function withOrgDefault(loadout: ModelLoadout, org: LoadoutEntry | null): ModelLoadout {
   if (loadout.default || !org) return loadout;
   const kept = loadout.models.find((e) => sameEntry(e, org));
-  if (kept) return { models: loadout.models, default: kept };
+  if (kept) {
+    const entry = !kept.agent && org.agent ? { ...kept, agent: org.agent } : kept;
+    return { models: loadout.models.map((m) => sameEntry(m, kept) ? entry : m), default: entry };
+  }
   return { models: [...loadout.models.slice(0, LOADOUT_MAX - 1), org], default: org };
 }
 

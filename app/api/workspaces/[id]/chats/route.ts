@@ -1,9 +1,18 @@
+import { codexModelsFor } from "@/lib/codex/model-catalog.deps";
+import { agentConnection } from "@/lib/agents/resolve";
+import { agentAuthStore, modelKey, modelMenu } from "@/lib/db/credentials";
+import { getModelLoadout } from "@/lib/db/model-loadout";
+import { orgDefaultsFor } from "@/lib/db/org-defaults";
+import { withOrgDefault } from "@/lib/orgs/defaults";
+import { checkEffortApplied, modelGroups } from "@/lib/runtime/session-models";
+import { recordedModelRequest } from "@/lib/runtime/model-switch";
+import { chatSelection } from "@/lib/session/chat-selection";
 import { NextResponse } from "next/server";
 
 import { AGENTS, isAgentId } from "@/lib/agents/registry";
 import { probeStatus } from "@/lib/supabase/probe";
 import { getOwner } from "@/lib/auth/owner";
-import { deleteChatRow, insertChat, listChats } from "@/lib/db/chats";
+import { deleteChatRow, insertChat, listChats, recordChatModel } from "@/lib/db/chats";
 import { getWorkspace } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
@@ -96,6 +105,19 @@ export async function POST(request: Request, context: RouteContext) {
   // A chat on its source's agent goes on its model; on another, on that
   // agent's own default until the user picks one.
   const source = from ?? mainChatOf(workspace);
+  let model = source.model;
+  if (source.agent !== chatAgent) {
+    try {
+      const store = agentAuthStore(owner.id, workspace.orgId);
+      const [menu, mine, org, account, catalog] = await Promise.all([
+        modelMenu(owner.id, workspace.orgId), getModelLoadout(owner.id), orgDefaultsFor(workspace.orgId),
+        agentConnection(store, chatAgent), chatAgent === "codex" ? codexModelsFor(store) : Promise.resolve([]),
+      ]);
+      model = chatSelection(source, chatAgent, modelGroups({ ...menu, codexModels: catalog }, account.cloud ? [chatAgent] : [], chatAgent), withOrgDefault(mine, org.defaultModel));
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "Choose an eligible harness." }, { status: 409 });
+    }
+  }
   let chat: Awaited<ReturnType<typeof insertChat>>;
   try {
     chat = await insertChat({
@@ -106,7 +128,7 @@ export async function POST(request: Request, context: RouteContext) {
       agent: chatAgent,
       kind: side ? "side" : "chat",
       forkedFrom: from?.id ?? null,
-      model: source.agent === chatAgent ? source.model : null,
+      model,
     });
   } catch (error) {
     console.error(`Chat: couldn't record a chat in ${workspace.id}`, error);
@@ -122,6 +144,16 @@ export async function POST(request: Request, context: RouteContext) {
       noStart: true,
     });
     await readyChatRelaunch(agent, identity, upgrade, workspace, chat, owner.id);
+    if (chat.model) {
+      // CreateChat inherits from the workspace's main chat, which can differ
+      // from a fork's source. Explicitly apply the selected/source model before
+      // launch for every provider, including direct Claude/Codex accounts.
+      const req = await recordedModelRequest(model ?? chat.model, (holder) => modelKey(owner.id, holder, workspace.orgId));
+      checkEffortApplied(req, await agent.setModel(identity, req, chat.id));
+      const applied = { model: (model ?? chat.model).model, effort: req.effort ?? null };
+      await recordChatModel(workspace.id, chat.id, applied);
+      chat = { ...chat, model: applied };
+    }
     await agent.startWorkspace(identity, chat.id);
   } catch (error) {
     // Not made, so not listed: the box forgets what it had of it.

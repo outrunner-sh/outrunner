@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { codexModelsFor } from "@/lib/codex/model-catalog.deps";
 import { AGENTS } from "@/lib/agents/registry";
 import { getOwner } from "@/lib/auth/owner";
 import { recordChatModel } from "@/lib/db/chats";
@@ -23,6 +24,7 @@ import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
 import {
   agentOf,
+  effortsFor,
   agentsFor,
   checkEffortApplied,
   onCodexGateway,
@@ -52,7 +54,7 @@ export async function POST(request: Request, context: RouteContext) {
   const body = (await request.json().catch(() => null)) as
     | { provider?: unknown; model?: unknown; key?: unknown; effort?: unknown }
     | null;
-  const model = requestedModel(body);
+  let model = requestedModel(body);
   if (!model) {
     return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
   }
@@ -78,6 +80,17 @@ export async function POST(request: Request, context: RouteContext) {
       { error: `This chat runs ${AGENTS[chatAgent].label}. Fork it to use ${AGENTS[agentOf(model.provider)].label}.` },
       { status: 409 },
     );
+  }
+
+  // Resolve the selected billing identity before validating model capabilities.
+  if (model.provider === "codex") {
+    const catalog = await codexModelsFor(agentAuthStore(owner.id, workspace.orgId));
+    const discovered = catalog.find((m) => m.id === model?.id);
+    if (!discovered) return NextResponse.json({ error: "This model isn't in your connected Codex account's runtime catalog." }, { status: 409 });
+    model = discovered;
+  }
+  if (effort && !effortsFor(model).includes(effort)) {
+    return NextResponse.json({ error: "That effort isn't supported by the selected model." }, { status: 400 });
   }
 
   const resolution = resolveProvider(workspace);

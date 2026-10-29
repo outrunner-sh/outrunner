@@ -171,6 +171,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       prompt,
       branch,
       agent: agentOf(model?.provider ?? "claude", model ? agent : undefined),
+      model: model ? { model, effort } : null,
       ownerId: ownSession?.ownerId ?? "",
       provider: ownSession?.provider ?? "daytona",
     });
@@ -268,6 +269,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     model?: SessionModel,
     status: LocalStatus | null = null,
     pickedEffort: Effort | null = null,
+    askedAgent?: AgentId,
   ): Promise<boolean> {
     const effort = startingEffort(model, pickedEffort);
     return new Promise((resolve) => startCreating(async () => {
@@ -276,7 +278,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       FAILED_CREATE.set(null);
       const workspaceId = crypto.randomUUID();
       const target = localTarget(workspaceId);
-      const agent = agentOf(model?.provider ?? "claude");
+      const agent = agentOf(model?.provider ?? "claude", askedAgent);
       const fail = (error: unknown, fallback: string) => {
         setMessage(error instanceof Error ? error.message : fallback);
         if (error instanceof LocalAgentAuthError) setMessageAction({ label: "Open settings", href: error.settingsHref, kind: "step" });

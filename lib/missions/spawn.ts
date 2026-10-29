@@ -10,6 +10,8 @@
  * Outrunner's metered models as startServerSession's sessions are.
  */
 
+import { runnerRequest } from "@/lib/missions/runner-request";
+export { runnerRequest } from "@/lib/missions/runner-request";
 import { after } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
@@ -17,35 +19,9 @@ import { saveBrief } from "@/lib/missions/store";
 import type { RunnerStart } from "@/lib/missions/tools";
 import { firstPrompt } from "@/lib/api/create-request";
 import { openRunnerWatch, watchSoon } from "@/lib/missions/watch.deps";
-import { CLAUDE_MODELS } from "@/lib/runtime/session-models";
 import type { Workspace } from "@/lib/runtime/types";
-import { createCloudSession, type SessionRequest } from "@/lib/session/create-cloud-session";
+import { createCloudSession } from "@/lib/session/create-cloud-session";
 import { ActAsUserError, actAsUser } from "@/lib/supabase/acting-user";
-
-/** The new-session request for a Ship under `runner`. */
-export function runnerRequest(mission: Pick<Workspace, "model" | "agent">, start: RunnerStart): SessionRequest {
-  const own = mission.model;
-  let provider: string | undefined = own?.model.provider;
-  let model: string | undefined = own?.model.id;
-  if (start.model) {
-    model = start.model;
-    provider =
-      start.agent === "codex"
-        ? "codex"
-        : CLAUDE_MODELS.some((m) => m.id === start.model)
-          ? "claude"
-          : own && own.model.provider !== "claude" && own.model.provider !== "codex"
-            ? own.model.provider
-            : "outrunner";
-  }
-  const agent = start.agent ?? (mission.agent !== "claude" ? mission.agent : undefined);
-  return {
-    ...(model && { provider, model }),
-    ...((start.effort ?? own?.effort) && { effort: start.effort ?? own?.effort }),
-    ...(agent && { agent }),
-    prompt: start.brief,
-  };
-}
 
 /**
  * Start the Runner and answer with its id as soon as its row is made; its box

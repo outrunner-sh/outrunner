@@ -7,9 +7,10 @@ import { InlineMessage } from "@/components/ui/notice";
 import type { OrgDefaults } from "@/lib/db/org-defaults";
 import { requestJson } from "@/lib/http/request-json";
 import type { Org } from "@/lib/orgs/active";
-import type { ModelProvider } from "@/lib/runtime/session-models";
+import { AGENTS, type AgentId } from "@/lib/agents/registry";
+import { agentsFor, effortsFor, EFFORT_LABELS, type Effort, type SessionModel } from "@/lib/runtime/session-models";
 
-export type DefaultModelOption = { provider: ModelProvider; id: string; label: string; group: string };
+export type DefaultModelOption = SessionModel & { group: string };
 
 /** A model option's value in the select: its provider and id. */
 const valueOf = (m: { provider: string; id: string }) => `${m.provider}\u0000${m.id}`;
@@ -34,6 +35,8 @@ export function OrgDefaultsSettings({
   const [error, setError] = useState<string | null>(null);
   const admin = org.role === "admin";
   const groups = [...new Set(options.map((o) => o.group))];
+  const selected = options.find((o) => defaults.defaultModel && valueOf(o) === valueOf(defaults.defaultModel));
+  const levels = selected ? effortsFor(selected) : [];
   const shownModel = defaults.defaultModel
     ? (options.find((o) => valueOf(o) === valueOf(defaults.defaultModel!))?.label ?? defaults.defaultModel.id)
     : "Outrunner's default";
@@ -81,7 +84,7 @@ export function OrgDefaultsSettings({
             value={defaults.defaultModel ? valueOf(defaults.defaultModel) : ""}
             onChange={(event) => {
               const picked = options.find((o) => valueOf(o) === event.target.value);
-              void save({ ...defaults, defaultModel: picked ? { provider: picked.provider, id: picked.id } : null });
+              void save({ ...defaults, defaultModel: picked ? { provider: picked.provider, id: picked.id, ...(picked.defaultEffort ? { effort: picked.defaultEffort } : {}) } : null });
             }}
           >
             <option value="">Outrunner&apos;s default</option>
@@ -105,6 +108,24 @@ export function OrgDefaultsSettings({
           Outrunner&apos;s default instead.
         </p>
       </div>
+
+      {defaults.defaultModel && <div className="flex flex-wrap gap-4 text-sm">
+        {agentsFor(defaults.defaultModel.provider).length > 1 && <label className="flex items-center gap-2">Default harness
+          <select aria-label="Organization default harness" className="rounded border bg-background p-2" disabled={!admin || saving}
+            value={defaults.defaultModel.agent ?? agentsFor(defaults.defaultModel.provider)[0]}
+            onChange={(event) => void save({ ...defaults, defaultModel: { ...defaults.defaultModel!, agent: event.target.value as AgentId } })}>
+            {agentsFor(defaults.defaultModel.provider).map((agent) => <option key={agent} value={agent}>{AGENTS[agent].label}</option>)}
+          </select>
+        </label>}
+        {levels.length > 0 && <label className="flex items-center gap-2">Default effort
+          <select aria-label="Organization default effort" className="rounded border bg-background p-2" disabled={!admin || saving}
+            value={defaults.defaultModel.effort ?? ""}
+            onChange={(event) => void save({ ...defaults, defaultModel: { ...defaults.defaultModel!, effort: (event.target.value || undefined) as Effort | undefined } })}>
+            <option value="">Model default</option>
+            {levels.map((level) => <option key={level} value={level}>{EFFORT_LABELS[level]}</option>)}
+          </select>
+        </label>}
+      </div>}
 
       <div className="space-y-2 border-t border-border/60 pt-6">
         <label className="flex items-center gap-2 text-sm font-medium text-foreground">

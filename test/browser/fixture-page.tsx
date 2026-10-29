@@ -3,12 +3,15 @@
 import { useMemo, useSyncExternalStore } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
+import { WorkspaceStudio } from "@/components/workspace-studio";
+import { usePendingSession } from "@/lib/session/pending-sessions";
+import { selectionMenu } from "./selection-fixtures";
 import { AppFrame } from "@/components/app-frame";
 import { Automations } from "@/components/automations";
 import { AutomationsLoading } from "@/components/automations-loading";
 import { Markdown } from "@/components/markdown";
 import { PullRequestChip } from "@/components/missions/mission-parts";
-import { HomeSessionRoute } from "@/components/new-session-route";
+import { HomeSessionRoute, NewSessionRoute } from "@/components/new-session-route";
 import { OrgGeneralSettings } from "@/components/org-settings";
 import { PageLayout } from "@/components/page-layout";
 import { ProjectSettings } from "@/components/project-settings";
@@ -59,7 +62,7 @@ export function FixturePage() {
   const pathname = usePathname();
   const view =
     params.get("view") ??
-    (pathname.startsWith("/projects/") ? "project" : "home");
+    (pathname.startsWith("/projects/") ? "project" : pathname.startsWith("/workspaces/") ? "session" : "home");
   const state =
     params.get("state") ??
     (pathname.includes("readonly") ? "readonly" : "normal");
@@ -90,7 +93,8 @@ export function FixturePage() {
     [state],
   );
   let content: React.ReactNode;
-  if (view === "project")
+  if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} />;
+  else if (view === "project")
     content = (
       <ProjectSettings
         initial={{
@@ -233,7 +237,7 @@ export function FixturePage() {
         </Dialog>
       </PageLayout>
     );
-  else content = <HomeSessionRoute />;
+  else content = pathname === "/new" ? <NewSessionRoute server={<ServerAnswer value={null} />} /> : <HomeSessionRoute />;
   return (
     <>
       <span hidden data-testid="fixture-ready" data-ready={ready} />
@@ -251,4 +255,11 @@ export function FixturePage() {
       )}
     </>
   );
+}
+
+function FixtureSession({ id }: { id: string }) {
+  const pending = usePendingSession(id);
+  const workspace = pending?.workspace ?? { ...frame.appData.workspaces[0], id, agent: "codex" as const,
+    model: { model: selectionMenu.codexModels![0], effort: "high" as const } };
+  return <WorkspaceStudio workspace={{ ...workspace, status: "ready" }} projectName="fixture/composer" pullRequest={null} />;
 }

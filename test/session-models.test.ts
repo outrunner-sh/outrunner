@@ -276,13 +276,13 @@ test("Codex takes its listed models and any id the agent takes, and switches wit
 test("an effort goes only with a model that takes one", async () => {
   const keyFor = async () => "key-0123456789abcdef";
   assert.equal(takesEffort({ provider: "claude", id: "opus" }), true);
-  assert.equal(takesEffort({ provider: "codex", id: "gpt-7-preview" }), true, "a typed Codex id too");
-  // Haiku has none; a gateway's model runs at its own, Claude's family or not.
-  assert.equal(takesEffort({ provider: "claude", id: "haiku" }), false);
+  assert.equal(takesEffort({ provider: "codex", id: "gpt-7-preview" }), false, "a typed Codex id has no verified capabilities");
+  // Current direct aliases support effort; gateways run at their own.
+  assert.equal(takesEffort({ provider: "claude", id: "haiku" }), true);
   assert.equal(takesEffort({ provider: "openrouter", id: "anthropic/claude-opus-5.5" }), false);
 
   assert.deepEqual(await setModelRequest(modelChoice("claude", "opus")!, keyFor, "xhigh"), { model: "opus", effort: "xhigh" });
-  assert.deepEqual(await setModelRequest(modelChoice("claude", "haiku")!, keyFor, "xhigh"), { model: "haiku" });
+  assert.deepEqual(await setModelRequest(modelChoice("claude", "haiku")!, keyFor, "xhigh"), { model: "haiku", effort: "xhigh" });
   assert.equal((await setModelRequest(modelChoice("outrunner", "z-ai/glm-5.3")!, keyFor, "max")).effort, undefined);
   assert.deepEqual(await setModelRequest(modelChoice("codex", "gpt-6-sol")!, keyFor, null), { model: "gpt-6-sol" });
 });
@@ -335,8 +335,8 @@ test("where an account is connected: everywhere on a saved credential, on the Ma
   assert.deepEqual(connectedAccounts(connections(macLogin, macLogin), "local", loggedIn(["codex"])), ["codex"]);
 });
 
-test("a server that says nothing of connections is taken to have them all", () => {
-  const all = { claude: { cloud: true, local: true }, codex: { cloud: true, local: true } };
+test("a server that says nothing of connections offers no unverified accounts", () => {
+  const all = { claude: { cloud: false, local: false }, codex: { cloud: false, local: false } };
   assert.deepEqual(parseAgentConnections(undefined), all);
   assert.deepEqual(parseAgentConnections({ claude: { cloud: "yes" } }), all);
   assert.deepEqual(

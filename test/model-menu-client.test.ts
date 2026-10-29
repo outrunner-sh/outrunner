@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-import { forgetOutrunnerModels, OUTRUNNER_MODELS, outrunnerModels } from "@/lib/desktop/local-runtime";
+import { forgetOutrunnerModels, OUTRUNNER_MODELS, outrunnerModels, workspaceModelMenu } from "@/lib/desktop/local-runtime";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -20,8 +20,8 @@ function answer(body: unknown) {
   return looks;
 }
 
-/** A server from before connections, said nothing of: all assumed. */
-const ALL_CONNECTED = { claude: { cloud: true, local: true }, codex: { cloud: true, local: true } };
+/** A server from before connections, said nothing of: none assumed. */
+const ALL_CONNECTED = { claude: { cloud: false, local: false }, codex: { cloud: false, local: false } };
 
 test("the menu reads the user's keys, dropping any provider this page doesn't know", async () => {
   answer({ outrunner: true, allowance: true, keys: ["zai", "made-up", 7], available: true });
@@ -30,6 +30,9 @@ test("the menu reads the user's keys, dropping any provider this page doesn't kn
     allowance: true,
     keys: ["zai"],
     available: true,
+    harnesses: [],
+    codexModels: [],
+    localMenu: undefined,
     loadout: { models: [], default: null },
     agents: ALL_CONNECTED,
   });
@@ -42,6 +45,9 @@ test("a server from before providers still gives a menu: its OpenRouter key, and
     allowance: false,
     keys: ["openrouter"],
     available: true,
+    harnesses: [],
+    codexModels: [],
+    localMenu: undefined,
     loadout: { models: [], default: null },
     agents: ALL_CONNECTED,
   });
@@ -104,4 +110,30 @@ test("forgetting the menu looks again at once, so a menu shown next has the new 
   // A menu mounting meanwhile shares that look rather than starting another.
   assert.equal((await outrunnerModels()).agents.claude.cloud, true);
   assert.equal(looks.count, 1);
+});
+
+test("session menus keep their own workspace scope instead of inheriting the active org menu", async () => {
+  const urls: string[] = [];
+  globalThis.fetch = (async (url: string) => {
+    urls.push(url);
+    return Response.json({ outrunner: true, allowance: false, keys: url.includes("first") ? ["zai"] : ["deepseek"], harnesses: ["claude"], codexModels: [] });
+  }) as typeof fetch;
+  const first = await workspaceModelMenu("first").ensure();
+  const second = await workspaceModelMenu("second").ensure();
+  assert.deepEqual(first.keys, ["zai"]);
+  assert.deepEqual(second.keys, ["deepseek"]);
+  assert.deepEqual(urls, ["/api/outrunner-models?workspace=first", "/api/outrunner-models?workspace=second"]);
+});
+
+
+test("new-session menus use the selected repository scope independently of workspace menus", async () => {
+  const urls: string[] = [];
+  globalThis.fetch = (async (url: string) => {
+    urls.push(url);
+    return Response.json({ outrunner: true, allowance: false, keys: [], harnesses: ["codex"], codexModels: [] });
+  }) as typeof fetch;
+  await workspaceModelMenu(undefined, "repo-first").ensure();
+  await workspaceModelMenu(undefined, "repo-second").ensure();
+  await workspaceModelMenu(undefined, "repo-first").ensure();
+  assert.deepEqual(urls, ["/api/outrunner-models?project=repo-first", "/api/outrunner-models?project=repo-second"]);
 });
