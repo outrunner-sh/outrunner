@@ -95,7 +95,18 @@ async function Pull({ params }: { params: Params }) {
                 <ArrowUpRight className="size-3.5" />
               </a>
             </span>
-            {pr.state === "open" && <MergeButton repo={pr.repo} number={pr.number} headSha={pr.headSha} offer={mergeOffer(pr, access)} />}
+            {pr.state === "open" && (
+              <MergeButton
+                repo={pr.repo}
+                number={pr.number}
+                headSha={pr.headSha}
+                offer={mergeOffer(
+                  pr,
+                  access,
+                  token ? undefined : "Connect your GitHub account to merge (sign out and in again).",
+                )}
+              />
+            )}
           </div>
 
           <div className="space-y-2">

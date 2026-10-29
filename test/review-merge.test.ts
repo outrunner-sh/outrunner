@@ -64,6 +64,13 @@ test("an unreadable merge rule read disables the offer", () => {
   });
 });
 
+test("a missing GitHub token explains that the account must reconnect", () => {
+  assert.equal(
+    (mergeOffer(status(), null, "Connect your GitHub account to merge (sign out and in again).").primary as { why: string }).why,
+    "Connect your GitHub account to merge (sign out and in again).",
+  );
+});
+
 test("a blocked PR offers bypass only to someone GitHub lets past the rules", () => {
   const blocked = status({ mergeableState: "blocked" });
   assert.equal(mergeOffer(blocked, access()).bypass, false);

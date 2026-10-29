@@ -47,10 +47,14 @@ function whyNotBypassable(status: PullRequestStatus): string | null {
  * The offer for one PR as one person sees it. When GitHub's merge rules
  * couldn't be read, disable merging and explain why rather than guessing.
  */
-export function mergeOffer(status: PullRequestStatus, access: MergeAccess | null): MergeOffer {
+export function mergeOffer(
+  status: PullRequestStatus,
+  access: MergeAccess | null,
+  unavailableReason = MERGE_RULES_UNAVAILABLE,
+): MergeOffer {
   const primary: MergeOffer["primary"] =
     access === null
-      ? { action: "merge", label: "Merge", why: MERGE_RULES_UNAVAILABLE }
+      ? { action: "merge", label: "Merge", why: unavailableReason }
       : access.queuePosition !== null && access.queuePosition !== undefined
       ? { action: "queued", position: access.queuePosition || null }
       : access.mergeQueue
