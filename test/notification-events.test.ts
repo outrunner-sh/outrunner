@@ -66,9 +66,9 @@ test("email and Slack wait a minute, and skip what's seen or turned off", () => 
   assert.equal(dueFor({ ...due, kind: "pr_opened" }, all, null, NOW), "skip", "a kind turned off");
 });
 
-test("a turn that failed is news in Claude Code's words, without the mark that files it", () => {
+test("a turn that failed is an error, told in Claude Code's words without the mark that files it", () => {
   const after: TurnState = { ...IDLE, repliedAt: ago(5_000), replyPreview: `${ERROR_MARK}API Error: 400 bad request` };
   assert.deepEqual(activityNews({ before: working, after }, session, NOW), [
-    { ...session, kind: "turn_done", eventKey: ago(5_000), body: "API Error: 400 bad request" },
+    { ...session, kind: "errored", eventKey: ago(5_000), body: "Errored: API Error: 400 bad request" },
   ]);
 });
