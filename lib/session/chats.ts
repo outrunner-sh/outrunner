@@ -131,3 +131,9 @@ export function withoutCarried(text: string): { text: string; carried: ("handoff
   }
   return { text: carried.length > 0 ? rest.trim() : text, carried };
 }
+
+/** A list fetched before a local create must not erase the newly created chat. */
+export function mergeChatList(listed: SessionChat[], known: SessionChat[]): SessionChat[] {
+  const ids = new Set(listed.map((chat) => chat.id));
+  return [...listed, ...known.filter((chat) => !ids.has(chat.id))];
+}

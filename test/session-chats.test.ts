@@ -5,6 +5,7 @@ import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { conversationNodes } from "@/lib/runtime/conversation-nodes";
 import {
   chatName,
+  mergeChatList,
   chatRoute,
   chatStateKey,
   defaultChatName,
@@ -83,4 +84,12 @@ test("what a chat's prompt was sent with is folded out of its words", () => {
   assert.equal(prompt.kind, "prompt");
   assert.equal(prompt.kind === "prompt" && prompt.text, "Now add a test");
   assert.deepEqual(prompt.kind === "prompt" && prompt.carried, ["handoff"]);
+});
+
+
+test("a stale list keeps a chat created locally while the list was in flight", () => {
+  const base = mainChatOf({ agent: "claude", model: null, createdAt: "t" });
+  const known = [{ ...base, id: "old", name: "old name" }, { ...base, id: "created", name: "new chat" }];
+  const merged = mergeChatList([{ ...base, id: "old", name: "server name" }], known);
+  assert.deepEqual(merged.map((chat) => [chat.id, chat.name]), [["old", "server name"], ["created", "new chat"]]);
 });

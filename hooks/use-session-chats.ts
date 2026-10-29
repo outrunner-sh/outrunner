@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import type { AgentId } from "@/lib/agents/registry";
 import { requestJson } from "@/lib/http/request-json";
-import { MAIN_CHAT, type SessionChat } from "@/lib/session/chats";
+import { mergeChatList, MAIN_CHAT, type SessionChat } from "@/lib/session/chats";
 
 /** How a new chat starts: afresh, a fork of one (`from`), or a side chat
  *  about one (`side`), on an agent of its own (`agent`, else its source's). */
@@ -39,7 +39,7 @@ export function useSessionChats(workspaceId: string, main: SessionChat, enabled:
       .then(({ chats }) => {
         if (!live) return;
         setError(null);
-        setOthers(chats.filter((chat) => chat.id !== MAIN_CHAT));
+        setOthers((known) => mergeChatList(chats.filter((chat) => chat.id !== MAIN_CHAT), known));
         setMainName(chats.find((chat) => chat.id === MAIN_CHAT)?.name ?? null);
       })
       .catch((error: unknown) => {
