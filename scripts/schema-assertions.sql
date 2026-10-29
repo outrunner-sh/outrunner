@@ -2351,7 +2351,7 @@ begin
   raise notice 'ok: failed_at marks when a session failed, and only that';
 end $$;
 
--- 56. Missions (20261102200000_missions.sql, 20261102210000_mission_events.sql):
+-- 56. Missions (20261102200000_missions.sql, 20261102250000_mission_events.sql):
 -- a Runner's parent is a Mission of its owner's, and a Mission's Runner's
 -- pull request ready is a kind of notification.
 do $$

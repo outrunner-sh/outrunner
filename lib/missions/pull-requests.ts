@@ -246,10 +246,16 @@ export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<
     // Read with the first of their owners whose token reads it: one with no
     // token, or one GitHub turns away (SSO not authorized, access removed),
     // leaves the others still tried.
+    // Each token once: several owners fall back to the org's, and one that
+    // timed out won't do better on a second try.
     let pulls: GitHubPull[] | null = null;
+    const tried = new Set<string>();
     for (const runner of here) {
       const token = await tokenFor(runner, repo);
-      if (token && (pulls = await githubGet<GitHubPull[]>(token, `/repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`))) break;
+      if (!token || tried.has(token)) continue;
+      tried.add(token);
+      pulls = await githubGet<GitHubPull[]>(token, `/repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`);
+      if (pulls) break;
     }
     for (const pull of pulls ?? []) {
       if (!pull.number || !pull.head?.ref) continue;

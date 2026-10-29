@@ -9,7 +9,6 @@
 import { after } from "next/server";
 
 import { boxSummary, sessionWorking } from "@/lib/missions/box";
-import { notifyActivity } from "@/lib/notifications/record";
 import { readSession } from "@/lib/session/watch";
 import { deliverNow } from "@/lib/missions/outbox.deps";
 import { DELIVERY_MAX_WAIT_SECONDS, DELIVERY_SETTLE_SECONDS } from "@/lib/missions/outbox";
@@ -151,13 +150,14 @@ export async function openRunnerWatch(runnerId: string, sentAt: Date, baseline: 
 /**
  * One look at a Runner: what's new on its conversation read the way every
  * session's is (readSession, lib/session/watch.ts, which keeps
- * session_activity for the sidebar too, its news passed on as any read's
- * is), then where its turn stands by that record. Its box's summary adds
+ * session_activity for the sidebar too), then where its turn stands by
+ * that record. Its box's summary adds
  * whether its agent is still running and its whole last reply.
  */
 async function lookAtRunner(runner: Workspace) {
-  const change = await readSession(runner.id).catch(() => null);
-  if (change) await notifyActivity(change).catch((error: unknown) => console.error(`Runner ${runner.id}: its news`, error));
+  // A Runner's news is its Mission's, as events: none of it notifies its
+  // owner (missionsQuiet), so the read is for the session's record alone.
+  await readSession(runner.id).catch(() => null);
   const [{ data: activity }, summary] = await Promise.all([
     db().from("session_activity").select("turn, waiting, waiting_tool_id, event_at").eq("workspace_id", runner.id).maybeSingle(),
     boxSummary(runner).catch(() => null),
@@ -181,8 +181,7 @@ async function lookAtRunner(runner: Workspace) {
 async function lastEventAt(runner: Workspace): Promise<string | null> {
   // Read up to now first: the record is only as fresh as its last read, and
   // a turn that ended since would otherwise read as this send's.
-  const change = await readSession(runner.id).catch(() => null);
-  if (change) await notifyActivity(change).catch(() => undefined);
+  await readSession(runner.id).catch(() => null);
   const { data } = await db().from("session_activity").select("event_at").eq("workspace_id", runner.id).maybeSingle();
   return data?.event_at ?? (await boxSummary(runner).catch(() => null))?.lastActivity ?? null;
 }
@@ -244,7 +243,11 @@ export function watchSoon(runnerId: string): void {
       async () => {
         const row = await readWatch(runnerId);
         if (!row) return true;
-        return (await checkRunnerWatch(row, watchDeps())) !== "waiting";
+        await checkRunnerWatch(row, watchDeps());
+        // Every end closes the row, and a Runner waiting on a person isn't
+        // one: only the row gone ends this, so their answer reaches the
+        // Mission now, not at the next tick.
+        return false;
       },
       { forMs: WATCH_MS, everyMs: WATCH_EVERY_MS },
     ),
