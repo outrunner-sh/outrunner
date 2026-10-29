@@ -222,9 +222,9 @@ export function WorkspaceStudio({
       )}
 
       <section className="studio-chat">
-        {hasLiveSession && chatId !== MAIN_CHAT && !chats.loaded ? (
+        {hasLiveSession && chatId !== MAIN_CHAT && !chats.loaded && !chats.chats.some((chat) => chat.id === chatId) ? (
           <div className="studio-offline"><div className="studio-empty-chat" role="status"><Spinner /> Loading chat…</div></div>
-        ) : hasLiveSession && chatId !== MAIN_CHAT && (chats.error || !chats.chats.some((chat) => chat.id === chatId)) ? (
+        ) : hasLiveSession && chatId !== MAIN_CHAT && !chats.chats.some((chat) => chat.id === chatId) ? (
           <div className="studio-offline"><div className="studio-empty-chat" role="alert"><h3>{chats.error ?? "This chat is no longer available."}</h3></div></div>
         ) : hasLiveSession ? (
           <WorkspaceSession
