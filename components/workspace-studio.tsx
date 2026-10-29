@@ -26,7 +26,6 @@ import { type SessionSender, WorkspaceSession } from "@/components/workspace-ses
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useMission } from "@/hooks/use-missions";
 import { useModalPanel } from "@/hooks/use-modal-panel";
-import { useQueuedFirstPrompt } from "@/hooks/use-queued-first-prompt";
 import { useSessionChats } from "@/hooks/use-session-chats";
 import { useRestoreOnOpen } from "@/hooks/use-restore-on-open";
 import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
@@ -91,7 +90,7 @@ export function WorkspaceStudio({
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && (onRuntimeComputer(workspace.provider) || isLocal);
   const offline = offlineCopy({ workspace, isReady });
-  const queued = useQueuedFirstPrompt(workspace.id, { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] });
+  const [infoOpen, setInfoOpen] = useState(false);
   // Beside the title: the repository by its short name, or this Mac's folder.
   const place = local ? local.name : projectName?.split("/").pop();
   // A Runner's page: its header, and its Ships where a session's
@@ -188,7 +187,20 @@ export function WorkspaceStudio({
           )}
         </div>
         <div className="studio-header-actions">
-          <SessionInfo workspaceId={workspace.id} local={isLocal} />
+          <SessionInfo
+            workspaceId={workspace.id}
+            local={isLocal}
+            open={infoOpen}
+            onOpenChange={setInfoOpen}
+            details={setup !== "ended" ? <WorkspaceCreating
+              projectName={projectName ?? workspaceLabel(workspace)}
+              branch={workspace.baseBranch}
+              startedAt={workspace.createdAt}
+              phase={phase}
+              hasExistingComputer={hasComputer}
+              stalled={setup === "stalled" && <SetupStalled workspace={workspace} onKeepWaiting={keepWaiting} />}
+            /> : undefined}
+          />
           {/* VS Code on the session's own box: cloud sessions only. */}
           {!isLocal && workspace.slackThreadUrl && (
             <SlackThreadLink workspaceId={workspace.id} url={workspace.slackThreadUrl} sync={workspace.slackSync !== false} />
@@ -238,11 +250,12 @@ export function WorkspaceStudio({
           <div className="studio-offline"><div className="studio-empty-chat" role="status"><Spinner /> Loading chat…</div></div>
         ) : hasLiveSession && chatId !== MAIN_CHAT && !chats.chats.some((chat) => chat.id === chatId) ? (
           <div className="studio-offline"><div className="studio-empty-chat" role="alert"><h3>{chats.error ?? "This chat is no longer available."}</h3></div></div>
-        ) : hasLiveSession ? (
+        ) : hasLiveSession || setup !== "ended" ? (
           <WorkspaceSession
             // Each chat its own page state: its conversation, queue, picks.
             key={current.id}
             workspaceId={workspace.id}
+            startup={setup !== "ended" ? { startedAt: workspace.createdAt, stalled: setup === "stalled", onDetails: () => setInfoOpen(true) } : undefined}
             chatId={current.id}
             projectId={isLocal ? undefined : workspace.projectId}
             agent={current.agent}
@@ -265,31 +278,6 @@ export function WorkspaceStudio({
               pick(fork);
             } : undefined}
           />
-        ) : setup !== "ended" ? (
-          <div className="studio-offline">
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <WorkspaceCreating
-                projectName={projectName ?? workspaceLabel(workspace)}
-                branch={workspace.baseBranch}
-                startedAt={workspace.createdAt}
-                phase={phase}
-                hasExistingComputer={hasComputer}
-                stalled={setup === "stalled" && <SetupStalled workspace={workspace} onKeepWaiting={keepWaiting} />}
-                queued={queued}
-              />
-            </div>
-            <SessionComposer
-              onSend={() => {}}
-              canSend={false}
-              disabledPlaceholder={
-                setup === "stalled"
-                  ? "Start over to try again"
-                  : queued
-                    ? "Your message sends as soon as the session is ready"
-                    : "Claude starts here, with your first message, once the session is ready"
-              }
-            />
-          </div>
         ) : restore.state === "restoring" ? (
           <div className="studio-offline">
             <div className="studio-empty-chat" role="status">

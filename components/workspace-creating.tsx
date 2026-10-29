@@ -1,182 +1,88 @@
 "use client";
 
-import { Check, Clock, GitBranch } from "lucide-react";
-import { useEffect, useState } from "react";
-
+import { Check, Clock } from "lucide-react";
 import { attachmentFiles, MessageAttachments } from "@/components/attachment-thumbnails";
-import { DotMatrix, Spinner } from "@/components/ui/loaders";
+import { Spinner } from "@/components/ui/loaders";
+import { useNow } from "@/hooks/use-now";
 import type { ProvisionPhase } from "@/lib/runtime/types";
 import type { FirstPrompt } from "@/lib/session/first-prompt";
 import { cn } from "@/lib/utils";
 
-/**
- * Provisioning progress, shown in a new session's chat while its box is set up.
- * Uses actual backend phases when available, with time-based fallback for
- * backwards compatibility.
- */
+export type SessionStartup = {
+  startedAt: string;
+  stalled: boolean;
+  onDetails: () => void;
+};
 
-type Stage = { id: ProvisionPhase | "preparing"; label: string };
+function elapsed(startedAt: string, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - Date.parse(startedAt)) / 1000));
+  if (!Number.isFinite(seconds)) return "";
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
 
-/** Full provisioning stages when creating a new Runtime Computer. */
-const FULL_STAGES: Stage[] = [
-  { id: "preparing", label: "Preparing" },
-  { id: "allocate", label: "Provisioning sandbox" },
-  { id: "clone", label: "Cloning repository" },
-  { id: "worktree", label: "Creating workspace" },
-  { id: "secrets", label: "Configuring session" },
-  { id: "health_check", label: "Starting Claude" },
-  { id: "claude_ready", label: "Ready" },
-];
-
-/** Quick start stages when Runtime Computer already exists. */
-const QUICK_STAGES: Stage[] = [
-  { id: "preparing", label: "Preparing" },
-  { id: "clone", label: "Updating repository" },
-  { id: "worktree", label: "Creating workspace" },
-  { id: "secrets", label: "Configuring session" },
-  { id: "health_check", label: "Starting Claude" },
-  { id: "claude_ready", label: "Ready" },
-];
-
-/** Time-based fallback stages for when phase isn't available. */
-const FALLBACK_STAGES = [
-  { label: "Preparing", at: 0 },
-  { label: "Provisioning sandbox", at: 3 },
-  { label: "Installing agent", at: 12 },
-  { label: "Cloning repository", at: 28 },
-  { label: "Starting session", at: 38 },
-  { label: "Finalizing setup", at: 46 },
-] as const;
-
-/** The first prompt, waiting for the box, as the message it will be: its
- *  files as thumbnails, its words clamped on whole lines. */
-function QueuedPrompt({ first }: { first: FirstPrompt }) {
-  const text = first.prompt.trim();
+/** An honest queue echo, never an agent message or a delivery receipt. */
+export function QueuedFirstPrompt({ first }: { first: FirstPrompt }) {
   return (
-    <div className="flex flex-col items-stretch gap-1">
+    <div className="mx-auto w-full max-w-3xl px-5 py-4">
       <div className="timeline-prompt">
         <MessageAttachments files={attachmentFiles(first.attachmentIds)} />
-        {text && <div className="line-clamp-6">{text}</div>}
+        {first.prompt.trim() && <div>{first.prompt.trim()}</div>}
       </div>
-      <span className="text-muted-foreground flex items-center gap-1 self-end px-1 text-[11px]">
-        <Clock className="size-3" aria-hidden />
-        Sends when ready
-      </span>
+      <p className="mt-1 text-right text-[11px] text-muted-foreground">Queued · sends when ready</p>
     </div>
   );
 }
 
-function clock(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
+/** Startup stays beside the input; its infrastructure belongs in Session info. */
+export function StartupStatus({ startup }: { startup: SessionStartup }) {
+  const now = useNow(1000);
+  return (
+    <div role="status" className="flex items-center gap-2 px-4 py-2 text-xs text-muted-foreground">
+      {startup.stalled ? <Clock className="size-3.5 shrink-0" /> : <Spinner className="size-3.5 shrink-0" />}
+      <span className="min-w-0 flex-1">
+        {startup.stalled ? "Startup is taking longer than expected" : "Starting your session"}
+        <span className="ml-2 tabular-nums" suppressHydrationWarning>{elapsed(startup.startedAt, now)}</span>
+      </span>
+      <button type="button" onClick={startup.onDetails} className="shrink-0 underline underline-offset-2">Session info</button>
+    </div>
+  );
 }
 
-export function WorkspaceCreating({
-  projectName,
-  branch,
-  startedAt,
-  stalled,
-  queued,
-  phase,
-  hasExistingComputer,
-}: {
+const STAGES: { id: ProvisionPhase | "preparing"; label: string }[] = [
+  { id: "preparing", label: "Preparing" },
+  { id: "allocate", label: "Starting sandbox" },
+  { id: "clone", label: "Preparing repository" },
+  { id: "worktree", label: "Creating workspace" },
+  { id: "secrets", label: "Configuring session" },
+  { id: "health_check", label: "Starting agent" },
+  { id: "claude_ready", label: "Ready" },
+];
+
+/** Technical startup details, only shown when Session info is opened. No
+ * estimated completion time or time-based fabricated stage progression. */
+export function WorkspaceCreating({ projectName, branch, phase, stalled, hasExistingComputer }: {
   projectName: string;
   branch: string;
-  /** Set up for so long it may never finish: shown under the steps, and the
-   *  current step stops turning. */
-  stalled?: React.ReactNode;
-  /** When setup began (the session's creation), so a session opened midway
-   *  shows the time it has really taken. */
   startedAt: string;
-  /** The first prompt waiting for the box, shown as the message it will be. */
-  queued?: FirstPrompt | null;
-  /** Current provisioning phase from the backend. */
   phase: ProvisionPhase | null;
-  /** Whether there's already a Runtime Computer for this project. */
   hasExistingComputer: boolean;
+  stalled?: React.ReactNode;
 }) {
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    const started = Date.parse(startedAt);
-    const tick = () =>
-      setElapsed(Number.isNaN(started) ? 0 : Math.max(0, Math.floor((Date.now() - started) / 1000)));
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [startedAt]);
-
-  // Use real phases when available, otherwise fall back to time-based
-  const useRealPhases = phase !== null;
-  const stages = useRealPhases
-    ? (hasExistingComputer ? QUICK_STAGES : FULL_STAGES)
-    : FALLBACK_STAGES;
-
-  let active = 0;
-  if (useRealPhases) {
-    // Find the index of the current phase
-    const phaseStages = stages as Stage[];
-    const phaseIndex = phaseStages.findIndex((s) => s.id === phase);
-    active = phaseIndex >= 0 ? phaseIndex : 0;
-  } else {
-    // Time-based fallback
-    const timeStages = stages as typeof FALLBACK_STAGES;
-    for (let i = 0; i < timeStages.length; i += 1) {
-      if (elapsed >= timeStages[i].at) active = i;
-    }
-  }
-
-  // For quick start, show a shorter estimated time
-  const estimateSeconds = useRealPhases && hasExistingComputer ? 10 : 45;
-
+  const stages = hasExistingComputer ? STAGES.filter((s) => s.id !== "allocate") : STAGES;
+  const active = Math.max(0, stages.findIndex((s) => s.id === phase));
   return (
-    <div className="flex h-full items-center justify-center px-6">
-      <div className="w-full max-w-sm space-y-7">
-        {queued && <QueuedPrompt first={queued} />}
-        <DotMatrix rows={6} cols={10} />
-
-        <div className="space-y-1.5">
-          <h3 className="text-foreground text-lg font-medium tracking-tight">
-            Creating workspace
-          </h3>
-          <p className="text-muted-foreground flex items-center gap-1.5 font-mono text-xs">
-            <GitBranch className="size-3.5" />
-            {projectName} · {branch}
-          </p>
-        </div>
-
-        <ol className="task-steps">
-          {stages.map((stage, i) => {
-            const state = i < active ? "done" : i === active ? "current" : "pending";
-            return (
-              <li key={stage.label} className={cn("task-step", `is-${state}`, stalled && state === "current" && "is-stalled")}>
-                <span className="task-step-mark" aria-hidden>
-                  {state === "done" ? (
-                    <Check strokeWidth={3} />
-                  ) : state === "current" ? (
-                    stalled ? <Clock /> : <Spinner />
-                  ) : (
-                    <span className="task-step-dot" />
-                  )}
-                </span>
-                <span>{stage.label}</span>
-              </li>
-            );
-          })}
-        </ol>
-
-        <div className="text-muted-foreground flex items-center justify-between font-mono text-xs tabular-nums">
-          <span role="status">
-            {stages[active].label}, step {active + 1} of {stages.length}
-          </span>
-          <span>
-            {clock(elapsed)} <span className="text-muted-foreground/60">/ ~{estimateSeconds}s</span>
-          </span>
-        </div>
-
-        {stalled}
-      </div>
-    </div>
+    <section className="space-y-3 border-b border-border pb-4" aria-label="Startup details">
+      <h3 className="text-sm font-medium">Session startup</h3>
+      <p className="break-words text-xs text-muted-foreground">{projectName} · {branch}</p>
+      <ol className="space-y-2 text-xs">
+        {stages.map((stage, i) => (
+          <li key={stage.id} className={cn("flex items-center gap-2", i !== active && "text-muted-foreground")}>
+            {i < active ? <Check className="size-3" /> : i === active && !stalled ? <Spinner className="size-3" /> : <span className="size-3 rounded-full border border-current opacity-40" />}
+            {stage.label}{i === active && <span className="sr-only"> · current step</span>}
+          </li>
+        ))}
+      </ol>
+      {stalled}
+    </section>
   );
 }

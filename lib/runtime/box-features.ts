@@ -25,3 +25,19 @@ export async function requireFeature(client: FeatureClient, feature: string, wha
   }
   throw new OutdatedComputerError(`This project's cloud computer can't ${what}.`);
 }
+
+/** A setup's capabilities stay fixed until an agent upgrade. Reuse one
+ * health answer within that setup, never across sessions or upgrades. */
+export function cachedFeatures(client: FeatureClient): FeatureClient {
+  let snapshot: Promise<string[]> | undefined;
+  return {
+    features: () => snapshot ??= client.features().catch((error: unknown) => {
+      snapshot = undefined;
+      throw error;
+    }),
+    ...(client.upgrade && { upgrade: async () => {
+      try { await client.upgrade!(); }
+      finally { snapshot = undefined; }
+    } }),
+  };
+}

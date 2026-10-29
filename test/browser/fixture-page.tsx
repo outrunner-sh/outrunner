@@ -6,6 +6,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { usePendingSession } from "@/lib/session/pending-sessions";
 import { selectionMenu } from "./selection-fixtures";
+import { StartupFixture } from "./startup-fixture";
 import { AppFrame } from "@/components/app-frame";
 import { Automations } from "@/components/automations";
 import { AutomationsLoading } from "@/components/automations-loading";
@@ -237,6 +238,7 @@ export function FixturePage() {
         </Dialog>
       </PageLayout>
     );
+  else if (view === "startup") content = <StartupFixture agent={params.get("harness") === "codex" ? "codex" : "claude"} shared={params.get("shared") === "1"} />;
   else content = pathname === "/new" ? <NewSessionRoute server={<ServerAnswer value={null} />} /> : <HomeSessionRoute />;
   return (
     <>

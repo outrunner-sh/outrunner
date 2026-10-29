@@ -642,7 +642,14 @@ async function provisionWorkspace({
   // last one it reached.
   const began = Date.now();
   const elapsed = () => `${Math.round((Date.now() - began) / 1000)}s into setup`;
+  let phaseStarted = began;
+  const logPhase = (next: string) => {
+    const now = Date.now();
+    console.info("Session startup", JSON.stringify({ workspaceId: workspace.id, stage: phase ?? "preparing", ms: now - phaseStarted, elapsedMs: now - began, next }));
+    phaseStarted = now;
+  };
   const setPhase = async (next: ProvisionPhase) => {
+    logPhase(next);
     console.log(`Workspace ${workspace.id}: ${next} (${elapsed()})`);
     phase = next;
     await settle({ status: "provisioning", phase: next });
@@ -818,6 +825,7 @@ async function provisionWorkspace({
       await recordWorkspaceModel(workspace.id, startsOn);
       await setPhase("health_check");
       await agent.startWorkspace(identity);
+      logPhase("ready");
       console.log(`Workspace ${workspace.id}: ready (${elapsed()})`);
 
       const ready = await settle({

@@ -15,11 +15,19 @@ import type { SessionInfo as InfoView } from "@/lib/session/session-info";
 export function SessionInfo({
   workspaceId,
   local = false,
+  open: controlledOpen,
+  onOpenChange,
+  details,
 }: {
   workspaceId: string;
   local?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  details?: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlledOpen ?? ownOpen;
+  const setOpen = onOpenChange ?? setOwnOpen;
   const wide = useMediaQuery("(min-width: 640px)");
   const trigger = (
     <button
@@ -32,7 +40,10 @@ export function SessionInfo({
     </button>
   );
   const content = (
-    <SessionInfoContent workspaceId={workspaceId} local={local} />
+    <>
+      {details}
+      <SessionInfoContent workspaceId={workspaceId} local={local} />
+    </>
   );
   if (!wide)
     return (

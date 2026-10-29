@@ -7,6 +7,8 @@ import { useState } from "react";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import { RouteMessage } from "@/components/route-states";
 import { InlineMessage } from "@/components/ui/notice";
+import { DRAFTS } from "@/lib/client/drafts";
+import { transferQueue } from "@/lib/session/prompt-queue";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import type { Workspace } from "@/lib/runtime/types";
 import { deleteSession } from "@/lib/session/delete-session";
@@ -40,6 +42,7 @@ export function useStartOver(workspace: Workspace) {
         // Its branch isn't carried: the session it replaces still holds it.
         body: JSON.stringify({
           branch: "",
+          agent: workspace.agent,
           ...(workspace.model && {
             provider: workspace.model.model.provider,
             model: workspace.model.model.id,
@@ -59,6 +62,17 @@ export function useStartOver(workspace: Workspace) {
         setRetrying(false);
         return;
       }
+      if (!transferQueue(tabStorage(), workspace.id, body.workspace.id)) {
+        void deleteSession(body.workspace.id, { kind: "cloud" }).catch(() => {});
+        setRetryError({ message: "Couldn't move the queued messages. They are still in this tab; try again." });
+        setRetrying(false);
+        return;
+      }
+      const draft = DRAFTS.get(`ws:${workspace.id}`);
+      if (draft) {
+        DRAFTS.update(`ws:${body.workspace.id}`, () => draft);
+        DRAFTS.update(`ws:${workspace.id}`, () => ({ text: "", attachments: [] }));
+      }
       setRetryError(null);
       // The waiting prompt moves to the fresh session: this one can never
       // send it. A tab without the kept copy (the link opened in another) has
@@ -69,8 +83,8 @@ export function useStartOver(workspace: Workspace) {
       // Its URL too: Back to this session, once its setup finishes after all,
       // would otherwise send the prompt the fresh one already has.
       dropFirstPromptFromAddressBar();
+      // Refreshing the old route in the same turn can cancel this navigation.
       router.push(`/workspaces/${body.workspace.id}${first ? firstPromptSearch(tabStorage(), body.workspace.id, first) : ""}`);
-      router.refresh();
       // The replaced session goes: left alone, its box would keep setting up
       // (and could come up, costing a computer) beside the fresh one.
       void deleteSession(workspace.id, { kind: "cloud" }).catch((error) => {

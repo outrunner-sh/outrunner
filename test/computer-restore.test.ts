@@ -95,7 +95,8 @@ test("with the ended box's disk gone, the project gets a new box and a new mirro
   const made = await provider.provisionComputer(request);
 
   assert.equal(made.sandboxId, "sb-new");
-  assert.deepEqual(log, ["restored from sb-ended", "created", "sb-new: agent launched", "sb-new: mirror cloned"]);
+  assert.deepEqual(log.slice(0, 2), ["restored from sb-ended", "created"]);
+  assert.deepEqual(log.slice(2).sort(), ["sb-new: agent launched", "sb-new: mirror cloned"]);
 });
 
 test("a restored box whose agent doesn't start is deleted, and the ended one kept", async () => {
@@ -136,7 +137,8 @@ test("a provider whose boxes don't end makes a new one, whatever came before", a
   const made = await provider.provisionComputer(request);
 
   assert.equal(made.sandboxId, "sb-new");
-  assert.deepEqual(log, ["created", "sb-new: agent launched", "sb-new: mirror cloned"]);
+  assert.equal(log[0], "created");
+  assert.deepEqual(log.slice(1).sort(), ["sb-new: agent launched", "sb-new: mirror cloned"]);
 });
 
 test("a running box's agent is upgraded in place, once however many ask at once", async () => {
@@ -212,4 +214,35 @@ test("a delete that must be known to have worked says so when it hasn't", async 
   await new ComputerRuntimeProvider("daytona", failing({ statusCode: 404 })).destroyComputerOrThrow("sb-1");
   await new ComputerRuntimeProvider("daytona", restoringBackend(log, null)).destroyComputerOrThrow("sb-2");
   assert.deepEqual(log, ["sb-2: deleted"]);
+});
+
+
+test("a fresh box clones while agent installation waits, and failure cleanup waits for both jobs", async () => {
+  const log: string[] = [];
+  const box = fakeBox("sb-parallel", log);
+  let release!: () => void;
+  let cloneStarted!: () => void;
+  const install = new Promise<void>((resolve) => { release = resolve; });
+  const cloned = new Promise<void>((resolve) => { cloneStarted = resolve; });
+  const exec = box.io.exec;
+  box.io.exec = async (command) => {
+    if (command.includes("command -v tmux")) await install;
+    return exec(command);
+  };
+  const failingBox: SandboxBox = { ...box, gitExec: async () => {
+    cloneStarted();
+    throw new Error("mirror failed");
+  } };
+  const backend = restoringBackend(log, null);
+  backend.create = async () => failingBox;
+  const provider = new ComputerRuntimeProvider("daytona", backend);
+  const making = provider.provisionComputer({ secret: "secret", repoFullName: "acme/app" });
+  // Rejection is observed before any deliberate yield.
+  const outcome = making.then(() => null, (error: unknown) => error);
+  try {
+    await Promise.race([cloned, new Promise((_, reject) => setTimeout(() => reject(new Error("clone was serialized behind agent boot")), 1000))]);
+    assert.ok(!log.some((entry) => entry.includes("deleted")));
+  } finally { release(); }
+  assert.match(String(await outcome), /mirror failed/);
+  assert.equal(log.at(-1), "sb-parallel: deleted");
 });

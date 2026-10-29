@@ -59,3 +59,34 @@ test("the queue sends only once the turn is over and the session can take it", (
   // shows no bubble meanwhile): the next waits for it, not into its turn.
   assert.equal(queueDrains({ ...ready, awaitingLast: true }), false);
 });
+
+test("startup input stays durable with its key, attachments and original echo anchor until acknowledged", () => {
+  const storage = memory();
+  const queue = [{ id: "stable-key", text: "Follow up", attachmentIds: ["image-id"], startup: true, sentAt: 1, mode: "plan" as const }];
+  assert.equal(writeQueue(storage, "w", queue), true);
+  assert.deepEqual(readQueue(storage, "w"), queue);
+  assert.equal(writeQueue(null, "w", queue), false);
+  const full = { ...storage, setItem: () => { throw new Error("QuotaExceededError"); } };
+  assert.equal(writeQueue(full, "w", []), true);
+  assert.equal(writeQueue(full, "w", queue), false);
+});
+
+test("start over carries the ordered queue and files without carrying another conversation's echo anchors", async () => {
+  const { transferQueue, editQueued } = await import("@/lib/session/prompt-queue");
+  const storage = memory();
+  const queue = [
+    { id: "a", text: "first", attachmentIds: ["a1"], startup: true, sentAt: 3 },
+    { id: "b", text: "second", attachmentIds: [], startup: true },
+  ];
+  writeQueue(storage, "old", queue);
+  assert.equal(transferQueue(storage, "old", "new"), true);
+  assert.deepEqual(readQueue(storage, "old"), []);
+  assert.deepEqual(readQueue(storage, "new").map((p) => [p.id, p.text, p.attachmentIds]), queue.map((p) => [p.id, p.text, p.attachmentIds]));
+  assert.ok(readQueue(storage, "new").every((p) => p.sentAt === undefined));
+  // A delivery that may already have landed cannot change its key's payload.
+  assert.deepEqual(editQueued(queue, "a", "different"), queue);
+  writeQueue(storage, "old", queue);
+  const full = { ...storage, setItem: () => { throw new Error("QuotaExceededError"); } };
+  assert.equal(transferQueue(full, "old", "other"), false);
+  assert.deepEqual(readQueue(storage, "old"), queue);
+});
