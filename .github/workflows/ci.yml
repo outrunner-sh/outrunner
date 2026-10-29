@@ -65,8 +65,6 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - name: Build with the image's public values
-        env:
-          CODEX_CLI_VERSION: ${{ vars.CODEX_CLI_VERSION }}
         # From cloudflare/wrangler.jsonc's image_vars, the one place they're
         # kept (shipped to every visitor, not secrets): a change there is
         # what CI builds with too.
@@ -78,17 +76,15 @@ jobs:
             const { config, error } = ts.parseConfigFileTextToJson(file, require("fs").readFileSync(file, "utf8"));
             if (error) throw new Error(`${file}: ${ts.flattenDiagnosticMessageText(error.messageText, " ")}`);
             const vars = config.containers?.[0]?.image_vars ?? {};
-            for (const name of ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"]) {
+            for (const name of ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_CODEX_CLI_VERSION"]) {
               // As the Dockerfile refuses: next build passes without them,
               // and ships a bundle that cannot reach Supabase.
               if (!vars[name]) throw new Error(`${file} has no image_vars.${name}`);
               console.log(`${name}=${vars[name]}`);
             }
-            if (process.env.CODEX_CLI_VERSION) {
-              if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(process.env.CODEX_CLI_VERSION)) throw new Error("CODEX_CLI_VERSION must pin an exact release");
-              console.log(`NEXT_PUBLIC_CODEX_CLI_VERSION=${process.env.CODEX_CLI_VERSION}`);
-            }
           ' >> "$GITHUB_ENV"
+      - name: Verify the pinned public Codex CLI
+        run: node scripts/verify-codex-cli.mjs "$NEXT_PUBLIC_CODEX_CLI_VERSION"
       # next build's own cache: much of a repeat build is reused.
       - uses: actions/cache@v4
         with:

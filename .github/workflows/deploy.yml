@@ -12,8 +12,8 @@ name: Deploy to Cloudflare Containers
 #   CLOUDFLARE_API_TOKEN   - Workers Scripts:Edit, Durable Objects:Edit,
 #                            Containers:Edit, and neev.ai Zone:DNS:Edit
 #   CLOUDFLARE_ACCOUNT_ID  - the Neevcloud account id
-# Required repository Actions variable:
-#   CODEX_CLI_VERSION     - exact public CLI release verified to have codex-auth.
+# The public supported CLI version lives with the existing public build values
+# in cloudflare/wrangler.jsonc, and is verified against npm before every deploy.
 # Apply pending SQL migrations separately before deploying; the health gate
 # refuses to call a missing Codex schema a successful feature rollout.
 #
@@ -56,17 +56,17 @@ jobs:
           node-version: 22
 
       - name: Verify the published Codex CLI before enabling sign-in
-        env:
-          CODEX_CLI_VERSION: ${{ vars.CODEX_CLI_VERSION }}
         run: |
-          node scripts/verify-codex-cli.mjs "$CODEX_CLI_VERSION"
-          # image_vars are Docker build arguments; a Worker runtime variable
-          # cannot change the browser bundle's NEXT_PUBLIC_* constants.
-          node -e '
-            const fs = require("fs"), file = "cloudflare/wrangler.jsonc";
-            const text = fs.readFileSync(file, "utf8");
-            fs.writeFileSync(file, text.replace(/"image_vars": \{/, "\"image_vars\": {\n        \"NEXT_PUBLIC_CODEX_CLI_VERSION\": " + JSON.stringify(process.env.CODEX_CLI_VERSION) + ","));
-          '
+          # image_vars are Docker build arguments, already checked in for the
+          # public Supabase values. Keep one auditable source of configuration;
+          # a Worker runtime variable cannot change the browser bundle.
+          version=$(node -e '
+            const text = require("fs").readFileSync("cloudflare/wrangler.jsonc", "utf8");
+            const matches = [...text.matchAll(/"NEXT_PUBLIC_CODEX_CLI_VERSION"\s*:\s*"([^"]+)"/g)];
+            if (matches.length !== 1) throw new Error("Pin one supported NEXT_PUBLIC_CODEX_CLI_VERSION in image_vars");
+            process.stdout.write(matches[0][1]);
+          ')
+          node scripts/verify-codex-cli.mjs "$version"
 
       - name: Install deploy tooling
         working-directory: cloudflare

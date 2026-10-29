@@ -5,7 +5,7 @@ release paths. Deploying the app alone does not publish the CLI or apply SQL.
 Do not remove the supported-release guard or use the mutable npm `latest` tag
 to work around an incomplete rollout.
 
-## Confirmed production state (2026-10-29)
+## Diagnosed production state (before this rollout, 2026-10-29)
 
 - `app.outrunner.sh/api/health` served merged build
   `8fbc485b331da8d12e3354d2c33fb352b51c9658`; core health was green. That older
@@ -27,15 +27,32 @@ to work around an incomplete rollout.
   isolated legacy-constraint fixture. We did not impersonate the production
   owner or inspect private production request logs.
 
-## Prepared and tested release
+## Applied production migrations
 
-Candidate **0.1.4** was built with the established `scripts/build-cli.sh` from
-the merged Codex CLI source on main. The five platform packages and npm launcher
-were packed; a clean offline installation of the Linux platform/launcher
-tarballs reports `outrunner 0.1.4` and advertises `codex-auth`. CLI tests passed.
-This is a tested candidate, **not a claim that 0.1.4 is already published**.
-Recheck the registry before using this version; if another release consumed it,
-choose the next unused patch and rebuild/verify.
+Using the authenticated Supabase CLI against the documented production project
+`butbnitdpiehgwqggowr`, we read migration history and found exactly two pending
+main migrations. `supabase db push --linked --dry-run` confirmed the list, then
+`db push --linked --yes` executed the actual SQL in order:
+
+- `20261103180000_slack_channel_access.sql`
+- `20261103190000_codex_connections.sql`
+
+Both are recorded in normal migration history. A subsequent dry run reports
+**up to date, no pending migrations**. Read-only metadata verification confirms
+the Codex table and both RPCs exist, RLS is enabled, browser SELECT is revoked,
+and the choice CHECK includes all previous methods plus `codex-account`.
+No provider credentials or users' saved choices were queried or rewritten.
+
+## Published and verified release
+
+Version **0.1.4** is now published through the established
+[CLI publish workflow](https://github.com/neevai-labs/outrunner/actions/runs/40946774207)
+from main commit `3535cb90e5507df443fa52c459bf2abc6908c5d2`.
+All five platform packages and the npm launcher published successfully. After
+registry propagation, `node scripts/verify-codex-cli.mjs 0.1.4` passed against
+all six public packages and the freshly installed public Linux executable:
+`outrunner 0.1.4`, with `codex-auth` present. No provider login was started.
+Do not republish this immutable version.
 
 The new release gate verifies all six public npm versions and dependency pins,
 then executes only `--version` and `--help` in a fresh temporary home. It never
@@ -59,29 +76,32 @@ starts provider login. It correctly refuses the real published 0.1.3 launcher.
    version as applied. If using the Supabase SQL editor, execute the migration
    transactionally and record its migration version through the normal procedure.
 
-2. Publish candidate 0.1.4 through **Actions → CLI publish → Run workflow** on
-   **main**, after checking that version is still unused:
-
-   ```sh
-   gh workflow run cli-publish.yml --ref main -f version=0.1.4
-   ```
-
-   This uses the existing protected `NPM_TOKEN` in Actions. Do not copy that token
-   into a workspace. Platform packages publish first, then the launcher. After
-   the run succeeds, verify the actual public executable:
+2. For a future CLI release, use **Actions → CLI publish → Run workflow** on
+   **main**, checking the proposed version is unused first. Publish all platform
+   packages before the launcher, then verify the public executable:
 
    ```sh
    node scripts/verify-codex-cli.mjs 0.1.4
    ```
 
-3. Set the non-secret repository Actions variable **CODEX_CLI_VERSION=0.1.4**
-   only after that public verification passes. This workspace's GitHub integration
-   returns HTTP 403 for Actions variable administration, including through the
-   authenticated SDK; an authorized repository administrator must do this.
+   The current `0.1.4` publication and verification are complete.
 
-4. Merge the rollout follow-up and let the normal main deployment run. It verifies
-   the public executable before injecting the exact version into Docker
-   `image_vars`. The Docker build passes it to `next build`; no nonexistent or
+3. The verified immutable version is pinned as
+   **NEXT_PUBLIC_CODEX_CLI_VERSION=0.1.4** in
+   `cloudflare/wrangler.jsonc` → `containers[].image_vars`, beside the existing
+   public Supabase build configuration. CI and deployment verify this same pin
+   against public npm before Docker/Next build. A Worker runtime variable cannot
+   update a constant already inlined into browser JavaScript.
+
+   The user's separately requested repository Actions variable
+   **CODEX_CLI_VERSION=0.1.4** was attempted after verification; GitHub denied
+   the actual update with HTTP 403, `Resource not accessible by integration`.
+   The browser has no signed-in repository administrator either. Setting that
+   optional mirror still requires repository Variables write access; it is not
+   needed by the checked-in build configuration and is not claimed complete.
+
+4. Merge the rollout follow-up and let the normal main deployment run. The
+   Docker build passes the verified pin to `next build`; no nonexistent or
    unsupported version is offered to users. Deployment verification requires
    `health.codex.ready=true`, `schema=ok`, and the expected `cliVersion`.
 

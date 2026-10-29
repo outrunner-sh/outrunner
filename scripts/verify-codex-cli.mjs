@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 
 export async function verifyCodexCli(version, request = fetch, run = spawnSync) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version ?? ""))
-    throw new Error("Set the CODEX_CLI_VERSION repository variable to an exact published version containing codex-auth.");
+    throw new Error("Pin NEXT_PUBLIC_CODEX_CLI_VERSION in image_vars to an exact published version containing codex-auth.");
   const packages = ["outrunner", "outrunner-linux-x64", "outrunner-linux-arm64", "outrunner-darwin-x64", "outrunner-darwin-arm64", "outrunner-windows-x64"];
   const metadata = await Promise.all(packages.map(async (name) => {
     const response = await request(`https://registry.npmjs.org/${name}/${version}`, { signal: AbortSignal.timeout(15000) });

@@ -22,7 +22,7 @@ a ten-minute attempt. The page shows a command bound to this deployment, signed-
 Outrunner user, organization UUID and attempt UUID:
 
 ```
-npx outrunner@latest --url https://app.outrunner.sh --account <user-uuid> codex-auth --org <org-uuid> --attempt <attempt-uuid>
+npx outrunner@0.1.4 --url https://app.outrunner.sh --account <user-uuid> codex-auth --org <org-uuid> --attempt <attempt-uuid>
 ```
 
 The CLI can also start an attempt itself. `outrunner codex-auth` defaults to
@@ -154,9 +154,10 @@ Actual owner-approved connection and disconnect:
 
 Rollout requires the migration, normal app/runtime release and a CLI release
 containing `codex-auth` via the existing CLI-publish workflow. After verifying
-that release, set the repository Actions variable `CODEX_CLI_VERSION` to its
-exact version. Deployment verifies the public executable and passes it through
-Docker to `NEXT_PUBLIC_CODEX_CLI_VERSION` at build time. Settings pins that release; without a configured version it explains
+that release, pin its exact version in `cloudflare/wrangler.jsonc` →
+`containers[].image_vars.NEXT_PUBLIC_CODEX_CLI_VERSION`. CI and deployment verify
+the public executable and pass the pin through Docker at build time. The current
+verified public release is **0.1.4**. Settings pins that release; without a configured version it explains
 the prerequisite and disables starting an unusable sign-in. It never assumes
 the mutable `latest` tag contains this unreleased command. No production
 deployment or provider entitlement is assumed by this PR.
