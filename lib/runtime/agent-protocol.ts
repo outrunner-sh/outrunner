@@ -145,6 +145,11 @@ export type SetSkillsResponse = z.infer<typeof SetSkillsResponse>;
 /** The agent installs a project's skills (POST /skills). */
 export const AGENT_FEATURE_SKILLS = "environment-skills";
 
+/** A Codex session loads the computer's MCP servers (SetAgentConfigRequest's
+ *  `mcpServers`), as a Claude one always has; an older agent gives them to
+ *  Claude alone. */
+export const AGENT_FEATURE_CODEX_MCP = "codex-mcp";
+
 /** The agent takes a session's environment (POST /workspaces/{id}/environment). */
 export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
 

@@ -360,6 +360,10 @@ type SkillFailure struct {
 // FeatureSkills is POST /skills.
 const FeatureSkills = "environment-skills"
 
+// FeatureCodexMCP is a Codex session loading the computer's MCP servers
+// (SetAgentConfigRequest's MCPServers), as a Claude one does.
+const FeatureCodexMCP = "codex-mcp"
+
 // FeatureEnvironment is POST /workspaces/{id}/environment.
 const FeatureEnvironment = "session-environment"
 

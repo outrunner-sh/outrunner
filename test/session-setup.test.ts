@@ -160,3 +160,28 @@ test("skills the box couldn't install don't stop the session starting", async ()
   await deliverSessionSetup(client, { environment, agentConfig: null, skills: [{ repo: "acme/skills" }], downloadUrl });
   assert.deepEqual(b.sent.map(([kind]) => kind), ["environment"]);
 });
+
+test("a box with MCP servers to load is upgraded first when its Codex wouldn't get them", async () => {
+  let features = ["session-environment", "agent-config"];
+  const order: string[] = [];
+  const b = box([]);
+  const client = {
+    ...b.client,
+    features: async () => features,
+    upgrade: async () => {
+      order.push("upgrade");
+      features = [...features, "codex-mcp"];
+    },
+    setAgentConfig: async () => void order.push("config"),
+  };
+  await deliverSessionSetup(client, { environment: null, agentConfig, downloadUrl });
+  assert.deepEqual(order, ["upgrade", "config"]);
+
+  // No servers: nothing to upgrade for.
+  let upgraded = false;
+  await deliverSessionSetup(
+    { ...box(all).client, upgrade: async () => void (upgraded = true) },
+    { environment: null, agentConfig: { ...agentConfig, mcpServers: {} }, downloadUrl },
+  );
+  assert.equal(upgraded, false);
+});

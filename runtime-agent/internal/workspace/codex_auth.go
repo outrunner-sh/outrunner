@@ -40,8 +40,9 @@ func (s *Service) ownCodexHome(workspaceID string) bool {
 // prepareCodexHome readies a session's own Codex home for a launch: owner-
 // only, its config keeping the login in the home's auth.json (not the
 // system keychain, shared by every home), trusting the session's folder (so
-// no trust question waits for an answer) and, on a gateway, putting Codex on
-// it with the session's gateway key (codex.ProviderConfig). With an OpenAI
+// no trust question waits for an answer), with the computer's MCP servers
+// (codex.MCPServersConfig) and, on a gateway, putting Codex on it with the
+// session's gateway key (codex.ProviderConfig). With an OpenAI
 // key, it is then logged in with it, given on stdin, never on a command line.
 // Rewritten each launch from the session's facts, so a model switched to or
 // from a gateway, or a key replaced, is what the next launch runs on.
@@ -75,7 +76,10 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 	}
 	// The provider's top-level key goes before the tables.
 	config := "cli_auth_credentials_store = \"file\"\n" + provider + "\n" +
-		"[projects." + codex.TOMLString(folder) + "]\ntrust_level = \"trusted\"\n"
+		"[projects." + codex.TOMLString(folder) + "]\ntrust_level = \"trusted\"\n" +
+		// The MCP servers a Claude launch is given (agentconfig.go): the
+		// user's own, their project's and Outrunner's, for Codex too.
+		codex.MCPServersConfig(agentMCPServers())
 	// writeKeysFile: owner-only and atomic, so Codex never reads half of it.
 	if err := writeKeysFile(filepath.Join(home, "config.toml"), config); err != nil {
 		return err

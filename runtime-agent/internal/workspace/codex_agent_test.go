@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -464,5 +465,52 @@ func TestTheJcodeEngineTakesNoSessionCredential(t *testing.T) {
 	}
 	if err := s.SetAuth(context.Background(), "ws-j", AuthNone, ""); err != nil {
 		t.Errorf("taking a credential away on jcode = %v", err)
+	}
+}
+
+// A Codex session in a home of its own loads the MCP servers a Claude launch
+// is given (the user's own and their project's), from its config.toml.
+func TestACodexSessionLoadsTheComputersMCPServers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	s, _, id := codexSession(t, CreateInput{WorkspaceID: "ws-mcp", Branch: "b", BaseBranch: "main"})
+	s.runCommand = (&loginRecorder{}).run
+	ctx := context.Background()
+	mcp := map[string]json.RawMessage{
+		"docs":    json.RawMessage(`{"type":"http","url":"https://mcp.example/docs","headers":{"Authorization":"Bearer tok-0123456789abcdef"}}`),
+		"tracker": json.RawMessage(`{"type":"stdio","command":"npx","args":["-y","tracker-mcp"],"env":{"TRACKER_KEY":"key-0123456789abcdef"}}`),
+	}
+	if err := s.SetAgentConfig(ctx, AgentConfigRequest{MCPServers: mcp}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAuth(ctx, id, AuthOpenAIAPIKey, testOpenAIKey); err != nil {
+		t.Fatalf("SetAuth: %v", err)
+	}
+	if _, err := s.Start(ctx, id, ""); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	config := readFileString(t, filepath.Join(s.codexHome(id), "config.toml"))
+	for _, want := range []string{
+		`[mcp_servers."docs"]`, `url = "https://mcp.example/docs"`, `http_headers = { "Authorization" = "Bearer tok-0123456789abcdef" }`,
+		`[mcp_servers."tracker"]`, `command = "npx"`, `env = { "TRACKER_KEY" = "key-0123456789abcdef" }`,
+	} {
+		if !strings.Contains(config, want) {
+			t.Errorf("config.toml lacks %q:\n%s", want, config)
+		}
+	}
+	// TOML: the top-level keys still come before every table.
+	if strings.Index(config, "cli_auth_credentials_store") > strings.Index(config, "[") {
+		t.Errorf("a top-level key follows a table:\n%s", config)
+	}
+
+	// Gone from the computer, gone from the next launch's config.
+	if err := s.SetAgentConfig(ctx, AgentConfigRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.prepareCodexHome(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if config := readFileString(t, filepath.Join(s.codexHome(id), "config.toml")); strings.Contains(config, "mcp_servers") {
+		t.Errorf("servers removed are still in config.toml:\n%s", config)
 	}
 }

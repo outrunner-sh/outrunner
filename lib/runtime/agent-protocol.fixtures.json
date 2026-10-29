@@ -595,7 +595,8 @@
         "plan-mode",
         "compact",
         "files",
-        "environment-skills"
+        "environment-skills",
+        "codex-mcp"
       ]
     }
   ],
