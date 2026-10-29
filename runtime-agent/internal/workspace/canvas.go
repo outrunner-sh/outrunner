@@ -63,7 +63,8 @@ func (s *Service) removeCanvas(workspaceID string) {
 const maxCanvasWalk = 50_000
 
 // CanvasFiles lists a session's Canvas: its regular files, by their paths in
-// it, newest first, the newest MaxCanvasFiles of them. Hidden files and
+// it, newest first, the newest MaxCanvasFiles among the entries walked.
+// The path-ordered walk is bounded by maxCanvasWalk. Hidden files and
 // folders, and links, are left out: a link could point anywhere on the box.
 // Times are to the nanosecond: the app reloads an open file when its time
 // changes, and an agent often writes a file twice in a second.
@@ -89,6 +90,8 @@ func (s *Service) CanvasFiles(workspaceID string) (protocol.CanvasResponse, erro
 		if path == dir {
 			return nil
 		}
+		// Past the bound, these are the newest entries walked so far in path
+		// order, not necessarily the newest files in the whole Canvas.
 		if walked++; walked > maxCanvasWalk {
 			truncated = true
 			return filepath.SkipAll

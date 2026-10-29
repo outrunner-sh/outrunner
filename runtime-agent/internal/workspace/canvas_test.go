@@ -133,3 +133,35 @@ func TestCanvasListsTheNewestPastTheBound(t *testing.T) {
 		t.Fatalf("%d files, truncated %v, first %q", len(canvas.Files), canvas.Truncated, canvas.Files[0].Path)
 	}
 }
+
+func TestCanvasVersionsAndOrderWithinASecond(t *testing.T) {
+	s, dir := canvasService(t)
+	whole := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	for name, at := range map[string]time.Time{"whole.md": whole, "fraction.md": whole.Add(500 * time.Millisecond)} {
+		path := filepath.Join(dir, name)
+		writeTestFile(t, path, "one")
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := s.CanvasFiles("ws-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Files[0].Path != "fraction.md" {
+		t.Fatalf("newest = %q", before.Files[0].Path)
+	}
+	path := filepath.Join(dir, "fraction.md")
+	writeTestFile(t, path, "two") // Same size, same second, different modification time.
+	at := whole.Add(750 * time.Millisecond)
+	if err := os.Chtimes(path, at, at); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.CanvasFiles("ws-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Files[0].ModifiedAt == after.Files[0].ModifiedAt {
+		t.Fatal("same-second rewrite kept the old version")
+	}
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
 import { type CanvasKind, canvasFileUrl, MAX_CSV_COLUMNS, parseCsv } from "@/lib/session/canvas";
@@ -168,7 +168,7 @@ export function MermaidDiagram({ source }: { source: string }) {
 
 /** A CSV as a table, its first row the header. */
 function CsvTable({ text }: { text: string }) {
-  const { rows, truncated, columnsTruncated } = parseCsv(text);
+  const { rows, truncated, columnsTruncated } = useMemo(() => parseCsv(text), [text]);
   if (rows.length === 0) return <div className="canvas-message">An empty table.</div>;
   const [head, ...body] = rows;
   return (

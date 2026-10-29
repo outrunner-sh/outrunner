@@ -205,7 +205,11 @@ export function WorkspaceCanvas({
               })}
             </ul>
           )}
-          {listing?.truncated && <p className="px-4 py-3 text-[11px] text-muted-foreground">Only the newest files are listed.</p>}
+          {listing?.truncated && (
+            <p className="px-4 py-3 text-[11px] text-muted-foreground">
+              The file list is limited. Large folders may be only partly scanned, so newer files outside the scan may be omitted.
+            </p>
+          )}
         </div>
       )}
     </div>
