@@ -356,6 +356,19 @@ test("a send that lands lets its files go from what is kept", () => {
   assert.equal(page(storage).drafts.get("ws:1"), null);
 });
 
+test("signing out mid-send keeps the files of the message on its way", () => {
+  const storage = new FakeStorage();
+  const { drafts, run, discarded } = page(storage);
+  const sent = ready("a");
+  drafts.update("ws:1", (d) => ({ ...d, text: "look", attachments: [sent, ready("b")] }));
+  drafts.hold("ws:1", "look", [sent]);
+  drafts.update("ws:1", (d) => ({ text: "", attachments: d.attachments.filter((a) => a.id !== "a") }));
+  run();
+  drafts.clear();
+  assert.deepEqual(discarded, ["b"], "the staged one goes; the one being sent stays");
+  assert.equal(storage.items.size, 0);
+});
+
 test("an upload's progress is kept with it; one the page cut off comes back failed, without it", () => {
   const storage = new FakeStorage();
   const { drafts, run } = page(storage);

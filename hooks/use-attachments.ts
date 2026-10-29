@@ -7,7 +7,7 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_BYTES,
 } from "@/lib/runtime/attachments";
-import { dropPreview, keepPreview } from "@/lib/session/attachment-previews";
+import { dropPreview, keepPreview, previewOf } from "@/lib/session/attachment-previews";
 
 export type { PendingAttachment } from "@/lib/client/drafts";
 
@@ -115,6 +115,14 @@ export function useAttachments(draftKey: string) {
       const sent = new Set(ids);
       const taken = (DRAFTS.get(draftKey)?.attachments ?? []).filter((item) => item.id && sent.has(item.id));
       if (taken.length === 0) return [];
+      // One staged on a page since reloaded was never kept there: the
+      // message it goes with shows it from here (its kept thumbnail), not as
+      // a plain file until the logged prompt replaces it.
+      for (const item of taken) {
+        if (item.id && !previewOf(item.id)) {
+          keepPreview(item.id, { filename: item.filename, contentType: item.contentType, url: item.previewUrl });
+        }
+      }
       const keys = new Set(taken.map((item) => item.key));
       DRAFTS.update(draftKey, (draft) => ({ ...draft, attachments: draft.attachments.filter((item) => !keys.has(item.key)) }));
       return taken;

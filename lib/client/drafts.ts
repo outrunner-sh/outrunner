@@ -274,6 +274,11 @@ export class Drafts {
   clear(): void {
     for (const handle of this.pending.values()) this.cancel(handle);
     this.pending.clear();
+    // Files of a send on its way are the message's now, not the draft's:
+    // they aren't let go with it.
+    const sending = new Set(
+      [...this.held.values()].flatMap((holds) => [...holds.values()].flatMap((held) => held.attachments.map((a) => a.id))),
+    );
     this.held.clear();
     const ids = new Set<string>();
     for (const draft of this.memory.values()) for (const a of draft.attachments) if (a.id) ids.add(a.id);
@@ -287,7 +292,8 @@ export class Drafts {
     const keys = [...this.memory.keys()];
     this.memory.clear();
     this.read.clear();
-    if (ids.size > 0) this.discard([...ids]);
+    const gone = [...ids].filter((id) => !sending.has(id));
+    if (gone.length > 0) this.discard(gone);
     for (const key of keys) this.notify(key);
   }
 
