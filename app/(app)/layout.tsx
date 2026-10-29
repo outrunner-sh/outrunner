@@ -10,6 +10,7 @@ import { countTriage, triageActor } from "@/lib/db/work-items";
 import { GET_STARTED_COOKIE } from "@/lib/nav/get-started";
 import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import { GROUPING_COOKIE, readGrouping } from "@/lib/nav/status-groups";
+import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/active";
 import { getOrgContext } from "@/lib/orgs/server";
 import { readStandings } from "@/lib/db/session-standing";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
@@ -63,6 +64,9 @@ async function ChromeData() {
         folded: readFoldedProjects(jar.get(FOLDED_PROJECTS_COOKIE)?.value),
         getStartedSkipped: jar.get(GET_STARTED_COOKIE)?.value === "1",
         grouping: readGrouping(jar.get(GROUPING_COOKIE)?.value),
+        // Which org's list the browser kept may stand in for
+        // (components/app-frame.tsx): null before the switcher was ever used.
+        pickedOrgId: jar.get(ACTIVE_ORG_COOKIE)?.value ?? null,
       }}
     />
   );

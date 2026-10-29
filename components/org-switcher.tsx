@@ -17,6 +17,7 @@ import {
 import { Spinner } from "@/components/ui/loaders";
 import { type Org, orgSummary } from "@/lib/orgs/active";
 import { requestJson } from "@/lib/http/request-json";
+import { clearAppDataCache } from "@/lib/session/app-data-cache";
 
 /**
  * The org the sidebar lists, as its header: Outrunner's mark and the org's
@@ -49,6 +50,8 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
         body: { orgId: org.id },
         fallback: "Couldn't switch orgs. Try again.",
       });
+      // The list kept is the org left behind: none of it shows in the new one.
+      clearAppDataCache();
       router.push("/");
       router.refresh();
     } catch (cause) {

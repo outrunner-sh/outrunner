@@ -51,6 +51,7 @@ import { buildStatusSections, type Grouping, groupingCookie } from "@/lib/nav/st
 import type { SessionStanding } from "@/lib/session/standing";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
+import { forgetCachedSession } from "@/lib/session/app-data-cache";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { startNewSession } from "@/lib/session/new-session-reset";
 import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
@@ -167,6 +168,8 @@ export function AppSidebar({
   const [archiving, setArchiving] = useState<ArchivingSession | null>(null);
   const onArchived = (id: string) => {
     if (id === active) router.push("/");
+    // Until the list comes back, a reload must not show it as it was.
+    forgetCachedSession(id);
     router.refresh();
   };
 

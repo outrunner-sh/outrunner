@@ -1,4 +1,5 @@
 import { store, useStore } from "@/lib/client/store";
+import { forgetCachedSession } from "@/lib/session/app-data-cache";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
 import { localAgentRequest, localTarget } from "@/lib/desktop/local-runtime";
 import type { SessionDeletion } from "@/lib/nav/sidebar";
@@ -45,8 +46,10 @@ export async function deleteSession(id: string, deletion: SessionDeletion): Prom
   forgetDeleted(id);
 }
 
-/** A deleted session's kept page says it is gone, and its conversation goes. */
+/** A deleted session's kept page says it is gone, its conversation goes, and
+ *  the sidebar's kept list drops it: a reload must not bring it back. */
 function forgetDeleted(id: string): void {
   DELETED.set(new Set([...DELETED.get(), id]));
   CONVERSATIONS.forget(id);
+  forgetCachedSession(id);
 }

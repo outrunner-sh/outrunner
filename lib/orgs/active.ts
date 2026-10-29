@@ -5,6 +5,9 @@
  * connected goes into it.
  */
 
+/** Read by the app layout for the frame, as the sidebar's own cookies are
+ *  (lib/nav/sidebar.ts): named again in each instant page's
+ *  `unstable_instant` samples, which static analysis reads. */
 export const ACTIVE_ORG_COOKIE = "outrunner_org";
 
 export type OrgRole = "admin" | "member";
