@@ -78,7 +78,8 @@ function PullRow({ pull: p }: { pull: PullSummary }) {
         <td key={kind} className="whitespace-nowrap text-right">
           <Link href={href} className={cell} tabIndex={-1}>
             {p.lines ? (
-              // Over 100 files, only the first 100's lines are counted.
+              // Over 100 files, only the first 100's lines are counted. A PR of
+              // exactly 100 is marked too: a full page can't tell it from more.
               <span title={p.linesComplete ? undefined : "Counted from its first 100 files"}>
                 {!p.linesComplete && <span className="text-muted-foreground">≥ </span>}
                 <Delta delta={p.lines[kind]} dim={kind === "generated"} />

@@ -108,7 +108,8 @@ async function Pull({ params }: { params: Params }) {
               </span>
               <span className="inline-flex items-center gap-2">
                 {pr.changedFiles} files
-                {pr.lines ? <LineCountsSummary counts={pr.lines} /> : <Delta delta={pr} />}
+                {/* By kind only when every file was read: else GitHub's own totals. */}
+                {pr.lines && pr.filesComplete ? <LineCountsSummary counts={pr.lines} /> : <Delta delta={pr} />}
               </span>
             </div>
           </div>
