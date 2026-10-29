@@ -134,8 +134,10 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                     draggable
                     onDragStart={(e) => {
                       setDragging(mission.id);
-                      // Firefox starts no drag that carries nothing.
-                      e.dataTransfer.setData("text/plain", mission.id);
+                      // Replace the link's text/URL so dropping on a text field
+                      // inserts nothing. Firefox still needs data to start a drag.
+                      e.dataTransfer.clearData();
+                      e.dataTransfer.setData("application/x-outrunner-mission", mission.id);
                       e.dataTransfer.effectAllowed = "move";
                     }}
                     onDragEnd={() => {

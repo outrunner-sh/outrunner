@@ -6,7 +6,7 @@
  */
 
 import { FolderGit2, Users } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { MissionGlyph, StatusDot } from "@/components/missions/mission-parts";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -15,6 +15,9 @@ import { MISSION_ICONS, missionIcon } from "@/lib/missions/icons";
 import { MAX_RUNNERS } from "@/lib/missions/rules";
 import { MISSION_STATUS_LABEL } from "@/lib/missions/view";
 import { cn } from "@/lib/utils";
+
+/** The icon picker's columns, as its grid-cols-5 lays them out. */
+const GRID_COLUMNS = 5;
 
 /** Save a change to the Mission; the reason it wasn't saved, or null. */
 async function patch(id: string, body: { title?: string; icon?: string }): Promise<string | null> {
@@ -55,9 +58,26 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
     if (next && next !== title) void patch(missionId, { title: next }).then(setFailed);
   };
 
+  const grid = useRef<HTMLDivElement>(null);
+  const moveInGrid = (e: KeyboardEvent<HTMLDivElement>) => {
+    const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -GRID_COLUMNS, ArrowDown: GRID_COLUMNS }[e.key];
+    if (!step) return;
+    const items = [...e.currentTarget.querySelectorAll<HTMLElement>("[role=menuitem]")];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const next = items[at + step];
+    e.preventDefault();
+    e.stopPropagation();
+    next?.focus();
+  };
+
   return (
     <div className="flex min-w-0 items-center gap-2.5">
-      <DropdownMenu>
+      <DropdownMenu
+        onOpenChange={(open) => {
+          // Wait for the portal and Radix's initial focus to mount.
+          if (open) requestAnimationFrame(() => grid.current?.querySelector<HTMLElement>("[data-current]")?.focus());
+        }}
+      >
         <DropdownMenuTrigger
           aria-label={`Icon: ${current.label}. Change it`}
           className="rounded-md outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-white/30"
@@ -66,13 +86,14 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-[212px] p-2">
           <DropdownMenuLabel className="px-1 pt-0 pb-2 text-[11.5px] font-normal text-muted-foreground">Mission icon</DropdownMenuLabel>
-          {/* Menu items, so a pick closes the menu and the arrow keys and
-              typeahead move between them. */}
-          <div className="grid grid-cols-5 gap-1">
+          {/* Capture arrows before Radix's item handlers move focus in a
+              single list; leave selection and typeahead to the menu. */}
+          <div ref={grid} className="grid grid-cols-5 gap-1" onKeyDownCapture={moveInGrid}>
             {MISSION_ICONS.map(({ key, label, Icon }) => (
               <DropdownMenuItem
                 key={key}
                 aria-label={current.key === key ? `${label}, current` : label}
+                data-current={current.key === key || undefined}
                 title={label}
                 textValue={label}
                 onSelect={() => {
