@@ -46,7 +46,7 @@ test("with local sessions off, no way that only a Mac session can use is offered
   );
   assert.deepEqual(
     authMethodsFor("codex", false).map((m) => m.id),
-    ["api-key"],
+    ["codex-account", "api-key"],
   );
   // On, every way is.
   assert.ok(authMethodsFor("codex", true).some((m) => m.id === "chatgpt"));

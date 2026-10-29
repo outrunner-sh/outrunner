@@ -228,7 +228,7 @@ func TestACodexSessionWithAKeyRunsInItsOwnLoggedInHome(t *testing.T) {
 	if !slices.Contains(call.env, "CODEX_HOME="+home) || slices.Contains(call.env, "CODEX_HOME=/Users/user/.codex") || slices.Contains(call.env, "OPENAI_API_KEY=the-computers-key") {
 		t.Errorf("login env = %q, want only the session's home", call.env)
 	}
-	want := []string{"env", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN", "CODEX_HOME=" + home, "codex"}
+	want := []string{"env", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN", "-u", "OUTRUNNER_CODEX_GRANT", "CODEX_HOME=" + home, "codex"}
 	if got := fake.lastLaunch(); !slices.Equal(got[:len(want)], want) || strings.Contains(strings.Join(got, " "), testOpenAIKey) {
 		t.Errorf("launch = %q, want codex in its own home, the key off the command line", got)
 	}

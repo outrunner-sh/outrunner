@@ -424,6 +424,7 @@ const FeatureAgentContext = "agent-context"
 
 // FeatureCodexAccessToken accepts a Codex workspace access token, separately
 // from an OpenAI Platform API key.
+const FeatureCodexAccount = "codex-account"
 const FeatureCodexAccessToken = "codex-access-token"
 
 // FeatureEnvironment is POST /workspaces/{id}/environment.

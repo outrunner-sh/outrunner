@@ -150,6 +150,7 @@ export const AGENT_FEATURE_SKILLS = "environment-skills";
  *  Claude alone. */
 export const AGENT_FEATURE_CODEX_MCP = "codex-mcp";
 /** A Codex workspace credential passed to `codex login --with-access-token`. */
+export const AGENT_FEATURE_CODEX_ACCOUNT = "codex-account";
 export const AGENT_FEATURE_CODEX_ACCESS_TOKEN = "codex-access-token";
 
 /** POST /agent-context: what every session on the computer reads besides
@@ -461,12 +462,12 @@ export type ProvideSecretsRequest = z.infer<typeof ProvideSecretsRequest>;
 
 export const SetAuthRequest = z
   .object({
-    kind: z.enum(["none", "claude-oauth-token", "anthropic-api-key", "openai-api-key", "codex-access-token"]),
+    kind: z.enum(["none", "claude-oauth-token", "anthropic-api-key", "openai-api-key", "codex-access-token", "codex-account"]),
     // Access tokens are opaque and may be longer than API keys. Keep the
     // existing API-key limit, and the same shell-safe character set.
     token: z.string().regex(/^[\x21-\x26\x28-\x5b\x5d-\x7e]{20,16384}$/).optional(),
   })
-  .refine((v) => v.token === undefined || v.kind === "codex-access-token" || CredentialToken.safeParse(v.token).success, {
+  .refine((v) => v.token === undefined || ["codex-access-token", "codex-account"].includes(v.kind) || CredentialToken.safeParse(v.token).success, {
     message: "invalid credential token",
     path: ["token"],
   })

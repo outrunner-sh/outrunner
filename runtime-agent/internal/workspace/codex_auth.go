@@ -36,7 +36,7 @@ func (s *Service) codexHome(workspaceID string) string {
 // ownCodexHome reports whether a session runs in a Codex home of its own.
 func (s *Service) ownCodexHome(workspaceID string) bool {
 	f, _ := s.getFacts(workspaceID)
-	return f.Auth == AuthOpenAIAPIKey || f.Auth == AuthCodexAccessToken || f.Gateway != claude.NoGateway
+	return f.Auth == AuthOpenAIAPIKey || f.Auth == AuthCodexAccessToken || f.Auth == AuthCodexAccount || f.Gateway != claude.NoGateway
 }
 
 // prepareCodexHome readies a session's own Codex home for a launch: owner-
@@ -55,8 +55,11 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 	if f.Auth == AuthCodexAccessToken {
 		credentialEnv, loginFlag = "CODEX_ACCESS_TOKEN", "--with-access-token"
 	}
+	if f.Auth == AuthCodexAccount {
+		credentialEnv = "OUTRUNNER_CODEX_GRANT"
+	}
 	key := s.authFiles().value(workspaceID, credentialEnv)
-	if (f.Auth == AuthOpenAIAPIKey || f.Auth == AuthCodexAccessToken) && key == "" {
+	if (f.Auth == AuthOpenAIAPIKey || f.Auth == AuthCodexAccessToken || f.Auth == AuthCodexAccount) && key == "" {
 		return ErrAuthMissing
 	}
 	provider := ""
@@ -67,6 +70,14 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 		}
 		if provider = codex.ProviderConfig(f.Gateway, token); provider == "" {
 			return ErrGatewayUnsupported
+		}
+	}
+	accountAuth := ""
+	if f.Auth == AuthCodexAccount && f.Gateway == claude.NoGateway {
+		var err error
+		provider, accountAuth, err = codex.AccountConfig(key)
+		if err != nil {
+			return err
 		}
 	}
 	home := s.codexHome(workspaceID)
@@ -91,13 +102,18 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 	if err := writeKeysFile(filepath.Join(home, "config.toml"), config); err != nil {
 		return err
 	}
+	if accountAuth != "" {
+		if err := writeKeysFile(filepath.Join(home, "auth.json"), accountAuth); err != nil {
+			return err
+		}
+	}
 	copyAgentsMD(home) // the user's instructions, as the computer's own home has them
 	if f.Auth != AuthOpenAIAPIKey && f.Auth != AuthCodexAccessToken {
-		return nil // on a gateway alone: nothing to log in with, nor needed
+		return nil // gateway or host-managed account: no provider login on the computer
 	}
 	ctx, cancel := context.WithTimeout(ctx, codexLoginTimeout)
 	defer cancel()
-	env := append(withoutEnv(s.env, "CODEX_HOME", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN"), "CODEX_HOME="+home)
+	env := append(withoutEnv(s.env, "CODEX_HOME", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OUTRUNNER_CODEX_GRANT"), "CODEX_HOME="+home)
 	if out, err := s.runCommand(ctx, env, key+"\n", "codex", "login", loginFlag); err != nil {
 		if f.Auth == AuthCodexAccessToken {
 			// An access-token login can exchange credentials. Do not forward
@@ -119,7 +135,7 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 // (withProvided).
 func (s *Service) codexEnvironment(workspaceID string) func(string) (string, bool) {
 	env := map[string]string{}
-	for _, entry := range withoutEnv(s.env, "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_HOME") {
+	for _, entry := range withoutEnv(s.env, "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OUTRUNNER_CODEX_GRANT", "CODEX_HOME") {
 		if name, value, ok := strings.Cut(entry, "="); ok {
 			env[name] = value
 		}
@@ -176,7 +192,7 @@ func (s *Service) codexLaunchEnv(workspaceID string) []string {
 	if !s.ownCodexHome(workspaceID) {
 		return nil
 	}
-	return []string{"env", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN", "CODEX_HOME=" + s.codexHome(workspaceID)}
+	return []string{"env", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN", "-u", "OUTRUNNER_CODEX_GRANT", "CODEX_HOME=" + s.codexHome(workspaceID)}
 }
 
 // withoutEnv is env without the named variables.

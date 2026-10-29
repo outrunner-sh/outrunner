@@ -1,91 +1,130 @@
-# Codex personal accounts and the requested organization connection
+# Codex account connections
 
-Status: groundwork in draft PR #328; the organization connection is not implemented.
-Provider documentation checked on 2026-10-29.
+Settings → Providers → Codex offers **ChatGPT account** alongside the existing
+API-key method. The old Mac-only ChatGPT/local choices are kept as they were;
+local sessions remain disabled on the web. No existing choice is rewritten.
 
-## Confirmed product requirement
+The user explicitly chose a personal ChatGPT Plus/Pro account connected once at
+organization scope, for current members' cloud sessions on new computers. This
+supersedes the earlier per-computer and owner-only proposals. The public Replicas
+technical/product pattern is the reference, not a claim of provider contractual
+approval:
 
-An organization admin connects their **personal ChatGPT Plus/Pro account** once.
-Authorized current Outrunner org members should then use that connection for
-their own cloud sessions and new computers, without signing in individually.
-Existing personal authentication choices, working sessions and API-key
-authentication must remain available. Do not substitute a service account,
-pay-as-you-go billing, or a per-computer-only connection for this requirement.
+- https://docs.replicas.dev/features/coding-agents/codex.md
+- https://docs.replicas.dev/admin/credentials.md
 
-## Supported login versus account delegation
+## Connect and manage
 
-The [Codex authentication guide](https://learn.chatgpt.com/docs/auth#login-on-headless-devices)
-documents `codex login --device-auth` for remote/headless machines. It also
-documents protected auth-cache transfer and automatic refresh during CLI use.
-This is a native CLI account login; it does not depend on registering a
-third-party Sign in with ChatGPT client. A missing SIWC configuration is not
-evidence that this native login is unavailable.
+An organization admin selects the organization explicitly in Settings and starts
+a ten-minute attempt. The page shows a command bound to this deployment, signed-in
+Outrunner user, organization UUID and attempt UUID:
 
-The [OpenAI account-sharing policy](https://help.openai.com/en/articles/10471989-openai-account-sharing-policy)
-distinguishes the account owner's use on multiple devices from other people's
-use of that account. The [Terms of Use, Registration and access](https://openai.com/policies/terms-of-use/#registration-and-access)
-prohibit both sharing credentials and making a personal account available to
-other people.
+```
+npx outrunner@latest --url https://app.outrunner.sh --account <user-uuid> codex-auth --org <org-uuid> --attempt <attempt-uuid>
+```
 
-The requested operation outside that published support boundary is **delegating
-one person's Plus/Pro Codex identity and subscription to other Outrunner org
-members**. A server retaining all tokens would avoid disclosing those tokens,
-but would still make that personal account available to the other users.
-This is a provider-support limitation; no technical claim is made that the
-native CLI cannot cache or refresh credentials on a remote computer.
+The CLI can also start an attempt itself. `outrunner codex-auth` defaults to
+**personal**; `--org <UUID>` explicitly selects shared scope. The existing
+Outrunner browser login authenticates the CLI. Current admin status is checked
+before provider login, again after verification, and inside the SQL upload
+transaction. Members may see connection status and use it; they cannot manage it.
 
-The separate [third-party plan-usage documentation](https://developers.openai.com/siwc/token-sharing-open-source)
-describes user-bound grants for OSS/local clients and directs hosted
-applications to a separate integration process. Identity-only website OAuth
-and an OSS user's plan-usage grant are not documentation of the requested
-cross-user delegation. No SIWC registration or exception to the personal
-account-sharing policy is assumed here.
+The CLI runs the official `codex login --device-auth` in a new, private,
+file-backed CODEX_HOME. It prints only the official device URL and approval code,
+never raw CLI diagnostics or credentials. It uploads that newly-created login
+through HTTPS with its Outrunner CLI bearer token. Existing Codex homes/keychains
+are never read or replaced. Temporary login files are removed on every exit.
+The browser receives only status and command parameters, never provider tokens.
 
-The missing prerequisite for the exact requested product behavior is a
-provider agreement or supported grant explicitly allowing that hosted,
-multi-user personal-subscription delegation. A successful device login alone
-would not establish it. Do not solicit or copy a real personal credential to
-test delegation while that prerequisite is unresolved.
+The server verifies the login against Codex's native model catalog before
+committing. Pending attempts are bound to actor and scope; cancel, expiry,
+disconnect, admin removal, and replacement prevent a late upload from restoring
+old credentials. A pending replacement leaves the working connection intact.
+The CLI watches cancellation and stops waiting for device approval.
 
-## Implemented groundwork
+## Selection and runtime
 
-- The runtime accepts a distinct `codex-access-token` credential and calls
-  `codex login --with-access-token`, using stdin and an isolated Codex home.
-  It is separate from personal browser/device login and from Platform API keys.
-  Adding this primitive does not turn a Plus/Pro account into a service account.
-- Capability checks refuse unsupported computers before delivering auth or
-  restoring, with an upgrade where the provider supports one.
-- Tests cover restart/restore, replacement/removal, credential isolation and
-  error redaction. They use synthetic credentials, not a real provider account.
-- Org credential reads use the existing membership resolver after the sealed
-  read completes; tests cover two members, cross-org refusal and removal during
-  the read. Existing admin-only management and project permissions still apply.
-- No new stored authentication choice, organization Codex connection, personal
-  credential sharing, or connection UI is enabled.
+`user_agent_auth` adds `codex-account`; API-key and legacy Mac choices remain
+valid. An explicit pick is honored. Without one, a personal account is preferred,
+then a personal API key, then org account/key defaults. An org connection never
+silently displaces a personal key. A personal account needing reconnect does not
+silently bill the organization instead. Org lookup uses the existing current
+`organization_members` role resolver, including after awaited reads.
 
-## Central lifecycle design if provider-supported delegation becomes available
+Each runtime gets a sealed Outrunner inference grant bound to user, session org,
+connection scope and generation. It contains **no provider token**. The runtime
+uses native Codex's `chatgptAuthTokens` host-managed mode in its isolated home,
+an empty refresh token and a local protocol identity. Its custom Responses
+provider points to Outrunner over HTTPS with WebSockets disabled (streaming HTTP
+is supported by pinned Codex 0.146.0). This is the native CLI's external-token
+mode, not a new OpenAI OAuth registration or a service account.
 
-Reuse `orgCaller({ admin: true })` for connection management, `memberRole` for
-current membership, and existing project permissions for session eligibility.
-Store one encrypted connection per org, with public status metadata separated
-from credentials. Bind login attempts to the org, initiating admin, random
-attempt ID, expiry and generation; recheck admin status when completing login.
+The inference broker allows only models, responses and compaction, targets a
+fixed native Codex upstream, forwards compressed bodies/SSE and selected protocol
+headers, and supplies the actual fresh access token/account id server-side.
+Every request checks the current member, saved method, personal precedence,
+connection generation and status in one PostgreSQL authorization snapshot before
+upstream use, including after refresh.
+Disconnected connections, removed members, and changed choices cannot use stale
+computer grants. An already accepted upstream request can finish. Replacement or
+disconnect invalidates old grants; reopening/waking the session resolves a fresh
+one. Ordinary agent restarts on the same connected generation preserve sign-in.
 
-Keep upstream credentials in a central vault. Runtime computers should use
-scoped broker credentials. On every new upstream operation, the broker must
-check current membership, project access and the connection generation so
-member removal and disconnect stop future use without waiting for copied
-upstream credentials to expire. Preserve explicit personal choices and
-API-key priority; never silently substitute billing sources.
+Provider refresh tokens never reach computers, so there is no distributed
+refresh-token cache to rotate or resurrect. Local auth caches contain only
+revocable grants, and switching authentication removes them. Both the encoded
+grant and its bearer are redacted, including retired grants and live terminals.
+ChatGPT cloud plugins/apps are disabled for this connection and are not proxied; this integration supports coding,
+models and compaction, plus Outrunner's existing MCP configuration.
 
-Serialize refresh for each upstream connection across server instances using
-a durable lease and fencing generation. Atomically store replacement tokens,
-expiry and version. A stale refresh or login completion must not resurrect a
-disconnected connection or overwrite a newer reconnect. Define bounded retry,
-reconnect-required status and crash recovery against the selected provider's
-documented refresh contract; do not invent token endpoints or assume that
-native CLI refresh and third-party SIWC refresh are interchangeable.
+## Central lifecycle
 
-This lifecycle and its admin/member UX remain a design, not a claim of a
-completed or provider-supported shared personal-account connection. Keep the
-PR draft until the actual supported grant, lifecycle, UI and evidence exist.
+`codex_connections` is service-role-only (RLS, no browser grants). AES-256-GCM
+uses Outrunner's existing credential encryption and includes the scope inside
+the authenticated plaintext. Rows belong to a user or organization with foreign
+key cleanup. Metadata is explicitly projected before returning it to settings.
+
+A PostgreSQL RPC acquires one refresh lease per connection across controller
+instances. A revision fences concurrent 401 retries; a generation fences
+replacement/disconnect. Refresh responses can commit only with their current
+lease/generation. The request times out in 15 seconds against a 60-second lease;
+crashed workers leave a recoverable lease. Refresh-token rotation is encrypted
+and committed centrally before being used. Refresh rejected with invalid_grant,
+expired/reused/invalidated refresh token or 401 clears the credential and marks
+reconnect. Network failures, 429 and 5xx preserve it, with a short shared retry
+cooldown. There is no speculative credential or billing fallback on failures.
+As with any rotating-token integration, a process/database outage after the
+provider rotates but before commit may require reconnect if the provider later
+rejects the retained token; we do not claim to make this external transaction
+atomic.
+
+## Sources and validation
+
+Official native behavior is pinned to OpenAI Codex rust-v0.146.0:
+
+- https://learn.chatgpt.com/docs/auth — native CLI/browser and device login.
+- https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/login/src/auth/manager.rs — native public client id, refresh JSON contract, external-token mode.
+- https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/model-provider-info/src/lib.rs — provider base URL, HTTP and native ChatGPT protocol.
+
+Tests cover personal/API precedence, current-member/org isolation, admin-only
+management in SQL, 24 concurrent renewals, rejected-revision deduplication,
+rotation, reconnect versus transient failures, stale leases, canceled/expired
+uploads, replacement/disconnect races, runtime restart/cache removal and masking.
+SQL tests use a disposable database (`CODEX_AUTH_PG`, provided by CI; a dedicated
+local Docker test container is also supported). The optional real-CLI probe is:
+
+```
+CODEX_TEST_BINARY=/path/to/codex go test ./internal/codex -run AccountNative -v
+```
+
+That probe runs the actual pinned CLI through the actual runtime configuration
+against a local synthetic upstream, completing an inference response. It is not
+provider acceptance. Browser evidence uses the actual components with visibly
+labeled synthetic organization/status fixtures; no real account was authorized.
+A real Plus/Pro owner must approve device login in the secure OpenAI browser
+flow to verify live upload, inference and eventual real token renewal.
+
+Rollout requires the migration, normal app/runtime release and a CLI release
+containing `codex-auth` via the existing CLI-publish workflow before directing
+users to the `outrunner@latest` command. No production deployment or provider
+entitlement is assumed by this PR.

@@ -23,7 +23,7 @@ import { providerSettingsHref } from "@/lib/settings-links";
 
 /** A credential handed to the agent for one session (POST /workspaces/{id}/auth). */
 export type SessionCredential = {
-  kind: "claude-oauth-token" | "anthropic-api-key" | "openai-api-key" | "codex-access-token";
+  kind: "claude-oauth-token" | "anthropic-api-key" | "openai-api-key" | "codex-access-token" | "codex-account";
   token: string;
 };
 
@@ -107,6 +107,7 @@ function firstCloudMethod(agent: AgentId): AuthMethodId {
 /** The session credential for a way of signing in that needs one. */
 function sessionCredential(credential: AuthCredential, token: string): SessionCredential | null {
   switch (credential.kind) {
+    case "codex-account": return { kind: "codex-account", token };
     case "claude-slot":
       // The slot holds subscription tokens; one from before keys moved out of
       // it still runs as the API key it is.

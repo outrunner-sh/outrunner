@@ -20,8 +20,8 @@ import { SessionKeyRemovedError } from "@/lib/runtime/model-switch";
 const KEY: ResolvedAuth["credential"] = { kind: "openai-api-key", token: "sk-proj-" + "o".repeat(40) };
 const TOKEN: ResolvedAuth["credential"] = { kind: "claude-oauth-token", token: "sk-ant-oat01-" + "t".repeat(40) };
 
-test("Codex access tokens require the advertised capability before delivery or restore", async () => {
-  const auth: ResolvedAuth = { method: null, credential: { kind: "codex-access-token", token: "synthetic-workspace-access-token" }, picked: false };
+for (const kind of ["codex-access-token", "codex-account"] as const) test(`Codex ${kind} requires the advertised capability before delivery or restore`, async () => {
+  const auth: ResolvedAuth = { method: null, credential: { kind, token: "synthetic-workspace-access-token" }, picked: false };
   const { c, given } = client(ok, async () => ["claude", "codex"]);
   let restored = 0;
   await assert.rejects(readyBox(c, "codex", auth), OutdatedComputerError);
@@ -33,7 +33,7 @@ test("Codex access tokens require the advertised capability before delivery or r
   let features: string[] = [];
   let upgrades = 0;
   c.features = async () => features;
-  c.upgrade = async () => { upgrades++; features = ["codex-access-token"]; };
+  c.upgrade = async () => { upgrades++; features = [kind]; };
   await readyBox(c, "codex", auth);
   await deliverSessionAuth(c, "codex", auth);
   await restoreSignedIn(c, "codex", auth, async (credential) => {

@@ -25,6 +25,7 @@ const (
 	AuthAnthropicAPIKey  = "anthropic-api-key"
 	AuthOpenAIAPIKey     = "openai-api-key"
 	AuthCodexAccessToken = "codex-access-token"
+	AuthCodexAccount     = "codex-account"
 )
 
 // authAgent is the agent each kind of credential is for.
@@ -33,6 +34,7 @@ var authAgent = map[string]string{
 	AuthAnthropicAPIKey:  AgentClaude,
 	AuthOpenAIAPIKey:     AgentCodex,
 	AuthCodexAccessToken: AgentCodex,
+	AuthCodexAccount:     AgentCodex,
 }
 
 // ValidAuthKind accepts a kind of credential a session can be given.
@@ -53,13 +55,13 @@ var (
 )
 
 // authKeyEnvs are the variables a session's credential is exported in.
-var authKeyEnvs = []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN"}
+var authKeyEnvs = []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OUTRUNNER_CODEX_GRANT"}
 
 // ValidAuthToken keeps API-key bounds unchanged, while accepting the longer
 // opaque credentials issued for Codex workspace automation. Both go into a
 // shell-sourced file, so whitespace, quotes and backslashes remain forbidden.
 func ValidAuthToken(kind, token string) bool {
-	if kind != AuthCodexAccessToken {
+	if kind != AuthCodexAccessToken && kind != AuthCodexAccount {
 		return claude.ValidGatewayToken(token)
 	}
 	if len(token) < 20 || len(token) > 16384 {
@@ -89,6 +91,8 @@ func authEnvFile(kind, token string) string {
 		return "unset CLAUDE_CODE_OAUTH_TOKEN\nexport ANTHROPIC_API_KEY=" + quoted + "\n"
 	case AuthOpenAIAPIKey:
 		return "unset CODEX_ACCESS_TOKEN\nexport OPENAI_API_KEY=" + quoted + "\n"
+	case AuthCodexAccount:
+		return "unset OPENAI_API_KEY CODEX_ACCESS_TOKEN\nexport OUTRUNNER_CODEX_GRANT=" + quoted + "\n"
 	case AuthCodexAccessToken:
 		return "unset OPENAI_API_KEY\nexport CODEX_ACCESS_TOKEN=" + quoted + "\n"
 	}
@@ -133,6 +137,7 @@ func (s *Service) SetAuth(ctx context.Context, workspaceID, kind, token string) 
 		kind = ""
 	}
 	s.updateFacts(workspaceID, func(f *workspaceFacts) { f.Auth = kind })
+	s.refreshLiveSecrets()
 	return nil
 }
 

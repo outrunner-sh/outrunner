@@ -716,7 +716,7 @@
         "rewind",
         "environment-skills",
         "codex-mcp",
-        "canvas"
+        "canvas", "codex-access-token", "codex-account"
       ]
     }
   ],

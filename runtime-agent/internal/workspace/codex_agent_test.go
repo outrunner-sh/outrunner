@@ -246,7 +246,7 @@ func TestACodexSessionOnOpenRouterRunsInItsOwnHomeOnTheKey(t *testing.T) {
 	}
 	home := s.codexHome(id)
 	argv := fake.lastLaunch()
-	want := []string{"env", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN", "CODEX_HOME=" + home, "codex", "-m", "z-ai/glm-5.3"}
+	want := []string{"env", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN", "-u", "OUTRUNNER_CODEX_GRANT", "CODEX_HOME=" + home, "codex", "-m", "z-ai/glm-5.3"}
 	if len(argv) < len(want) || !slices.Equal(argv[:len(want)], want) {
 		t.Fatalf("relaunch = %q, want codex on GLM in its own home", argv)
 	}

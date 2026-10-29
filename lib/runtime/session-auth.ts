@@ -19,7 +19,7 @@ import {
 } from "@/lib/agents/resolve";
 import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
 import { type AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { AGENT_FEATURE_CODEX_ACCESS_TOKEN } from "@/lib/runtime/agent-protocol";
+import { AGENT_FEATURE_CODEX_ACCESS_TOKEN, AGENT_FEATURE_CODEX_ACCOUNT } from "@/lib/runtime/agent-protocol";
 import { SessionKeyRemovedError } from "@/lib/runtime/model-switch";
 import { type RecordedModel, runsOnOwnAccount } from "@/lib/runtime/session-models";
 
@@ -114,14 +114,16 @@ export async function readyBox(client: SessionAuthClient, agent: AgentId, auth: 
 /** Refuse before writing auth or restoring anything on an older runtime.
  *  A Codex workspace token must never be treated as a Platform API key. */
 async function readyCredential(client: SessionAuthClient, auth: ResolvedAuth): Promise<void> {
-  if (auth.credential?.kind !== "codex-access-token") return;
-  const supports = async () => (await client.features?.() ?? []).includes(AGENT_FEATURE_CODEX_ACCESS_TOKEN);
+  const kind = auth.credential?.kind;
+  if (kind !== "codex-access-token" && kind !== "codex-account") return;
+  const feature = kind === "codex-account" ? AGENT_FEATURE_CODEX_ACCOUNT : AGENT_FEATURE_CODEX_ACCESS_TOKEN;
+  const supports = async () => (await client.features?.() ?? []).includes(feature);
   if (await supports()) return;
   if (client.upgrade) {
     await client.upgrade();
     if (await supports()) return;
   }
-  throw outdated("can't sign Codex in with a workspace access token");
+  throw outdated(`can't sign Codex in with ${kind === "codex-account" ? "a ChatGPT account" : "a workspace access token"}`);
 }
 
 /**
