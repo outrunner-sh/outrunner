@@ -282,3 +282,53 @@ test("the browser's ask: again while there's more, else the route's error, said"
   }) as typeof fetch;
   await assert.rejects(requestMissionArchive("m1", offline), /Could not reach Outrunner/);
 });
+
+test("a Ship whose box is out of reach is archived without its files, and the Runner goes, saying so", async () => {
+  const w = world([session("dead", "ready", { title: "Click Blink" }), session("asleep", "suspended", { title: "Instant Routes" }), session("fine", "idle")]);
+  const archive = w.deps.archive;
+  w.deps.archive = async (s) => {
+    const why = await archive(s);
+    return why === null && s.id !== "fine" && s.id !== "m1" ? { note: "Archived without its files." } : why;
+  };
+  const result = await archiveMission(w.mission, w.deps);
+  assert.equal(result.archived, true);
+  if (!result.archived) return;
+  assert.equal(result.ships, 3);
+  assert.deepEqual(w.archived.sort(), ["asleep", "dead", "fine", "m1"]);
+  assert.deepEqual(result.unsaved?.map((s) => s.id).sort(), ["asleep", "dead"]);
+  assert.match(result.note ?? "", /^2 Ships were archived without their files, their boxes out of reach: /);
+  assert.match(result.note ?? "", /“Click Blink”/);
+  assert.match(result.note ?? "", /anything pushed to GitHub is kept/);
+  assert.doesNotMatch(result.note ?? "", /setup/);
+});
+
+test("a Runner archived without its own files says so too", async () => {
+  const w = world([]);
+  const archive = w.deps.archive;
+  w.deps.archive = async (s) => ((await archive(s)) === null ? { note: "Archived without its files." } : null);
+  const result = await archiveMission(w.mission, w.deps);
+  assert.equal(result.archived, true);
+  if (result.archived) assert.match(result.note ?? "", /The Runner itself was archived without its files/);
+});
+
+test("a Ship archived without its files is still said when another keeps the Runner", async () => {
+  const w = world([session("dead", "ready", { title: "Click Blink" }), session("stuck", "ready")]);
+  w.refuse.set("stuck", "Your plan's cloud hours are used up");
+  const archive = w.deps.archive;
+  w.deps.archive = async (s) => (s.id === "dead" ? (await archive(s), { note: "Archived without its files." }) : archive(s));
+  const result = await archiveMission(w.mission, w.deps);
+  assert.equal(result.archived, false);
+  if (result.archived) return;
+  assert.match(result.why, /“stuck” \(Your plan's cloud hours are used up\)/);
+  assert.match(result.why, /A Ship was archived without its files, its box out of reach: “Click Blink”/);
+});
+
+test("the browser's ask answers the note, kept across asks that ran out of time", async () => {
+  const answers = [
+    new Response(JSON.stringify({ error: "2 Ships still to archive.", more: true, note: "A Ship was archived without its files: “a”." }), { status: 409 }),
+    new Response(JSON.stringify({ ok: true, note: "A Ship was archived without its files: “b”." }), { status: 200 }),
+  ];
+  const asks = (async () => answers.shift()!) as typeof fetch;
+  assert.equal(await requestMissionArchive("m1", asks), "A Ship was archived without its files: “a”. A Ship was archived without its files: “b”.");
+  assert.equal(await requestMissionArchive("m1", (async () => new Response("{}", { status: 200 })) as typeof fetch), null);
+});

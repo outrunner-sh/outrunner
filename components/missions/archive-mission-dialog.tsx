@@ -36,9 +36,10 @@ export function ArchiveMissionDialog({
         </button>
       )}
       run={async () => {
-        if (!mission) return;
+        if (!mission) return null;
         try {
-          await requestMissionArchive(mission.id);
+          // Ships archived without their files are said, with Done.
+          return await requestMissionArchive(mission.id);
         } finally {
           void refreshMissions();
         }

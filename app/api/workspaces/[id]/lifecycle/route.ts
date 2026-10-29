@@ -194,7 +194,10 @@ async function archiveDaytonaWorkspace(
   owner: Owner,
 ) {
   const archived = await archiveCloudSession(workspace, provider, owner);
-  if (archived.ok) return NextResponse.json({ workspace: { id: workspace.id, status: "archived" } });
+  if (archived.ok) {
+    // `note`: archived without its files, which the user is told.
+    return NextResponse.json({ workspace: { id: workspace.id, status: "archived" }, ...(archived.unsaved && { note: archived.note }) });
+  }
   if (archived.reason === "failed") return NextResponse.json({ error: archived.error }, { status: archived.status });
   return archived.reason === "reconcile" ? lifecycleReconciliationRequired("archive") : lifecycleConflict();
 }
@@ -220,8 +223,13 @@ async function restoreDaytonaWorkspace(
   }
   const snapshot = (await listWorkspaceSnapshots(workspace.id))[0];
   if (!snapshot) {
+    // Archived while its box was out of reach (lib/session/archive-save.ts):
+    // nothing of its work was kept to restore.
     return NextResponse.json(
-      { error: "This workspace has no Snapshot to restore." },
+      {
+        error:
+          "This session was archived without its files (its box couldn't be reached), so it can't be reopened. Anything pushed to GitHub is kept: continue in a new session.",
+      },
       { status: 409 },
     );
   }

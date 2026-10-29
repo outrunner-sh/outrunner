@@ -33,9 +33,8 @@ export function ArchiveSessionDialog({
           Archive session
         </button>
       )}
-      run={async () => {
-        if (session) await archiveSession(session.id);
-      }}
+      // Archived without its files (its box out of reach): said, with Done.
+      run={() => (session ? archiveSession(session.id) : Promise.resolve(null))}
       onOpenChange={onOpenChange}
       onDone={() => {
         if (session) onArchived(session.id);

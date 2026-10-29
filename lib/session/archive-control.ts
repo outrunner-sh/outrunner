@@ -14,14 +14,15 @@ export type ArchiveOffer = { can: true } | { can: false; why: string };
  * Archive for `workspace`: offered only on a Runtime Computer, the one kind
  * with a Snapshot to restore from, and only while there is something to
  * archive (not one already archived, or gone). Pressable only from the
- * statuses the lifecycle route archives from, ready or idle; from any other
- * it shows, disabled, saying why.
+ * statuses the lifecycle route archives from, running or asleep; from any
+ * other it shows, disabled, saying why.
  */
 export function archiveOffer(workspace: Pick<Workspace, "status" | "provider">): ArchiveOffer | null {
   if (!onRuntimeComputer(workspace.provider)) return null;
   switch (workspace.status) {
     case "ready":
     case "idle":
+    case "suspended":
       return { can: true };
     case "archived":
     case "destroyed":
@@ -37,10 +38,9 @@ export function archiveOffer(workspace: Pick<Workspace, "status" | "provider">):
       return { can: false, why: "It's being deleted." };
     case "failed":
       return { can: false, why: "It didn't start, so there's no work to save." };
-    case "suspended":
     case "suspending":
     case "resuming":
-      return { can: false, why: "Only a running session can be archived." };
+      return { can: false, why: "It can be archived in a moment, once its box settles." };
   }
   // A status this build doesn't know (a server ahead of it) is not offered.
   // Typed `never`, so a status added to the union is a build error above.
@@ -56,9 +56,10 @@ export const ARCHIVE_CONSEQUENCE =
 
 /**
  * Archive the cloud session `id` (the lifecycle route's archive). Throws with
- * a sentence to show when it could not.
+ * a sentence to show when it could not; answers what to say once it is, when
+ * there's something (it was archived without its files), else null.
  */
-export async function archiveSession(id: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+export async function archiveSession(id: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
   let res: Response;
   try {
     res = await fetchImpl(`/api/workspaces/${id}/lifecycle`, {
@@ -76,7 +77,7 @@ export async function archiveSession(id: string, fetchImpl: typeof fetch = fetch
   // happen either: the server graph reaches this file through lib/nav/sidebar.ts
   // and app/(app)/layout.tsx, and that module's stores come from a "use client"
   // one, which throws when a server render calls it.)
-  if (res.ok) return;
-  const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+  const body = (await res.json().catch(() => ({}))) as { error?: unknown; note?: unknown };
+  if (res.ok) return typeof body.note === "string" ? body.note : null;
   throw new Error(typeof body.error === "string" ? body.error : "Could not archive this session. Please try again.");
 }

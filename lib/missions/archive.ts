@@ -70,19 +70,37 @@ export type MissionArchiveDeps = {
    *  can't send one (and restore it); their ids, to give back if it isn't. */
   takeQueued(runnerId: string): Promise<string[]>;
   returnQueued(ids: string[]): Promise<void>;
-  /** Archive one session as its owner, waking it first if asleep; why not,
-   *  or null once archived. */
-  archive(session: Workspace): Promise<string | null>;
+  /** Archive one session as its owner; why not, or null once archived, or
+   *  `note` once archived without its files (its box out of reach). */
+  archive(session: Workspace): Promise<string | ArchivedWithNote | null>;
   now(): number;
 };
+
+/** Archived, but without its files: what to tell the user. */
+export type ArchivedWithNote = { note: string };
 
 /** A Ship left as it was, and why. */
 export type ShipLeft = { id: string; name: string; why: string };
 
+/** A Ship archived without its files, its box out of reach. */
+export type ShipUnsaved = { id: string; name: string };
+
 export type MissionArchiveResult =
-  | { archived: true; ships: number }
+  /** `unsaved`, when there are any: Ships archived without their files. */
+  | { archived: true; ships: number; unsaved?: ShipUnsaved[]; note?: string }
   /** `more`: only time ran out, so asking again goes on (the browser does). */
-  | { archived: false; ships: number; left: ShipLeft[]; why: string; more: boolean };
+  | { archived: false; ships: number; left: ShipLeft[]; why: string; more: boolean; unsaved?: ShipUnsaved[] };
+
+/** What's said of Ships archived without their files. */
+export function unsavedNote(unsaved: ShipUnsaved[]): string {
+  const named = unsaved.map((s) => `“${s.name}”`).join(", ");
+  const one = unsaved.length === 1;
+  return (
+    `${one ? "A Ship was" : `${unsaved.length} Ships were`} archived without ${one ? "its" : "their"} files, ` +
+    `${one ? "its box" : "their boxes"} out of reach: ${named}. ` +
+    `Uncommitted changes on ${one ? "it" : "them"} couldn't be saved; anything pushed to GitHub is kept.`
+  );
+}
 
 /** No Ship is started on after this long in one ask, so the last ones (a
  *  wake and a save, about 75 seconds each) and then the Runner's own end
@@ -135,9 +153,11 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
     const why = more
       ? `${plural(toGo)} still to archive. Try again to finish.`
       : `The Runner wasn't archived: ${refused.length === 1 ? "a Ship" : plural(refused.length)} couldn't be yet: ${named}` +
-        `${toGo > 0 ? `, and ${plural(toGo)} still to archive` : ""}. Try again shortly.`;
-    return { archived: false, ships, left, why, more };
+        `${toGo > 0 ? `, and ${plural(toGo)} still to archive` : ""}. Try again shortly.` +
+        (unsaved.length > 0 ? ` ${unsavedNote(unsaved)}` : "");
+    return { archived: false, ships, left, why, more, ...(unsaved.length > 0 && { unsaved }) };
   };
+  const unsaved: ShipUnsaved[] = [];
 
   const live = toArchive(await deps.runners(mission.id));
   const blocked = live.flatMap((ship) => {
@@ -155,7 +175,12 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
     const notNow = shipNotNow(ship);
     if (notNow) return notNow;
     const taken = await deps.takeQueued(ship.id);
-    const why = await deps.archive(ship).catch(errorText);
+    const answer = await deps.archive(ship).catch(errorText);
+    if (answer !== null && typeof answer === "object") {
+      unsaved.push({ id: ship.id, name: shipName(ship) });
+      return null;
+    }
+    const why = answer;
     if (why !== null && taken.length > 0) {
       // The archive's reason is what's said; messages that couldn't be given
       // back are lost, and logged.
@@ -186,12 +211,23 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
   if (left.length > 0) return refuse(ships, left);
 
   const runner = await deps.session(mission.id);
+  let runnerAnswer: string | ArchivedWithNote | null = null;
   if (runner && runner.status !== "archived") {
     const offer = missionArchiveOffer(runner);
-    const why = offer?.can ? await deps.archive(runner).catch(errorText) : offer ? offer.why.replace(/\.$/, "").toLowerCase() : "it isn't running";
-    if (why !== null) return { archived: false, ships, left, why: `Its Ships are archived, but the Runner itself couldn't be: ${why}.`, more: false };
+    const answer = runnerAnswer = offer?.can ? await deps.archive(runner).catch(errorText) : offer ? offer.why.replace(/\.$/, "").toLowerCase() : "it isn't running";
+    // The Runner's own box out of reach: archived all the same, as a Ship is.
+    const why = typeof answer === "string" ? answer : null;
+    if (why !== null) {
+      const also = unsaved.length > 0 ? ` ${unsavedNote(unsaved)}` : "";
+      return { archived: false, ships, left, why: `Its Ships are archived, but the Runner itself couldn't be: ${why}.${also}`, more: false, ...(unsaved.length > 0 && { unsaved }) };
+    }
   }
-  return { archived: true, ships };
+  const runnerUnsaved = runnerAnswer !== null && typeof runnerAnswer === "object";
+  const notes = [
+    ...(unsaved.length > 0 ? [unsavedNote(unsaved)] : []),
+    ...(runnerUnsaved ? ["The Runner itself was archived without its files, its box out of reach."] : []),
+  ];
+  return { archived: true, ships, ...(unsaved.length > 0 && { unsaved }), ...(notes.length > 0 && { note: notes.join(" ") }) };
 }
 
 /** Asks the browser makes, each going on where the last ran out of time:
@@ -201,9 +237,12 @@ const MAX_ASKS = 5;
 /**
  * Archive the Runner `id` with its Ships, from the browser: asked again while
  * the server only ran out of time. Throws with a sentence to show when it (or
- * one of its Ships) couldn't be.
+ * one of its Ships) couldn't be; answers what to say once it is, when there's
+ * something (Ships archived without their files), else null.
  */
-export async function requestMissionArchive(id: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+export async function requestMissionArchive(id: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  // Said by asks that ran out of time, kept for the end.
+  const notes: string[] = [];
   for (let ask = 1; ; ask++) {
     let res: Response;
     try {
@@ -211,9 +250,12 @@ export async function requestMissionArchive(id: string, fetchImpl: typeof fetch 
     } catch {
       throw new Error("Could not reach Outrunner. Check your connection and try again.");
     }
-    if (res.ok) return;
-    const body = (await res.json().catch(() => ({}))) as { error?: unknown; more?: unknown };
+    const body = (await res.json().catch(() => ({}))) as { error?: unknown; more?: unknown; note?: unknown };
+    if (typeof body.note === "string") notes.push(body.note);
+    if (res.ok) return notes.length > 0 ? notes.join(" ") : null;
     if (body.more === true && ask < MAX_ASKS) continue;
-    throw new Error(typeof body.error === "string" ? body.error : "Could not archive this Runner. Please try again.");
+    const why = typeof body.error === "string" ? body.error : "Could not archive this Runner. Please try again.";
+    // A refusal at the end says its own; the earlier asks' notes go with it.
+    throw new Error([why, ...notes.filter((n) => !why.includes(n))].join(" "));
   }
 }
