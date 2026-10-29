@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -368,5 +369,38 @@ func TestChatPreviewsBelongToTheParentSession(t *testing.T) {
 	s.UsePreviews(&preview.Client{AppURL: server.URL, SandboxID: "box", Secret: "key"})
 	if _, err := s.CreatePreview(context.Background(), key, 3000, "web"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestParentTeardownWaitsForTheChatLifecycle(t *testing.T) {
+	for _, destroy := range []bool{false, true} {
+		t.Run(fmt.Sprint(destroy), func(t *testing.T) {
+			s, id, key := chatSession(t, ChatInput{})
+			s.updateFacts(id, func(f *workspaceFacts) { f.InPlace = true })
+			fake := s.tmux.(*fakeSessions)
+			fake.running[sessionName(key)] = true
+			unlock := s.lockLifecycle(key)
+			done := make(chan error, 1)
+			go func() {
+				if destroy {
+					done <- s.Destroy(context.Background(), id)
+				} else {
+					done <- s.Stop(context.Background(), id)
+				}
+			}()
+			select {
+			case err := <-done:
+				unlock()
+				t.Fatalf("teardown did not wait: %v", err)
+			case <-time.After(20 * time.Millisecond):
+			}
+			unlock()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if fake.running[sessionName(key)] {
+				t.Fatal("chat tmux survived teardown")
+			}
+		})
 	}
 }
