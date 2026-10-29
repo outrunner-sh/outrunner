@@ -19,7 +19,7 @@ import { NewMissionDialog } from "@/components/missions/new-mission-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { SkeletonRows } from "@/components/ui/skeleton-swap";
 import { refreshMissions, useMissions } from "@/hooks/use-missions";
-import { missionArchiveOffer } from "@/lib/missions/archive";
+import { missionArchiveOffer, unarchivedShipCount } from "@/lib/missions/archive";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import { MISSION_STATUS_LABEL, type MissionView, type RunnerView } from "@/lib/missions/view";
 import type { WorkspaceStatus } from "@/lib/runtime/types";
@@ -39,6 +39,9 @@ export function SidebarMissions({ active, projects }: { active?: string; project
   const { loaded, missions } = useMissions();
   const [creating, setCreating] = useState(false);
   const [archiving, setArchiving] = useState<MissionView | null>(null);
+  // A partial attempt refreshes Missions; use that live row rather than the
+  // object captured when the menu opened.
+  const archiveTarget = archiving && (missions.find((mission) => mission.id === archiving.id) ?? archiving);
   const router = useRouter();
   // Dragged into place here, before the server has it.
   const [order, setOrder] = useState<string[] | null>(null);
@@ -247,7 +250,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
       </div>
       <NewMissionDialog open={creating} onOpenChange={setCreating} projects={projects} />
       <ArchiveMissionDialog
-        mission={archiving && { id: archiving.id, title: archiving.title, ships: archiving.liveRunners }}
+        mission={archiveTarget && { id: archiveTarget.id, title: archiveTarget.title, ships: unarchivedShipCount(archiveTarget.runners) }}
         onOpenChange={(open) => {
           if (!open) setArchiving(null);
         }}

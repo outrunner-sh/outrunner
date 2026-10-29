@@ -31,7 +31,7 @@ import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
 import { AGENT_IDS } from "@/lib/agents/registry";
 import { replaceAddressBar } from "@/lib/client/address-bar";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
-import { missionArchiveOffer } from "@/lib/missions/archive";
+import { missionArchiveOffer, unarchivedShipCount } from "@/lib/missions/archive";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
@@ -217,7 +217,7 @@ export function WorkspaceStudio({
       </header>
       {isMission ? (
         <ArchiveMissionDialog
-          mission={archiving ? { id: workspace.id, title: mission?.title ?? workspaceLabel(workspace), ships: mission?.liveRunners ?? 0 } : null}
+          mission={archiving ? { id: workspace.id, title: mission?.title ?? workspaceLabel(workspace), ships: unarchivedShipCount(mission?.runners ?? []) } : null}
           onOpenChange={setArchiving}
           onArchived={leave}
         />

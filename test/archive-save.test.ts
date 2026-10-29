@@ -3,10 +3,12 @@ import { test } from "node:test";
 
 import { CloudLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
+import { RuntimeAgentUnavailableError } from "@/lib/runtime/agent-recovery";
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 import { saveForArchive, type ArchiveSaveDeps } from "@/lib/session/archive-save";
 import { MissingBoxProjectError } from "@/lib/session/box-failure";
+import { ArchivePreparationError } from "@/lib/session/archive-failure";
 
 const manifest = { sessionId: "s-1" } as unknown as SnapshotManifest;
 
@@ -68,6 +70,7 @@ test("a reachable agent's capture or upload error leaves the session available t
     new AgentRequestError(403, { code: "UNAUTHORIZED", message: "unauthorized" }),
     new Error("invalid Snapshot manifest"),
     new TypeError("Cannot read properties of undefined"),
+    new ArchivePreparationError(new TypeError("fetch failed")),
   ]) {
     await assert.rejects(saveForArchive(box({ capture: error }).deps), (caught) => caught === error);
   }
@@ -103,4 +106,6 @@ test("the plan refusing the box's start, or a box too old to archive, stop the a
   const missing = box({ bringBack: new MissingBoxProjectError("project-1") });
   await assert.rejects(saveForArchive(missing.deps), MissingBoxProjectError);
   assert.deepEqual(missing.asked, ["bringBack"]);
+  await assert.rejects(saveForArchive(box({ capture: new RuntimeAgentUnavailableError(new CloudLimitError(denial)) }).deps), CloudLimitError);
+  await assert.rejects(saveForArchive(box({ capture: new RuntimeAgentUnavailableError(old) }).deps), OutdatedComputerError);
 });

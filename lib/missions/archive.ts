@@ -5,9 +5,10 @@
  * is POST /api/missions/[id]/archive.
  */
 
-import { isLiveRunner } from "@/lib/missions/rules";
+import type { RunnerView } from "@/lib/missions/view";
 import { onRuntimeComputer, type Workspace } from "@/lib/runtime/types";
 import type { ArchiveOffer } from "@/lib/session/archive-control";
+import { ARCHIVED_UNSAVED } from "@/lib/session/archive-notice";
 
 /** Ships archived at once: each saves its worktree, which can take a minute. */
 export const ARCHIVE_CONCURRENCY = 4;
@@ -54,12 +55,18 @@ export function missionArchiveConsequence(ships: number): string {
   const them =
     ships === 0
       ? ""
-      : `${ships === 1 ? "Its Ship is" : `Its ${ships} Ships are`} archived with it, even one at work or with a pull request open (that stays open on GitHub). `;
+      : `${ships === 1 ? "Its remaining Ship is" : `Its ${ships} remaining Ships are`} archived with it, even one at work or with a pull request open (that stays open on GitHub). `;
   return (
     them +
-    "Their work is saved and their boxes freed, and news from them no longer reaches it. " +
-    "Opening the Runner restores it; a Ship comes back when it's opened or messaged."
+    "Reachable work is saved and their boxes freed. If a box can't be reached, you'll be told which files couldn't be saved; its original disk is kept. " +
+    "Ships already archived stay archived. Saved sessions come back when opened."
   );
+}
+
+/** Failed Ships still need archiving. Shipping can show an already archived
+ * Ship's PR, so the pane's visible row count is not the archive count. */
+export function unarchivedShipCount(ships: readonly Pick<RunnerView, "state">[]): number {
+  return ships.filter((ship) => ship.state !== "archived" && ship.state !== "gone").length;
 }
 
 export type MissionArchiveDeps = {
@@ -118,7 +125,7 @@ function errorText(e: unknown): string {
 function shipNotNow(ship: Pick<Workspace, "status" | "provider">): string | null {
   if (!onRuntimeComputer(ship.provider)) return "its computer can't archive";
   const { status } = ship;
-  if (status === "ready" || status === "idle" || status === "suspended") return null;
+  if (status === "ready" || status === "idle" || status === "suspended" || status === "failed") return null;
   if (status === "creating" || status === "provisioning") return "it's still setting up";
   if (status === "restoring") return "it's being restored";
   // Another ask's, or one cut off: it counts as gone only once it is.
@@ -129,7 +136,7 @@ function shipNotNow(ship: Pick<Workspace, "status" | "provider">): string | null
 const shipName = (ship: Workspace) => ship.title ?? ship.branch;
 /** Ships not yet archived (or ended): one being archived still counts, as
  *  its archive may fail and leave it up. */
-const toArchive = (ships: Workspace[]) => ships.filter(isLiveRunner);
+const toArchive = (ships: Workspace[]) => ships.filter((ship) => !["archived", "destroying", "destroyed"].includes(ship.status));
 
 /**
  * Archive `mission`'s Ships, then the Runner itself: the Runner goes only
@@ -144,7 +151,12 @@ const toArchive = (ships: Workspace[]) => ships.filter(isLiveRunner);
  */
 export async function archiveMission(mission: Workspace, deps: MissionArchiveDeps): Promise<MissionArchiveResult> {
   const started = deps.now();
-  const unsaved: ShipUnsaved[] = [];
+  const listed = await deps.runners(mission.id);
+  // A previous attempt may have archived an unreachable Ship before a real
+  // save failure stopped the Runner. Keep that warning across manual retries.
+  const unsaved: ShipUnsaved[] = listed
+    .filter((ship) => ship.status === "archived" && ship.errorMessage === ARCHIVED_UNSAVED)
+    .map((ship) => ({ id: ship.id, name: shipName(ship) }));
   const refuse = (ships: number, left: ShipLeft[]): MissionArchiveResult => {
     const refused = left.filter((s) => s.why !== NOT_REACHED);
     const toGo = left.length - refused.length;
@@ -153,13 +165,13 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
     const named = refused.map((s) => `“${s.name}” (${s.why})`).join(", ");
     const why = more
       ? `${plural(toGo)} still to archive. Try again to finish.`
-      : `The Runner wasn't archived: ${refused.length === 1 ? "a Ship" : plural(refused.length)} couldn't be yet: ${named}` +
-        `${toGo > 0 ? `, and ${plural(toGo)} still to archive` : ""}. Try again shortly.` +
+      : `${ships > 0 ? `${plural(ships)} archived. ` : ""}The Runner wasn't archived: ${refused.length === 1 ? "a Ship" : plural(refused.length)} couldn't be yet: ${named}` +
+        `${toGo > 0 ? `, and ${plural(toGo)} still to archive` : ""}.` +
         (unsaved.length > 0 ? ` ${unsavedNote(unsaved)}` : "");
     return { archived: false, ships, left, why, more, ...(unsaved.length > 0 && { unsaved }) };
   };
 
-  const live = toArchive(await deps.runners(mission.id));
+  const live = toArchive(listed);
   const blocked = live.flatMap((ship) => {
     const why = shipNotNow(ship);
     return why ? [{ id: ship.id, name: shipName(ship), why }] : [];
@@ -222,7 +234,8 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
       return { archived: false, ships, left, why: `Its Ships are archived, but the Runner itself couldn't be: ${why}.${also}`, more: false, ...(unsaved.length > 0 && { unsaved }) };
     }
   }
-  const runnerUnsaved = runnerAnswer !== null && typeof runnerAnswer === "object";
+  const runnerUnsaved = (runnerAnswer !== null && typeof runnerAnswer === "object") ||
+    (runner?.status === "archived" && runner.errorMessage === ARCHIVED_UNSAVED);
   const notes = [
     ...(unsaved.length > 0 ? [unsavedNote(unsaved)] : []),
     ...(runnerUnsaved ? ["The Runner itself was archived without its files, its box out of reach."] : []),
@@ -250,8 +263,13 @@ export async function requestMissionArchive(id: string, fetchImpl: typeof fetch 
     } catch {
       throw new Error("Could not reach Outrunner. Check your connection and try again.");
     }
-    const body = (await res.json().catch(() => ({}))) as { error?: unknown; more?: unknown; note?: unknown };
-    if (typeof body.note === "string") notes.push(body.note);
+    const body = (await res.json().catch(() => ({}))) as { error?: unknown; more?: unknown; note?: unknown; cumulativeNote?: unknown };
+    if (typeof body.note === "string") {
+      // New servers include earlier attempts' persisted loss notes. Keep
+      // compatibility with older servers that send each ask's note alone.
+      if (body.cumulativeNote === true) notes.splice(0, notes.length, body.note);
+      else notes.push(body.note);
+    }
     if (res.ok) return notes.length > 0 ? notes.join(" ") : null;
     if (body.more === true && ask < MAX_ASKS) continue;
     const why = typeof body.error === "string" ? body.error : "Could not archive this Runner. Please try again.";

@@ -15,9 +15,12 @@
 
 import { CloudLimitError, isPlanLimitError } from "@/lib/billing/limits";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
+import { RuntimeAgentUnavailableError } from "@/lib/runtime/agent-recovery";
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 import { MissingBoxProjectError } from "@/lib/session/box-failure";
+
+export { ARCHIVED_UNSAVED } from "@/lib/session/archive-notice";
 
 export type ArchiveSaveDeps<Box> = {
   /** Bring the session's box back if it isn't up (bringBack). */
@@ -68,7 +71,12 @@ export async function saveForArchive<Box>(
     capturing = true;
     return { saved: true, manifest: await deps.capture(box) };
   } catch (error) {
-    const unreachable = (error instanceof TypeError && (error.message === "fetch failed" || error.message === "Failed to fetch")) ||
+    // Recovery may fail on a plan or capability refusal. Keep those hard
+    // stops, even though the agent itself could not be reached beforehand.
+    if (error instanceof RuntimeAgentUnavailableError &&
+      !(error.cause instanceof AgentRequestError && !error.cause.error) && stopsArchive(error.cause)) throw error.cause;
+    const unreachable = error instanceof RuntimeAgentUnavailableError ||
+      (error instanceof TypeError && (error.message === "fetch failed" || error.message === "Failed to fetch")) ||
       (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError"));
     // A malformed manifest or other capture failure is not proof that the
     // box is unreachable. Preserve the session for a retry in those cases.
@@ -76,8 +84,3 @@ export async function saveForArchive<Box>(
     return { saved: false, cause: error };
   }
 }
-
-/** What an archive that couldn't save the session's work says, to the user
- *  and on its row. */
-export const ARCHIVED_UNSAVED =
-  "Archived without its files: its box couldn't be reached, so uncommitted changes on it couldn't be saved. Anything pushed to GitHub is kept.";
