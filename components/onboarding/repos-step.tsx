@@ -17,9 +17,9 @@ import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /**
- * Step 2: the GitHub repositories to work on, connected as projects. Those
- * already connected start ticked. At least one is needed: a session works in
- * a repository.
+ * Step 2, the last: the GitHub repositories to work on, connected as
+ * projects. Those already connected start ticked. At least one is needed: a
+ * session works in a repository. Done, onboarding ends (`onDone`).
  *
  * They're added to the active org, from its Outrunner GitHub App, or from the
  * user's own GitHub account in an org without it. One with neither (a Google
@@ -31,8 +31,9 @@ export function ReposStep({
   onDone,
 }: {
   env: OnboardingEnv;
-  /** The projects picked, to start a first session on. */
-  onDone: (projects: Project[]) => void;
+  /** The projects picked, to start a first session on; the button stays
+   *  busy until it's done, as it leaves the page. */
+  onDone: (projects: Project[]) => Promise<void>;
 }) {
   const [list, setList] = useState<RepositoryListing[] | null>(null);
   const [picked, setPicked] = useState<Set<number>>(new Set());
@@ -130,13 +131,13 @@ export function ReposStep({
     try {
       const ids = [...picked];
       const projects = await env.connect(ids);
-      onDone(projects.filter((project) => ids.includes(project.githubRepoId)));
+      await onDone(projects.filter((project) => ids.includes(project.githubRepoId)));
+      // Still busy: the page is on its way out.
     } catch (e) {
       setError({
         message: e instanceof Error ? e.message : "Couldn't connect those repositories.",
         reconnect: e instanceof OnboardingError && e.reconnect,
       });
-    } finally {
       setBusy(false);
     }
   }
@@ -240,7 +241,7 @@ export function ReposStep({
           status={busy ? "pending" : "idle"}
           disabled={picked.size === 0}
           onClick={() => void next()}
-          labels={{ idle: "Continue", pending: "Connecting" }}
+          labels={{ idle: "Finish", pending: "Connecting" }}
         />
       </div>
     </section>

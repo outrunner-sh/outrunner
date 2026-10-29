@@ -5,31 +5,28 @@ import { useEffect, useState } from "react";
 
 import { AgentStep } from "@/components/onboarding/agent-step";
 import { ReposStep } from "@/components/onboarding/repos-step";
-import { StartStep } from "@/components/onboarding/start-step";
 import { Stepper } from "@/components/onboarding/stepper";
 import type { AgentPick, AgentStatus, OnboardingEnv } from "@/lib/onboarding/types";
-import type { Project } from "@/lib/runtime/types";
 
-type Step = "agent" | "repos" | "start";
+type Step = "agent" | "repos";
 
 const STEPS: { id: Step; label: string }[] = [
   { id: "agent", label: "Agent" },
   { id: "repos", label: "Repositories" },
-  { id: "start", label: "Start" },
 ];
 
 /**
- * First run, as Replicas' onboarding: the coding agent signed in, the
- * repositories to work on connected, a first session started. Each step
- * ticks once done. An agent already connected (from `npx outrunner` in the
+ * First run, as Replicas' onboarding: the coding agent signed in and the
+ * repositories to work on connected, then the new-session screen, on the
+ * first of them and the agent picked, to start a first session from. Each
+ * step ticks once done. An agent already connected (from `npx outrunner` in the
  * terminal, say) shows connected on its row.
  * Teams come in as a step of their own later.
  */
 export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: (href: string) => void }) {
   const [step, setStep] = useState<Step>("agent");
   const [status, setStatus] = useState<AgentStatus | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
-  // What the first session runs on, as the Agent step left it.
+  // What the first session starts on, as the Agent step left it.
   const [runOn, setRunOn] = useState<AgentPick>("outrunner");
   const [done, setDone] = useState<Set<Step>>(new Set());
   const [skipping, setSkipping] = useState(false);
@@ -83,15 +80,8 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
             <p className="text-muted-foreground text-sm">Checking what you&apos;ve connected…</p>
           ))}
         {step === "repos" && (
-          <ReposStep
-            env={env}
-            onDone={(picked) => {
-              setProjects(picked);
-              finish("repos", "start");
-            }}
-          />
+          <ReposStep env={env} onDone={(picked) => env.finish(picked[0]?.id, runOn).then(onLeave)} />
         )}
-        {step === "start" && <StartStep env={env} projects={projects} runOn={runOn} onLeave={onLeave} />}
       </main>
     </div>
   );
