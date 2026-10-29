@@ -6,6 +6,7 @@ import { deleteCachedBoxImages } from "@/lib/db/chat-images";
 import { projectOrgId } from "@/lib/db/work-items";
 import { cloudBoxStartGate, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
+import { listChatsOf } from "@/lib/db/chats";
 import { agentAuthStore, modelKey, modelMenu } from "@/lib/db/credentials";
 import { gitTokensFor, optionalGitToken, sessionGitAs } from "@/lib/github/identity.deps";
 import {
@@ -22,6 +23,7 @@ import {
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import {
+  AGENT_FEATURE_CHAT_SNAPSHOTS,
   AGENT_FEATURE_CODEX_GATEWAY,
   AGENT_FEATURE_IMPORTS,
   AGENT_FEATURE_MULTI_REPO_SNAPSHOTS,
@@ -33,7 +35,7 @@ import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { scopeOf } from "@/lib/runtime/computer-scope";
 import { recordedModelRequest } from "@/lib/runtime/model-switch";
-import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
+import { readyChatRelaunch, readyRelaunch } from "@/lib/runtime/relaunch.deps";
 import {
   relaunchNeedsAccount,
   restoreSignedIn,
@@ -52,6 +54,7 @@ import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { archiveCloudSession, daytonaAgent } from "@/lib/session/archive-session";
 import { bringBack } from "@/lib/session/bring-back-box";
+import { restoreChats } from "@/lib/session/chat-snapshots";
 import { canDestroy } from "@/lib/session/provisioning";
 import { resumeFailure, type ResumeStage } from "@/lib/session/resume-failure";
 
@@ -292,6 +295,12 @@ async function restoreDaytonaWorkspace(
         ...(manifest.encodings?.[file] && { encoding: manifest.encodings[file] }),
       })),
     );
+    // Its other chats, each with its conversation, those it still has: one
+    // deleted since it was archived stays gone.
+    const keptChats = await listChatsOf(workspace.id);
+    const chats = await restoreChats(manifest, keptChats, (file) =>
+      mintSnapshotDownloadUrl(storage, `${storagePath}${file}`, owner.id),
+    );
 
     // If the persisted box is marked ready but its Daytona sandbox has
     // vanished, release the stale claim first so ensure provisions a replacement
@@ -363,6 +372,9 @@ async function restoreDaytonaWorkspace(
     if (workspace.checkouts) {
       await requireFeature(features, AGENT_FEATURE_MULTI_REPO_SNAPSHOTS, "restore a session of several repositories");
     }
+    if (chats.length > 0) {
+      await requireFeature(features, AGENT_FEATURE_CHAT_SNAPSHOTS, "restore a session with several chats");
+    }
     // An older agent would ignore the model, and relaunch on Claude's own.
     if (model) await requireFeature(features, AGENT_FEATURE_RESTORE_MODEL, "restore a session on its model");
     // Nor would one from before Codex ran through a gateway take its model.
@@ -398,9 +410,18 @@ async function restoreDaytonaWorkspace(
         ...(workspace.checkouts && {
           repos: workspace.checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout, baseBranch: c.baseBranch })),
         }),
+        ...(chats.length > 0 && { chats }),
       });
       restoredWorktree = restored.worktree;
     });
+    // Each chat back signed in on its own agent and model, as it is opened
+    // next: one on the other agent than the session has no credential yet.
+    // Best effort: a chat that can't sign in now says why when it is opened.
+    for (const chat of keptChats.filter((kept) => chats.some((c) => c.chatId === kept.id))) {
+      await readyChatRelaunch(agent, identity, upgrade, { orgId: project.orgId }, chat, owner.id).catch((error: unknown) =>
+        console.warn(`Restore: chat ${chat.id} of ${workspace.id} isn't signed in yet`, error),
+      );
+    }
 
     // Persist the (possibly new) box + session linkage now that the agent has
     // rebuilt and verified the worktree. Its path too, which a session

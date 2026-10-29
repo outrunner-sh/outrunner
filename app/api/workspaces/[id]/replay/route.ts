@@ -7,9 +7,10 @@ import {
   listWorkspaceSnapshots,
 } from "@/lib/db/repositories";
 import { isUuid } from "@/lib/ids";
-import { assembleReplay, fetchSnapshotBytes } from "@/lib/runtime/replay/load";
+import { assembleReplay, fetchSnapshotBytes, SnapshotChatMissingError } from "@/lib/runtime/replay/load";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { WorkspaceSnapshot } from "@/lib/runtime/snapshot/types";
+import { parseChatId } from "@/lib/session/chats";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -31,7 +32,11 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
 
-  const snapshotId = new URL(request.url).searchParams.get("snapshotId");
+  const query = new URL(request.url).searchParams;
+  const snapshotId = query.get("snapshotId");
+  // One of its chats (?chat=), or its main one.
+  const chatId = parseChatId(query.get("chat"));
+  if (chatId === null) return NextResponse.json({ error: "That isn't a chat's id." }, { status: 400 });
   let snapshot: WorkspaceSnapshot | null;
   if (snapshotId) {
     // Guard the id before it hits the uuid-typed column, so arbitrary query
@@ -49,14 +54,20 @@ export async function GET(request: Request, context: RouteContext) {
   }
 
   try {
-    const payload = await assembleReplay({
-      snapshot,
-      ownerId: owner.id,
-      storage: supabaseSnapshotStorage(),
-      fetchBytes: fetchSnapshotBytes,
-    });
-    return NextResponse.json({ snapshotId: snapshot.id, ...payload });
+    const payload = await assembleReplay(
+      {
+        snapshot,
+        ownerId: owner.id,
+        storage: supabaseSnapshotStorage(),
+        fetchBytes: fetchSnapshotBytes,
+      },
+      chatId,
+    );
+    return NextResponse.json({ snapshotId: snapshot.id, chatId, ...payload });
   } catch (error) {
+    if (error instanceof SnapshotChatMissingError) {
+      return NextResponse.json({ error: error.message }, { status: 404 });
+    }
     console.error(`Replay: assemble failed for snapshot ${snapshot.id}`, error);
     return NextResponse.json(
       { error: "Could not load this Snapshot's replay." },

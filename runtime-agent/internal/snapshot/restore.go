@@ -223,6 +223,15 @@ func verify(ctx context.Context, mirror, worktree, branch string) error {
 	return nil
 }
 
+// DownloadArtifact writes a Snapshot artifact's signed download URL to dst,
+// for a restore placing what Materialize doesn't (a chat's conversation).
+func DownloadArtifact(ctx context.Context, url, dst string) error {
+	if url == "" {
+		return fmt.Errorf("no download URL")
+	}
+	return download(ctx, url, "", dst)
+}
+
 // download streams a signed URL to dst, decompressing a gzip-encoded one.
 func download(ctx context.Context, url, encoding, dst string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

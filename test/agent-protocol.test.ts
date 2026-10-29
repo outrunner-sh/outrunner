@@ -7,6 +7,7 @@ import {
   AGENT_FEATURE_AGENT_CONFIG,
   AGENT_FEATURE_CANVAS,
   AGENT_FEATURE_AGENT_CONTEXT,
+  AGENT_FEATURE_CHAT_SNAPSHOTS,
   AGENT_FEATURE_CHATS,
   AGENT_FEATURE_CODEX_GATEWAY,
   AGENT_FEATURE_CODEX_MCP,
@@ -28,6 +29,7 @@ import {
   PROTOCOL_SCHEMAS,
   type ProtocolSchemaName,
 } from "@/lib/runtime/agent-protocol";
+import { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 
 /**
  * The golden fixtures are the shared source of truth between this (zod) side and
@@ -170,6 +172,7 @@ test("the newest health fixture names every feature the agent and the control pl
     AGENT_FEATURE_AGENT_CONTEXT,
     AGENT_FEATURE_MESSAGE_KEYS,
     AGENT_FEATURE_CHATS,
+    AGENT_FEATURE_CHAT_SNAPSHOTS,
   ]) {
     assert.ok(newest.includes(feature), `the newest AgentHealth fixture lacks ${feature}`);
   }
@@ -183,4 +186,16 @@ test("a chat is made with an id of the agent's, and a side chat only about anoth
   assert.equal(create({ chatId: "b7e1", from: "main", side: true }), true);
   assert.equal(create({ chatId: "b7e1", side: true }), false, "a side chat names the chat it's about");
   assert.equal(create({ chatId: "b7e1", agent: "gemini" }), false);
+});
+
+test("a Snapshot's chats sit under chats/<id>/, and an archive or restore names them", () => {
+  const manifests = (JSON.parse(readFileSync(path.join(process.cwd(), "lib/runtime/snapshot/manifest.fixtures.json"), "utf8")) as { valid: Record<string, unknown>[] }).valid;
+  const withChats = manifests.find((m) => Array.isArray(m.chats));
+  assert.ok(withChats, "a golden manifest with chats");
+  const moved = structuredClone(withChats) as { chats: { conversation: string }[] };
+  moved.chats[0].conversation = "chats/elsewhere/conversation.jsonl";
+  assert.equal(SnapshotManifest.safeParse(moved).success, false, "a chat's conversation is under its own id");
+  const restore = structuredClone(fixtures.RestoreWorkspaceRequest[0]) as { chats: { chatId: string }[] };
+  restore.chats[0].chatId = "main";
+  assert.equal(PROTOCOL_SCHEMAS.RestoreWorkspaceRequest.safeParse(restore).success, false, "the main chat is the session's own");
 });

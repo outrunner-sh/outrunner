@@ -1610,6 +1610,10 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 	summary.State = "archived" // the Snapshot captures the archived session
 
 	f, _ := s.getFacts(workspaceID)
+	chats, err := s.snapshotChats(workspaceID, req.Chats)
+	if err != nil {
+		return nil, err
+	}
 	return snapshot.Produce(ctx, snapshot.Input{
 		WorkspaceID:      workspaceID,
 		Worktree:         s.worktreePath(workspaceID),
@@ -1622,6 +1626,7 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 		ArchivedAt:       req.ArchivedAt,
 		Uploads:          req.Uploads,
 		ClaudeVersion:    snapshot.ClaudeVersion(ctx),
+		Chats:            chats,
 	})
 }
 
@@ -1710,6 +1715,11 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 			return "", fmt.Errorf("cannot restore: the snapshot's rollout is not session %s", sessionID)
 		}
 		s.updateFacts(workspaceID, func(f *workspaceFacts) { f.CodexRollout, f.CodexSessionID = in.RolloutDest, sessionID })
+	}
+	if len(req.Chats) > 0 {
+		if err := s.restoreChats(ctx, workspaceID, sessionID, req.Chats); err != nil {
+			return "", err
+		}
 	}
 	// Verified — safe to boot the agent, continuing the restored session.
 	return s.Resume(ctx, workspaceID, "")

@@ -19,7 +19,7 @@ var httpClient = http.DefaultClient
 // complete, so no consumer may observe a manifest that points at not-yet-present
 // artifacts. Every non-manifest artifact must have a local file; a requested
 // artifact we don't recognize is an error rather than a silent skip.
-func uploadAll(ctx context.Context, uploads []protocol.ArchiveUpload, paths map[string]string) error {
+func uploadAll(ctx context.Context, uploads []protocol.ArchiveUpload, paths map[string]string, chats []chatUpload) error {
 	// Every artifact must have an upload URL BEFORE we push anything — otherwise a
 	// request carrying only some URLs could write a manifest that points at absent
 	// objects, persisting an incomplete Snapshot that Replay/Restore can't read.
@@ -53,6 +53,12 @@ func uploadAll(ctx context.Context, uploads []protocol.ArchiveUpload, paths map[
 		}
 		if err := PutFile(ctx, byArtifact[artifact], paths[artifact]); err != nil {
 			return fmt.Errorf("upload %s: %w", artifact, err)
+		}
+	}
+	// The chats' artifacts, before the manifest that names them.
+	for _, chat := range chats {
+		if err := PutFile(ctx, chat.url, chat.path); err != nil {
+			return fmt.Errorf("upload %s: %w", chat.name, err)
 		}
 	}
 	if err := PutFile(ctx, byArtifact["manifest"], paths["manifest"]); err != nil {

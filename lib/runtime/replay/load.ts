@@ -19,6 +19,7 @@ import { gunzipSync } from "node:zlib";
 import { WorkspaceSummary } from "@/lib/runtime/agent-protocol";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { parseCast, type Cast } from "@/lib/runtime/replay/cast";
+import { MAIN_CHAT } from "@/lib/runtime/agent-protocol";
 import { parseConversation } from "@/lib/runtime/replay/conversation";
 import {
   parseManifest,
@@ -73,18 +74,38 @@ async function openSnapshot(input: ReplayInput) {
   return { manifest, readVerified };
 }
 
-/** Only a Snapshot's conversation: none of its other artifacts (the cast,
- *  the patch) are read. */
-export async function assembleConversation(input: ReplayInput): Promise<AgentEvent[]> {
-  const { manifest, readVerified } = await openSnapshot(input);
-  return parseConversation(decode(await readVerified(manifest.conversation)));
+/** A chat a Snapshot doesn't hold: one started after it was archived, or
+ *  one it was archived without (before Snapshots kept every chat). */
+export class SnapshotChatMissingError extends Error {
+  constructor(chatId: string) {
+    super(`This Snapshot has no chat ${chatId}.`);
+    this.name = "SnapshotChatMissingError";
+  }
 }
 
-export async function assembleReplay(input: ReplayInput): Promise<ReplayPayload> {
+/** Where a Snapshot keeps a chat's conversation: the manifest's own for its
+ *  main chat (none named), else the chat's, by its id. */
+function conversationOf(manifest: SnapshotManifest, chatId: string | undefined): string {
+  if (!chatId || chatId === MAIN_CHAT) return manifest.conversation;
+  const chat = manifest.chats?.find((c) => c.id === chatId);
+  if (!chat) throw new SnapshotChatMissingError(chatId);
+  return chat.conversation;
+}
+
+/** Only a Snapshot's conversation (its main chat's, or `chatId`'s): none of
+ *  its other artifacts (the cast, the patch) are read. */
+export async function assembleConversation(input: ReplayInput, chatId?: string): Promise<AgentEvent[]> {
+  const { manifest, readVerified } = await openSnapshot(input);
+  return parseConversation(decode(await readVerified(conversationOf(manifest, chatId))));
+}
+
+/** A Snapshot's replay, with the conversation of its main chat or of
+ *  `chatId`; the cast is the main chat's terminal either way. */
+export async function assembleReplay(input: ReplayInput, chatId?: string): Promise<ReplayPayload> {
   const { manifest, readVerified } = await openSnapshot(input);
   const [castBytes, conversationBytes, patchBytes, summaryBytes] = await Promise.all([
     manifest.cast ? readVerified(manifest.cast) : null,
-    readVerified(manifest.conversation),
+    readVerified(conversationOf(manifest, chatId)),
     readVerified(manifest.tree.patch),
     readVerified(manifest.summary),
   ]);

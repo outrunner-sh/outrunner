@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { gzipSync } from "node:zlib";
 
-import { assembleReplay } from "@/lib/runtime/replay/load";
+import { assembleConversation, assembleReplay, SnapshotChatMissingError } from "@/lib/runtime/replay/load";
 import type { SnapshotStorage } from "@/lib/runtime/storage/snapshots";
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type { WorkspaceSnapshot } from "@/lib/runtime/snapshot/types";
@@ -205,4 +205,44 @@ test("assembleReplay reads an imported Snapshot: no cast, artifacts verified as 
   assert.equal(payload.cast, null);
   assert.equal((payload.events[0] as { uuid: string }).uuid, "u1");
   assert.match(payload.patch, /\+world/);
+});
+
+// A Snapshot of a session with a chat beside its main one.
+const CHAT = "6f1c2d3e-4a5b-4c6d-8e7f-001122334455";
+const chatConversation =
+  '{"type":"user","uuid":"c1","parentUuid":null,"timestamp":"t","message":{"role":"user","content":"Write the docs"}}';
+const withChat: SnapshotManifest = {
+  ...manifest,
+  chats: [
+    {
+      id: CHAT,
+      name: "Docs",
+      kind: "chat",
+      forkedFrom: null,
+      agent: "claude",
+      model: null,
+      sessionId: "sess-docs",
+      conversation: `chats/${CHAT}/conversation.jsonl`,
+    },
+  ],
+  checksums: { ...manifest.checksums, [`chats/${CHAT}/conversation.jsonl`]: digest(chatConversation) },
+  sizes: { ...manifest.sizes, [`chats/${CHAT}/conversation.jsonl`]: size(chatConversation) },
+};
+const chatObjects: Record<string, string> = {
+  ...artifactText,
+  [`chats/${CHAT}/conversation.jsonl`]: chatConversation,
+  "manifest.json": JSON.stringify(withChat),
+};
+
+test("an archived session's chat is read from its Snapshot, verified like the rest", async () => {
+  const input = { snapshot: { ...snapshot, manifest: withChat }, ownerId: OWNER, storage: fakeStorage().storage, fetchBytes: fetcherFrom(chatObjects) };
+  const chat = await assembleConversation(input, CHAT);
+  assert.deepEqual(chat.map((e) => (e as { uuid: string }).uuid), ["c1"]);
+  const main = await assembleConversation(input, "main");
+  assert.deepEqual(main.map((e) => (e as { uuid: string }).uuid), ["u1"]);
+  const replay = await assembleReplay(input, CHAT);
+  assert.deepEqual(replay.events.map((e) => (e as { uuid: string }).uuid), ["c1"]);
+  await assert.rejects(() => assembleConversation(input, "0b1c2d3e-4a5b-4c6d-8e7f-001122334455"), SnapshotChatMissingError);
+  const tampered = { ...chatObjects, [`chats/${CHAT}/conversation.jsonl`]: chatConversation + " " };
+  await assert.rejects(() => assembleConversation({ ...input, fetchBytes: fetcherFrom(tampered) }, CHAT), /size|digest/);
 });

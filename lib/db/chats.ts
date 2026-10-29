@@ -9,7 +9,7 @@ import { isAgentId } from "@/lib/agents/registry";
 import { type RecordedModel, recordedModel } from "@/lib/runtime/session-models";
 import { MAIN_CHAT, type SessionChat } from "@/lib/session/chats";
 import { probeStatus } from "@/lib/supabase/probe";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 
 type ChatRow = Database["public"]["Tables"]["workspace_chats"]["Row"];
@@ -114,4 +114,18 @@ export async function recordChatModel(workspaceId: string, chatId: string, recor
     .eq("workspace_id", workspaceId)
     .eq("id", chatId);
   if (error) console.warn(`Chat ${chatId}: could not record its model ${recorded.model.provider}/${recorded.model.id}`, error);
+}
+
+/** A session's chats other than its main one, as the server reads them (an
+ *  archive, which an automation's run makes too, with no user signed in);
+ *  the caller has the session's owner's say already. */
+export async function listChatsOf(workspaceId: string): Promise<SessionChat[]> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("workspace_chats")
+    .select("*")
+    .eq("workspace_id", workspaceId)
+    .order("created_at", { ascending: true });
+  if (error && probeStatus(error) === "missing") return [];
+  if (error) throw error;
+  return data.map(toChat);
 }

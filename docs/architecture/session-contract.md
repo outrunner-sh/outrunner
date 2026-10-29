@@ -43,8 +43,11 @@ sees what another changed. A **fork** starts a chat from another's
 conversation (a cleaned transcript in the worktree's `.context/chats/`, and
 the latest turns sent with its first prompt), on either agent; a **side
 chat** is a fork whose every prompt carries the source chat's newest turns.
-Archive captures the main chat's conversation; the other chats stop with the
-Session.
+The other chats stop with the Session, and Archive keeps every one: each
+chat's conversation (and a Codex chat's rollout) is a Snapshot artifact under
+`chats/<id>/`, the manifest's `chats` naming each with its name, kind, agent
+and model; Restore brings each back with its history, and Replay and the API
+read an archived chat from there.
 
 ## Guarantees
 

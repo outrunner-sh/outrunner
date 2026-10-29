@@ -97,6 +97,10 @@ type Manifest struct {
 	Summary      string `json:"summary"`
 	// Rollout names the raw Codex rollout when the Snapshot has one.
 	Rollout string `json:"rollout,omitempty"`
+	// Chats are the session's chats other than its main one: each with its
+	// own conversation (and a Codex chat's rollout), checksummed beside the
+	// rest. None for a session of one chat, as before chats.
+	Chats []ManifestChat `json:"chats,omitempty"`
 
 	Checksums map[string]string `json:"checksums"`
 	Sizes     map[string]int64  `json:"sizes"`
@@ -109,6 +113,37 @@ type Manifest struct {
 	TokenUsage   map[string]int `json:"tokenUsage"`
 	ChangedFiles int            `json:"changedFiles"`
 }
+
+// ManifestChat is one of a Snapshot's chats: the control plane's record of it
+// (its name, kind, the chat it forked, its model), its agent, the session id
+// a restore resumes its conversation by, and its artifacts, by filename under
+// chats/<id>/.
+type ManifestChat struct {
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	Kind         string              `json:"kind"`
+	ForkedFrom   *string             `json:"forkedFrom"`
+	Agent        string              `json:"agent"`
+	Model        *protocol.ChatModel `json:"model"`
+	SessionID    *string             `json:"sessionId"`
+	Conversation string              `json:"conversation"`
+	Rollout      string              `json:"rollout,omitempty"`
+}
+
+// ChatInput is one chat Produce captures beside the main conversation.
+type ChatInput struct {
+	protocol.ArchiveChat
+	// ConversationPath is the chat's log ("" for none yet: an empty one is
+	// captured), RolloutPath a Codex chat's raw rollout ("" for none).
+	ConversationPath string
+	RolloutPath      string
+	SessionID        *string
+}
+
+// ChatConversationName and ChatRolloutName are where a chat's artifacts sit
+// in a Snapshot (the TS side's chatArtifactName).
+func ChatConversationName(chatID string) string { return "chats/" + chatID + "/" + ConversationName }
+func ChatRolloutName(chatID string) string      { return "chats/" + chatID + "/" + RolloutName }
 
 // Input is everything Produce needs to capture and upload one Snapshot.
 type Input struct {
@@ -139,6 +174,8 @@ type Input struct {
 	Uploads []protocol.ArchiveUpload
 	// ClaudeVersion is resolved by the caller (shelling `claude --version`).
 	ClaudeVersion string
+	// Chats are the session's other chats, each uploaded to its own URLs.
+	Chats []ChatInput
 }
 
 // Produce captures the Snapshot artifacts, assembles the manifest, and uploads
@@ -234,16 +271,70 @@ func Produce(ctx context.Context, in Input) (*Manifest, error) {
 		manifest.Rollout = RolloutName
 	}
 
+	// Each chat's conversation, uploaded ahead of the manifest that names it.
+	var chatUploads []chatUpload
+	for _, chat := range in.Chats {
+		entry, uploads, err := stageChat(staging, chat, checksums, sizes)
+		if err != nil {
+			return nil, err
+		}
+		manifest.Chats = append(manifest.Chats, entry)
+		chatUploads = append(chatUploads, uploads...)
+	}
+
 	manifestPath := filepath.Join(staging, ManifestName)
 	if err := writeJSON(manifestPath, manifest); err != nil {
 		return nil, err
 	}
 	paths["manifest"] = manifestPath
 
-	if err := uploadAll(ctx, in.Uploads, paths); err != nil {
+	if err := uploadAll(ctx, in.Uploads, paths, chatUploads); err != nil {
 		return nil, err
 	}
 	return manifest, nil
+}
+
+// chatUpload is one of a chat's artifacts and the URL it goes to.
+type chatUpload struct {
+	name, url, path string
+}
+
+// stageChat readies one chat's artifacts: its conversation (an empty one
+// when it has none yet, so every chat listed has one) and a Codex chat's
+// rollout, when it has one and was given somewhere to put it. Their
+// checksums and sizes join the manifest's.
+func stageChat(staging string, chat ChatInput, checksums map[string]string, sizes map[string]int64) (ManifestChat, []chatUpload, error) {
+	entry := ManifestChat{
+		ID: chat.ChatID, Name: chat.Name, Kind: chat.Kind, ForkedFrom: chat.ForkedFrom,
+		Agent: chat.Agent, Model: chat.Model, SessionID: chat.SessionID,
+		Conversation: ChatConversationName(chat.ChatID),
+	}
+	if chat.Conversation == "" {
+		return entry, nil, fmt.Errorf("archive request is missing chat %s's conversation upload URL", chat.ChatID)
+	}
+	dir := filepath.Join(staging, "chats", chat.ChatID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return entry, nil, err
+	}
+	conversation, err := stageConversation(dir, chat.ConversationPath)
+	if err != nil {
+		return entry, nil, err
+	}
+	uploads := []chatUpload{{entry.Conversation, chat.Conversation, conversation}}
+	if chat.RolloutPath != "" && chat.Rollout != "" {
+		if _, err := os.Stat(chat.RolloutPath); err == nil {
+			entry.Rollout = ChatRolloutName(chat.ChatID)
+			uploads = append(uploads, chatUpload{entry.Rollout, chat.Rollout, chat.RolloutPath})
+		}
+	}
+	for _, up := range uploads {
+		sum, size, err := checksumFile(up.path)
+		if err != nil {
+			return entry, nil, err
+		}
+		checksums[up.name], sizes[up.name] = sum, size
+	}
+	return entry, uploads, nil
 }
 
 // stageConversation returns the JSONL path to upload — the live session log when

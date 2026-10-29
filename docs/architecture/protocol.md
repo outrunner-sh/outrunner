@@ -57,6 +57,13 @@ message, interrupt, compact, plan, answer, secrets, model, auth, summary),
 and `/pty`, `/events` and `/events-ws`, take `?chat=<id>`; none, or `main`,
 is the main chat. A chat the session doesn't have is `404 CHAT_NOT_FOUND`.
 
+An agent that also advertises `chat-snapshots` keeps every chat in a Snapshot:
+an archive's `chats` (`ArchiveChat`: the chat's record and the signed URLs its
+conversation, and a Codex chat's rollout, go to) are captured beside the main
+conversation and listed in the manifest's `chats`, and a restore's `chats`
+(`RestoreChat`) are brought back before the main chat relaunches, which is
+then named by its session id.
+
 ## Conversation events (agent → Next/browser)
 
 Derived by the ConversationWatcher from Claude Code's session JSONL. **Not** parsed from the PTY.

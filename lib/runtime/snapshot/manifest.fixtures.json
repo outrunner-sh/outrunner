@@ -104,6 +104,78 @@
       "lastMessage": "The sheet now embeds the loan settlements.",
       "tokenUsage": {},
       "changedFiles": 16
+    },
+    {
+      "version": 1,
+      "workspaceId": "ws-chats",
+      "runtimeVersion": "runtime-computer-v1",
+      "claudeVersion": "claude-code-1.2.3",
+      "sessionId": "sess-7f3c",
+      "conversation": "conversation.jsonl",
+      "cast": "session.cast",
+      "tree": {
+        "kind": "git-bundle+patch",
+        "bundle": "worktree.bundle",
+        "patch": "uncommitted.patch"
+      },
+      "summary": "summary.json",
+      "checksums": {
+        "conversation.jsonl": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "session.cast": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "worktree.bundle": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "uncommitted.patch": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "summary.json": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "chats/3f6c1d2e-7a8b-4c9d-8e0f-1a2b3c4d5e6f/conversation.jsonl": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "chats/b7e1/conversation.jsonl": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "chats/b7e1/rollout.jsonl": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "sizes": {
+        "conversation.jsonl": 40213,
+        "session.cast": 128044,
+        "worktree.bundle": 918273,
+        "uncommitted.patch": 2048,
+        "summary.json": 412,
+        "chats/3f6c1d2e-7a8b-4c9d-8e0f-1a2b3c4d5e6f/conversation.jsonl": 812,
+        "chats/b7e1/conversation.jsonl": 812,
+        "chats/b7e1/rollout.jsonl": 812
+      },
+      "startedAt": "2026-08-05T10:00:00.000Z",
+      "archivedAt": "2026-08-05T12:30:00.000Z",
+      "lastCommit": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+      "lastMessage": "Refactored the storage helpers and added tests.",
+      "tokenUsage": {
+        "input_tokens": 120400,
+        "output_tokens": 8300,
+        "cache_read_input_tokens": 90000
+      },
+      "changedFiles": 14,
+      "chats": [
+        {
+          "id": "3f6c1d2e-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+          "name": "Docs",
+          "kind": "chat",
+          "forkedFrom": null,
+          "agent": "claude",
+          "model": {
+            "provider": "claude",
+            "id": "opus",
+            "effort": "high"
+          },
+          "sessionId": "sess-docs",
+          "conversation": "chats/3f6c1d2e-7a8b-4c9d-8e0f-1a2b3c4d5e6f/conversation.jsonl"
+        },
+        {
+          "id": "b7e1",
+          "name": "Side: why?",
+          "kind": "side",
+          "forkedFrom": "main",
+          "agent": "codex",
+          "model": null,
+          "sessionId": "01a1596f-41f4-7f30-88f4-b569d1b5bf76",
+          "conversation": "chats/b7e1/conversation.jsonl",
+          "rollout": "chats/b7e1/rollout.jsonl"
+        }
+      ]
     }
   ]
 }
