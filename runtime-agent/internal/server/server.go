@@ -736,10 +736,6 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// askSecrets holds a request for secrets the session's agent made (its
-// request_secrets call) until the user answers it in the browser, or the
-// relay gives the call up. The request names variables; no value comes this
-// way.
 // createPreview makes a preview of a server the session runs, for its
 // agent's `runtime-agent preview`: the control plane's refusal (a port it
 // won't preview, previews off) comes back as its own status and sentence.
@@ -778,6 +774,10 @@ func (s *Server) createPreview(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// askSecrets holds a request for secrets the session's agent made (its
+// request_secrets call) until the user answers it in the browser, or the
+// relay gives the call up. The request names variables; no value comes this
+// way.
 func (s *Server) askSecrets(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !validWorkspaceID(id) || !s.ws.AskAuthorized(id, bearer(r)) {
