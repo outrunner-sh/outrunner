@@ -2,9 +2,8 @@ import { after, NextResponse } from "next/server";
 
 import { linkedSessions, linkSession, resetCiTurns } from "@/lib/db/github-loop";
 import { type LineQuote, requestChange, startSoon } from "@/lib/review/change";
-import { commitsSince, pullDetail, pullHead, readReviewThreads } from "@/lib/review/pulls";
+import { commitsSince, pullHead, readReviewThreads } from "@/lib/review/pulls";
 import { startServerSession } from "@/lib/session/server-session";
-import { repoToken } from "@/lib/slack/github";
 import { wakeAndSend } from "@/lib/slack/research";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { triageCaller } from "@/lib/triage/caller";
@@ -33,14 +32,20 @@ export async function POST(request: Request) {
   if (typeof body?.repo !== "string" || typeof body.number !== "number" || !message) {
     return NextResponse.json({ error: "Say what should change." }, { status: 400 });
   }
-  const pr = await pullDetail(caller.actor, body.repo, body.number);
-  if (!pr) return NextResponse.json({ error: "Pull request not found." }, { status: 404 });
+  const head = await pullHead(caller.actor, body.repo, body.number);
+  if (head.kind === "unavailable") return NextResponse.json({ error: "GitHub couldn't be reached. Try again." }, { status: 502 });
+  if (head.kind === "unreadable") return NextResponse.json({ error: "Pull request not found." }, { status: 404 });
+  const pr = head.pull;
+  // This must precede review-thread reads and every session action. A push
+  // to origin would update this repository's branch, not the fork's branch.
+  if (pr.fromFork) {
+    return NextResponse.json({ error: "This pull request's branch is in a fork, which Outrunner can't push to." }, { status: 409 });
+  }
   if (pr.state !== "open") return NextResponse.json({ error: "This pull request isn't open." }, { status: 409 });
+  const quote = readQuote(body.quote);
   // When it was asked, by the server's clock: the session's replies are
   // timed by it, and the page tells the change's reply by this.
   const askedAt = new Date().toISOString();
-  const token = await repoToken(caller.actor.orgId, pr.repo);
-
   const outcome = await requestChange(
     {
       pull: {
@@ -58,11 +63,11 @@ export async function POST(request: Request) {
       level: caller.actor.levels.get(pr.projectId) ?? null,
       orgId: caller.actor.orgId,
       message,
-      quote: readQuote(body.quote),
+      quote,
     },
     {
       linkedSessions,
-      reviewThreads: async (pull) => (token ? readReviewThreads(token, pull.repo, pull.number) : []),
+      reviewThreads: async (pull, selectedLines) => readReviewThreads(pr.token, pull.repo, pull.number, selectedLines),
       // Marked as from outside the app: the asker may not be the session's
       // owner, so it mustn't reach the session's Slack thread as theirs.
       wakeAndSend: (ownerId, workspaceId, prompt) => wakeAndSend(ownerId, workspaceId, prompt, "github"),
@@ -100,8 +105,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
   // Read lightly: the page asks every few seconds while the change is made.
-  const pr = await pullHead(caller.actor, repo, number);
-  if (!pr) return NextResponse.json({ error: "Pull request not found." }, { status: 404 });
+  const head = await pullHead(caller.actor, repo, number);
+  if (head.kind === "unavailable") return NextResponse.json({ error: "GitHub couldn't be reached. Try again." }, { status: 502 });
+  if (head.kind === "unreadable") return NextResponse.json({ error: "Pull request not found." }, { status: 404 });
+  const pr = head.pull;
   const sessions = await linkedSessions(
     { projectId: pr.projectId, target: "pull", number: pr.number, headRef: pr.headRef },
     caller.actor.orgId,

@@ -127,6 +127,8 @@ export function ReviewChat({ repo, number, canChange }: { repo: string; number: 
       });
       const body = (await response.json().catch(() => ({}))) as { answer?: string; error?: string };
       setMessages((current) => [...current, { role: "assistant", content: body.answer ?? body.error ?? "Couldn't answer that." }]);
+    } catch {
+      setNote("Couldn't reach Outrunner. Try asking again.");
     } finally {
       setBusy(null);
       scrollDown();
@@ -173,6 +175,10 @@ export function ReviewChat({ repo, number, canChange }: { repo: string; number: 
       setDraft("");
       clearQuote();
       scrollDown();
+    } catch {
+      // The server may have accepted this request before the connection
+      // failed. Check the PR's sessions before asking again to avoid a dupe.
+      setNote("Couldn't reach Outrunner. Check the PR's sessions before asking again.");
     } finally {
       setBusy(null);
     }

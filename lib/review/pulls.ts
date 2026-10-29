@@ -9,14 +9,16 @@
 import { listOrgProjects } from "@/lib/db/org-access";
 import { getPullRequestStatus } from "@/lib/github/client";
 import { appSlug, githubAppConfig } from "@/lib/github/app";
-import { type ReviewThread, toReviewThreads } from "@/lib/review/change";
 import { pullFiles } from "@/lib/review/files";
 import type { PullFile } from "@/lib/review/hunks";
 import { countLines, type LineCounts } from "@/lib/review/line-kinds";
+import { githubGetResult } from "@/lib/github/rest";
 import { githubGet, repoToken } from "@/lib/slack/github";
 import { parseVerdict, type Verdict } from "@/lib/slack/proactive-text";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { TriageActor } from "@/lib/triage/access";
+
+export { commitsSince, readReviewThreads, type PushedCommit } from "@/lib/review/pull-github";
 
 export type Checks = { passing: number; failing: number; pending: number };
 
@@ -224,19 +226,65 @@ export async function readableRepo(actor: TriageActor, fullName: string): Promis
   return (await readableRepos(actor)).find((r) => r.fullName.toLowerCase() === wanted) ?? null;
 }
 
-/** A PR's repository and head, read lightly (one call), for what polls it;
- *  null when the viewer may not read it. */
+/** A PR's repository and head, read lightly, for polling and safe change routing. */
+export type PullHead = {
+  repo: string;
+  projectId: string;
+  number: number;
+  title: string;
+  url: string;
+  state: "open" | "closed" | "merged";
+  headRef: string;
+  headSha: string;
+  baseRef: string;
+  fromFork: boolean;
+  token: string;
+};
+
+export type PullHeadResult = { kind: "found"; pull: PullHead } | { kind: "unreadable" } | { kind: "unavailable" };
+
+/** A PR's repository and head, read lightly (one GitHub call), for what polls
+ *  it. Distinguishes an unreadable/missing PR from a temporary GitHub failure. */
 export async function pullHead(
   actor: TriageActor,
   fullName: string,
   number: number,
-): Promise<{ repo: string; projectId: string; number: number; headRef: string; headSha: string; token: string } | null> {
-  const repo = await readableRepo(actor, fullName);
-  if (!repo || !Number.isInteger(number) || number < 1) return null;
-  const token = await repoToken(actor.orgId, repo.fullName);
-  const pull = token ? await githubGet<GitHubPull>(token, `/repos/${repo.fullName}/pulls/${number}`) : null;
-  if (!token || !pull) return null;
-  return { repo: repo.fullName, projectId: repo.id, number, headRef: pull.head.ref, headSha: pull.head.sha, token };
+): Promise<PullHeadResult> {
+  let repo: { id: string; fullName: string } | null;
+  try {
+    repo = await readableRepo(actor, fullName);
+  } catch {
+    return { kind: "unavailable" };
+  }
+  if (!repo || !Number.isInteger(number) || number < 1) return { kind: "unreadable" };
+  let token: string | null;
+  try {
+    token = await repoToken(actor.orgId, repo.fullName);
+  } catch {
+    return { kind: "unavailable" };
+  }
+  if (!token) return { kind: "unreadable" };
+  const result = await githubGetResult<GitHubPull>(token, `/repos/${repo.fullName}/pulls/${number}`);
+  if (!result.value) {
+    return result.retryable ? { kind: "unavailable" } : { kind: "unreadable" };
+  }
+  const pull = result.value;
+  return {
+    kind: "found",
+    pull: {
+      repo: repo.fullName,
+      projectId: repo.id,
+      number,
+      title: pull.title,
+      url: pull.html_url,
+      state: pull.merged || pull.merged_at ? "merged" : pull.state === "closed" ? "closed" : "open",
+      headRef: pull.head.ref,
+      headSha: pull.head.sha,
+      baseRef: pull.base.ref,
+      fromFork: (pull.head.repo?.full_name ?? "").toLowerCase() !== repo.fullName.toLowerCase(),
+      token,
+    },
+  };
 }
 
 /** How long a PR's page waits to ask GitHub again whether it merges cleanly. */
@@ -315,59 +363,4 @@ export async function pullDetail(actor: TriageActor, fullName: string, number: n
     ownSession,
     itemKey: link?.itemKey ?? null,
   };
-}
-
-const REVIEW_THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      reviewThreads(first: 100) {
-        nodes {
-          id
-          isResolved
-          path
-          diffSide
-          line
-          startLine
-          first: comments(first: 1) { nodes { databaseId author { login } body url } }
-          latest: comments(last: 3) { nodes { databaseId author { login } body url } }
-        }
-      }
-    }
-  }
-}`;
-
-/** A PR's review comment threads (the first 100), as the App reads them;
- *  empty when GitHub won't say. */
-export async function readReviewThreads(token: string, repo: string, number: number): Promise<ReviewThread[]> {
-  const [owner, name] = repo.split("/");
-  try {
-    const response = await fetch("https://api.github.com/graphql", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ query: REVIEW_THREADS_QUERY, variables: { owner, name, number } }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const body = (await response.json().catch(() => null)) as {
-      data?: { repository?: { pullRequest?: { reviewThreads?: { nodes?: unknown[] } } } };
-    } | null;
-    return toReviewThreads(body?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? []);
-  } catch {
-    return [];
-  }
-}
-
-/** A commit pushed to a PR since some other one. */
-export type PushedCommit = { sha: string; message: string; url: string };
-
-/** The commits on a PR's head since `since`, oldest first (at most 20);
- *  empty when there are none, or GitHub can't compare them. */
-export async function commitsSince(token: string, repo: string, since: string, head: string): Promise<PushedCommit[]> {
-  if (since === head) return [];
-  const compare = await githubGet<{ commits?: { sha?: string; html_url?: string; commit?: { message?: string } }[] }>(
-    token,
-    `/repos/${repo}/compare/${encodeURIComponent(since)}...${encodeURIComponent(head)}`,
-  );
-  return (compare?.commits ?? []).slice(-20).flatMap((c) =>
-    typeof c.sha === "string" ? [{ sha: c.sha, message: (c.commit?.message ?? "").split("\n")[0], url: c.html_url ?? "" }] : [],
-  );
 }

@@ -75,13 +75,15 @@ export function ChangeCard({ repo, number, track }: { repo: string; number: numb
       const response = await fetch(`/api/review/change?${query}`).catch(() => null);
       if (stopped) return;
       if (response?.ok) {
-        const next = (await response.json()) as Progress;
-        setProgress(next);
-        if (next.headSha !== seenHead.current) {
-          seenHead.current = next.headSha;
-          router.refresh();
+        const next = (await response.json().catch(() => null)) as Progress | null;
+        if (next && typeof next.headSha === "string" && Array.isArray(next.commits)) {
+          setProgress(next);
+          if (next.headSha !== seenHead.current) {
+            seenHead.current = next.headSha;
+            router.refresh();
+          }
         }
-      } else if (response && response.status !== 502 && response.status !== 503) {
+      } else if (response && !(response.status === 408 || response.status === 429 || response.status >= 500)) {
         const body = (await response.json().catch(() => ({}))) as { error?: string };
         setLost(body.error ?? "Couldn't follow the change.");
         return;
