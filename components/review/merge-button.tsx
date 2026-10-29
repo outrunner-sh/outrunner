@@ -2,7 +2,7 @@
 
 import { GitMerge, ListOrdered } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
@@ -18,14 +18,15 @@ export function MergeButton({ repo, number, headSha, offer }: { repo: string; nu
   const router = useRouter();
   const [busy, setBusy] = useState<MergeAction | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Queued just now: shown until the page's refresh says how it stands, and
-  // dropped once it does (the queue may have let it go since).
+  // Queued just now: shown only while the page's refresh is on its way.
+  // Once it lands, the server's word stands, whatever it says (the queue may
+  // have let the PR go, or GitHub not show it queued yet).
   const [queued, setQueued] = useState<number | null | undefined>(undefined);
-  const standing = JSON.stringify(offer.primary);
+  const [refreshing, startRefresh] = useTransition();
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the server's word replaces the stand-in
-    setQueued(undefined);
-  }, [standing]);
+    if (!refreshing) setQueued(undefined);
+  }, [refreshing]);
   const merge = async (action: MergeAction) => {
     setBusy(action);
     setError(null);
@@ -38,7 +39,7 @@ export function MergeButton({ repo, number, headSha, offer }: { repo: string; nu
       const body = (await response.json().catch(() => ({}))) as { error?: string; queued?: boolean; position?: number | null };
       if (!response.ok) throw new Error(body.error ?? "Couldn't merge.");
       if (body.queued) setQueued(body.position ?? null);
-      router.refresh();
+      startRefresh(() => router.refresh());
     } catch (mergeError) {
       setError(mergeError instanceof Error ? mergeError.message : "Couldn't merge.");
     } finally {

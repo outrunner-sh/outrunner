@@ -161,3 +161,45 @@ test("mergePullRequest merges by a method the rules allow", async () => {
   await mergePullRequest({ token: "t", repoFullName: "acme/repo", number: 7, headSha: "s1", methods: ["squash"] });
   assert.deepEqual(seen.find((r) => r.path.endsWith("/merge"))?.body, { sha: "s1", merge_method: "squash" });
 });
+
+test("getMergeAccess reads every page of the branch's rules", async () => {
+  const pages: string[] = [];
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/graphql") {
+      return Promise.resolve(json({ data: { repository: { pullRequest: { id: "PR_kw", viewerCanMergeAsAdmin: false } } } }));
+    }
+    const page = url.searchParams.get("page") ?? "?";
+    pages.push(page);
+    // The pull_request rule that narrows the methods is on the second page.
+    return Promise.resolve(
+      page === "1"
+        ? json(Array.from({ length: 100 }, () => ({ type: "required_signatures" })))
+        : json([{ type: "pull_request", parameters: { allowed_merge_methods: ["squash"] } }]),
+    );
+  }) as typeof fetch;
+  const result = await getMergeAccess({ token: "t", repoFullName: "acme/repo", number: 7, baseRef: "main" });
+  assert.deepEqual(pages, ["1", "2"]);
+  assert.deepEqual(result.methods, ["squash"]);
+});
+
+test("a failed read of the rules is logged, and a 404 is none", async () => {
+  const logged: unknown[] = [];
+  const error = console.error;
+  console.error = (...args: unknown[]) => logged.push(args);
+  try {
+    for (const status of [404, 503]) {
+      globalThis.fetch = ((input: Parameters<typeof fetch>[0]) =>
+        Promise.resolve(
+          new URL(String(input)).pathname === "/graphql"
+            ? json({ data: { repository: { pullRequest: { id: "PR_kw" } } } })
+            : json({ message: "no" }, status),
+        )) as typeof fetch;
+      assert.equal((await getMergeAccess({ token: "t", repoFullName: "acme/repo", number: 7, baseRef: "main" })).methods, null);
+    }
+  } finally {
+    console.error = error;
+  }
+  assert.equal(logged.length, 1);
+  assert.match(String((logged[0] as unknown[])[0]), /wouldn't list acme\/repo's rules/);
+});

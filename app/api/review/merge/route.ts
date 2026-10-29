@@ -58,26 +58,27 @@ export async function POST(request: Request) {
           return null;
         })
       : null;
-    // Queueing or bypassing goes only by GitHub's word on this branch, never
-    // on a guess: without it, only a plain Merge by the rules is decided.
-    if (!access && action !== "merge") {
+    // Every merge goes by GitHub's word on this branch, never a guess: without
+    // it, a branch's queue could be skipped, or an admin's plain Merge go
+    // past the rules, so none goes out.
+    if (!access) {
       return NextResponse.json({ error: "Couldn't read this branch's merge rules from GitHub. Please try again." }, { status: 502 });
     }
     const why = refuseMerge(action, status, access);
     if (why) return NextResponse.json({ error: why }, { status: 409 });
 
     if (action === "queue") {
-      const { position } = await enqueuePullRequest({ token, pullId: access!.pullId, headSha: body.headSha });
+      const { position } = await enqueuePullRequest({ token, pullId: access.pullId, headSha: body.headSha });
       return NextResponse.json({ queued: true, position });
     }
-    await mergePullRequest({ ...pull, headSha: body.headSha, methods: access?.methods });
+    await mergePullRequest({ ...pull, headSha: body.headSha, methods: access.methods });
     if (action === "bypass") {
       await recordAudit({
         orgId: caller.actor.orgId,
         actor: caller.owner,
         action: "github.rules_bypassed",
         resource: { type: "pull_request", id: `${repo.fullName}#${body.number}`, label: `${repo.fullName}#${body.number}` },
-        details: { headSha: body.headSha, mergeableState: status.mergeableState, mergeQueue: access?.mergeQueue ?? false },
+        details: { headSha: body.headSha, mergeableState: status.mergeableState, mergeQueue: access.mergeQueue },
       });
     }
     return NextResponse.json({ merged: true });

@@ -738,27 +738,49 @@ export async function getMergeAccess(input: {
         } | null;
       } | null;
     }>(input.token, MERGE_ACCESS_QUERY, { owner, name, number: input.number }, "read the pull request's merge rules"),
-    fetchGitHub(
-      new URL(`/repos/${input.repoFullName}/rules/branches/${input.baseRef.split("/").map(encodeURIComponent).join("/")}?per_page=100`, GITHUB_API_URL),
-      input.token,
-    ),
+    branchRules(input.token, input.repoFullName, input.baseRef),
   ]);
   const pr = data.repository?.pullRequest;
   if (!pr || typeof pr.id !== "string") throw new GitHubSyncError("GitHub returned an invalid pull request record.");
-  // The rules are only for the methods: a repository without rulesets, or
-  // one GitHub won't show them for, merges by its own settings.
-  if (!rules.ok && rules.status !== 404) {
-    console.error(`GitHub wouldn't list ${input.repoFullName}'s rules for ${input.baseRef}`, { status: rules.status });
-  }
-  const ruleList = rules.ok ? ((await rules.json().catch(() => [])) as unknown) : [];
   return {
     pullId: pr.id,
     canBypass: pr.viewerCanMergeAsAdmin === true,
     mergeQueue: pr.isMergeQueueEnabled === true,
     queuePosition:
       pr.isInMergeQueue === true ? (typeof pr.mergeQueueEntry?.position === "number" ? pr.mergeQueueEntry.position : 0) : null,
-    methods: allowedMethods(ruleList),
+    methods: allowedMethods(rules),
   };
+}
+
+const RULES_PER_PAGE = 100;
+const MAX_RULE_PAGES = 10;
+
+/**
+ * The rules that apply to a branch, every page of them. They are only for
+ * the merge methods: a repository without rulesets, or one GitHub won't
+ * show them for, merges by its own settings, so a failed read is logged
+ * (a 404 is no rules, not a failure) and gives what was read before it.
+ */
+async function branchRules(token: string, repoFullName: string, baseRef: string): Promise<unknown[]> {
+  const rules: unknown[] = [];
+  const path = `/repos/${repoFullName}/rules/branches/${baseRef.split("/").map(encodeURIComponent).join("/")}`;
+  for (let page = 1; page <= MAX_RULE_PAGES; page++) {
+    const url = new URL(path, GITHUB_API_URL);
+    url.searchParams.set("per_page", String(RULES_PER_PAGE));
+    url.searchParams.set("page", String(page));
+    const response = await fetchGitHub(url, token).catch(() => null);
+    if (!response?.ok) {
+      if (response?.status !== 404) {
+        console.error(`GitHub wouldn't list ${repoFullName}'s rules for ${baseRef}`, { status: response?.status ?? "unreachable", page });
+      }
+      return rules;
+    }
+    const list = (await response.json().catch(() => null)) as unknown;
+    if (!Array.isArray(list)) return rules;
+    rules.push(...list);
+    if (list.length < RULES_PER_PAGE) return rules;
+  }
+  return rules;
 }
 
 /** The merge methods a branch's rules allow (the `pull_request` rules'
