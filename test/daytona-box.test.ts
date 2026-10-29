@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { Sandbox } from "@daytonaio/sdk";
 
-import { box, EXEC_TIMEOUT_SECONDS, relabel } from "@/lib/runtime/sandbox/daytona";
+import { box, daytonaSnapshotFor, EXEC_TIMEOUT_SECONDS, relabel } from "@/lib/runtime/sandbox/daytona";
 
 /** A sandbox whose executeCommand records the timeout it was given. */
 function recording(): { sandbox: Sandbox; timeouts: (number | undefined)[] } {
@@ -52,4 +52,11 @@ test("a box brought back gets the labels it lacks, keeping its others, and a fai
 
   await relabel(labelled({}, true), wanted);
   assert.equal(set.length, 2);
+});
+
+test("a sized box is Daytona's largest size within its vCPUs, the base box below them", () => {
+  assert.equal(daytonaSnapshotFor({ cpu: 1, memoryGb: 2 }), undefined);
+  assert.equal(daytonaSnapshotFor({ cpu: 2, memoryGb: 4 }), "daytona-medium");
+  assert.equal(daytonaSnapshotFor({ cpu: 4, memoryGb: 8 }), "daytona-large");
+  assert.equal(daytonaSnapshotFor({ cpu: 8, memoryGb: 16 }), "daytona-large");
 });

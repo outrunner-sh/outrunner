@@ -30,7 +30,7 @@ export default async function OnboardingPage() {
 
   return (
     <OnboardingLive
-      user={{ name: user.name, login: user.login, avatarUrl: user.avatarUrl }}
+      user={{ id: user.id, name: user.name, login: user.login, avatarUrl: user.avatarUrl }}
       outrunnerModels={outrunnerModels}
     />
   );

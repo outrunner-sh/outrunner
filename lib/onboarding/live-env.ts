@@ -1,7 +1,15 @@
 import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
-import { newSessionAfterOnboarding } from "@/lib/onboarding/rules";
-import type { AgentStatus, GitHubAccess, OnboardingEnv, OnboardingUser, RepositoryList } from "@/lib/onboarding/types";
+import { newSessionAfterOnboarding, parseProgress } from "@/lib/onboarding/rules";
+import type {
+  AgentChoices,
+  AgentStatus,
+  GitHubAccess,
+  OnboardingEnv,
+  OnboardingProgress,
+  OnboardingUser,
+  RepositoryList,
+} from "@/lib/onboarding/types";
 import type { Project } from "@/lib/runtime/types";
 
 /** A failure the page can show, with where to fix it when there's a place. */
@@ -44,11 +52,37 @@ async function markOnboarded(): Promise<void> {
   }
 }
 
+/** Where this browser keeps the user's onboarding progress: localStorage,
+ *  so a tab the CLI opens finds it too. Storage that fails (private mode,
+ *  full) only means onboarding opens at its start. */
+function progressStore(userId: string) {
+  const key = `outrunner:onboarding:${userId}`;
+  return {
+    read(): OnboardingProgress | null {
+      try {
+        const raw = window.localStorage.getItem(key);
+        return raw ? parseProgress(JSON.parse(raw)) : null;
+      } catch {
+        return null;
+      }
+    },
+    write(progress: OnboardingProgress | null) {
+      try {
+        if (progress) window.localStorage.setItem(key, JSON.stringify(progress));
+        else window.localStorage.removeItem(key);
+      } catch {
+        // Kept only for next time; nothing to tell.
+      }
+    },
+  };
+}
+
 /**
  * Onboarding on the live app: the same APIs Settings → Providers, the
  * repository picker and the new-session form use, not copies of them.
  */
 export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean }): OnboardingEnv {
+  const progress = progressStore(user.id);
   const agentStatus = async (): Promise<AgentStatus> => {
     const [claude, providers] = await Promise.all([
       call<{ connected: boolean; last4: string | null }>("GET", "/api/settings/claude"),
@@ -76,6 +110,10 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
       forgetOutrunnerModels();
       return agentStatus();
     },
+    async agentChoices() {
+      const { choices } = await call<{ choices: Partial<AgentChoices> }>("GET", "/api/settings/agents");
+      return { claude: choices.claude ?? null, codex: choices.codex ?? null };
+    },
     async chooseMethod(agent, method) {
       await call("PUT", "/api/settings/agents", { agent, method });
       forgetOutrunnerModels();
@@ -91,11 +129,16 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
 
     async finish(projectId, runOn) {
       await markOnboarded();
+      progress.write(null);
       return newSessionAfterOnboarding(projectId, runOn);
     },
     async skip() {
       await markOnboarded();
+      progress.write(null);
       return "/";
     },
+
+    savedProgress: () => progress.read(),
+    saveProgress: (next) => progress.write(next),
   };
 }

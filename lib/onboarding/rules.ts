@@ -6,7 +6,7 @@
 import type { AgentId } from "@/lib/agents/registry";
 import { PLANS } from "@/lib/billing/plans";
 import type { RepositoryListing } from "@/lib/github/listing";
-import type { AgentPick } from "@/lib/onboarding/types";
+import type { AgentChoices, AgentMethod, AgentPick, AgentStatus, OnboardingProgress, OnboardingStep } from "@/lib/onboarding/types";
 import {
   CLAUDE_DEFAULT_MODEL,
   CODEX_MODELS,
@@ -60,7 +60,79 @@ export function connectClaudeCommand(runner: string, origin: string, account?: s
   return `${runner} outrunner@latest --url ${origin}${account ? ` --account ${account}` : ""} claude`;
 }
 
-const AGENT_PICKS: readonly AgentPick[] = ["claude", "codex", "outrunner", "codex-outrunner"];
+const STEPS: readonly OnboardingStep[] = ["agent", "repos"];
+const PICKS: readonly AgentPick[] = ["claude", "codex", "outrunner", "codex-outrunner"];
+
+/** An agent pick from anywhere (a URL's `?start=`, storage); undefined for
+ *  anything else. */
+export function parseAgentPick(raw: unknown): AgentPick | undefined {
+  return PICKS.find((pick) => pick === raw);
+}
+
+/** Saved progress as read back from storage, or null when it isn't any:
+ *  storage is the browser's, anyone's to write. A Start step saved before
+ *  there was none is its Repositories step, where onboarding now ends. */
+export function parseProgress(raw: unknown): OnboardingProgress | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { step: savedStep, done, runOn } = raw as Record<string, unknown>;
+  const step = savedStep === "start" ? "repos" : savedStep;
+  const pick = parseAgentPick(runOn);
+  if (!STEPS.includes(step as OnboardingStep) || !pick || !Array.isArray(done)) return null;
+  return { step: step as OnboardingStep, done: STEPS.filter((s) => done.includes(s)), runOn: pick };
+}
+
+/** The agent of the user's own that's connected already, and how: the way
+ *  they picked in Settings → Providers when it's connected, or else a Claude
+ *  subscription, then an Anthropic key, then an OpenAI key. `chosen` says
+ *  it's their pick already, so nothing needs saving. Null when none is. */
+export function connectedAgent(
+  status: AgentStatus,
+  choices: AgentChoices,
+): { agent: "claude" | "codex"; method: AgentMethod; chosen: boolean } | null {
+  const ready = [
+    status.claude.subscription && { agent: "claude" as const, method: "subscription" as const },
+    status.claude.apiKey && { agent: "claude" as const, method: "api-key" as const },
+    status.codex.apiKey && { agent: "codex" as const, method: "api-key" as const },
+  ].filter((way) => way !== false);
+  const picked = ready.find((way) => choices[way.agent] === way.method);
+  if (picked) return { ...picked, chosen: true };
+  return ready[0] ? { ...ready[0], chosen: false } : null;
+}
+
+/** Whether the user's own `agent` can run a session as things are now. */
+function canRun(agent: "claude" | "codex", status: AgentStatus): boolean {
+  return agent === "claude" ? status.claude.subscription || status.claude.apiKey : status.codex.apiKey;
+}
+
+/**
+ * Where onboarding opens: where it was left in this browser, and past the
+ * Agent step when that's not done but an agent is connected already (from
+ * `npx outrunner … claude` in the terminal, say, seen from a tab the CLI
+ * opened), on that agent. `save` is the way sessions sign in to save then,
+ * when it isn't the user's pick already. With `status` or `choices` unknown
+ * (null: they couldn't be read) the step isn't passed, so no pick is made
+ * blind.
+ *
+ * An Agent step done on the user's own agent that can't run now (its key
+ * removed, say) is the Agent step again, not a new session that fails; a
+ * status that couldn't be read says nothing of that, so the progress stands.
+ * A user who went back to the Agent step (it's done) stays on it.
+ */
+export function resumeAt(
+  saved: OnboardingProgress | null,
+  status: AgentStatus | null,
+  choices: AgentChoices | null,
+): OnboardingProgress & { save?: { agent: "claude" | "codex"; method: AgentMethod } } {
+  let at: OnboardingProgress = saved ?? { step: "agent", done: [], runOn: "outrunner" };
+  if (status && at.done.includes("agent") && (at.runOn === "claude" || at.runOn === "codex") && !canRun(at.runOn, status)) {
+    at = { step: "agent", done: at.done.filter((step) => step !== "agent"), runOn: "outrunner" };
+  }
+  if (at.step !== "agent" || at.done.includes("agent") || !status || !choices) return at;
+  const connected = connectedAgent(status, choices);
+  if (!connected) return at;
+  const { agent, method, chosen } = connected;
+  return { step: "repos", done: [...at.done, "agent"], runOn: agent, ...(!chosen && { save: { agent, method } }) };
+}
 
 /** What the new-session form starts on after onboarding: its model, the
  *  effort it runs at (null: the model's own), and the agent where it isn't
@@ -77,11 +149,6 @@ export function startingPick(pick: AgentPick): StartingPick {
   if (pick === "codex") return { model: CODEX_MODELS[0], effort: DEFAULT_EFFORT };
   const outrunner = { model: OUTRUNNER_MODELS[0], effort: null };
   return pick === "codex-outrunner" ? { ...outrunner, agent: "codex" } : outrunner;
-}
-
-/** An agent pick from a URL (`?start=`); undefined for anything else. */
-export function parseAgentPick(raw: string | null | undefined): AgentPick | undefined {
-  return AGENT_PICKS.find((pick) => pick === raw);
 }
 
 /** Where onboarding ends: the new-session screen, on the first repository

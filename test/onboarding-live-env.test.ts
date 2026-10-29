@@ -6,16 +6,20 @@ import { liveEnv, OnboardingError } from "@/lib/onboarding/live-env";
 import {
   CLI_DEFAULT_URL,
   connectClaudeCommand,
+  connectedAgent,
   filterRepositories,
   freeModelsOffer,
   newSessionAfterOnboarding,
   parseAgentPick,
+  parseProgress,
+  resumeAt,
   sortRepositories,
   startingPick,
 } from "@/lib/onboarding/rules";
+import type { AgentStatus } from "@/lib/onboarding/types";
 import { CLAUDE_DEFAULT_MODEL, CODEX_MODELS, OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
 
-const user = { name: "Ada Lovelace", login: "ada", avatarUrl: null };
+const user = { id: "u1", name: "Ada Lovelace", login: "ada", avatarUrl: null };
 const realFetch = globalThis.fetch;
 
 type Call = { url: string; method: string; body: unknown };
@@ -144,4 +148,131 @@ test("a refused onboarding mark is logged, and the new-session screen still open
   stubFetch({ "POST /api/onboarding/complete": () => [500, { error: "db down" }] });
   assert.equal(await env().finish("p1", "outrunner"), "/new?project=p1&focus=composer&start=outrunner");
   assert.equal(logged.mock.callCount(), 1);
+});
+
+const agents = (claude: Partial<AgentStatus["claude"]> = {}, codexKey = false): AgentStatus => ({
+  claude: { subscription: false, last4: null, apiKey: false, ...claude },
+  codex: { apiKey: codexKey },
+});
+
+const none = { claude: null, codex: null };
+
+test("an agent connected already is the user's pick when it's connected, else subscription, then Anthropic, then OpenAI", () => {
+  assert.equal(connectedAgent(agents(), none), null);
+  assert.deepEqual(connectedAgent(agents({ subscription: true, apiKey: true }, true), none), {
+    agent: "claude",
+    method: "subscription",
+    chosen: false,
+  });
+  assert.deepEqual(connectedAgent(agents({ apiKey: true }, true), none), { agent: "claude", method: "api-key", chosen: false });
+  assert.deepEqual(connectedAgent(agents({}, true), none), { agent: "codex", method: "api-key", chosen: false });
+  // An Anthropic key picked on purpose in Settings stays the pick.
+  assert.deepEqual(connectedAgent(agents({ subscription: true, apiKey: true }), { claude: "api-key", codex: null }), {
+    agent: "claude",
+    method: "api-key",
+    chosen: true,
+  });
+});
+
+test("onboarding opens past the Agent step once an agent is connected, as from the CLI in another tab", () => {
+  assert.deepEqual(resumeAt(null, agents(), none), { step: "agent", done: [], runOn: "outrunner" });
+  assert.deepEqual(resumeAt(null, agents({ subscription: true }), none), {
+    step: "repos",
+    done: ["agent"],
+    runOn: "claude",
+    save: { agent: "claude", method: "subscription" },
+  });
+  // The tab that showed the command saved the Agent step before the CLI ran.
+  assert.equal(resumeAt({ step: "agent", done: [], runOn: "outrunner" }, agents({ subscription: true }), none).step, "repos");
+});
+
+test("passing the Agent step keeps a pick the user made, and makes none blind", () => {
+  const picked = resumeAt(null, agents({ subscription: true, apiKey: true }), { claude: "api-key", codex: null });
+  assert.equal(picked.step, "repos");
+  assert.equal(picked.save, undefined);
+  // Their picks unknown: the Agent step, where they pick.
+  assert.deepEqual(resumeAt(null, agents({ subscription: true }), null), { step: "agent", done: [], runOn: "outrunner" });
+});
+
+test("onboarding opens where it was left, and a user gone back to the Agent step stays there", () => {
+  // Back from installing the GitHub App.
+  assert.deepEqual(resumeAt({ step: "repos", done: ["agent"], runOn: "outrunner" }, agents(), none), {
+    step: "repos",
+    done: ["agent"],
+    runOn: "outrunner",
+  });
+  const back = resumeAt({ step: "agent", done: ["agent", "repos"], runOn: "outrunner" }, agents({ subscription: true }), none);
+  assert.equal(back.step, "agent");
+  assert.equal(back.save, undefined);
+});
+
+test("an Agent step done on the user's own agent that can't run now is the Agent step again", () => {
+  assert.deepEqual(resumeAt({ step: "repos", done: ["agent", "repos"], runOn: "claude" }, agents(), none), {
+    step: "agent",
+    done: ["repos"],
+    runOn: "outrunner",
+  });
+  // Not known (the status couldn't be read): the progress stands.
+  assert.deepEqual(resumeAt({ step: "repos", done: ["agent"], runOn: "claude" }, null, none), {
+    step: "repos",
+    done: ["agent"],
+    runOn: "claude",
+  });
+  assert.equal(resumeAt(null, null, none).step, "agent");
+  // Still connected another way: carry on.
+  assert.equal(resumeAt({ step: "repos", done: ["agent"], runOn: "claude" }, agents({ apiKey: true }), none).step, "repos");
+});
+
+test("saved progress is only taken as it should be", () => {
+  assert.deepEqual(parseProgress({ step: "repos", done: ["repos", "agent", "x"], runOn: "codex" }), {
+    step: "repos",
+    done: ["agent", "repos"],
+    runOn: "codex",
+  });
+  // Saved when there was a Start step: onboarding now ends on Repositories.
+  assert.deepEqual(parseProgress({ step: "start", done: ["agent", "repos", "start"], runOn: "codex" }), {
+    step: "repos",
+    done: ["agent", "repos"],
+    runOn: "codex",
+  });
+  assert.equal(parseProgress(null), null);
+  assert.equal(parseProgress("repos"), null);
+  assert.equal(parseProgress({ step: "done", done: [], runOn: "claude" }), null);
+  assert.equal(parseProgress({ step: "repos", done: [], runOn: "gpt" }), null);
+  assert.equal(parseProgress({ step: "repos", done: "agent", runOn: "claude" }), null);
+});
+
+test("progress is kept per account in this browser, and dropped once onboarding is done", async (t) => {
+  const store = new Map<string, string>();
+  const localStorage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => void store.set(key, value),
+    removeItem: (key: string) => void store.delete(key),
+  };
+  Object.defineProperty(globalThis, "window", { value: { localStorage }, configurable: true });
+  t.after(() => {
+    delete (globalThis as { window?: unknown }).window;
+  });
+
+  const progress = { step: "repos", done: ["agent"], runOn: "claude" } as const;
+  env().saveProgress({ ...progress, done: [...progress.done] });
+  assert.deepEqual(env().savedProgress(), progress);
+  assert.equal(liveEnv({ ...user, id: "u2" }, { outrunnerModels: true }).savedProgress(), null);
+
+  stubFetch({ "POST /api/onboarding/complete": () => [200, { ok: true }] });
+  await env().skip();
+  assert.equal(env().savedProgress(), null);
+  env().saveProgress({ ...progress, done: [...progress.done] });
+  await env().finish("p1", "claude");
+  assert.equal(env().savedProgress(), null);
+});
+
+test("storage that fails only means onboarding opens at its start", (t) => {
+  const failing = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("full"); }, removeItem: () => {} };
+  Object.defineProperty(globalThis, "window", { value: { localStorage: failing }, configurable: true });
+  t.after(() => {
+    delete (globalThis as { window?: unknown }).window;
+  });
+  assert.doesNotThrow(() => env().saveProgress({ step: "repos", done: [], runOn: "claude" }));
+  assert.equal(env().savedProgress(), null);
 });

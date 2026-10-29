@@ -40,6 +40,18 @@ This replaces the earlier Mission Engine design
   Click a Runner to read its latest response and message it there; your
   replies stay in its session and don't go to the Mission.
 - **In the Mission's chat,** Runner news shows as compact cards.
+- **Archive** a Mission from its header or its sidebar row's menu: its
+  Runners that aren't archived are archived first, a few at a time, even one
+  at work or with an open pull request (that stays open on GitHub); then the
+  Mission itself, once every Runner has gone. If a Runner can't be archived
+  now (still setting up, being archived, on a computer that can't archive), nothing is
+  touched and the error names it. One that fails, or one started or brought
+  back meanwhile, keeps the Mission as it is; asking again archives the
+  rest. Each Runner's queued messages are taken as it's archived, and given
+  back if it isn't. One request stops starting Runners after two minutes, and
+  the browser asks again for the rest. An archived Mission stays in the
+  sidebar, marked, and hears no more news (it's dropped, not held). Opening
+  it restores it; a Runner comes back when opened or messaged.
 - **Notifications** go through the app's notifications (`lib/notifications`),
   under each person's preferences in Settings → Account (browser, email,
   Slack). Two kinds of news reach the user:
@@ -70,6 +82,7 @@ This replaces the earlier Mission Engine design
 | Pull request settler | `lib/missions/settle.ts`, `lib/missions/pull-requests.ts` |
 | Outbox delivery | `lib/missions/outbox.ts` |
 | Tick | `lib/missions/tick.ts`, after the sessions tick's reads (`/api/sessions/tick`) |
+| Archiving a Mission with its Runners | `lib/missions/archive.ts`, `POST /api/missions/[id]/archive` |
 | UI | `components/missions/*`, `hooks/use-missions.ts`, `GET /api/missions` |
 
 ### Tools
@@ -177,9 +190,10 @@ twice records it once. Events are delivered in batches:
   dies is taken over when the lease runs out.
 - Events wait a few seconds for others arriving with them (at most 20
   seconds), so they go as one message.
-- The Mission is resumed if asleep, or restored if archived, then sent the
-  batch as `<runner_event>` blocks. Mid-turn, the batch is folded into the
-  running turn; otherwise it starts a new one.
+- The Mission is resumed if asleep, then sent the batch as `<runner_event>`
+  blocks. Mid-turn, the batch is folded into the running turn; otherwise it
+  starts a new one. An archived Mission isn't restored: its owner put it
+  away, so the batch is dropped.
 - The message carries the delivery's id as its key. The runtime-agent sends
   a keyed message once (`message-keys`, kept on the box's disk), so a delivery
   sent again after a crash between sending and recording it isn't said twice.
@@ -212,7 +226,9 @@ twice records it once. Events are delivered in batches:
 - `test/turn-watch.test.ts` and `test/mission-watch.test.ts`: turn ends.
 - `test/mission-settle.test.ts`: settler decisions.
 - `test/mission-outbox.test.ts`: exactly-once across crashes, races, sleep
-  and failures.
+  and failures; an archived Mission's news dropped.
+- `test/mission-archive.test.ts`: archiving a Mission with its Runners, and
+  what's left when one can't be.
 - `test/mission-view.test.ts`: sidebar and pane grouping.
 - `test/mission-midturn.test.ts`: a delivery while the Mission works is
   folded into its turn (one turn, one end); at rest, it starts one.
