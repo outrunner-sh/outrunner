@@ -553,7 +553,8 @@
         "multi-repo",
         "multi-repo-snapshots",
         "git-credential",
-        "multi-repo-warm"
+        "multi-repo-warm",
+        "message-keys"
       ]
     },
     {

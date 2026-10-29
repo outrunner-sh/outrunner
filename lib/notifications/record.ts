@@ -9,7 +9,7 @@
 
 import { toWorkspace } from "@/lib/db/mappers";
 import { workspaceLabel } from "@/lib/nav/session-title";
-import { activityNews, errorNews, pullRequestNews, type NotificationDraft } from "@/lib/notifications/events";
+import { activityNews, errorNews, missionsQuiet, pullRequestNews, type NotificationDraft } from "@/lib/notifications/events";
 import type { ActivityChange } from "@/lib/session/watch";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -17,8 +17,11 @@ function db() {
   return createSupabaseAdminClient();
 }
 
-/** Record `drafts`; those recorded before are skipped. How many were new. */
-export async function recordNotifications(drafts: NotificationDraft[]): Promise<number> {
+/** Record `drafts`; those recorded before are skipped, and a Mission's
+ *  Runners' own news is its Mission's, not told (missionsQuiet). How many
+ *  were new. */
+export async function recordNotifications(all: NotificationDraft[]): Promise<number> {
+  const drafts = await withoutMissionsQuiet(all);
   if (drafts.length === 0) return 0;
   const { data, error } = await db()
     .from("session_notifications")
@@ -36,6 +39,17 @@ export async function recordNotifications(drafts: NotificationDraft[]): Promise<
     .select("id");
   if (error) throw error;
   return data?.length ?? 0;
+}
+
+async function withoutMissionsQuiet(drafts: NotificationDraft[]): Promise<NotificationDraft[]> {
+  if (drafts.length === 0) return drafts;
+  const { data, error } = await db()
+    .from("workspaces")
+    .select("id, kind, parent_mission_id")
+    .in("id", [...new Set(drafts.map((d) => d.workspaceId))]);
+  if (error) throw error;
+  const sessions = new Map((data ?? []).map((row) => [row.id, { kind: row.kind, parentMissionId: row.parent_mission_id }]));
+  return drafts.filter((d) => !missionsQuiet(d.kind, sessions.get(d.workspaceId) ?? {}));
 }
 
 /** Sessions' names, by id, as their owners see them. */

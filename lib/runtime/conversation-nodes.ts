@@ -7,6 +7,8 @@ import { isEcho } from "@/lib/session/optimistic-echo";
 
 type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
 
+const TYPED_COMPACT = /^\/compact(\s|$)/;
+
 /** A row of the conversation. Each of Claude's steps is a row of its own: a
  *  thought, a tool call (carrying its result, which arrives in a later
  *  message), or its words. */
@@ -101,7 +103,7 @@ export function conversationNodes(
       // (its compaction's row says it), so a "worked" row under it would
       // stand under no prompt; and folded into the turn before, that turn's
       // would run on to the compaction, however long after it was.
-      const compactTyped = event.content.some((b) => b.type === "text" && /^\/compact(\s|$)/.test(b.text));
+      const compactTyped = event.content.some((b) => b.type === "text" && TYPED_COMPACT.test(b.text));
       if (!isEcho(event.uuid) && !compactTyped) turn = { from: event.timestamp, last: null, key: `${event.uuid}-${ei}` };
     } else if (turn) {
       turn.last = event.timestamp;
@@ -131,7 +133,7 @@ export function conversationNodes(
             // The turn it starts was begun above (endTurn, then `turn`).
             // Claude Code 2.1.304 records a typed /compact first as a prompt of
             // its own: the compaction's row says it.
-            if (/^\/compact(\s|$)/.test(block.text)) return;
+            if (TYPED_COMPACT.test(block.text)) return;
             planTurn = event.mode === "plan";
             nodes.push({
               kind: "prompt",

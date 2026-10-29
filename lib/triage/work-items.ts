@@ -90,6 +90,20 @@ export function itemHref(item: Pick<WorkItem, "id">): string {
   return `/triage?item=${item.id}`;
 }
 
+/**
+ * The app's page for capturing an item: the dialog over the list. `item` is
+ * the item left open behind it, and `project` the workspace the dialog
+ * starts in. Made in one place because ⌘I and the page's own buttons both
+ * need it, and the page's is what keeps the item open (app-frame.tsx).
+ */
+export function captureHref({ item, project }: { item?: string | null; project?: string | null } = {}): string {
+  const params = new URLSearchParams();
+  if (item) params.set("item", item);
+  params.set("new", "1");
+  if (project) params.set("project", project);
+  return `/triage?${params}`;
+}
+
 /** Statuses still waiting on someone: the inbox and the backlog. */
 export function isOpen(status: WorkItemStatus): boolean {
   return status === "triage" || status === "todo" || status === "in_progress";

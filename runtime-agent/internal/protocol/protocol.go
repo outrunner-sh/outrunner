@@ -405,6 +405,12 @@ const FeatureCodexGateway = "codex-gateway"
 // gitcred). An older agent ignores the variables and keeps GH_TOKEN.
 const FeatureGitCredential = "git-credential"
 
+// FeatureMessageKeys is a message sent once per key: POST /message's `key`,
+// which the agent keeps on disk, answering a repeat as sent without sending it
+// again. For a sender that may repeat after a restart (a Mission's events). An
+// older agent ignores the field, and sends a repeat again.
+const FeatureMessageKeys = "message-keys"
+
 // ErrorResponse is the stable error envelope for control-plane failures.
 type ErrorResponse struct {
 	Error struct {
@@ -507,10 +513,12 @@ type Compaction struct {
 // plan, Codex read-only), "build" back out of it. Dismiss first closes the
 // menu the agent shows (its plan, waiting on approval), as Escape does, so
 // the prompt answers it. An agent from before FeaturePlanMode ignores both.
+// Key, when set, sends it once per key (FeatureMessageKeys).
 type SendMessageRequest struct {
 	Content string `json:"content"`
 	Mode    string `json:"mode,omitempty"`
 	Dismiss bool   `json:"dismiss,omitempty"`
+	Key     string `json:"key,omitempty"`
 }
 
 // PlanActionRequest answers the plan a session's agent waits on (POST

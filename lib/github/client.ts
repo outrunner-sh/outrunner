@@ -513,6 +513,33 @@ export async function getPullRequestStatus(input: {
   repoFullName: string;
   number: number;
 }): Promise<PullRequestStatus> {
+  return (await readPullRequest(input)).status;
+}
+
+/** What else the same reads say of a pull request: its title, base, size,
+ *  and each check run, for a caller that shows them (a Mission's Runners). */
+export type PullRequestDetails = {
+  title: string;
+  baseRef: string | null;
+  additions: number | null;
+  deletions: number | null;
+  checkRuns: { name: string; status: string; conclusion: string | null; url: string | null }[];
+};
+
+/** getPullRequestStatus, with its details from the same reads. */
+export async function getPullRequestStatusWithDetails(input: {
+  token: string;
+  repoFullName: string;
+  number: number;
+}): Promise<{ status: PullRequestStatus; details: PullRequestDetails }> {
+  return readPullRequest(input);
+}
+
+async function readPullRequest(input: {
+  token: string;
+  repoFullName: string;
+  number: number;
+}): Promise<{ status: PullRequestStatus; details: PullRequestDetails }> {
   const repo = `/repos/${input.repoFullName}`;
   const response = await fetchGitHub(new URL(`${repo}/pulls/${input.number}`, GITHUB_API_URL), input.token);
   if (!response.ok) {
@@ -524,6 +551,10 @@ export async function getPullRequestStatus(input: {
     draft?: unknown;
     mergeable_state?: unknown;
     head?: { sha?: unknown };
+    base?: { ref?: unknown };
+    title?: unknown;
+    additions?: unknown;
+    deletions?: unknown;
   };
   const headSha = pr.head?.sha;
   if (typeof headSha !== "string" || (pr.state !== "open" && pr.state !== "closed")) {
@@ -540,7 +571,8 @@ export async function getPullRequestStatus(input: {
   if (!statuses.ok) throw rejected(statuses, "commit status", "GitHub could not read the pull request's checks. Please try again.");
 
   const checks = { passing: 0, failing: 0, pending: 0 };
-  const runList = ((await readJson(runs)) as { check_runs?: { status?: unknown; conclusion?: unknown }[] }).check_runs ?? [];
+  const runList =
+    ((await readJson(runs)) as { check_runs?: { name?: unknown; status?: unknown; conclusion?: unknown; html_url?: unknown }[] }).check_runs ?? [];
   for (const run of runList) {
     if (run.status !== "completed") checks.pending += 1;
     else if (FAILED_CONCLUSIONS.has(String(run.conclusion))) checks.failing += 1;
@@ -555,11 +587,25 @@ export async function getPullRequestStatus(input: {
   }
 
   return {
-    state: pr.merged === true ? "merged" : pr.state,
-    draft: pr.draft === true,
-    mergeableState: typeof pr.mergeable_state === "string" ? pr.mergeable_state : "unknown",
-    headSha,
-    checks,
+    status: {
+      state: pr.merged === true ? "merged" : pr.state,
+      draft: pr.draft === true,
+      mergeableState: typeof pr.mergeable_state === "string" ? pr.mergeable_state : "unknown",
+      headSha,
+      checks,
+    },
+    details: {
+      title: typeof pr.title === "string" ? pr.title : "",
+      baseRef: typeof pr.base?.ref === "string" ? pr.base.ref : null,
+      additions: typeof pr.additions === "number" ? pr.additions : null,
+      deletions: typeof pr.deletions === "number" ? pr.deletions : null,
+      checkRuns: runList.slice(0, 50).map((run) => ({
+        name: typeof run.name === "string" ? run.name : "check",
+        status: typeof run.status === "string" ? run.status : "completed",
+        conclusion: typeof run.conclusion === "string" ? run.conclusion : null,
+        url: typeof run.html_url === "string" ? run.html_url : null,
+      })),
+    },
   };
 }
 
