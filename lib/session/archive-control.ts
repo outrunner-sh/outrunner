@@ -1,4 +1,3 @@
-import { forgetKeptMission } from "@/lib/missions/kept-missions";
 import { onRuntimeComputer, type Workspace } from "@/lib/runtime/types";
 
 /**
@@ -70,12 +69,14 @@ export async function archiveSession(id: string, fetchImpl: typeof fetch = fetch
   } catch {
     throw new Error("Could not reach Outrunner. Check your connection and try again.");
   }
-  if (res.ok) {
-    // A Mission archived is kept no longer: what was shown of it is what it was
-    // before this, and a reload must not paint that (lib/missions/kept-missions.ts).
-    forgetKeptMission(id);
-    return;
-  }
+  // Nothing is forgotten from the kept Runners here: GET /api/missions still
+  // lists an archived session — only destroyed and destroying ones are left
+  // out — so the kept copy isn't wrong, and the next look reads it again.
+  // (Importing lib/missions/kept-missions.ts into this file is what must not
+  // happen either: the server graph reaches this file through lib/nav/sidebar.ts
+  // and app/(app)/layout.tsx, and that module's stores come from a "use client"
+  // one, which throws when a server render calls it.)
+  if (res.ok) return;
   const body = (await res.json().catch(() => ({}))) as { error?: unknown };
   throw new Error(typeof body.error === "string" ? body.error : "Could not archive this session. Please try again.");
 }

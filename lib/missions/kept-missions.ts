@@ -19,7 +19,7 @@ import type { MissionView, RunnerView } from "@/lib/missions/view";
  *
  * A kept list is a first-paint stand-in and nothing more: the server's answer
  * always wins over it, and it is dropped as the user's own acts make it wrong
- * — a Runner archived or deleted, the org switched, the user signed out. It is
+ * — a Runner deleted, the org switched, the user signed out. It is
  * read into a `store` so a server render, and so hydration, sees
  * {@link NO_MISSIONS}: nothing reads localStorage while rendering, and the
  * kept Runners land in the first commit after (lib/client/store.ts).
@@ -162,8 +162,8 @@ export class KeptMissions {
     }
   }
 
-  /** Drop a Runner from the kept list: it was archived or deleted, and what
-   *  is kept of it is no longer what the server would say. */
+  /** Drop a Runner from the kept list: it was deleted, so what is kept of it
+   *  is no longer what the server would say — the list would bring it back. */
   forget(missionId: string): MissionView[] | null {
     const kept = this.load();
     if (!kept) return null;
@@ -216,7 +216,7 @@ export function rememberMissions(missions: readonly MissionView[]): void {
   KEPT_MISSIONS_CACHE.save(missions);
 }
 
-/** A Runner's kept copy goes with it: it was archived or deleted. */
+/** A Runner's kept copy goes with it: it was deleted. */
 export function forgetKeptMission(missionId: string): void {
   KEPT_MISSIONS_CACHE.forget(missionId);
 }
