@@ -1167,7 +1167,7 @@ export function WorkspaceSession({
   }, [attached, initialPrompt, initialPromptKey, initialAttachmentIds]);
 
   return (
-    <div ref={sessionRef} className="studio-live-session" data-testid="workspace-session">
+    <div ref={sessionRef} className="studio-live-session min-w-0" data-testid="workspace-session">
       {conversation.lost ? (
         <Notice
           tone="warning"

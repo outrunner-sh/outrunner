@@ -55,7 +55,7 @@ export function QueuedPrompts({
     onEditingChange(null);
   };
   return (
-    <section className="studio-queue" aria-label="Queued messages">
+    <section className={`studio-queue${starting ? " is-starting" : ""}`} aria-label="Queued messages">
       <p className="studio-queue-label">
         {starting ? "Queued · sends in order after startup" : paused ? "Queued · held since you stopped the turn; your next message goes after them" : "Queued · sends when the current turn ends"}
       </p>

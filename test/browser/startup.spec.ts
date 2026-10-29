@@ -72,6 +72,12 @@ for (const retry of [false, true]) test(`startup keeps input ordered through rel
   await composer.press("Enter");
   await expect(queue.locator("li")).toHaveCount(2);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  // A clipped child can be wider even when the page itself never scrolls.
+  expect(await page.locator(".studio-chat").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  for (const control of [page.getByRole("button", { name: "Send", exact: true }), page.getByRole("button", { name: "Session info", exact: true }).last()]) {
+    const bounds = await control.boundingBox();
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
+  }
   await composer.fill("Unsent draft");
   await page.getByRole("button", { name: "Session info", exact: true }).last().click();
   await expect(page.getByRole("region", { name: "Startup details" })).toBeVisible();
