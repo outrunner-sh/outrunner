@@ -369,6 +369,38 @@ test("signing out mid-send keeps the files of the message on its way", () => {
   assert.equal(storage.items.size, 0);
 });
 
+test("an optimistic create refusal and the send result restore one image, whose removal survives a revisit", () => {
+  const storage = new FakeStorage();
+  const { drafts, run } = page(storage);
+  const sent = ready("a", { thumbnail: "data:image/webp;base64,kept" });
+  drafts.update("new", () => ({ text: "look", attachments: [sent] }));
+  const release = drafts.hold("new", "look", [sent]);
+  drafts.update("new", () => ({ text: "", attachments: [] }));
+  // The old form's pending send returns its full file, then the new form
+  // consumes #295's refused ids under its own restored keys.
+  drafts.setText("new", "look");
+  drafts.restoreAttachments("new", [sent]);
+  drafts.restoreAttachments("new", [{ ...sent, key: "restored-a", thumbnail: undefined }]);
+  run();
+  assert.equal(drafts.get("new")?.attachments.length, 1);
+  assert.equal(page(storage).drafts.get("new")?.attachments.length, 1, "the hold and restored id are one file on reload too");
+  assert.equal(drafts.get("new")?.attachments[0].thumbnail, sent.thumbnail);
+  release();
+  drafts.update("new", (draft) => ({ ...draft, attachments: [] }));
+  run();
+  assert.deepEqual(page(storage).drafts.get("new")?.attachments, [], "removing the refused image stays removed");
+});
+
+test("a refused id restored before its hold releases is stored only once", () => {
+  const storage = new FakeStorage();
+  const { drafts, run } = page(storage);
+  const sent = ready("a");
+  drafts.hold("new", "look", [sent]);
+  drafts.restoreAttachments("new", [{ ...sent, key: "restored-a" }]);
+  run();
+  assert.equal(page(storage).drafts.get("new")?.attachments.length, 1);
+});
+
 test("an upload's progress is kept with it; one the page cut off comes back failed, without it", () => {
   const storage = new FakeStorage();
   const { drafts, run } = page(storage);

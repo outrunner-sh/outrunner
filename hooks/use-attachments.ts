@@ -135,10 +135,7 @@ export function useAttachments(draftKey: string) {
    *  not, they land in the draft it left. */
   const restore = useCallback(
     (taken: readonly PendingAttachment[]) => {
-      DRAFTS.update(draftKey, (draft) => {
-        const back = taken.filter((item) => !draft.attachments.some((a) => a.key === item.key));
-        return back.length === 0 ? draft : { ...draft, attachments: [...back, ...draft.attachments] };
-      });
+      DRAFTS.restoreAttachments(draftKey, taken);
     },
     [draftKey],
   );

@@ -109,9 +109,11 @@ type Held = { text: string; attachments: PendingAttachment[] };
 function withHeld(holds: readonly Held[], shown: Draft): Draft {
   const text = holds.reduceRight((rest, held) => restoreDraft(held.text, rest), shown.text);
   const seen = new Set<string>();
+  const ids = new Set<string>();
   const attachments = [...holds.flatMap((held) => held.attachments), ...shown.attachments].filter((a) => {
-    if (seen.has(a.key)) return false;
+    if (seen.has(a.key) || (a.id && ids.has(a.id))) return false;
     seen.add(a.key);
+    if (a.id) ids.add(a.id);
     return true;
   });
   return { text, attachments };
@@ -225,6 +227,22 @@ export class Drafts {
     this.update(key, (draft) => {
       const next = typeof text === "function" ? text(draft.text) : text;
       return next === draft.text ? draft : { ...draft, text: next };
+    });
+  }
+
+  /** Return a failed send's files once, including when an optimistic
+   *  create's refusal also returns the same ids under restored keys. */
+  restoreAttachments(key: string, taken: readonly PendingAttachment[]): void {
+    this.update(key, (draft) => {
+      const keys = new Set(draft.attachments.map((a) => a.key));
+      const ids = new Set(draft.attachments.flatMap((a) => a.id ? [a.id] : []));
+      const back = taken.filter((a) => {
+        if (keys.has(a.key) || (a.id && ids.has(a.id))) return false;
+        keys.add(a.key);
+        if (a.id) ids.add(a.id);
+        return true;
+      });
+      return back.length === 0 ? draft : { ...draft, attachments: [...back, ...draft.attachments] };
     });
   }
 
