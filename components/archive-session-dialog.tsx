@@ -3,7 +3,7 @@
 import { ConfirmSessionDialog } from "@/components/confirm-session-dialog";
 import { Notice } from "@/components/ui/notice";
 import { ARCHIVE_CONSEQUENCE } from "@/lib/session/archive-control";
-import { archiveInBackground, dismissArchiveFailure, useArchiveFailure } from "@/lib/session/optimistic-archive";
+import { archiveInBackground, dismissArchiveNotice, useArchiveNotice } from "@/lib/session/optimistic-archive";
 
 /**
  * Confirm archiving a cloud session: what happens to its work and how it comes
@@ -46,23 +46,20 @@ export function ArchiveSessionDialog({
   );
 }
 
-/**
- * An archive the server refused after the dialog had closed on it: said over
- * the app, wherever the user went, with the way back to the session (which
- * shows as it was again) to try once more.
- */
-export function ArchiveFailureNotice() {
-  const failure = useArchiveFailure();
-  if (!failure) return null;
+/** An archive result that needs attention after its dialog has closed. */
+export function ArchiveNotice() {
+  const notice = useArchiveNotice();
+  if (!notice) return null;
+  const unsaved = notice.kind === "unsaved";
   return (
     <Notice
       className="fixed right-4 bottom-4 z-50 w-[min(420px,calc(100vw-32px))] shadow-lg"
-      tone="error"
-      title={`Couldn't archive “${failure.title}”`}
-      detail={failure.message}
-      actions={[
-        { label: "Open session", href: `/workspaces/${failure.id}`, primary: true, onClick: dismissArchiveFailure },
-        { label: "Dismiss", onClick: dismissArchiveFailure },
+      tone={unsaved ? "warning" : "error"}
+      title={unsaved ? `Archived “${notice.title}” without its files` : `Couldn't archive “${notice.title}”`}
+      detail={notice.message}
+      actions={unsaved ? [{ label: "Done", primary: true, onClick: dismissArchiveNotice }] : [
+        { label: "Open session", href: `/workspaces/${notice.id}`, primary: true, onClick: dismissArchiveNotice },
+        { label: "Dismiss", onClick: dismissArchiveNotice },
       ]}
     />
   );
