@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { attachmentImageBytes, cacheBoxImage, cachedBoxImage } from "@/lib/db/chat-images";
@@ -72,9 +72,13 @@ export async function GET(request: Request, context: RouteContext) {
   const type = sniffImage(bytes);
   if (!type) return NextResponse.json({ error: "That file isn't an image the chat shows." }, { status: 415 });
 
-  // Kept for when the box is away; the chat needn't wait on it.
-  void cacheBoxImage(id, onBox, bytes, type).catch((error: unknown) =>
-    console.error(`Workspace ${id}: could not keep a copy of image ${onBox}`, error),
+  // Kept for when the box is away, once the answer has gone: the chat
+  // needn't wait on it, and after() sees it through where the server would
+  // otherwise stop once it has answered.
+  after(() =>
+    cacheBoxImage(id, onBox, bytes, type).catch((error: unknown) =>
+      console.error(`Workspace ${id}: could not keep a copy of image ${onBox}`, error),
+    ),
   );
   // A file on the box can change (a screenshot taken again), so not for long.
   return image(bytes, "private, max-age=60");

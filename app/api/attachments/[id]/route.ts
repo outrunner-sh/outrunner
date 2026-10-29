@@ -7,6 +7,8 @@ import { sniffImage } from "@/lib/runtime/chat-image";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * One of the owner's attachments, when it's an image, for its thumbnail: a
  * new session's first prompt shows its files while the box starts, from
@@ -19,6 +21,9 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
   const { id } = await context.params;
+  // Not an id at all (a stale or mangled link): no such attachment, rather
+  // than the database's refusal of it read as a server error.
+  if (!UUID.test(id)) return NextResponse.json({ error: "No such attachment." }, { status: 404 });
   let bytes: Buffer;
   try {
     const [attachment] = await getAttachments([id]);

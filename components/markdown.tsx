@@ -141,10 +141,16 @@ function MarkdownImage({ src, alt }: { src?: string | Blob; alt?: string }) {
   // Per URL, so a new one (a streamed reply's src changing) gets its own tries.
   const [state, setState] = useState<Tries>({ url: null, round: 0, failures: 0, failed: false, loaded: false });
   const current: Tries = state.url === url ? state : { url: url ?? null, round: 0, failures: 0, failed: false, loaded: false };
+  // A retry waiting when the URL changes (a streamed reply's src growing) is
+  // the old one's: it goes with it, and with the image.
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (retryTimer.current) clearTimeout(retryTimer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+    },
+    [url],
+  );
   const failedOnce = () => {
     if (!url) return;
     const failures = current.failures + 1;
@@ -155,7 +161,11 @@ function MarkdownImage({ src, alt }: { src?: string | Blob; alt?: string }) {
     }
     // Shown as loading meanwhile.
     if (retryTimer.current) clearTimeout(retryTimer.current);
-    retryTimer.current = setTimeout(() => setState({ ...current, url, failures, failed: false, loaded: false }), delay);
+    // Only for its own URL, should one fire past a change all the same.
+    retryTimer.current = setTimeout(
+      () => setState((prev) => (prev.url !== null && prev.url !== url ? prev : { ...current, url, failures, failed: false, loaded: false })),
+      delay,
+    );
   };
   // One that loaded or failed before this was hydrated fired its event to no
   // handler: a complete image has, by whether it has a size.

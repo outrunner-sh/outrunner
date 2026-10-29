@@ -48,12 +48,41 @@ export async function cachedBoxImage(workspaceId: string, path: string): Promise
   return download(cachePath(workspaceId, path));
 }
 
-/** Keep a copy of an image read off the box, replacing an older one. */
+/** What this server last kept of each box image (cachePath → its bytes'
+ *  hash), so reading an unchanged one again (each view, each retry) doesn't
+ *  write it again. In memory and capped: another server, or this one after
+ *  a restart, writes it once more, which is only a repeat. */
+const keptHashes = new Map<string, string>();
+const MAX_KEPT_HASHES = 2000;
+
+/** Keep a copy of an image read off the box, replacing an older one; one
+ *  this server already kept as it is now is left alone. */
 export async function cacheBoxImage(workspaceId: string, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
+  const key = cachePath(workspaceId, path);
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  if (keptHashes.get(key) === hash) return;
   const { error } = await createSupabaseAdminClient()
     .storage.from(ATTACHMENT_BUCKET)
-    .upload(cachePath(workspaceId, path), bytes, { contentType, upsert: true });
+    .upload(key, bytes, { contentType, upsert: true });
   if (error) throw error;
+  keptHashes.delete(key);
+  keptHashes.set(key, hash);
+  while (keptHashes.size > MAX_KEPT_HASHES) keptHashes.delete(keptHashes.keys().next().value!);
+}
+
+/** Drop every copy kept of a workspace's box images: it was destroyed. */
+export async function deleteCachedBoxImages(workspaceId: string): Promise<void> {
+  const bucket = createSupabaseAdminClient().storage.from(ATTACHMENT_BUCKET);
+  const folder = `box-images/${workspaceId}`;
+  for (;;) {
+    const { data, error } = await bucket.list(folder, { limit: 1000 });
+    if (error) throw error;
+    if (!data || data.length === 0) return;
+    for (const key of keptHashes.keys()) if (key.startsWith(`${folder}/`)) keptHashes.delete(key);
+    const { error: removeError } = await bucket.remove(data.map((object) => `${folder}/${object.name}`));
+    if (removeError) throw removeError;
+    if (data.length < 1000) return;
+  }
 }
 
 async function download(storagePath: string): Promise<Buffer | null> {
