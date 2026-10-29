@@ -63,8 +63,9 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
       return { found, at };
     };
     void open()
-      // Whatever goes wrong, onboarding opens at its start, never stuck.
-      .catch(() => ({ found: null, at: resumeAt(null, null, null) }))
+      // Whatever goes wrong, onboarding opens where it was left, or at its
+      // start; never stuck.
+      .catch(() => ({ found: null, at: resumeAt(saved, null, null) }))
       .then(({ found, at }) => {
         if (stale) return;
         setStatus(found ?? NOTHING_CONNECTED);
