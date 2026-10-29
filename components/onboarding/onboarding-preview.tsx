@@ -128,6 +128,7 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
       else status.codex.apiKey = true;
       return current();
     },
+    agentChoices: async () => (await wait(200), { claude: null, codex: null }),
     chooseMethod: async () => void (await wait(300)),
     async githubAccess() {
       await wait(200);

@@ -36,6 +36,10 @@ export type AgentPick = "claude" | "codex" | "outrunner" | "codex-outrunner";
 /** How a picked agent signs in, in the cloud. */
 export type AgentMethod = "subscription" | "api-key";
 
+/** The way the user picked for each agent to sign in (Settings →
+ *  Providers), as the server names it; null where they've picked none. */
+export type AgentChoices = { claude: string | null; codex: string | null };
+
 export type OnboardingStep = "agent" | "repos" | "start";
 
 /** How far the user got, kept in the browser, so onboarding opens there
@@ -79,6 +83,8 @@ export type OnboardingEnv = {
   saveClaudeToken(token: string): Promise<AgentStatus>;
   /** Save an Anthropic or OpenAI API key. */
   saveApiKey(provider: "anthropic" | "openai", key: string): Promise<AgentStatus>;
+  /** How each agent signs in, as picked so far. */
+  agentChoices(): Promise<AgentChoices>;
   /** Run sessions of `agent` on `method` from now on (Settings → Providers). */
   chooseMethod(agent: "claude" | "codex", method: AgentMethod): Promise<void>;
 

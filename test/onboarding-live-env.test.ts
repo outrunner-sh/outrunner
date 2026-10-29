@@ -166,37 +166,67 @@ const agents = (claude: Partial<AgentStatus["claude"]> = {}, codexKey = false): 
   codex: { apiKey: codexKey },
 });
 
-test("an agent connected already is the one sessions would pick: subscription, then Anthropic, then OpenAI", () => {
-  assert.equal(connectedAgent(agents()), null);
-  assert.deepEqual(connectedAgent(agents({ subscription: true, apiKey: true }, true)), { agent: "claude", method: "subscription" });
-  assert.deepEqual(connectedAgent(agents({ apiKey: true }, true)), { agent: "claude", method: "api-key" });
-  assert.deepEqual(connectedAgent(agents({}, true)), { agent: "codex", method: "api-key" });
+const none = { claude: null, codex: null };
+
+test("an agent connected already is the user's pick when it's connected, else subscription, then Anthropic, then OpenAI", () => {
+  assert.equal(connectedAgent(agents(), none), null);
+  assert.deepEqual(connectedAgent(agents({ subscription: true, apiKey: true }, true), none), {
+    agent: "claude",
+    method: "subscription",
+    chosen: false,
+  });
+  assert.deepEqual(connectedAgent(agents({ apiKey: true }, true), none), { agent: "claude", method: "api-key", chosen: false });
+  assert.deepEqual(connectedAgent(agents({}, true), none), { agent: "codex", method: "api-key", chosen: false });
+  // An Anthropic key picked on purpose in Settings stays the pick.
+  assert.deepEqual(connectedAgent(agents({ subscription: true, apiKey: true }), { claude: "api-key", codex: null }), {
+    agent: "claude",
+    method: "api-key",
+    chosen: true,
+  });
 });
 
 test("onboarding opens past the Agent step once an agent is connected, as from the CLI in another tab", () => {
-  assert.deepEqual(resumeAt(null, agents()), { step: "agent", done: [], runOn: "outrunner" });
-  assert.deepEqual(resumeAt(null, agents({ subscription: true })), {
+  assert.deepEqual(resumeAt(null, agents(), none), { step: "agent", done: [], runOn: "outrunner" });
+  assert.deepEqual(resumeAt(null, agents({ subscription: true }), none), {
     step: "repos",
     done: ["agent"],
     runOn: "claude",
-    connect: { agent: "claude", method: "subscription" },
+    save: { agent: "claude", method: "subscription" },
   });
   // The tab that showed the command saved the Agent step before the CLI ran.
-  assert.equal(resumeAt({ step: "agent", done: [], runOn: "outrunner" }, agents({ subscription: true })).step, "repos");
+  assert.equal(resumeAt({ step: "agent", done: [], runOn: "outrunner" }, agents({ subscription: true }), none).step, "repos");
+});
+
+test("passing the Agent step keeps a pick the user made, and makes none blind", () => {
+  const picked = resumeAt(null, agents({ subscription: true, apiKey: true }), { claude: "api-key", codex: null });
+  assert.equal(picked.step, "repos");
+  assert.equal(picked.save, undefined);
+  // Their picks unknown: the Agent step, where they pick.
+  assert.deepEqual(resumeAt(null, agents({ subscription: true }), null), { step: "agent", done: [], runOn: "outrunner" });
 });
 
 test("onboarding opens where it was left, and a user gone back to the Agent step stays there", () => {
   // Back from installing the GitHub App.
-  assert.deepEqual(resumeAt({ step: "repos", done: ["agent"], runOn: "outrunner" }, agents()), {
+  assert.deepEqual(resumeAt({ step: "repos", done: ["agent"], runOn: "outrunner" }, agents(), none), {
     step: "repos",
     done: ["agent"],
     runOn: "outrunner",
   });
   // Start needs the repositories just picked: their step again.
-  assert.equal(resumeAt({ step: "start", done: ["agent", "repos"], runOn: "codex" }, agents()).step, "repos");
-  const back = resumeAt({ step: "agent", done: ["agent", "repos"], runOn: "outrunner" }, agents({ subscription: true }));
+  assert.equal(resumeAt({ step: "start", done: ["agent", "repos"], runOn: "codex" }, agents({}, true), none).step, "repos");
+  const back = resumeAt({ step: "agent", done: ["agent", "repos"], runOn: "outrunner" }, agents({ subscription: true }), none);
   assert.equal(back.step, "agent");
-  assert.equal(back.connect, undefined);
+  assert.equal(back.save, undefined);
+});
+
+test("an Agent step done on the user's own agent that can't run now is the Agent step again", () => {
+  assert.deepEqual(resumeAt({ step: "start", done: ["agent", "repos"], runOn: "claude" }, agents(), none), {
+    step: "agent",
+    done: ["repos"],
+    runOn: "outrunner",
+  });
+  // Still connected another way: carry on.
+  assert.equal(resumeAt({ step: "repos", done: ["agent"], runOn: "claude" }, agents({ apiKey: true }), none).step, "repos");
 });
 
 test("saved progress is only taken as it should be", () => {

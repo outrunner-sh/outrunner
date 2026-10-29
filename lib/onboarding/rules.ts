@@ -5,7 +5,7 @@
 
 import { PLANS } from "@/lib/billing/plans";
 import type { RepositoryListing } from "@/lib/github/listing";
-import type { AgentMethod, AgentPick, AgentStatus, OnboardingProgress, OnboardingStep } from "@/lib/onboarding/types";
+import type { AgentChoices, AgentMethod, AgentPick, AgentStatus, OnboardingProgress, OnboardingStep } from "@/lib/onboarding/types";
 
 /** The repositories a user picks from, most recently pushed first. */
 export function sortRepositories(repositories: RepositoryListing[]): RepositoryListing[] {
@@ -63,33 +63,56 @@ export function parseProgress(raw: unknown): OnboardingProgress | null {
   return { step: step as OnboardingStep, done: STEPS.filter((s) => done.includes(s)), runOn: runOn as AgentPick };
 }
 
-/** The agent of the user's own that's connected already, and how, the way
- *  sessions would pick it: a Claude subscription, then an Anthropic key, then
- *  an OpenAI key. Null when none is. */
-export function connectedAgent(status: AgentStatus): { agent: "claude" | "codex"; method: AgentMethod } | null {
-  if (status.claude.subscription) return { agent: "claude", method: "subscription" };
-  if (status.claude.apiKey) return { agent: "claude", method: "api-key" };
-  if (status.codex.apiKey) return { agent: "codex", method: "api-key" };
-  return null;
+/** The agent of the user's own that's connected already, and how: the way
+ *  they picked in Settings → Providers when it's connected, or else a Claude
+ *  subscription, then an Anthropic key, then an OpenAI key. `chosen` says
+ *  it's their pick already, so nothing needs saving. Null when none is. */
+export function connectedAgent(
+  status: AgentStatus,
+  choices: AgentChoices,
+): { agent: "claude" | "codex"; method: AgentMethod; chosen: boolean } | null {
+  const ready = [
+    status.claude.subscription && { agent: "claude" as const, method: "subscription" as const },
+    status.claude.apiKey && { agent: "claude" as const, method: "api-key" as const },
+    status.codex.apiKey && { agent: "codex" as const, method: "api-key" as const },
+  ].filter((way) => way !== false);
+  const picked = ready.find((way) => choices[way.agent] === way.method);
+  if (picked) return { ...picked, chosen: true };
+  return ready[0] ? { ...ready[0], chosen: false } : null;
+}
+
+/** Whether the user's own `agent` can run a session as things are now. */
+function canRun(agent: "claude" | "codex", status: AgentStatus): boolean {
+  return agent === "claude" ? status.claude.subscription || status.claude.apiKey : status.codex.apiKey;
 }
 
 /**
  * Where onboarding opens: where it was left in this browser, and past the
  * Agent step when that's not done but an agent is connected already (from
  * `npx outrunner … claude` in the terminal, say, seen from a tab the CLI
- * opened), on that agent. `connect` is the agent to run sessions on, then.
- * Start needs the repositories just picked, which aren't kept, so it opens
- * on Repositories, their step, ticked as they were. A user who went back to
+ * opened), on that agent. `save` is the way sessions sign in to save then,
+ * when it isn't the user's pick already; with `choices` unknown (null) the
+ * step isn't passed, so no pick is made blind.
+ *
+ * An Agent step done on the user's own agent that can't run now (its key
+ * removed, say) is the Agent step again, not a Start that fails. Start
+ * needs the repositories just picked, which aren't kept, so it opens on
+ * Repositories, their step, ticked as they were. A user who went back to
  * the Agent step (it's done) stays on it.
  */
 export function resumeAt(
   saved: OnboardingProgress | null,
   status: AgentStatus,
-): OnboardingProgress & { connect?: { agent: "claude" | "codex"; method: AgentMethod } } {
-  const at: OnboardingProgress = saved ?? { step: "agent", done: [], runOn: "outrunner" };
+  choices: AgentChoices | null,
+): OnboardingProgress & { save?: { agent: "claude" | "codex"; method: AgentMethod } } {
+  let at: OnboardingProgress = saved ?? { step: "agent", done: [], runOn: "outrunner" };
+  if (at.done.includes("agent") && (at.runOn === "claude" || at.runOn === "codex") && !canRun(at.runOn, status)) {
+    at = { step: "agent", done: at.done.filter((step) => step !== "agent"), runOn: "outrunner" };
+  }
   if (at.step === "start") return { ...at, step: "repos" };
-  if (at.step !== "agent" || at.done.includes("agent")) return at;
-  const connect = connectedAgent(status);
-  if (!connect) return at;
-  return { step: "repos", done: [...at.done, "agent"], runOn: connect.agent, connect };
+  if (at.step !== "agent" || at.done.includes("agent") || !choices) return at;
+  const connected = connectedAgent(status, choices);
+  if (!connected) return at;
+  const { agent, method, chosen } = connected;
+  return { step: "repos", done: [...at.done, "agent"], runOn: agent, ...(!chosen && { save: { agent, method } }) };
 }

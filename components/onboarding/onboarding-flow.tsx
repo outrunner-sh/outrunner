@@ -44,20 +44,27 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
   useEffect(() => {
     let stale = false;
     const saved = env.savedProgress();
-    void env
-      .agentStatus()
-      .catch(() => NOTHING_CONNECTED)
-      .then(async (found) => {
-        let at = resumeAt(saved, found);
-        if (at.connect) {
-          // Sessions sign in that way from now on, as the Agent step's
-          // Continue says; if that can't be saved, the Agent step is where.
-          const chosen = await env.chooseMethod(at.connect.agent, at.connect.method).then(
-            () => true,
-            () => false,
-          );
-          if (!chosen) at = resumeAt(saved, NOTHING_CONNECTED);
-        }
+    const open = async () => {
+      const [found, choices] = await Promise.all([
+        env.agentStatus().catch(() => NOTHING_CONNECTED),
+        env.agentChoices().catch(() => null),
+      ]);
+      let at = resumeAt(saved, found, choices);
+      if (at.save) {
+        // Sessions sign in that way from now on, as the Agent step's
+        // Continue says; if that can't be saved, the Agent step is where.
+        const chosen = await env.chooseMethod(at.save.agent, at.save.method).then(
+          () => true,
+          () => false,
+        );
+        if (!chosen) at = resumeAt(saved, found, null);
+      }
+      return { found, at };
+    };
+    void open()
+      // Whatever goes wrong, onboarding opens at its start, never stuck.
+      .catch(() => ({ found: NOTHING_CONNECTED, at: resumeAt(null, NOTHING_CONNECTED, null) }))
+      .then(({ found, at }) => {
         if (stale) return;
         setStatus(found);
         setStep(at.step);

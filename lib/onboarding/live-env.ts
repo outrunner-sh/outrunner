@@ -3,6 +3,7 @@ import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { parseProgress } from "@/lib/onboarding/rules";
 import type {
+  AgentChoices,
   AgentPick,
   AgentStatus,
   GitHubAccess,
@@ -129,6 +130,10 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
       await call("PUT", "/api/settings/providers", { provider, key });
       forgetOutrunnerModels();
       return agentStatus();
+    },
+    async agentChoices() {
+      const { choices } = await call<{ choices: Partial<AgentChoices> }>("GET", "/api/settings/agents");
+      return { claude: choices.claude ?? null, codex: choices.codex ?? null };
     },
     async chooseMethod(agent, method) {
       await call("PUT", "/api/settings/agents", { agent, method });
