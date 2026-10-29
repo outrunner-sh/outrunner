@@ -19,6 +19,7 @@ import (
 	"runtime-agent/internal/ask"
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/cli"
+	"runtime-agent/internal/desktop"
 	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/localimport"
@@ -52,6 +53,13 @@ func main() {
 		os.Exit(code)
 	}
 
+	// `runtime-agent desktop-mcp …` is a session's desktop tools, an MCP
+	// server its agent's CLI launches over stdio (package desktop). It drives
+	// the box's desktop itself, through the desktop's toolbox on the box.
+	if len(os.Args) > 1 && os.Args[1] == "desktop-mcp" {
+		os.Exit(desktopServer(os.Args[2:]))
+	}
+
 	// `runtime-agent git-credential …` is git's credential helper for
 	// github.com in a session, and `runtime-agent github-token …` the gh
 	// wrapper's (package gitcred): each asks the agent it finds under the
@@ -82,6 +90,9 @@ func main() {
 	host := os.Getenv("HOST")
 
 	svc := workspace.NewService(root)
+	// Sessions get the desktop tools where the box turns out to have a
+	// desktop (Daytona's); elsewhere nothing answers here, and they don't.
+	svc.DesktopToolbox = desktop.DefaultToolbox
 	if exe, err := os.Executable(); err == nil {
 		svc.RelayExecutable = exe
 	} else {
@@ -202,6 +213,41 @@ func askRelay(args []string) int {
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ask-mcp:", err)
+		return 1
+	}
+	return 0
+}
+
+// desktopServer serves a session's desktop tools on stdio
+// (`desktop-mcp --folder F`), keeping its screenshots and recordings in the
+// session's folder F.
+func desktopServer(args []string) int {
+	flags := flag.NewFlagSet("desktop-mcp", flag.ContinueOnError)
+	folder := flags.String("folder", "", "the session's folder")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *folder == "" {
+		fmt.Fprintln(os.Stderr, "desktop-mcp: --folder is required")
+		return 2
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "desktop-mcp:", err)
+		return 1
+	}
+	err = desktop.Serve(context.Background(), os.Stdin, os.Stdout, desktop.Config{
+		// DESKTOP_TOOLBOX points it at another toolbox, for a test.
+		Toolbox: &desktop.Toolbox{Base: envOr("DESKTOP_TOOLBOX", desktop.DefaultToolbox)},
+		Browser: &desktop.Browser{
+			Port:    desktop.DevToolsPort,
+			Profile: filepath.Join(home, ".outrunner", "desktop", "chromium"),
+			Display: desktop.Display,
+		},
+		Folder: desktop.FilesFolder(*folder),
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "desktop-mcp:", err)
 		return 1
 	}
 	return 0

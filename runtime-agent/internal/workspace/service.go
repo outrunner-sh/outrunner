@@ -16,12 +16,14 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"runtime-agent/internal/ask"
 	"runtime-agent/internal/cast"
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/codex"
+	"runtime-agent/internal/desktop"
 	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/media"
@@ -161,6 +163,11 @@ type Service struct {
 	// outrunnerCLI is whether the sessions have `outrunner` on their PATH,
 	// and are launched saying which session they are (outrunner_cli.go).
 	outrunnerCLI bool
+	// DesktopToolbox is where the box's desktop is driven from (desktop.go);
+	// empty launches sessions without the desktop tools.
+	DesktopToolbox string
+	// desktopFound is set once the box is found to have a desktop.
+	desktopFound atomic.Bool
 }
 
 // UseJcode switches the service to the jcode engine, driving workspaces through
@@ -960,6 +967,9 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 	o := claude.Orientation(worktree, f.BaseBranch, !f.InPlace && onPlaceholderBranch(worktree))
 	if len(f.Checkouts) > 0 {
 		o += "\n\n" + checkoutsNote(f.Checkouts, f.Branch)
+	}
+	if s.desktopReady(workspaceID) {
+		o += "\n\n# Desktop\n\n" + desktop.Instructions
 	}
 	switch {
 	case !f.Gateway.SpeaksAsOutrunner():
@@ -1781,6 +1791,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	s.removeProvided(workspaceID)
 	s.forgetMessageKeys(workspaceID)
 	s.forgetAsk(workspaceID)
+	s.forgetDesktop(workspaceID)
 	// A session's own Codex home holds a copy of its key (auth.json).
 	_ = os.RemoveAll(s.codexHome(workspaceID))
 	s.summariesMu.Lock()
