@@ -140,7 +140,7 @@ function reservedSize(size: { width: number; height: number }): React.CSSPropert
 }
 
 /** A reply image loads through its Canvas or box route; Canvas HTML renders
- *  as an InlineVisual. An image it opens full size in a tab unless it's a link's already.
+ *  as an InlineVisual. An image opens full size in a tab unless it's a link's already.
  *  While it loads it holds a placeholder's space (its own, where it was
  *  shown before), so the reply doesn't jump as it arrives. One that fails is
  *  tried again a few times (RETRY_DELAYS_MS), then says it couldn't be

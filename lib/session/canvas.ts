@@ -195,21 +195,62 @@ function cleanCanvasPath(path: string): string | null {
  * listening). The reply takes the message only from that frame, and only a
  * number.
  *
- * The height is where the page's content ends (a range over the body's
- * contents, plus the body's bottom margin and padding), not the root's: a
- * root or body sized to the viewport (`min-height: 100vh`, common) grows
- * with the frame, so measuring it would grow the frame on every report.
- * Content itself sized in `vh` can still do that, up to visualHeight's bound.
+ * Measurement temporarily removes viewport-sized root/body constraints and
+ * visits the content, including overflowing and positioned descendants. The
+ * original styles are restored before paint. Fixed overlays do not determine
+ * intrinsic height. Measurements are coalesced per animation frame, and a
+ * repeated viewport-growth pattern is stopped for viewport-sized descendants.
  */
 export const VISUAL_HEIGHT_MESSAGE = "outrunnerVisualHeight";
-export const VISUAL_EMBED_SCRIPT =
-  "<script>(()=>{const measure=()=>{const b=document.body;if(!b)return 0;const r=document.createRange();r.selectNodeContents(b);" +
-  "const s=getComputedStyle(b);return Math.ceil(r.getBoundingClientRect().bottom+scrollY+parseFloat(s.marginBottom)+parseFloat(s.paddingBottom))};" +
-  "let last=-1;const post=(force)=>{const h=measure();if(force!==true&&Math.abs(h-last)<2)return;last=h;parent.postMessage({" +
-  VISUAL_HEIGHT_MESSAGE +
-  ":h},\"*\")};const ro=new ResizeObserver(()=>post());ro.observe(document.documentElement);" +
-  "new MutationObserver(()=>post()).observe(document.documentElement,{childList:true,subtree:true,attributes:true,characterData:true});" +
-  "addEventListener(\"message\",(e)=>{if(e.source===parent)post(true)});addEventListener(\"load\",()=>post(true));post(true)})()</script>";
+export const VISUAL_EMBED_SCRIPT = `<script>(()=>{
+  const root=document.documentElement;
+  const options={childList:true,subtree:true,attributes:true,characterData:true};
+  let last=-1,lastViewport=-1,lastOverflow=-1,growing=0,queued=false,forceNext=false;
+  const measure=()=>{
+    const body=document.body;if(!body)return 0;
+    const nodes=[root,body],styles=nodes.map(n=>n.getAttribute("style"));
+    mutations.disconnect();
+    try{
+      for(const n of nodes){n.style.setProperty("height","auto","important");n.style.setProperty("min-height","0","important")}
+      let bottom=body.getBoundingClientRect().top;
+      const range=document.createRange();
+      const visit=n=>{
+        if(n.nodeType===1){
+          if(getComputedStyle(n).position==="fixed")return;
+          bottom=Math.max(bottom,n.getBoundingClientRect().bottom);
+        }else if(n.nodeType===3&&n.textContent.trim()){
+          range.selectNodeContents(n);bottom=Math.max(bottom,range.getBoundingClientRect().bottom);
+        }
+        for(const child of n.childNodes)visit(child);
+      };
+      for(const child of body.childNodes)visit(child);
+      const style=getComputedStyle(body);
+      return Math.ceil(bottom+scrollY+(parseFloat(style.marginBottom)||0)+(parseFloat(style.paddingBottom)||0));
+    }finally{
+      nodes.forEach((n,i)=>{if(styles[i]===null)n.removeAttribute("style");else n.setAttribute("style",styles[i])});
+      mutations.observe(root,options);
+    }
+  };
+  const post=force=>{
+    const h=measure(),viewport=innerHeight,overflow=h-viewport;
+    if(viewport!==lastViewport){
+      growing=Math.abs(viewport-last)<2&&overflow>0&&Math.abs(overflow-lastOverflow)<2?growing+1:0;
+    }
+    if(growing>=2)return;
+    lastViewport=viewport;lastOverflow=overflow;
+    if(!force&&Math.abs(h-last)<2)return;
+    last=h;parent.postMessage({${VISUAL_HEIGHT_MESSAGE}:h},"*");
+  };
+  const schedule=force=>{
+    forceNext=forceNext||force===true;if(queued)return;queued=true;
+    requestAnimationFrame(()=>{queued=false;const force=forceNext;forceNext=false;post(force)});
+  };
+  const mutations=new MutationObserver(()=>{growing=0;schedule()});
+  mutations.observe(root,options);
+  new ResizeObserver(()=>schedule()).observe(root);
+  addEventListener("message",e=>{if(e.source===parent)schedule(true)});
+  addEventListener("load",()=>schedule(true));schedule(true);
+})()</script>`;
 
 /** The height a visual's frame takes for what its page said: within bounds,
  *  so a page can't push the conversation away. */
