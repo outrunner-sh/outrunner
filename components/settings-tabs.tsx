@@ -17,6 +17,7 @@ export function SettingsTabs<Id extends string>({
   idPrefix,
   tabLabel,
   connected,
+  className,
 }: {
   ids: Id[];
   active: Id;
@@ -27,6 +28,7 @@ export function SettingsTabs<Id extends string>({
   /** Whether a tab shows the dot that says it's connected; none do when
    *  left out. */
   connected?: (id: Id) => boolean;
+  className?: string;
 }) {
   const tabs = useRef<Partial<Record<Id, HTMLButtonElement | null>>>({});
 
@@ -52,7 +54,7 @@ export function SettingsTabs<Id extends string>({
       role="tablist"
       aria-label={label}
       onKeyDown={onKeyDown}
-      className="flex gap-4 overflow-x-auto border-b border-border/60"
+      className={cn("flex gap-5 overflow-x-auto border-b border-border/60", className)}
     >
       {ids.map((id) => {
         const selected = id === active;
@@ -70,7 +72,7 @@ export function SettingsTabs<Id extends string>({
             tabIndex={selected ? 0 : -1}
             onClick={() => onOpen(id)}
             className={cn(
-              "-mb-px flex shrink-0 cursor-pointer items-center gap-2 border-b-2 pb-2 text-[13px] whitespace-nowrap transition-colors",
+              "-mb-px flex shrink-0 cursor-pointer items-center gap-2 border-b-2 px-0.5 pb-3 pt-1 text-[13px] whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               selected
                 ? "border-foreground text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground",
