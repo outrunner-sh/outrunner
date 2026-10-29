@@ -51,6 +51,19 @@ jobs:
         with:
           node-version: 22
 
+      - name: Verify the published Codex CLI before enabling sign-in
+        env:
+          CODEX_CLI_VERSION: ${{ vars.CODEX_CLI_VERSION }}
+        run: |
+          node scripts/verify-codex-cli.mjs "$CODEX_CLI_VERSION"
+          # image_vars are Docker build arguments; a Worker runtime variable
+          # cannot change the browser bundle's NEXT_PUBLIC_* constants.
+          node -e '
+            const fs = require("fs"), file = "cloudflare/wrangler.jsonc";
+            const text = fs.readFileSync(file, "utf8");
+            fs.writeFileSync(file, text.replace(/"image_vars": \{/, "\"image_vars\": {\n        \"NEXT_PUBLIC_CODEX_CLI_VERSION\": " + JSON.stringify(process.env.CODEX_CLI_VERSION) + ","));
+          '
+
       - name: Install deploy tooling
         working-directory: cloudflare
         # --ignore-workspace: this package is deliberately outside the app's
@@ -94,7 +107,7 @@ jobs:
           done
           : "${body:?/api/health never responded}"
           echo "$body"
-          python3 -c "import json,sys; h=json.load(sys.stdin); c=h.get('configured',{}); bad=[k for k in ('supabase','supabaseServiceRole','credentialEncryption','daytona') if not c.get(k)]; sys.exit('::error::deployed but not usable; false: '+', '.join(bad)) if bad else None; sys.exit('::error::health reports ok=false') if not h.get('ok') else print('health OK:',c)" <<< "$body"
+          python3 -c "import json,sys; h=json.load(sys.stdin); c=h.get('configured',{}); bad=[k for k in ('supabase','supabaseServiceRole','credentialEncryption','daytona') if not c.get(k)]; sys.exit('::error::deployed but not usable; false: '+', '.join(bad)) if bad else None; sys.exit('::error::health reports ok=false') if not h.get('ok') else None; sys.exit('::error::Codex rollout incomplete: apply 20261103190000_codex_connections.sql and configure the verified CLI build version; '+str(h.get('codex'))) if not h.get('codex',{}).get('ready') else print('health OK:',c,h['codex'])" <<< "$body"
 
       - name: Wait until users get this deploy
         # A deploy can succeed while the container keeps the image before it

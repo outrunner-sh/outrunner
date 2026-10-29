@@ -65,6 +65,8 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - name: Build with the image's public values
+        env:
+          CODEX_CLI_VERSION: ${{ vars.CODEX_CLI_VERSION }}
         # From cloudflare/wrangler.jsonc's image_vars, the one place they're
         # kept (shipped to every visitor, not secrets): a change there is
         # what CI builds with too.
@@ -81,6 +83,10 @@ jobs:
               // and ships a bundle that cannot reach Supabase.
               if (!vars[name]) throw new Error(`${file} has no image_vars.${name}`);
               console.log(`${name}=${vars[name]}`);
+            }
+            if (process.env.CODEX_CLI_VERSION) {
+              if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(process.env.CODEX_CLI_VERSION)) throw new Error("CODEX_CLI_VERSION must pin an exact release");
+              console.log(`NEXT_PUBLIC_CODEX_CLI_VERSION=${process.env.CODEX_CLI_VERSION}`);
             }
           ' >> "$GITHUB_ENV"
       # next build's own cache: much of a repeat build is reused.
