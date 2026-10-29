@@ -46,11 +46,11 @@ import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { endedBoxOf } from "@/lib/runtime/sandbox-choice";
 import { mintSnapshotDownloadUrl } from "@/lib/runtime/storage";
+import { ARCHIVED_UNSAVED } from "@/lib/session/archive-save";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { archiveCloudSession, daytonaAgent } from "@/lib/session/archive-session";
-import { ARCHIVED_UNSAVED } from "@/lib/session/archive-save";
 import { canDestroy } from "@/lib/session/provisioning";
 
 // resume/restore ensure a Runtime Computer (provision + agent boot, ~15s+), and
