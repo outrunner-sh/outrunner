@@ -91,26 +91,28 @@ function canRun(agent: "claude" | "codex", status: AgentStatus): boolean {
  * Agent step when that's not done but an agent is connected already (from
  * `npx outrunner … claude` in the terminal, say, seen from a tab the CLI
  * opened), on that agent. `save` is the way sessions sign in to save then,
- * when it isn't the user's pick already; with `choices` unknown (null) the
- * step isn't passed, so no pick is made blind.
+ * when it isn't the user's pick already. With `status` or `choices` unknown
+ * (null: they couldn't be read) the step isn't passed, so no pick is made
+ * blind.
  *
  * An Agent step done on the user's own agent that can't run now (its key
- * removed, say) is the Agent step again, not a Start that fails. Start
+ * removed, say) is the Agent step again, not a Start that fails; a status
+ * that couldn't be read says nothing of that, so the progress stands. Start
  * needs the repositories just picked, which aren't kept, so it opens on
  * Repositories, their step, ticked as they were. A user who went back to
  * the Agent step (it's done) stays on it.
  */
 export function resumeAt(
   saved: OnboardingProgress | null,
-  status: AgentStatus,
+  status: AgentStatus | null,
   choices: AgentChoices | null,
 ): OnboardingProgress & { save?: { agent: "claude" | "codex"; method: AgentMethod } } {
   let at: OnboardingProgress = saved ?? { step: "agent", done: [], runOn: "outrunner" };
-  if (at.done.includes("agent") && (at.runOn === "claude" || at.runOn === "codex") && !canRun(at.runOn, status)) {
+  if (status && at.done.includes("agent") && (at.runOn === "claude" || at.runOn === "codex") && !canRun(at.runOn, status)) {
     at = { step: "agent", done: at.done.filter((step) => step !== "agent"), runOn: "outrunner" };
   }
   if (at.step === "start") return { ...at, step: "repos" };
-  if (at.step !== "agent" || at.done.includes("agent") || !choices) return at;
+  if (at.step !== "agent" || at.done.includes("agent") || !status || !choices) return at;
   const connected = connectedAgent(status, choices);
   if (!connected) return at;
   const { agent, method, chosen } = connected;

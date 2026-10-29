@@ -45,8 +45,9 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
     let stale = false;
     const saved = env.savedProgress();
     const open = async () => {
+      // Null where it couldn't be read: not known, which isn't "nothing".
       const [found, choices] = await Promise.all([
-        env.agentStatus().catch(() => NOTHING_CONNECTED),
+        env.agentStatus().catch(() => null),
         env.agentChoices().catch(() => null),
       ]);
       let at = resumeAt(saved, found, choices);
@@ -63,10 +64,10 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
     };
     void open()
       // Whatever goes wrong, onboarding opens at its start, never stuck.
-      .catch(() => ({ found: NOTHING_CONNECTED, at: resumeAt(null, NOTHING_CONNECTED, null) }))
+      .catch(() => ({ found: null, at: resumeAt(null, null, null) }))
       .then(({ found, at }) => {
         if (stale) return;
-        setStatus(found);
+        setStatus(found ?? NOTHING_CONNECTED);
         setStep(at.step);
         setDone(new Set(at.done));
         setRunOn(at.runOn);

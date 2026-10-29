@@ -225,6 +225,13 @@ test("an Agent step done on the user's own agent that can't run now is the Agent
     done: ["repos"],
     runOn: "outrunner",
   });
+  // Not known (the status couldn't be read): the progress stands.
+  assert.deepEqual(resumeAt({ step: "repos", done: ["agent"], runOn: "claude" }, null, none), {
+    step: "repos",
+    done: ["agent"],
+    runOn: "claude",
+  });
+  assert.equal(resumeAt(null, null, none).step, "agent");
   // Still connected another way: carry on.
   assert.equal(resumeAt({ step: "repos", done: ["agent"], runOn: "claude" }, agents({ apiKey: true }), none).step, "repos");
 });

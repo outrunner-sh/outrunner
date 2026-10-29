@@ -8,6 +8,7 @@
  * started on one of them.
  */
 
+import type { AgentAuthChoices } from "@/lib/db/credentials";
 import type { RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
 
@@ -37,8 +38,8 @@ export type AgentPick = "claude" | "codex" | "outrunner" | "codex-outrunner";
 export type AgentMethod = "subscription" | "api-key";
 
 /** The way the user picked for each agent to sign in (Settings →
- *  Providers), as the server names it; null where they've picked none. */
-export type AgentChoices = { claude: string | null; codex: string | null };
+ *  Providers); null where they've picked none. */
+export type AgentChoices = Pick<AgentAuthChoices, "claude" | "codex">;
 
 export type OnboardingStep = "agent" | "repos" | "start";
 
