@@ -60,7 +60,7 @@ export class ModelKeyRefusedError extends Error {
 export class AllowanceSpentError extends ModelKeyRefusedError {
   constructor() {
     super(
-      "You've used your included usage of Outrunner's models. Connect Claude, or add your own OpenRouter key in Settings → Providers, to keep going.",
+      "You've used your included usage of Outrunner's models. Connect Claude, or add your own OpenRouter key in Personal → Coding agents, to keep going.",
     );
     this.name = "AllowanceSpentError";
   }
@@ -71,7 +71,7 @@ export class AllowanceSpentError extends ModelKeyRefusedError {
 export class ModelKeyDisabledError extends ModelKeyRefusedError {
   constructor() {
     super(
-      "Outrunner's models are turned off for this account. Connect Claude, or add your own OpenRouter key in Settings → Providers.",
+      "Outrunner's models are turned off for this account. Connect Claude, or add your own OpenRouter key in Personal → Coding agents.",
     );
     this.name = "ModelKeyDisabledError";
   }

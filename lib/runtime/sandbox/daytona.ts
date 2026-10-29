@@ -1,4 +1,4 @@
-import { Daytona, DaytonaNotFoundError, type Sandbox } from "@daytonaio/sdk";
+import { Daytona, DaytonaNotFoundError, type CreateSandboxFromSnapshotParams, type Sandbox } from "@daytonaio/sdk";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
 import { NOVNC_PORT } from "@/lib/runtime/box-ports";
@@ -100,24 +100,26 @@ export class DaytonaBackend implements SandboxBackend {
     return this.client;
   }
 
-  // Sized by Daytona's own snapshot of its base image at that size (claude
-  // + node ship with it), which starts as fast as the base box: sizing one
-  // any other way means building it from a full image, slow to first start.
+  /** Snapshot resources are fixed; never send `resources` on this path. */
   async create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox> {
-    const snapshot = size && daytonaSnapshotFor(size);
-    const sandbox = await (await this.daytona()).create(
-      // Never auto-stopped or auto-deleted by Daytona: Outrunner stops an
-      // idle box itself (lib/billing/reconcile.ts), by what its sessions are
-      // doing.
-      {
-        autoStopInterval: 0,
-        autoDeleteInterval: -1,
-        labels,
-        envVars: { VNC_RESOLUTION: DESKTOP_RESOLUTION },
-        ...(snapshot && { snapshot }),
-      },
-      { timeout: CREATE_TIMEOUT_SECONDS },
-    );
+    const daytona = await this.daytona();
+    const params = createParams(labels, size);
+    let sandbox: Sandbox;
+    try {
+      sandbox = await daytona.create(params, { timeout: CREATE_TIMEOUT_SECONDS });
+    } catch (error) {
+      // General snapshots may be absent on a self-hosted/other target. Retry
+      // only a missing snapshot, never auth, quotas, timeouts or other errors.
+      if (!params.snapshot || !(error instanceof DaytonaNotFoundError) || !/snapshot/i.test(error.message)) throw error;
+      console.warn(`Daytona snapshot ${params.snapshot} is unavailable; using the account's default snapshot`);
+      sandbox = await daytona.create(createParams(labels), { timeout: CREATE_TIMEOUT_SECONDS });
+    }
+    if (size && (sandbox.cpu !== size.cpu || sandbox.memory !== size.memoryGb)) {
+      console.warn(
+        `Daytona box ${sandbox.id}: requested ${size.cpu} vCPU / ${size.memoryGb} GiB; ` +
+        `received ${sandbox.cpu} vCPU / ${sandbox.memory} GiB`,
+      );
+    }
     return box(sandbox);
   }
 
@@ -206,20 +208,34 @@ export async function relabel(sandbox: Sandbox, labels: Record<string, string>):
 }
 
 /**
- * Daytona's sizes of its base image, largest first. The base box, with no
- * snapshot, is the smallest: 1 vCPU and 1 GiB, which a large install and a
- * test run at once can run out of.
+ * General container snapshots, largest first, checked against
+ * https://www.daytona.io/docs/snapshots/ (2026-10-29). These are snapshot
+ * sizes, not an account resource ceiling. Custom targets may omit them.
  */
 const DAYTONA_SNAPSHOTS = [
   { name: "daytona-large", cpu: 4, memoryGb: 8 },
   { name: "daytona-medium", cpu: 2, memoryGb: 4 },
 ] as const;
 
-/** The largest of Daytona's sizes within `size`'s vCPUs (what the box is
- *  billed by, lib/billing/hours.ts); none, the base box, below them all.
- *  Exported for tests. */
+/** The largest named snapshot within BOTH requested resources. Below them,
+ * use the account's default as before; warn on any actual size mismatch.
+ * Never round CPU up: Outrunner bills by the box's actual vCPUs. */
 export function daytonaSnapshotFor(size: BoxResources): string | undefined {
-  return DAYTONA_SNAPSHOTS.find((s) => s.cpu <= size.cpu)?.name;
+  return DAYTONA_SNAPSHOTS.find((s) => s.cpu <= size.cpu && s.memoryGb <= size.memoryGb)?.name;
+}
+
+/** Without a size keep the account's default (including user-owned Daytona).
+ * Outrunner's selected default size already arrives via boxSizeOn. */
+export function createParams(labels: Record<string, string>, size?: BoxResources): CreateSandboxFromSnapshotParams {
+  const snapshot = size && daytonaSnapshotFor(size);
+  return {
+    // Outrunner owns idle stopping; Daytona must not auto-stop/delete it.
+    autoStopInterval: 0,
+    autoDeleteInterval: -1,
+    labels,
+    envVars: { VNC_RESOLUTION: DESKTOP_RESOLUTION },
+    ...(snapshot && { snapshot }),
+  };
 }
 
 /** States a box is started again from, ones it's on its way up in, and
@@ -288,6 +304,7 @@ export function box(sandbox: Sandbox): SandboxBox {
   return {
     id: sandbox.id,
     cpu: sandbox.cpu,
+    memoryGb: sandbox.memory,
     io,
     gitExec,
     // Default images aren't /home/runtime; the agent + mirror hang off $HOME.

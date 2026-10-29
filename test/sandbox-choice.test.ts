@@ -92,7 +92,7 @@ test("the owner's Modal with no token says where to add one, when a box is first
   const provider = new UserModalRuntimeProvider(async () => null);
   await assert.rejects(provider.agentTarget("sb-1", "secret"), (error: unknown) => {
     assert.ok(error instanceof NoModalTokenError);
-    assert.match(error.message, /Settings → Sandbox/);
+    assert.match(error.message, /deployment administrator/);
     return true;
   });
 });
@@ -111,7 +111,7 @@ test("the owner's Daytona with no key says where to add one, at the first call t
   assert.equal(reads, 0, "constructing it reads nothing");
   await assert.rejects(provider.agentTarget("box-1", "secret"), (error: unknown) => {
     assert.ok(error instanceof NoDaytonaKeyError);
-    assert.match(error.message, /Settings → Sandbox/);
+    assert.match(error.message, /deployment administrator/);
     return true;
   });
   // Not cached: a key added meanwhile is read next time.

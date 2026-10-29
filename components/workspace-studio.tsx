@@ -9,6 +9,7 @@ import { CollapsedSidebarButtons, MobileNavButton } from "@/components/app-frame
 import { ChatSwitcher } from "@/components/chat-switcher";
 import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
 import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
+import { SessionInfo } from "@/components/session-info";
 import { MissionHeader } from "@/components/missions/mission-header";
 import { RunnersPane } from "@/components/missions/runners-pane";
 import { OpenEditorButton } from "@/components/open-editor-button";
@@ -186,6 +187,7 @@ export function WorkspaceStudio({
           )}
         </div>
         <div className="studio-header-actions">
+          <SessionInfo workspaceId={workspace.id} local={isLocal} />
           {/* VS Code on the session's own box: cloud sessions only. */}
           {!isLocal && workspace.slackThreadUrl && (
             <SlackThreadLink workspaceId={workspace.id} url={workspace.slackThreadUrl} sync={workspace.slackSync !== false} />

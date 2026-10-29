@@ -148,7 +148,7 @@ export class SessionKeyRemovedError extends Error {
   readonly settingsHref: string;
   constructor(model: SessionModel, cause: NoProviderKeyError) {
     super(
-      `This session runs ${model.label} on your ${PROVIDERS[cause.provider].label} key, which isn't saved anymore. Save it again in Settings → Providers, or switch the session to another model.`,
+      `This session runs ${model.label} on your ${PROVIDERS[cause.provider].label} key, which isn't saved anymore. Save it again in Personal → Coding agents, or switch the session to another model.`,
     );
     this.name = "SessionKeyRemovedError";
     this.settingsHref = cause.settingsHref;

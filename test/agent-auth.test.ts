@@ -101,7 +101,7 @@ for (const c of CASES) {
         assert.equal(error.reason, reason);
         assert.equal(error.method, method);
         assert.equal(error.agent, c.agent);
-        assert.equal(error.settingsHref, `/settings/providers?tab=${c.agent}&method=${method}`);
+        assert.equal(error.settingsHref, `/settings/coding-agents?tab=${c.agent}&method=${method}`);
         return true;
       });
     } else {
@@ -121,9 +121,9 @@ test("only the credential the pick needs is opened", async () => {
 });
 
 test("the errors say what to do, and where", async () => {
-  await assert.rejects(resolveAgentAuth(store("chatgpt", {}), "codex", "cloud"), /sign in with ChatGPT, which works for sessions on your Mac only\. Choose API key under Settings → Providers → Codex/);
-  await assert.rejects(resolveAgentAuth(store("api-key", {}), "codex", "local"), /Save your OpenAI API key under Settings → Providers → Codex/);
-  await assert.rejects(resolveAgentAuth(store("subscription", {}), "claude", "cloud"), /Connect your Claude subscription under Settings → Providers → Claude Code/);
+  await assert.rejects(resolveAgentAuth(store("chatgpt", {}), "codex", "cloud"), /sign in with ChatGPT, which works for sessions on your Mac only\. Choose API key under Personal → Coding agents → Codex/);
+  await assert.rejects(resolveAgentAuth(store("api-key", {}), "codex", "local"), /Save your OpenAI API key under Personal → Coding agents → Codex/);
+  await assert.rejects(resolveAgentAuth(store("subscription", {}), "claude", "cloud"), /Connect your Claude subscription under Personal → Coding agents → Claude Code/);
 });
 
 test("on a model on a key, a pick that can't run signs in to nothing instead", async () => {

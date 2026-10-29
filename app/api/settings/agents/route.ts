@@ -5,6 +5,8 @@ import { getOwner } from "@/lib/auth/owner";
 import { getAgentAuthChoices, setAgentAuthChoice } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
+import { AgentChoiceDeploymentError, saveAgentChoice } from "@/lib/agents/save-choice";
+import { probeCodexSchema } from "@/lib/codex/rollout";
 
 /**
  * How each of the user's coding agents signs in (Settings → Providers, a card
@@ -35,7 +37,17 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Choose one of that agent's ways of signing in." }, { status: 400 });
   }
   return savingSettings("agent sign-in", async () => {
-    await setAgentAuthChoice(owner.id, agent, method.id);
-    return NextResponse.json({ choices: await getAgentAuthChoices(owner.id) });
+    try {
+      const choices = await saveAgentChoice({
+        read: () => getAgentAuthChoices(owner.id),
+        write: (agent, method) => setAgentAuthChoice(owner.id, agent, method),
+        codexSchema: () => probeCodexSchema(),
+      }, agent, method.id);
+      return NextResponse.json({ choices });
+    } catch (error) {
+      if (!(error instanceof AgentChoiceDeploymentError)) throw error;
+      console.error("Codex sign-in choice refused: deployment prerequisite", { reason: error.reason });
+      return NextResponse.json({ error: error.message, code: "CODEX_DEPLOYMENT_NOT_READY" }, { status: 503 });
+    }
   });
 }

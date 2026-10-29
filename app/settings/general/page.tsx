@@ -4,7 +4,7 @@ import { PageHeader } from "@/components/page-layout";
 export default function GeneralSettings() {
   return (
     <section className="space-y-6">
-      <PageHeader title={"General"} />
+      <PageHeader title="Help / About" />
 
       <div className="space-y-1">
         <span className="text-lg font-semibold text-foreground">Outrunner</span>

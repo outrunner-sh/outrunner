@@ -46,7 +46,7 @@ export function OrgGeneralSettings({ org, domain }: { org: Org; domain: string |
 
   return (
     <section className="space-y-6">
-      <PageHeader title={"Org"} />
+      <PageHeader title="General" />
 
       <Details>
         <DetailRow term="Org">{org.personal ? "Personal: just you" : "Team"}</DetailRow>

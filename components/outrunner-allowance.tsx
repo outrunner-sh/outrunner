@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { AllowanceBar } from "@/components/allowance-bar";
 import { NoticeActions } from "@/components/ui/notice";
 import type { AllowanceView } from "@/lib/openrouter/allowance";
-import { providerSettingsHref, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
+import { providerSettingsHref } from "@/lib/settings-links";
 
 /**
  * How much of their allowance on Outrunner's models the user has used, as a
@@ -44,7 +44,7 @@ export function OutrunnerAllowance() {
   return (
     <div className="space-y-1.5 px-2 pb-3">
       {/* The whole picture, with the user's own keys, is in Settings → Usage. */}
-      <Link href={USAGE_SETTINGS_HREF} className="block rounded-sm hover:opacity-80">
+      <Link href="/settings/org/usage" className="block rounded-sm hover:opacity-80">
         <AllowanceBar view={view} />
       </Link>
       {view.state === "out" ? (

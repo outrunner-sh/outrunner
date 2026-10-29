@@ -3,6 +3,7 @@ import { connection, NextResponse } from "next/server";
 import { billingMode } from "@/lib/billing/mode";
 import { optionalEnv, providerName } from "@/lib/env";
 import { keySource } from "@/lib/openrouter/keys";
+import { codexCliVersion, probeCodexSchema } from "@/lib/codex/rollout";
 import {
   probeRuntimeDatabase,
   RUNTIME_TABLES,
@@ -79,6 +80,11 @@ export async function GET() {
   }
 
   const ok = configured.supabase && configured.credentialEncryption && database.ok;
+  // Report optional feature rollout separately: a missing Codex migration
+  // must not break existing API-key sessions or the core health check.
+  const codexSchema = configured.supabaseServiceRole ? await probeCodexSchema() : "not configured";
+  const cliVersion = codexCliVersion();
+  const codex = { ready: codexSchema === "ok" && cliVersion !== null, schema: codexSchema, cliVersion };
 
   // Point operators at the actual blocker: credentials come before migrations.
   const nextStep = !configured.supabase
@@ -95,6 +101,7 @@ export async function GET() {
       provider: providerName(),
       configured,
       database,
+      codex,
       ...(nextStep ? { nextStep } : {}),
       // The commit this server was built from (Dockerfile OUTRUNNER_BUILD),
       // so the Worker and the deploy check can tell it's the one just deployed.

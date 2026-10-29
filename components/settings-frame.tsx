@@ -5,14 +5,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
-import { SettingsNav, settingsNavigationTitle } from "@/components/settings-nav";
+import { SettingsNav } from "@/components/settings-nav";
+import { settingsNavigationTitle } from "@/lib/settings-navigation";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useModalPanel } from "@/hooks/use-modal-panel";
 import { cn } from "@/lib/utils";
 
 /** Settings keeps its section navigation in a drawer on phones, leaving the
  *  page the full width. The desktop navigation stays beside the page. */
-export function SettingsFrame({ children }: { children: React.ReactNode }) {
+export function SettingsFrame({ children, orgName }: { children: React.ReactNode; orgName?: string }) {
   const pathname = usePathname();
   const wide = useMediaQuery("(min-width: 640px)");
   const [drawerOn, setDrawerOn] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export function SettingsFrame({ children }: { children: React.ReactNode }) {
           open ? "fixed inset-y-0 left-0 z-50 w-[min(264px,85vw)] shadow-2xl shadow-black/60" : "hidden",
         )}
       >
-        <SettingsNav onClose={close} />
+        <SettingsNav onClose={close} orgName={orgName} />
       </div>
       <header className="flex h-11 items-center gap-2 border-b border-border/60 px-2 sm:hidden">
         <button

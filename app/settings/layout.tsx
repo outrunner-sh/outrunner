@@ -1,15 +1,21 @@
+import { Suspense } from "react";
 import { SettingsFrame } from "@/components/settings-frame";
+import { getOwnerSafe } from "@/lib/auth/owner";
+import { getOrgContext } from "@/lib/orgs/server";
 
-/** Two-pane settings: a section nav on the left, the selected section on the
- *  right. It reads nothing, so it shows at once. Owner-gated like the rest of
- *  the control plane: signed out by the proxy, and each section that shows
- *  anything of the user's checks for the owner as it loads — with getOwnerSafe,
- *  so a deployment whose Supabase isn't configured yet still reaches sign-in
- *  rather than the error page. */
 export default function SettingsLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return <SettingsFrame>{children}</SettingsFrame>;
+  return (
+    <Suspense fallback={<SettingsFrame>{children}</SettingsFrame>}>
+      <ScopedSettings>{children}</ScopedSettings>
+    </Suspense>
+  );
+}
+async function ScopedSettings({ children }: { children: React.ReactNode }) {
+  if (!(await getOwnerSafe())) return <SettingsFrame>{children}</SettingsFrame>;
+  const org = (await getOrgContext().catch(() => null))?.active;
+  return <SettingsFrame orgName={org?.name}>{children}</SettingsFrame>;
 }

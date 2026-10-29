@@ -8,7 +8,7 @@ export class NoProviderKeyError extends Error {
   /** Settings → Providers, open on this provider's tab. */
   readonly settingsHref: string;
   constructor(provider: ProviderId) {
-    super(`Save your ${PROVIDERS[provider].label} key in Settings → Providers to run models on it.`);
+    super(`Save your ${PROVIDERS[provider].label} key in Personal → Coding agents to run models on it.`);
     this.name = "NoProviderKeyError";
     this.provider = provider;
     this.settingsHref = providerSettingsHref(provider);

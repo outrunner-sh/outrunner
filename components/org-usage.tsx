@@ -69,7 +69,7 @@ export function OrgUsageSettings({
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <PageHeader title={"Usage"} />
+        <PageHeader title="Usage &amp; limits" />
         <p className="max-w-prose text-sm text-muted-foreground">
           {`${org.name}'s cloud hours this period, shared by all its members' sessions, against its ${hours.planLabel} plan's.`}
         </p>

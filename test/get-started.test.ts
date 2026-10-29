@@ -26,9 +26,9 @@ test("the project step opens the repository picker, the session step the compose
   assert.equal(session.href, "/new?focus=composer");
 });
 
-test("Claude's step opens its subscription card in Settings → Providers", () => {
+test("Claude's step opens its subscription card in Personal → Coding agents", () => {
   const claude = getStartedSteps({ projects: 0, sessions: 0, claudeConnected: false, startsWithoutClaude: false })[2];
-  assert.equal(claude.href, "/settings/providers?tab=claude&method=subscription");
+  assert.equal(claude.href, "/settings/coding-agents?tab=claude&method=subscription");
 });
 
 test("the checklist shows until it's done or skipped", () => {

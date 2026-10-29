@@ -71,7 +71,7 @@ export const unavailable = () =>
 export const revoked = () =>
   new CodexError(
     "revoked",
-    "This Codex connection is no longer available. Check Settings → Providers.",
+    "This Codex connection is no longer available. Check Settings → Coding agents.",
   );
 export function expiresAt(token: string): number {
   try {
@@ -137,7 +137,7 @@ export async function renewCodex(
     ) {
       throw new CodexError(
         "reconnect",
-        "Codex needs you to sign in again. Reconnect in Settings → Providers.",
+        "Codex needs you to sign in again. Reconnect in Settings → Coding agents.",
       );
     }
     throw unavailable();
@@ -223,7 +223,7 @@ export class CodexAccounts {
       if (row.status === "reconnect")
         throw new CodexError(
           "reconnect",
-          "Reconnect Codex in Settings → Providers.",
+          "Reconnect Codex in Settings → Coding agents.",
         );
       if (Date.parse(row.retry_until ?? "") > Date.now()) throw unavailable();
       const tokens = this.decrypt(row);

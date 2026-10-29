@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/page-layout";
 
 import Link from "next/link";
+import { SettingsSectionTabs } from "@/components/settings-section-tabs";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
@@ -13,50 +14,84 @@ import { listOrgApiKeys } from "@/lib/db/api-keys";
 import { getOrgContext } from "@/lib/orgs/server";
 
 /** Opens at once, its data streaming in behind: the build checks it. */
-export const unstable_instant = { prefetch: "static" };
+export const unstable_instant = {
+  prefetch: "static",
+  samples: [{ searchParams: { tab: null } }],
+};
 
-/** Settings → Org → API keys: keys for the public API (docs/api.md), its
+/** Settings → Organization → Developer: keys for the public API (docs/api.md), its
  *  admins'. Apart from Keys, which holds the org's model-provider keys. */
-export default function OrgApiKeys() {
+export default function OrgApiKeys({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
   return (
-    <Suspense fallback={<SettingsLoading title="API keys" />}>
-      <ApiKeysSection />
+    <Suspense fallback={<SettingsLoading title="Developer" />}>
+      <ApiKeysSection searchParams={searchParams} />
     </Suspense>
   );
 }
 
-async function ApiKeysSection() {
+async function ApiKeysSection({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const { tab } = await searchParams;
   const owner = await getOwnerSafe();
-  if (!owner) redirect("/signin?next=/settings/org/api-keys");
+  if (!owner) redirect("/signin?next=/settings/org/developer");
   const context = await getOrgContext().catch(() => undefined);
   const org = context?.active;
   if (!org) {
     return (
       <section className="space-y-6">
-        <PageHeader title={"API keys"} />
-        <p className="max-w-prose text-sm text-muted-foreground">Couldn&apos;t load your orgs. Reload the page to try again.</p>
+        <PageHeader title="Developer" />
+        <p className="max-w-prose text-sm text-muted-foreground">
+          Couldn&apos;t load your orgs. Reload the page to try again.
+        </p>
       </section>
     );
   }
   return (
     <section className="space-y-6">
       <div className="space-y-1">
-        <PageHeader title={"API keys"} />
+        <PageHeader title="Developer" />
         <p className="max-w-prose text-sm text-muted-foreground">
           {`Keys for Outrunner's API and MCP server, for ${org.name}. A key acts as the admin who made it, in this org only, with their Roles & access, and stops working if they stop being an admin. Each call is recorded with its key. `}
-          <Link href="/settings/api-keys" className="text-foreground underline underline-offset-2">
+          <Link
+            href="/settings/api-keys"
+            className="text-foreground underline underline-offset-2"
+          >
             Your own keys
           </Link>
           {" work in every org you're in."}
         </p>
       </div>
       {org.role === "admin" ? (
-        <>
-          <ApiKeysSettings endpoint={`/api/orgs/${org.id}/api-keys`} initial={await listOrgApiKeys(org.id)} showMaker />
-          <ApiWebhooksSettings endpoint={`/api/orgs/${org.id}/webhooks`} initial={await webhookView({ scope: "org", scopeId: org.id })} />
-        </>
+        <SettingsSectionTabs
+          labels={["API / MCP keys", "Webhooks"]}
+          initial={tab === "webhooks" ? "second" : "first"}
+          prefix="developer"
+        >
+          {[
+            <ApiKeysSettings
+              key="keys"
+              endpoint={`/api/orgs/${org.id}/api-keys`}
+              initial={await listOrgApiKeys(org.id)}
+              showMaker
+            />,
+            <ApiWebhooksSettings
+              key="webhooks"
+              endpoint={`/api/orgs/${org.id}/webhooks`}
+              initial={await webhookView({ scope: "org", scopeId: org.id })}
+            />,
+          ]}
+        </SettingsSectionTabs>
       ) : (
-        <p className="text-sm text-muted-foreground">Only the org&apos;s admins make and revoke its API keys.</p>
+        <p className="text-sm text-muted-foreground">
+          Only the org&apos;s admins make and revoke its API keys.
+        </p>
       )}
     </section>
   );

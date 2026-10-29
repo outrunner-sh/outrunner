@@ -370,7 +370,7 @@ export function AppSidebar({
           <HomeUserMenu ownerLogin={ownerLogin} ownerAvatarUrl={ownerAvatarUrl} />
         </div>
         <Link
-          href="/settings/general"
+          href="/settings/profile"
           aria-label="Settings"
           title="Settings"
           className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"

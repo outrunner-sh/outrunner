@@ -1,6 +1,8 @@
 # Codex account connections
 
-Settings → Providers → Codex offers **ChatGPT account** alongside the existing
+Organization → Coding agents → Codex contains the active organization’s shared ChatGPT connection and OpenAI API-key cards. Page ownership is fixed: Personal never defaults to a team org, and an inaccessible org never falls back to a personal connection. Old provider links to Codex account/default methods retain #328’s active-org destination; explicit API-key/local-method links stay personal, and query parameters/fragments survive the alias.
+
+Personal → Coding agents → Codex offers a private **ChatGPT account** alongside the existing
 API-key method. The old Mac-only ChatGPT/local choices are kept as they were;
 local sessions remain disabled on the web. No existing choice is rewritten.
 
@@ -20,7 +22,7 @@ a ten-minute attempt. The page shows a command bound to this deployment, signed-
 Outrunner user, organization UUID and attempt UUID:
 
 ```
-npx outrunner@latest --url https://app.outrunner.sh --account <user-uuid> codex-auth --org <org-uuid> --attempt <attempt-uuid>
+npx outrunner@0.1.4 --url https://app.outrunner.sh --account <user-uuid> codex-auth --org <org-uuid> --attempt <attempt-uuid>
 ```
 
 The CLI can also start an attempt itself. `outrunner codex-auth` defaults to
@@ -152,11 +154,14 @@ Actual owner-approved connection and disconnect:
 
 Rollout requires the migration, normal app/runtime release and a CLI release
 containing `codex-auth` via the existing CLI-publish workflow. After verifying
-that release, build the app with `NEXT_PUBLIC_CODEX_CLI_VERSION` set to its exact
-version. Settings pins that release; without a configured version it explains
+that release, pin its exact version in `cloudflare/wrangler.jsonc` →
+`containers[].image_vars.NEXT_PUBLIC_CODEX_CLI_VERSION`. CI and deployment verify
+the public executable and pass the pin through Docker at build time. The current
+verified public release is **0.1.4**. Settings pins that release; without a configured version it explains
 the prerequisite and disables starting an unusable sign-in. It never assumes
 the mutable `latest` tag contains this unreleased command. No production
 deployment or provider entitlement is assumed by this PR.
+See [production rollout and existing-user recovery](../operations/codex-rollout.md).
 
 The isolated harness instead builds with
 `NEXT_PUBLIC_CODEX_AUTH_LAUNCHER_PATH=/__test`, so settings links back to the

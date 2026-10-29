@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/page-layout";
 
 import Link from "next/link";
+import { GitHubConnectionSection } from "@/components/github-connection-section";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
@@ -27,7 +28,7 @@ const SLACK_RESULTS: Record<string, string> = {
 export default function IntegrationsSettings({
   searchParams,
 }: {
-  searchParams: Promise<{ slack?: string }>;
+  searchParams: Promise<{ slack?: string; link_error?: string }>;
 }) {
   return (
     <Suspense fallback={<SettingsLoading title="Connections" />}>
@@ -36,10 +37,10 @@ export default function IntegrationsSettings({
   );
 }
 
-async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ slack?: string }> }) {
+async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ slack?: string; link_error?: string }> }) {
   const owner = await getOwnerSafe();
   if (!owner) redirect("/signin");
-  const { slack } = await searchParams;
+  const { slack, link_error: linkError } = await searchParams;
   const enabled = Boolean(optionalEnv("SLACK_SIGNING_SECRET"));
   const links = await listSlackLinks(owner.id).catch((error: unknown): SlackLink[] => {
     console.error("Settings: could not load Slack links", error);
@@ -54,6 +55,9 @@ async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ s
           View your org&apos;s integrations
         </Link>
       </div>
+
+      <GitHubConnectionSection userId={owner.id} login={owner.githubLogin} />
+      {linkError && <p role="alert" className="text-sm text-destructive">{linkError === "identity_already_exists" ? "That GitHub account is already linked to another Outrunner account. Connect a different account, or sign in with GitHub to use it." : "GitHub could not be connected. Please try again."}</p>}
 
       <div className="space-y-3">
         <h2 className="text-sm font-medium text-foreground">Slack</h2>

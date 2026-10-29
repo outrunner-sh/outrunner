@@ -52,13 +52,19 @@ test(
       sql(`create schema auth; create table auth.users(id uuid primary key);
       create table organizations(id uuid primary key);
       create table organization_members(org_id uuid, user_id uuid, role text);
-      create table user_agent_auth(user_id uuid, agent text, method text);
       create table user_provider_keys(user_id uuid, provider text);
+      create function set_updated_at() returns trigger language plpgsql as $$ begin new.updated_at=now(); return new; end $$;
       do $$ begin
         if not exists(select 1 from pg_roles where rolname='anon') then create role anon; end if;
         if not exists(select 1 from pg_roles where rolname='authenticated') then create role authenticated; end if;
         if not exists(select 1 from pg_roles where rolname='service_role') then create role service_role bypassrls; end if;
       end $$;`);
+      // Start from the real pre-Codex schema, including its old method CHECK.
+      sql(readFileSync(new URL("../supabase/migrations/20261020120000_user_agent_auth.sql", import.meta.url), "utf8"));
+      const existing = randomUUID();
+      sql(`insert into auth.users values('${existing}'); insert into user_agent_auth(user_id,agent,method) values('${existing}','codex','api-key');`);
+      assert.throws(() => sql(`update user_agent_auth set method='codex-account' where user_id='${existing}'`), /Command failed/);
+      assert.equal(sql(`select method from user_agent_auth where user_id='${existing}'`), "api-key", "failed update preserves existing choice");
       sql(
         readFileSync(
           new URL(
@@ -68,6 +74,9 @@ test(
           "utf8",
         ),
       );
+      assert.equal(sql(`select method from user_agent_auth where user_id='${existing}'`), "api-key", "migration never rewrites the saved API-key choice");
+      sql(`update user_agent_auth set method='codex-account' where user_id='${existing}';`);
+      assert.equal(sql(`select method from user_agent_auth where user_id='${existing}'`), "codex-account", "the existing user can choose account auth after migration");
       const admin = randomUUID(),
         member = randomUUID(),
         org = randomUUID(),
@@ -113,7 +122,7 @@ test(
       sql(`insert into user_provider_keys values('${member}','openai')`);
       assert.equal(usable(), "f", "personal API key keeps precedence");
       sql(
-        `insert into user_agent_auth values('${member}','codex','codex-account')`,
+        `insert into user_agent_auth(user_id,agent,method) values('${member}','codex','codex-account')`,
       );
       assert.equal(usable(), "t", "explicit account choice may use org");
       sql(
