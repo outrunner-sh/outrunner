@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { markSession } from "@/hooks/use-standings";
+import { useSkeletonSwap } from "@/hooks/use-skeleton-swap";
 import { relativeTime, type SessionDeletion, type SidebarSession } from "@/lib/nav/sidebar";
 import { shownRows, type StatusRow, type StatusSection } from "@/lib/nav/status-groups";
 import { isStanding, REASON_LABEL, STANDING_LABEL, STANDINGS, type SessionStanding } from "@/lib/session/standing";
@@ -292,9 +293,16 @@ export function SessionMenu({
 
 /** A session row's right end: when it was last active, or, from the click until
  *  its page arrives, a spinner in the same box (useLinkStatus), so a click in
- *  the sidebar always answers. Steps aside on hover for the row's menu. */
+ *  the sidebar always answers. The answer waits out the skeleton rule
+ *  (lib/session/skeleton-swap.ts): a page that arrives within
+ *  SKELETON_DELAY_MS shows no spinner at all, a flash being worse than
+ *  nothing, and one that has shown is held its minimum so it cannot blink.
+ *  Steps aside on hover for the row's menu. */
 export function RowTail({ at, now, hideOnHover }: { at: string; now: number; hideOnHover: boolean }) {
   const { pending } = useLinkStatus();
+  // The load is over once the click's navigation lands, so not pending is
+  // ready, exactly as a skeleton's content is (components/ui/skeleton-swap.tsx).
+  const showSpinner = useSkeletonSwap(!pending);
   return (
     <span
       className={cn(
@@ -308,11 +316,12 @@ export function RowTail({ at, now, hideOnHover }: { at: string; now: number; hid
       <time
         dateTime={at}
         suppressHydrationWarning
-        className={cn("col-start-1 row-start-1 text-xs text-muted-foreground", pending && "invisible")}
+        className={cn("col-start-1 row-start-1 text-xs text-muted-foreground", showSpinner && "invisible")}
       >
         {relativeTime(at, now)}
       </time>
-      {pending && <Spinner label="Opening" className="col-start-1 row-start-1 size-3 text-muted-foreground" />}
+      {/* Both share the cell, so the swap moves nothing around them. */}
+      {showSpinner && <Spinner label="Opening" className="col-start-1 row-start-1 size-3 text-muted-foreground" />}
     </span>
   );
 }
