@@ -12,14 +12,17 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"time"
 
 	"runtime-agent/internal/ask"
 	"runtime-agent/internal/claude"
+	"runtime-agent/internal/cli"
 	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/localimport"
+	"runtime-agent/internal/media"
 	"runtime-agent/internal/preview"
 	"runtime-agent/internal/server"
 	"runtime-agent/internal/workspace"
@@ -37,6 +40,16 @@ func main() {
 	// session, through the agent it finds under the root.
 	if len(os.Args) > 1 && os.Args[1] == "ask-mcp" {
 		os.Exit(askRelay(os.Args[2:]))
+	}
+
+	// `runtime-agent outrunner …` is the outrunner CLI, as a session on a
+	// box runs it (`outrunner media upload`, `outrunner media gif`): the
+	// agent puts a script for it first on the sessions' PATH.
+	if len(os.Args) > 1 && os.Args[1] == "outrunner" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		code := cli.Main(ctx, os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
 	}
 
 	// `runtime-agent git-credential …` is git's credential helper for
@@ -83,6 +96,9 @@ func main() {
 		}
 		// The same means make the sessions' previews.
 		svc.UsePreviews(&preview.Client{AppURL: cfg.AppURL, SandboxID: cfg.SandboxID, Secret: cfg.Secret})
+		// The same means let its sessions upload screenshots and recordings
+		// for their pull requests (package media).
+		svc.UseMedia(&media.Client{Config: cfg})
 	}
 	if raw := os.Getenv("RUNTIME_DEFAULT_PERMISSION_MODE"); raw != "" {
 		mode, err := claude.ParsePermissionMode(raw)
@@ -90,6 +106,13 @@ func main() {
 			log.Fatalf("RUNTIME_DEFAULT_PERMISSION_MODE: %v", err)
 		}
 		svc.DefaultPermissionMode = mode
+	}
+	// A box the control plane launched has its sessions show their work in
+	// pull requests with `outrunner media`, which uploads through this agent.
+	if _, ok := gitcred.ConfigFromEnv(os.Getenv); ok {
+		if err := svc.UseOutrunnerCLI(); err != nil {
+			log.Printf("runtime-agent: sessions have no outrunner command: %v", err)
+		}
 	}
 	if os.Getenv("RUNTIME_AGENT_EXIT_WITH_PARENT") == "1" {
 		go exitWithParent()

@@ -2380,3 +2380,83 @@ begin
   delete from workspaces where id in (runner, mission);
   raise notice 'ok: a Runner''s parent is a Mission, and a pull request ready is told on it';
 end $$;
+
+-- 57. Secret sync (20261103140000_secret_sync.sql): an org connects each
+-- provider once, a project links to each at most once, disconnecting
+-- unlinks every project, and members can't read either table directly.
+do $$
+declare
+  org uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  env uuid;
+  integration uuid;
+begin
+  insert into environments (owner_id, name, org_id) values ('11111111-1111-1111-1111-111111111111', 'synced', org)
+    returning id into env;
+  insert into org_secret_integrations (org_id, provider, credentials_ciphertext, label)
+    values (org, 'doppler', 'v1.sealed', 'backend / dev') returning id into integration;
+  begin
+    insert into org_secret_integrations (org_id, provider, credentials_ciphertext, label)
+      values (org, 'doppler', 'v1.sealed', 'again');
+    raise exception 'FAIL: an org connected Doppler twice';
+  exception when unique_violation then null;
+  end;
+  begin
+    insert into org_secret_integrations (org_id, provider, credentials_ciphertext, label)
+      values (org, 'vault', 'v1.sealed', 'x');
+    raise exception 'FAIL: an unknown provider was connected';
+  exception when check_violation then null;
+  end;
+  insert into environment_secret_links (environment_id, integration_id, org_id, provider)
+    values (env, integration, org, 'doppler');
+  begin
+    insert into environment_secret_links (environment_id, integration_id, org_id, provider)
+      values (env, integration, org, 'doppler');
+    raise exception 'FAIL: a project linked to Doppler twice';
+  exception when unique_violation then null;
+  end;
+  if has_table_privilege('authenticated', 'org_secret_integrations', 'select')
+    or has_table_privilege('authenticated', 'environment_secret_links', 'select') then
+    raise exception 'FAIL: members can read secret sync directly';
+  end if;
+  delete from org_secret_integrations where id = integration;
+  if exists (select 1 from environment_secret_links where environment_id = env) then
+    raise exception 'FAIL: disconnecting left a project linked';
+  end if;
+  delete from environments where id = env;
+  raise notice 'ok: an org connects each provider once, and disconnecting unlinks its projects';
+end $$;
+
+-- 58. Media (20261103170000_media.sql): an org's uploads are capped by count
+-- a day and by bytes kept, a pending upload counts for three hours, members can't
+-- write rows themselves, and only the server reserves.
+do $$
+declare
+  org constant uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  owner constant uuid := '11111111-1111-1111-1111-111111111111';
+  refused text;
+begin
+  refused := reserve_media_upload(gen_random_uuid(), repeat('a', 43), org, owner, null, 'Before', 'image/png', 100, 'public', 'o/1', 2, 250);
+  if refused is not null then raise exception 'FAIL: the first upload was refused (%)', refused; end if;
+  refused := reserve_media_upload(gen_random_uuid(), repeat('b', 43), org, owner, null, 'After', 'image/png', 200, 'public', 'o/2', 2, 250);
+  if refused is distinct from 'storage' then raise exception 'FAIL: an upload past the bytes cap was %', refused; end if;
+  refused := reserve_media_upload(gen_random_uuid(), repeat('b', 43), org, owner, null, 'After', 'image/png', 100, 'public', 'o/2', 2, 250);
+  if refused is not null then raise exception 'FAIL: an upload within both caps was refused (%)', refused; end if;
+  refused := reserve_media_upload(gen_random_uuid(), repeat('c', 43), org, owner, null, 'Again', 'image/png', 1, 'public', 'o/3', 2, 250);
+  if refused is distinct from 'daily' then raise exception 'FAIL: an upload past the daily cap was %', refused; end if;
+  -- A pending upload from over three hours ago no longer holds bytes.
+  update media set created_at = now() - interval '4 hours' where org_id = org;
+  refused := reserve_media_upload(gen_random_uuid(), repeat('d', 43), org, owner, null, 'Later', 'image/png', 240, 'public', 'o/4', 10, 250);
+  if refused is not null then raise exception 'FAIL: unfinished uploads still held their bytes (%)', refused; end if;
+  begin
+    insert into media (public_id, org_id, owner_id, name, content_type, size_bytes, storage_path)
+    values (repeat('e', 43), org, owner, 'Page', 'text/html', 1, 'o/5');
+    raise exception 'FAIL: a type that isn''t an image or video was kept';
+  exception when check_violation then null;
+  end;
+  if has_table_privilege('authenticated', 'media', 'insert') or has_table_privilege('authenticated', 'media', 'update')
+    or has_function_privilege('authenticated', 'reserve_media_upload(uuid, text, uuid, uuid, uuid, text, text, bigint, text, text, integer, bigint)', 'execute') then
+    raise exception 'FAIL: members can write media rows themselves';
+  end if;
+  delete from media where org_id = org;
+  raise notice 'ok: media uploads are capped per org, and only the server writes them';
+end $$;

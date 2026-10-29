@@ -61,7 +61,7 @@ run_psql -d "$DB" -c "
   -- As Supabase has it: any role may call auth.uid().
   grant usage on schema auth to public;
   create schema if not exists storage;
-  create table storage.buckets (id text primary key, name text not null, public boolean not null default false, file_size_limit bigint);
+  create table storage.buckets (id text primary key, name text not null, public boolean not null default false, file_size_limit bigint, allowed_mime_types text[]);
   create table storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text not null, name text not null);
   create or replace function storage.foldername(path text) returns text[] language sql immutable as \$\$
     select string_to_array(path, '/')

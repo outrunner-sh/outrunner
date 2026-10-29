@@ -33,7 +33,9 @@ import (
 const askTimeoutSeconds = 24 * 60 * 60
 
 // AskPaths are the files a session's relay reads: the agent's announced
-// address, and the session's ask token.
+// address, and the session's ask token. `outrunner media upload` reads the
+// same two (cli.boxAgentFromEnv, written out there since the npm CLI builds
+// that package too): move them together; a test there pins them.
 func AskPaths(root, workspaceID string) (addrFile, tokenFile string) {
 	return filepath.Join(root, "agent.addr"), filepath.Join(root, "ask", workspaceID+".token")
 }
@@ -127,7 +129,7 @@ func (s *Service) claudeAskArgs(workspaceID string) []string {
 	}
 	return []string{
 		"--mcp-config", path,
-		"--allowedTools", ask.QualifiedToolName, ask.QualifiedSecretsToolName,
+		"--allowedTools", ask.QualifiedToolName, ask.QualifiedSecretsToolName, ask.QualifiedMediaToolName,
 		"--disallowedTools", "AskUserQuestion",
 	}
 }

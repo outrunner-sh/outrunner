@@ -6,9 +6,11 @@ import { safeRelativePath } from "@/lib/auth/redirect";
  */
 export type SignedIn = boolean | "unknown";
 
-/** Paths anyone may open: signing in itself, and the routes that do their own
- *  sign-in handling. Matched as the whole path or a prefix ending in "/". */
-const PUBLIC_PATHS = ["/signin", "/auth", "/upgrade"];
+/** Paths anyone may open: signing in itself, the routes that do their own
+ *  sign-in handling, and the public links of uploaded media (/m), which
+ *  GitHub fetches signed out. Matched as the whole path or a prefix ending
+ *  in "/". */
+const PUBLIC_PATHS = ["/signin", "/auth", "/upgrade", "/m"];
 
 /**
  * Where the proxy sends a request that needs signing in, or null to let it

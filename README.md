@@ -52,6 +52,12 @@ in first if needed and opens no tab after, so it's what onboarding's
 subscription page shows (always with `--url`, the page's own app).
 `--url` or `OUTRUNNER_URL` points it at another app.
 
+On an Outrunner box the sessions have `outrunner` too (the runtime-agent's
+own copy), for showing their work in a pull request: `outrunner media gif
+<recording>` makes a looping GIF under the 5 MB GitHub shows, and `outrunner
+media upload <file> --name "<what it shows>"` uploads it through the box's
+agent and prints the `![name](url)` line to paste.
+
 The CLI is Go (`runtime-agent/cmd/outrunner`), shipped through npm like
 esbuild: the `outrunner` launcher (`cli-npm/`) and one `outrunner-<os>-<cpu>`
 package per platform. `scripts/build-cli.sh <version>` stages them all.
@@ -126,6 +132,7 @@ See [`docs/missions.md`](docs/missions.md).
 
 - API — [`docs/api.md`](docs/api.md)
 - Missions and Runners — [`docs/missions.md`](docs/missions.md)
+- Doppler and Infisical secret sync — [`docs/secret-sync.md`](docs/secret-sync.md)
 - Architecture — [`docs/architecture/runtime-v1-plan.md`](docs/architecture/runtime-v1-plan.md)
 - Agent & protocol — [`runtime-agent.md`](docs/architecture/runtime-agent.md), [`protocol.md`](docs/architecture/protocol.md)
 - Validation report — [`spike4-runtime-report.md`](docs/architecture/spike4-runtime-report.md)

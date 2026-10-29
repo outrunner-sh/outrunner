@@ -27,6 +27,7 @@ import (
 	"runtime-agent/internal/conversation"
 	"runtime-agent/internal/editor"
 	"runtime-agent/internal/gitcred"
+	"runtime-agent/internal/media"
 	"runtime-agent/internal/ports"
 	"runtime-agent/internal/preview"
 	"runtime-agent/internal/protocol"
@@ -124,6 +125,9 @@ func (s *Server) Handler() http.Handler {
 	// `runtime-agent preview` asks, with the session's ask token too
 	// (package preview).
 	mux.HandleFunc("POST /workspaces/{id}/preview", s.createPreview)
+	// A session's upload of a screenshot or recording (its upload_media
+	// tool, or `outrunner media upload`), with its ask token as ask's.
+	mux.HandleFunc("POST /workspaces/{id}/media", s.uploadMedia)
 	mux.HandleFunc("POST /workspaces/{id}/secrets", s.authed(s.provideSecrets))
 	// git's credential helper and the gh wrapper on this box ask, with the
 	// agent's credential token (package gitcred).
@@ -736,10 +740,6 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// askSecrets holds a request for secrets the session's agent made (its
-// request_secrets call) until the user answers it in the browser, or the
-// relay gives the call up. The request names variables; no value comes this
-// way.
 // createPreview makes a preview of a server the session runs, for its
 // agent's `runtime-agent preview`: the control plane's refusal (a port it
 // won't preview, previews off) comes back as its own status and sentence.
@@ -778,6 +778,10 @@ func (s *Server) createPreview(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// askSecrets holds a request for secrets the session's agent made (its
+// request_secrets call) until the user answers it in the browser, or the
+// relay gives the call up. The request names variables; no value comes this
+// way.
 func (s *Server) askSecrets(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !validWorkspaceID(id) || !s.ws.AskAuthorized(id, bearer(r)) {
@@ -809,6 +813,42 @@ func (s *Server) askSecrets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 	default:
 		writeJSON(w, http.StatusOK, map[string]string{"text": text})
+	}
+}
+
+// uploadMedia uploads a file from the box for the session, to Outrunner,
+// answering with its link and the markdown that shows it. A refusal (a file
+// too large, an org at its limit) is the session's agent's to read: its
+// message is the error's.
+func (s *Server) uploadMedia(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !validWorkspaceID(id) || !s.ws.AskAuthorized(id, bearer(r)) {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "this session can't upload files here")
+		return
+	}
+	var req struct {
+		Path   string `json:"path"`
+		Name   string `json:"name"`
+		Access string `json:"access"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "malformed upload: "+err.Error())
+		return
+	}
+	result, err := s.ws.UploadMedia(r.Context(), id, req.Path, media.Options{Name: req.Name, Access: req.Access})
+	var refused *media.Error
+	switch {
+	case errors.As(err, &refused):
+		writeError(w, http.StatusUnprocessableEntity, "REFUSED", refused.Message)
+	case errors.Is(err, workspace.ErrNoMedia):
+		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, struct {
+			Text string `json:"text"`
+			media.Result
+		}{media.Text(result), result})
 	}
 }
 

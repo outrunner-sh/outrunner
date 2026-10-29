@@ -24,6 +24,7 @@ import (
 	"runtime-agent/internal/codex"
 	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/jcode"
+	"runtime-agent/internal/media"
 	"runtime-agent/internal/preview"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/redact"
@@ -151,9 +152,15 @@ type Service struct {
 	// previews asks the control plane for the sessions' previews
 	// (previews.go); nil where it makes none.
 	previews *preview.Client
+	// media uploads the sessions' screenshots and recordings to the control
+	// plane (media.go); nil when it can't take them.
+	media *media.Client
 	// RelayExecutable is this binary, which a session's agent launches as
 	// its ask_user relay; empty launches sessions without the tool.
 	RelayExecutable string
+	// outrunnerCLI is whether the sessions have `outrunner` on their PATH,
+	// and are launched saying which session they are (outrunner_cli.go).
+	outrunnerCLI bool
 }
 
 // UseJcode switches the service to the jcode engine, driving workspaces through

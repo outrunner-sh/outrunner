@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -80,7 +81,7 @@ func ask(ctx context.Context, client *http.Client, addrFile, tokenFile, workspac
 	if err != nil {
 		return Preview{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+"/workspaces/"+workspaceID+"/preview", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+"/workspaces/"+url.PathEscape(workspaceID)+"/preview", bytes.NewReader(payload))
 	if err != nil {
 		return Preview{}, err
 	}

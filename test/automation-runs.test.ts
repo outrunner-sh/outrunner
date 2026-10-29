@@ -100,6 +100,9 @@ test("a run's session is told the pull request, then the automation's prompt", (
   assert.match(prompt, /^Pull request: neevai-labs\/outrunner#7 "Add automations"/);
   assert.match(prompt, /gh pr diff 7/);
   assert.match(prompt, /new commits/);
+  // Every run, an automation made from an older template's prompt included.
+  assert.match(prompt, /`gh api -F body=@file`/);
+  assert.match(prompt, /never `-f body=@file`, which posts the text "@file" itself/);
   assert.ok(prompt.endsWith("\n\nReview it."));
   // Not told whose comments are its own without the App's slug.
   assert.doesNotMatch(prompt, /\[bot\]/);

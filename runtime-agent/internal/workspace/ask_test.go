@@ -23,6 +23,7 @@ func TestALaunchGivesTheAgentTheAskTool(t *testing.T) {
 	for _, want := range []string{
 		"--mcp-config " + s.askConfigPath("ws-a"),
 		"--allowedTools " + ask.QualifiedToolName,
+		ask.QualifiedMediaToolName,
 		"--disallowedTools AskUserQuestion",
 	} {
 		if !strings.Contains(joined, want) {
