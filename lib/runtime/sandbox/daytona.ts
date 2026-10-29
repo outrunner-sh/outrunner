@@ -17,9 +17,10 @@ import {
 const CREATE_TIMEOUT_SECONDS = 180;
 /** Signed WS preview lifetime; refreshed on reconnect (Spike 1 finding). */
 const SIGNED_URL_TTL_SECONDS = 300;
-/** How long a preview's way to its port lasts: longer than the gate keeps
- *  it (lib/previews/gate.deps.ts), so it never expires in use. */
-const PREVIEW_TARGET_TTL_SECONDS = 60 * 60;
+/** How long a preview's way to its port lasts: well past the five minutes
+ *  the gate uses one for (lib/previews/upstream.ts), so it never expires in
+ *  use, and short, since one leaked can't be told from the gate's own. */
+const PREVIEW_TARGET_TTL_SECONDS = 15 * 60;
 /**
  * How long one command on a box may run. The SDK puts no deadline on a
  * command given none, so a call Daytona never answers held a session's setup
@@ -325,17 +326,24 @@ export function box(sandbox: Sandbox): SandboxBox {
         return url.toString();
       },
     },
-    // The signed link, its credential good for this one port, and for an
-    // hour: the standard link's token is the sandbox's, good for every
-    // port, the agent's among them, and a header the box's server might
-    // be sent and show. Daytona's proxy routes by the host, and would
-    // show browsers its own warning page before the user's server without
-    // the skip header.
-    previewTarget: async (port) => ({
-      baseUrl: (await sandbox.getSignedPreviewUrl(port, PREVIEW_TARGET_TTL_SECONDS)).url,
-      headers: { "x-daytona-skip-preview-warning": "true" },
-      hostHeader: "upstream",
-    }),
+    // The signed link, its credential good for this one port, and for a
+    // quarter of an hour: the standard link's token is the sandbox's, good
+    // for every port, the agent's among them, and a header the box's
+    // server might be sent and show. The signed link is the Host the box's
+    // server may be sent, and so may echo in a page it builds from it,
+    // which is why it lasts minutes and is expired as soon as the preview
+    // is deleted or made sign-in only (lib/previews/upstream.ts). Daytona's
+    // proxy routes by the host, and would show browsers its own warning
+    // page before the user's server without the skip header.
+    previewTarget: async (port) => {
+      const signed = await sandbox.getSignedPreviewUrl(port, PREVIEW_TARGET_TTL_SECONDS);
+      return {
+        baseUrl: signed.url,
+        headers: { "x-daytona-skip-preview-warning": "true" },
+        hostHeader: "upstream",
+        revoke: () => sandbox.expireSignedPreviewUrl(port, signed.token),
+      };
+    },
   };
 }
 

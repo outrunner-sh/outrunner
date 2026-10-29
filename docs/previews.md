@@ -84,9 +84,10 @@ needs a public preview; so do webhooks, which come from a server, not a
 signed-in browser.
 
 A session asleep (paused or archived), waking or failed shows a page saying
-so instead of an error, which loads itself again. To the session's owner it
-offers to wake it: a form on the preview's own host (its Origin checked),
-which resumes the session as them, as opening it would.
+so instead of an error, which loads itself again. To the session's owner,
+when it's paused or archived (what can be woken), it offers to wake it: a
+form on the preview's own host (its Origin checked), which resumes or
+restores the session as them, as opening it would.
 
 ## Threat model
 
@@ -144,11 +145,18 @@ sessions are signed with a key derived from `CREDENTIALS_ENCRYPTION_KEY`,
 each for its own purpose.
 
 **The provider's credential.** The proxy reaches Daytona with a link signed
-for the one port (an hour, renewed every ten minutes), never the sandbox's
-standard preview token, which opens every port, the agent's among them:
-were the box's server to show the headers or host it was sent, that would
-reach nothing a visitor couldn't already. Neither is ever sent to a
-browser. A visitor's own `x-daytona-*` headers are dropped.
+for the one port, never the sandbox's standard preview token, which opens
+every port, the agent's among them. The proxy never sends that link to a
+browser, but on Daytona it is the Host the box's server may be sent, so a
+server that builds absolute URLs from Host (rather than `X-Forwarded-Host`)
+can echo it in a page, and anyone shown that page can reach the port
+without Outrunner until the link ends. So a login preview on Daytona is
+only as private as its server's habit of echoing Host, and each link is
+short-lived: signed for 15 minutes, used for 5, expired a minute after the
+next replaces it, and expired at once when its preview is deleted or made
+sign-in only (`lib/previews/upstream.ts`). A visitor's own `x-daytona-*`
+headers are dropped. On Neev the box's server is sent the preview's own
+host, and the tunnel holds no credential a page could show.
 
 **The gate.** `app/api/previews/gate` answers only a call carrying the
 secret `server.ts` makes at each start (`OUTRUNNER_PREVIEW_GATE_SECRET`,
@@ -158,13 +166,15 @@ in its process alone); to anything else it's a 404.
 
 - **Delete the preview** (panel, API, MCP; the owner or an org admin): the
   row goes, and with it the link, for everyone, signed in or not, within
-  the proxy's ~10 seconds. A new preview of the port is a new link.
+  the proxy's ~10 seconds; the Daytona link to the port is expired at once.
+  A new preview of the port is a new link.
 - **Switch public to login**: anonymous visitors are sent to sign in within
-  ~10 seconds.
+  ~10 seconds, and the Daytona link to the port is expired at once.
 - **Take a member's access away** (remove them from the org, or their read
   on the repository): the gate asks Roles & access on every check, so their
   session stops working within ~10 seconds. That holds for the session's
-  owner too, removed from the org.
+  owner too, removed from the org. A Daytona link their visits may have
+  shown them (above) isn't expired for this; it ends within its minutes.
 - **Delete the session**: its previews are deleted with it (the foreign
   key); an ended session's are refused before that.
 - **Pause or archive the session**: its previews show the asleep page; the
@@ -184,7 +194,8 @@ isn't well signed from costing it anything.
 ## Setting it up
 
 - `RUNTIME_PREVIEW_DOMAIN`: the domain, e.g. `outrunner-preview.com`. Unset,
-  previews are off (the panel shows none, the API answers `503`).
+  previews are off: the panel shows none, making or changing one answers
+  `503`, and listing answers an empty list (lib/previews/manage.ts).
 - DNS: a wildcard for it, pointing at the app. On Cloudflare, see
   [deploy-cloudflare.md](deploy-cloudflare.md#previews).
 - In development, `RUNTIME_PREVIEW_DOMAIN=localhost:3000` serves previews at

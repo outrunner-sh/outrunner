@@ -61,7 +61,9 @@ export async function POST(request: Request) {
   }
 
   const workspace = await wakeTarget(deps, body.slug, body.session);
-  if (!workspace) return NextResponse.json({ ok: false, message: "Only the session's owner can wake it." } satisfies WakeAnswer);
+  if (!workspace) {
+    return NextResponse.json({ ok: false, message: "Only the session's owner can wake it, and only once it's paused or archived." } satisfies WakeAnswer);
+  }
   const action = workspace.status === "archived" ? "restore" : "resume";
   try {
     // As the owner, through the session page's own route: their plan's

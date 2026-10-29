@@ -49,6 +49,13 @@ const ENDED: readonly WorkspaceStatus[] = ["destroying", "destroyed"];
 const ASLEEP: readonly WorkspaceStatus[] = ["suspending", "suspended", "archiving", "archived"];
 const STARTING: readonly WorkspaceStatus[] = ["creating", "provisioning", "resuming", "restoring"];
 
+/** Whether waking a session from its preview can do anything: the
+ *  lifecycle route resumes a suspended one and restores an archived one,
+ *  and refuses the rest. */
+export function wakeable(status: WorkspaceStatus): boolean {
+  return status === "suspended" || status === "archived";
+}
+
 /** Whether `userId` may see a session's previews: its owner while still a
  *  member of its org (as they may see the session itself), or a member who
  *  can read its repository. */
@@ -85,17 +92,18 @@ export async function resolvePreview(deps: GateDeps, slug: string, session: stri
   }
   if (!previewsSupported(workspace.provider)) return page(501, "unsupported", GONE_TTL_MS);
 
-  // Waking costs the owner's hours, so only they are offered it.
-  const isOwner = viewer === workspace.ownerId;
-  if (ASLEEP.includes(workspace.status)) return page(503, "asleep", WAIT_TTL_MS, isOwner);
+  // Waking costs the owner's hours, so only they are offered it, and only
+  // where the lifecycle route can act (resume: suspended, restore: archived).
+  const canWake = viewer === workspace.ownerId && wakeable(workspace.status);
+  if (ASLEEP.includes(workspace.status)) return page(503, "asleep", WAIT_TTL_MS, canWake);
   if (STARTING.includes(workspace.status) || workspace.status === "failed") {
-    return workspace.status === "failed" ? page(503, "asleep", WAIT_TTL_MS, isOwner) : page(503, "starting", WAIT_TTL_MS);
+    return workspace.status === "failed" ? page(503, "asleep", WAIT_TTL_MS, canWake) : page(503, "starting", WAIT_TTL_MS);
   }
   const box = await deps.box(workspace);
   if (!box?.daytonaSandboxId || box.status !== "ready") {
     return box?.status === "provisioning"
       ? page(503, "starting", WAIT_TTL_MS)
-      : page(503, "asleep", WAIT_TTL_MS, isOwner);
+      : page(503, "asleep", WAIT_TTL_MS, canWake);
   }
 
   let upstream: PreviewUpstream | null;
@@ -109,8 +117,8 @@ export async function resolvePreview(deps: GateDeps, slug: string, session: stri
   return { kind: "proxy", upstream, mode: preview.mode, ttlMs: ALLOW_TTL_MS };
 }
 
-/** Whether `session` signs in the owner of the session `slug` previews,
- *  and which session that is: for waking it. */
+/** The session `slug` previews, when `session` signs in its owner and it
+ *  can be woken: for waking it. */
 export async function wakeTarget(
   deps: Pick<GateDeps, "key" | "preview" | "workspace" | "now">,
   slug: string,
@@ -121,5 +129,5 @@ export async function wakeTarget(
   if (!viewer) return null;
   const preview = await deps.preview(slug);
   const workspace = preview ? await deps.workspace(preview.workspaceId) : null;
-  return workspace && workspace.ownerId === viewer ? workspace : null;
+  return workspace && workspace.ownerId === viewer && wakeable(workspace.status) ? workspace : null;
 }

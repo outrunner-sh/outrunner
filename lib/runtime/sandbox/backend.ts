@@ -28,6 +28,9 @@ export type PreviewTarget = {
   baseUrl: string;
   headers: Record<string, string>;
   hostHeader: "preview" | "upstream";
+  /** Ends the way in at once, where its credential can be (a Daytona link
+   *  signed for the port): for a preview deleted or made sign-in only. */
+  revoke?: () => Promise<void>;
 };
 
 /** One running sandbox. */

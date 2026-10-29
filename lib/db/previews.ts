@@ -90,6 +90,18 @@ export async function getPreview(workspaceId: string, previewId: string): Promis
   return data ? toPreview(data) : null;
 }
 
+/** The preview a session has of `port`, if it has one. */
+export async function previewForPort(workspaceId: string, port: number): Promise<Preview | null> {
+  const { data, error } = await db()
+    .from("workspace_previews")
+    .select("*")
+    .eq("workspace_id", workspaceId)
+    .eq("port", port)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toPreview(data) : null;
+}
+
 /** The preview a link names. */
 export async function previewBySlug(slug: string): Promise<Preview | null> {
   const { data, error } = await db().from("workspace_previews").select("*").eq("slug", slug).maybeSingle();

@@ -160,6 +160,13 @@ test("an asleep session shows its page, offering its owner alone to wake it", as
   // A session still marked up whose box stopped is asleep too.
   const stopped = await resolvePreview(deps({ box: { ...READY_BOX, status: "stopped" } }), SLUG, as(OWNER));
   assert.equal(stopped.kind === "page" && stopped.page, "asleep");
+  // Nothing the lifecycle route could do there (it resumes a suspended
+  // session, restores an archived one): no button that can only fail.
+  assert.equal(stopped.kind === "page" && stopped.canWake, false);
+  const failed = await resolvePreview(deps({ workspace: workspace({ status: "failed" }) }), SLUG, as(OWNER));
+  assert.equal(failed.kind === "page" && `${failed.page} ${failed.canWake}`, "asleep false");
+  const suspending = await resolvePreview(deps({ workspace: workspace({ status: "suspending" }) }), SLUG, as(OWNER));
+  assert.equal(suspending.kind === "page" && suspending.canWake, false);
   const waking = await resolvePreview(deps({ workspace: workspace({ status: "resuming" }) }), SLUG, as(OWNER));
   assert.equal(waking.kind === "page" && waking.page, "starting");
 });
@@ -169,11 +176,13 @@ test("a session where Outrunner can't reach the box's ports says so", async () =
   assert.equal(modal.kind === "page" && modal.page, "unsupported");
 });
 
-test("only the session's owner can wake it from its preview", async () => {
-  const d = deps();
+test("only the session's owner can wake it from its preview, and only once it's paused or archived", async () => {
+  const d = deps({ workspace: workspace({ status: "suspended" }) });
   assert.equal((await wakeTarget(d, SLUG, as(OWNER)))?.id, workspace().id);
   assert.equal(await wakeTarget(d, SLUG, as(MEMBER)), null);
   assert.equal(await wakeTarget(d, SLUG, null), null);
+  assert.equal(await wakeTarget(deps({ workspace: workspace({ status: "failed" }) }), SLUG, as(OWNER)), null);
+  assert.equal((await wakeTarget(deps({ workspace: workspace({ status: "archived" }) }), SLUG, as(OWNER)))?.id, workspace().id);
 });
 
 test("what's asked for a preview is read strictly", () => {

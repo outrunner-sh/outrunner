@@ -290,3 +290,50 @@ test("cookies and headers are read and rewritten exactly", () => {
   assert.equal(headers.host, "3000-box.proxy.daytona.works");
   assert.equal(headers["x-daytona-preview-token"], "t");
 });
+
+test("an answer is acted on for as long as the gate says, then asked again: how long a revoked link lasts", async () => {
+  let clock = 1_000_000;
+  let calls = 0;
+  let open = true;
+  const timed = createPreviewProxy({
+    domain: () => DOMAIN,
+    appHost: () => "app.test",
+    sessionValid: () => false,
+    now: () => clock,
+    gate: async () => {
+      calls++;
+      // Slow enough that a page's requests arrive while it's being asked.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return open
+        ? ({ kind: "proxy", upstream: { baseUrl: `http://127.0.0.1:${upstreamPort}`, headers: {}, hostHeader: "preview" }, mode: "public", ttlMs: 10_000 } satisfies GateDecision)
+        : ({ kind: "page", status: 404, page: "missing", ttlMs: 10_000 } satisfies GateDecision);
+    },
+  });
+  const server = createServer((req, res) => {
+    if (!timed.handle(req, res)) res.end("Next");
+  });
+  const port = await listen(server);
+  const get = () =>
+    new Promise<number>((resolve, reject) => {
+      const req = request({ host: "127.0.0.1", port, path: "/", headers: { host: `${PUBLIC}.preview.test` } }, (res) => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode ?? 0));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+
+  // A page and its assets at once: one question between them.
+  assert.deepEqual(await Promise.all([get(), get(), get()]), [200, 200, 200]);
+  assert.equal(calls, 1);
+
+  // Deleted meanwhile: the answer already given holds until it runs out...
+  open = false;
+  clock += 9_000;
+  assert.equal(await get(), 200);
+  assert.equal(calls, 1);
+  // ...and not a moment past it.
+  clock += 1_001;
+  assert.equal(await get(), 404);
+  assert.equal(calls, 2);
+});

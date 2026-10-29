@@ -24,12 +24,14 @@ import {
   getPreview,
   insertPreview,
   listPreviews,
+  previewForPort,
   type Preview,
   type PreviewMode,
   updatePreview,
 } from "@/lib/db/previews";
 import { previewDomain, previewDomainOf, previewOrigin, type PreviewDomain } from "@/lib/previews/host";
 import { MAX_LABEL, previewLabel, previewMode, previewPort, previewsSupported } from "@/lib/previews/rules";
+import { revokePreviewUpstream } from "@/lib/previews/upstream";
 import { previewablePort } from "@/lib/runtime/box-ports";
 import type { Workspace } from "@/lib/runtime/types";
 
@@ -131,6 +133,9 @@ export async function createSessionPreview(
   if (!previewsSupported(workspace.provider)) return fail(409, "Previews open on Outrunner's cloud sandboxes only.");
   const domain = domainOrFail();
   if (!domain.ok) return domain;
+  // The port's own, as it is, before any cap: asking again is never refused.
+  const existing = await previewForPort(workspace.id, port);
+  if (existing) return { ok: true, value: previewView(existing, domain.domain), status: 200 };
   if ((await countPreviews(workspace.id)) >= MAX_PREVIEWS) {
     return fail(409, `A session keeps ${MAX_PREVIEWS} previews at most. Delete one first.`);
   }
@@ -183,18 +188,23 @@ export async function updateSessionPreview(
   const updated = await updatePreview(preview.id, change);
   if (!updated) return fail(404, "No preview by that id in this session.");
   if (preview.mode !== updated.mode) {
+    // Back to sign-in only: a link to the box an anonymous visitor may have
+    // seen stops working now.
+    if (updated.mode === "login") revokePreviewUpstream(workspace.id, updated.port);
     await audit(actor, workspace, updated, updated.mode === "public" ? "preview.made_public" : "preview.made_login");
   }
   return { ok: true, value: previewView(updated, domain.domain) };
 }
 
 /** Delete a preview: its link stops working for everyone within seconds
- *  (the proxy's cache, lib/previews/proxy.ts). */
+ *  (the proxy's cache, lib/previews/proxy.ts), and the way to the box it
+ *  used at once (lib/previews/upstream.ts). */
 export async function deleteSessionPreview(actor: PreviewActor, workspace: Workspace, previewId: string): Promise<Outcome<null>> {
   const who = await rights(actor, workspace);
   if (!who || who === "agent") return fail(404, "No session by that id that you can see.");
   const preview = await getPreview(workspace.id, previewId);
   if (!preview || !(await deletePreview(preview.id))) return fail(404, "No preview by that id in this session.");
+  revokePreviewUpstream(workspace.id, preview.port);
   await audit(actor, workspace, preview, "preview.deleted");
   return { ok: true, value: null, status: 204 };
 }

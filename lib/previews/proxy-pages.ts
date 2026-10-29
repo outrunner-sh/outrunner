@@ -60,7 +60,9 @@ export function renderPreviewPage(
         ? { title: "Waking the session", message: "Its sandbox is starting. You'll be taken back in a few seconds." }
         : COPY[page];
   const message = options.message ?? copy.message;
-  const refresh = page === "woke" ? 4 : page === "asleep" && options.canWake ? undefined : REFRESH[page as PreviewPage];
+  // An asleep page reloads too, offering to wake it or not: woken from
+  // Outrunner, the session's preview comes back by itself.
+  const refresh = page === "woke" ? 4 : REFRESH[page as PreviewPage];
   const back = options.path ?? "/";
   const actions: string[] = [];
   if (page === "asleep" && options.canWake) {
