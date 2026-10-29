@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
@@ -29,7 +31,7 @@ async function MembersSection() {
   if (!context) {
     return (
       <section className="space-y-6">
-        <h1 className="text-lg font-semibold text-foreground">Members</h1>
+        <PageHeader title={"Members"} />
         <p className="text-sm text-muted-foreground">Couldn&apos;t load your orgs. Reload the page to try again.</p>
       </section>
     );

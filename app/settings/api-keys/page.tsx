@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
@@ -27,7 +29,7 @@ async function ApiKeysSection() {
   return (
     <section className="space-y-6">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">API keys</h1>
+        <PageHeader title={"API keys"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           Keys for Outrunner&apos;s API and MCP server that act as you, with your Roles &amp; access, in any org
           you&apos;re in: a call names one with <code className="font-mono text-xs">?org=</code>, else it&apos;s your

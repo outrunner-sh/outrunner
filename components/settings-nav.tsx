@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, BarChart3, Blocks, Box, Brain, Building2, Code, CreditCard, Gauge, Info, KeyRound, Layers, Lightbulb, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Terminal, User, Users, X } from "lucide-react";
+import { ArrowLeft, BarChart3, Blocks, Box, Brain, Building2, Code, CreditCard, Gauge, Info, KeyRound, Layers, Lightbulb, Plug, ScrollText, ShieldCheck, SlidersHorizontal, User, Users, X } from "lucide-react";
 
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PROVIDERS_SETTINGS_HREF, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
@@ -70,6 +70,11 @@ const groups = [
   },
 ];
 
+export function settingsNavigationTitle(pathname: string): string {
+  return groups.flatMap((group) => group.sections).find((section) => section.href === pathname)?.label
+    ?? (pathname.endsWith("/github") ? "GitHub" : pathname.endsWith("/slack") ? "Slack" : "Settings");
+}
+
 /** The settings-nav column, laid out as the app sidebar is (same width, rows
  *  and header): Back to app, then the sections in groups, the active one
  *  highlighted. */
@@ -79,12 +84,11 @@ export function SettingsNav({ onClose }: { onClose?: () => void }) {
     <aside
       role="navigation"
       aria-label="Settings"
-      className="flex h-full min-h-0 flex-col gap-5 overflow-y-auto border-r border-border/60 bg-sidebar px-3 pb-3 pt-5"
+      className="flex h-full min-h-0 flex-col gap-7 overflow-y-auto border-r border-border/60 bg-sidebar px-3 pb-6 pt-4"
     >
       <div className="flex items-center justify-between gap-2">
-        <Link href="/" className="flex items-center gap-2 px-2 font-mono text-sm font-semibold text-foreground">
-          <Terminal className="size-4" />
-          outrunner
+        <Link href="/" className={cn(SIDEBAR_ROW, "text-muted-foreground hover:bg-accent hover:text-foreground")}>
+          <ArrowLeft /> Back to app
         </Link>
         {onClose && (
           <button type="button" onClick={onClose} aria-label="Close settings menu" className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground sm:hidden">
@@ -92,12 +96,9 @@ export function SettingsNav({ onClose }: { onClose?: () => void }) {
           </button>
         )}
       </div>
-      <Link href="/" className={cn(SIDEBAR_ROW, "text-muted-foreground hover:bg-accent hover:text-foreground")}>
-        <ArrowLeft /> Back to app
-      </Link>
       {groups.map((group) => (
         <div key={group.label} className="space-y-0.5">
-          <h2 className="px-2 pb-1 text-[13px] text-muted-foreground">{group.label}</h2>
+          <h2 className="px-2 pb-2 text-[11px] font-medium text-muted-foreground">{group.label}</h2>
           {group.sections.map(({ href, label, icon: Icon }) => {
             // Integrations stays lit on the pages its cards open.
             const active =

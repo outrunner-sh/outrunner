@@ -1,5 +1,7 @@
 "use client";
 
+import { PageHeader } from "@/components/page-layout";
+
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Check, Copy } from "lucide-react";
@@ -73,7 +75,7 @@ export function OrgMembersSettings({
   if (org.personal) {
     return (
       <section className="space-y-6">
-        <h1 className="text-lg font-semibold text-foreground">Members</h1>
+        <PageHeader title={"Members"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           Your personal org is just you. Make a team org from the org menu at the top of the sidebar to invite others.
         </p>
@@ -84,7 +86,7 @@ export function OrgMembersSettings({
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Members</h1>
+        <PageHeader title={"Members"} />
         <p className="text-sm text-muted-foreground">
           {`Who's in ${org.name}. What each may do with its projects is set on Roles & access; each person's sessions stay their own, admins included.`}
         </p>

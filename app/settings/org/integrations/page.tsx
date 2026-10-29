@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { KeyRound, Vault } from "lucide-react";
@@ -40,7 +42,7 @@ async function IntegrationsSection() {
   if (!org) {
     return (
       <section className="space-y-6">
-        <h1 className="text-lg font-semibold text-foreground">Integrations</h1>
+        <PageHeader title={"Integrations"} />
         <p className="text-sm text-muted-foreground">Couldn&apos;t load your orgs. Reload the page to try again.</p>
       </section>
     );
@@ -59,7 +61,7 @@ async function IntegrationsSection() {
   return (
     <section className="@container space-y-6">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Integrations</h1>
+        <PageHeader title={"Integrations"} />
         <p className="text-sm text-muted-foreground">
           Connect the services {org.name}&apos;s agents and automations work with.
         </p>

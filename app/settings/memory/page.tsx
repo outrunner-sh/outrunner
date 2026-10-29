@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
@@ -28,7 +30,7 @@ async function MemorySection() {
   if (!org) {
     return (
       <section className="space-y-6">
-        <h1 className="text-lg font-semibold text-foreground">Memory</h1>
+        <PageHeader title={"Memory"} />
         <p className="max-w-prose text-sm text-muted-foreground">Couldn&apos;t load your orgs. Reload the page to try again.</p>
       </section>
     );
@@ -37,7 +39,7 @@ async function MemorySection() {
   return (
     <section className="space-y-6">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Memory</h1>
+        <PageHeader title={"Memory"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           Notes your agents kept to remember across sessions: how a project&apos;s tests really run, a decision and its
           reason, a pitfall worth avoiding. Every new session loads the newest of them, and an agent can read the rest.

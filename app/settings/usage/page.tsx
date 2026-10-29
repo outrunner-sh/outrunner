@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
@@ -55,7 +57,7 @@ async function UsageSection() {
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Usage</h1>
+        <PageHeader title={"Usage"} />
         <p className="text-sm text-muted-foreground">
           What your sessions have used, for each way they run models.
         </p>

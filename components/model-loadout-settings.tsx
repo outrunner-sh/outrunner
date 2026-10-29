@@ -1,5 +1,7 @@
 "use client";
 
+import { PageHeader } from "@/components/page-layout";
+
 import { Check, ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -99,7 +101,7 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Default models</h1>
+        <PageHeader title={"Default models"} />
         <p className="text-sm text-muted-foreground">
           Choose the models the chat picker shows, and the one new sessions start on.
         </p>

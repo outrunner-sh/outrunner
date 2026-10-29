@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
@@ -29,7 +31,7 @@ async function LearningsSection() {
   if (!org) {
     return (
       <section className="space-y-6">
-        <h1 className="text-lg font-semibold text-foreground">Learnings</h1>
+        <PageHeader title={"Learnings"} />
         <p className="max-w-prose text-sm text-muted-foreground">Couldn&apos;t load your orgs. Reload the page to try again.</p>
       </section>
     );
@@ -41,7 +43,7 @@ async function LearningsSection() {
   return (
     <section className="space-y-6">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Learnings</h1>
+        <PageHeader title={"Learnings"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           Short standing instructions every new session loads, for Claude Code and Codex alike: how to write commit
           messages, which commands to run, what never to do. When you give an agent a lasting instruction, it suggests

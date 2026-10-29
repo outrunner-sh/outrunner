@@ -1,5 +1,7 @@
 "use client";
 
+import { PageHeader } from "@/components/page-layout";
+
 import Link from "next/link";
 import { useState } from "react";
 
@@ -20,7 +22,7 @@ export function OrgKeysSettings({ org, initial }: { org: Org; initial: ProviderK
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Keys</h1>
+        <PageHeader title={"Keys"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           {`Keys ${org.name}'s members' cloud sessions run on, billed to the org's accounts. A member's own key under `}
           <Link href={PROVIDERS_SETTINGS_HREF} className="text-foreground underline underline-offset-2">

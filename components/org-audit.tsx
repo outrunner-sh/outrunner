@@ -1,5 +1,7 @@
 "use client";
 
+import { PageHeader } from "@/components/page-layout";
+
 import { useState } from "react";
 
 import { InlineMessage } from "@/components/ui/notice";
@@ -45,7 +47,7 @@ export function OrgAuditLog({ org, initial }: { org: Org; initial: Page }) {
   return (
     <section className="space-y-6">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Audit log</h1>
+        <PageHeader title={"Audit log"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           {`Every change to ${org.name}'s members, access, keys, settings, GitHub App and billing, by whom and when. Outrunner's own are marked as such.`}
         </p>

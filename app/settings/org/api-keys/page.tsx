@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
@@ -31,7 +33,7 @@ async function ApiKeysSection() {
   if (!org) {
     return (
       <section className="space-y-6">
-        <h1 className="text-lg font-semibold text-foreground">API keys</h1>
+        <PageHeader title={"API keys"} />
         <p className="max-w-prose text-sm text-muted-foreground">Couldn&apos;t load your orgs. Reload the page to try again.</p>
       </section>
     );
@@ -39,7 +41,7 @@ async function ApiKeysSection() {
   return (
     <section className="space-y-6">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">API keys</h1>
+        <PageHeader title={"API keys"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           {`Keys for Outrunner's API and MCP server, for ${org.name}. A key acts as the admin who made it, in this org only, with their Roles & access, and stops working if they stop being an admin. Each call is recorded with its key. `}
           <Link href="/settings/api-keys" className="text-foreground underline underline-offset-2">

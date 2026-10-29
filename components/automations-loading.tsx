@@ -1,6 +1,7 @@
 import { ArrowLeft } from "lucide-react";
 
 import { SkeletonRows } from "@/components/ui/skeleton-swap";
+import { PageHeader, PageLayout } from "@/components/page-layout";
 
 /**
  * The Automations pane while its data streams in: its heading where the pane's
@@ -10,16 +11,11 @@ import { SkeletonRows } from "@/components/ui/skeleton-swap";
  */
 export function AutomationsLoading() {
   return (
-    <div role="status" aria-busy aria-label="Opening automations" className="flex h-full flex-col px-8 py-8">
-      <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col gap-6">
-        <header className="space-y-1">
-          <h1 className="text-lg font-semibold text-foreground">Automations</h1>
-          <p className="text-[13px] text-muted-foreground">
-            Shared workflows for your org: a session that starts on its own, like a code review on every pull request.
-          </p>
-        </header>
+    <div role="status" aria-busy aria-label="Opening automations">
+      <PageLayout className="space-y-8">
+        <PageHeader title="Automations" description="Recurring and event-driven workflows for your projects." />
         <SkeletonRows rows={5} rowHeight={44} />
-      </div>
+      </PageLayout>
     </div>
   );
 }

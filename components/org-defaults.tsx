@@ -1,5 +1,7 @@
 "use client";
 
+import { PageHeader } from "@/components/page-layout";
+
 import Link from "next/link";
 import { useState } from "react";
 
@@ -60,7 +62,7 @@ export function OrgDefaultsSettings({
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Defaults</h1>
+        <PageHeader title={"Defaults"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           {`For ${org.name}'s members who haven't chosen their own under `}
           <Link href="/settings/models" className="text-foreground underline underline-offset-2">
@@ -81,7 +83,7 @@ export function OrgDefaultsSettings({
         {admin ? (
           <select
             id="org-default-model"
-            className="block w-full max-w-sm rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+            className="block w-full max-w-sm rounded-md border border-border bg-transparent px-2 py-1.5 text-sm"
             disabled={saving}
             value={defaults.defaultModel ? valueOf(defaults.defaultModel) : ""}
             onChange={(event) => {
@@ -118,7 +120,7 @@ export function OrgDefaultsSettings({
         {admin ? (
           <select
             id="org-box-size"
-            className="block w-full max-w-sm rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+            className="block w-full max-w-sm rounded-md border border-border bg-transparent px-2 py-1.5 text-sm"
             disabled={saving}
             value={defaults.boxSize ?? ""}
             onChange={(event) => {

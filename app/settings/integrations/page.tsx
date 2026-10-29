@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
@@ -47,7 +49,7 @@ async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ s
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Connections</h1>
+        <PageHeader title={"Connections"} />
         <Link href="/settings/org/integrations" className="text-sm text-muted-foreground underline-offset-4 hover:underline">
           View your org&apos;s integrations
         </Link>
