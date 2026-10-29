@@ -9,6 +9,7 @@ import { workingStep } from "@/lib/runtime/conversation-events";
 import type { Workspace } from "@/lib/runtime/types";
 import { optimisticSession } from "@/lib/session/pending-sessions";
 import { rowsAhead } from "@/lib/session/rows-ahead";
+import { sendCreate } from "@/lib/session/send-create";
 
 /** localStorage, with a quota in characters when given one. */
 class FakeStorage {
@@ -137,4 +138,27 @@ test("mid-turn, the indicator says what Claude is at, and since when", () => {
   // A tool's result: Claude is thinking about it.
   assert.equal(workingStep([message("user", [{ type: "tool_result", toolUseId: "x", content: "ok" }], "t3")]).label, "Thinking");
   assert.deepEqual(workingStep([]), { label: "Working", since: null });
+});
+
+test("a create whose answer is lost is sent again, the same, until one gets through", async () => {
+  const bodies: string[] = [];
+  let calls = 0;
+  const flaky = (async (_url: string, init?: RequestInit) => {
+    bodies.push(String(init?.body));
+    if (++calls < 3) throw new TypeError("network");
+    return new Response("{}", { status: 202 });
+  }) as typeof fetch;
+  const waited: number[] = [];
+  const response = await sendCreate("/api/projects/p/workspaces", '{"id":"x"}', flaky, async (ms) => {
+    waited.push(ms);
+  });
+  assert.equal(response?.status, 202);
+  // The same body each time: the server settles which send made the session.
+  assert.deepEqual(bodies, ['{"id":"x"}', '{"id":"x"}', '{"id":"x"}']);
+  assert.deepEqual(waited, [1_000, 2_000]);
+  // None got through at all: null, after every resend.
+  const down = (async () => {
+    throw new TypeError("network");
+  }) as typeof fetch;
+  assert.equal(await sendCreate("/u", "{}", down, async () => {}), null);
 });

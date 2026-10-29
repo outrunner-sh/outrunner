@@ -135,6 +135,11 @@ export type FailedCreate = {
   message: string;
   /** The way out, when one page holds it (as the screen's own errors). */
   action: { label: string; href: string; kind: "step" | "refusal" } | null;
+  /** A create that never reached the server, though one of its sends still
+   *  might: its id and branch, which the next Send in the same repository
+   *  takes again, so the server answers for the session rather than making a
+   *  second. Null for any other failure. */
+  unsent?: { id: string; branch: string; projectId: string } | null;
 };
 
 export const FAILED_CREATE = store<FailedCreate | null>(null);

@@ -43,6 +43,7 @@ import {
   useFailedCreate,
 } from "@/lib/session/pending-sessions";
 import { rememberEffort } from "@/lib/session/picked-effort";
+import { sendCreate } from "@/lib/session/send-create";
 
 type CreateResponse = {
   /** The new session's row, whole, so its page opens on it at once. */
@@ -56,30 +57,6 @@ type CreateResponse = {
  *  one; else none, the model's own. */
 function startingEffort(model: SessionModel | undefined, effort: Effort | null): Effort | null {
   return model && effort && takesEffort(model) ? effort : null;
-}
-
-/** How many times, and how far apart, a create whose answer was lost asks
- *  whether its session was made: the request may still be finishing. */
-const LOST_ANSWER_CHECKS = 3;
-const LOST_ANSWER_CHECK_MS = 1_000;
-
-/**
- * Whether the session `id` exists, for a create whose answer never came: its
- * status route answers 200 for a session of the user's and 404 for none.
- * Asked a few times, a second apart, since the create may still be making
- * it; false once it is still missing, or Outrunner can't be reached at all.
- */
-async function sessionExists(id: string): Promise<boolean> {
-  for (let i = 0; i < LOST_ANSWER_CHECKS; i++) {
-    await new Promise((resolve) => setTimeout(resolve, LOST_ANSWER_CHECK_MS));
-    try {
-      const res = await fetch(`/api/workspaces/${id}/status`, { cache: "no-store" });
-      if (res.ok) return true;
-    } catch {
-      // Still unreachable: ask again.
-    }
-  }
-  return false;
 }
 
 /** Same shape as the server's generated branches (runtime/<time>-<id>): a
@@ -168,14 +145,19 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     const effort = startingEffort(model, pickedEffort);
     setMessage(null);
     setMessageAction(null);
+    // A Send that never got through: this one is that session again, its id
+    // and branch the same, so a first send that landed late after all is
+    // answered for rather than made twice.
+    const unsent = FAILED_CREATE.get()?.unsent;
+    const again = unsent && unsent.projectId === selected.id ? unsent : null;
     FAILED_CREATE.set(null);
     forgetRefusedSessions();
 
-    const id = nextId ?? crypto.randomUUID();
-    setNextId(crypto.randomUUID());
+    const id = again?.id ?? nextId ?? crypto.randomUUID();
+    if (!again) setNextId(crypto.randomUUID());
     // Named here, in the server's own shape, so the page shows the branch it
     // will work on from the start rather than none until the server answers.
-    const branch = localBranch(id);
+    const branch = again?.branch ?? localBranch(id);
     const first = newFirstPrompt(prompt, attachmentIds);
     // Before the push: its page and the sidebar open on this row.
     const held = optimisticSession({
@@ -200,42 +182,34 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     const href = `/workspaces/${id}`;
     router.push(kept ? href : `${href}${firstPromptQuery(first)}`);
 
-    const failed = (error: string, action: FailedCreate["action"] = null) => {
+    const failed = (error: string, action: FailedCreate["action"] = null, unsent: FailedCreate["unsent"] = null) => {
       refusePendingSession(id, error);
       forgetFirstPrompt(tabStorage(), id);
-      FAILED_CREATE.set({ prompt, message: error, action });
+      FAILED_CREATE.set({ prompt, message: error, action, unsent });
       // Still on its page: back to this screen, which says why. Elsewhere,
       // the screen says so when next opened.
       if (window.location.pathname === href) router.replace("/new");
     };
     void (async () => {
-      let response: Response;
-      try {
-        response = await fetch(`/api/projects/${selected.id}/workspaces`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          // The prompt goes along only to name the session at once. The model
-          // picked on this screen, who serves it, and its effort; none, the
-          // server starts it on the menu's default.
-          body: JSON.stringify({
-            id,
-            branch,
-            prompt,
-            ...(model && { provider: model.provider, model: model.id }),
-            ...(effort && { effort }),
-            ...(workItemId && { workItemId }),
-            ...(model && agent && { agent }),
-          }),
-        });
-      } catch {
-        // The answer was lost, not necessarily the session: it may have been
-        // made before the connection went. The id is this screen's, so ask
-        // after it before taking it back — a resend would make a second one.
-        if (await sessionExists(id)) {
-          rememberPendingSession({ ...held, status: "provisioning" });
-          return;
-        }
-        failed("Could not reach Outrunner. Please try again.");
+      // The prompt goes along only to name the session at once. The model
+      // picked on this screen, who serves it, and its effort; none, the
+      // server starts it on the menu's default.
+      const response = await sendCreate(
+        `/api/projects/${selected.id}/workspaces`,
+        JSON.stringify({
+          id,
+          branch,
+          prompt,
+          ...(model && { provider: model.provider, model: model.id }),
+          ...(effort && { effort }),
+          ...(workItemId && { workItemId }),
+          ...(model && agent && { agent }),
+        }),
+      );
+      if (!response) {
+        // Nothing got through, though a send may still land: the next Send
+        // goes out as this same session, which the server then answers for.
+        failed("Could not reach Outrunner. Please try again.", null, { id, branch, projectId: selected.id });
         return;
       }
       const result = (await response.json().catch(() => ({}))) as CreateResponse;

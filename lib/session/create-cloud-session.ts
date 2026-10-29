@@ -105,6 +105,13 @@ import { gitTokensFor, markReviewSession, REVIEW_AS_APP, requireGitToken } from 
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-links";
 
+/** The session `id`, when an earlier send of the same create made it: the
+ *  user's own, in this repository. Null for none, or one that isn't that. */
+async function madeBefore(id: string, ownerId: string, projectId: string): Promise<Workspace | null> {
+  const made = await getWorkspace(id).catch(() => null);
+  return made && made.ownerId === ownerId && made.projectId === projectId ? made : null;
+}
+
 function generatedBranch(): string {
   return `runtime/${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 }
@@ -198,6 +205,16 @@ export async function createCloudSession(
   const project = await getProject(projectId);
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
+  }
+  // The id the new-session screen made, when it sent a well-formed one. A
+  // send whose answer was lost is sent again with it (hooks/use-create-session.ts):
+  // when an earlier send made the session, it is the answer, ahead of every
+  // check below — the box gate among them, which that session now counts
+  // against.
+  const askedId = typeof body.id === "string" && isUuid(body.id) ? body.id : undefined;
+  if (askedId) {
+    const made = await madeBefore(askedId, owner.id, project.id);
+    if (made) return NextResponse.json({ workspace: made }, { status: 202 });
   }
   // The model chosen on the new-session screen; none, the menu's default.
   const chosenModel = requestedModel(body);
@@ -369,8 +386,6 @@ export async function createCloudSession(
     }
   }
 
-  // The id the new-session screen made, when it sent a well-formed one.
-  const askedId = typeof body.id === "string" && isUuid(body.id) ? body.id : undefined;
   let workspace;
   try {
     workspace = await createWorkspaceRow({
@@ -393,11 +408,8 @@ export async function createCloudSession(
     // the first send made, so it is the answer again (its setup is already
     // under way); any other is a plain conflict, never a branch's.
     if (askedId && isIdTaken(error)) {
-      const made = await getWorkspace(askedId).catch(() => null);
-      if (made && made.ownerId === owner.id && made.projectId === project.id) {
-        return NextResponse.json({ workspace: made }, { status: 202 });
-      }
-      return idTakenResponse();
+      const made = await madeBefore(askedId, owner.id, project.id);
+      return made ? NextResponse.json({ workspace: made }, { status: 202 }) : idTakenResponse();
     }
     // A requested branch can be one a live session already works on: name that
     // session and offer its page, rather than only saying one is there.
