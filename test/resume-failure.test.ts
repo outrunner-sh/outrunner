@@ -5,6 +5,7 @@ import { CloudLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 import { resumeFailure } from "@/lib/session/resume-failure";
+import { bringBackFailure, MissingBoxProjectError } from "@/lib/session/box-failure";
 import { BOX_GONE, BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
 
 test("a paused box that didn't come back offers Try again, not Check Outrunner's setup", () => {
@@ -25,6 +26,15 @@ test("the plan refusing the box's start says so, with where to upgrade", () => {
     status: 403,
     body: { error: "Your plan runs 1 box at a time.", settingsHref: UPGRADE_HREF },
   });
+});
+
+test("a missing project gives a permanent failure shared with attach, rather than endless retries", () => {
+  const missing = new MissingBoxProjectError("project-1");
+  const failure = resumeFailure(missing, "box");
+  assert.deepEqual(failure, bringBackFailure(missing));
+  assert.equal(failure.status, 409);
+  assert.match(failure.body.error, /project is no longer available.*Start a new session/);
+  assert.doesNotMatch(failure.body.error, /Try again|project-1/);
 });
 
 test("a box started in place of a deleted one points at a new session", () => {

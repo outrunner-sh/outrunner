@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { Sandbox } from "@daytonaio/sdk";
 
-import { box, daytonaSnapshotFor, EXEC_TIMEOUT_SECONDS, relabel, settled } from "@/lib/runtime/sandbox/daytona";
+import { box, daytonaSnapshotFor, EXEC_TIMEOUT_SECONDS, relabel, settled, SETTLE_TIMEOUT_SECONDS } from "@/lib/runtime/sandbox/daytona";
 
 /** A sandbox whose executeCommand records the timeout it was given. */
 function recording(): { sandbox: Sandbox; timeouts: (number | undefined)[] } {
@@ -85,4 +85,17 @@ test("a box still archiving is waited out, so it's started again rather than tak
 
 test("a box that never finishes going down is an error to try again, not a new box", async () => {
   await assert.rejects(settled(going(["archiving"]), 0.01, 1), /box-1 is still archiving/);
+});
+
+test("the default settle wait fails in 30 seconds, within the lifecycle route's 60 seconds", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 0 });
+  assert.equal(SETTLE_TIMEOUT_SECONDS, 30);
+  const rejected = assert.rejects(settled(going(["archiving"])), /box-1 is still archiving/);
+  for (let elapsed = 0; elapsed < 30_000; elapsed += 2_000) {
+    t.mock.timers.tick(2_000);
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+  await rejected;
+  assert.equal(Date.now(), 30_000);
 });

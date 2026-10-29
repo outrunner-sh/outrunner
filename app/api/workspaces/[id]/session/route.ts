@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { CloudLimitError, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { getWorkspaceComputer, getWorkspace, readRuntimeComputerSecret } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
@@ -12,8 +11,8 @@ import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
 import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { bringBack } from "@/lib/session/bring-back-box";
+import { bringBackFailure } from "@/lib/session/box-failure";
 import { relaunchFailure } from "@/lib/session/relaunch-failure";
-import { BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
 
 // May ensure/boot a Runtime Computer before minting session tokens; give it the
 // same 60s cap as provisioning (serverless hosts only; a no-op on Railway).
@@ -86,14 +85,9 @@ export async function POST(request: Request, context: RouteContext) {
     try {
       computer = (await bringBack(provider, workspace, computer, owner)) ?? computer;
     } catch (error) {
-      if (error instanceof CloudLimitError) return NextResponse.json(error.denial, { status: 403 });
-      const refused = isPlanLimitError(error);
-      if (refused) return NextResponse.json({ error: refused.message, settingsHref: UPGRADE_HREF }, { status: 403 });
-      console.error(`Session attach: could not bring back the box for ${workspace.id}`, error);
-      return NextResponse.json(
-        { error: "Couldn't restart this session's box. Try again.", code: BOX_RESTORE_FAILED },
-        { status: 503 },
-      );
+      const failure = bringBackFailure(error);
+      if (failure.status !== 403) console.error(`Session attach: could not bring back the box for ${workspace.id}`, error);
+      return NextResponse.json(failure.body, { status: failure.status });
     }
   }
   if (!computer || !computer.daytonaSandboxId) {

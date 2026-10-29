@@ -128,7 +128,7 @@ export class DaytonaBackend implements SandboxBackend {
     // stopped a week. Its disk is kept, so it's waited out and started, not
     // taken for gone (that started a new box, and the session's files were
     // left on this one).
-    const state = await settled(sandbox, CREATE_TIMEOUT_SECONDS);
+    const state = await settled(sandbox);
     if (STOPPED_STATES.has(state)) {
       try {
         await sandbox.start(CREATE_TIMEOUT_SECONDS);
@@ -185,6 +185,8 @@ const STARTING_STATES = new Set(["starting", "restoring", "creating"]);
 const SETTLING_STATES = new Set(["stopping", "archiving"]);
 /** How often a box going down is looked at again. */
 const SETTLE_POLL_MS = 2_000;
+/** Leave room in the 60s lifecycle/attach routes to return a retryable error. */
+export const SETTLE_TIMEOUT_SECONDS = 30;
 
 /**
  * The box's state once it's no longer on its way down (SETTLING_STATES),
@@ -194,7 +196,7 @@ const SETTLE_POLL_MS = 2_000;
  */
 export async function settled(
   sandbox: Pick<Sandbox, "id" | "state" | "refreshData">,
-  timeoutSeconds: number,
+  timeoutSeconds = SETTLE_TIMEOUT_SECONDS,
   pollMs = SETTLE_POLL_MS,
 ): Promise<string> {
   const deadline = Date.now() + timeoutSeconds * 1000;

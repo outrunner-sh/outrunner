@@ -20,6 +20,7 @@ import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { boxSizeOn, computerMadeBy, endedBoxOf, sandboxOf } from "@/lib/runtime/sandbox-choice";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import type { RuntimeComputer, Workspace } from "@/lib/runtime/types";
+import { MissingBoxProjectError } from "@/lib/session/box-failure";
 
 /**
  * The session's computer (its own box, or its project's shared one) once its
@@ -44,7 +45,7 @@ export async function bringBack(
     return null;
   }
   const project = await getProject(computer.projectId);
-  if (!project) throw new Error(`Project ${computer.projectId} not found`);
+  if (!project) throw new MissingBoxProjectError(computer.projectId);
   // A box is about to start: the plan's hours and box count get their say,
   // and the claim in the database enforces the cap.
   const scope = scopeOf(workspace, computer);

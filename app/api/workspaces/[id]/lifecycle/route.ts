@@ -467,6 +467,8 @@ async function resumeDaytonaWorkspace(
     const computer = await getWorkspaceComputer(workspace);
     if (computer && provider.restoresBoxes) await bringBack(provider, workspace, computer, owner);
     stage = "relaunch";
+    // ensureComputer updates the row in place; daytonaAgent reads it again
+    // so a replacement box is used rather than this earlier computer value.
     const { agent, identity, upgrade, sandboxId, secret } = await daytonaAgent(workspace, provider, owner);
     // Signed in as the user picks now, and on its model's key as it is now,
     // before it relaunches.
@@ -479,7 +481,9 @@ async function resumeDaytonaWorkspace(
     );
   } catch (error) {
     const failure = resumeFailure(error, stage);
-    if (failure.status !== 403 && failure.status !== 409) console.error(`Workspace ${workspace.id} resume failed`, error);
+    if (failure.status !== 403 && (stage === "box" || failure.status !== 409)) {
+      console.error(`Workspace ${workspace.id} resume failed during ${stage}`, error);
+    }
     await restoreAfterFailure(workspace, "resuming", failure.body.error).catch(
       (updateError: unknown) => console.error("Could not persist resume failure", updateError),
     );

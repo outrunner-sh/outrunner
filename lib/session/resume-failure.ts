@@ -1,8 +1,7 @@
-import { CloudLimitError, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { signInFailure } from "@/lib/runtime/session-auth";
+import { boxGone, boxPlanFailure, bringBackFailure } from "@/lib/session/box-failure";
 import type { AttachFailure } from "@/lib/session/relaunch-failure";
-import { BOX_GONE, BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
 
 /** Where a resume was when it failed: bringing its box back, or relaunching
  *  the session on it. */
@@ -18,26 +17,14 @@ export type ResumeStage = "box" | "relaunch";
  * "Check Outrunner's setup", however often it was tried.
  */
 export function resumeFailure(error: unknown, stage: ResumeStage): AttachFailure {
-  if (error instanceof CloudLimitError) return { status: 403, body: error.denial };
-  const refused = isPlanLimitError(error);
-  if (refused) return { status: 403, body: { error: refused.message, settingsHref: UPGRADE_HREF } };
-  if (stage === "box") {
-    return {
-      status: 503,
-      body: { error: "Couldn't restart this session's box. Try again.", code: BOX_RESTORE_FAILED },
-    };
-  }
+  if (stage === "box") return bringBackFailure(error);
+  const refused = boxPlanFailure(error);
+  if (refused) return refused;
   const failure = signInFailure(error);
   if (failure) return { status: 409, body: failure };
   // A box started in place of one that was deleted has no record of it.
   if (error instanceof AgentRequestError && error.status === 404) {
-    return {
-      status: 410,
-      body: {
-        error: "This session's box ended and couldn't be restored, so its uncommitted files are gone. Start a new session.",
-        code: BOX_GONE,
-      },
-    };
+    return boxGone();
   }
   return { status: 502, body: { error: "Could not resume this workspace. Check Outrunner's setup and try again." } };
 }
