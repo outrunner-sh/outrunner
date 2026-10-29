@@ -76,13 +76,15 @@ jobs:
             const { config, error } = ts.parseConfigFileTextToJson(file, require("fs").readFileSync(file, "utf8"));
             if (error) throw new Error(`${file}: ${ts.flattenDiagnosticMessageText(error.messageText, " ")}`);
             const vars = config.containers?.[0]?.image_vars ?? {};
-            for (const name of ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"]) {
+            for (const name of ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_CODEX_CLI_VERSION"]) {
               // As the Dockerfile refuses: next build passes without them,
               // and ships a bundle that cannot reach Supabase.
               if (!vars[name]) throw new Error(`${file} has no image_vars.${name}`);
               console.log(`${name}=${vars[name]}`);
             }
           ' >> "$GITHUB_ENV"
+      - name: Verify the pinned public Codex CLI
+        run: node scripts/verify-codex-cli.mjs "$NEXT_PUBLIC_CODEX_CLI_VERSION"
       # next build's own cache: much of a repeat build is reused.
       - uses: actions/cache@v4
         with:

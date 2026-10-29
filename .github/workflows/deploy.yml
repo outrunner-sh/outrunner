@@ -12,6 +12,10 @@ name: Deploy to Cloudflare Containers
 #   CLOUDFLARE_API_TOKEN   - Workers Scripts:Edit, Durable Objects:Edit,
 #                            Containers:Edit, and neev.ai Zone:DNS:Edit
 #   CLOUDFLARE_ACCOUNT_ID  - the Neevcloud account id
+# The public supported CLI version lives with the existing public build values
+# in cloudflare/wrangler.jsonc, and is verified against npm before every deploy.
+# Apply pending SQL migrations separately before deploying; the health gate
+# refuses to call a missing Codex schema a successful feature rollout.
 #
 # Runtime secrets (Supabase, Daytona, CREDENTIALS_ENCRYPTION_KEY) are NOT set
 # here. They live as Worker secrets, set once with `wrangler secret put`, and
@@ -51,6 +55,19 @@ jobs:
         with:
           node-version: 22
 
+      - name: Verify the published Codex CLI before enabling sign-in
+        run: |
+          # image_vars are Docker build arguments, already checked in for the
+          # public Supabase values. Keep one auditable source of configuration;
+          # a Worker runtime variable cannot change the browser bundle.
+          version=$(node -e '
+            const text = require("fs").readFileSync("cloudflare/wrangler.jsonc", "utf8");
+            const matches = [...text.matchAll(/"NEXT_PUBLIC_CODEX_CLI_VERSION"\s*:\s*"([^"]+)"/g)];
+            if (matches.length !== 1) throw new Error("Pin one supported NEXT_PUBLIC_CODEX_CLI_VERSION in image_vars");
+            process.stdout.write(matches[0][1]);
+          ')
+          node scripts/verify-codex-cli.mjs "$version"
+
       - name: Install deploy tooling
         working-directory: cloudflare
         # --ignore-workspace: this package is deliberately outside the app's
@@ -81,21 +98,6 @@ jobs:
           wranglerVersion: "4"
           command: deploy --var OUTRUNNER_BUILD:${{ github.sha }}
 
-      - name: Verify the deployment is actually usable
-        # A deploy that returns 200 can still be broken: without
-        # CREDENTIALS_ENCRYPTION_KEY the site loads, sign-in works, and every
-        # credential write fails. Fail the job rather than report success.
-        shell: bash
-        run: |
-          set -euo pipefail
-          for i in $(seq 1 30); do
-            if body=$(curl -fsS https://app.outrunner.sh/api/health); then break; fi
-            sleep 10
-          done
-          : "${body:?/api/health never responded}"
-          echo "$body"
-          python3 -c "import json,sys; h=json.load(sys.stdin); c=h.get('configured',{}); bad=[k for k in ('supabase','supabaseServiceRole','credentialEncryption','daytona') if not c.get(k)]; sys.exit('::error::deployed but not usable; false: '+', '.join(bad)) if bad else None; sys.exit('::error::health reports ok=false') if not h.get('ok') else print('health OK:',c)" <<< "$body"
-
       - name: Wait until users get this deploy
         # A deploy can succeed while the container keeps the image before it
         # (cloudflare/worker.ts): only /api/health reporting this commit says
@@ -122,3 +124,18 @@ jobs:
           done
           echo "::error::app.outrunner.sh still isn't serving $GITHUB_SHA after 10 minutes"
           exit 1
+
+      - name: Verify the deployment is actually usable
+        # A deploy that returns 200 can still be broken: without
+        # CREDENTIALS_ENCRYPTION_KEY the site loads, sign-in works, and every
+        # credential write fails. Fail the job rather than report success.
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if body=$(curl -fsS https://app.outrunner.sh/api/health); then break; fi
+            sleep 10
+          done
+          : "${body:?/api/health never responded}"
+          echo "$body"
+          python3 -c "import json,sys; h=json.load(sys.stdin); c=h.get('configured',{}); bad=[k for k in ('supabase','supabaseServiceRole','credentialEncryption','daytona') if not c.get(k)]; sys.exit('::error::deployed but not usable; false: '+', '.join(bad)) if bad else None; sys.exit('::error::health reports ok=false') if not h.get('ok') else None; sys.exit('::error::Codex rollout incomplete: apply 20261103190000_codex_connections.sql and configure the verified CLI build version; '+str(h.get('codex'))) if not h.get('codex',{}).get('ready') else print('health OK:',c,h['codex'])" <<< "$body"
