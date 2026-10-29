@@ -756,10 +756,9 @@ const RULES_PER_PAGE = 100;
 const MAX_RULE_PAGES = 10;
 
 /**
- * The rules that apply to a branch, every page of them. They are only for
- * the merge methods: a repository without rulesets, or one GitHub won't
- * show them for, merges by its own settings, so a failed read is logged
- * (a 404 is no rules, not a failure) and gives what was read before it.
+ * The rules that apply to a branch, every page of them. They narrow the
+ * merge methods. A 404 on the first page means no branch rules; a failed or
+ * incomplete read is logged and throws so callers never use partial rules.
  */
 async function branchRules(token: string, repoFullName: string, baseRef: string): Promise<unknown[]> {
   const rules: unknown[] = [];
@@ -768,19 +767,22 @@ async function branchRules(token: string, repoFullName: string, baseRef: string)
     const url = new URL(path, GITHUB_API_URL);
     url.searchParams.set("per_page", String(RULES_PER_PAGE));
     url.searchParams.set("page", String(page));
-    const response = await fetchGitHub(url, token).catch(() => null);
-    if (!response?.ok) {
-      if (response?.status !== 404) {
-        console.error(`GitHub wouldn't list ${repoFullName}'s rules for ${baseRef}`, { status: response?.status ?? "unreachable", page });
-      }
-      return rules;
+    const response = await fetchGitHub(url, token);
+    if (!response.ok) {
+      if (response.status === 404 && page === 1) return rules;
+      console.error(`GitHub wouldn't list ${repoFullName}'s rules for ${baseRef}`, { status: response.status, page });
+      throw new GitHubSyncError("Couldn't read this branch's merge rules from GitHub. Please try again.", response.status);
     }
     const list = (await response.json().catch(() => null)) as unknown;
-    if (!Array.isArray(list)) return rules;
+    if (!Array.isArray(list)) {
+      console.error(`GitHub returned an unreadable rules page for ${repoFullName} ${baseRef}`, { page });
+      throw new GitHubSyncError("Couldn't read this branch's merge rules from GitHub. Please try again.");
+    }
     rules.push(...list);
     if (list.length < RULES_PER_PAGE) return rules;
   }
-  return rules;
+  console.error(`GitHub rules pagination reached its ${MAX_RULE_PAGES}-page limit for ${repoFullName} ${baseRef}`);
+  throw new GitHubSyncError("Couldn't read every page of this branch's merge rules from GitHub. Please try again.");
 }
 
 /** The merge methods a branch's rules allow (the `pull_request` rules'

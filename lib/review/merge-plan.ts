@@ -23,6 +23,8 @@ export type MergeOffer = {
   bypass: boolean;
 };
 
+const MERGE_RULES_UNAVAILABLE = "Couldn't read this branch's merge rules from GitHub. Please try again.";
+
 /** Why the merge queue won't take it, or null when it may. The queue runs
  *  the required checks itself, so only what it can't fix holds it back. */
 export function whyNotQueueable(status: PullRequestStatus): string | null {
@@ -42,20 +44,21 @@ function whyNotBypassable(status: PullRequestStatus): string | null {
 }
 
 /**
- * The offer for one PR as one person sees it. `access` is null when their
- * GitHub account couldn't be asked (not connected, or GitHub didn't answer):
- * then it's a plain Merge by the rules, as before.
+ * The offer for one PR as one person sees it. When GitHub's merge rules
+ * couldn't be read, disable merging and explain why rather than guessing.
  */
 export function mergeOffer(status: PullRequestStatus, access: MergeAccess | null): MergeOffer {
   const primary: MergeOffer["primary"] =
-    access?.queuePosition !== null && access?.queuePosition !== undefined
+    access === null
+      ? { action: "merge", label: "Merge", why: MERGE_RULES_UNAVAILABLE }
+      : access.queuePosition !== null && access.queuePosition !== undefined
       ? { action: "queued", position: access.queuePosition || null }
-      : access?.mergeQueue
+      : access.mergeQueue
         ? { action: "queue", label: "Merge when ready", why: whyNotQueueable(status) }
         : { action: "merge", label: "Merge", why: whyNotMergeable(status) };
   // Bypassing is worth offering only where the usual way won't merge it now:
   // the rules hold it back, or a queue would make it wait its turn.
-  const heldBack = primary.action !== "merge" || primary.why !== null;
+  const heldBack = primary.action !== "queued" && (primary.action !== "merge" || primary.why !== null);
   return { primary, bypass: !!access?.canBypass && heldBack && whyNotBypassable(status) === null };
 }
 
@@ -64,9 +67,11 @@ export function mergeOffer(status: PullRequestStatus, access: MergeAccess | null
  * null when it may, else why not. GitHub has the last word on each.
  */
 export function refuseMerge(action: MergeAction, status: PullRequestStatus, access: MergeAccess | null): string | null {
+  if (!access) return MERGE_RULES_UNAVAILABLE;
   const offer = mergeOffer(status, access);
   if (action === "bypass") {
     if (!access?.canBypass) return "Your GitHub account can't bypass this branch's rules.";
+    if (offer.primary.action === "queued") return "It's already in the merge queue.";
     return whyNotBypassable(status) ?? (offer.bypass ? null : "It can be merged without bypassing the rules.");
   }
   if (offer.primary.action === "queued") return "It's already in the merge queue.";

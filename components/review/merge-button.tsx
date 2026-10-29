@@ -24,9 +24,12 @@ export function MergeButton({ repo, number, headSha, offer }: { repo: string; nu
   const [queued, setQueued] = useState<number | null | undefined>(undefined);
   const [refreshing, startRefresh] = useTransition();
   useEffect(() => {
+    // Keep the stand-in if GitHub's refreshed offer still says "queue": the
+    // queue entry can take a moment to appear. Drop it once the server reports
+    // queued or offers a different action.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the server's word replaces the stand-in
-    if (!refreshing) setQueued(undefined);
-  }, [refreshing]);
+    if (!refreshing && queued !== undefined && offer.primary.action !== "queue") setQueued(undefined);
+  }, [refreshing, queued, offer.primary.action]);
   const merge = async (action: MergeAction) => {
     setBusy(action);
     setError(null);
@@ -47,7 +50,7 @@ export function MergeButton({ repo, number, headSha, offer }: { repo: string; nu
     }
   };
   const { primary } = offer;
-  const position = queued !== undefined ? queued : primary.action === "queued" ? primary.position : undefined;
+  const position = queued !== undefined && primary.action === "queue" ? queued : primary.action === "queued" ? primary.position : undefined;
   return (
     <span className="flex flex-col items-end gap-1">
       <span className="flex items-center gap-1.5">

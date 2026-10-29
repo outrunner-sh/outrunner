@@ -57,6 +57,13 @@ test("a clean PR offers a plain Merge, and no bypass even to an admin", () => {
   });
 });
 
+test("an unreadable merge rule read disables the offer", () => {
+  assert.deepEqual(mergeOffer(status(), null), {
+    primary: { action: "merge", label: "Merge", why: "Couldn't read this branch's merge rules from GitHub. Please try again." },
+    bypass: false,
+  });
+});
+
 test("a blocked PR offers bypass only to someone GitHub lets past the rules", () => {
   const blocked = status({ mergeableState: "blocked" });
   assert.equal(mergeOffer(blocked, access()).bypass, false);
@@ -89,6 +96,8 @@ test("a branch with a merge queue offers the queue, and bypass to skip it", () =
 
 test("a PR in the queue shows its place", () => {
   assert.deepEqual(mergeOffer(status(), access({ mergeQueue: true, queuePosition: 3 })).primary, { action: "queued", position: 3 });
+  assert.equal(mergeOffer(status(), access({ canBypass: true, mergeQueue: true, queuePosition: 3 })).bypass, false);
+  assert.equal(refuseMerge("bypass", status(), access({ canBypass: true, mergeQueue: true, queuePosition: 3 })), "It's already in the merge queue.");
 });
 
 test("the route never lets a plain Merge bypass the rules", () => {
@@ -100,7 +109,7 @@ test("the route never lets a plain Merge bypass the rules", () => {
   assert.match(refuseMerge("merge", status(), access({ mergeQueue: true })) ?? "", /merge queue/);
   assert.equal(refuseMerge("queue", status(), access({ mergeQueue: true })), null);
   assert.match(refuseMerge("queue", status(), access()) ?? "", /no merge queue/);
-  assert.equal(refuseMerge("merge", status(), null), null);
+  assert.match(refuseMerge("merge", status(), null) ?? "", /Couldn't read this branch's merge rules/);
 });
 
 test("the rules' allowed merge methods narrow what the repository allows", () => {
@@ -183,7 +192,7 @@ test("getMergeAccess reads every page of the branch's rules", async () => {
   assert.deepEqual(result.methods, ["squash"]);
 });
 
-test("a failed read of the rules is logged, and a 404 is none", async () => {
+test("a missing rules endpoint means no rules, but a failed read throws and is logged", async () => {
   const logged: unknown[] = [];
   const error = console.error;
   console.error = (...args: unknown[]) => logged.push(args);
@@ -195,11 +204,30 @@ test("a failed read of the rules is logged, and a 404 is none", async () => {
             ? json({ data: { repository: { pullRequest: { id: "PR_kw" } } } })
             : json({ message: "no" }, status),
         )) as typeof fetch;
-      assert.equal((await getMergeAccess({ token: "t", repoFullName: "acme/repo", number: 7, baseRef: "main" })).methods, null);
+      if (status === 404) {
+        assert.equal((await getMergeAccess({ token: "t", repoFullName: "acme/repo", number: 7, baseRef: "main" })).methods, null);
+      } else {
+        await assert.rejects(
+          getMergeAccess({ token: "t", repoFullName: "acme/repo", number: 7, baseRef: "main" }),
+          (error: unknown) => error instanceof GitHubSyncError && /Couldn't read this branch's merge rules/.test(error.message),
+        );
+      }
     }
   } finally {
     console.error = error;
   }
   assert.equal(logged.length, 1);
   assert.match(String((logged[0] as unknown[])[0]), /wouldn't list acme\/repo's rules/);
+});
+
+test("a later failed rules page does not return partial rules", async () => {
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/graphql") return Promise.resolve(json({ data: { repository: { pullRequest: { id: "PR_kw" } } } }));
+    return Promise.resolve(url.searchParams.get("page") === "1" ? json(Array.from({ length: 100 }, () => ({ type: "required_signatures" }))) : json({}, 503));
+  }) as typeof fetch;
+  await assert.rejects(
+    getMergeAccess({ token: "t", repoFullName: "acme/repo", number: 7, baseRef: "main" }),
+    (error: unknown) => error instanceof GitHubSyncError && /Couldn't read this branch's merge rules/.test(error.message),
+  );
 });
