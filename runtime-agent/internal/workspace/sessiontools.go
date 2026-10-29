@@ -57,6 +57,8 @@ func (s *Service) SessionTool(ctx context.Context, call sessiontools.Call) (int,
 	if _, ok := s.getFacts(call.Workspace); !ok {
 		return 0, sessiontools.Answer{}, ErrUnknownWorkspace
 	}
+	// The control plane knows the owning session, not a chat's runtime key.
+	call.Workspace = s.owner(call.Workspace)
 	body, err := json.Marshal(call)
 	if err != nil {
 		return 0, sessiontools.Answer{}, err

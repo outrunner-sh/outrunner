@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/preview"
+	"runtime-agent/internal/sessiontools"
 	"slices"
 	"strings"
 	"testing"
@@ -498,5 +500,36 @@ func TestForgettingAChatWaitsForPendingFactsWrites(t *testing.T) {
 	}
 	if s.updateFacts(key, func(f *workspaceFacts) { f.Handoff = "after deletion" }) {
 		t.Fatal("a later update recreated the deleted chat")
+	}
+}
+
+func TestAChatsLearningAndMemoryCommandsNameItsOwningSession(t *testing.T) {
+	s, id, key := chatSession(t, ChatInput{})
+	var calls []sessiontools.Call
+	cp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var call sessiontools.Call
+		if err := json.NewDecoder(r.Body).Decode(&call); err != nil {
+			t.Error(err)
+		}
+		calls = append(calls, call)
+		_ = json.NewEncoder(w).Encode(sessiontools.Answer{Text: "ok"})
+	}))
+	defer cp.Close()
+	s.RelayExecutable = "/opt/runtime-agent"
+	if err := s.UseGitCredential(&gitcred.Client{Config: gitcred.Config{AppURL: cp.URL, SandboxID: "box", Secret: "secret"}, HTTP: cp.Client()}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"suggest_learning", "remember", "memory"} {
+		if status, answer, err := s.SessionTool(context.Background(), sessiontools.Call{Workspace: key, Tool: tool, Args: json.RawMessage(`{}`)}); err != nil || status != http.StatusOK || answer.Text != "ok" {
+			t.Fatalf("%s: %d, %+v, %v", tool, status, answer, err)
+		}
+	}
+	if len(calls) != 3 {
+		t.Fatalf("calls: %+v", calls)
+	}
+	for _, call := range calls {
+		if call.Workspace != id {
+			t.Fatalf("control plane got runtime chat key: %+v", call)
+		}
 	}
 }
