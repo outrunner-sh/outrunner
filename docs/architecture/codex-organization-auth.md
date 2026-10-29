@@ -127,12 +127,28 @@ CODEX_TEST_BINARY=/path/to/codex RUNTIME_TMUX_SOCKET=outrunner-codex-test-probe 
   go test ./internal/workspace -run TestCodexAccountNativeSession -v
 ```
 
-Both probes passed on pinned 0.146.0 with the app's current model identifier.
-This is synthetic upstream validation. It is not
-provider acceptance. Browser evidence uses the actual components with visibly
-labeled synthetic organization/status fixtures; no real account was authorized.
-A real Plus/Pro owner must approve device login in the secure OpenAI browser
-flow to verify live upload, inference and eventual real token renewal.
+Both probes passed on pinned 0.146.0 with synthetic upstreams. Separately, on
+2026-10-29 the owner approved the official device login in the isolated harness.
+The real controller accepted/encrypted the upload; admin and teammate native TUI
+inference passed on separate network-disabled test computers using the provider's
+actual catalog model (`gpt-reserve`), without teammate provider login. Twelve
+concurrent renewal callers made exactly one OAuth request (HTTP 200) and stored
+one revision. Native inference after same-computer stop/resume and renewal passed.
+Nonmember/cross-org use, removed-member use and saved API-key precedence were
+checked against the actual controller. Disconnect through real settings cleared
+the encrypted credential and both retained grants returned HTTP 403.
+
+The first automatic run stopped at renewal with a generic error while preserving
+the connection. The exact initial cause was not retained. Subsequent real renewal
+and concurrent renewal passed without reapproval; the runner now records only
+the renewal HTTP status and safe error classification for future diagnosis.
+The completed private report is visible in the launcher; no provider token or
+device code is included in public evidence. Production was not connected or
+deployed, and cloud provisioning was not exercised by these local containers.
+
+Actual owner-approved connection and disconnect:
+
+![Owner-approved Codex connection disconnected after live inference and refresh checks](https://api.replicas.dev/v1/media/public/31500a97-e014-4120-b626-aec109ad783e/PmgQTSeehdN2v-SRhzTKnV54GO8o6Y4S4YtGbiVvItY)
 
 Rollout requires the migration, normal app/runtime release and a CLI release
 containing `codex-auth` via the existing CLI-publish workflow. After verifying

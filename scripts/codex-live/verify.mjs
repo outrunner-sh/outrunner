@@ -7,6 +7,7 @@ import { createClient } from "@supabase/supabase-js";
 import { resolveAgentAuth } from "@/lib/agents/resolve";
 import { agentAuthStore } from "@/lib/db/credentials";
 import { codexStore, codexAccounts } from "@/lib/codex/store";
+import { CodexError, renewCodex } from "@/lib/codex/account";
 import { inferenceGrant, authorizeGrant, readGrant } from "@/lib/codex/grant";
 import { AgentClient } from "@/lib/runtime/agent-client";
 
@@ -133,6 +134,18 @@ try {
     "Complete browser approval before running live checks",
   );
   assert.ok(row?.ciphertext?.startsWith("v1."));
+  const resume = process.argv.includes("--resume-after-inference");
+  if (resume) {
+    const previous = JSON.parse(readFileSync(root + "/auto-verification.json", "utf8"));
+    for (const actor of ["admin", "teammate (no teammate provider login)"])
+      assert.ok(previous.checks.includes("PASS Native runtime/TUI inference through real broker as " + actor));
+    const oldGrants = JSON.parse(readFileSync(root + "/last-grants.json", "utf8"));
+    assert.equal(oldGrants.length, 2);
+    for (const grant of oldGrants)
+      assert.equal(readGrant(grant.bearer).generation, row.generation,
+        "Reuse inference evidence only for the same approved connection");
+    pass("Reused successful admin/teammate native inference for this same connection");
+  }
   pass("Connection saved encrypted in migrated isolated DB");
   const auths = await Promise.all(
     [state.owner, state.member].map((u) =>
@@ -231,18 +244,27 @@ try {
     await agent.setAuth(ids[i], auths[i].credential);
     await agent.setModel(ids[i], { model });
     await agent.startWorkspace(ids[i]);
-    await ask(
-      ids[i],
-      i === 0 ? "OUTRUNNER_ADMIN_LIVE_OK" : "OUTRUNNER_TEAMMATE_LIVE_OK",
-    );
-    pass(
-      "Native runtime/TUI inference through real broker as " +
-        (i === 0 ? "admin" : "teammate (no teammate provider login)"),
-    );
+    if (!resume) {
+      await ask(
+        ids[i],
+        i === 0 ? "OUTRUNNER_ADMIN_LIVE_OK" : "OUTRUNNER_TEAMMATE_LIVE_OK",
+      );
+      pass(
+        "Native runtime/TUI inference through real broker as " +
+          (i === 0 ? "admin" : "teammate (no teammate provider login)"),
+      );
+    }
   }
   stage = "central refresh";
   const current = await codexStore.read(key);
   assert.ok(current);
+  let providerRefreshes = 0;
+  codexAccounts.renew = (tokens) => renewCodex(tokens, async (url, options) => {
+    providerRefreshes++;
+    const response = await fetch(url, options);
+    console.log("INFO OAuth renewal HTTP " + response.status);
+    return response;
+  });
   const renewed = await Promise.all(
     Array.from({ length: 12 }, () =>
       codexAccounts.access(key, current.generation, current.revision),
@@ -251,6 +273,7 @@ try {
   const after = await codexStore.read(key);
   assert.equal(after?.revision, current.revision + 1);
   assert.ok(renewed.every((x) => x.revision === after?.revision));
+  assert.equal(providerRefreshes, 1);
   pass(
     "12 concurrent real renewal requests completed with one fenced revision",
   );
@@ -319,6 +342,8 @@ try {
   const reason =
     error instanceof assert.AssertionError
       ? error.message.slice(0, 200)
+      : error instanceof CodexError
+        ? error.code
       : "operation failed";
   console.log("FAIL " + stage + ": " + reason);
   process.exitCode = 1;

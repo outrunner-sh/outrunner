@@ -62,7 +62,7 @@ test(
       sql(
         readFileSync(
           new URL(
-            "../supabase/migrations/20261103180000_codex_connections.sql",
+            "../supabase/migrations/20261103190000_codex_connections.sql",
             import.meta.url,
           ),
           "utf8",

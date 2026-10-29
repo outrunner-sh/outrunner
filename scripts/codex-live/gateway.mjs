@@ -1,5 +1,5 @@
 import http from "node:http";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
@@ -18,6 +18,12 @@ let login = null,
     checks: [],
     message: "Awaiting owner approval.",
   };
+// Preserve completed evidence after the operator restarts the test gateway.
+if (existsSync(root + "/auto-verification.json")) {
+  const completed = JSON.parse(readFileSync(root + "/auto-verification.json", "utf8"));
+  if (completed.revoked === true)
+    verification = { running: false, checks: completed.checks ?? [], message: completed.message };
+}
 const origin = () =>
   JSON.parse(readFileSync(root + "/preview.json", "utf8")).origin;
 const json = (res, data, status = 200) => {

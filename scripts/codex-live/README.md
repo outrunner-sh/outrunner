@@ -119,6 +119,14 @@ Reports contain pass/fail stages and HTTP statuses, never raw provider bodies,
 headers, credentials or arbitrary exceptions. Provider model availability/menu
 compatibility must be reported from the actual catalog, not assumed.
 
+After an inspected failure at renewal, `run-verify.mjs --resume-after-inference`
+can reuse the earlier admin/member inference evidence. It requires both passes
+in the private automatic-run report and verifies that both retained grants belong
+to the same approved connection generation. It recreates native sessions, records
+the OAuth HTTP status and asserts one provider refresh for twelve concurrent
+callers before finishing restart, membership and saved-choice checks. It never
+retries a rejected provider login or starts a new device authorization.
+
 ## Cancel, revoke and remove
 
 Cancel in the real settings stops the CLI by its regular status poll; the

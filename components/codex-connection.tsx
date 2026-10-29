@@ -108,18 +108,25 @@ function ConnectionScope({
   useEffect(() => {
     let gone = false;
     let lastPending: CodexMeta["pending"] = null;
+    let lastUpdatedAt: string | null = null;
     const load = () => {
       if (document.hidden) return;
       void requestJson<CodexMeta>(endpoint)
         .then((value) => {
           if (!gone) {
             if (
+              value.pending ||
+              (value.connected && value.updatedAt !== lastUpdatedAt)
+            ) {
+              setExpired(false);
+            } else if (
               lastPending &&
               !value.pending &&
               Date.parse(lastPending.expiresAt) <= Date.now()
             )
               setExpired(true);
             lastPending = value.pending;
+            lastUpdatedAt = value.updatedAt;
             setMeta(value);
             setError(null);
             setOrigin(window.location.origin);
