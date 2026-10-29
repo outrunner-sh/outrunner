@@ -60,8 +60,7 @@ func (s *Service) Rewind(ctx context.Context, key, uuid string) (Rewound, error)
 		return Rewound{}, ErrUnknownWorkspace
 	}
 	// Held throughout, so no prompt lands between the check and the cut.
-	lock := s.sendLock(key)
-	lock.Lock()
+	lock := s.lockSend(key)
 	defer lock.Unlock()
 	base := context.WithoutCancel(ctx)
 	checkCtx, cancel := context.WithTimeout(base, switchCheckTimeout)
