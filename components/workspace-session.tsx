@@ -322,9 +322,10 @@ export function WorkspaceSession({
       body: JSON.stringify({ content: text, attachmentIds, ...(firstPromptKey && { firstPromptKey }), ...(how.mode && { mode: how.mode }), ...(how.dismiss && { dismiss: true }), ...(how.queuedKey && { queuedKey: how.queuedKey }) }),
     }).then(
       async (res) => {
-        const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string; code?: string };
+        const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string; code?: string; result?: string };
         if (!res.ok) return failed(body.error ?? "Could not send that message.", body.code);
-        anchor(pendingId, sentAt);
+        if (body.result === "already") setPending((prev) => prev.filter((p) => p.id !== pendingId));
+        else anchor(pendingId, sentAt);
         // The first prompt just named this session, as the server names it:
         // the sidebar shows the name at once (lib/session/rows-ahead.ts).
         const title = body.titled ? sessionTitle(text) : null;
@@ -343,10 +344,10 @@ export function WorkspaceSession({
     sendRef.current = send;
   });
   useEffect(() => {
-    if (!canSend || startup || !onSender) return;
+    if (!canSend || startup || !initialDeliveryComplete || !onSender) return;
     onSender({ send: (text, attachmentIds) => sendRef.current(text, attachmentIds) });
     return () => onSender(null);
-  }, [canSend, startup, onSender]);
+  }, [canSend, startup, initialDeliveryComplete, onSender]);
 
   // The model of the most recent assistant turn — shown in the composer so it
   // reflects what's actually running, not a hardcoded label. Claude Code's
@@ -1327,14 +1328,14 @@ export function WorkspaceSession({
         <QueuedPrompts
           queue={queue}
           working={working}
-          canSendNow={attached && !stopping}
+          canSendNow={attached && initialDeliveryComplete && !stopping}
           editing={queuedEditing}
           onEditingChange={(next) => {
             if (next && sendingQueued.current) return;
             setQueuedEditing(next);
           }}
           paused={queuePaused && queue.length > 0}
-          starting={!!startup}
+          starting={!!startup || !initialDeliveryComplete}
           onSteer={(prompt) => void sendQueuedNow(prompt, false)}
           onSendNow={(prompt) => void sendQueuedNow(prompt)}
           onEdit={(prompt, words) => { updateQueue((q) => editQueued(q, prompt.id, words)); }}

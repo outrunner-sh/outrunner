@@ -31,7 +31,10 @@ export async function requireFeature(client: FeatureClient, feature: string, wha
 export function cachedFeatures(client: FeatureClient): FeatureClient {
   let snapshot: Promise<string[]> | undefined;
   return {
-    features: () => snapshot ??= client.features(),
+    features: () => snapshot ??= client.features().catch((error: unknown) => {
+      snapshot = undefined;
+      throw error;
+    }),
     ...(client.upgrade && { upgrade: async () => {
       try { await client.upgrade!(); }
       finally { snapshot = undefined; }

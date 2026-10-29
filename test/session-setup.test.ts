@@ -254,3 +254,16 @@ test("one setup reuses capabilities, and an upgrade invalidates the snapshot", a
   assert.equal(reads, 2);
   assert.deepEqual(sent, ["config", "context", "environment"]);
 });
+
+test("a transient capability read failure can be retried within the setup", async () => {
+  const { cachedFeatures } = await import("@/lib/runtime/box-features");
+  let reads = 0;
+  const client = cachedFeatures({ features: async () => {
+    if (++reads === 1) throw new Error("temporary disconnect");
+    return ["ready"];
+  } });
+  await assert.rejects(client.features(), /temporary disconnect/);
+  assert.deepEqual(await client.features(), ["ready"]);
+  assert.deepEqual(await client.features(), ["ready"]);
+  assert.equal(reads, 2);
+});
