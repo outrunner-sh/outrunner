@@ -261,7 +261,9 @@ export function ConversationTimeline({
             </div>
           ))}
           {(working || compacting) && (
-            <WorkingIndicator label={compacting ? "Compacting conversation" : "Working"} since={turnSince} />
+            // A compaction counts from when it began here: the last prompt's
+            // time may be long before it (a typed /compact is no prompt row).
+            <WorkingIndicator label={compacting ? "Compacting conversation" : "Working"} since={compacting ? undefined : turnSince} />
           )}
         </div>
       </div>

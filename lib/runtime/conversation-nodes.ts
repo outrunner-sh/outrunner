@@ -97,7 +97,12 @@ export function conversationNodes(
     // too (/compact's), not one of its own.
     if (event.role === "user" && event.content.some((b) => b.type === "text") && !isInterruption(event) && !isLocalCommand(event)) {
       endTurn();
-      if (!isEcho(event.uuid)) turn = { from: event.timestamp, last: null, key: `${event.uuid}-${ei}` };
+      // A typed /compact starts no turn of its own: it has no prompt row
+      // (its compaction's row says it), so a "worked" row under it would
+      // stand under no prompt; and folded into the turn before, that turn's
+      // would run on to the compaction, however long after it was.
+      const compactTyped = event.content.some((b) => b.type === "text" && /^\/compact(\s|$)/.test(b.text));
+      if (!isEcho(event.uuid) && !compactTyped) turn = { from: event.timestamp, last: null, key: `${event.uuid}-${ei}` };
     } else if (turn) {
       turn.last = event.timestamp;
     }
