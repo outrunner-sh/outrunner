@@ -53,8 +53,16 @@
       "branch": "feat/z",
       "baseBranch": "main",
       "repos": [
-        { "fullName": "acme/web", "checkout": "web", "baseBranch": "main" },
-        { "fullName": "acme/api", "checkout": "api", "baseBranch": "develop" }
+        {
+          "fullName": "acme/web",
+          "checkout": "web",
+          "baseBranch": "main"
+        },
+        {
+          "fullName": "acme/api",
+          "checkout": "api",
+          "baseBranch": "develop"
+        }
       ]
     },
     {
@@ -281,6 +289,24 @@
       "mode": "plan"
     }
   ],
+  "CreateChatRequest": [
+    {
+      "chatId": "3f6c1d2e-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+    },
+    {
+      "chatId": "b7e1",
+      "agent": "codex",
+      "from": "main",
+      "fromName": "Main chat"
+    },
+    {
+      "chatId": "c9a2",
+      "from": "b7e1",
+      "fromName": "Refactor",
+      "side": true,
+      "noStart": true
+    }
+  ],
   "CompactRequest": [
     {},
     {
@@ -375,13 +401,30 @@
       "branch": "feat/z",
       "sessionId": "sess-3",
       "downloads": [
-        { "artifact": "bundle", "url": "https://storage.example/download/bundle?token=t" },
-        { "artifact": "patch", "url": "https://storage.example/download/patch?token=t" },
-        { "artifact": "conversation", "url": "https://storage.example/download/conversation?token=t" }
+        {
+          "artifact": "bundle",
+          "url": "https://storage.example/download/bundle?token=t"
+        },
+        {
+          "artifact": "patch",
+          "url": "https://storage.example/download/patch?token=t"
+        },
+        {
+          "artifact": "conversation",
+          "url": "https://storage.example/download/conversation?token=t"
+        }
       ],
       "repos": [
-        { "fullName": "acme/web", "checkout": "web", "baseBranch": "main" },
-        { "fullName": "acme/api", "checkout": "api", "baseBranch": "develop" }
+        {
+          "fullName": "acme/web",
+          "checkout": "web",
+          "baseBranch": "main"
+        },
+        {
+          "fullName": "acme/api",
+          "checkout": "api",
+          "baseBranch": "develop"
+        }
       ]
     },
     {
@@ -600,6 +643,43 @@
         "canvas",
         "agent-context"
       ]
+    },
+    {
+      "status": "ok",
+      "gateways": [
+        "anthropic",
+        "deepseek",
+        "moonshot",
+        "openrouter",
+        "zai"
+      ],
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "features": [
+        "restore-imports",
+        "session-environment",
+        "agent-config",
+        "restore-model",
+        "editor",
+        "ports",
+        "codex-gateway",
+        "project-instructions",
+        "request-secrets",
+        "warm-hooks",
+        "multi-repo",
+        "multi-repo-snapshots",
+        "git-credential",
+        "multi-repo-warm",
+        "plan-mode",
+        "compact",
+        "files",
+        "message-keys",
+        "chats",
+        "agent-context",
+        "canvas"
+      ]
     }
   ],
   "LocalSession": [
@@ -677,8 +757,16 @@
       "baseBranch": "main",
       "hook": "pnpm -C web install && pnpm -C api install",
       "repos": [
-        { "fullName": "acme/web", "checkout": "web", "baseBranch": "main" },
-        { "fullName": "acme/api", "checkout": "api", "baseBranch": "develop" }
+        {
+          "fullName": "acme/web",
+          "checkout": "web",
+          "baseBranch": "main"
+        },
+        {
+          "fullName": "acme/api",
+          "checkout": "api",
+          "baseBranch": "develop"
+        }
       ]
     }
   ],
@@ -737,18 +825,40 @@
   "SetSkillsRequest": [
     {
       "sources": [
-        { "repo": "anthropics/skills", "skills": ["pdf"] },
-        { "repo": "acme/skills-registry", "ref": "main", "token": "ghs_0123456789abcdef" }
+        {
+          "repo": "anthropics/skills",
+          "skills": [
+            "pdf"
+          ]
+        },
+        {
+          "repo": "acme/skills-registry",
+          "ref": "main",
+          "token": "ghs_0123456789abcdef"
+        }
       ]
     },
-    { "sources": [] }
+    {
+      "sources": []
+    }
   ],
   "SetSkillsResponse": [
     {
-      "installed": ["deploy", "pdf"],
-      "failed": [{ "repo": "acme/skills-registry", "skill": "review", "error": "a skill of yours has this name: yours is kept" }]
+      "installed": [
+        "deploy",
+        "pdf"
+      ],
+      "failed": [
+        {
+          "repo": "acme/skills-registry",
+          "skill": "review",
+          "error": "a skill of yours has this name: yours is kept"
+        }
+      ]
     },
-    { "installed": [] }
+    {
+      "installed": []
+    }
   ],
   "SetAgentContextRequest": [
     { "content": "# Outrunner learnings\n\n## The user's learnings\n\n### Conventional Commits\n\nUse Conventional Commits." },
@@ -795,11 +905,23 @@
     {
       "dir": "/home/runtime/.outrunner/canvas/ws-1",
       "files": [
-        { "path": "rollout-plan.md", "size": 2048, "modifiedAt": "2026-11-03T10:00:00Z" },
-        { "path": "charts/latency.html", "size": 18234, "modifiedAt": "2026-11-03T09:00:00Z" }
+        {
+          "path": "rollout-plan.md",
+          "size": 2048,
+          "modifiedAt": "2026-11-03T10:00:00Z"
+        },
+        {
+          "path": "charts/latency.html",
+          "size": 18234,
+          "modifiedAt": "2026-11-03T09:00:00Z"
+        }
       ]
     },
-    { "dir": "/home/runtime/.outrunner/canvas/ws-2", "files": [], "truncated": true }
+    {
+      "dir": "/home/runtime/.outrunner/canvas/ws-2",
+      "files": [],
+      "truncated": true
+    }
   ],
   "ProviderPorts": [
     [

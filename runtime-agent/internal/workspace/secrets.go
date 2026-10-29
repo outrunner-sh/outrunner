@@ -46,12 +46,15 @@ func (s *Service) providedFiles() keyFiles {
 
 // ProvidedEnvPath is the file of a session's provided secrets: its
 // CLAUDE_ENV_FILE, and what the tool's result tells the agent to source.
+//
+// A chat's are its session's (owner): a secret given in one chat is there
+// for every other.
 func (s *Service) ProvidedEnvPath(workspaceID string) string {
-	return s.providedFiles().path(workspaceID)
+	return s.providedFiles().path(s.owner(workspaceID))
 }
 
 func (s *Service) providedJSONPath(workspaceID string) string {
-	return filepath.Join(s.Root, "provided", workspaceID+".json")
+	return filepath.Join(s.Root, "provided", s.owner(workspaceID)+".json")
 }
 
 // RequestSecrets waits for the user to answer a session's request for
@@ -133,7 +136,7 @@ func (s *Service) addProvided(workspaceID string, values map[string]string) erro
 	if err := writeJSONFile(s.providedJSONPath(workspaceID), all, 0o600); err != nil {
 		return err
 	}
-	return s.providedFiles().put(workspaceID, content.String())
+	return s.providedFiles().put(s.owner(workspaceID), content.String())
 }
 
 // provided are the session's provided secrets, by name.

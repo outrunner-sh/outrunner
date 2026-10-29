@@ -401,3 +401,40 @@ func IsInterruption(msg *protocol.ConversationMessage) bool {
 	}
 	return strings.HasPrefix(strings.TrimSpace(text.String()), Interrupted)
 }
+
+// Read decodes the renderable records of a session file from byte offset
+// from to its last whole line, each with its ID, as a Watcher delivers them:
+// for a reader that wants what the conversation holds now rather than a tail
+// of it (a fork's transcript, an edit finding its message). An offset inside
+// a line starts at the next one.
+func Read(path string, from int64) ([]Event, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if from < 0 || from > int64(len(data)) {
+		from = 0
+	}
+	start := from
+	if start > 0 && data[start-1] != '\n' {
+		next := bytes.IndexByte(data[start:], '\n')
+		if next < 0 {
+			return nil, nil
+		}
+		start += int64(next) + 1
+	}
+	var events []Event
+	for cursor := start; cursor < int64(len(data)); {
+		idx := bytes.IndexByte(data[cursor:], '\n')
+		if idx < 0 {
+			break // a line still being written
+		}
+		end := cursor + int64(idx) + 1
+		if ev, ok := decode(data[cursor:end]); ok {
+			ev.ID = end
+			events = append(events, ev)
+		}
+		cursor = end
+	}
+	return events, nil
+}

@@ -230,6 +230,10 @@ type workspaceFacts struct {
 	// CodexLaunchedAt is when a Codex session whose rollout isn't found yet
 	// was launched: the rollout it begins is no older.
 	CodexLaunchedAt string `json:"codexLaunchedAt,omitempty"`
+	// CodexPromptedAt is when such a session was first sent a prompt since
+	// its launch: Codex begins its rollout then. A worktree several chats
+	// share can hold another chat's rollout begun since the launch.
+	CodexPromptedAt string `json:"codexPromptedAt,omitempty"`
 	// Model is the model the session runs; empty is Claude's own default.
 	Model string `json:"model,omitempty"`
 	// Gateway, when set, runs the session through it on a key of its own (in
@@ -247,6 +251,17 @@ type workspaceFacts struct {
 	// in. Kept across launches, as the model is, until a prompt in build
 	// mode takes it out.
 	Plan bool `json:"plan,omitempty"`
+	// Parent is the session a chat belongs to (chats.go): set for every chat
+	// but its session's main one, which is the session itself. A chat works
+	// in its parent's worktree, with its parent's environment and secrets.
+	Parent string `json:"parent,omitempty"`
+	// Handoff is what a forked chat's first prompt is sent with: where the
+	// conversation it continues is, and its latest turns. Cleared once that
+	// prompt lands.
+	Handoff string `json:"handoff,omitempty"`
+	// SideOf is the chat a side chat asks about: each of its prompts goes
+	// with that chat's newest turns.
+	SideOf string `json:"sideOf,omitempty"`
 	// Name and Title label the session in the desktop's list: the folder's name,
 	// and what the user asked for first.
 	Name      string `json:"name,omitempty"`
@@ -404,7 +419,11 @@ func (s *Service) factsPath(id string) string {
 // worktreePath is where a workspace's Claude works: its worktree under Root, or
 // for an in-place local session, the user's folder itself.
 func (s *Service) worktreePath(id string) string {
-	if f, ok := s.getFacts(id); ok && f.InPlace && f.RepoPath != "" {
+	f, ok := s.getFacts(id)
+	if ok && f.Parent != "" {
+		return s.worktreePath(f.Parent) // a chat works in its session's
+	}
+	if ok && f.InPlace && f.RepoPath != "" {
 		return f.RepoPath
 	}
 	return filepath.Join(s.Root, "workspaces", id)
@@ -1134,7 +1153,13 @@ func (s *Service) getFacts(workspaceID string) (workspaceFacts, bool) {
 // Stop ends the Claude session and stops the Summary collector, marking the
 // summary's endedAt. The Summary itself is retained so a post-stop
 // SummaryOf still returns the last-known state.
+//
+// A session's other chats stop with it: they work in its worktree, which an
+// archive captures as it is.
 func (s *Service) Stop(ctx context.Context, workspaceID string) error {
+	for _, key := range s.chatKeys(workspaceID) {
+		_ = s.Stop(ctx, key)
+	}
 	if s.jcode != nil {
 		s.jcode.StopSession(workspaceID)
 		s.endSummary(workspaceID)
@@ -1226,13 +1251,18 @@ func (s *Service) SendPrompt(workspaceID string, p Prompt) error {
 	// one while holding the other, so letting it go early can't deadlock.
 	unlockLifecycle()
 	unlockLifecycle = func() {}
-	return s.deliverHeld(workspaceID, s.promptText(workspaceID, p.Content), lock)
+	if err := s.deliverHeld(workspaceID, s.promptText(workspaceID, p.Content), lock); err != nil {
+		return err
+	}
+	s.handedOff(workspaceID)
+	return nil
 }
 
 // promptText is a prompt as the session's agent is given it: as typed, but
 // for a Codex session in plan mode, which is told with each prompt that a
 // plan is wanted (codex.PlanPreamble).
 func (s *Service) promptText(workspaceID, content string) string {
+	content = s.chatPromptText(workspaceID, content)
 	if f, _ := s.getFacts(workspaceID); f.Plan && f.Agent == AgentCodex {
 		return codex.PlanPreamble + content
 	}
@@ -1252,6 +1282,7 @@ func (s *Service) deliverHeld(workspaceID, content string, lock *sendState) erro
 	case retry && s.userTurns(workspaceID) > before:
 		return nil // the earlier copy landed after that send gave up
 	case !retry:
+		s.codexPrompted(workspaceID)
 		before = s.userTurns(workspaceID)
 		if s.awaitingAnswer(ctx, workspaceID, name) {
 			return errAwaitsAnswer
@@ -1760,6 +1791,10 @@ func (s *Service) SessionAlive(ctx context.Context, workspaceID string) bool {
 // it may hold commits that were never pushed.
 func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 	defer s.lockLifecycle(workspaceID)()
+	// Its chats first: they work in the worktree about to go.
+	for _, key := range s.chatKeys(workspaceID) {
+		s.endChat(ctx, key)
+	}
 	_ = s.Stop(ctx, workspaceID)
 	// An in-place session's directory is the user's own folder: forget the
 	// session, never touch the files.
@@ -1792,17 +1827,24 @@ func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 
 func (s *Service) forgetWorkspace(workspaceID string) {
 	s.stopCodexTail(workspaceID)
-	if f, _ := s.getFacts(workspaceID); f.Agent == AgentCodex {
+	f, _ := s.getFacts(workspaceID)
+	if f.Agent == AgentCodex {
 		_ = os.Remove(conversationPath(s.Root, workspaceID)) // its translation
 	}
+	chat := f.Parent != ""
 	s.mu.Lock()
 	delete(s.facts, workspaceID)
 	s.mu.Unlock()
 	_ = os.Remove(s.factsPath(workspaceID))
 	s.gatewayFiles().remove(workspaceID)
 	s.authFiles().remove(workspaceID)
-	s.removeEnvironment(workspaceID)
-	s.removeProvided(workspaceID)
+	if !chat {
+		// A chat's environment and secrets are its session's, still in use.
+		s.removeEnvironment(workspaceID)
+		s.removeProvided(workspaceID)
+	} else {
+		_ = os.Remove(filepath.Join(s.Root, "ask", workspaceID+".settings.json"))
+	}
 	s.forgetMessageKeys(workspaceID)
 	s.forgetAsk(workspaceID)
 	s.forgetDesktop(workspaceID)

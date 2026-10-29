@@ -322,7 +322,7 @@ func TestClaudeConvDirEncodesWorktreePath(t *testing.T) {
 }
 
 func TestUserTurnCountMissingDirIsZero(t *testing.T) {
-	if got := userTurnCount(t.TempDir() + "/does-not-exist"); got != 0 {
+	if got := userTurnCount(t.TempDir()+"/does-not-exist", nil); got != 0 {
 		t.Errorf("userTurnCount(missing) = %d, want 0", got)
 	}
 }

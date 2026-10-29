@@ -26,8 +26,8 @@ func (s *Service) LocalSessions(ctx context.Context) []protocol.LocalSession {
 			continue
 		}
 		f, ok := s.getFacts(id)
-		if !ok || f.RepoPath == "" {
-			continue // not a local session (or unreadable)
+		if !ok || f.RepoPath == "" || f.Parent != "" {
+			continue // not a local session (or unreadable), or a chat in one
 		}
 		// Facts written before sessions were named carry no name; the folder's
 		// own name is what it would have been.

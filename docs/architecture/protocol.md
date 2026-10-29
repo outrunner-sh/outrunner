@@ -46,6 +46,17 @@ Requests and responses are JSON validated against the shared schemas. Errors use
 { "error": { "code": "WORKSPACE_NOT_FOUND | UNAUTHORIZED | AGENT_UNREACHABLE | …", "message": "…" } }
 ```
 
+## Chats
+
+An agent that advertises the `chats` feature runs several chats in a session
+(see session-contract.md). `POST /workspaces/{id}/chats` makes one
+(`CreateChatRequest`: its id, agent, the chat it forks `from`, `side`) and
+starts it; `POST /workspaces/{id}/chats/{chat}/delete` ends one. Every route
+under `/workspaces/{id}/` that acts on a conversation (start, stop, resume,
+message, interrupt, compact, plan, answer, secrets, model, auth, summary),
+and `/pty`, `/events` and `/events-ws`, take `?chat=<id>`; none, or `main`,
+is the main chat. A chat the session doesn't have is `404 CHAT_NOT_FOUND`.
+
 ## Conversation events (agent → Next/browser)
 
 Derived by the ConversationWatcher from Claude Code's session JSONL. **Not** parsed from the PTY.

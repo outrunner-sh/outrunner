@@ -617,6 +617,26 @@ type SendMessageRequest struct {
 	Key     string `json:"key,omitempty"`
 }
 
+// FeatureChats marks an agent that runs several chats in a session (POST
+// /workspaces/{id}/chats, and ?chat= on a session's routes and streams). An
+// agent without it has the main chat alone, which every route reaches when
+// no chat is named.
+const FeatureChats = "chats"
+
+// CreateChatRequest makes a chat in a session (POST /workspaces/{id}/chats)
+// and starts it, unless NoStart. Agent is the chat's ("" is the session's).
+// From forks it from one of the session's chats ("main" for its main one),
+// FromName naming that chat in the handoff; Side makes it a side chat about
+// From, whose prompts go with From's newest turns.
+type CreateChatRequest struct {
+	ChatID   string `json:"chatId"`
+	Agent    string `json:"agent,omitempty"`
+	From     string `json:"from,omitempty"`
+	FromName string `json:"fromName,omitempty"`
+	Side     bool   `json:"side,omitempty"`
+	NoStart  bool   `json:"noStart,omitempty"`
+}
+
 // PlanActionRequest answers the plan a session's agent waits on (POST
 // /workspaces/{id}/plan). Action "approve" goes on to build it: through
 // Claude's own plan menu where it offers the session's build mode, else as a
