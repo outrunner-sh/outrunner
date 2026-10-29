@@ -606,6 +606,20 @@ func (s *Service) restoreChat(ctx context.Context, workspaceID string, chat prot
 	if !ValidChatID(chat.ChatID) {
 		return fmt.Errorf("invalid chat id %q", chat.ChatID)
 	}
+	if chat.Kind != "" && chat.Kind != "chat" && chat.Kind != "side" {
+		return fmt.Errorf("invalid chat kind %q", chat.Kind)
+	}
+	sideOf := ""
+	if chat.Kind == "side" {
+		if chat.ForkedFrom == nil {
+			return fmt.Errorf("side chat has no source chat")
+		}
+		from := *chat.ForkedFrom
+		if from != MainChat && !ValidChatID(from) {
+			return fmt.Errorf("invalid source chat %q", from)
+		}
+		sideOf = ChatKey(workspaceID, from)
+	}
 	sessionID := ""
 	if chat.SessionID != nil {
 		sessionID = *chat.SessionID
@@ -618,6 +632,10 @@ func (s *Service) restoreChat(ctx context.Context, workspaceID string, chat prot
 	}
 	key := ChatKey(workspaceID, chat.ChatID)
 	f, _ := s.getFacts(key)
+	if sideOf != "" {
+		s.updateFacts(key, func(f *workspaceFacts) { f.SideOf = sideOf })
+		f.SideOf = sideOf
+	}
 	if f.Agent == AgentCodex {
 		dest := conversationPath(s.Root, key)
 		if err := snapshot.DownloadArtifact(ctx, chat.Conversation, dest); err != nil {

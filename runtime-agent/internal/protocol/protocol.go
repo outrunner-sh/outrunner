@@ -225,11 +225,14 @@ type ArchiveChat struct {
 	Rollout      string     `json:"rollout,omitempty"`
 }
 
-// RestoreChat is one chat a restore brings back: its agent, the session id
-// its conversation is resumed by, and its artifacts' download URLs (a Codex
-// chat's rollout when its Snapshot has one).
+// RestoreChat is one chat a restore brings back: its kind and source chat,
+// agent, session id, and artifact download URLs. Kind and ForkedFrom are
+// optional for older control planes; a side chat uses them to resume its
+// context without replaying its spent fork handoff.
 type RestoreChat struct {
 	ChatID       string  `json:"chatId"`
+	Kind         string  `json:"kind,omitempty"`
+	ForkedFrom   *string `json:"forkedFrom,omitempty"`
 	Agent        string  `json:"agent,omitempty"`
 	SessionID    *string `json:"sessionId"`
 	Conversation string  `json:"conversation"`

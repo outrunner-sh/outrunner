@@ -173,14 +173,16 @@ func TestARestoreContinuesWhenASideChatCantBeRestored(t *testing.T) {
 	s, fake := restoringService(t)
 	fake.pane = composerPane
 	main := "main-sess"
+	mainChat := MainChat
+	sideSession := "side-sess"
 	srv := snapshotServer(t, map[string][]byte{"/conversation": []byte(mainTranscript), "/chat": []byte(docsChat)})
 	bad := "../escape"
 	_, err := s.Restore(context.Background(), "ws-r", protocol.RestoreWorkspaceRequest{
 		Branch: "feature", BaseBranch: "main", SessionID: &main,
 		Downloads: downloads(srv, "bundle", "patch", "conversation"),
 		Chats: []protocol.RestoreChat{
-			{ChatID: "bad-chat", SessionID: &bad, Conversation: srv.URL + "/missing"},
-			{ChatID: "good-chat", SessionID: &main, Conversation: srv.URL + "/chat"},
+			{ChatID: "bad-chat", Kind: "chat", SessionID: &bad, Conversation: srv.URL + "/missing"},
+			{ChatID: "good-chat", Kind: "side", ForkedFrom: &mainChat, SessionID: &sideSession, Conversation: srv.URL + "/chat"},
 		},
 	}, nil)
 	if err != nil {
@@ -191,6 +193,12 @@ func TestARestoreContinuesWhenASideChatCantBeRestored(t *testing.T) {
 	}
 	if !s.HasChat("ws-r", "good-chat") {
 		t.Fatal("the valid side chat after the failure wasn't restored")
+	}
+	if f, _ := s.getFacts(ChatKey("ws-r", "good-chat")); f.SideOf != "ws-r" || f.Handoff != "" {
+		t.Fatalf("restored side chat facts = %+v, want side-of main with no spent handoff", f)
+	}
+	if prompt := s.chatPromptText(ChatKey("ws-r", "good-chat"), "What next?"); !strings.Contains(prompt, "Add dark mode to the settings page") {
+		t.Fatalf("restored side chat prompt lost its source turns: %q", prompt)
 	}
 	if f, _ := s.getFacts("ws-r"); f.ClaudeSessionID != main {
 		t.Fatalf("main chat session = %q, want %s", f.ClaudeSessionID, main)

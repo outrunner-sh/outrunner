@@ -47,7 +47,7 @@ test("a restore brings back each chat the Snapshot holds that the session still 
       {
         id: "b2",
         name: "Review",
-        kind: "chat",
+        kind: "side",
         forkedFrom: "main",
         agent: "codex",
         model: null,
@@ -60,8 +60,8 @@ test("a restore brings back each chat the Snapshot holds that the session still 
   } as unknown as SnapshotManifest;
   const restored = await restoreChats(manifest, [chat("a1", "claude"), chat("b2", "codex")], async (file) => `signed:${file}`);
   assert.deepEqual(restored, [
-    { chatId: "a1", agent: "claude", sessionId: "s1", conversation: "signed:chats/a1/conversation.jsonl" },
-    { chatId: "b2", agent: "codex", sessionId: "s2", conversation: "signed:chats/b2/conversation.jsonl", rollout: "signed:chats/b2/rollout.jsonl" },
+    { chatId: "a1", kind: "chat", forkedFrom: null, agent: "claude", sessionId: "s1", conversation: "signed:chats/a1/conversation.jsonl" },
+    { chatId: "b2", kind: "side", forkedFrom: "main", agent: "codex", sessionId: "s2", conversation: "signed:chats/b2/conversation.jsonl", rollout: "signed:chats/b2/rollout.jsonl" },
   ]);
   // A Snapshot from before Snapshots kept every chat has none to bring back.
   assert.deepEqual(await restoreChats({} as SnapshotManifest, [chat("a1", "claude")], async (f) => f), []);

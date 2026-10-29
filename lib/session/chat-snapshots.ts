@@ -37,8 +37,8 @@ export function archiveChat(chat: SessionChat, urls: { conversation: string; rol
 
 /**
  * The chats a restore brings back: each the Snapshot holds that the session
- * still has (one deleted since stays gone), with signed download URLs for
- * its artifacts (`download` mints one for a Snapshot filename).
+ * still has (one deleted since stays gone), preserving side-chat metadata
+ * alongside signed download URLs for its artifacts.
  */
 export async function restoreChats(
   manifest: SnapshotManifest,
@@ -50,6 +50,8 @@ export async function restoreChats(
   return Promise.all(
     chats.map(async (chat) => ({
       chatId: chat.id,
+      kind: chat.kind,
+      forkedFrom: chat.forkedFrom,
       agent: chat.agent,
       sessionId: chat.sessionId,
       conversation: await download(chat.conversation),

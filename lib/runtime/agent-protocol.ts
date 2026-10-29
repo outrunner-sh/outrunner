@@ -581,6 +581,9 @@ export type ArchiveChat = z.infer<typeof ArchiveChat>;
 export const RestoreChat = z
   .object({
     chatId: ChatId,
+    /** Preserve side-chat context when the chat resumes. */
+    kind: z.enum(["chat", "side"]).optional(),
+    forkedFrom: z.string().min(1).nullable().optional(),
     agent: z.enum(["claude", "codex"]).optional(),
     sessionId: z.string().min(1).nullable(),
     conversation: z.string().url(),
