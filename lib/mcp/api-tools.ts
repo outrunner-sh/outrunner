@@ -10,6 +10,7 @@
 
 import { listProjectsApi } from "@/lib/api/catalog";
 import { takeLimit, type ApiContext } from "@/lib/api/handler";
+import { createPreviewApi, deletePreviewApi, listPreviewsApi, updatePreviewApi } from "@/lib/api/previews";
 import { CREATE_LIMIT } from "@/lib/api/rate-limit";
 import { checkWebhookUrl, messageSent, webhookHooks } from "@/lib/api/webhooks.deps";
 import {
@@ -175,6 +176,64 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
     description: "Archive a session: snapshot it and let its box go. send_message wakes it again.",
     inputSchema: { type: "object", properties: WORKSPACE_ID, required: ["workspace_id"] },
     call: async (context, args) => answer(await lifecycleApi(asCall(context, { method: "POST" }), id(args), "archive")),
+  },
+  {
+    name: "list_previews",
+    description: "List a session's previews: links to servers running on its box, each with its port, mode (login or public) and url.",
+    inputSchema: { type: "object", properties: WORKSPACE_ID, required: ["workspace_id"] },
+    call: async (context, args) => answer(await listPreviewsApi(asCall(context, {}), id(args))),
+  },
+  {
+    name: "create_preview",
+    description:
+      "Make a preview of a port a server listens on in a session's box: a stable link on Outrunner's preview domain. " +
+      "mode login (the default) lets in signed-in members of the org who can see the repository; public lets in anyone with the link. " +
+      "A port that has one already answers with it, unchanged.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...WORKSPACE_ID,
+        port: { type: "integer", minimum: 1024, maximum: 65535, description: "The port the server listens on." },
+        label: { type: "string", maxLength: 80, description: "A short name, e.g. \"Web app\"." },
+        mode: { type: "string", enum: ["login", "public"] },
+      },
+      required: ["workspace_id", "port"],
+    },
+    call: async (context, args) =>
+      answer(
+        await createPreviewApi(asCall(context, { method: "POST", body: { port: args.port, label: args.label, mode: args.mode } }), id(args)),
+      ),
+  },
+  {
+    name: "update_preview",
+    description: "Rename a session's preview, or switch its mode between login and public.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...WORKSPACE_ID,
+        preview_id: { type: "string" },
+        label: { type: "string", maxLength: 80 },
+        mode: { type: "string", enum: ["login", "public"] },
+      },
+      required: ["workspace_id", "preview_id"],
+    },
+    call: async (context, args) =>
+      answer(
+        await updatePreviewApi(
+          asCall(context, { method: "PATCH", body: { label: args.label, mode: args.mode } }),
+          id(args),
+          typeof args.preview_id === "string" ? args.preview_id : "",
+        ),
+      ),
+  },
+  {
+    name: "delete_preview",
+    description: "Delete a session's preview: its link stops working for everyone within seconds.",
+    inputSchema: { type: "object", properties: { ...WORKSPACE_ID, preview_id: { type: "string" } }, required: ["workspace_id", "preview_id"] },
+    call: async (context, args) =>
+      answer(
+        await deletePreviewApi(asCall(context, { method: "DELETE" }), id(args), typeof args.preview_id === "string" ? args.preview_id : ""),
+      ),
   },
 ];
 

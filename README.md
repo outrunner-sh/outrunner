@@ -128,11 +128,23 @@ Mission exactly once, and it writes to you only when it needs a decision or a
 pull request is ready. Start one with `+` next to **Missions** in the sidebar.
 See [`docs/missions.md`](docs/missions.md).
 
+## Previews
+
+A **preview** is a stable link to a server running on a session's box,
+`https://<slug>.<RUNTIME_PREVIEW_DOMAIN>/`, that can be shared: **login**
+lets in signed-in members of the org who can see the repository, **public**
+anyone with the link. The custom server (`server.ts`) signs visitors in and
+proxies pages, assets and WebSockets to the box; deleting a preview revokes
+its link within seconds. Made from the session's Environment panel, the API
+or MCP, or by the agent itself. See [`docs/previews.md`](docs/previews.md),
+threat model included.
+
 ## Docs
 
 - API — [`docs/api.md`](docs/api.md)
 - Missions and Runners — [`docs/missions.md`](docs/missions.md)
 - Doppler and Infisical secret sync — [`docs/secret-sync.md`](docs/secret-sync.md)
+- Previews, and who can reach what through one — [`docs/previews.md`](docs/previews.md)
 - Architecture — [`docs/architecture/runtime-v1-plan.md`](docs/architecture/runtime-v1-plan.md)
 - Agent & protocol — [`runtime-agent.md`](docs/architecture/runtime-agent.md), [`protocol.md`](docs/architecture/protocol.md)
 - Validation report — [`spike4-runtime-report.md`](docs/architecture/spike4-runtime-report.md)

@@ -242,6 +242,13 @@ export class NeevBackend implements SandboxBackend {
         controlHeaders: {},
         wsBaseUrl: neevRelayBaseUrl(sandbox.id, port, conn.apiKey),
       }),
+      // The same tunnel reaches any port, straight to it: the server there
+      // can be told the preview's own host.
+      previewTarget: async (port) => ({
+        baseUrl: await neevTunnel(sandbox.id, port, conn.connectUrl),
+        headers: {},
+        hostHeader: "preview",
+      }),
     };
   }
 }

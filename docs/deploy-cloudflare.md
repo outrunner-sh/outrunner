@@ -179,6 +179,28 @@ lookup key (`pro_monthly`, `pro_yearly`, `max_monthly`, `max_yearly`).
 4. **Supabase → Auth → URL Configuration** — Site URL `https://app.outrunner.sh`,
    and it in the redirect allowlist. GitHub OAuth callback stays Supabase's.
 
+## Previews
+
+Previews ([docs/previews.md](previews.md)) are served by the same container
+at `https://<slug>.<preview domain>`. The domain must be a site of its own:
+not `outrunner.sh` or anything under it (the app refuses one that is, and
+previews stay off).
+
+1. **Zone**: add the preview domain (say `outrunner-preview.com`) to this
+   account. Universal SSL covers `*.outrunner-preview.com`; a deeper
+   wildcard (`*.preview.example.com`) needs Advanced Certificate Manager.
+2. **DNS**: a proxied wildcard record, `*` → AAAA `100::` (the Worker
+   answers; the address is never reached).
+3. **Route**: in `wrangler.jsonc`'s `routes`,
+   `{ "pattern": "*.outrunner-preview.com/*", "zone_name": "outrunner-preview.com" }`.
+   A custom domain can't be a wildcard, hence a zone route.
+4. **Variable**: `RUNTIME_PREVIEW_DOMAIN=outrunner-preview.com` (under
+   `vars` in `wrangler.jsonc`, or `wrangler secret put`; it isn't secret).
+   The Worker passes it to the container and names each preview's host to
+   it (`cloudflare/preview-host.ts`).
+5. Later, submit the domain to the [Public Suffix List](https://publicsuffix.org)
+   so browsers keep each preview's cookies from the others.
+
 ## Deploy
 
 ```bash

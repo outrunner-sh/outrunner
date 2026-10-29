@@ -13,6 +13,7 @@
 import { Container, getContainer } from "@cloudflare/containers";
 
 import { isNotRunningError, mayBeContainerError, waitFor } from "./container-ready";
+import { namePreviewHost } from "./preview-host";
 
 interface Env {
   CONTROL_PLANE: DurableObjectNamespace<OutrunnerControlPlane>;
@@ -93,6 +94,13 @@ interface Env {
   NEEV_PROJECT_ID?: string;
   /** Optional; the app defaults to sb-ubuntu-26-04-dev. */
   NEEV_SANDBOX_TEMPLATE?: string;
+  /**
+   * Previews' domain (lib/previews/host.ts): `<slug>.<domain>` reaches a
+   * server on a session's box. A plain variable, not a secret; it needs the
+   * domain's zone in this account, a proxied wildcard DNS record and the
+   * wildcard route in wrangler.jsonc. Unset, previews are off.
+   */
+  RUNTIME_PREVIEW_DOMAIN?: string;
 }
 
 /** Where the Durable Object keeps the deploy its container was started under. */
@@ -300,6 +308,7 @@ export class OutrunnerControlPlane extends Container<Env> {
       ...(env.NEEV_ORG_ID ? { NEEV_ORG_ID: env.NEEV_ORG_ID } : {}),
       ...(env.NEEV_PROJECT_ID ? { NEEV_PROJECT_ID: env.NEEV_PROJECT_ID } : {}),
       ...(env.NEEV_SANDBOX_TEMPLATE ? { NEEV_SANDBOX_TEMPLATE: env.NEEV_SANDBOX_TEMPLATE } : {}),
+      ...(env.RUNTIME_PREVIEW_DOMAIN ? { RUNTIME_PREVIEW_DOMAIN: env.RUNTIME_PREVIEW_DOMAIN } : {}),
       ...(env.BILLING_CRON_SECRET ? { BILLING_CRON_SECRET: env.BILLING_CRON_SECRET } : {}),
       ...(env.STRIPE_SECRET_KEY ? { STRIPE_SECRET_KEY: env.STRIPE_SECRET_KEY } : {}),
       ...(env.STRIPE_WEBHOOK_SECRET ? { STRIPE_WEBHOOK_SECRET: env.STRIPE_WEBHOOK_SECRET } : {}),
@@ -346,8 +355,9 @@ const worker = {
     if (moved) return moved;
     // One logical control-plane instance; route everything to it. Provisioning
     // is elected atomically in Postgres, so sharding to multiple instances later
-    // (e.g. by project id) stays safe.
-    return getContainer(env.CONTROL_PLANE).fetch(request);
+    // (e.g. by project id) stays safe. Previews' hosts too: the container's
+    // server proxies them (lib/previews/proxy.ts), WebSockets and all.
+    return getContainer(env.CONTROL_PLANE).fetch(await namePreviewHost(request, env.RUNTIME_PREVIEW_DOMAIN, env.CREDENTIALS_ENCRYPTION_KEY));
   },
 
   /**

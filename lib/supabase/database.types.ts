@@ -1062,6 +1062,20 @@ type ApiWebhookSettingsRow = {
   updated_at: string;
 };
 
+/** A preview link (20261103150000_workspace_previews.sql). */
+type WorkspacePreviewRow = {
+  id: string;
+  slug: string;
+  workspace_id: string;
+  org_id: string;
+  port: number;
+  label: string | null;
+  mode: "login" | "public";
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type ApiWatchRow = {
   workspace_id: string;
   org_id: string;
@@ -1689,6 +1703,12 @@ export type Database = {
         Row: ApiWebhookDeliveryRow;
         Insert: Insert<ApiWebhookDeliveryRow, "scope" | "scope_id" | "event" | "url" | "payload">;
         Update: Partial<ApiWebhookDeliveryRow>;
+        Relationships: [];
+      };
+      workspace_previews: {
+        Row: WorkspacePreviewRow;
+        Insert: Insert<WorkspacePreviewRow, "slug" | "workspace_id" | "org_id" | "port">;
+        Update: Partial<WorkspacePreviewRow>;
         Relationships: [];
       };
       cli_tokens: {

@@ -19,6 +19,20 @@ export type AgentEndpoint = {
   wsBaseUrl: string;
 };
 
+/** How this server reaches a port on a box for a preview: a base URL, the
+ *  headers that get a request through the provider's proxy (its credential
+ *  among them), and whether the box's server is sent the preview's own host
+ *  (a way straight to the port) or the URL's (a provider's proxy, which
+ *  routes by it). */
+export type PreviewTarget = {
+  baseUrl: string;
+  headers: Record<string, string>;
+  hostHeader: "preview" | "upstream";
+  /** Ends the way in at once, where its credential can be (a Daytona link
+   *  signed for the port): for a preview deleted or made sign-in only. */
+  revoke?: () => Promise<void>;
+};
+
 /** One running sandbox. */
 export interface SandboxBox {
   readonly id: string;
@@ -35,6 +49,10 @@ export interface SandboxBox {
   browserUrl?(port: number, ttlSeconds: number): Promise<string>;
   /** Its desktop, where the provider has one (Daytona). Absent elsewhere. */
   readonly desktop?: BoxDesktop;
+  /** Where this server reaches the box's `port` for a preview it proxies
+   *  (lib/previews/proxy.ts): never handed to a browser. Absent where the
+   *  provider has no way in. */
+  previewTarget?(port: number): Promise<PreviewTarget>;
   /** The vCPUs it runs with, where the provider says: a resumed box keeps
    *  the size it was made at, whatever the user's setting is now. */
   readonly cpu?: number;
