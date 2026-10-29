@@ -46,8 +46,9 @@ export type Provider = {
   usageUrl?: string;
   check: KeyCheck;
   /** The models the menu offers on the user's key, by the provider's own
-   *  names: a few good ones, with any other a custom id away. */
-  models: { id: string; label: string }[];
+   *  names: a few good ones, with any other a custom id away. Each says
+   *  whether it can see images (SessionModel.supportsImages). */
+  models: { id: string; label: string; supportsImages: boolean }[];
 };
 
 /** Every provider in providers.json, and OpenAI, by id: one missing here
@@ -67,11 +68,11 @@ export const PROVIDERS: Record<KeyProviderId, Provider> = {
     // (lib/providers/check.ts).
     check: { url: "https://openrouter.ai/api/v1/key", auth: "bearer" },
     models: [
-      { id: "z-ai/glm-5.3", label: "GLM 5.3" },
-      { id: "moonshotai/kimi-k3", label: "Kimi K3" },
-      { id: "deepseek/deepseek-v4-pro", label: "DeepSeek V4 Pro" },
-      { id: "anthropic/claude-sonnet-5.5", label: "Claude Sonnet 5.5" },
-      { id: "anthropic/claude-opus-5.5", label: "Claude Opus 5.5" },
+      { id: "z-ai/glm-5.3", label: "GLM 5.3", supportsImages: false },
+      { id: "moonshotai/kimi-k3", label: "Kimi K3", supportsImages: true },
+      { id: "deepseek/deepseek-v4-pro", label: "DeepSeek V4 Pro", supportsImages: false },
+      { id: "anthropic/claude-sonnet-5.5", label: "Claude Sonnet 5.5", supportsImages: true },
+      { id: "anthropic/claude-opus-5.5", label: "Claude Opus 5.5", supportsImages: true },
     ],
   },
   anthropic: {
@@ -86,9 +87,9 @@ export const PROVIDERS: Record<KeyProviderId, Provider> = {
     usageUrl: "https://platform.claude.com/usage",
     check: { url: "https://api.anthropic.com/v1/models", auth: "x-api-key", headers: { "anthropic-version": "2023-06-01" } },
     models: [
-      { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
-      { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
-      { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
+      { id: "claude-opus-5-5", label: "Claude Opus 5.5", supportsImages: true },
+      { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", supportsImages: true },
+      { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", supportsImages: true },
     ],
   },
   zai: {
@@ -103,8 +104,8 @@ export const PROVIDERS: Record<KeyProviderId, Provider> = {
     // Not the Anthropic-compatible path: its models list answers 200 to any key.
     check: { url: "https://api.z.ai/api/paas/v4/models", auth: "bearer" },
     models: [
-      { id: "glm-5.3", label: "GLM 5.3" },
-      { id: "glm-5.3-flash", label: "GLM 5.3 Flash" },
+      { id: "glm-5.3", label: "GLM 5.3", supportsImages: false },
+      { id: "glm-5.3-flash", label: "GLM 5.3 Flash", supportsImages: true },
     ],
   },
   moonshot: {
@@ -117,8 +118,8 @@ export const PROVIDERS: Record<KeyProviderId, Provider> = {
     keysPage: "Kimi platform → API Keys",
     check: { url: "https://api.moonshot.ai/v1/models", auth: "bearer" },
     models: [
-      { id: "kimi-k3", label: "Kimi K3" },
-      { id: "kimi-k2.6", label: "Kimi K2.6" },
+      { id: "kimi-k3", label: "Kimi K3", supportsImages: true },
+      { id: "kimi-k2.6", label: "Kimi K2.6", supportsImages: true },
     ],
   },
   deepseek: {
@@ -132,8 +133,8 @@ export const PROVIDERS: Record<KeyProviderId, Provider> = {
     usageUrl: "https://platform.deepseek.com/usage",
     check: { url: "https://api.deepseek.com/models", auth: "bearer" },
     models: [
-      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
-      { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", supportsImages: false },
+      { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", supportsImages: false },
     ],
   },
   openai: {
@@ -152,10 +153,10 @@ export const PROVIDERS: Record<KeyProviderId, Provider> = {
     check: { url: "https://api.openai.com/v1/models", auth: "bearer" },
     // Codex's models on an API key (codex-cli 0.146).
     models: [
-      { id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
-      { id: "gpt-6-sol", label: "GPT-6 Sol" },
-      { id: "gpt-6-luna", label: "GPT-6 Luna" },
-      { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+      { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", supportsImages: true },
+      { id: "gpt-6-sol", label: "GPT-6 Sol", supportsImages: true },
+      { id: "gpt-6-luna", label: "GPT-6 Luna", supportsImages: true },
+      { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", supportsImages: true },
     ],
   },
 };

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
+import type { AgentId } from "@/lib/agents/registry";
 import { LocalAgentAuthError, signInLocalAgent } from "@/lib/desktop/local-agent-auth";
 import {
   localAgentRequest,
@@ -95,6 +96,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     pickedEffort: Effort | null = null,
     /** The triage item it is started from: marked in progress on it. */
     workItemId?: string,
+    /** The agent to run `model` in, where it isn't the model's default (one
+     *  that runs it: agentOf). */
+    agent?: AgentId,
   ): Promise<boolean> {
     if (!selected) return Promise.resolve(false);
     const effort = startingEffort(model, pickedEffort);
@@ -118,6 +122,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
             ...(model && { provider: model.provider, model: model.id }),
             ...(effort && { effort }),
             ...(workItemId && { workItemId }),
+            ...(model && agent && { agent }),
           }),
         });
       } catch {

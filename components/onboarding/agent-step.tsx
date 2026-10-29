@@ -6,11 +6,13 @@ import { type ComponentType, useState } from "react";
 import { AgentIcon, ClaudeIcon } from "@/components/brand-icons";
 import { ClaudeConnection } from "@/components/claude-connection";
 import { ClaudeFromTerminal } from "@/components/claude-from-terminal";
+import { DashedCard, DashedPanel, DashedRule } from "@/components/onboarding/dashed";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { SecretForm } from "@/components/ui/secret-form";
 import { freeModelsOffer } from "@/lib/onboarding/rules";
 import type { AgentPick, AgentStatus, OnboardingEnv } from "@/lib/onboarding/types";
 import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
+import { cn } from "@/lib/utils";
 
 type Agent = "claude" | "codex";
 type Method = "subscription" | "api-key" | "outrunner";
@@ -20,6 +22,7 @@ type Method = "subscription" | "api-key" | "outrunner";
 type Page = { at: "agents" } | { at: "methods"; agent: Agent } | { at: "connect"; agent: Agent; method: Method };
 
 const AGENT_NAMES: Record<Agent, string> = { claude: "Claude Code", codex: "OpenAI Codex" };
+const AGENT_MAKERS: Record<Agent, string> = { claude: "Anthropic", codex: "OpenAI" };
 
 const NO_SUBSCRIPTION: ClaudeTokenMeta = { connected: false, last4: null, updatedAt: null };
 
@@ -79,18 +82,14 @@ export function AgentStep({
   if (page.at === "agents") {
     return (
       <Page title="Choose a coding agent">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {(["claude", "codex"] as const).map((agent) => (
-            <button
+            <AgentCard
               key={agent}
-              type="button"
+              agent={agent}
+              done={agent === "claude" ? status.claude.subscription || status.claude.apiKey : status.codex.apiKey}
               onClick={() => setPage({ at: "methods", agent })}
-              className="border-border hover:border-foreground/40 bg-background group flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left text-sm transition-colors"
-            >
-              <AgentIcon agent={agent} className="size-5 shrink-0" />
-              <span className="flex-1">{AGENT_NAMES[agent]}</span>
-              <ChevronRight className="text-muted-foreground group-hover:text-foreground size-4" />
-            </button>
+            />
           ))}
         </div>
       </Page>
@@ -105,31 +104,15 @@ export function AgentStep({
   );
 
   if (page.at === "methods") {
-    const methods: { id: Method; label: string; icon: ComponentType<{ className?: string }>; note?: string }[] = [
-      ...(agent === "claude" ? [{ id: "subscription" as const, label: "Use a subscription", icon: ClaudeIcon }] : []),
-      { id: "api-key", label: agent === "claude" ? "Anthropic API key" : "OpenAI API key", icon: KeyRound },
-      ...(env.outrunnerModels
-        ? [
-            {
-              id: "outrunner" as const,
-              label: "Outrunner's models",
-              icon: Sparkles,
-              note: freeModelsOffer(),
-            },
-          ]
-        : []),
-    ];
     return (
       <Page title={title} onBack={() => setPage({ at: "agents" })}>
-        <div className="space-y-2">
-          {methods.map((method) => (
-            <Row
-              key={method.id}
-              icon={method.icon}
-              label={method.label}
-              note={method.note}
-              done={connected(agent, method.id, status)}
-              onClick={() => setPage({ at: "connect", agent, method: method.id })}
+        <div className="space-y-3">
+          {methodsOf(agent, env.outrunnerModels).map((method) => (
+            <MethodCard
+              key={method}
+              info={methodInfo(agent, method)}
+              done={connected(agent, method, status)}
+              onClick={() => setPage({ at: "connect", agent, method })}
             />
           ))}
         </div>
@@ -140,55 +123,10 @@ export function AgentStep({
   const { method } = page;
   const isConnected = connected(agent, method, status);
   return (
-    <Page title={title} onBack={() => setPage({ at: "methods", agent })}>
-      {method === "subscription" &&
-        (isConnected ? (
-          <Connected detail={status.claude.last4 ? `Subscription · …${status.claude.last4}` : "Subscription"} />
-        ) : env.desktop ? (
-          <ClaudeConnection
-            meta={NO_SUBSCRIPTION}
-            onChange={(meta) => {
-              void env.agentStatus().then(onStatus, () => {});
-              if (meta.connected) void finish("claude", "subscription");
-            }}
-          />
-        ) : (
-          <ClaudeFromTerminal
-            before={NO_SUBSCRIPTION}
-            check={() => env.agentStatus().then(heard)}
-            saveToken={(token) => env.saveClaudeToken(token).then(heard)}
-            onLanded={() => void finish("claude", "subscription")}
-            next="This page moves on once it's connected."
-          />
-        ))}
-      {method === "api-key" &&
-        (isConnected ? (
-          <Connected detail={agent === "claude" ? "Anthropic API key" : "OpenAI API key"} />
-        ) : (
-          <div className="space-y-3">
-            <p className="text-muted-foreground text-sm">
-              {agent === "claude" ? "Sessions run Claude Code on your Anthropic API key." : "Sessions run Codex on your OpenAI API key."}
-            </p>
-            <SecretForm
-              placeholder={agent === "claude" ? "sk-ant-api…" : "sk-…"}
-              onSave={(key) => env.saveApiKey(agent === "claude" ? "anthropic" : "openai", key).then(onStatus)}
-            />
-          </div>
-        ))}
-      {method === "outrunner" && (
-        <div className="border-border/60 space-y-1 rounded-xl border p-4">
-          <p className="flex items-center gap-2 text-sm font-medium">
-            <Sparkles className="size-4" /> {freeModelsOffer()}
-          </p>
-          <p className="text-muted-foreground text-sm">
-            {`Sessions run ${AGENT_NAMES[agent]} on Outrunner's models (GLM, Kimi, DeepSeek), nothing to connect. `}
-            Add your own {AGENT_NAMES[agent]} any time in Settings → Providers.
-          </p>
-        </div>
-      )}
-
-      {error && <p role="alert" className="text-destructive text-sm">{error}</p>}
-      <div className="flex justify-end">
+    <Page
+      title={title}
+      onBack={() => setPage({ at: "methods", agent })}
+      action={
         <LoadingButton
           size="default"
           status={busy ? "pending" : "idle"}
@@ -196,53 +134,182 @@ export function AgentStep({
           onClick={() => void finish(agent, method)}
           labels={{ idle: "Continue", pending: "Saving" }}
         />
-      </div>
+      }
+    >
+      <DashedPanel>
+        <div className="flex items-center gap-4 px-5 py-4">
+          <MethodHeading info={methodInfo(agent, method)} />
+        </div>
+        <DashedRule />
+        <div className="px-5 py-5">
+          {method === "subscription" &&
+            (isConnected ? (
+              <Connected detail={status.claude.last4 ? `Subscription · …${status.claude.last4}` : "Subscription"} />
+            ) : env.desktop ? (
+              <ClaudeConnection
+                meta={NO_SUBSCRIPTION}
+                onChange={(meta) => {
+                  void env.agentStatus().then(onStatus, () => {});
+                  if (meta.connected) void finish("claude", "subscription");
+                }}
+              />
+            ) : (
+              <ClaudeFromTerminal
+                before={NO_SUBSCRIPTION}
+                check={() => env.agentStatus().then(heard)}
+                saveToken={(token) => env.saveClaudeToken(token).then(heard)}
+                onLanded={() => void finish("claude", "subscription")}
+                next="This page moves on once it's connected."
+              />
+            ))}
+          {method === "api-key" &&
+            (isConnected ? (
+              <Connected detail={`${AGENT_MAKERS[agent]} API key`} />
+            ) : (
+              <div className="space-y-3">
+                <p className="text-muted-foreground text-sm">
+                  {`Sessions run ${AGENT_NAMES[agent]} on your ${AGENT_MAKERS[agent]} API key.`}
+                </p>
+                <SecretForm
+                  placeholder={agent === "claude" ? "sk-ant-api…" : "sk-…"}
+                  onSave={(key) => env.saveApiKey(agent === "claude" ? "anthropic" : "openai", key).then(onStatus)}
+                />
+              </div>
+            ))}
+          {method === "outrunner" && (
+            <p className="text-muted-foreground text-sm">
+              {`Sessions run ${AGENT_NAMES[agent]} on these from the start. `}
+              Add your own {AGENT_NAMES[agent]} any time in Settings → Providers.
+            </p>
+          )}
+        </div>
+      </DashedPanel>
+      {error && <p role="alert" className="text-destructive text-sm">{error}</p>}
     </Page>
   );
 }
 
-function Page({ title, onBack, children }: { title: React.ReactNode; onBack?: () => void; children: React.ReactNode }) {
+function Page({
+  title,
+  onBack,
+  action,
+  children,
+}: {
+  title: React.ReactNode;
+  onBack?: () => void;
+  /** What moves the step on, across from Back. */
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <section className="space-y-6">
       <h1 className="text-xl font-semibold">{title}</h1>
       {children}
-      {onBack && (
-        <button type="button" onClick={onBack} className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-sm">
-          <ArrowLeft className="size-4" /> Back
-        </button>
+      {(onBack || action) && (
+        <div className="flex items-center justify-between">
+          {onBack ? (
+            <button type="button" onClick={onBack} className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-sm">
+              <ArrowLeft className="size-4" /> Back
+            </button>
+          ) : (
+            <span />
+          )}
+          {action}
+        </div>
       )}
     </section>
   );
 }
 
-/** One choice, as a row that goes on to its page. */
-function Row({
-  icon: Icon,
-  label,
-  note,
-  done,
-  onClick,
-}: {
-  icon: ComponentType<{ className?: string }>;
-  label: string;
-  note?: string;
-  done?: boolean;
-  onClick: () => void;
-}) {
+/** An icon in a small framed tile, as the cards lead with. */
+function IconTile({ size, children }: { size: "sm" | "lg"; children: React.ReactNode }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="border-border/60 bg-card/30 hover:bg-accent/30 flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm"
+    <span
+      className={cn("border-border/60 bg-muted/30 flex shrink-0 items-center justify-center rounded-lg border", size === "lg" ? "size-11" : "size-9")}
     >
-      <Icon className="size-4 shrink-0" />
-      <span className="flex-1">
-        {label}
-        {note && <span className="text-amber-500 ml-2 text-xs">{note}</span>}
+      {children}
+    </span>
+  );
+}
+
+/** Where a card ends: connected, or an arrow on. */
+function CardEnd({ done }: { done?: boolean }) {
+  return done ? (
+    <span className="text-amber-500 flex shrink-0 items-center gap-1 text-xs">
+      <Check className="size-3" strokeWidth={3} /> Connected
+    </span>
+  ) : (
+    <ChevronRight className="text-muted-foreground group-hover:text-foreground size-4 shrink-0 transition-transform group-hover:translate-x-0.5" />
+  );
+}
+
+/** One agent to choose, going on to its ways to connect. */
+function AgentCard({ agent, done, onClick }: { agent: Agent; done: boolean; onClick: () => void }) {
+  return (
+    <DashedCard onClick={onClick} className="flex min-h-40 flex-col justify-between p-5">
+      <span className="flex items-start justify-between">
+        <IconTile size="lg">
+          <AgentIcon agent={agent} className="size-6" />
+        </IconTile>
+        <CardEnd done={done} />
       </span>
-      {done && <span className="text-amber-500 text-xs">Connected</span>}
-      <ChevronRight className="text-muted-foreground size-4" />
-    </button>
+      <span className="space-y-0.5">
+        <span className="block text-base font-medium">{AGENT_NAMES[agent]}</span>
+        <span className="text-muted-foreground block text-xs">{AGENT_MAKERS[agent]}&apos;s coding agent</span>
+      </span>
+    </DashedCard>
+  );
+}
+
+type MethodInfo = { label: string; detail: string; icon: ComponentType<{ className?: string }>; note?: string };
+
+/** The ways `agent` can connect, in the order they're offered. */
+function methodsOf(agent: Agent, outrunnerModels: boolean): Method[] {
+  return [...(agent === "claude" ? (["subscription"] as const) : []), "api-key", ...(outrunnerModels ? (["outrunner"] as const) : [])];
+}
+
+/** How a way to connect is named and told, on its card and its page. */
+function methodInfo(agent: Agent, method: Method): MethodInfo {
+  const maker = AGENT_MAKERS[agent];
+  switch (method) {
+    case "subscription":
+      return { label: "Use a subscription", detail: "Sign in with your Claude Pro or Max plan", icon: ClaudeIcon };
+    case "api-key":
+      return { label: `${maker} API key`, detail: `Pay as you go on your own ${maker} key`, icon: KeyRound };
+    case "outrunner":
+      return { label: "Outrunner's models", detail: "GLM, Kimi and DeepSeek, nothing to connect", icon: Sparkles, note: freeModelsOffer() };
+  }
+}
+
+/** A way to connect, as its icon, name, and what it is. */
+function MethodHeading({ info: { icon: Icon, label, detail, note } }: { info: MethodInfo }) {
+  return (
+    <>
+      <IconTile size="sm">
+        <Icon className="size-4" />
+      </IconTile>
+      <span className="min-w-0 flex-1 space-y-0.5">
+        <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
+          {label}
+          {note && (
+            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-normal text-amber-500">
+              {note}
+            </span>
+          )}
+        </span>
+        <span className="text-muted-foreground block text-xs">{detail}</span>
+      </span>
+    </>
+  );
+}
+
+/** One way to connect an agent, going on to its page. */
+function MethodCard({ info, done, onClick }: { info: MethodInfo; done?: boolean; onClick: () => void }) {
+  return (
+    <DashedCard onClick={onClick} className="flex items-center gap-4 px-5 py-4">
+      <MethodHeading info={info} />
+      <CardEnd done={done} />
+    </DashedCard>
   );
 }
 

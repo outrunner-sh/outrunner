@@ -1,8 +1,9 @@
 "use client";
 
-import { ArrowUp, Check, CircleAlert, FileText, Hammer, ListChecks, MessageSquareText, Plus, Search, Settings2, Square, X } from "lucide-react";
+import { ArrowUp, Check, Hammer, ImagePlus, ListChecks, MessageSquareText, Plus, Search, Settings2, Square, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import {
   DropdownMenu,
@@ -12,10 +13,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ComposerAttachment } from "@/components/attachment-thumbnails";
 import { Spinner } from "@/components/ui/loaders";
 import { InlineMessage } from "@/components/ui/notice";
 import { useAttachments } from "@/hooks/use-attachments";
-import { attachNotice, restoreDraft } from "@/lib/runtime/attachments";
+import { attachNotice, isImage, restoreDraft } from "@/lib/runtime/attachments";
 import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
 import { CustomModelDialog } from "@/components/custom-model-dialog";
 import {
@@ -39,6 +41,7 @@ import {
   type Effort,
   EFFORT_LABELS,
   EFFORTS,
+  imageModelFor,
   matchModel,
   modelLabel,
   type ModelGroup,
@@ -187,11 +190,10 @@ export function SessionComposer({
     if (prefill && !value) setValue(prefill);
   }
   const [sending, setSending] = useState(false);
+  // Files dragged over the page: anywhere on it is the drop zone
+  // (usePageDrop), and an overlay says so.
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  // dragenter/dragleave fire for every child the pointer crosses; the outline
-  // follows the count, so it does not flicker on the way across.
-  const dragDepth = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const attachments = useAttachments();
@@ -241,10 +243,16 @@ export function SessionComposer({
 
   // Named for the agent whose own model it is (Claude Code's, Codex's); one
   // on a key, or not known, is just "Message".
-  const provider = modelChoice
-    ? matchModel(modelChoice.groups, model, modelChoice.preferredProvider)?.provider
-    : undefined;
+  const shownModel = modelChoice ? matchModel(modelChoice.groups, model, modelChoice.preferredProvider) : undefined;
+  const provider = shownModel?.provider;
   const messageLabel = provider === "claude" || provider === "codex" ? `Message ${AGENTS[provider].label}` : "Message";
+
+  // Images staged for a model that can't see them would fail the turn (the
+  // provider refuses the request): said before sending, with a model that
+  // can a click away, and the send held until one or the other.
+  const blindModel =
+    shownModel?.supportsImages === false && attachments.items.some((item) => isImage(item.contentType)) ? shownModel : null;
+  const seeingModel = blindModel && modelChoice ? imageModelFor(modelChoice.groups, blindModel) : null;
 
   // A prompt of only attachments is legitimate — "here's a screenshot" — and
   // so is one of only comments on the diff.
@@ -262,8 +270,10 @@ export function SessionComposer({
     setNotice(attachNotice({ allowed: true, canSend: true, skipped: attachments.add(files) }));
   }
 
+  usePageDrop(allowAttachments, setDragging, addFiles, textareaRef);
+
   function submit() {
-    if (!canSend || sending || !hasSomethingToSend || attachments.busy) return;
+    if (!canSend || sending || !hasSomethingToSend || attachments.busy || blindModel) return;
     let text = value.trim();
     let mode = modeChoice?.mode;
     const command = composerCommand(text);
@@ -289,8 +299,11 @@ export function SessionComposer({
       text = command.prompt;
     }
     // What this send carries, kept apart from whatever is typed or attached
-    // while it is in flight: only these are settled when it lands.
+    // while it is in flight. The box empties at once, files and all: the
+    // message shows them now. A failed send gives its text and files back,
+    // ahead of anything typed or attached since, so nothing is lost.
     const sentIds = attachments.readyIds;
+    const taken = attachments.forget(sentIds);
     const result = onSend(text, sentIds, mode);
     setValue("");
     setRecall(null);
@@ -299,20 +312,17 @@ export function SessionComposer({
     if (el) el.style.height = "auto";
     if (!result) {
       remember(text);
-      attachments.forget(sentIds);
       return;
     }
-    // The sent files stay on show until the send lands. A failed send gives
-    // its text back, ahead of anything typed since, so nothing is lost.
     setSending(true);
     void result
       .then((landed) => {
         if (landed) {
           // Recalled once it went: one that didn't is back in the box.
           remember(text);
-          attachments.forget(sentIds);
         } else {
           setValue((current) => restoreDraft(text, current));
+          attachments.restore(taken);
           textareaRef.current?.focus();
         }
       })
@@ -377,32 +387,17 @@ export function SessionComposer({
         event.preventDefault();
         submit();
       }}
-      onDragEnter={(event) => {
-        if (!event.dataTransfer.types.includes("Files")) return;
-        dragDepth.current += 1;
-        if (canSend && allowAttachments) setDragging(true);
-      }}
-      onDragOver={(event) => {
-        // A file dropped where it cannot be attached must still be caught:
-        // left to the browser, the drop navigates the page to the file and
-        // away from the session. Text drags are left alone.
-        if (!event.dataTransfer.types.includes("Files")) return;
-        event.preventDefault();
-      }}
-      onDragLeave={(event) => {
-        if (!event.dataTransfer.types.includes("Files")) return;
-        dragDepth.current = Math.max(0, dragDepth.current - 1);
-        if (dragDepth.current === 0) setDragging(false);
-      }}
-      onDrop={(event) => {
-        if (!event.dataTransfer.types.includes("Files")) return;
-        event.preventDefault();
-        dragDepth.current = 0;
-        setDragging(false);
-        addFiles(Array.from(event.dataTransfer.files));
-      }}
-      style={dragging ? { outline: "1px dashed currentColor", outlineOffset: 4 } : undefined}
     >
+      {dragging &&
+        createPortal(
+          <div className="page-drop-overlay" aria-hidden>
+            <div>
+              <ImagePlus />
+              Drop to attach
+            </div>
+          </div>,
+          document.body,
+        )}
       {notice && (
         <p role="status" className="studio-composer-notice">
           {notice}
@@ -454,43 +449,39 @@ export function SessionComposer({
         </ul>
       )}
       {attachments.items.length > 0 && (
-        <ul className="flex flex-wrap gap-2 px-1 pb-2">
+        <ul className="attachment-tiles" aria-label="Attachments">
           {attachments.items.map((item) => (
-            <li
-              key={item.key}
-              className={cn(
-                "bg-background/60 flex max-w-52 items-center gap-2 rounded-md border px-2 py-1.5 text-xs",
-                item.status === "error" ? "border-destructive/50" : "border-border",
-              )}
-              title={item.error ?? item.filename}
-            >
-              {item.status === "error" ? (
-                <CircleAlert className="text-destructive size-4 shrink-0" />
-              ) : item.previewUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={item.previewUrl}
-                  alt=""
-                  className="size-6 shrink-0 rounded object-cover"
-                />
-              ) : (
-                <FileText className="text-muted-foreground size-4 shrink-0" />
-              )}
-              <span className="truncate">{item.filename}</span>
-              {item.status === "uploading" && (
-                <Spinner className="size-3 shrink-0" />
-              )}
-              <button
-                type="button"
-                onClick={() => attachments.remove(item.key)}
-                aria-label={`Remove ${item.filename}`}
-                className="text-muted-foreground hover:text-foreground shrink-0"
-              >
-                <X className="size-3" />
-              </button>
-            </li>
+            <ComposerAttachment key={item.key} item={item} onRemove={() => attachments.remove(item.key)} />
           ))}
         </ul>
+      )}
+      {blindModel && (
+        <InlineMessage
+          tone="warning"
+          className="studio-composer-message"
+          actions={[
+            ...(seeingModel && modelChoice
+              ? [
+                  {
+                    label: `Switch to ${seeingModel.label}`,
+                    primary: true,
+                    disabled: modelChoice.switching || modelChoice.disabledReason !== null,
+                    onClick: () => modelChoice.onChange(seeingModel, effortOnPick(modelChoice.loadout, seeingModel)),
+                  },
+                ]
+              : []),
+            {
+              label: "Remove images",
+              onClick: () => {
+                for (const item of attachments.items) if (isImage(item.contentType)) attachments.remove(item.key);
+              },
+            },
+          ]}
+        >
+          {blindModel.label} can&apos;t see images.{" "}
+          {seeingModel ? `Switch to ${seeingModel.label} to send them.` : "Switch to a model that can to send them."}
+          {modelChoice?.disabledReason && seeingModel ? ` (${modelChoice.disabledReason})` : ""}
+        </InlineMessage>
       )}
       {attachments.items
         .filter((item) => item.status === "error")
@@ -688,8 +679,9 @@ export function SessionComposer({
           <button
             type="submit"
             className="studio-composer-send"
-            disabled={!canSend || sending || !hasSomethingToSend || attachments.busy}
+            disabled={!canSend || sending || !hasSomethingToSend || attachments.busy || blindModel !== null}
             aria-label="Send"
+            title={blindModel ? `${blindModel.label} can't see images` : undefined}
           >
             <ArrowUp />
           </button>
@@ -933,4 +925,84 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
       />
     </>
   );
+}
+
+/** The composers that take files dropped or pasted on the page, the newest
+ *  last: only it does, so a page with two takes each file once. */
+const dropTargets: symbol[] = [];
+
+/**
+ * The whole page as the composer's drop zone: files dragged anywhere on it
+ * light an overlay (`setDragging`) and land in the composer (`addFiles`)
+ * when dropped. A drop is always caught, even where nothing can take it:
+ * left to the browser, it opens the file in a tab, away from the session.
+ * Files pasted with the focus outside any field (on the conversation, say)
+ * are taken too; the box's own paste is its onPaste's.
+ */
+function usePageDrop(
+  enabled: boolean,
+  setDragging: (dragging: boolean) => void,
+  addFiles: (files: File[]) => void,
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>,
+) {
+  // The latest, for listeners added once.
+  const add = useRef(addFiles);
+  useEffect(() => {
+    add.current = addFiles;
+  });
+  useEffect(() => {
+    if (!enabled) return;
+    const me = Symbol("composer");
+    dropTargets.push(me);
+    const mine = () => dropTargets[dropTargets.length - 1] === me;
+    const hasFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
+    // dragenter/dragleave fire for every element the pointer crosses: the
+    // overlay follows the count, so it doesn't flicker on the way across.
+    let depth = 0;
+    const enter = (event: DragEvent) => {
+      if (!hasFiles(event) || !mine()) return;
+      depth += 1;
+      setDragging(true);
+    };
+    const over = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer && mine()) event.dataTransfer.dropEffect = "copy";
+    };
+    const leave = (event: DragEvent) => {
+      if (!hasFiles(event) || !mine()) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragging(false);
+    };
+    const drop = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      depth = 0;
+      setDragging(false);
+      if (mine()) add.current(Array.from(event.dataTransfer?.files ?? []));
+    };
+    const paste = (event: ClipboardEvent) => {
+      if (!mine() || event.target === textareaRef.current) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target?.closest("input, textarea, [contenteditable=''], [contenteditable='true']")) return;
+      const files = Array.from(event.clipboardData?.files ?? []);
+      if (files.length === 0) return;
+      event.preventDefault();
+      add.current(files);
+    };
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragover", over);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("drop", drop);
+    window.addEventListener("paste", paste);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("drop", drop);
+      window.removeEventListener("paste", paste);
+      dropTargets.splice(dropTargets.indexOf(me), 1);
+      setDragging(false);
+    };
+  }, [enabled, setDragging, textareaRef]);
 }

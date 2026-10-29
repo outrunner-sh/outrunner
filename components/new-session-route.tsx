@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { useAppData } from "@/components/app-data";
 import { NewSessionCreator } from "@/components/new-session-creator";
 import { useServerAnswer } from "@/components/server-answer";
+import { parseAgentPick, startingPick } from "@/lib/onboarding/rules";
 import type { Project } from "@/lib/runtime/types";
 import { lastSessionProjectId } from "@/lib/session/initial-project";
 import { useNewSessionCount } from "@/lib/session/new-session-reset";
@@ -35,7 +36,8 @@ export function HomeSessionRoute() {
  * session is in it, and otherwise the server's answer (`server`, a Project)
  * adds it, rather than the form falling back to some other repository.
  * `?pick=repo` (the sidebar's add-project button) opens the repository picker;
- * `?focus=composer` (Get started) focuses the composer.
+ * `?focus=composer` (Get started) focuses the composer. `?start=` (the end of
+ * onboarding) starts it on the agent picked there.
  */
 export function NewSessionRoute({ server }: { server: React.ReactNode }) {
   const data = useAppData();
@@ -44,6 +46,7 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
   const folder = search.get("folder") ?? "";
   const pick = search.get("pick") === "repo";
   const focus = search.get("focus") === "composer";
+  const start = parseAgentPick(search.get("start"));
   // Started from a triage item (its "Start session").
   const workItemId = search.get("triage") ?? undefined;
   const asked = useNewSessionCount();
@@ -53,12 +56,13 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
   // The form has taken the ask; drop it from the URL, so back or a reload
   // doesn't ask again.
   useEffect(() => {
-    if (!pick && !focus) return;
+    if (!pick && !focus && !start) return;
     const rest = new URLSearchParams(search);
     rest.delete("pick");
     rest.delete("focus");
+    rest.delete("start");
     router.replace(rest.size > 0 ? `/new?${rest}` : "/new", { scroll: false });
-  }, [pick, focus, search, router]);
+  }, [pick, focus, start, search, router]);
 
   const listed = data?.projects ?? [];
   const requested = [...(data?.hiddenProjects ?? []), ...(answered ? [answered] : [])].find((p) => p.id === project);
@@ -78,6 +82,7 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
         initialProjectId={project}
         openPicker={pick}
         focusComposer={focus}
+        initialPick={start && startingPick(start)}
         workItemId={workItemId}
         showBack
       />

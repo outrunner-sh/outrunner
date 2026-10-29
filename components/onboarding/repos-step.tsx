@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
+import { DashedPanel, DashedRule } from "@/components/onboarding/dashed";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/loaders";
 import { LoadingButton } from "@/components/ui/loading-button";
@@ -16,9 +17,9 @@ import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /**
- * Step 2: the GitHub repositories to work on, connected as projects. Those
- * already connected start ticked. At least one is needed: a session works in
- * a repository.
+ * Step 2, the last: the GitHub repositories to work on, connected as
+ * projects. Those already connected start ticked. At least one is needed: a
+ * session works in a repository. Done, onboarding ends (`onDone`).
  *
  * They're added to the active org, from its Outrunner GitHub App, or from the
  * user's own GitHub account in an org without it. One with neither (a Google
@@ -30,8 +31,9 @@ export function ReposStep({
   onDone,
 }: {
   env: OnboardingEnv;
-  /** The projects picked, to start a first session on. */
-  onDone: (projects: Project[]) => void;
+  /** The projects picked, to start a first session on; the button stays
+   *  busy until it's done, as it leaves the page. */
+  onDone: (projects: Project[]) => Promise<void>;
 }) {
   const [list, setList] = useState<RepositoryListing[] | null>(null);
   const [picked, setPicked] = useState<Set<number>>(new Set());
@@ -141,13 +143,13 @@ export function ReposStep({
     try {
       const ids = [...picked];
       const projects = await env.connect(ids);
-      onDone(projects.filter((project) => ids.includes(project.githubRepoId)));
+      await onDone(projects.filter((project) => ids.includes(project.githubRepoId)));
+      // Still busy: the page is on its way out.
     } catch (e) {
       setError({
         message: e instanceof Error ? e.message : "Couldn't connect those repositories.",
         reconnect: e instanceof OnboardingError && e.reconnect,
       });
-    } finally {
       setBusy(false);
     }
   }
@@ -172,71 +174,79 @@ export function ReposStep({
           orgName={active.name}
         />
       ) : (
-      <>
-      <div className="relative">
-        <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search repositories" aria-label="Search repositories" className="pl-8 text-sm" />
-      </div>
-
-      <div className="border-border/60 max-h-[45vh] overflow-y-auto rounded-xl border">
-        {list === null || access === undefined ? (
-          <div className="text-muted-foreground flex items-center gap-2 px-4 py-6 text-sm">
-            <Spinner /> Reading your GitHub repositories…
-          </div>
-        ) : listError ? (
-          <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-6 text-sm">
-            <span className="text-destructive">
-              {listError.message} {listError.reconnect && <GitHubReconnectLink />}
-            </span>
-            <button type="button" onClick={retryList} className="text-foreground underline underline-offset-4">
-              Try again
-            </button>
-          </div>
-        ) : shown.length === 0 ? (
-          <p className="text-muted-foreground px-4 py-6 text-sm">
-            {query
-              ? "No repository matches that."
-              : active?.accounts.length
-                ? `The GitHub App doesn't reach any repositories on ${active.accounts.join(", ")} yet.`
-                : "No repositories on your GitHub account yet."}
-          </p>
-        ) : (
-          <ul>
-            {shown.map((repo) => {
-              const on = picked.has(repo.githubRepoId);
-              return (
-                <li key={repo.githubRepoId} className="border-border/60 border-b last:border-b-0">
-                  <button
-                    type="button"
-                    role="checkbox"
-                    aria-checked={on}
-                    onClick={() => toggle(repo.githubRepoId)}
-                    className="hover:bg-accent/30 flex w-full items-center gap-3 px-4 py-3 text-left"
-                  >
-                    <span
+      <DashedPanel>
+        <div className="relative">
+          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search repositories"
+            aria-label="Search repositories"
+            className="h-12 rounded-none rounded-t-xl border-0 bg-transparent pl-11 text-sm shadow-none focus-visible:ring-2 focus-visible:ring-inset dark:bg-transparent"
+          />
+        </div>
+        <DashedRule />
+        <div className="max-h-[45vh] overflow-y-auto p-1.5">
+          {list === null || access === undefined ? (
+            <div className="text-muted-foreground flex items-center gap-2 px-3 py-5 text-sm">
+              <Spinner /> Reading your GitHub repositories…
+            </div>
+          ) : listError ? (
+            <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-5 text-sm">
+              <span className="text-destructive">
+                {listError.message} {listError.reconnect && <GitHubReconnectLink />}
+              </span>
+              <button type="button" onClick={retryList} className="text-foreground underline underline-offset-4">
+                Try again
+              </button>
+            </div>
+          ) : shown.length === 0 ? (
+            <p className="text-muted-foreground px-3 py-5 text-sm">
+              {query
+                ? "No repository matches that."
+                : active?.accounts.length
+                  ? `The GitHub App doesn't reach any repositories on ${active.accounts.join(", ")} yet.`
+                  : "No repositories on your GitHub account yet."}
+            </p>
+          ) : (
+            <ul className="space-y-0.5">
+              {shown.map((repo) => {
+                const on = picked.has(repo.githubRepoId);
+                return (
+                  <li key={repo.githubRepoId}>
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={on}
+                      onClick={() => toggle(repo.githubRepoId)}
                       className={cn(
-                        "flex size-4 shrink-0 items-center justify-center rounded border",
-                        on ? "border-foreground bg-foreground text-background" : "border-border",
+                        "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors",
+                        on ? "bg-accent/40" : "hover:bg-accent/20",
                       )}
                     >
-                      {on && <Check className="size-3" strokeWidth={3} />}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="text-foreground/90 flex items-center gap-1.5 font-mono text-[13px]">
-                        <span className="truncate">{repo.fullName}</span>
-                        {repo.private && <Lock className="text-muted-foreground size-3 shrink-0" aria-label="Private" />}
+                      <span
+                        className={cn(
+                          "flex size-4 shrink-0 items-center justify-center rounded border transition-colors",
+                          on ? "border-foreground bg-foreground text-background" : "border-border",
+                        )}
+                      >
+                        {on && <Check className="size-3" strokeWidth={3} />}
                       </span>
-                      {repo.description && <span className="text-muted-foreground block truncate text-xs">{repo.description}</span>}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-
-      </>
+                      <span className="min-w-0 flex-1">
+                        <span className="text-foreground/90 flex items-center gap-1.5 font-mono text-[13px]">
+                          <span className="truncate">{repo.fullName}</span>
+                          {repo.private && <Lock className="text-muted-foreground size-3 shrink-0" aria-label="Private" />}
+                        </span>
+                        {repo.description && <span className="text-muted-foreground block truncate text-xs">{repo.description}</span>}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </DashedPanel>
       )}
 
       {error && (
@@ -252,7 +262,7 @@ export function ReposStep({
           status={busy ? "pending" : "idle"}
           disabled={picked.size === 0}
           onClick={() => void next()}
-          labels={{ idle: "Continue", pending: "Connecting" }}
+          labels={{ idle: "Finish", pending: "Connecting" }}
         />
       </div>
     </section>
@@ -324,7 +334,7 @@ function ConnectGitHub({
   orgName: string;
 }) {
   return (
-    <div className="border-border/60 space-y-3 rounded-xl border px-4 py-5 text-sm">
+    <DashedPanel className="space-y-3 px-5 py-5 text-sm">
       <p className="text-foreground font-medium">Connect GitHub</p>
       <p className="text-muted-foreground">
         Install the Outrunner GitHub App on your GitHub account or organization and pick the repositories it can reach.
@@ -370,7 +380,7 @@ function ConnectGitHub({
           </>
         )}
       </div>
-    </div>
+    </DashedPanel>
   );
 }
 

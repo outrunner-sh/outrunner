@@ -79,44 +79,85 @@ export function uniqueFilenames(names: string[]): string[] {
 export function attachmentFilenames(attachments: Array<{ id: string; filename: string }>): string[] {
   return uniqueFilenames(
     attachments.map((a) => {
-      const short = a.id.replace(/[^A-Za-z0-9]/g, "").slice(0, 8);
+      const short = attachmentShortId(a.id);
       const name = safeFilename(a.filename);
       return short ? `${short}-${name}` : name;
     }),
   );
 }
 
+/** The short form of an attachment's id its name on the box leads with
+ *  (attachmentFilenames): an id's first 8 letters and digits. */
+export function attachmentShortId(id: string): string {
+  return id.replace(/[^A-Za-z0-9]/g, "").slice(0, 8);
+}
+
+/** The short id a name on the box leads with, or null for a name that
+ *  doesn't lead with one (an attachment named before ids were). */
+export function shortIdOfName(name: string): string | null {
+  return /^([0-9a-f]{8})-/i.exec(name)?.[1]?.toLowerCase() ?? null;
+}
+
+/** Whether a file on the box, by its name, is an image the model can see:
+ *  the names keep their extension (safeFilename), so this reads it. */
+export function isImageName(name: string): boolean {
+  return /\.(png|jpe?g|gif|webp)$/i.test(name);
+}
+
+/** One attachment as the prompt names it: its name on the box, and whether
+ *  it's an image (else read from its extension, isImageName). */
+export type AttachedName = string | { name: string; image: boolean };
+
 /**
  * Prefix a prompt with the attachment paths so Claude knows what arrived and
  * where. Paths are relative to the worktree, which is Claude's working
  * directory, so they resolve with no further context.
  *
+ * An image is named as an `@` mention: Claude Code reads a mentioned image
+ * into the prompt it sends, so the model sees it with the words rather than
+ * only if it thinks to open the file. Other files stay plain paths, as a
+ * mention would paste a whole log into the prompt.
+ *
  * Returns the prompt unchanged when there are no attachments — an empty header
  * would just be noise in the conversation log.
  */
-export function promptWithAttachments(prompt: string, filenames: string[]): string {
-  if (filenames.length === 0) return prompt;
-  const lines = filenames.map((name) => `- ${ATTACHMENT_DIR}/${name}`);
+export function promptWithAttachments(prompt: string, files: AttachedName[]): string {
+  if (files.length === 0) return prompt;
+  const lines = files.map((file) => {
+    const { name, image } = typeof file === "string" ? { name: file, image: isImageName(file) } : file;
+    return `- ${image ? "@" : ""}${ATTACHMENT_DIR}/${name}`;
+  });
   const header =
-    filenames.length === 1
+    files.length === 1
       ? "I've attached a file:"
-      : `I've attached ${filenames.length} files:`;
+      : `I've attached ${files.length} files:`;
   return `${header}\n${lines.join("\n")}\n\n${prompt}`.trim();
 }
 
 /**
- * The prompt the user typed, from one as Claude logged it: without the header
- * promptWithAttachments put in front. A prompt that does not start with that
- * exact header is returned as is, so ordinary text that happens to mention an
- * attachment is never cut.
+ * A prompt as Claude logged it, split into what the user typed and the files
+ * promptWithAttachments listed ahead of it (`.attachments/…`, without any
+ * `@`). A prompt that does not start with that exact header is all text, so
+ * ordinary text that happens to mention an attachment is never cut.
  */
-export function promptWithoutAttachments(prompt: string): string {
+export function promptAttachments(prompt: string): { text: string; files: string[] } {
   const header = /^I've attached (?:a file|\d+ files):\n(?:- [^\n]*\n?)+/;
   const match = header.exec(prompt);
-  if (!match) return prompt;
+  if (!match) return { text: prompt, files: [] };
   const listed = match[0].split("\n").slice(1).filter((line) => line.length > 0);
-  if (!listed.every((line) => line.startsWith(`- ${ATTACHMENT_DIR}/`))) return prompt;
-  return prompt.slice(match[0].length).trim();
+  const files: string[] = [];
+  for (const line of listed) {
+    const path = line.replace(/^- @?/, "");
+    if (!path.startsWith(`${ATTACHMENT_DIR}/`)) return { text: prompt, files: [] };
+    files.push(path);
+  }
+  return { text: prompt.slice(match[0].length).trim(), files };
+}
+
+/** The prompt the user typed, from one as Claude logged it: without the
+ *  header promptWithAttachments put in front (promptAttachments). */
+export function promptWithoutAttachments(prompt: string): string {
+  return promptAttachments(prompt).text;
 }
 
 /** What the composer says about files it was handed, or null when it took

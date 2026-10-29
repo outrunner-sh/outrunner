@@ -171,6 +171,7 @@
 .studio-queue-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .studio-queue-files { display: inline-flex; flex-shrink: 0; align-items: center; gap: 3px; color: #8a8a8a; font-size: 12px; }
 .studio-queue-files svg { width: 12px; height: 12px; }
+.studio-queue-thumb { width: 22px; height: 22px; border: 1px solid var(--studio-border); border-radius: 3px; object-fit: cover; }
 .studio-queue-item button { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border: 1px solid var(--studio-border); border-radius: 3px; color: var(--studio-text); background: transparent; font: 12px var(--font-geist-sans); cursor: pointer; transition: background-color .15s; }
 .studio-queue-item button:hover:not(:disabled) { background: rgba(255,255,255,.06); }
 .studio-queue-item button:disabled { cursor: not-allowed; opacity: .5; }
@@ -179,6 +180,48 @@
 .studio-composer textarea { display:block; width:100%; resize:none; min-height:56px; padding:14px 16px 10px; border:0; outline:0; color:var(--studio-text); background:transparent; font:14px var(--font-geist-sans); }
 .studio-composer textarea::placeholder { color:#6f6f6f !important; opacity:1; }
 .studio-composer textarea:disabled { cursor:not-allowed; opacity:.7; }
+/* Files staged on the composer: images as square tiles of their own picture,
+   at once, dimmed under a ring while they upload; other files by name. */
+.attachment-tiles { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 12px 12px 0; list-style: none; }
+.attachment-tile { position: relative; height: 60px; border: 1px solid var(--studio-border); border-radius: 4px; background: #0d0d0d; animation: placeholder-in .2s cubic-bezier(.23, 1, .32, 1) both; }
+.attachment-tile.is-image { width: 60px; }
+.attachment-tile.is-file { max-width: 200px; }
+.attachment-tile.is-error { border-color: color-mix(in oklab, var(--destructive) 60%, transparent); }
+.attachment-tile-open { display: block; width: 100%; height: 100%; padding: 0; border: 0; border-radius: 3px; overflow: hidden; background: transparent; cursor: zoom-in; }
+.attachment-tile-open img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.attachment-tile-file { display: flex; height: 100%; align-items: center; gap: 8px; padding: 0 28px 0 12px; color: var(--studio-text); font-size: 12.5px; }
+.attachment-tile-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-tile-file svg { width: 16px; height: 16px; flex-shrink: 0; color: #8a8a8a; }
+.attachment-tile.is-error .attachment-tile-file svg, .attachment-tile-failed svg { color: var(--destructive); }
+.attachment-tile-progress, .attachment-tile-failed { position: absolute; inset: 0; display: grid; place-items: center; border-radius: 3px; background: rgba(0,0,0,.55); pointer-events: none; }
+.attachment-tile-progress svg { width: 24px; height: 24px; transform: rotate(-90deg); }
+.attachment-tile-progress .ring-track { stroke: rgba(255,255,255,.2); }
+.attachment-tile-progress .ring-fill { stroke: #fff; transition: stroke-dasharray .2s; }
+.attachment-tile-failed svg { width: 18px; height: 18px; }
+.attachment-tile-remove { position: absolute; top: -7px; right: -7px; display: grid; width: 20px; height: 20px; place-items: center; padding: 0; border: 1px solid var(--studio-border); border-radius: 999px; color: var(--studio-text); background: #1c1c1c; cursor: pointer; opacity: .85; transition: opacity .15s, background-color .15s; }
+.attachment-tile:hover .attachment-tile-remove, .attachment-tile-remove:focus-visible { opacity: 1; background: #2a2a2a; }
+.attachment-tile-remove svg { width: 11px; height: 11px; }
+/* Files dragged over the page: all of it takes them, and says so. */
+.page-drop-overlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(10,10,10,.6); pointer-events: none; animation: placeholder-in .15s ease-out both; }
+.page-drop-overlay > div { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 40px; border: 1.5px dashed rgba(255,255,255,.45); border-radius: 8px; color: #ededed; background: rgba(18,18,18,.9); font-size: 14px; }
+.page-drop-overlay svg { width: 26px; height: 26px; }
+/* A message's files: images as thumbnails of one height, held while they
+   load so nothing shifts, opening full size; other files by name. */
+.message-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; white-space: normal; }
+.message-attachments:not(:last-child) { margin-bottom: 8px; }
+.message-attachment-image { height: 96px; min-width: 96px; max-width: 220px; border: 1px solid rgba(255,255,255,.1); border-radius: 4px; overflow: hidden; background: rgba(255,255,255,.04); }
+.message-attachment-image:not(.is-loaded) { width: 96px; animation: skeleton-pulse 1.6s ease-in-out infinite; }
+.message-attachment-image button { display: block; height: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+.message-attachment-image img { display: block; height: 100%; width: auto; max-width: 220px; object-fit: cover; }
+.message-attachment-image:not(.is-loaded) img { width: 100%; opacity: 0; }
+.message-attachment-file { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 4px 10px; border: 1px solid rgba(255,255,255,.1); border-radius: 4px; color: #b4b0ae; font-size: 12.5px; }
+.message-attachment-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-attachment-file svg { width: 13px; height: 13px; flex-shrink: 0; }
+@keyframes skeleton-pulse { 50% { background: rgba(255,255,255,.08); } }
+/* An image full size, over the page. */
+.image-lightbox { width: auto; max-width: min(92vw, 1400px); padding: 12px; gap: 8px; border-radius: 6px; background: #0d0d0d; }
+.image-lightbox img { display: block; max-width: 100%; max-height: 84vh; margin: 0 auto; object-fit: contain; }
+.image-lightbox-name { margin: 0; padding-right: 28px; color: #8a8a8a; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .studio-composer-notice { margin: 0; padding: 10px 16px 0; color: color-mix(in oklab, var(--foreground) 60%, transparent); font-size: 12px; animation: placeholder-in .3s cubic-bezier(.23, 1, .32, 1) both; }
 /* The toolbar, ruled off from the text: every control a square-cornered
    bordered box of one height, the send button among them. */
@@ -411,6 +454,14 @@
 .md-body .md-image img { display: block; max-width: 100%; max-height: 480px; height: auto; object-fit: contain; background: #0d0d0d; }
 .md-body .md-image-missing { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px dashed var(--studio-border); border-radius: 4px; color: #8a8a8a; font-size: 12px; }
 .md-body .md-image-missing svg { width: 13px; height: 13px; flex-shrink: 0; }
+.md-body .md-image-missing button { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; padding: 1px 6px; border: 1px solid var(--studio-border); border-radius: 3px; color: #c8c8c8; background: transparent; font: inherit; cursor: pointer; }
+.md-body .md-image-missing button:hover { background: rgba(255,255,255,.06); }
+/* A reply's image while it loads: its own size where it was shown before,
+   else a placeholder's, so the reply doesn't jump as it arrives. */
+.md-body .md-image.is-loading { background: rgba(255,255,255,.04); animation: skeleton-pulse 1.6s ease-in-out infinite; }
+.md-body .md-image.is-loading img { opacity: 0; }
+.md-body .md-image.is-placeholder { width: min(100%, 400px); aspect-ratio: 16 / 10; }
+.md-body .md-image.is-placeholder img { width: 100%; height: 100%; }
 .md-body h1, .md-body h2, .md-body h3, .md-body h4 { margin: 20px 0 10px; color: #f0f0f0; font-weight: 600; line-height: 1.3; letter-spacing: -.01em; }
 .md-body h1 { font-size: 18px; }
 .md-body h2 { font-size: 16px; }
