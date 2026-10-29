@@ -96,7 +96,10 @@ export async function resolvePreview(deps: GateDeps, slug: string, session: stri
   // still a member of the org (on a public preview mayView hasn't asked),
   // and only where the lifecycle route can act (resume: suspended,
   // restore: archived).
-  const canWake = viewer === workspace.ownerId && wakeable(workspace.status) && (await mayView(deps, viewer, workspace));
+  const canWake =
+    viewer === workspace.ownerId &&
+    wakeable(workspace.status) &&
+    (preview.mode === "login" || (await mayView(deps, viewer, workspace)));
   if (ASLEEP.includes(workspace.status)) return page(503, "asleep", WAIT_TTL_MS, canWake);
   if (STARTING.includes(workspace.status) || workspace.status === "failed") {
     return workspace.status === "failed" ? page(503, "asleep", WAIT_TTL_MS, canWake) : page(503, "starting", WAIT_TTL_MS);

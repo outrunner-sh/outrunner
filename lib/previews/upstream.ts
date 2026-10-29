@@ -41,16 +41,15 @@ function revokeLater(kept: Kept, delayMs: number): void {
 }
 
 /**
- * Room for one more: a way past its five minutes, which nothing is given
- * any more, is expired now; past that, the oldest, after the grace a
- * replaced one gets. None is ever dropped unexpired, so a preview deleted
- * later can't leave a link to its port working out its quarter hour.
+ * Room for one more: ways past their five minutes, which nothing is given
+ * any more, and then the oldest are expired after the grace a replaced
+ * link gets, so a proxy decision already in flight can finish.
  */
 function evict(): void {
   for (const [key, kept] of upstreams) {
     if (Date.now() - kept.at < UPSTREAM_TTL_MS) continue;
     upstreams.delete(key);
-    revokeLater(kept, 0);
+    revokeLater(kept, REPLACED_GRACE_MS);
   }
   for (const [key, kept] of upstreams) {
     if (upstreams.size < MAX_KEPT) break;

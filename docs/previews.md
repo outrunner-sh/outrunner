@@ -157,8 +157,10 @@ without Outrunner until the link ends. So a login preview on Daytona is
 only as private as its server's habit of echoing Host, and each link is
 short-lived: signed for 15 minutes, used for 5, expired a minute after the
 next replaces it, and expired at once when its preview is deleted or made
-sign-in only (`lib/previews/upstream.ts`). None is let go unexpired to make
-room. That's this process's own links: one kept by a process since gone (a
+sign-in only (`lib/previews/upstream.ts`). When this process makes room,
+it also gives an evicted link that minute so a proxy decision already in
+flight can finish; it stops handing the link out after five minutes. That's
+this process's own links: one kept by a process since gone (a
 restart, a deploy) can't be expired, and ends within its 15 minutes. A
 visitor's own `x-daytona-*`
 headers are dropped. On Neev the box's server is sent the preview's own

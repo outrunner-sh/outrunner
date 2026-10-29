@@ -171,6 +171,28 @@ test("an asleep session shows its page, offering its owner alone to wake it", as
   assert.equal(waking.kind === "page" && waking.page, "starting");
 });
 
+test("a login preview reuses its access check for wake; a public preview checks membership", async () => {
+  let memberChecks = 0;
+  const login = deps({ workspace: workspace({ status: "suspended" }) });
+  login.isMember = async () => {
+    memberChecks += 1;
+    return true;
+  };
+  const loginPage = await resolvePreview(login, SLUG, as(OWNER));
+  assert.equal(loginPage.kind === "page" && loginPage.canWake, true);
+  assert.equal(memberChecks, 1, "the login access check also establishes wake access");
+
+  memberChecks = 0;
+  const publicPreview = deps({ preview: preview({ mode: "public" }), workspace: workspace({ status: "suspended" }) });
+  publicPreview.isMember = async () => {
+    memberChecks += 1;
+    return true;
+  };
+  const publicPage = await resolvePreview(publicPreview, SLUG, as(OWNER));
+  assert.equal(publicPage.kind === "page" && publicPage.canWake, true);
+  assert.equal(memberChecks, 1, "public previews still check membership before offering wake");
+});
+
 test("a session where Outrunner can't reach the box's ports says so", async () => {
   const modal = await resolvePreview(deps({ workspace: workspace({ provider: "user-modal" }) }), SLUG, as(OWNER));
   assert.equal(modal.kind === "page" && modal.page, "unsupported");
