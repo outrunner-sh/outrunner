@@ -16,10 +16,9 @@
 import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 
-import { WorkspaceSummary } from "@/lib/runtime/agent-protocol";
+import { MAIN_CHAT, WorkspaceSummary } from "@/lib/runtime/agent-protocol";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { parseCast, type Cast } from "@/lib/runtime/replay/cast";
-import { MAIN_CHAT } from "@/lib/runtime/agent-protocol";
 import { parseConversation } from "@/lib/runtime/replay/conversation";
 import {
   parseManifest,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -590,16 +591,15 @@ func (s *Service) snapshotChats(workspaceID string, asked []protocol.ArchiveChat
 // launched: a chat starts when it is opened. The main chat is named by its
 // id (mainSession) first, so its relaunch never takes a chat's conversation
 // for the newest in the folder.
-func (s *Service) restoreChats(ctx context.Context, workspaceID, mainSession string, chats []protocol.RestoreChat) error {
+func (s *Service) restoreChats(ctx context.Context, workspaceID, mainSession string, chats []protocol.RestoreChat) {
 	if f, _ := s.getFacts(workspaceID); f.Agent != AgentCodex && mainSession != "" {
 		s.updateFacts(workspaceID, func(f *workspaceFacts) { f.ClaudeSessionID = mainSession })
 	}
 	for _, chat := range chats {
 		if err := s.restoreChat(ctx, workspaceID, chat); err != nil {
-			return fmt.Errorf("restore chat %s: %w", chat.ChatID, err)
+			log.Printf("restore %s: chat %s not restored: %v", workspaceID, chat.ChatID, err)
 		}
 	}
-	return nil
 }
 
 func (s *Service) restoreChat(ctx context.Context, workspaceID string, chat protocol.RestoreChat) error {

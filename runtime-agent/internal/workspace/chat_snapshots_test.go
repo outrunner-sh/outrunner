@@ -97,7 +97,7 @@ func TestArchivingAndRestoringASessionKeepsEveryChat(t *testing.T) {
 		Chats: []protocol.ArchiveChat{
 			{ChatID: "c1", Name: "Docs", Kind: "chat", Agent: AgentClaude, Conversation: store.URL + "/chats/c1/conversation"},
 			{ChatID: "c2", Name: "Review", Kind: "chat", ForkedFrom: &from, Agent: AgentCodex,
-				Model: &protocol.ChatModel{Provider: "codex", ID: "gpt-6-luna"},
+				Model:        &protocol.ChatModel{Provider: "codex", ID: "gpt-6-luna"},
 				Conversation: store.URL + "/chats/c2/conversation", Rollout: store.URL + "/chats/c2/rollout"},
 			// One the box never had (lost in an earlier restore): nothing to keep.
 			{ChatID: "c3", Name: "Gone", Kind: "chat", Agent: AgentClaude, Conversation: store.URL + "/chats/c3/conversation"},
@@ -169,18 +169,30 @@ func TestArchivingAndRestoringASessionKeepsEveryChat(t *testing.T) {
 	}
 }
 
-func TestARestoreRefusesAChatItCantPlace(t *testing.T) {
+func TestARestoreContinuesWhenASideChatCantBeRestored(t *testing.T) {
 	s, fake := restoringService(t)
 	fake.pane = composerPane
 	main := "main-sess"
-	srv := snapshotServer(t, map[string][]byte{"/conversation": []byte(mainTranscript)})
+	srv := snapshotServer(t, map[string][]byte{"/conversation": []byte(mainTranscript), "/chat": []byte(docsChat)})
 	bad := "../escape"
 	_, err := s.Restore(context.Background(), "ws-r", protocol.RestoreWorkspaceRequest{
 		Branch: "feature", BaseBranch: "main", SessionID: &main,
 		Downloads: downloads(srv, "bundle", "patch", "conversation"),
-		Chats:     []protocol.RestoreChat{{ChatID: "c1", SessionID: &bad, Conversation: srv.URL + "/missing"}},
+		Chats: []protocol.RestoreChat{
+			{ChatID: "bad-chat", SessionID: &bad, Conversation: srv.URL + "/missing"},
+			{ChatID: "good-chat", SessionID: &main, Conversation: srv.URL + "/chat"},
+		},
 	}, nil)
-	if err == nil {
-		t.Fatal("a chat with a session id that would escape its folder was restored")
+	if err != nil {
+		t.Fatalf("Restore: a failed side chat blocked the session: %v", err)
+	}
+	if s.HasChat("ws-r", "bad-chat") {
+		t.Fatal("the chat with a session id that would escape its folder was restored")
+	}
+	if !s.HasChat("ws-r", "good-chat") {
+		t.Fatal("the valid side chat after the failure wasn't restored")
+	}
+	if f, _ := s.getFacts("ws-r"); f.ClaudeSessionID != main {
+		t.Fatalf("main chat session = %q, want %s", f.ClaudeSessionID, main)
 	}
 }

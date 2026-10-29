@@ -1717,9 +1717,7 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 		s.updateFacts(workspaceID, func(f *workspaceFacts) { f.CodexRollout, f.CodexSessionID = in.RolloutDest, sessionID })
 	}
 	if len(req.Chats) > 0 {
-		if err := s.restoreChats(ctx, workspaceID, sessionID, req.Chats); err != nil {
-			return "", err
-		}
+		s.restoreChats(ctx, workspaceID, sessionID, req.Chats)
 	}
 	// Verified — safe to boot the agent, continuing the restored session.
 	return s.Resume(ctx, workspaceID, "")

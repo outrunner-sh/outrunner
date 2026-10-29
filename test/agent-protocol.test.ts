@@ -199,3 +199,32 @@ test("a Snapshot's chats sit under chats/<id>/, and an archive or restore names 
   restore.chats[0].chatId = "main";
   assert.equal(PROTOCOL_SCHEMAS.RestoreWorkspaceRequest.safeParse(restore).success, false, "the main chat is the session's own");
 });
+
+test("archive and restore accept more than 100 chats", () => {
+  const chatId = (index: number) => `chat-${index}`;
+  const archiveChats = Array.from({ length: 101 }, (_, index) => ({
+    chatId: chatId(index),
+    name: `Chat ${index}`,
+    kind: "chat" as const,
+    forkedFrom: null,
+    agent: "claude" as const,
+    model: null,
+    conversation: `https://s.example/chats/${chatId(index)}/conversation`,
+  }));
+  const restoreChats = archiveChats.map(({ chatId, conversation }) => ({ chatId, sessionId: null, conversation }));
+  const uploads = ["conversation", "cast", "bundle", "patch", "summary", "manifest"].map((artifact) => ({
+    artifact,
+    url: `https://s.example/${artifact}`,
+  }));
+
+  assert.equal(PROTOCOL_SCHEMAS.ArchiveWorkspaceRequest.safeParse({ archivedAt: "t", uploads, chats: archiveChats }).success, true);
+  assert.equal(
+    PROTOCOL_SCHEMAS.RestoreWorkspaceRequest.safeParse({
+      branch: "b",
+      sessionId: "s",
+      downloads: ["bundle", "patch", "conversation"].map((artifact) => ({ artifact, url: `https://s.example/${artifact}` })),
+      chats: restoreChats,
+    }).success,
+    true,
+  );
+});

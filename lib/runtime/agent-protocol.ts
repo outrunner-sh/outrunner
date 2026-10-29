@@ -594,7 +594,7 @@ export const ArchiveWorkspaceRequest = z
     archivedAt: z.string().min(1),
     uploads: z.array(ArchiveUpload),
     /** The session's other chats (AGENT_FEATURE_CHAT_SNAPSHOTS). */
-    chats: z.array(ArchiveChat).max(100).optional(),
+    chats: z.array(ArchiveChat).optional(),
   })
   .refine((v) => coversExactly(v.uploads.map((u) => u.artifact), ARCHIVE_ARTIFACTS, OPTIONAL_ARTIFACTS), {
     message: "archive uploads must cover exactly the six Snapshot artifacts (and may add a rollout)",
@@ -655,7 +655,7 @@ export const RestoreWorkspaceRequest = z
     repos: CreateWorkspaceRequest.shape.repos,
     /** The session's other chats, brought back beside it
      *  (AGENT_FEATURE_CHAT_SNAPSHOTS). */
-    chats: z.array(RestoreChat).max(100).optional(),
+    chats: z.array(RestoreChat).optional(),
   })
   .refine((v) => coversExactly(v.downloads.map((d) => d.artifact), RESTORE_ARTIFACTS, OPTIONAL_ARTIFACTS), {
     message: "restore downloads must cover exactly bundle, patch, and conversation (and may add a rollout)",
