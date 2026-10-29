@@ -44,8 +44,9 @@ export type BoxResources = { cpu: number; memoryGb: number };
 export interface SandboxBackend {
   /** A box that stays up as long as the provider lets one (forever, but on
    *  Modal: a day), ready to use. `labels` tag it for the provider's console.
-   *  `size` is honoured where the provider can size a box (Neev, Modal);
-   *  elsewhere it gets the provider's default. */
+   *  `size` is honoured where the provider can size a box (Neev, Modal; on
+   *  Daytona, the nearest of its own sizes); elsewhere it gets the
+   *  provider's default. */
   create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox>;
   /**
    * A box back on the disk the ended box `id` left, so the sessions on it

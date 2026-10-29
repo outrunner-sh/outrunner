@@ -317,6 +317,20 @@ func TestDecodeShowsACompactionAndNotItsSummary(t *testing.T) {
 	}
 }
 
+func TestDecodeDropsANoticeNeverSentToClaude(t *testing.T) {
+	// On resume, Claude only writes down the notice for a background task the
+	// previous process left running: no reply follows, so it is no prompt.
+	notice := `{"type":"user","uuid":"n","timestamp":"t","origin":{"kind":"task-notification"},"promptSource":"system","queueTranscriptOnly":true,"message":{"role":"user","content":"<task-notification>\n<status>stopped</status>\n</task-notification>"}}`
+	if _, ok := decode([]byte(notice)); ok {
+		t.Error("a transcript-only notice was shown as a prompt")
+	}
+	// One Claude was sent (the same notice, while idle) is a prompt, answered.
+	sent := `{"type":"user","uuid":"m","timestamp":"t","origin":{"kind":"task-notification"},"promptSource":"system","message":{"role":"user","content":"<task-notification>\n<status>completed</status>\n</task-notification>"}}`
+	if _, ok := decode([]byte(sent)); !ok {
+		t.Error("a notice sent to Claude was dropped")
+	}
+}
+
 func TestDecodeMarksAPromptSentInPlanMode(t *testing.T) {
 	line := `{"type":"user","uuid":"p","timestamp":"t","permissionMode":"plan","message":{"role":"user","content":"Plan dark mode"}}`
 	if ev, ok := decode([]byte(line)); !ok || ev.Message.Mode != "plan" {
