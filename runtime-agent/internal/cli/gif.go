@@ -145,7 +145,7 @@ var runFFmpeg = func(ctx context.Context, args []string) error {
 
 // MakeGIF makes a GIF of input at output, smaller a step at a time until it
 // is under MaxGIFBytes. Still too large at the last step: an error saying to
-// show less, the largest try left at output.
+// show less, the last (smallest) try left at output.
 func MakeGIF(ctx context.Context, input, output string, o GIFOptions, progress io.Writer) (GIFResult, error) {
 	if err := o.Validate(); err != nil {
 		return GIFResult{}, err

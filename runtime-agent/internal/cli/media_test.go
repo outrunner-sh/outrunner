@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"runtime-agent/internal/workspace"
 )
 
 func TestGIFStepsStartAsAskedAndOnlyGetSmaller(t *testing.T) {
@@ -152,6 +154,9 @@ func TestAnUploadMustSayWhatItShows(t *testing.T) {
 			t.Errorf("name %q was accepted", name)
 		}
 	}
+	if checkMediaName("Media-Row", "/w/media-row.gif") == nil {
+		t.Error("the file's own name without its extension was accepted")
+	}
 	if err := checkMediaName("Composer draft after reload", "/w/after.png"); err != nil {
 		t.Errorf("a descriptive name was refused: %v", err)
 	}
@@ -172,6 +177,21 @@ func TestTheSessionIsTheLaunchsOrTheFoldersIn(t *testing.T) {
 	}
 	if _, err := boxAgentFromEnv(env(map[string]string{"OUTRUNNER_BOX_ROOT": "/r"}), "/r"); err == nil {
 		t.Fatal("a folder that's no session's found one")
+	}
+}
+
+// The CLI reads the files the agent writes for a session's relay: if those
+// move, uploads must move with them.
+func TestTheCLIFindsTheAgentWhereTheAgentSaysItIs(t *testing.T) {
+	a, err := boxAgentFromEnv(func(k string) string {
+		return map[string]string{"OUTRUNNER_BOX_ROOT": "/home/runtime", "OUTRUNNER_SESSION_ID": "ws-9"}[k]
+	}, "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addrFile, tokenFile := workspace.AskPaths("/home/runtime", "ws-9")
+	if a.addrFile != addrFile || a.tokenFile != tokenFile {
+		t.Fatalf("the CLI reads %s and %s; the agent writes %s and %s", a.addrFile, a.tokenFile, addrFile, tokenFile)
 	}
 }
 
@@ -275,8 +295,12 @@ func TestAVideoIsUploadedWithAGIFThatLinksToIt(t *testing.T) {
 	if !slices.Equal(lines, want) {
 		t.Fatalf("stdout = %q, want %q", lines, want)
 	}
-	if len(box.asked) != 2 || box.asked[1]["path"] != GIFPath(video) || box.asked[1]["access"] != "public" {
+	poster := box.asked[1]["path"]
+	if len(box.asked) != 2 || poster == GIFPath(video) || filepath.Ext(poster) != ".gif" || box.asked[1]["access"] != "public" {
 		t.Fatalf("asked %v", box.asked)
+	}
+	if _, err := os.Stat(poster); !os.IsNotExist(err) {
+		t.Fatalf("the poster %s was left behind (%v)", poster, err)
 	}
 	if !strings.Contains(stderr, "opens only for you") {
 		t.Fatalf("stderr %q doesn't say the video is private", stderr)
@@ -312,7 +336,56 @@ func TestGIFCommandPrintsThePath(t *testing.T) {
 	if code != 0 || strings.TrimSpace(stdout) != GIFPath(in) {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
-	if code, _, _ := run(t, "media", "gif", in, "--duration", "45"); code != 1 {
+	if code, _, _ := run(t, "media", "gif", in, "--duration", "45"); code != 2 {
 		t.Fatalf("a 45 second GIF: exit %d", code)
+	}
+}
+
+// A GIF made with `outrunner media gif` beside the recording survives the
+// recording's upload, which makes its own poster elsewhere.
+func TestAVideosPosterLeavesTheUsersGIFAlone(t *testing.T) {
+	newFakeBox(t)
+	fakeFFmpeg(t, func(int) int { return 1000 })
+	t.Setenv("PATH", fakeFFmpegOnPath(t))
+	video := recording(t)
+	mine := []byte("GIF89a cropped by hand")
+	if err := os.WriteFile(GIFPath(video), mine, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, stderr := run(t, "media", "upload", video, "--name", "Settings walkthrough"); code != 0 {
+		t.Fatalf("exit %d, %q", code, stderr)
+	}
+	if got, _ := os.ReadFile(GIFPath(video)); !bytes.Equal(got, mine) {
+		t.Fatalf("the user's GIF was overwritten: %q", got)
+	}
+}
+
+func TestTheNoticeFitsWhatWasUploaded(t *testing.T) {
+	newFakeBox(t)
+	shot := filepath.Join(t.TempDir(), "after.png")
+	_ = os.WriteFile(shot, []byte("\x89PNG\r\n\x1a\n"), 0o644)
+	_, _, stderr := run(t, "media", "upload", shot, "--name", "Settings page, private", "--access", "private")
+	if strings.Contains(stderr, "video") || !strings.Contains(stderr, "The link opens only for you") {
+		t.Fatalf("a private image's notice: %q", stderr)
+	}
+
+	// A video whose poster couldn't be made: no GIF line to paste.
+	fakeFFmpeg(t, func(int) int { return MaxGIFBytes + 1 })
+	t.Setenv("PATH", fakeFFmpegOnPath(t))
+	code, stdout, stderr := run(t, "media", "upload", recording(t), "--name", "Settings walkthrough")
+	if code != 0 || strings.Contains(stdout, "[![") || strings.Contains(stderr, "Paste the GIF line") || !strings.Contains(stderr, "not a GIF of it") {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+// Bad arguments and a missing file are refused before ffmpeg is looked for,
+// let alone installed.
+func TestGIFChecksItsArgumentsBeforeFFmpeg(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // no ffmpeg, no apt-get
+	if code, _, stderr := run(t, "media", "gif", recording(t), "--duration", "45"); code != 2 || !strings.Contains(stderr, "--duration") {
+		t.Fatalf("a 45 second GIF: exit %d, %q", code, stderr)
+	}
+	if code, _, stderr := run(t, "media", "gif", filepath.Join(t.TempDir(), "missing.mp4")); code != 1 || !strings.Contains(stderr, "can't read") || strings.Contains(stderr, "ffmpeg") {
+		t.Fatalf("a missing recording: exit %d, %q", code, stderr)
 	}
 }

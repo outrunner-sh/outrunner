@@ -124,6 +124,16 @@ func mediaGIFCommand(ctx context.Context, args []string, stdout, stderr io.Write
 	if *output == "" {
 		*output = GIFPath(input)
 	}
+	// The cheap checks first: a bad flag or a missing file shouldn't cost
+	// an ffmpeg install before it's refused.
+	if err := o.Validate(); err != nil {
+		fmt.Fprintln(stderr, "outrunner:", err)
+		return 2
+	}
+	if _, err := os.Stat(input); err != nil {
+		fmt.Fprintf(stderr, "outrunner: can't read %s: %v\n", input, err)
+		return 1
+	}
 	if err := ensureFFmpeg(ctx, stderr); err != nil {
 		fmt.Fprintln(stderr, "outrunner:", err)
 		return 1
@@ -153,10 +163,16 @@ func checkMediaName(name, path string) error {
 	switch {
 	case name == "":
 		return errors.New(`name what the file shows with --name, e.g. --name "Composer draft after reload"`)
-	case genericNames[lower] || lower == strings.ToLower(filepath.Base(path)):
+	case genericNames[lower] || lower == strings.ToLower(filepath.Base(path)) || lower == strings.ToLower(fileStem(path)):
 		return fmt.Errorf(`--name %q doesn't say what it shows: it's the alt text a reader gets, e.g. "Composer draft after reload"`, name)
 	}
 	return nil
+}
+
+// fileStem is a path's file name without its extension: "after" of
+// "/w/after.png".
+func fileStem(path string) string {
+	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }
 
 // boxAgent is the session's way to its box's runtime-agent.
@@ -169,7 +185,9 @@ type boxAgent struct {
 var errNotOnBox = errors.New("uploads work in an Outrunner session's terminal, on its box: this isn't one")
 
 // boxAgentFromEnv finds the agent as a session's relay does: the address it
-// announces and the session's token, under the box's root. The session is
+// announces and the session's token, under the box's root. The paths are
+// workspace.AskPaths's, written out here so this package, which the npm CLI
+// builds too, needn't import the agent's; a test pins the two together. The session is
 // the one the terminal was launched in, or else the one whose worktree
 // (Root/workspaces/<id>) the command runs in.
 func boxAgentFromEnv(getenv func(string) string, cwd string) (boxAgent, error) {
@@ -349,20 +367,31 @@ func mediaUploadCommand(ctx context.Context, args []string, stdout, stderr io.Wr
 	for _, line := range lines {
 		fmt.Fprintln(stdout, line)
 	}
-	if link.Access == "private" {
+	switch {
+	case link.Access != "private":
+	case out["poster"] != nil:
 		fmt.Fprintln(stderr, "\nThe video's link opens only for you, signed in to Outrunner. Paste the GIF line: it shows the GIF to anyone and links to the video. Upload with --access public to open the video for anyone.")
+	default:
+		fmt.Fprintln(stderr, "\nThe link opens only for you, signed in to Outrunner. Upload with --access public to open it for anyone.")
 	}
 	fmt.Fprintf(stderr, "\nManage it (who it opens for, a new link, delete) at %s\n", link.PageURL)
 	return 0
 }
 
-// uploadPoster makes a GIF of a recording, beside it, and uploads it: the
-// image a pull request shows for the video.
+// uploadPoster makes a GIF of a recording and uploads it: the image a pull
+// request shows for the video. It's made in a folder of its own, never
+// beside the recording, where a GIF made with `outrunner media gif` (cropped,
+// trimmed) would be overwritten by this one, and removed once uploaded.
 func uploadPoster(ctx context.Context, agent boxAgent, video, name string, stderr io.Writer) (MediaLink, error) {
 	if err := ensureFFmpeg(ctx, stderr); err != nil {
 		return MediaLink{}, err
 	}
-	result, err := MakeGIF(ctx, video, GIFPath(video), GIFOptions{}, stderr)
+	dir, err := os.MkdirTemp("", "outrunner-poster-")
+	if err != nil {
+		return MediaLink{}, err
+	}
+	defer os.RemoveAll(dir)
+	result, err := MakeGIF(ctx, video, filepath.Join(dir, fileStem(video)+".gif"), GIFOptions{}, stderr)
 	if err != nil {
 		return MediaLink{}, err
 	}
