@@ -77,7 +77,15 @@ function PullRow({ pull: p }: { pull: PullSummary }) {
       {KINDS.map((kind) => (
         <td key={kind} className="whitespace-nowrap text-right">
           <Link href={href} className={cell} tabIndex={-1}>
-            {p.lines ? <Delta delta={p.lines[kind]} dim={kind === "generated"} /> : <span className="text-muted-foreground/50">…</span>}
+            {p.lines ? (
+              // Over 100 files, only the first 100's lines are counted.
+              <span title={p.linesComplete ? undefined : "Counted from its first 100 files"}>
+                {!p.linesComplete && <span className="text-muted-foreground">≥ </span>}
+                <Delta delta={p.lines[kind]} dim={kind === "generated"} />
+              </span>
+            ) : (
+              <span className="text-muted-foreground/50">…</span>
+            )}
           </Link>
         </td>
       ))}

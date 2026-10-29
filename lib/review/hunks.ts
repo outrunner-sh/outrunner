@@ -42,7 +42,7 @@ export const hunkId = (path: string, index: number) => `${path}#${index}`;
 export function splitHunks(path: string, patch: string | null): Hunk[] {
   if (!patch) return [];
   const hunks: Hunk[] = [];
-  for (const line of parseUnifiedDiff(patch)) {
+  for (const line of parseUnifiedDiff(patch, { headerless: true })) {
     if (line.type === "hunk") {
       hunks.push({ id: hunkId(path, hunks.length), path, index: hunks.length, header: line.text, lines: [] });
     } else if (hunks.length > 0 && line.type !== "meta") {

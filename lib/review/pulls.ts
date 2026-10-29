@@ -9,7 +9,8 @@
 import { listOrgProjects } from "@/lib/db/org-access";
 import { getPullRequestStatus } from "@/lib/github/client";
 import { appSlug, githubAppConfig } from "@/lib/github/app";
-import { type PullFile, toPullFiles } from "@/lib/review/hunks";
+import { pullFiles } from "@/lib/review/files";
+import type { PullFile } from "@/lib/review/hunks";
 import { countLines, type LineCounts } from "@/lib/review/line-kinds";
 import { githubGet, repoToken } from "@/lib/slack/github";
 import { parseVerdict, type Verdict } from "@/lib/slack/proactive-text";
@@ -28,8 +29,10 @@ export type PullSummary = {
   updatedAt: string;
   url: string;
   checks: Checks | null;
-  /** Its lines by kind (code, tests, generated); null when unread. */
+  /** Its lines by kind (code, tests, generated); null when unread. Partial
+   *  (`linesComplete` false) for a PR of over 100 files. */
   lines: LineCounts | null;
+  linesComplete: boolean;
   /** The Outrunner session that opened it, and its triage item. */
   sessionId: string | null;
   itemKey: string | null;
@@ -59,21 +62,24 @@ async function readableRepos(actor: TriageActor): Promise<{ id: string; fullName
   return (await listOrgProjects(actor.orgId)).filter((p) => actor.levels.has(p.id));
 }
 
-/** GitHub lists at most this many of a PR's files a page, and the Review
- *  tab reads at most this many pages (GitHub itself stops at 3,000 files). */
-const FILES_PER_PAGE = 100;
-const MAX_FILE_PAGES = 5;
+// The inbox's line counts, by PR and head commit: a commit's files never
+// change, so a PR is read again only once something is pushed to it. Kept
+// for this server process, the most recent few hundred.
+const countsByHead = new Map<string, { lines: LineCounts; complete: boolean }>();
+const COUNTS_KEPT = 500;
 
-/** A pull request's changed files, with their patches. */
-export async function pullFiles(token: string, repo: string, number: number): Promise<PullFile[] | null> {
-  const files: PullFile[] = [];
-  for (let page = 1; page <= MAX_FILE_PAGES; page++) {
-    const records = await githubGet<unknown[]>(token, `/repos/${repo}/pulls/${number}/files?per_page=${FILES_PER_PAGE}&page=${page}`);
-    if (!records) return page === 1 ? null : files;
-    files.push(...toPullFiles(records));
-    if (records.length < FILES_PER_PAGE) break;
-  }
-  return files;
+/** A PR's lines by kind for the inbox: from its first page of files only,
+ *  so a PR of over 100 files says its counts are partial. */
+async function inboxCounts(token: string, repo: string, number: number, headSha: string): Promise<{ lines: LineCounts; complete: boolean } | null> {
+  const key = `${repo}#${number}@${headSha}`;
+  const kept = countsByHead.get(key);
+  if (kept) return kept;
+  const read = await pullFiles(token, repo, number, 1);
+  if (!read) return null;
+  const counts = { lines: countLines(read.files), complete: read.complete };
+  countsByHead.set(key, counts);
+  if (countsByHead.size > COUNTS_KEPT) countsByHead.delete(countsByHead.keys().next().value as string);
+  return counts;
 }
 
 /** What Outrunner knows of some pull requests: their sessions and items. */
@@ -107,7 +113,7 @@ async function outrunnerLinks(
 export async function listOpenPulls(actor: TriageActor): Promise<{ pulls: PullSummary[]; unreachable: string[] }> {
   const repos = (await readableRepos(actor)).slice(0, 20);
   const unreachable: string[] = [];
-  const found: (Omit<PullSummary, "checks" | "lines" | "sessionId" | "itemKey"> & { token: string })[] = [];
+  const found: (Omit<PullSummary, "checks" | "lines" | "linesComplete" | "sessionId" | "itemKey"> & { token: string; headSha: string })[] = [];
   await Promise.all(
     repos.map(async (repo) => {
       const token = await repoToken(actor.orgId, repo.fullName).catch(() => null);
@@ -127,6 +133,7 @@ export async function listOpenPulls(actor: TriageActor): Promise<{ pulls: PullSu
           updatedAt: p.updated_at,
           url: p.html_url,
           token,
+          headSha: p.head.sha,
         });
       }
     }),
@@ -146,13 +153,9 @@ export async function listOpenPulls(actor: TriageActor): Promise<{ pulls: PullSu
           : Promise.resolve(null),
       ),
     ),
-    // And their lines by kind, from their files: a call each (more for a PR
-    // of over 100 files).
-    Promise.all(
-      shown.map((p, i) =>
-        i < 30 ? pullFiles(p.token, p.repo, p.number).then((files) => (files ? countLines(files) : null)) : Promise.resolve(null),
-      ),
-    ),
+    // And their lines by kind, from their files: a call each, unless their
+    // head was read before.
+    Promise.all(shown.map((p, i) => (i < 30 ? inboxCounts(p.token, p.repo, p.number, p.headSha) : Promise.resolve(null)))),
   ]);
   return {
     pulls: shown.map((p, i) => {
@@ -167,7 +170,8 @@ export async function listOpenPulls(actor: TriageActor): Promise<{ pulls: PullSu
         updatedAt: p.updatedAt,
         url: p.url,
         checks: checks[i],
-        lines: lines[i],
+        lines: lines[i]?.lines ?? null,
+        linesComplete: lines[i]?.complete ?? false,
         sessionId: link?.sessionId ?? null,
         itemKey: link?.itemKey ?? null,
       };
@@ -192,9 +196,12 @@ export type PullDetail = {
   additions: number;
   deletions: number;
   changedFiles: number;
-  /** Its changed files, with their patches, and their lines by kind. */
-  files: PullFile[];
-  lines: LineCounts;
+  /** Its changed files, with their patches, and their lines by kind; null
+   *  when GitHub didn't list them. `filesComplete` is false when only some
+   *  were read. */
+  files: PullFile[] | null;
+  filesComplete: boolean;
+  lines: LineCounts | null;
   checks: Checks;
   mergeableState: string;
   reviewers: string[];
@@ -276,8 +283,9 @@ export async function pullDetail(actor: TriageActor, fullName: string, number: n
     additions: pull.additions ?? 0,
     deletions: pull.deletions ?? 0,
     changedFiles: pull.changed_files ?? 0,
-    files: files ?? [],
-    lines: countLines(files ?? []),
+    files: files?.files ?? null,
+    filesComplete: files?.complete ?? false,
+    lines: files ? countLines(files.files) : null,
     checks: mergeStatus?.checks ?? { passing: 0, failing: 0, pending: 0 },
     mergeableState: mergeStatus?.mergeableState ?? "unknown",
     reviewers: (pull.requested_reviewers ?? []).flatMap((r) => (r.login ? [r.login] : [])),

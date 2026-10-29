@@ -62,3 +62,17 @@ test("GitHub's file records become files with their kind", () => {
     ],
   );
 });
+
+test("a removed SQL comment stays a removed line, and the numbers after it hold", () => {
+  const patch = ["@@ -1,3 +1,2 @@", "--- the old comment", " select 1;", "+++ counter", "-x"].join("\n");
+  const [hunk] = splitHunks("supabase/migrations/1.sql", patch);
+  assert.deepEqual(
+    hunk.lines.map((l) => [l.type, l.text, l.oldNumber ?? null, l.newNumber ?? null]),
+    [
+      ["del", "-- the old comment", 1, null],
+      ["context", "select 1;", 2, 1],
+      ["add", "++ counter", null, 2],
+      ["del", "x", 3, null],
+    ],
+  );
+});

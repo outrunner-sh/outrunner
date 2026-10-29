@@ -5,7 +5,7 @@ import { Suspense } from "react";
 
 import { Markdown } from "@/components/markdown";
 import { ChecksDot } from "@/components/review/checks-dot";
-import { LineCountsSummary } from "@/components/review/line-counts";
+import { Delta, LineCountsSummary } from "@/components/review/line-counts";
 import { MergeButton } from "@/components/review/merge-button";
 import { PullFiles } from "@/components/review/pull-files";
 import { ReviewChat } from "@/components/review/review-chat";
@@ -108,7 +108,7 @@ async function Pull({ params }: { params: Params }) {
               </span>
               <span className="inline-flex items-center gap-2">
                 {pr.changedFiles} files
-                <LineCountsSummary counts={pr.lines} />
+                {pr.lines ? <LineCountsSummary counts={pr.lines} /> : <Delta delta={pr} />}
               </span>
             </div>
           </div>
@@ -171,7 +171,7 @@ async function Pull({ params }: { params: Params }) {
             {pr.body.trim() ? <Markdown>{pr.body}</Markdown> : <p className="text-muted-foreground">No description.</p>}
           </div>
 
-          <PullFiles files={pr.files} lines={pr.lines} changedFiles={pr.changedFiles} />
+          <PullFiles files={pr.files} complete={pr.filesComplete} lines={pr.lines} changedFiles={pr.changedFiles} />
         </div>
       </div>
       <div className="hidden min-h-0 lg:block">

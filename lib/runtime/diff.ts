@@ -28,8 +28,13 @@ function parseHunkHeader(line: string): { oldStart: number; newStart: number } |
  * Classify a unified diff into renderable lines, tracking old/new line numbers
  * across hunks. Tolerant of malformed input: unknown lines become `meta`, a bad
  * hunk header still starts a hunk (without gutter numbers) rather than throwing.
+ *
+ * `headerless` is for a diff that has no file headers, only hunks (GitHub's
+ * per-file `patch`): there, once a hunk has started, a removed line reading
+ * `-- a SQL comment` is `--- a SQL comment`, and must stay a removed line
+ * rather than be taken for a `--- a/file` header.
  */
-export function parseUnifiedDiff(diff: string): DiffLine[] {
+export function parseUnifiedDiff(diff: string, { headerless = false }: { headerless?: boolean } = {}): DiffLine[] {
   if (!diff) return [];
 
   const lines: DiffLine[] = [];
@@ -42,19 +47,22 @@ export function parseUnifiedDiff(diff: string): DiffLine[] {
 
     // File/metadata headers — checked before the single-char +/- cases so that
     // `+++ b/file` and `--- a/file` are never mistaken for added/removed lines.
+    // Without headers, a hunk's body lines are only ever body lines.
+    const body = headerless && inHunk && /^[-+ ]/.test(line);
     if (
-      line.startsWith("diff --git") ||
-      line.startsWith("index ") ||
-      line.startsWith("--- ") ||
-      line.startsWith("+++ ") ||
-      line.startsWith("new file") ||
-      line.startsWith("deleted file") ||
-      line.startsWith("old mode") ||
-      line.startsWith("new mode") ||
-      line.startsWith("similarity ") ||
-      line.startsWith("rename ") ||
-      line.startsWith("Binary files") ||
-      line.startsWith("\\ No newline")
+      !body &&
+      (line.startsWith("diff --git") ||
+        line.startsWith("index ") ||
+        line.startsWith("--- ") ||
+        line.startsWith("+++ ") ||
+        line.startsWith("new file") ||
+        line.startsWith("deleted file") ||
+        line.startsWith("old mode") ||
+        line.startsWith("new mode") ||
+        line.startsWith("similarity ") ||
+        line.startsWith("rename ") ||
+        line.startsWith("Binary files") ||
+        line.startsWith("\\ No newline"))
     ) {
       lines.push({ type: "meta", text: line });
       continue;

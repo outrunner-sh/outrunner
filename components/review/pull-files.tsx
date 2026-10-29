@@ -91,9 +91,21 @@ const startsOpen = (file: PullFile) => file.kind !== "generated" && file.additio
  * A pull request's changed files, each with its kind and lines, and its diff
  * hunk by hunk: code first, then tests, then what a tool wrote, folded.
  */
-export function PullFiles({ files, lines, changedFiles }: { files: PullFile[]; lines: LineCounts; changedFiles: number }) {
+export function PullFiles({
+  files,
+  complete,
+  lines,
+  changedFiles,
+}: {
+  /** Null when GitHub didn't list them. */
+  files: PullFile[] | null;
+  /** False when only some were read. */
+  complete: boolean;
+  lines: LineCounts | null;
+  changedFiles: number;
+}) {
   const ordered = useMemo(
-    () => [...files].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.path.localeCompare(b.path)),
+    () => [...(files ?? [])].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.path.localeCompare(b.path)),
     [files],
   );
   const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
@@ -110,14 +122,16 @@ export function PullFiles({ files, lines, changedFiles }: { files: PullFile[]; l
         <h2 className="font-medium text-foreground">
           Files <span className="text-muted-foreground">{changedFiles}</span>
         </h2>
-        <span className="text-[12px]">
-          <LineCountsSummary counts={lines} />
-        </span>
+        <span className="text-[12px]">{lines && <LineCountsSummary counts={lines} />}</span>
       </div>
-      {files.length < changedFiles && (
-        <p className="text-[12px] text-muted-foreground">
-          Showing {files.length} of {changedFiles} files: GitHub lists no more.
-        </p>
+      {files === null ? (
+        <p className="text-[12px] text-muted-foreground">GitHub didn&apos;t list this PR&apos;s files. Reload to try again.</p>
+      ) : (
+        !complete && (
+          <p className="text-[12px] text-muted-foreground">
+            Showing {files.length} of {changedFiles} files.
+          </p>
+        )
       )}
       {ordered.map((file) => (
         <FileView key={file.path} file={file} open={startsOpen(file) !== toggled.has(file.path)} onToggle={() => toggle(file.path)} />

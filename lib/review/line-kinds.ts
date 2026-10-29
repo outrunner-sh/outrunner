@@ -43,7 +43,9 @@ const LOCKFILES = new Set([
 ]);
 
 // Folders whose files someone else wrote: vendored dependencies and build
-// output that got committed.
+// output that got committed. `dist` is taken for build output wherever it is,
+// though a repository may keep source under one: such files are only folded
+// and counted apart, never hidden.
 const VENDORED_DIRS = new Set(["vendor", "vendors", "node_modules", "third_party", "third-party", "thirdparty", "godeps", "bower_components", "dist"]);
 
 // Folders whose files a tool wrote.
@@ -92,21 +94,16 @@ export function lineKind(path: string): LineKind {
   return "code";
 }
 
-export const NO_LINES: LineCounts = {
-  code: { additions: 0, deletions: 0 },
-  test: { additions: 0, deletions: 0 },
-  generated: { additions: 0, deletions: 0 },
-};
-
-/** A PR's changed files' lines, summed by kind. */
-export function countLines(files: readonly { path: string; additions: number; deletions: number }[]): LineCounts {
+/** A PR's changed files' lines, summed by kind (the file's own, when it
+ *  was already worked out). */
+export function countLines(files: readonly { path: string; kind?: LineKind; additions: number; deletions: number }[]): LineCounts {
   const counts: LineCounts = {
     code: { additions: 0, deletions: 0 },
     test: { additions: 0, deletions: 0 },
     generated: { additions: 0, deletions: 0 },
   };
   for (const file of files) {
-    const kind = lineKind(file.path);
+    const kind = file.kind ?? lineKind(file.path);
     counts[kind].additions += file.additions;
     counts[kind].deletions += file.deletions;
   }

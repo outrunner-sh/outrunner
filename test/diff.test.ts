@@ -114,3 +114,9 @@ test("CRLF line endings are normalized", () => {
   assert.equal(lines[1].type, "add");
   assert.equal(lines[1].text, "added");
 });
+
+test("headerless: inside a hunk, --- and +++ lines are removed and added lines", () => {
+  const patch = "@@ -1,1 +1,1 @@\n--- a comment\n+++ b";
+  assert.deepEqual(types(parseUnifiedDiff(patch)), ["hunk", "meta", "meta"]);
+  assert.deepEqual(types(parseUnifiedDiff(patch, { headerless: true })), ["hunk", "del", "add"]);
+});
