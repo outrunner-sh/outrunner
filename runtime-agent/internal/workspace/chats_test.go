@@ -421,3 +421,28 @@ func TestStopWaitsForTheParentLifecycleBeforeListingChats(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestForgettingAChatCannotReloadItsDeletedFacts(t *testing.T) {
+	s, id, key := chatSession(t, ChatInput{})
+	for n := 0; n < 100; n++ {
+		s.updateFacts(key, func(f *workspaceFacts) { f.Parent = id })
+		stop, done := make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(done)
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					s.getFacts(key)
+				}
+			}
+		}()
+		s.forgetWorkspace(key)
+		close(stop)
+		<-done
+		if _, ok := s.getFacts(key); ok {
+			t.Fatalf("forgotten facts reloaded on iteration %d", n)
+		}
+	}
+}

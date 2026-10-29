@@ -1843,8 +1843,10 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	chat := f.Parent != ""
 	s.mu.Lock()
 	delete(s.facts, workspaceID)
-	s.mu.Unlock()
+	// getFacts reads disk under this same mutex. Remove the file before
+	// releasing it, so a concurrent read cannot repopulate the deleted entry.
 	_ = os.Remove(s.factsPath(workspaceID))
+	s.mu.Unlock()
 	s.gatewayFiles().remove(workspaceID)
 	s.authFiles().remove(workspaceID)
 	if !chat {
