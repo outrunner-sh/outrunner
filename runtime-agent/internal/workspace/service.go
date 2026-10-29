@@ -127,7 +127,7 @@ type Service struct {
 	// takes (claudeTakes).
 	claudeHelp claudeHelp
 
-	// factsWriteMu serializes updateFacts' read-modify-writes.
+	// factsWriteMu serializes updateFacts' read-modify-writes and deletion.
 	factsWriteMu sync.Mutex
 
 	// codexTails translate the running Codex sessions' rollouts.
@@ -1847,12 +1847,15 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 		_ = os.Remove(conversationPath(s.Root, workspaceID)) // its translation
 	}
 	chat := f.Parent != ""
+	// Prompt-path updates hold factsWriteMu while their file write finishes.
+	// Hold it before mu, as updateFacts does, so neither an in-flight write
+	// nor getFacts' disk read can resurrect a deleted chat.
+	s.factsWriteMu.Lock()
 	s.mu.Lock()
 	delete(s.facts, workspaceID)
-	// getFacts reads disk under this same mutex. Remove the file before
-	// releasing it, so a concurrent read cannot repopulate the deleted entry.
 	_ = os.Remove(s.factsPath(workspaceID))
 	s.mu.Unlock()
+	s.factsWriteMu.Unlock()
 	s.gatewayFiles().remove(workspaceID)
 	s.authFiles().remove(workspaceID)
 	if !chat {

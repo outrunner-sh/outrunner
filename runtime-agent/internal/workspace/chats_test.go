@@ -452,3 +452,37 @@ func TestForgettingAChatCannotReloadItsDeletedFacts(t *testing.T) {
 		}
 	}
 }
+
+func TestForgettingAChatWaitsForPendingFactsWrites(t *testing.T) {
+	s, _, key := chatSession(t, ChatInput{})
+	started, release, written := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(written)
+		s.updateFacts(key, func(f *workspaceFacts) {
+			close(started)
+			<-release
+			f.Handoff = "pending prompt update"
+		})
+	}()
+	<-started
+	forgotten := make(chan struct{})
+	go func() { s.forgetWorkspace(key); close(forgotten) }()
+	early := false
+	select {
+	case <-forgotten:
+		early = true
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	<-written
+	<-forgotten
+	if early {
+		t.Error("deletion did not wait for the facts writer")
+	}
+	if _, ok := s.getFacts(key); ok {
+		t.Fatal("pending write resurrected deleted chat facts")
+	}
+	if s.updateFacts(key, func(f *workspaceFacts) { f.Handoff = "after deletion" }) {
+		t.Fatal("a later update recreated the deleted chat")
+	}
+}
