@@ -113,6 +113,25 @@ export function prFooter({ sessionUrl, userName, coAuthors = [] }: PrFooterInput
 export const FOOTER_RULE =
   "End the body with this footer. When you edit a PR's body, keep the footer and any Co-Authored-By trailers it already has exactly as they are, wherever they came from, and never add a second footer.";
 
+/**
+ * Commit attribution for the person who prompted the work. Project variables
+ * win so a team can choose the exact GitHub identity it already keeps with the
+ * project; the signed-in user's GitHub noreply identity is the fallback.
+ */
+export function commitAttributionSection(coAuthors: string[] = []): string {
+  const fallback = coAuthors.length > 0
+    ? `Otherwise use ${coAuthors.length === 1 ? "this exact trailer" : "these exact trailers"}:\n${coAuthors.map((author) => `- \`Co-Authored-By: ${author}\``).join("\n")}`
+    : "Otherwise use the session's configured `git user.name` and `git user.email`.";
+  return `## Commit attribution
+
+Every commit made for this pull request must credit the user who prompted the work:
+
+- If the project variables \`GIT_AUTHOR_NAME\` and \`GIT_AUTHOR_EMAIL\` are both set, use their expanded values in \`Co-Authored-By: <name> <email>\`.
+- ${fallback}
+- Never write a literal variable name or placeholder into a trailer, and never add the same trailer twice.
+- Before pushing, inspect every commit unique to the branch and amend or rebase any that is missing the user's trailer.`;
+}
+
 /** The steps that produce the evidence, before the PR is opened: with a
  *  desktop, in its Chromium; without one, what to write instead. */
 export function evidenceSteps(tools: EvidenceTools, baseBranch: string): string[] {
@@ -174,6 +193,8 @@ export function prGuide(input: PrFooterInput & { tools: EvidenceTools; baseBranc
   return `# Pull requests
 
 Whenever you open or update a pull request, write it this way.
+
+${commitAttributionSection(input.coAuthors)}
 
 ${templateSection(input)}
 

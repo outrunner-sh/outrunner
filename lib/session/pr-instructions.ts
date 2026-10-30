@@ -12,6 +12,7 @@
  */
 
 import {
+  commitAttributionSection,
   type EvidenceTools,
   evidenceSection,
   type PrFooterInput,
@@ -22,6 +23,16 @@ import {
 export const PR_PROMPT = "Create a PR";
 
 export const PR_INSTRUCTIONS_FILENAME = "PR instructions.md";
+
+/** The footer details the Environment panel sends with its explicit Create PR
+ *  request. Keep the trusted identity here so those one-off instructions and
+ *  the standing session guide enforce the same commit attribution. */
+export function prInstructionFooter(sessionUrl: string, coAuthor?: string | null): PrFooterInput {
+  return {
+    sessionUrl,
+    ...(coAuthor ? { coAuthors: [coAuthor] } : {}),
+  };
+}
 
 /** The steps, from the session's branch, its target and how many files are
  *  uncommitted: null when the count can't be read yet, and then left out. */
@@ -61,7 +72,7 @@ Follow these steps to create a PR:
 
 - If you have any skills related to creating PRs, invoke them now. Instructions there should take precedence over these instructions.
 - Run \`git diff\` to review uncommitted changes
-- Commit them. Follow any instructions the user gave you about writing commit messages.
+- Commit them. Follow any instructions the user gave you about writing commit messages and the attribution rules below.
 - Run \`git diff origin/${baseBranch}...\` to review the whole PR diff, and decide whether it changes UI or behaviour a person can see.
 - If it does, produce the evidence now, before pushing (below). Backend-only and docs changes skip this.
 - Push to origin (\`git push -u origin ${branch}\`).
@@ -69,6 +80,8 @@ Follow these steps to create a PR:
 - Otherwise write the body from the template below to a file and run \`gh pr create --base ${baseBranch} --title "…" --body-file <file>\` to create a PR onto the target branch, unless the user instructed you otherwise. Describe not just changes made in this session but ALL changes in the workspace diff.
 
 If any of these steps fail, ask the user for help.
+
+${commitAttributionSection(footer.coAuthors)}
 
 ## Evidence
 

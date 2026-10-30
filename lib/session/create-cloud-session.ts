@@ -109,6 +109,7 @@ import { getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } fr
 import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
 import { GitIdentityError } from "@/lib/github/identity";
 import { gitTokensFor, markReviewSession, REVIEW_AS_APP, requireGitToken } from "@/lib/github/identity.deps";
+import { githubCoAuthor } from "@/lib/github/co-author";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-links";
 
@@ -802,6 +803,7 @@ async function provisionWorkspace({
             checkouts: checkouts ?? undefined,
             sessionUrl: appUrl(`/workspaces/${workspace.id}`, "https://app.outrunner.sh"),
             userName: owner.name,
+            coAuthors: [githubCoAuthor(owner)].filter((author): author is string => author !== null),
           }),
         },
         identity,

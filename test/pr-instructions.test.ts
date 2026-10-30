@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { prInstructionFooter, prInstructions } from "@/lib/session/pr-instructions";
 import { EVIDENCE_REPLY_RULE } from "@/lib/session/pr-template";
-import { prInstructions } from "@/lib/session/pr-instructions";
 
 const DESKTOP = { desktop: true };
 const NO_DESKTOP = { desktop: false };
@@ -20,6 +20,20 @@ test("the instructions name the branch, its target and what's uncommitted", () =
   assert.match(md, /`git push -u origin runtime\/abc`/);
   assert.match(md, /`git diff origin\/develop\.\.\.`/);
   assert.match(md, /`gh pr create --base develop --title "…" --body-file <file>`/);
+});
+
+test("the instructions require the prompting user's co-author trailer on every commit", () => {
+  const md = instructions({ footer: { ...FOOTER, coAuthors: ["Ada <1+ada@users.noreply.github.com>"] } });
+  assert.match(md, /project variables `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL`/);
+  assert.match(md, /`Co-Authored-By: Ada <1\+ada@users\.noreply\.github\.com>`/);
+  assert.match(md, /Before pushing, inspect every commit unique to the branch/);
+});
+
+test("the Environment panel's Create PR footer carries the trusted co-author", () => {
+  const footer = prInstructionFooter("https://app/workspaces/w", "Ada <1+ada@users.noreply.github.com>");
+  const md = instructions({ footer });
+  assert.deepEqual(footer.coAuthors, ["Ada <1+ada@users.noreply.github.com>"]);
+  assert.match(md, /`Co-Authored-By: Ada <1\+ada@users\.noreply\.github\.com>`/);
 });
 
 test("one uncommitted change is singular, none says so", () => {
