@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 export const BOX_TOOLS = {
   node: "22",
   claudeCode: "2.1.304",
-  codex: "0.146.0",
+  codex: "0.162.1",
   gh: "2.102.1",
 } as const;
 
@@ -39,7 +39,7 @@ export function boxImageTag(dockerfile: string): string {
 /** {@link boxImageTag} of box/Dockerfile as committed. Written out rather than
  *  computed, so the app needs no Dockerfile at runtime; its test fails when
  *  the two part. */
-export const BOX_IMAGE_TAG = "1e6ddadace5e";
+export const BOX_IMAGE_TAG = "2fe23c90ef49";
 
 /** Where CI publishes the image, public. */
 export const BOX_IMAGE_REPOSITORY = "ghcr.io/neevai-labs/outrunner-box";
@@ -57,7 +57,7 @@ export function boxCheckScript(): string {
     "fail=0",
     `want() { [ "$3" = "$2" ] || { echo "$1 is \${3:-missing}, expected $2"; fail=1; }; }`,
     `want "Claude Code" ${claudeCode} "$(claude --version 2>/dev/null | cut -d' ' -f1)"`,
-    // "codex-cli 0.146.0"
+    // "codex-cli 0.162.1"
     `want Codex ${codex} "$(codex --version 2>/dev/null | awk '{print $NF}')"`,
     // "gh version 2.102.1 (2026-…)"
     `want gh ${gh} "$(gh --version 2>/dev/null | awk 'NR==1{print $3}')"`,

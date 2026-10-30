@@ -277,25 +277,33 @@ func realPath(path string) string {
 }
 
 // countUserMessages counts the prompts a rollout recorded (0 before there is
-// one): Codex writes a user_message as it takes each.
+// one): the canonical user event differs between legacy and paginated history.
 func countUserMessages(path string) int {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0
 	}
 	count := 0
+	paginated := false
 	for _, line := range bytes.Split(data, []byte("\n")) {
-		if !bytes.Contains(line, []byte(`"user_message"`)) {
+		var rec struct {
+			Type    string          `json:"type"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		if json.Unmarshal(line, &rec) != nil {
 			continue
 		}
-		var rec struct {
-			Type    string `json:"type"`
-			Payload struct {
-				Type string `json:"type"`
-			} `json:"payload"`
+		if rec.Type == "session_meta" {
+			var meta struct {
+				HistoryMode string `json:"history_mode"`
+			}
+			_ = json.Unmarshal(rec.Payload, &meta)
+			paginated = meta.HistoryMode == "paginated"
 		}
-		if json.Unmarshal(line, &rec) == nil && rec.Type == "event_msg" && rec.Payload.Type == "user_message" {
-			count++
+		if rec.Type == "event_msg" {
+			if _, ok := codex.UserPrompt(rec.Payload, paginated); ok {
+				count++
+			}
 		}
 	}
 	return count

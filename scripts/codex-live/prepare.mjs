@@ -154,7 +154,7 @@ await task(
     "--ignore-scripts",
     "--no-fund",
     "--no-audit",
-    "@openai/codex@0.146.0",
+    "@openai/codex@0.162.1",
   ],
   root,
 );

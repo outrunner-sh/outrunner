@@ -63,7 +63,7 @@ if (process.argv.includes("--cleanup")) {
       readFileSync(root + "/last-grants.json", "utf8"),
     )) {
       const response = await fetch(
-        grant.url + "/models?client_version=0.146.0",
+        grant.url + "/models?client_version=0.162.1",
         { headers: { Authorization: "Bearer " + grant.bearer } },
       );
       assert.equal(
@@ -161,7 +161,7 @@ try {
   writeFileSync(root + "/last-grants.json", JSON.stringify(grants), {
     mode: 0o600,
   });
-  const request = async (g, path = "models?client_version=0.146.0") =>
+  const request = async (g, path = "models?client_version=0.162.1") =>
     fetch(g.url + "/" + path, {
       headers: { Authorization: "Bearer " + g.bearer },
       signal: AbortSignal.timeout(30000),

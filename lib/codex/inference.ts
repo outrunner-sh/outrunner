@@ -12,12 +12,14 @@ type ProxyDeps = {
   authorize(grant: CodexGrant): Promise<unknown>;
   accounts: Pick<CodexAccounts, "access">;
   fetch: typeof fetch;
+  brokerOrigin?: string;
 };
 export function createCodexProxy(deps: ProxyDeps) {
-  // An inference-only endpoint: no remote login, files, arbitrary URLs, or OAuth
-  // refresh endpoint. The native CLI's provider base_url points here over HTTPS.
+  // Inference and local account routing only: no remote login, files, arbitrary
+  // URLs, or OAuth refresh. The native CLI's base_url points here over HTTPS.
   const allowed = new Map([
     ["GET models", "models"],
+    ["GET api/codex/accounts/check", "accounts/check"],
     ["POST responses", "responses"],
     ["POST responses/compact", "responses/compact"],
   ]);
@@ -40,6 +42,17 @@ export function createCodexProxy(deps: ProxyDeps) {
       const check = () => deps.authorize(grant);
       await check();
       let access = await deps.accounts.access(grant.key, grant.generation);
+      if (target === "accounts/check") {
+        // Newer CLIs discover workspace routing during account/read. Their
+        // local identity is "outrunner" (AccountConfig); keep them on this
+        // broker, which alone owns the real account and provider routing.
+        await check();
+        return Response.json({ accounts: [{
+          id: "outrunner",
+          workspace_backend_origin: new URL(deps.brokerOrigin ?? request.url).origin,
+          account_routing_override: "NO_CONSTRAINT",
+        }] }, { headers: { "Cache-Control": "no-store" } });
+      }
       let body: ArrayBuffer | undefined;
       if (request.method === "POST") {
         const bounded = await boundedBody(request, 20 * 1024 * 1024);

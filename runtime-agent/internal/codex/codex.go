@@ -20,7 +20,7 @@ const PlanPreamble = "[Plan mode] Don't change any files yet: read what you need
 
 // InstallHint is how to get the Codex CLI a session needs: the version this
 // agent's launch flags and transcript reading were checked against.
-const InstallHint = "npm install -g @openai/codex@0.146.0"
+const InstallHint = "npm install -g @openai/codex@0.162.1"
 
 // Command is the argv that launches Codex in a session, or with sessionID
 // continues that conversation (`codex resume <id>` appends to the same
@@ -67,7 +67,9 @@ func permissionArgs(mode claude.PermissionMode) []string {
 		// see. What needs more is said in the plan, for the user to approve.
 		return []string{"-s", "read-only", "-a", "never"}
 	default: // claude.Default
-		return []string{"-s", "workspace-write", "-a", "untrusted"}
+		// Current Codex supports on-request and never; untrusted was removed.
+		// Keep its workspace sandbox and native approval flow.
+		return []string{"-s", "workspace-write", "-a", "on-request"}
 	}
 }
 
