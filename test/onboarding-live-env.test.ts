@@ -13,6 +13,7 @@ import {
   parseAgentPick,
   parseProgress,
   resumeAt,
+  resumeDesktopAt,
   sortRepositories,
   startingPick,
 } from "@/lib/onboarding/rules";
@@ -275,4 +276,35 @@ test("storage that fails only means onboarding opens at its start", (t) => {
   });
   assert.doesNotThrow(() => env().saveProgress({ step: "repos", done: [], runOn: "claude" }));
   assert.equal(env().savedProgress(), null);
+});
+
+test("desktop progress preserves the execution target and never skips agent/location selection on detection alone", () => {
+  const found: AgentStatus = {
+    ...agents({}, true),
+    codex: { apiKey: false, account: true },
+    local: { deviceId: "mac", root: "/r", agentBundled: true, git: "/g", tmux: "/t", claude: null,
+      agents: { claude: { path: null, loggedIn: null, method: null }, codex: { path: "/codex", loggedIn: true, method: "chatgpt" } } },
+  };
+  assert.equal(resumeDesktopAt(null, found).step, "agent");
+  const saved = { step: "repos", done: ["agent"], runOn: "codex", target: "local" } as const;
+  const parsed = parseProgress(saved)!;
+  assert.equal(parsed.target, "local");
+  assert.equal(resumeDesktopAt(parsed, found).step, "repos");
+  found.local!.agents!.codex.loggedIn = false;
+  assert.equal(resumeDesktopAt(parsed, found).step, "agent");
+  // A valid cloud account does not stand in for a missing local login.
+  assert.equal(resumeDesktopAt({ ...parsed, target: "cloud" }, found).step, "repos");
+  const href = newSessionAfterOnboarding(undefined, "codex", "local", "/Users/ada/my project");
+  const query = new URL(href, "https://app.test").searchParams;
+  assert.equal(query.get("target"), "local");
+  assert.equal(query.get("folder"), "/Users/ada/my project");
+});
+
+test("a saved Codex ChatGPT account is recognized alongside API keys", async () => {
+  stubFetch({ ...statusRoutes({ connected: false, last4: null }, {}),
+    "GET /api/onboarding/agents": () => [200, { methods: { claude: [], codex: ["codex-account"] } }],
+  });
+  const status = await env().agentStatus();
+  assert.equal(status.codex.account, true);
+  assert.deepEqual(connectedAgent(status, { claude: null, codex: "codex-account" }), { agent: "codex", method: "codex-account", chosen: true });
 });

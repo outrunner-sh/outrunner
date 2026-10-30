@@ -35,6 +35,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "desktop-codex-auth" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := cli.DesktopCodexAuth(ctx, os.Stdin, os.Stdout)
+		stop()
+		os.Exit(code)
+	}
 	// `runtime-agent import …` is the desktop app's: it reads this Mac's
 	// sessions and exits. It serves nothing, so needs no secret.
 	if len(os.Args) > 1 && os.Args[1] == "import" {

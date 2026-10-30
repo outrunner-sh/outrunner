@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { DesktopCodexConnection } from "@/components/desktop-codex-connection";
+import { isDesktopApp } from "@/lib/is-desktop";
 import { Check, Copy, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { InlineMessage } from "@/components/ui/notice";
@@ -14,6 +16,7 @@ export type CodexMeta = {
   updatedAt: string | null;
   pending: { id: string; expiresAt: string; mine?: boolean } | null;
 };
+const subscribe = () => () => {};
 type Scopes = { user: string; orgs: Org[]; activeOrg: string | null };
 // Set only after a release containing codex-auth is published. Never assume
 // the registry's mutable latest tag contains this deployment's commands.
@@ -37,6 +40,7 @@ export function CodexConnection({
   orgId?: string;
   onConnected?: (connected: boolean) => void;
 }) {
+  const desktop = useSyncExternalStore(subscribe, isDesktopApp, () => false);
   const [scopes, setScopes] = useState<Scopes | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -75,6 +79,9 @@ export function CodexConnection({
         Reload to choose an organization you belong to.
       </InlineMessage>
     );
+  if (desktop && (scope.kind !== "org" || scope.org.role === "admin")) {
+    return <DesktopCodexConnection orgId={orgId} onConnected={onConnected} />;
+  }
   return (
     <ConnectionScope
       key={orgId ?? "personal"}

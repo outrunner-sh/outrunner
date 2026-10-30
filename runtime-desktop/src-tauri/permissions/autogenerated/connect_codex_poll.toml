@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-connect-codex-poll"
+description = "Enables the connect_codex_poll command without any pre-configured scope."
+commands.allow = ["connect_codex_poll"]
+
+[[permission]]
+identifier = "deny-connect-codex-poll"
+description = "Denies the connect_codex_poll command without any pre-configured scope."
+commands.deny = ["connect_codex_poll"]

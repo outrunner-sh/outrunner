@@ -58,7 +58,7 @@ export function FixtureFrame({ children }: { children: React.ReactNode }) {
     }
     return frame;
   }, [state]);
-  if (params.get("view") === "settings") return children;
+  if (["settings", "onboarding"].includes(params.get("view") ?? "")) return children;
   return (
     <AppFrame chrome={<ServerAnswer value={chrome} />} server={<ServerAnswer value={shownFrame} />}>
       {children}

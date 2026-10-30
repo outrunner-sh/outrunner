@@ -3,7 +3,8 @@
  * test on their own.
  */
 
-import type { AgentId } from "@/lib/agents/registry";
+import type { AgentId, RunTarget } from "@/lib/agents/registry";
+import { agentCli } from "@/lib/desktop/local-runtime";
 import { PLANS } from "@/lib/billing/plans";
 import type { RepositoryListing } from "@/lib/github/listing";
 import type { AgentChoices, AgentMethod, AgentPick, AgentStatus, OnboardingProgress, OnboardingStep } from "@/lib/onboarding/types";
@@ -78,7 +79,7 @@ export function parseProgress(raw: unknown): OnboardingProgress | null {
   const step = savedStep === "start" ? "repos" : savedStep;
   const pick = parseAgentPick(runOn);
   if (!STEPS.includes(step as OnboardingStep) || !pick || !Array.isArray(done)) return null;
-  return { step: step as OnboardingStep, done: STEPS.filter((s) => done.includes(s)), runOn: pick };
+  return { step: step as OnboardingStep, done: STEPS.filter((s) => done.includes(s)), runOn: pick, ...((raw as { target?: unknown }).target === "local" && { target: "local" as const }), ...((raw as { target?: unknown }).target === "cloud" && { target: "cloud" as const }) };
 }
 
 /** The agent of the user's own that's connected already, and how: the way
@@ -92,6 +93,7 @@ export function connectedAgent(
   const ready = [
     status.claude.subscription && { agent: "claude" as const, method: "subscription" as const },
     status.claude.apiKey && { agent: "claude" as const, method: "api-key" as const },
+    status.codex.account === true && { agent: "codex" as const, method: "codex-account" as const },
     status.codex.apiKey && { agent: "codex" as const, method: "api-key" as const },
   ].filter((way) => way !== false);
   const picked = ready.find((way) => choices[way.agent] === way.method);
@@ -101,7 +103,19 @@ export function connectedAgent(
 
 /** Whether the user's own `agent` can run a session as things are now. */
 function canRun(agent: "claude" | "codex", status: AgentStatus): boolean {
-  return agent === "claude" ? status.claude.subscription || status.claude.apiKey : status.codex.apiKey;
+  if (status.cloud?.[agent]?.length) return true;
+  return agent === "claude" ? status.claude.subscription || status.claude.apiKey : (status.codex.apiKey || status.codex.account === true);
+}
+
+/** Desktop users explicitly choose both an agent and a location. A detected
+ * CLI never silently selects local execution or becomes a cloud credential. */
+export function resumeDesktopAt(saved: OnboardingProgress | null, status: AgentStatus | null): OnboardingProgress {
+  const at: OnboardingProgress = saved ?? { step: "agent", done: [], runOn: "outrunner", target: "local" };
+  if (!status || !at.done.includes("agent") || (at.runOn !== "claude" && at.runOn !== "codex")) return at;
+  const ready = at.target === "local"
+    ? status.local && agentCli(status.local, at.runOn).loggedIn === true
+    : canRun(at.runOn, status);
+  return ready ? at : { ...at, step: "agent", done: at.done.filter((step) => step !== "agent") };
 }
 
 /**
@@ -124,6 +138,7 @@ export function resumeAt(
   choices: AgentChoices | null,
 ): OnboardingProgress & { save?: { agent: "claude" | "codex"; method: AgentMethod } } {
   let at: OnboardingProgress = saved ?? { step: "agent", done: [], runOn: "outrunner" };
+  if (at.target === "local") return at;
   if (status && at.done.includes("agent") && (at.runOn === "claude" || at.runOn === "codex") && !canRun(at.runOn, status)) {
     at = { step: "agent", done: at.done.filter((step) => step !== "agent"), runOn: "outrunner" };
   }
@@ -154,7 +169,9 @@ export function startingPick(pick: AgentPick): StartingPick {
 /** Where onboarding ends: the new-session screen, on the first repository
  *  picked (none: the form's own choice), the composer focused, starting on
  *  the agent picked (`?start=`, read by components/new-session-route.tsx). */
-export function newSessionAfterOnboarding(projectId: string | undefined, runOn: AgentPick): string {
+export function newSessionAfterOnboarding(projectId: string | undefined, runOn: AgentPick, target?: RunTarget, folder?: string): string {
   const query = new URLSearchParams({ ...(projectId && { project: projectId }), focus: "composer", start: runOn });
+  if (target) query.set("target", target);
+  if (target === "local" && folder) query.set("folder", folder);
   return `/new?${query}`;
 }

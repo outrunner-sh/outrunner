@@ -24,6 +24,8 @@ mod claude_login;
 mod import;
 mod local_runtime;
 mod managed_claude;
+mod managed_codex;
+mod codex_login;
 mod updater;
 
 use tauri::{
@@ -168,6 +170,7 @@ pub fn run() {
     install_crypto_provider();
     tauri::Builder::default()
         .manage(claude_login::ClaudeLoginState::default())
+        .manage(codex_login::CodexLoginState::default())
         .manage(local_runtime::LocalRuntime::default())
         .manage(updater::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
@@ -177,6 +180,11 @@ pub fn run() {
             claude_login::connect_claude_debug,
             claude_login::connect_claude_cancel,
             local_runtime::local_status,
+            local_runtime::local_agent_setup,
+            codex_login::connect_codex_start,
+            codex_login::local_codex_models,
+            codex_login::connect_codex_poll,
+            codex_login::connect_codex_cancel,
             local_runtime::local_claude_login,
             local_runtime::local_claude_login_cancel,
             local_runtime::local_codex_login,

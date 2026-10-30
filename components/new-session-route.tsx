@@ -48,6 +48,7 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
   const search = useSearchParams();
   const project = search.get("project") ?? undefined;
   const folder = search.get("folder") ?? "";
+  const target = search.get("target") === "local" ? "local" : search.get("target") === "cloud" ? "cloud" : undefined;
   const pick = search.get("pick") === "repo";
   const focus = search.get("focus") === "composer";
   const start = parseAgentPick(search.get("start"));
@@ -78,7 +79,7 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
         // A new form per "New Session" and per target: arriving while already
         // on /new must not keep the repository, folder or cloud/Mac choice the
         // open form was switched to. The prompt's draft stays.
-        key={`${project ?? ""}\n${folder}\n${workItemId ?? ""}\n${asked}`}
+        key={`${target ?? ""}\n${project ?? ""}\n${folder}\n${workItemId ?? ""}\n${asked}`}
         projects={projects}
         // A hidden repository asked for may still be on its way from the
         // server: the form picks it up as it lands, until one is picked.
@@ -87,6 +88,8 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
         openPicker={pick}
         focusComposer={focus}
         initialPick={start && startingPick(start)}
+        initialTarget={target}
+        initialFolder={folder || undefined}
         workItemId={workItemId}
         showBack
       />

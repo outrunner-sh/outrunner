@@ -8,6 +8,8 @@
  * first of them and the agent picked.
  */
 
+import type { AuthMethodId, RunTarget } from "@/lib/agents/registry";
+import type { LocalStatus, LocalFolder } from "@/lib/desktop/local-runtime";
 import type { AgentAuthChoices } from "@/lib/db/credentials";
 import type { RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
@@ -26,7 +28,10 @@ export type AgentStatus = {
     /** An Anthropic API key is saved. */
     apiKey: boolean;
   };
-  codex: { apiKey: boolean };
+  codex: { apiKey: boolean; account?: boolean };
+  cloud?: Record<"claude" | "codex", AuthMethodId[]>;
+  local?: LocalStatus | null;
+  localError?: string;
 };
 
 /** The agent a user starts on: their own Claude Code or Codex, or Outrunner's
@@ -35,7 +40,7 @@ export type AgentStatus = {
 export type AgentPick = "claude" | "codex" | "outrunner" | "codex-outrunner";
 
 /** How a picked agent signs in, in the cloud. */
-export type AgentMethod = "subscription" | "api-key";
+export type AgentMethod = AuthMethodId;
 
 /** The way the user picked for each agent to sign in (Settings →
  *  Providers); null where they've picked none. */
@@ -46,7 +51,7 @@ export type OnboardingStep = "agent" | "repos";
 /** How far the user got, kept in the browser, so onboarding opens there
  *  again after it's left: for GitHub to install the App, Settings to link
  *  GitHub, or a tab the CLI opened (lib/onboarding/rules.ts resumeAt). */
-export type OnboardingProgress = { step: OnboardingStep; done: OnboardingStep[]; runOn: AgentPick };
+export type OnboardingProgress = { step: OnboardingStep; done: OnboardingStep[]; runOn: AgentPick; target?: RunTarget };
 
 /** The user's GitHub repositories, and which are already projects. */
 export type RepositoryList = {
@@ -80,6 +85,10 @@ export type OnboardingEnv = {
   outrunnerModels: boolean;
 
   agentStatus(): Promise<AgentStatus>;
+  setupAgent(agent: "claude" | "codex"): Promise<void>;
+  loginAgent(agent: "claude" | "codex"): Promise<void>;
+  cancelLogin(agent: "claude" | "codex"): Promise<void>;
+  pickFolder(): Promise<LocalFolder | null>;
   /** Save a Claude subscription token (from `claude setup-token`). */
   saveClaudeToken(token: string): Promise<AgentStatus>;
   /** Save an Anthropic or OpenAI API key. */
@@ -99,7 +108,7 @@ export type OnboardingEnv = {
 
   /** Finish onboarding; where the first session is started from: the
    *  new-session screen, on the project and the agent picked. */
-  finish(projectId: string | undefined, runOn: AgentPick): Promise<string>;
+  finish(projectId: string | undefined, runOn: AgentPick, target?: RunTarget, folder?: string): Promise<string>;
   /** Finish onboarding without a session; where home is. */
   skip(): Promise<string>;
 

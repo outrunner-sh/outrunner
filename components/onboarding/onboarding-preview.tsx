@@ -113,6 +113,10 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
     user: { id: "preview", name: "Sajda", login: "sajdakabir", avatarUrl: null },
     desktop: scenario.surface === "desktop",
     outrunnerModels: scenario.outrunnerModels === "yes",
+    async setupAgent() { await wait(500); },
+    async loginAgent() { await wait(500); },
+    async cancelLogin() {},
+    async pickFolder() { return { path: "/Users/ada/projects/outrunner", name: "outrunner", git: true, branch: "main" }; },
     agentStatus: async () => (await wait(300), current()),
     async saveClaudeToken() {
       await wait(500);

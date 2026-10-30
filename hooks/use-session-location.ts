@@ -51,12 +51,12 @@ function savedLocation(): SessionLocation {
  * last local session used (re-checked, since it may have moved), and the one
  * reason, if any, a local session cannot start yet.
  */
-export function useSessionLocation(agent: AgentId = "claude") {
+export function useSessionLocation(agent: AgentId = "claude", initialTarget?: SessionLocation, initialFolder?: string) {
   const { runtime, recheck } = useLocalRuntime();
   const claudeLogin = useClaudeLocalLogin(recheck);
   // The last choice sticks. It only takes effect where local is possible, so
   // the server render and the first client render agree (both say cloud).
-  const [chosen, setChosen] = useState<SessionLocation>(savedLocation);
+  const [chosen, setChosen] = useState<SessionLocation>(() => initialTarget ?? (initialFolder ? "local" : savedLocation()));
   // The latest answer about a folder: one just picked, or the remembered one
   // re-checked.
   const [found, setFound] = useState<{ path: string; picked: boolean; choice: FolderChoice } | null>(
@@ -81,6 +81,7 @@ export function useSessionLocation(agent: AgentId = "claude") {
   const onMacLogin = claudePick === null || claudePick === "local";
 
   const onOutrunnerModel =
+    agent === "claude" &&
     onMacLogin &&
     location === "local" &&
     runtime.state === "ready" &&
@@ -89,7 +90,7 @@ export function useSessionLocation(agent: AgentId = "claude") {
   // Choosing This Mac on a Mac with no Claude Code a session can run (none,
   // a broken one, one too old) sets up the app's own; nothing to install. A
   // failure waits for Try again.
-  const setupNeeded = location === "local" && runtime.state === "ready" && claudeSetupNeeded(runtime.status);
+  const setupNeeded = agent === "claude" && location === "local" && runtime.state === "ready" && claudeSetupNeeded(runtime.status);
   const setUpClaude = useCallback(async () => {
     await setUpClaudeCode().catch(() => {});
     await recheck();
@@ -119,7 +120,7 @@ export function useSessionLocation(agent: AgentId = "claude") {
     stopCheck.current = () => {
       cancelled = true;
     };
-    const path = rememberedFolder();
+    const path = initialFolder ?? rememberedFolder();
     if (path) {
       checkLocalFolder(path)
         .then((folder) => {
@@ -139,7 +140,7 @@ export function useSessionLocation(agent: AgentId = "claude") {
       // being checked rather than an earlier pick that may be stale.
       setFound(null);
     };
-  }, [location]);
+  }, [location, initialFolder]);
 
   const chooseFolder = useCallback(async () => {
     try {
@@ -176,7 +177,7 @@ export function useSessionLocation(agent: AgentId = "claude") {
     }
   }, []);
 
-  const remembered = location === "local" ? rememberedFolder() : null;
+  const remembered = location === "local" ? initialFolder ?? rememberedFolder() : null;
   const folder: FolderChoice =
     found && (found.picked || found.path === remembered)
       ? found.choice
