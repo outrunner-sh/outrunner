@@ -428,3 +428,41 @@ func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
+
+// environmentNote tells agents how to use project variables without ever
+// putting their values in the prompt. Names are validated even when reading
+// a file written by an earlier agent version.
+func (s *Service) environmentNote(workspaceID string) string {
+	id := s.owner(workspaceID)
+	names := map[string]bool{}
+	for _, line := range s.envFiles().keyLines(s.envFiles().read(id)) {
+		name, _, _ := strings.Cut(strings.TrimPrefix(line, "export "), "=")
+		if ValidEnvName(name) {
+			names[name] = true
+		}
+	}
+	for name := range s.provided(workspaceID) {
+		if ValidEnvName(name) {
+			names[name] = true
+		}
+	}
+	ordered := make([]string, 0, len(names))
+	for name := range names {
+		ordered = append(ordered, name)
+	}
+	sort.Strings(ordered)
+	var note strings.Builder
+	note.WriteString("# Project environment\n\nUse the project's existing environment variables before asking the user for credentials. ")
+	if len(ordered) > 0 {
+		note.WriteString("Available variables: " + strings.Join(ordered, ", ") + ". ")
+	}
+	note.WriteString("Use variables by name in shell commands; never print, log or commit their values. ")
+	for _, path := range []string{s.envFiles().path(id), s.ProvidedEnvPath(workspaceID)} {
+		q := claude.ShellQuote(path)
+		note.WriteString("To load the current values explicitly, run `if [ -f " + q + " ]; then . " + q + "; fi` before your command. ")
+	}
+	if s.RelayExecutable != "" {
+		note.WriteString("For missing secrets, call request_secrets with the variable names and a reason. Outrunner shows a secure form; never ask for a secret in chat. In cloud sessions, supplied values are also saved to the project for future sessions. ")
+	}
+	return note.String()
+}

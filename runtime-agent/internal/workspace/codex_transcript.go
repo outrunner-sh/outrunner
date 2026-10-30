@@ -596,7 +596,7 @@ func (t *codexTail) write(recs []codex.Record) {
 	if len(t.pending) == 0 {
 		return
 	}
-	if err := appendRecords(conversationPath(t.s.Root, t.workspaceID), t.pending); err != nil {
+	if err := t.s.appendCodexRecords(t.workspaceID, t.pending); err != nil {
 		if !t.failing {
 			log.Printf("workspace %s: couldn't write its Codex conversation (will retry): %v", t.workspaceID, err)
 		}
@@ -604,6 +604,14 @@ func (t *codexTail) write(recs []codex.Record) {
 		return
 	}
 	t.pending, t.failing = nil, false
+}
+
+// appendCodexRecords also serializes runtime-owned forms with a translator
+// stopping or starting, when its tail is temporarily absent from the map.
+func (s *Service) appendCodexRecords(workspaceID string, out []byte) error {
+	s.codexLogMu.Lock()
+	defer s.codexLogMu.Unlock()
+	return appendRecords(conversationPath(s.Root, workspaceID), out)
 }
 
 // appendRecords appends whole lines to a conversation log, ending a last line

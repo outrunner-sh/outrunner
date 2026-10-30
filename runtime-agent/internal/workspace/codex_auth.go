@@ -141,7 +141,7 @@ func (s *Service) codexEnvironment(workspaceID string) func(string) (string, boo
 		}
 	}
 	env["CODEX_HOME"] = s.codexHome(workspaceID)
-	for _, line := range strings.Split(s.envFiles().read(workspaceID), "\n") {
+	for _, line := range strings.Split(s.envFiles().read(s.owner(workspaceID)), "\n") {
 		if name, quoted, ok := strings.Cut(strings.TrimPrefix(line, "export "), "="); ok && strings.HasPrefix(line, "export ") {
 			env[name] = shellUnquote(quoted)
 		}

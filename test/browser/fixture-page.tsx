@@ -94,7 +94,7 @@ export function FixturePage() {
     [state],
   );
   let content: React.ReactNode;
-  if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} />;
+  if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} agent={params.get("harness") === "claude" ? "claude" : "codex"} />;
   else if (view === "project")
     content = (
       <ProjectSettings
@@ -259,9 +259,9 @@ export function FixturePage() {
   );
 }
 
-function FixtureSession({ id }: { id: string }) {
+function FixtureSession({ id, agent }: { id: string; agent: "claude" | "codex" }) {
   const pending = usePendingSession(id);
-  const workspace = pending?.workspace ?? { ...frame.appData.workspaces[0], id, agent: "codex" as const,
+  const workspace = pending?.workspace ?? { ...frame.appData.workspaces[0], id, agent,
     model: { model: selectionMenu.codexModels![0], effort: "high" as const } };
   return <WorkspaceStudio workspace={{ ...workspace, status: "ready" }} projectName="fixture/composer" pullRequest={null} />;
 }
