@@ -24,12 +24,10 @@ import (
 //   - $ROOT/provided/<id>.json, the same values as JSON, so the next request
 //     adds to them rather than parse the shell file back.
 //
-// A running Claude gets them without a relaunch: its launch names the .env
-// as CLAUDE_ENV_FILE, which Claude Code sources ahead of each Bash command,
-// and a SessionStart hook has Claude watch it, so writing it (a FileChanged
-// hook, which does nothing, runs) clears Claude's cache of it. Read from
-// Claude Code 2.1.310; the tool's result also tells the agent to source the
-// file itself, should a version stop doing this.
+// Claude's SessionStart hook appends source commands to Claude's own
+// CLAUDE_ENV_FILE. Each Bash call then reads the current project and provided
+// files, including secrets supplied after Claude started, without depending
+// on file watchers or Claude's cache invalidation.
 
 // minMaskedProvided is the shortest provided value masked in the terminal:
 // shorter than a project's variables' (minMaskedEnv), since every one is a
@@ -177,41 +175,27 @@ func (s *Service) withProvided(workspaceID string, argv []string) []string {
 	return claude.WithEnvFile(argv, path)
 }
 
-// claudeSecretsLaunch readies a Claude launch to take secrets provided while
-// it runs: the provided file, made empty if there is none yet so Claude can
-// watch it, and the settings file of the hooks that make it watch. It
-// returns the variables the launch is run with and that settings file, or
-// nothing when either can't be made (the agent then sources the file, as the
-// tool's result says).
-func (s *Service) claudeSecretsLaunch(workspaceID string) (env []string, settings string) {
-	path := s.ProvidedEnvPath(workspaceID)
-	if !fileExists(path) {
-		if err := writeKeysFile(path, ""); err != nil {
-			return nil, ""
-		}
+// claudeSecretsLaunch makes the settings that load the project's environment
+// and secrets provided while Claude runs. The source commands go in Claude's
+// own hook env file, rather than overriding CLAUDE_ENV_FILE at launch.
+func (s *Service) claudeSecretsLaunch(workspaceID string) string {
+	settings := filepath.Join(s.Root, "ask", workspaceID+".settings.json")
+	if err := writeJSONFile(settings, secretsSettings(s.envFiles().path(s.owner(workspaceID)), s.ProvidedEnvPath(workspaceID), userSettings()), 0o600); err != nil {
+		return ""
 	}
-	settings = filepath.Join(s.Root, "ask", workspaceID+".settings.json")
-	if err := writeJSONFile(settings, secretsSettings(path, userSettings()), 0o600); err != nil {
-		return nil, ""
-	}
-	return []string{"CLAUDE_ENV_FILE=" + path}, settings
+	return settings
 }
 
-// secretsSettings are the user's own Claude settings (Settings → their
-// imported setup; none is an empty object) with the hooks that make Claude
-// watch the provided file added to theirs: one --settings file, since the
-// user's must keep applying.
-func secretsSettings(providedPath string, user map[string]any) map[string]any {
-	watch, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{
-		"hookEventName": "SessionStart",
-		"watchPaths":    []string{providedPath},
-	}})
-	ours := map[string][]any{
-		"SessionStart": {map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "printf '%s' " + claude.ShellQuote(string(watch))}}}},
-		// Does nothing: that a FileChanged hook ran is what clears Claude's
-		// cache of the file.
-		"FileChanged": {map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "true"}}}},
+// secretsSettings keeps the user's settings and hooks. Store references to
+// our files, not their contents: Claude may cache the hook env file, while
+// the referenced files must be read anew for every Bash command.
+func secretsSettings(projectPath, providedPath string, user map[string]any) map[string]any {
+	var source strings.Builder
+	for _, path := range []string{projectPath, providedPath} {
+		quoted := claude.ShellQuote(path)
+		source.WriteString("if [ -f " + quoted + " ]; then . " + quoted + "; fi\n")
 	}
+	command := `if [ -n "$CLAUDE_ENV_FILE" ]; then printf '%s\n' ` + claude.ShellQuote(source.String()) + ` >> "$CLAUDE_ENV_FILE"; fi`
 	settings := map[string]any{}
 	for k, v := range user {
 		settings[k] = v
@@ -222,10 +206,10 @@ func secretsSettings(providedPath string, user map[string]any) map[string]any {
 			hooks[k] = v
 		}
 	}
-	for event, entries := range ours {
-		existing, _ := hooks[event].([]any)
-		hooks[event] = append(append([]any{}, existing...), entries...)
-	}
+	existing, _ := hooks["SessionStart"].([]any)
+	hooks["SessionStart"] = append(append([]any{}, existing...), map[string]any{
+		"hooks": []any{map[string]any{"type": "command", "command": command}},
+	})
 	settings["hooks"] = hooks
 	return settings
 }

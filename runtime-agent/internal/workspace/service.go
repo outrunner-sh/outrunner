@@ -1004,6 +1004,7 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 	if s.desktopReady(workspaceID) {
 		o += "\n\n# Desktop\n\n" + desktop.Instructions
 	}
+	o += "\n\n" + s.environmentNote(workspaceID)
 	o += "\n\n" + s.canvasNote(workspaceID)
 	switch {
 	case !f.Gateway.SpeaksAsOutrunner():
