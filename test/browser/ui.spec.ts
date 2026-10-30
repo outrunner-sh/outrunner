@@ -487,3 +487,29 @@ for (const state of ["normal", "archived"]) {
     await expect(page.getByRole("dialog", { name: "Delete “Improve workspace navigation”?" })).toHaveCount(0);
   });
 }
+
+test("header deletion preserves failures and allows retry after navigating home", async ({ page }, testInfo) => {
+  await page.route("**/api/workspaces/preview-0/chats", (route) => route.fulfill({ json: { chats: [] } }));
+  await openFixture(page, "/workspaces/preview-0");
+  if (testInfo.project.name === "desktop") {
+    await page.getByRole("button", { name: "Collapse sidebar", exact: true }).click();
+  }
+  let attempts = 0;
+  await page.route("**/api/workspaces/preview-0/lifecycle", async (route) => {
+    attempts++;
+    if (attempts === 1) {
+      await route.fulfill({ status: 409, json: { error: "This workspace is busy. Please try again." } });
+    } else {
+      await route.fulfill({ json: { workspace: { id: "preview-0", status: "destroyed" } } });
+    }
+  });
+  await page.getByRole("button", { name: "Delete session", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Delete “Improve workspace navigation”?" });
+  const hold = dialog.getByRole("button", { name: "Hold to delete session", exact: true });
+  await hold.click({ delay: 1_100 });
+  await expect(page).toHaveURL(/\/$/);
+  await expect(dialog.getByRole("alert")).toHaveText("This workspace is busy. Please try again.");
+  await hold.click({ delay: 1_100 });
+  await expect(dialog).toHaveCount(0);
+  expect(attempts).toBe(2);
+});

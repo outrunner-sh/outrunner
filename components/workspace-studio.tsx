@@ -7,7 +7,7 @@ import { useState } from "react";
 
 import { CollapsedSidebarButtons, MobileNavButton } from "@/components/app-frame";
 import { ChatSwitcher } from "@/components/chat-switcher";
-import { DeleteSessionDialog } from "@/components/delete-session-dialog";
+import { requestSessionDeletion } from "@/components/delete-session-dialog";
 import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
 import { SessionInfo } from "@/components/session-info";
 import { MissionHeader } from "@/components/missions/mission-header";
@@ -103,7 +103,6 @@ export function WorkspaceStudio({
   const [archiving, setArchiving] = useState(false);
   const now = useNow(60_000);
   const deletable = !isLocal && !isMission && canDestroy(workspace, now);
-  const [deleting, setDeleting] = useState(false);
   const router = useRouter();
   const leave = () => {
     router.push("/");
@@ -222,7 +221,7 @@ export function WorkspaceStudio({
           {deletable && (
             <button
               className="studio-icon-button"
-              onClick={() => setDeleting(true)}
+              onClick={() => requestSessionDeletion({ id: workspace.id, title: workspaceLabel(workspace), deletion: { kind: "cloud" } })}
               title="Delete session"
               aria-label="Delete session"
             >
@@ -239,18 +238,11 @@ export function WorkspaceStudio({
           </button>
         </div>
       </header>
-      {isMission ? (
+      {isMission && (
         <ArchiveMissionDialog
           mission={archiving ? { id: workspace.id, title: mission?.title ?? workspaceLabel(workspace), ships: unarchivedShipCount(mission?.runners ?? []) } : null}
           onOpenChange={setArchiving}
           onArchived={leave}
-        />
-      ) : (
-        <DeleteSessionDialog
-          session={deleting ? { id: workspace.id, title: workspaceLabel(workspace), deletion: { kind: "cloud" } } : null}
-          onOpenChange={setDeleting}
-          onDeleting={() => router.push("/")}
-          onDeleted={leave}
         />
       )}
 
