@@ -215,6 +215,17 @@ func (t *Translator) Line(offset int64, line []byte) []Record {
 			rec.PermissionMode = "plan"
 		}
 		return append(out, t.release(offset, rec)...)
+	case l.Type == "event_msg" && kind.Type == "error":
+		var p struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(l.Payload, &p) != nil || strings.TrimSpace(p.Message) == "" {
+			return nil
+		}
+		out := t.Flush()
+		rec := t.newRecord(offset, l.Timestamp, "assistant", jsonString(p.Message))
+		rec.Message.Model = "<synthetic>"
+		return append(out, t.release(offset, rec)...)
 	case l.Type == "compacted":
 		// The summary Codex goes on from is its own, not a turn to show:
 		// only that the conversation was compacted here.

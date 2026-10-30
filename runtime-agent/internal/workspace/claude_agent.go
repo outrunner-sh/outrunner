@@ -281,7 +281,7 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	}
 	var argv []string
 	switch {
-	case f.ClaudeSessionID != "" && s.SessionLog(workspaceID) != "":
+	case f.ClaudeSessionID != "" && a.sessionLog(workspaceID) != "":
 		argv = claude.ResumeCommand(mode, f.ClaudeSessionID, orientation)
 	case f.ClaudeSessionID != "":
 		argv = claude.SessionCommand(mode, f.ClaudeSessionID, orientation)

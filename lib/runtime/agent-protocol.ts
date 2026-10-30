@@ -858,6 +858,7 @@ const ReplyUsage = z.object({
 });
 
 export const ConversationMessage = z.object({
+  harness: z.object({ from: z.enum(["claude", "codex"]), to: z.enum(["claude", "codex"]), selection: z.unknown().optional() }).optional(),
   t: z.literal("message"),
   uuid: z.string(),
   parentUuid: z.string().nullable(),

@@ -103,7 +103,7 @@ func (s *Service) codexRollout(workspaceID string) string {
 	sessions := filepath.Join(s.codexHomeFor(workspaceID), "sessions")
 	var found string
 	var meta transcript.RolloutMeta
-	if s.codexHomeFor(workspaceID) == s.codexHome(workspaceID) {
+	if s.codexHomeFor(workspaceID) == s.codexHome(workspaceID) && f.Harness == nil {
 		found = transcript.NewestRollout(sessions)
 		meta, _ = transcript.ReadRolloutMeta(found)
 	} else {

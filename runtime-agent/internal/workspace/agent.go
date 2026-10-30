@@ -122,8 +122,13 @@ func (s *Service) SessionLog(workspaceID string) string {
 	if s.jcode != nil {
 		return s.jcode.ConversationLog(workspaceID)
 	}
-	return s.agentFor(workspaceID).sessionLog(workspaceID)
+	if f, _ := s.getFacts(workspaceID); f.Harness != nil {
+		return s.harnessLog(workspaceID)
+	}
+	return s.nativeLog(workspaceID)
 }
+
+func (s *Service) nativeLog(id string) string { return s.agentFor(id).sessionLog(id) }
 
 // userTurns counts the user prompts a workspace's agent has recorded.
 func (s *Service) userTurns(workspaceID string) int {

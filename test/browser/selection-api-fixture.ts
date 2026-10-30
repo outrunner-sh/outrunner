@@ -6,12 +6,19 @@ import { creationSelection } from "@/lib/runtime/selection";
 import { modelGroups, requestedModel, type RecordedModel } from "@/lib/runtime/session-models";
 import { startingModel } from "@/lib/runtime/model-switch";
 import { chatSelection } from "@/lib/session/chat-selection";
+import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 
-export async function stubSelectionApis(page: Page, failedFork = false, menu: OutrunnerModels = selectionMenu) {
+export async function stubSelectionApis(page: Page, failedFork = false, menu: OutrunnerModels = selectionMenu, initialEvents: AgentEvent[] = []) {
   const groups = modelGroups(menu, ["claude", "codex"]);
   const evidence: unknown[] = [];
   let stored: RecordedModel = { model: menu.codexModels![0], effort: "high" };
-  await page.routeWebSocket("**/fixture-events", (ws) => ws.send(JSON.stringify({ id: "0", data: { t: "state", workspaceId: "fixture", state: "running" } })));
+  const history = [...initialEvents];
+  let socket: { send: (data: string) => void } | null = null;
+  await page.routeWebSocket("**/fixture-events", (ws) => {
+    socket = ws;
+    ws.send(JSON.stringify({ id: "0", data: { t: "state", workspaceId: "fixture", state: "running" } }));
+    history.forEach((data, i) => ws.send(JSON.stringify({ id: String(i + 1), data })));
+  });
   await page.route("**/api/**", async (route) => {
     const request = route.request(); const path = new URL(request.url()).pathname;
     const body = request.method() === "POST" && request.headers()["content-type"]?.includes("application/json") ? request.postDataJSON() : null;
@@ -26,6 +33,16 @@ export async function stubSelectionApis(page: Page, failedFork = false, menu: Ou
     else if (path.endsWith("/message")) { evidence.push({ stage: "delivered first prompt", body }); response = { sentAt: 0 }; }
     else if (path.endsWith("/session")) response = { ptyUrl: "ws://127.0.0.1:3100/fixture-events", eventsUrl: "ws://127.0.0.1:3100/fixture-events" };
     else if (path.endsWith("/chats") && request.method() === "GET") response = { chats: [] };
+    else if (path.endsWith("/harness")) {
+      evidence.push({ stage: "harness request", body });
+      if (failedFork) { await route.fulfill({ status: 409, json: { error: "This computer cannot run that harness." } }); return; }
+      const selected = creationSelection(groups, menu.loadout, { model: requestedModel(body) ?? undefined, agent: body.agent, effort: body.effort });
+      stored = { model: selected.model, effort: selected.effort };
+      const boundary: AgentEvent = { t: "message", uuid: `harness-${body.id}`, parentUuid: null, role: "assistant", timestamp: "", content: [], harness: { from: body.expectedAgent, to: body.agent, selection: stored } };
+      history.push(boundary);
+      socket?.send(JSON.stringify({ id: String(history.length), data: boundary }));
+      response = { agent: selected.agent, recorded: stored, operationId: body.id };
+    }
     else if ((path.startsWith("/api/projects/") && path.endsWith("/workspaces")) || path.endsWith("/model")) {
       const selected = creationSelection(groups, menu.loadout, { model: requestedModel(body) ?? undefined, agent: body.agent ?? (path.endsWith("/model") ? "codex" : undefined), effort: body.effort });
       evidence.push({ stage: "client request", path, body });

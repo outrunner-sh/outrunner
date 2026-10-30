@@ -6,6 +6,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { usePendingSession } from "@/lib/session/pending-sessions";
 import { selectionMenu } from "./selection-fixtures";
+import { CLAUDE_DEFAULT_MODEL } from "@/lib/runtime/session-models";
 import { StartupFixture } from "./startup-fixture";
 import { AppFrame } from "@/components/app-frame";
 import { Automations } from "@/components/automations";
@@ -260,8 +261,10 @@ export function FixturePage() {
 }
 
 function FixtureSession({ id }: { id: string }) {
+  const params = useSearchParams();
   const pending = usePendingSession(id);
-  const workspace = pending?.workspace ?? { ...frame.appData.workspaces[0], id, agent: "codex" as const,
-    model: { model: selectionMenu.codexModels![0], effort: "high" as const } };
-  return <WorkspaceStudio workspace={{ ...workspace, status: "ready" }} projectName="fixture/composer" pullRequest={null} />;
+  const sourceClaude = params.get("agent") === "claude";
+  const workspace = pending?.workspace ?? { ...frame.appData.workspaces[0], id, agent: sourceClaude ? "claude" as const : "codex" as const,
+    model: { model: sourceClaude ? CLAUDE_DEFAULT_MODEL : selectionMenu.codexModels![0], effort: "high" as const } };
+  return <WorkspaceStudio workspace={{ ...workspace, status: "ready", ...(params.get("kind") === "mission" && { kind: "mission" as const }) }} projectName="fixture/composer" pullRequest={null} />;
 }
