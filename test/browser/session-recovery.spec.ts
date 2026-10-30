@@ -96,3 +96,26 @@ test("a persistent restart failure stops retrying and shows a usable retry actio
   expect(requests).toBe(3);
   await expect(page.getByRole("button", { name: "Try again", exact: true })).toBeEnabled();
 });
+
+test("a cached conversation reloads without a hydration error while attachment is delayed", async ({ page }) => {
+  await stubSelectionApis(page);
+  await streamReplies(page);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  let delayAttach = false;
+  let pending: Route | null = null;
+  await page.route("**/api/workspaces/preview-0/session*", async (route) => {
+    if (delayAttach) { pending = route; return; }
+    await route.fulfill({ json: urls("preview-0") });
+  });
+  await openSession(page);
+  await expect(page.getByText("Reply from preview-0", { exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("outrunner:conversation:preview-0"))).not.toBeNull();
+  delayAttach = true;
+  await page.reload();
+  await expect.poll(() => pending !== null).toBe(true);
+  await expect(page.getByText("Reply from preview-0", { exact: true })).toBeVisible();
+  await expect(page.getByText("Connecting to Codex", { exact: true })).toHaveCount(0);
+  expect(errors).toEqual([]);
+  await (pending as unknown as Route).fulfill({ json: urls("preview-0") });
+});
