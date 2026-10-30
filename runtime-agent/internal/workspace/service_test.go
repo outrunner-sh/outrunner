@@ -48,6 +48,28 @@ func TestUnknownActivityStartsFreshWhenBoxLifetimeChanges(t *testing.T) {
 	}
 }
 
+func TestUnknownActivityProtectsUnfinishedWorkWithoutExpiring(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.lifetimeID = func() string { return "current-container" }
+	since := time.Now().UTC().Add(-24 * time.Hour)
+	data, _ := json.Marshal(unknownActivityMarker{Since: since, LifetimeID: "current-container"})
+	if err := os.WriteFile(s.unknownActivityPath(), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, svc := range []*Service{s, NewService(s.Root)} {
+		svc.lifetimeID = s.lifetimeID
+		last, active := svc.unknownActivity("live session facts unavailable")
+		if !active || !last.Equal(since) {
+			t.Fatalf("unknown activity = (%s, %t), want original timestamp and protected work", last, active)
+		}
+		svc.clearUnknownActivity()
+		// Restore the marker to exercise recovery by a new service instance.
+		if err := os.WriteFile(s.unknownActivityPath(), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestBoxLifetimeIDPersistsWithEitherAvailableSource(t *testing.T) {
 	if got := boxLifetimeIDParts("boot-id", "pid1-start"); got != "boot:boot-id:pid1:pid1-start" {
 		t.Errorf("full lifetime ID = %q", got)

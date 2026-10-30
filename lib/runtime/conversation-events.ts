@@ -186,7 +186,8 @@ export function firstUserPrompt(events: AgentEvent[]): string | null {
  *  it must act on), or while its own latest turn ended on thinking or a tool_use
  *  (more is coming). A turn that ends in text is Claude done and idle — unless
  *  the reply it's part of stopped for a tool call (stopReason "tool_use"): Claude
- *  logs its words before a tool call as a record of their own, the call next. */
+ *  logs its words before a tool call as a record of their own, the call next.
+ *  Codex commentary carries "in_progress" for the same reason. */
 export function claudeIsWorking(events: AgentEvent[]): boolean {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
@@ -230,7 +231,7 @@ function messageIsWorking(event: Extract<AgentEvent, { t: "message" }>): boolean
   // a command Claude ran itself. Words finish a reply unless a tool follows.
   if (event.role === "user") return !isInterruption(event) && !isLocalCommandOutput(event);
   const last = event.content[event.content.length - 1];
-  return !!last && (last.type !== "text" || event.stopReason === "tool_use");
+  return !!last && (last.type !== "text" || event.stopReason === "tool_use" || event.stopReason === "in_progress");
 }
 
 /** Runner deliveries absorbed while the agent works are steps of that turn.

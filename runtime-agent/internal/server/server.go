@@ -432,8 +432,9 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
 		last = used
 	}
 	writeJSON(w, http.StatusOK, protocol.Activity{
-		LastActivity:   last.UTC().Format(time.RFC3339),
-		TurnInProgress: turnInProgress,
+		LastActivity:        last.UTC().Format(time.RFC3339),
+		TurnInProgress:      turnInProgress,
+		TurnTrackingVersion: 1,
 	})
 }
 

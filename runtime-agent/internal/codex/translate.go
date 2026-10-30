@@ -102,10 +102,11 @@ type compactMetadata struct {
 }
 
 type message struct {
-	Role    string          `json:"role"`
-	Model   string          `json:"model,omitempty"`
-	Content json.RawMessage `json:"content"`
-	Usage   *Usage          `json:"usage,omitempty"`
+	StopReason string          `json:"stop_reason,omitempty"`
+	Role       string          `json:"role"`
+	Model      string          `json:"model,omitempty"`
+	Content    json.RawMessage `json:"content"`
+	Usage      *Usage          `json:"usage,omitempty"`
 	// ContextWindow is the model's context, which Claude's records never say
 	// and Codex's token_count does: what the context-usage ring is out of.
 	ContextWindow int `json:"context_window,omitempty"`
@@ -162,6 +163,7 @@ type (
 	responseItem struct {
 		Type      string          `json:"type"`
 		Role      string          `json:"role"`
+		Phase     string          `json:"phase"`
 		Content   []contentPart   `json:"content"`
 		Summary   []contentPart   `json:"summary"`
 		Name      string          `json:"name"`
@@ -282,6 +284,19 @@ func (t *Translator) responseItem(offset int64, at string, p responseItem) []Rec
 	}
 	rec := t.newRecord(offset, at, "assistant", mustJSON(blocks))
 	rec.Message.Model = t.model
+	switch p.Type {
+	case "message":
+		switch p.Phase {
+		case "commentary":
+			rec.Message.StopReason = "in_progress"
+		case "final_answer":
+			rec.Message.StopReason = "end_turn"
+		}
+	case "reasoning":
+		rec.Message.StopReason = "in_progress"
+	case "function_call", "custom_tool_call":
+		rec.Message.StopReason = "tool_use"
+	}
 	rec.Message.Usage, t.late = t.late, nil
 	if rec.Message.Usage != nil {
 		rec.Message.ContextTokens, rec.Message.ContextWindow, t.lateContext = t.lateContext, t.window, 0

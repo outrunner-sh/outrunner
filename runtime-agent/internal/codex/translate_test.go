@@ -362,3 +362,25 @@ func TestLateUsageIsntCountedAsContext(t *testing.T) {
 		t.Errorf("usage input = %d, want both calls' kept for the totals", total)
 	}
 }
+
+func TestTranslationPreservesWhetherAssistantWorkContinues(t *testing.T) {
+	for _, tc := range []struct{ payload, want string }{
+		{`{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"Working."}]}`, "in_progress"},
+		{`{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Done."}]}`, "end_turn"},
+		{`{"type":"reasoning","summary":[{"type":"summary_text","text":"Thinking"}]}`, "in_progress"},
+		{`{"type":"function_call","call_id":"c1","name":"exec","arguments":"{}"}`, "tool_use"},
+	} {
+		out := translateAll(t, []byte(`{"type":"response_item","payload":`+tc.payload+"}\n"))
+		var rec struct {
+			Message struct {
+				StopReason string `json:"stop_reason"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(out), &rec); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Message.StopReason != tc.want {
+			t.Errorf("payload %s: stop reason %q, want %q", tc.payload, rec.Message.StopReason, tc.want)
+		}
+	}
+}

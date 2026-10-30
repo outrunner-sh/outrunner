@@ -69,6 +69,9 @@ func TestActivityTakesOnlyTheListingTokenAndCountsWrites(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("activity with the listing token = %d, want 200", status)
 	}
+	if booted.TurnTrackingVersion != 1 {
+		t.Errorf("turn tracking version = %d, want 1", booted.TurnTrackingVersion)
+	}
 	if booted.TurnInProgress {
 		t.Error("no session, yet a turn is in progress")
 	}
