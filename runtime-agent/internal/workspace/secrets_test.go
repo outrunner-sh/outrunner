@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"runtime-agent/internal/ask"
+	"runtime-agent/internal/conversation"
 	"runtime-agent/internal/redact"
 )
 
@@ -110,18 +113,13 @@ func TestASkippedRequestKeepsNothing(t *testing.T) {
 	}
 }
 
-// A Claude launch with the tools names the provided file as CLAUDE_ENV_FILE
-// and gets one settings file: the user's, with the hooks that watch it.
-func TestAClaudeLaunchWatchesTheProvidedFile(t *testing.T) {
+// Claude owns CLAUDE_ENV_FILE; our settings append source commands to it.
+func TestAClaudeLaunchLoadsTheEnvironmentThroughAHook(t *testing.T) {
 	s, worktree := cloudSession(t, CreateInput{WorkspaceID: "ws-s", Branch: "b", BaseBranch: "main"})
 	s.RelayExecutable = "/opt/runtime-agent"
 	argv := claudeAgent{s}.command("ws-s", worktree, false)
-	path := s.ProvidedEnvPath("ws-s")
-	if len(argv) < 3 || argv[0] != "env" || argv[1] != "CLAUDE_ENV_FILE="+path || argv[2] != "claude" {
-		t.Fatalf("launch = %q, want env CLAUDE_ENV_FILE=%s claude ...", argv, path)
-	}
-	if !fileExists(path) {
-		t.Error("no provided file for Claude to watch")
+	if argv[0] != "claude" || strings.Contains(strings.Join(argv, " "), "CLAUDE_ENV_FILE=") {
+		t.Fatalf("launch overrides Claude's hook env file: %q", argv)
 	}
 	i := slices.Index(argv, "--settings")
 	if i < 0 || strings.Count(strings.Join(argv, " "), "--settings ") != 1 {
@@ -131,7 +129,7 @@ func TestAClaudeLaunchWatchesTheProvidedFile(t *testing.T) {
 		t.Errorf("launch = %q, want the tool allowed", argv)
 	}
 	data, _ := os.ReadFile(argv[i+1])
-	if !strings.Contains(string(data), `\"watchPaths\":[\"`+path) || !strings.Contains(string(data), `"FileChanged"`) {
+	if !strings.Contains(string(data), `"SessionStart"`) || !strings.Contains(string(data), "$CLAUDE_ENV_FILE") {
 		t.Errorf("settings = %s", data)
 	}
 }
@@ -141,28 +139,73 @@ func TestSecretsSettingsKeepTheUsersOwn(t *testing.T) {
 		"model": "x",
 		"hooks": map[string]any{"SessionStart": []any{map[string]any{"hooks": []any{"theirs"}}}, "Stop": []any{"stop"}},
 	}
-	got := secretsSettings("/r/provided/ws.env", user)
+	got := secretsSettings("/r/env/ws.env", "/r/provided/ws.env", user)
 	data, _ := json.Marshal(got)
 	hooks := got["hooks"].(map[string]any)
-	if got["model"] != "x" || len(hooks["SessionStart"].([]any)) != 2 || hooks["Stop"] == nil || hooks["FileChanged"] == nil {
+	if got["model"] != "x" || len(hooks["SessionStart"].([]any)) != 2 || hooks["Stop"] == nil {
 		t.Errorf("settings = %s", data)
 	}
-	// The user's own map is left as it was.
 	if len(user["hooks"].(map[string]any)["SessionStart"].([]any)) != 1 {
 		t.Error("the user's settings were changed")
 	}
-	// The SessionStart hook prints the JSON Claude reads.
-	cmd := hooks["SessionStart"].([]any)[1].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
-	out, err := exec.Command("sh", "-c", cmd).Output()
-	var printed struct {
-		HookSpecificOutput struct {
-			HookEventName string   `json:"hookEventName"`
-			WatchPaths    []string `json:"watchPaths"`
-		} `json:"hookSpecificOutput"`
+}
+
+func TestClaudeHookLoadsProjectAndNewSecretsInAnAlreadyRunningSession(t *testing.T) {
+	s := NewService(filepath.Join(t.TempDir(), "root with 'quotes"))
+	project := s.envFiles().path("ws")
+	provided := s.ProvidedEnvPath("ws")
+	if err := s.SetEnvironment(context.Background(), "ws", map[string]string{"PROJECT_TOKEN": "project-'token", "OVERRIDE": "old"}, nil, ""); err != nil {
+		t.Fatal(err)
 	}
-	if err != nil || json.Unmarshal(out, &printed) != nil || printed.HookSpecificOutput.HookEventName != "SessionStart" ||
-		!slices.Equal(printed.HookSpecificOutput.WatchPaths, []string{"/r/provided/ws.env"}) {
-		t.Errorf("hook printed %q (%v)", out, err)
+	settings := secretsSettings(project, provided, nil)
+	hooks := settings["hooks"].(map[string]any)["SessionStart"].([]any)
+	command := hooks[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
+	hookEnv := filepath.Join(t.TempDir(), "claude-hook.env")
+	if err := os.WriteFile(hookEnv, []byte("export USER_HOOK=kept\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", command)
+	cmd.Env = append(os.Environ(), "CLAUDE_ENV_FILE="+hookEnv)
+	if out, err := cmd.CombinedOutput(); err != nil || len(out) != 0 {
+		t.Fatalf("hook = %q, %v", out, err)
+	}
+	// As Claude does, cache the hook env contents once, then use that same
+	// script before each Bash call. Initially no supplied file exists.
+	preamble, err := os.ReadFile(hookEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bash := func(want string) {
+		t.Helper()
+		cmd := exec.Command("bash", "-c", string(preamble)+`printf '%s|%s|%s|%s' "$USER_HOOK" "$PROJECT_TOKEN" "${NEW_TOKEN-unset}" "$OVERRIDE"`)
+		out, err := cmd.CombinedOutput()
+		if err != nil || string(out) != want {
+			t.Fatalf("Bash saw %q, %v; want %q", out, err, want)
+		}
+	}
+	bash("kept|project-'token|unset|old")
+	if err := s.addProvided("ws", map[string]string{"NEW_TOKEN": "new-'secret", "OVERRIDE": "provided"}); err != nil {
+		t.Fatal(err)
+	}
+	bash("kept|project-'token|new-'secret|provided")
+	if err := s.SetEnvironment(context.Background(), "ws", map[string]string{"PROJECT_TOKEN": "changed", "OVERRIDE": "old"}, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	bash("kept|changed|new-'secret|provided")
+}
+
+func TestProjectEnvironmentIsDescribedAndLoadedWithoutAnAskRelay(t *testing.T) {
+	s, worktree := cloudSession(t, CreateInput{WorkspaceID: "ws-e", Branch: "b", BaseBranch: "main"})
+	if err := s.SetEnvironment(context.Background(), "ws-e", map[string]string{"PROJECT_TOKEN": "private-value"}, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	argv := claudeAgent{s}.command("ws-e", worktree, false)
+	if !slices.Contains(argv, "--settings") {
+		t.Fatalf("project environment has no Bash hook: %q", argv)
+	}
+	note := s.orientation("ws-e", worktree)
+	if !strings.Contains(note, "Available variables: PROJECT_TOKEN") || strings.Contains(note, "private-value") {
+		t.Fatalf("orientation doesn't describe variable names safely: %q", note)
 	}
 }
 
@@ -174,5 +217,122 @@ func waitUntil(t *testing.T, cond func() bool) {
 			t.Fatal("timed out")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Code mode may record only its outer script. The runtime must publish an
+// answerable form before that script can finish, without a native tool call.
+func TestCodexSecretRequestIsVisibleBeforeItsToolReturns(t *testing.T) {
+	s := NewService(t.TempDir())
+	rollout := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(rollout, []byte(`{"type":"session_meta","payload":{"id":"test-codex"}}
+{"type":"response_item","timestamp":"2026-10-30T10:00:00Z","payload":{"type":"function_call","name":"functions.exec","call_id":"outer-script","arguments":"{}"}}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.setFacts("ws-c", workspaceFacts{Agent: AgentCodex, CodexRollout: rollout})
+	s.startCodexTail("ws-c")
+	defer s.stopCodexTail("ws-c")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan string, 1)
+	go func() {
+		text, err := s.RequestSecrets(ctx, "ws-c", "code-mode-call", ask.SecretRequest{
+			Reason: "Connect the API", Keys: []ask.SecretKey{{Name: "APP_TOKEN"}},
+		})
+		if err != nil {
+			t.Errorf("request: %v", err)
+		}
+		done <- text
+	}()
+	waitUntil(t, func() bool { return s.secretAsks.Waiting("ws-c") })
+	log := s.SessionLog("ws-c")
+	events, err := conversation.Read(log, 0)
+	if err != nil || len(events) != 2 {
+		t.Fatalf("waiting form: %d events, %v", len(events), err)
+	}
+	block := events[1].Message.Content[0]
+	if block.Type != "tool_use" || block.Name != ask.QualifiedSecretsToolName || block.ID != "secret-request-code-mode-call" {
+		t.Fatalf("waiting form = %+v", block)
+	}
+	select {
+	case <-done:
+		t.Fatal("tool returned before the browser supplied a value")
+	default:
+	}
+	if err := s.ProvideSecrets("ws-c", []string{"APP_TOKEN"}, map[string]string{"APP_TOKEN": "fixture-secret-'token"}, false); err != nil {
+		t.Fatal(err)
+	}
+	text := <-done
+	if !strings.Contains(text, "Load them before each shell command") || strings.Contains(text, "set in your Bash environment from your next") {
+		t.Fatalf("Codex loading instructions: %s", text)
+	}
+	events, err = conversation.Read(log, 0)
+	if err != nil || len(events) != 3 || events[2].Message.Content[0].ToolUseID != block.ID {
+		t.Fatalf("answered form: %d events, %v", len(events), err)
+	}
+	if data, _ := os.ReadFile(log); strings.Contains(string(data), "fixture-secret-") {
+		t.Fatal("secret in conversation")
+	}
+	out, err := exec.Command("sh", "-c", `. "$1" && printf '%s' "$APP_TOKEN"`, "sh", s.ProvidedEnvPath("ws-c")).Output()
+	if err != nil || string(out) != "fixture-secret-'token" {
+		t.Fatalf("Codex couldn't load values: %q, %v", out, err)
+	}
+}
+
+func TestCanceledCodexSecretRequestClosesItsFormAndBusyCallsPublishNothing(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.setFacts("ws-c", workspaceFacts{Agent: AgentCodex})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	req := ask.SecretRequest{Reason: "Connect", Keys: []ask.SecretKey{{Name: "APP_TOKEN"}}}
+	go func() { _, err := s.RequestSecrets(ctx, "ws-c", "first", req); done <- err }()
+	waitUntil(t, func() bool { return s.secretAsks.Waiting("ws-c") })
+	if _, err := s.RequestSecrets(context.Background(), "ws-c", "second", req); !errors.Is(err, ask.ErrBusy) {
+		t.Fatalf("second request = %v", err)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled request = %v", err)
+	}
+	events, err := conversation.Read(s.SessionLog("ws-c"), 0)
+	if err != nil || len(events) != 2 || events[1].Message.Content[0].ToolUseID != events[0].Message.Content[0].ID {
+		t.Fatalf("canceled form: %d events, %v", len(events), err)
+	}
+}
+
+func TestCodexLaunchGetsSecretToolInEitherHomeAndProjectValuesInItsShell(t *testing.T) {
+	for _, ownHome := range []bool{false, true} {
+		t.Run(fmt.Sprint("own-home=", ownHome), func(t *testing.T) {
+			s := NewService(t.TempDir())
+			s.RelayExecutable = "/opt/runtime-agent"
+			facts := workspaceFacts{Agent: AgentCodex}
+			if ownHome {
+				facts.Auth = AuthOpenAIAPIKey
+			}
+			s.setFacts("ws-c", facts)
+			if err := s.SetEnvironment(context.Background(), "ws-c", map[string]string{"APP_TOKEN": "project-token"}, nil, ""); err != nil {
+				t.Fatal(err)
+			}
+			argv := s.launchCommand("ws-c", t.TempDir(), false)
+			joined := strings.Join(argv, " ")
+			for _, want := range []string{"mcp_servers.outrunner.command=", "mcp_servers.outrunner.enabled_tools=[\"request_secrets\"]", "tool_timeout_sec=86400", "Available variables: APP_TOKEN"} {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("launch missing %s: %q", want, argv)
+				}
+			}
+			// A harmless Codex fixture inspects the actual launch environment.
+			bin := t.TempDir()
+			if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nprintf '%s' \"$APP_TOKEN\"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(argv[0], argv[1:]...)
+			cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			out, err := cmd.CombinedOutput()
+			if err != nil || string(out) != "project-token" {
+				t.Fatalf("Codex environment: %q, %v", out, err)
+			}
+		})
 	}
 }

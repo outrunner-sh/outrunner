@@ -128,6 +128,7 @@ export function toRuntimeComputer(
     pooled: row.pooled ?? false,
     poolSlot: row.pool_slot ?? 0,
     generation: row.generation ?? null,
+    warmExpiresAt: row.warm_expires_at ?? null,
     status: row.status,
     imageVersion: row.image_version,
     daytonaSandboxId: row.daytona_sandbox_id,

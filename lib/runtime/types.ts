@@ -216,13 +216,17 @@ export type RuntimeComputer = {
   /** The workspace whose own box it is; null for a project's box shared by
    *  its sessions, from before each session had its own. */
   workspaceId: string | null;
-  /** Made ready ahead of a session and stopped, for the next new session of
-   *  its project to take (lib/runtime/warm-pool.ts). */
+  /** Made ready ahead of a session and normally stopped, for the next new
+   *  session of its project to take (lib/runtime/warm-pool.ts). It may be
+   *  briefly awake under warmExpiresAt while that session is composed. */
   pooled: boolean;
   /** Which of the project's ready boxes it is: 0 or 1. */
   poolSlot: number;
   /** The project setup's generation it was made from; null before. */
   generation: number | null;
+  /** Until when a pooled box is kept awake for a composer that showed intent
+   *  to start a session. Null for an ordinary stopped/refilling pool box. */
+  warmExpiresAt?: string | null;
   status: RuntimeComputerStatus;
   /** Frozen image tag this box was built from, e.g. `v1`. */
   imageVersion: string;

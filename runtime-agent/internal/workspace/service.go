@@ -133,6 +133,7 @@ type Service struct {
 	factsWriteMu sync.Mutex
 
 	// codexTails translate the running Codex sessions' rollouts.
+	codexLogMu   sync.Mutex // serializes all appends to translated conversations
 	codexTailsMu sync.Mutex
 	codexTails   map[string]*codexTail
 
@@ -1021,6 +1022,7 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 	if s.desktopReady(workspaceID) {
 		o += "\n\n# Desktop\n\n" + desktop.Instructions
 	}
+	o += "\n\n" + s.environmentNote(workspaceID)
 	o += "\n\n" + s.canvasNote(workspaceID)
 	switch {
 	case !f.Gateway.SpeaksAsOutrunner():

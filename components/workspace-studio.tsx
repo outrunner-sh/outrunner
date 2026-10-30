@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, MessageSquarePlus, PanelRight, PanelRightClose } from "lucide-react";
+import { Archive, Files, GitBranch, MessageSquarePlus, Monitor, PanelsTopLeft, PanelRight, PanelRightClose } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -107,8 +107,7 @@ export function WorkspaceStudio({
     router.push("/");
     router.refresh();
   };
-  // The right pane's tabs, its strip shown where there are two or more. The
-  // pane remembers the one chosen while it's closed, not across pages.
+  // The pane remembers its selected tab while closed, not across pages.
   const tabs = inspectorTabs(workspace, isLocal);
   const [chosenTab, setChosenTab] = useState<InspectorTabId>("environment");
   const tab = shownTab(tabs, chosenTab);
@@ -162,7 +161,6 @@ export function WorkspaceStudio({
         "studio-shell",
         !rightOpen && "no-inspector",
         isMission && "is-mission",
-        rightOpen && tab === "desktop" && "desktop-open",
       )}
     >
       <header className="studio-header">
@@ -328,9 +326,8 @@ export function WorkspaceStudio({
       </section>
 
       {overlay && <div aria-hidden className="studio-inspector-backdrop" onClick={() => setRightOpen(false)} />}
-      {/* Each tab's panel mounts only while it is open: the rows poll for
-          changes, and the desktop is started, and its socket held, only
-          while someone looks at it. */}
+        {/* Desktop starts and holds its socket only while its tab is open.
+            Environment keeps its PR watch across Changes/Canvas switches. */}
       <aside
         ref={inspector}
         className={cn("studio-inspector", isMission ? "studio-runners" : "studio-env", overlay && "is-overlay")}
@@ -340,28 +337,52 @@ export function WorkspaceStudio({
         aria-label={isMission ? "Ships" : (tabs.find((t) => t.id === tab)?.label ?? "Environment")}
       >
         {rightOpen && isMission && <RunnersPane missionId={workspace.id} onClose={() => setRightOpen(false)} />}
-        {rightOpen && tabs.length > 1 && (
-          <div className="studio-tabs" role="tablist" aria-label="Session panels">
-            {tabs.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                role="tab"
-                id={`studio-tab-${t.id}`}
-                aria-selected={t.id === tab}
-                aria-controls="studio-tabpanel"
-                onClick={() => setChosenTab(t.id)}
-                className="studio-tab"
-              >
-                {t.label}
-              </button>
-            ))}
+        {rightOpen && !isMission && (
+          <div className="studio-inspector-toolbar">
+            <div className="studio-tabs" role="tablist" aria-label="Session panels">
+              {tabs.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="tab"
+                  id={`studio-tab-${t.id}`}
+                  aria-selected={t.id === tab}
+                  aria-label={t.label}
+                  aria-controls="studio-tabpanel"
+                  title={t.label}
+                  tabIndex={t.id === tab ? 0 : -1}
+                  onClick={() => setChosenTab(t.id)}
+                  onKeyDown={(event) => {
+                    const index = tabs.findIndex((item) => item.id === t.id);
+                    const next = event.key === "ArrowRight" ? (index + 1) % tabs.length
+                      : event.key === "ArrowLeft" ? (index - 1 + tabs.length) % tabs.length
+                      : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
+                    if (next === null) return;
+                    event.preventDefault();
+                    setChosenTab(tabs[next].id);
+                    document.getElementById(`studio-tab-${tabs[next].id}`)?.focus();
+                  }}
+                  className="studio-tab"
+                >
+                  {t.id === "desktop" ? <Monitor aria-hidden="true" />
+                    : t.id === "changes" ? <Files aria-hidden="true" />
+                    : t.id === "canvas" ? <PanelsTopLeft aria-hidden="true" />
+                    : <GitBranch aria-hidden="true" />}
+                  {t.id === tab && <span>{t.label}</span>}
+                </button>
+              ))}
+            </div>
+            <button type="button" onClick={() => setRightOpen(false)} className="studio-icon-button" title="Hide panel" aria-label="Hide panel">
+              <PanelRightClose />
+            </button>
           </div>
         )}
         {rightOpen && !isMission && (
           <div
             className="studio-tabpanel"
-            {...(tabs.length > 1 && { id: "studio-tabpanel", role: "tabpanel", "aria-labelledby": `studio-tab-${tab}` })}
+            id="studio-tabpanel"
+            role="tabpanel"
+            aria-labelledby={`studio-tab-${tab}`}
           >
             {tab === "desktop" ? (
               <WorkspaceDesktop workspaceId={workspace.id} isReady={isReady} onClose={() => setRightOpen(false)} />
@@ -373,6 +394,12 @@ export function WorkspaceStudio({
                 isReady={isReady}
                 sender={sender}
                 onClose={() => setRightOpen(false)}
+                view={tab === "changes" || tab === "canvas" ? tab : "overview"}
+                onViewChange={(view) => {
+                  const selected = view === "overview" ? "environment" : view;
+                  setChosenTab(selected);
+                  document.getElementById(`studio-tab-${selected}`)?.focus();
+                }}
               />
             )}
           </div>

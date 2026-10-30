@@ -497,7 +497,7 @@ export function WorkspaceSession({
       setAnswerError(local ? messageForLocalError(error, agent) : raw || "Couldn't send your answer.");
     });
   };
-  const provideSecrets = (asked: PendingSecretRequest, reply: { values: Record<string, string>; save: boolean } | null) => {
+  const provideSecrets = (asked: PendingSecretRequest, reply: { values: Record<string, string> } | null) => {
     setAnsweredHere((prev) => new Set(prev).add(asked.toolUseId));
     setSendError(null);
     setAnswerError(null);
@@ -507,7 +507,7 @@ export function WorkspaceSession({
     const body = reply ? { keys, values: reply.values } : { keys, skipped: true };
     (local
       ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/secrets`, body).then(() => null)
-      : provideCloudSecrets(workspaceId, chatId, { ...body, save: reply?.save ?? false })
+      : provideCloudSecrets(workspaceId, chatId, body)
     )
       .then((saveError) => setSecretsSaveError(saveError))
       .catch((error: unknown) => {
@@ -1355,7 +1355,7 @@ export function WorkspaceSession({
           agentLabel={AGENTS[agent].label}
           canSave={!local}
           hidden={!waitingOnSecrets}
-          onProvide={(values, save) => provideSecrets(secretRequest, { values, save })}
+          onProvide={(values) => provideSecrets(secretRequest, { values })}
           onSkip={() => provideSecrets(secretRequest, null)}
         />
       )}

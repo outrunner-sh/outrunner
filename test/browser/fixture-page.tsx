@@ -96,7 +96,7 @@ export function FixturePage() {
     [state],
   );
   let content: React.ReactNode;
-  if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} />;
+  if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} agent={params.get("harness") === "claude" ? "claude" : "codex"} />;
   else if (view === "project")
     content = (
       <ProjectSettings
@@ -261,10 +261,10 @@ export function FixturePage() {
   );
 }
 
-function FixtureSession({ id }: { id: string }) {
+function FixtureSession({ id, agent }: { id: string; agent: "claude" | "codex" }) {
   const params = useSearchParams();
   const pending = usePendingSession(id);
-  const sourceClaude = params.get("agent") === "claude";
+  const sourceClaude = params.get("agent") === "claude" || agent === "claude";
   const workspace = pending?.workspace ?? { ...frame.appData.workspaces[0], id, agent: sourceClaude ? "claude" as const : "codex" as const,
     model: { model: sourceClaude ? CLAUDE_DEFAULT_MODEL : selectionMenu.codexModels![0], effort: "high" as const } };
   if (params.get("selection") === "saved") return <SavedFixtureSession workspace={workspace} mission={params.get("kind") === "mission"} />;

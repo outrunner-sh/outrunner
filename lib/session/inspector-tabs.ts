@@ -1,4 +1,4 @@
-import { opensInBrowser, type Workspace } from "@/lib/runtime/types";
+import { onRuntimeComputer, opensInBrowser, type Workspace } from "@/lib/runtime/types";
 
 /**
  * The tabs of a session's right pane, beside its chat. Environment is always
@@ -8,22 +8,25 @@ import { opensInBrowser, type Workspace } from "@/lib/runtime/types";
  * Pure (no I/O), so it is unit-tested in Node.
  */
 
-export type InspectorTabId = "environment" | "desktop";
+export type InspectorTabId = "environment" | "changes" | "desktop" | "canvas";
 
 export type InspectorTab = { id: InspectorTabId; label: string };
 
 /**
  * The tabs `workspace`'s right pane has, in order: none for a mission, whose
- * pane is its Ships (components/missions/runners-pane.tsx). The pane shows a
- * tab strip only when there are two or more.
+ * pane is its Ships (components/missions/runners-pane.tsx).
  */
 export function inspectorTabs(workspace: Pick<Workspace, "provider" | "kind">, local: boolean): InspectorTab[] {
   if (workspace.kind === "mission") return [];
-  const tabs: InspectorTab[] = [{ id: "environment", label: "Environment" }];
+  const tabs: InspectorTab[] = [
+    { id: "environment", label: "Environment" },
+    { id: "changes", label: "Changes" },
+  ];
   // The box's desktop: a cloud session on Daytona, whose computer use runs
   // it. opensInBrowser is that same check (Daytona's signed preview links,
   // which the desktop is viewed through); a session on this Mac has none.
   if (!local && opensInBrowser(workspace.provider)) tabs.push({ id: "desktop", label: "Desktop" });
+  if (!local && onRuntimeComputer(workspace.provider)) tabs.push({ id: "canvas", label: "Canvas" });
   return tabs;
 }
 
