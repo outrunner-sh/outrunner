@@ -22,6 +22,27 @@ function recording(): { sandbox: Sandbox; timeouts: (number | undefined)[] } {
   return { sandbox, timeouts };
 }
 
+test("hot memory resize sends only memory to Daytona and refuses stops or decreases", async () => {
+  const calls: unknown[] = [];
+  const sdk = { id: "box", state: "started", cpu: 2, memory: 4,
+    resize: async (...args: unknown[]) => { calls.push(args); } } as unknown as Sandbox;
+  await box(sdk).growMemory!(8);
+  assert.deepEqual(calls, [[{ memory: 8 }, 60]]);
+  await assert.rejects(box(sdk).growMemory!(4), /must increase/);
+  sdk.state = "stopped" as Sandbox["state"];
+  await assert.rejects(box(sdk).growMemory!(8), /running sandbox/);
+  assert.equal(calls.length, 1);
+});
+
+test("a hot-resizing Daytona sandbox stays alive to the reconciler", async () => {
+  const backend = new DaytonaBackend();
+  let state = "resizing";
+  (backend as unknown as { client: Promise<unknown> }).client = Promise.resolve({ get: async () => ({ state }) });
+  assert.equal(await backend.alive("box"), true);
+  state = "stopped";
+  assert.equal(await backend.alive("box"), false);
+});
+
 test("every command on a box has a deadline, so a call Daytona never answers can't hang a setup", async () => {
   const { sandbox, timeouts } = recording();
   const b = box(sandbox);

@@ -16,12 +16,13 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { GIT_CREDENTIAL_WINDOW_SECONDS } from "@/lib/runtime/git-credential";
 
 export type MediaRoute = "media-upload" | "media-complete";
+type BoxPurpose = MediaRoute | "memory-scale";
 
 /** The `X-Outrunner-Signature` of a media request: HMAC-SHA256 under the
  *  agent's secret of the purpose, sandbox, time and body, a line each. */
 export function mediaRequestSignature(
   secret: string,
-  purpose: MediaRoute,
+  purpose: BoxPurpose,
   sandboxId: string,
   timestamp: string,
   body: string,
@@ -34,7 +35,7 @@ export function mediaRequestSignature(
  *  within the window a GitHub token's request has. */
 export function mediaRequestValid(
   secret: string,
-  purpose: MediaRoute,
+  purpose: BoxPurpose,
   request: { sandboxId: string; timestamp: string | null; signature: string | null; body: string },
   nowSeconds = Math.floor(Date.now() / 1000),
 ): boolean {

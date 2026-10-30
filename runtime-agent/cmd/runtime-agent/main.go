@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"runtime-agent/internal/ask"
+	"runtime-agent/internal/autoscale"
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/cli"
 	"runtime-agent/internal/desktop"
@@ -121,6 +122,12 @@ func main() {
 		// The same means let its sessions upload screenshots and recordings
 		// for their pull requests (package media).
 		svc.UseMedia(&media.Client{Config: cfg})
+		// The daemon reads its cgroup even when no browser is connected.
+		// Only the control plane can authorize and perform a memory increase.
+		if os.Getenv("RUNTIME_MEMORY_AUTOSCALING") == "1" {
+			monitor := &autoscale.Monitor{Config: cfg}
+			go monitor.Run(context.Background())
+		}
 	}
 	if raw := os.Getenv("RUNTIME_DEFAULT_PERMISSION_MODE"); raw != "" {
 		mode, err := claude.ParsePermissionMode(raw)

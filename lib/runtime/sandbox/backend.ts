@@ -57,6 +57,8 @@ export interface SandboxBox {
    *  the size it was made at, whatever the user's setting is now. */
   readonly cpu?: number;
   readonly memoryGb?: number;
+  /** Increase RAM without stopping processes. CPU and disk stay as they are. */
+  growMemory?(memoryGb: number): Promise<void>;
 }
 
 /**
