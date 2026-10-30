@@ -79,3 +79,27 @@ test("icon tabs support keyboard navigation and the panel remembers its tab when
   await page.getByTitle("Show environment", { exact: true }).click();
   await expect(page.getByRole("tab", { name: "Desktop", exact: true })).toHaveAttribute("aria-selected", "true");
 });
+
+test("mobile inspector traps focus around the selected tab and restores it on reopen", async ({ page }) => {
+  test.skip(page.viewportSize()!.width > 1100, "The inspector is a modal only on narrow screens.");
+  const panel = page.getByRole("dialog");
+  for (const label of ["Changes", "Desktop", "Canvas"]) {
+    const selected = page.getByRole("tab", { name: label, exact: true });
+    await selected.click();
+    if (label === "Desktop") {
+      await expect(panel.getByRole("button", { name: "Try again", exact: true })).toBeVisible();
+    } else if (label === "Canvas") {
+      await expect(panel.getByRole("button", { name: /plan.md/ })).toBeVisible();
+    }
+    const last = panel.locator("button:visible").last();
+    await selected.press("Shift+Tab");
+    await expect(last).toBeFocused();
+    await last.press("Tab");
+    await expect(selected).toBeFocused();
+    await selected.press("Tab");
+    await expect(panel.getByRole("button", { name: "Hide panel", exact: true })).toBeFocused();
+    await panel.getByRole("button", { name: "Hide panel", exact: true }).click();
+    await page.getByTitle("Show environment", { exact: true }).click();
+    await expect(selected).toBeFocused();
+  }
+});
