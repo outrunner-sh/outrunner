@@ -3,7 +3,7 @@
  * linked (signed in with Google), or a different one from the one they
  * installed with. GitHub's webhook names the installer; the admin signs in
  * to GitHub for the App once (its user authorization), and the GitHub user
- * that comes back must be them for the installation to be the org's
+ * that comes back must be them for the installation's first org connection
  * (claimInstallation). Nothing is kept: the user token is revoked at once.
  *
  * Needs GITHUB_APP_CLIENT_SECRET, and the App's Callback URL to include

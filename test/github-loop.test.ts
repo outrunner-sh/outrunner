@@ -246,7 +246,7 @@ test("a session that doesn't start is said as such; one that throws first gives 
     },
   });
   await assert.rejects(handleMention("issue_comment", comment(), broken.deps, SLUG), /database down/);
-  assert.deepEqual(broken.calls.released, ["mention:issue_comment:900"]);
+  assert.deepEqual(broken.calls.released, ["mention:issue_comment:900:p1"]);
 });
 
 test("closing an issue or pull request is read with what it closed and when", () => {
@@ -353,4 +353,28 @@ test("an org that turned archiving on close off keeps its sessions", async () =>
   assert.equal(await archiveClosed("pull_request", closedPull(), deps), 0);
   assert.equal(calls.archived.length, 0);
   assert.equal(calls.claims.length, 0);
+});
+
+
+test("shared installation mentions are independently claimed for each project", async () => {
+  const claimed = new Set<string>();
+  const claim = async (key: string) => {
+    if (claimed.has(key)) return false;
+    claimed.add(key);
+    return true;
+  };
+  const first = fakeDeps({ claim, scope: async () => ({ orgId: "o1", projectId: "p1" }) });
+  const second = fakeDeps({ claim, scope: async () => ({ orgId: "o2", projectId: "p2" }) });
+  assert.equal(await handleMention("issue_comment", comment(), first.deps), "started");
+  assert.equal(await handleMention("issue_comment", comment(), second.deps), "started");
+  assert.equal(await handleMention("issue_comment", comment(), second.deps), "repeat");
+  assert.equal(first.calls.started[0].projectId, "p1");
+  assert.equal(second.calls.started[0].projectId, "p2");
+});
+
+test("a denial in one shared organization does not reply over another organization's session", async () => {
+  const { deps, calls } = fakeDeps({ quietDenials: true, member: async () => null });
+  assert.equal(await handleMention("issue_comment", comment(), deps), "not_member");
+  assert.equal(calls.replies.length, 0);
+  assert.equal(calls.started.length, 0);
 });

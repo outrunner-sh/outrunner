@@ -423,7 +423,7 @@ test("a review that couldn't be queued gives its claim back, for GitHub's redeli
     },
   });
   await assert.rejects(queueReview("pull_request_review", reviewEvent(), deps), /database down/);
-  assert.deepEqual(recorded.released, ["review:555"]);
+  assert.deepEqual(recorded.released, ["review:555:p1"]);
 });
 
 test("a review deleted since is left out, and the rest of the batch still goes", async () => {
@@ -481,4 +481,36 @@ test("a follow-up that fails while its event waits is left to the cron, not trie
   await waitAndFlush(["row1"], deps);
   assert.equal(flushes, 1);
   assert.equal(recorded.slept.length, 1);
+});
+
+
+test("the same review queues independently for projects sharing an installation", async () => {
+  const claimed = new Set<string>();
+  const claim = async (key: string) => {
+    if (claimed.has(key)) return false;
+    claimed.add(key);
+    return true;
+  };
+  const first = fakeDeps({ claim });
+  const second = fakeDeps({ claim, scope: async () => ({ orgId: "o2", projectId: "p2" }) });
+  await queueReview("pull_request_review", reviewEvent(), first.deps);
+  await queueReview("pull_request_review", reviewEvent(), second.deps);
+  assert.equal(first.recorded.queued.length, 1);
+  assert.equal(second.recorded.queued.length, 1);
+  assert.equal(second.recorded.queued[0].projectId, "p2");
+});
+
+test("queued follow-ups recheck the exact project's remaining installation link", async () => {
+  const checked: (string | undefined)[] = [];
+  const { deps, recorded } = fakeDeps({
+    waiting: [due()],
+    scope: async (_installation, _repo, projectId) => {
+      checked.push(projectId);
+      return null;
+    },
+  });
+  await flushFollowUps(deps);
+  assert.deepEqual(checked, ["p1"]);
+  assert.equal(recorded.sent.length, 0);
+  assert.deepEqual(recorded.settled, [["f1", "no_scope"]]);
 });

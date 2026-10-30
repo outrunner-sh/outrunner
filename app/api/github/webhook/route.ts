@@ -213,9 +213,9 @@ export async function POST(request: Request) {
         String(payload.action)
       ] as "github.uninstalled" | "github.suspended" | "github.unsuspended" | undefined;
       const holder = action ? await installationHolder(installationId).catch(() => null) : null;
-      if (action && holder?.orgId) {
-        await recordAudit({
-          orgId: holder.orgId,
+      if (action && holder) {
+        await Promise.all(holder.orgIds.map((orgId) => recordAudit({
+          orgId,
           actor: "system",
           action,
           resource: {
@@ -223,7 +223,7 @@ export async function POST(request: Request) {
             id: String(installationId),
             label: payload.installation?.account?.login ?? null,
           },
-        });
+        })));
       }
       if (payload.action === "deleted") {
         dropInstallationToken(installationId);

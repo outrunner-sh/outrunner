@@ -14,6 +14,7 @@ import { AutomationsLoading } from "@/components/automations-loading";
 import { Markdown } from "@/components/markdown";
 import { PullRequestChip } from "@/components/missions/mission-parts";
 import { HomeSessionRoute, NewSessionRoute } from "@/components/new-session-route";
+import { OrgGitHubSettings } from "@/components/org-github";
 import { OrgGeneralSettings } from "@/components/org-settings";
 import { PageLayout } from "@/components/page-layout";
 import { ProjectSettings } from "@/components/project-settings";
@@ -237,7 +238,23 @@ export function FixturePage() {
   return (
     <>
       <span hidden data-testid="fixture-ready" data-ready={ready} />
-      {view === "settings" ? (
+      {view === "github" ? (
+        <SettingsFrame>
+          <OrgGitHubSettings
+            org={{ ...org, name: "neevcloud" }} configured
+            installations={state === "connected" ? [{
+              id: 42, accountLogin: "neevai-labs", accountType: "Organization", repositorySelection: "all",
+              suspendedAt: null, suspended: false, installedBy: "preview-owner", createdAt: "2026-10-30T00:00:00Z",
+              repositories: ["neevai-labs/outrunner"], total: 1, reachable: true,
+            }] : []}
+            available={state !== "connected" ? [{
+              id: 42, accountLogin: "neevai-labs", accountType: "Organization", repositorySelection: "all",
+              suspendedAt: null, suspended: false, installedBy: null, createdAt: "2026-10-30T00:00:00Z",
+            }] : []}
+            pending={false} installed={null} error={null}
+          />
+        </SettingsFrame>
+      ) : view === "settings" ? (
         <SettingsFrame>
           <OrgGeneralSettings org={org} domain="neev.ai" />
         </SettingsFrame>

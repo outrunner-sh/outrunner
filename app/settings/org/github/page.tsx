@@ -6,7 +6,7 @@ import { Suspense } from "react";
 import { OrgGitHubSettings, type InstallationView } from "@/components/org-github";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { listOrgInstallations, listUnclaimedFor } from "@/lib/db/github-installations";
+import { listOrgInstallations, listAvailableFor } from "@/lib/db/github-installations";
 import { githubAppConfig, installationToken, listInstallationRepositories } from "@/lib/github/app";
 import { getOrgContext } from "@/lib/orgs/server";
 
@@ -46,12 +46,11 @@ async function GitHubSection({ searchParams }: { searchParams: Promise<Query> })
       </section>
     );
   }
-  const [kept, unclaimed] = config
+  const [kept, available] = config
     ? await Promise.all([
         listOrgInstallations(org.id).catch(() => []),
-        // Installed by them on GitHub, before GitHub's word reached the
-        // setup route: theirs to add here.
-        org.role === "admin" ? listUnclaimedFor(owner.githubId, org.id).catch(() => []) : Promise.resolve([]),
+        // Includes installations already connected to another org they administer.
+        org.role === "admin" ? listAvailableFor(owner.githubId, org.id, owner.id).catch(() => []) : Promise.resolve([]),
       ])
     : [[], []];
   const installations: InstallationView[] = await Promise.all(
@@ -73,7 +72,7 @@ async function GitHubSection({ searchParams }: { searchParams: Promise<Query> })
       org={org}
       configured={config !== null}
       installations={installations}
-      unclaimed={unclaimed}
+      available={available}
       pending={pending === "1"}
       installed={installed ?? null}
       error={error ?? null}

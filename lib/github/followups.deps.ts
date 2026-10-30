@@ -29,10 +29,10 @@ async function token(installationId: number): Promise<string> {
   return installationToken(config, installationId);
 }
 
-export function followUpDeps(): FollowUpDeps {
+export function followUpDeps(scope?: { orgId: string; projectId: string }): FollowUpDeps {
   const loop = loopDeps();
   return {
-    scope: installationProject,
+    scope: scope ? async () => scope : installationProject,
     claim: claimLoopAct,
     linkedSessions,
     pullForBranch,

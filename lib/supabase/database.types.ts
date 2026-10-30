@@ -1045,23 +1045,27 @@ type AccessGrantRow = {
 
 type GithubInstallationRow = {
   installation_id: number;
-  /** Null until its installer claims it for an org (20261029110000). */
-  org_id: string | null;
   account_login: string;
   account_type: "User" | "Organization";
   repository_selection: "all" | "selected";
-  installed_by: string | null;
   /** The GitHub user who installed it (the webhook's sender), by numeric
    *  id: what a claim is matched by. */
   installer_id: number | null;
   /** Their login then, for showing. */
   installer_login: string | null;
-  /** The org that removed it (unclaimed it): the only one it goes back to. */
-  removed_from: string | null;
   suspended_at: string | null;
   created_at: string;
   updated_at: string;
 };
+
+type OrgGithubInstallationRow = {
+  org_id: string;
+  installation_id: number;
+  installed_by: string | null;
+  created_at: string;
+};
+
+type OrgGithubInstallationDetailsRow = GithubInstallationRow & OrgGithubInstallationRow;
 
 type CliTokenRow = {
   id: string;
@@ -1402,6 +1406,12 @@ export type Database = {
         Row: AccessGrantRow;
         Insert: Insert<AccessGrantRow, "org_id" | "level">;
         Update: Partial<AccessGrantRow>;
+        Relationships: [];
+      };
+      org_github_installations: {
+        Row: OrgGithubInstallationRow;
+        Insert: Insert<OrgGithubInstallationRow, "org_id" | "installation_id">;
+        Update: Partial<OrgGithubInstallationRow>;
         Relationships: [];
       };
       github_installations: {
@@ -1916,8 +1926,17 @@ export type Database = {
         Relationships: [];
       };
     };
-    Views: Record<never, never>;
+    Views: {
+      org_github_installation_details: {
+        Row: OrgGithubInstallationDetailsRow;
+        Relationships: [];
+      };
+    };
     Functions: {
+      link_github_installation: {
+        Args: { target_org: string; target_installation: number; github_user_id: number | null; actor_id: string };
+        Returns: string | null;
+      };
       set_slack_channel_access: {
         Args: { target_team: string; target_channel: string; target_org: string; admin_id: string; project_ids: string[]; slack_user_id: string };
         Returns: undefined;

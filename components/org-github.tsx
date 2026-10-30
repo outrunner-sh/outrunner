@@ -25,16 +25,13 @@ export type InstallationView = OrgInstallation & {
 /** What the setup route sends back, said for the page. */
 const ERRORS: Record<string, string> = {
   not_configured: "The GitHub App isn't set up on this Outrunner yet.",
-  not_admin: "Only the org's admins can install the GitHub App.",
+  not_admin: "You must administer this org and an org already connected to the installation to share it.",
   link_expired: "That install link has expired, or was someone else's. Start again from here.",
-  not_installer: "Only whoever installed the App on GitHub can add it to an org. Ask them to add it here.",
+  not_installer: "Only whoever installed the App on GitHub can make its first org connection. Ask them to add it here.",
   verify_declined:
     "Outrunner needs that one-time GitHub sign-in to confirm you installed the App. Install it again and allow it to finish.",
-  removed_elsewhere:
-    "Another Outrunner org removed that installation, and only it can add it back. To use it here, uninstall it on GitHub and install it again from this page.",
   no_installation:
     "Outrunner has no record of that installation from GitHub. If the App is still installed there, uninstall it on GitHub, then install it again from here.",
-  taken: "Another Outrunner org has that GitHub account's installation. Uninstall it there first, or ask its admins.",
   failed: "Couldn't keep the installation. Try again.",
 };
 
@@ -52,7 +49,7 @@ export function OrgGitHubSettings({
   org,
   configured,
   installations,
-  unclaimed,
+  available,
   pending,
   installed,
   error,
@@ -60,8 +57,8 @@ export function OrgGitHubSettings({
   org: Org;
   configured: boolean;
   installations: InstallationView[];
-  /** Installed on GitHub by the signed-in admin, not in an org yet. */
-  unclaimed: OrgInstallation[];
+  /** Installations the admin may connect here, including shared ones. */
+  available: OrgInstallation[];
   /** Back from GitHub before its word of the install: say to wait. */
   pending: boolean;
   installed: string | null;
@@ -110,24 +107,24 @@ export function OrgGitHubSettings({
       <div className="space-y-1">
         <PageHeader title={"GitHub"} />
         <p className="max-w-prose text-sm text-muted-foreground">
-          {`Install the Outrunner GitHub App on the GitHub accounts and organizations ${org.name} works in. Outrunner then reaches their repositories with the App, rather than each member's own GitHub sign-in.`}
+          {`Connect the GitHub accounts and organizations ${org.name} works in. Multiple Outrunner organizations can share the same GitHub App installation.`}
         </p>
       </div>
 
       {installed ? (
         <InlineMessage tone="info">{`Installed on ${installed}.`}</InlineMessage>
       ) : null}
-      {pending && unclaimed.length === 0 ? (
+      {pending && available.length === 0 ? (
         <InlineMessage tone="info" actions={[{ label: "Reload", onClick: () => router.refresh() }]}>
           GitHub hasn&apos;t confirmed the installation yet. It shows here in a moment, for you to add. If it
           doesn&apos;t within a minute, uninstall the App on GitHub and install it again from here.
         </InlineMessage>
       ) : null}
-      {admin && unclaimed.length > 0 ? (
+      {admin && available.length > 0 ? (
         <div className="max-w-2xl space-y-2">
-          <h2 className="text-[13px] font-medium text-foreground">Installed by you, not added to an org yet</h2>
+          <h2 className="text-[13px] font-medium text-foreground">Available GitHub connections</h2>
           <ul className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border/60">
-            {unclaimed.map((i) => (
+            {available.map((i) => (
               <li key={i.id} className="flex items-center gap-3 px-3 py-2">
                 <GitHubIcon className="size-4 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{i.accountLogin}</span>
@@ -153,7 +150,7 @@ export function OrgGitHubSettings({
       ) : (
         <>
           {installations.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Not installed anywhere yet.</p>
+            <p className="text-sm text-muted-foreground">No GitHub accounts connected to this org yet.</p>
           ) : (
             <ul className="max-w-2xl divide-y divide-border/60 overflow-hidden rounded-lg border border-border/60">
               {installations.map((i) => (
@@ -209,7 +206,7 @@ export function OrgGitHubSettings({
                 {installations.length === 0 ? "Install the GitHub App" : "Install on another account"}
               </a>
               <p className="text-xs text-muted-foreground">
-                {`On GitHub, pick the account and which of its repositories Outrunner may reach. Removing it here stops ${org.name} using it; whoever installed it can add it back. Uninstall it on GitHub to take its access away there too.`}
+                {`On GitHub, pick the account and repositories Outrunner may reach. Removing it here only disconnects ${org.name}; other Outrunner organizations keep their connections. Uninstalling it on GitHub removes access for every connected organization.`}
               </p>
             </div>
           ) : (
