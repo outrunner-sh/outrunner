@@ -7,6 +7,7 @@
  * changes a session still goes through its routes, as its owner.
  */
 
+import { openAgentSecretOrNull } from "@/lib/db/computer-secret";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import type { WorkspaceSummary } from "@/lib/runtime/agent-protocol";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
@@ -32,8 +33,10 @@ export async function reachBox(workspace: Workspace): Promise<Reached | null> {
   if (error) throw error;
   const computer = (data ?? []).find((c) => c.workspace_id === workspace.id) ?? data?.[0];
   if (!computer || computer.status !== "ready" || !computer.daytona_sandbox_id || !computer.agent_secret) return null;
+  const agentSecret = openAgentSecretOrNull(computer.agent_secret, computer.id);
+  if (!agentSecret) return null;
   try {
-    const target = await resolution.provider.agentTarget(computer.daytona_sandbox_id, computer.agent_secret);
+    const target = await resolution.provider.agentTarget(computer.daytona_sandbox_id, agentSecret);
     return {
       agent: new AgentClient(target),
       identity: { workspaceId: workspace.id, projectId: workspace.projectId, computerId: computer.id, userId: workspace.ownerId },

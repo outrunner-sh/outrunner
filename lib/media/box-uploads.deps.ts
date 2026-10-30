@@ -5,6 +5,8 @@
 
 import { randomBytes, randomUUID } from "node:crypto";
 
+import { openAgentSecretOrNull } from "@/lib/db/computer-secret";
+
 import { RateLimiter } from "@/lib/api/rate-limit";
 import { MEDIA_BUCKET } from "@/lib/db/media";
 import { memberRole } from "@/lib/db/orgs";
@@ -31,7 +33,7 @@ export function boxUploadDeps(requestOrigin: string): BoxUploadDeps {
     async computersFor(sandboxId) {
       const { data, error } = await admin
         .from("runtime_computers")
-        .select("owner_id, org_id, project_id, workspace_id, agent_secret")
+        .select("id, owner_id, org_id, project_id, workspace_id, agent_secret")
         .eq("daytona_sandbox_id", sandboxId)
         .limit(5);
       if (error) throw error;
@@ -40,7 +42,7 @@ export function boxUploadDeps(requestOrigin: string): BoxUploadDeps {
         orgId: c.org_id,
         projectId: c.project_id,
         workspaceId: c.workspace_id,
-        agentSecret: c.agent_secret,
+        agentSecret: openAgentSecretOrNull(c.agent_secret, c.id),
       }));
     },
 

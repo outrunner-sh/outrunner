@@ -13,6 +13,7 @@
  * watch never keeps an idle box up.
  */
 
+import { openAgentSecretOrNull } from "@/lib/db/computer-secret";
 import { AgentClient } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { resolveProvider } from "@/lib/runtime/resolve";
@@ -170,9 +171,11 @@ async function upBox(workspace: ReturnType<typeof toWorkspace>) {
   if (row && (row.status === "stopped" || row.status === "error")) return "down" as const;
   if (!row || row.status !== "ready" || !row.daytona_sandbox_id || !row.agent_secret) return null;
   const computer = toRuntimeComputer(row);
+  const agentSecret = openAgentSecretOrNull(row.agent_secret, computer.id);
+  if (!agentSecret) return null;
   const resolution = resolveProvider(workspace);
   if (!resolution.ok || !isComputerProvider(resolution.provider)) return null;
-  const target = await resolution.provider.agentTarget(computer.daytonaSandboxId!, row.agent_secret);
+  const target = await resolution.provider.agentTarget(computer.daytonaSandboxId!, agentSecret);
   return { target, sandboxId: computer.daytonaSandboxId!, computerId: computer.id };
 }
 

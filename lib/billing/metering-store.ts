@@ -9,6 +9,7 @@ import type { Interval, Period } from "@/lib/billing/hours";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { sandboxOf } from "@/lib/runtime/sandbox-choice";
 import type { ProviderName } from "@/lib/runtime/types";
+import { openAgentSecretOrNull } from "@/lib/db/computer-secret";
 import { orgConnectorIds } from "@/lib/db/repositories";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -16,13 +17,14 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 export type OpenInterval = { id: string; sandboxId: string; startedAt: Date; lastSeenAt: Date };
 
 /** A ready computer on one of Outrunner's boxes, with what reaching its agent
- *  takes. */
+ *  takes. Null agentSecret: one whose stored secret won't open, so its agent
+ *  can't be reached — metered and stoppable, never pause-on-report. */
 export type MeteredComputer = {
   id: string;
   ownerId: string;
   projectId: string;
   sandboxId: string;
-  agentSecret: string;
+  agentSecret: string | null;
 };
 
 /** Whether Outrunner pays for boxes `provider` makes, so they're metered: the
@@ -191,7 +193,7 @@ export async function meteredReadyComputers(): Promise<MeteredComputer[]> {
       ownerId: row.owner_id,
       projectId: row.project_id,
       sandboxId: row.daytona_sandbox_id as string,
-      agentSecret: row.agent_secret as string,
+      agentSecret: openAgentSecretOrNull(row.agent_secret, row.id),
     }));
 }
 

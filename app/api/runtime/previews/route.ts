@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { openAgentSecretOrNull } from "@/lib/db/computer-secret";
 import { memberRole } from "@/lib/db/orgs";
 import { workspaceForPreview } from "@/lib/db/previews";
 import { isUuid } from "@/lib/ids";
@@ -40,7 +41,10 @@ export async function POST(request: Request) {
     signature: request.headers.get("x-outrunner-signature"),
     body,
   };
-  const computer = (computers ?? []).find((c) => c.agent_secret && previewRequestValid(c.agent_secret, signed));
+  const computer = (computers ?? []).find((c) => {
+    const secret = openAgentSecretOrNull(c.agent_secret, c.id);
+    return secret !== null && previewRequestValid(secret, signed);
+  });
   if (!computer) return NextResponse.json({ error: "Bad signature." }, { status: 401 });
 
   let asked: { workspaceId?: unknown; port?: unknown; label?: unknown };
