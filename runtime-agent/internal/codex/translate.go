@@ -11,14 +11,14 @@ import (
 
 // Codex records a session in a rollout: $CODEX_HOME/sessions/YYYY/MM/DD/
 // rollout-<time>-<id>.jsonl, one JSON line per item, appended as the session
-// goes (codex-cli 0.146.0). The conversation stream, the Summary and Archive
-// all read Claude's transcript shape, so a Codex session's rollout is
+// goes (legacy 0.146.0 and paginated 0.162.1). The conversation stream,
+// Summary and Archive all read Claude's transcript shape, so the rollout is
 // translated into it, a line at a time, and those readers stay as they are
 // (the jcode engine does the same: internal/jcode/translate.go).
 //
 // What is translated:
-//   - event_msg user_message: the user's prompt (a user record, its text as a
-//     plain string, as Claude records a typed prompt);
+//   - event_msg user_message or paginated UserMessage completion: the user's
+//     prompt (a user record, its text as a plain string, as Claude records it);
 //   - response_item message (assistant): its output_text, as text blocks, with
 //     the model the latest turn_context named;
 //   - response_item reasoning: its summary, as a thinking block;
@@ -61,6 +61,7 @@ type Record struct {
 // tool call must show while its tool runs, not once it is done.
 type Translator struct {
 	sessionID string
+	paginated bool
 	model     string
 	parent    *string
 	// held are the current model call's records, not yet given out: its
@@ -141,13 +142,11 @@ type rolloutLine struct {
 // must not cost another kind its line.
 type (
 	sessionMeta struct {
-		ID string `json:"id"`
+		ID          string `json:"id"`
+		HistoryMode string `json:"history_mode"`
 	}
 	turnContext struct {
 		Model string `json:"model"`
-	}
-	userMessage struct {
-		Message string `json:"message"`
 	}
 	tokenCount struct {
 		Info *struct {
@@ -196,22 +195,23 @@ func (t *Translator) Line(offset int64, line []byte) []Record {
 		var p sessionMeta
 		if json.Unmarshal(l.Payload, &p) == nil {
 			t.sessionID = p.ID
+			t.paginated = p.HistoryMode == "paginated"
 		}
 	case l.Type == "turn_context":
 		var p turnContext
 		if json.Unmarshal(l.Payload, &p) == nil {
 			t.model = p.Model
 		}
-	case l.Type == "event_msg" && kind.Type == "user_message":
-		var p userMessage
-		if json.Unmarshal(l.Payload, &p) != nil {
+	case l.Type == "event_msg" && (kind.Type == "user_message" || kind.Type == "item_completed"):
+		text, ok := UserPrompt(l.Payload, t.paginated)
+		if !ok {
 			return nil
 		}
 		out := t.Flush()
-		if strings.TrimSpace(p.Message) == "" {
+		if strings.TrimSpace(text) == "" {
 			return out // an image alone: nothing the timeline renders
 		}
-		prompt, planned := strings.CutPrefix(p.Message, PlanPreamble)
+		prompt, planned := strings.CutPrefix(text, PlanPreamble)
 		rec := t.newRecord(offset, l.Timestamp, "user", jsonString(prompt))
 		if planned {
 			rec.PermissionMode = "plan"

@@ -67,7 +67,7 @@ receive only freshly generated local configuration. Supabase/DB ports and runtim
 are not published as previews; only the protected gateway is exposed.
 
 Preparation snapshots the commit, builds its CLI/runtime/app, installs official
-Codex **0.146.0**, applies all branch migrations in a new Supabase project, and
+Codex **0.162.1**, applies all branch migrations in a new Supabase project, and
 builds a local test-computer image and creates three isolated users: an org admin, a teammate and a nonmember. It
 preprovisions a revocable Outrunner CLI token for the isolated admin; this is
 **test bootstrap**, not provider authentication. Local legacy Data API default

@@ -151,7 +151,7 @@ export const PROVIDERS: Record<KeyProviderId, Provider> = {
     keysPage: "OpenAI → API keys",
     usageUrl: "https://platform.openai.com/usage",
     check: { url: "https://api.openai.com/v1/models", auth: "bearer" },
-    // Codex's models on an API key (codex-cli 0.146).
+    // Codex's models on an API key. Account sign-in uses its native catalog.
     models: [
       { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", supportsImages: true },
       { id: "gpt-6-sol", label: "GPT-6 Sol", supportsImages: true },

@@ -74,6 +74,27 @@ func TestTranslateARealRollout(t *testing.T) {
 	}
 }
 
+func TestTranslatePaginatedNativeRollout(t *testing.T) {
+	rollout, err := os.ReadFile(filepath.Join("testdata", "rollout-0.162.1.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(translateAll(t, rollout)), []byte("\n"))
+	if len(lines) != 2 {
+		t.Fatalf("want one prompt and one reply, got %d: %s", len(lines), bytes.Join(lines, []byte("\n")))
+	}
+	var prompt, reply record
+	if json.Unmarshal(lines[0], &prompt) != nil || string(prompt.Message.Content) != `"Reply with broker verified."` || prompt.Message.Role != "user" {
+		t.Fatalf("wrong canonical prompt: %s", lines[0])
+	}
+	if json.Unmarshal(lines[1], &reply) != nil || reply.Message.Role != "assistant" || reply.Message.Model != "gpt-6.1-sol" || !bytes.Contains(reply.Message.Content, []byte("broker verified")) {
+		t.Fatalf("wrong reply: %s", lines[1])
+	}
+	if reply.Message.Usage == nil || reply.Message.Usage.InputTokens != 1 || reply.Message.Usage.OutputTokens != 2 {
+		t.Fatalf("lost model usage: %s", lines[1])
+	}
+}
+
 // What the golden file must hold, independent of its exact bytes.
 func TestTranslationOfTheRealRollout(t *testing.T) {
 	rollout, err := os.ReadFile(filepath.Join("testdata", "rollout.jsonl"))

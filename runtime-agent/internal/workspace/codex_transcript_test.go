@@ -19,6 +19,20 @@ import (
 
 const fixtureSessionID = "01a1596f-41f4-7f30-88f4-b569d1b5bf76"
 
+func TestPaginatedPromptDeliveryCountsCanonicalUserItems(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "codex", "testdata", "rollout-0.162.1.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := countUserMessages(path); got != 1 {
+		t.Fatalf("counted %d prompts; injected context and message copies must not count", got)
+	}
+}
+
 // fixtureRollout is the real rollout in internal/codex/testdata, recorded in
 // folder instead of the redacted /work/repo.
 func fixtureRollout(t *testing.T, folder string) []byte {

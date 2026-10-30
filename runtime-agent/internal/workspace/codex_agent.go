@@ -11,8 +11,8 @@ import (
 	"runtime-agent/internal/codex"
 )
 
-// codexAgent runs OpenAI's Codex CLI (codex-cli 0.146.0, whose screens the
-// readers below were written against: see the pane captures in testdata).
+// codexAgent runs OpenAI's Codex CLI. The pane captures cover 0.146.0 and
+// 0.162.1; the native account probe checks startup, delivery and transcript reading.
 type codexAgent struct{ s *Service }
 
 // ErrCodexMissing is a Codex session on a computer without the Codex CLI:
