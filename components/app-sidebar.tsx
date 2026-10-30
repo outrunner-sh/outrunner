@@ -49,7 +49,7 @@ import {
 import { buildStatusSections, type Grouping, groupingCookie } from "@/lib/nav/status-groups";
 import type { SessionStanding } from "@/lib/session/standing";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
-import type { Workspace } from "@/lib/runtime/types";
+import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { startNewSession } from "@/lib/session/new-session-reset";
 import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
@@ -67,6 +67,7 @@ export function AppSidebar({
   loading = false,
   projects,
   workspaces,
+  pullRequests = {},
   ownerLogin,
   ownerAvatarUrl,
   orgs = [],
@@ -83,6 +84,8 @@ export function AppSidebar({
   loading?: boolean;
   projects: NavProject[];
   workspaces: Workspace[];
+  /** The pull request each cloud session shows, keyed by workspace id. */
+  pullRequests?: Record<string, WorkspacePullRequest>;
   ownerLogin: string;
   ownerAvatarUrl: string | null;
   /** The user's orgs, for the switcher in the header; none before they load. */
@@ -283,6 +286,7 @@ export function AppSidebar({
             {grouping === "status" && sections.length > 0 ? (
               <StatusSections
                 sections={sections}
+                pullRequests={pullRequests}
                 active={active}
                 now={now}
                 folded={folded}

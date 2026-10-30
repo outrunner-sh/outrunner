@@ -17,17 +17,63 @@ const chrome = {
 export function FixtureFrame({ children }: { children: React.ReactNode }) {
   const params = useSearchParams();
   const state = params.get("state");
-  const shownFrame = useMemo(() => state === "archived" ? {
-    ...frame,
-    appData: {
-      ...frame.appData,
-      workspaces: frame.appData.workspaces.map((workspace, i) => i === 0 ? { ...workspace, status: "archived" as const } : workspace),
-    },
-  } : frame, [state]);
+  const shownFrame = useMemo(() => {
+    if (state === "archived") {
+      return {
+        ...frame,
+        appData: {
+          ...frame.appData,
+          workspaces: frame.appData.workspaces.map((workspace, i) =>
+            i === 0 ? { ...workspace, status: "archived" as const } : workspace,
+          ),
+        },
+      };
+    }
+    if (state === "merged-sidebar") {
+      return {
+        ...frame,
+        appData: {
+          ...frame.appData,
+          pullRequests: {
+            "preview-0": {
+              id: "pull-request-1",
+              workspaceId: "preview-0",
+              projectId: "project-1",
+              number: 343,
+              url: "https://github.com/neevai-labs/outrunner/pull/343",
+              title: "Improve workspace navigation",
+              baseBranch: "main",
+              headBranch: "runtime/preview-0",
+              createdAt: "2026-10-30T07:00:00Z",
+              state: "merged" as const,
+              stateAt: "2026-10-30T10:00:00Z",
+            },
+          },
+          standings: {
+            "preview-0": sidebarDone("2026-10-30T10:00:00Z"),
+            "preview-1": sidebarDone("2026-10-30T09:00:00Z"),
+          },
+        },
+      };
+    }
+    return frame;
+  }, [state]);
   if (params.get("view") === "settings") return children;
   return (
     <AppFrame chrome={<ServerAnswer value={chrome} />} server={<ServerAnswer value={shownFrame} />}>
       {children}
     </AppFrame>
   );
+}
+
+function sidebarDone(at: string) {
+  return {
+    standing: "done" as const,
+    reason: null,
+    moved: false,
+    pinned: false,
+    unread: false,
+    replyPreview: null,
+    at,
+  };
 }
