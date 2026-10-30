@@ -25,6 +25,11 @@ import (
 
 // rawRecord is the subset of a Claude JSONL line the watcher understands.
 type rawRecord struct {
+	Harness *struct {
+		From      string          `json:"from"`
+		Agent     string          `json:"agent"`
+		Selection json.RawMessage `json:"selection"`
+	} `json:"outrunnerHarness"`
 	Type      string  `json:"type"`
 	Subtype   string  `json:"subtype"`
 	UUID      string  `json:"uuid"`
@@ -225,6 +230,9 @@ func decode(line []byte) (Event, bool) {
 	if err := json.Unmarshal(line, &rec); err != nil {
 		return Event{}, false // tolerate unparseable lines
 	}
+	if rec.Type == "outrunner_harness_switch" && rec.Harness != nil {
+		return Event{Message: &protocol.ConversationMessage{T: "message", UUID: rec.UUID, Role: "assistant", Content: []protocol.ContentBlock{}, Harness: &protocol.HarnessChange{From: rec.Harness.From, To: rec.Harness.Agent, Selection: rec.Harness.Selection}}}, true
+	}
 	if rec.Type == "attachment" {
 		return decodeQueuedPrompt(rec)
 	}
@@ -413,14 +421,25 @@ func IsInterruption(msg *protocol.ConversationMessage) bool {
 // of it (a fork's transcript, an edit finding its message). An offset inside
 // a line starts at the next one.
 func Read(path string, from int64) ([]Event, error) {
-	f, err := os.Open(path)
+	var events []Event
+	err := Walk(path, from, func(ev Event) bool { events = append(events, ev); return true })
 	if err != nil {
 		return nil, err
+	}
+	return events, nil
+}
+
+// Walk visits records without retaining a whole long-running chat in memory.
+// Returning false stops after the current record.
+func Walk(path string, from int64, visit func(Event) bool) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if from < 0 || from > info.Size() {
 		from = 0
@@ -429,23 +448,22 @@ func Read(path string, from int64) ([]Event, error) {
 	if from > 0 {
 		var prior [1]byte
 		if _, err := f.ReadAt(prior[:], from-1); err != nil {
-			return nil, err
+			return err
 		}
 		partial = prior[0] != '\n'
 	}
 	if _, err := f.Seek(from, io.SeekStart); err != nil {
-		return nil, err
+		return err
 	}
 	reader := bufio.NewReader(f)
 	cursor := from
-	var events []Event
 	for {
 		line, err := reader.ReadBytes('\n')
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
 		cursor += int64(len(line))
 		if partial {
@@ -454,8 +472,10 @@ func Read(path string, from int64) ([]Event, error) {
 		}
 		if ev, ok := decode(line); ok {
 			ev.ID, ev.Start = cursor, cursor-int64(len(line))
-			events = append(events, ev)
+			if !visit(ev) {
+				return nil
+			}
 		}
 	}
-	return events, nil
+	return nil
 }

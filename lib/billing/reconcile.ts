@@ -21,12 +21,6 @@ import type { MeteredComputer, OpenInterval } from "@/lib/billing/metering-store
 
 /** No activity for this long, and no turn in progress: the box is paused. */
 export const IDLE_AFTER_MS = 15 * 60_000;
-/**
- * A turn that has been "in progress" this long with nothing happening is
- * taken as stuck (Claude killed mid-turn leaves one open forever), so it no
- * longer keeps the box up. Long enough for any quiet tool run.
- */
-export const STUCK_TURN_AFTER_MS = 2 * 60 * 60_000;
 /** Shorter than the cron's period. */
 export const LEASE_SECONDS = 90;
 /**
@@ -75,11 +69,13 @@ export type ReconcileReport = {
 
 /** Whether a box doing `activity` is idle at `now`. */
 export function isIdle(activity: Activity | null, now: Date): boolean {
-  if (!activity) return false;
+  // Silence, browser disconnects, and user absence do not finish agent work.
+  // Older agents can mistake commentary for completion: never pause on their report.
+  if (!activity || activity.turnInProgress || activity.turnTrackingVersion !== 1) return false;
   const last = Date.parse(activity.lastActivity);
   if (!Number.isFinite(last)) return false;
   const quietMs = now.getTime() - last;
-  return quietMs >= (activity.turnInProgress ? STUCK_TURN_AFTER_MS : IDLE_AFTER_MS);
+  return quietMs >= IDLE_AFTER_MS;
 }
 
 export async function reconcile(deps: ReconcileDeps): Promise<ReconcileReport> {

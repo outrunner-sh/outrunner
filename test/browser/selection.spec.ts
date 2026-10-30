@@ -69,23 +69,28 @@ test("new chat asks the server for the active chat's live harness, model and eff
     model: expect.objectContaining({ effort: "low" }),
   }));
 });
-test("existing harness action forks through the supported API and moves the draft and image", async ({ page }) => {
+test("existing harness change stages a selection and sends the draft and image in the same chat", async ({ page }) => {
   const state = await fixture(page); await open(page, "/workspaces/preview-0");
   await page.getByRole("textbox", { name: "Message Codex" }).fill("Continue this draft");
   await page.locator('input[type="file"]').setInputFiles({ name: "image.png", mimeType: "image/png", buffer: image });
   await expect(page.getByText("image.png attached", { exact: true })).toBeAttached();
-  await menu(page, "Harness"); await page.getByRole("menuitemradio", { name: "Fork with Claude Code", exact: true }).click();
-  await expect(page).toHaveURL(/chat=66666666/);
+  await menu(page, "Harness"); await page.getByRole("menuitemradio", { name: "Claude Code", exact: true }).click();
+  await expect(page).not.toHaveURL(/chat=/);
   await expect(page.getByRole("textbox", { name: "Message Claude Code", exact: true })).toHaveValue("Continue this draft");
   await expect(page.getByText("image.png attached", { exact: true })).toBeAttached();
-  expect(state.evidence).toContainEqual(expect.objectContaining({ stage: "fork request", body: { from: "main", agent: "claude" } }));
+  expect(state.evidence).not.toContainEqual(expect.objectContaining({ stage: "harness request" }));
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect.poll(() => state.evidence.some((event) => (event as { stage: string }).stage === "harness request")).toBe(true);
+  expect(state.evidence).toContainEqual(expect.objectContaining({ stage: "harness request", body: expect.objectContaining({ expectedAgent: "codex", agent: "claude", content: "Continue this draft", attachmentIds: ["55555555-5555-4555-8555-555555555555"] }) }));
+  await expect(page).not.toHaveURL(/chat=/);
 });
-test("an unavailable runtime fork leaves conversation and draft unchanged", async ({ page }) => {
+test("an unavailable harness switch leaves conversation and draft unchanged", async ({ page }) => {
   await fixture(page, true); await open(page, "/workspaces/preview-0");
   await page.getByRole("textbox", { name: "Message Codex" }).fill("Keep this on failure");
-  await menu(page, "Harness"); await page.getByRole("menuitemradio", { name: "Fork with Claude Code", exact: true }).click();
+  await menu(page, "Harness"); await page.getByRole("menuitemradio", { name: "Claude Code", exact: true }).click();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByText("This computer cannot run that harness.", { exact: false })).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Message Codex" })).toHaveValue("Keep this on failure");
+  await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toHaveValue("Keep this on failure");
   await expect(page).not.toHaveURL(/chat=/);
 });
 

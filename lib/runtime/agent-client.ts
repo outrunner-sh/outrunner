@@ -45,6 +45,7 @@ import {
   WorkspaceSummary,
 } from "@/lib/runtime/agent-protocol";
 import { mintRuntimeToken } from "@/lib/runtime/runtime-token";
+import { HarnessStatus } from "@/lib/session/harness-switch";
 import type { AgentEndpoint } from "@/lib/runtime/sandbox/backend";
 import type { SetModelRequest } from "@/lib/runtime/session-models";
 import {
@@ -132,6 +133,13 @@ export function chatQuery(chat: string | undefined, join: "?" | "&" = "?"): stri
 }
 
 export class AgentClient {
+  async harnessSelection(identity: WorkspaceIdentity, chat?: string): Promise<HarnessStatus> {
+    return HarnessStatus.parse(await this.get(`/workspaces/${identity.workspaceId}/harness${chatQuery(chat)}`, identity));
+  }
+
+  async switchHarness(identity: WorkspaceIdentity, request: unknown, chat?: string): Promise<HarnessStatus> {
+    return HarnessStatus.parse(await this.post(`/workspaces/${identity.workspaceId}/harness${chatQuery(chat)}`, identity, request, 150_000));
+  }
   private readonly target: AgentTarget;
   private readonly fetchFn: FetchFn;
 

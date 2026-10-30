@@ -806,6 +806,8 @@ export const Activity = z.object({
   /** RFC3339 UTC. */
   lastActivity: z.string(),
   turnInProgress: z.boolean(),
+  /** Version 1 distinguishes commentary from completion; older agents are unsafe to pause. */
+  turnTrackingVersion: z.number().optional(),
 });
 export type Activity = z.infer<typeof Activity>;
 
@@ -861,6 +863,7 @@ const ReplyUsage = z.object({
 });
 
 export const ConversationMessage = z.object({
+  harness: z.object({ from: z.enum(["claude", "codex"]), to: z.enum(["claude", "codex"]), selection: z.unknown().optional() }).optional(),
   t: z.literal("message"),
   uuid: z.string(),
   parentUuid: z.string().nullable(),

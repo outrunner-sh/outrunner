@@ -68,14 +68,15 @@ type Service struct {
 	// output. Agent control variables never enter env in the first place.
 	secrets []string
 
-	mu    sync.Mutex
-	facts map[string]workspaceFacts
+	mu            sync.Mutex
+	facts         map[string]workspaceFacts
+	journalMu     sync.Mutex
+	journalCopies map[string]journalCopy
 
 	activityMu                    sync.Mutex
 	activityUnknownSince          time.Time
 	activityUnknownReason         string
 	activityUnknownLogged         time.Time
-	activityUnknownExpiredLogged  bool
 	activityUnknownClearAttempted bool
 	activityUnknownClearFailed    bool
 	lifetimeID                    func() string
@@ -193,6 +194,7 @@ func (s *Service) UseJcode(client *jcode.Client) {
 // carry on. Start degrades gracefully (base omitted from the orientation) when
 // neither copy exists.
 type workspaceFacts struct {
+	Harness        *HarnessState         `json:"harness,omitempty"`
 	Branch         string                `json:"branch"`
 	BaseBranch     string                `json:"baseBranch"`
 	PermissionMode claude.PermissionMode `json:"permissionMode,omitempty"`
@@ -679,6 +681,14 @@ func (s *Service) local(workspaceID string) bool {
 //   - otherwise a fresh session starts.
 func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string) (string, error) {
 	defer s.lockLifecycle(workspaceID)()
+	if _, err := os.Stat(s.harnessUndoPath(workspaceID)); err == nil {
+		lock := s.lockSend(workspaceID)
+		err := s.recoverHarnessHeld(ctx, workspaceID)
+		lock.Unlock()
+		if err != nil {
+			return "", err
+		}
+	}
 	name := sessionName(workspaceID)
 	if s.jcode != nil {
 		if err := s.jcode.StartSession(ctx, workspaceID, s.worktreePath(workspaceID)); err != nil {
@@ -784,7 +794,12 @@ func (s *Service) waitReady(ctx context.Context, a agent, name string) error {
 // The Summary collector is (re)started so post-restart activity is folded in.
 func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string) (string, error) {
 	defer s.lockLifecycle(workspaceID)()
-	return s.relaunch(ctx, workspaceID, anthropicToken, true)
+	lock := s.lockSend(workspaceID)
+	defer lock.Unlock()
+	if err := s.recoverHarnessHeld(ctx, workspaceID); err != nil {
+		return "", err
+	}
+	return s.relaunchHeld(ctx, workspaceID, anthropicToken, true, lock)
 }
 
 var (
@@ -819,10 +834,11 @@ const (
 // it runs through, and the effort it runs at (empty: the model's own).
 // Callers validate each part.
 type ModelChoice struct {
-	Model   string
-	Gateway claude.Gateway
-	Token   string
-	Effort  string
+	Selection json.RawMessage
+	Model     string
+	Gateway   claude.Gateway
+	Token     string
+	Effort    string
 }
 
 // SetModel switches a session to another model or effort, or to or from a
@@ -856,7 +872,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	}
 	priorEnv := s.readGatewayEnv(workspaceID)
 	if f.Model == choice.Model && f.Gateway == choice.Gateway && f.Effort == choice.Effort && priorEnv == env {
-		return nil
+		return s.updateHarnessModel(workspaceID, choice.Selection)
 	}
 	// Held from the busy check through the relaunch, so no prompt can be sent
 	// after Claude looked idle and then be cut off by the kill.
@@ -907,7 +923,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 		f.Model, f.Gateway, f.Effort = choice.Model, choice.Gateway, choice.Effort
 	})
 	if !running {
-		return nil // the next Start launches on it
+		return s.updateHarnessModel(workspaceID, choice.Selection) // the next Start launches on it
 	}
 	// Continue only a conversation that exists: before the first prompt there
 	// is none, and --continue with nothing to continue exits.
@@ -931,7 +947,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 		}
 		return err
 	}
-	return nil
+	return s.updateHarnessModel(workspaceID, choice.Selection)
 }
 
 // relaunch replaces a workspace's Claude session. Callers hold its lifecycle
@@ -1239,12 +1255,19 @@ func (s *Service) SendPrompt(workspaceID string, p Prompt) error {
 	// nothing; and it is let go as soon as any switch is done, so the paste
 	// (up to sendTimeout) doesn't hold up an attach's Start behind it.
 	unlockLifecycle := func() {}
-	if p.Mode != "" {
+	_, undoErr := os.Stat(s.harnessUndoPath(workspaceID))
+	if p.Mode != "" || undoErr == nil {
 		unlockLifecycle = s.lockLifecycle(workspaceID)
 	}
 	defer func() { unlockLifecycle() }()
 	lock := s.lockSend(workspaceID)
 	defer lock.Unlock()
+	if err := s.recoverHarnessHeld(context.Background(), workspaceID); err != nil {
+		return err
+	}
+	if f, _ := s.getFacts(workspaceID); f.Harness != nil && (!f.Harness.Delivered || !f.Harness.Saved) {
+		return ErrHarnessConflict
+	}
 	if p.RequirePlan {
 		f, ok := s.getFacts(workspaceID)
 		switch {
@@ -1610,6 +1633,13 @@ func (s *Service) SessionName(workspaceID string) string { return sessionName(wo
 // revive it. Archive is idempotent — re-archiving a stopped session simply
 // re-captures and re-uploads.
 func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.ArchiveWorkspaceRequest) (*snapshot.Manifest, error) {
+	state, err := s.HarnessSelection(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if state != nil && !state.Saved {
+		return nil, fmt.Errorf("retry the harness switch to save its selection before archiving")
+	}
 	chats, err := s.snapshotChats(workspaceID, req.Chats)
 	if err != nil {
 		return nil, snapshot.FailureAt("chats", "chat", err)
@@ -1617,6 +1647,11 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 
 	if err := s.Stop(ctx, workspaceID); err != nil {
 		return nil, snapshot.FailureAt("stop", "", err)
+	}
+	for _, key := range append([]string{workspaceID}, s.chatKeys(workspaceID)...) {
+		if err := s.flushHarnessJournal(key); err != nil {
+			return nil, snapshot.FailureAt("chats", "conversation", err)
+		}
 	}
 
 	summary := s.SummaryOf(ctx, workspaceID)
@@ -1702,7 +1737,7 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 	switch {
 	case codexSession:
 		// No session id: Codex never recorded a conversation to restore.
-		if sessionID != "" {
+		if downloadFor(req.Downloads, "conversation") != "" {
 			in.ConversationDest = conversationPath(s.Root, workspaceID)
 		}
 		if rollout {
@@ -1717,6 +1752,11 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 	}
 	if err := snapshot.Materialize(ctx, in); err != nil {
 		return "", err
+	}
+	if in.ConversationDest != "" {
+		if err := s.restoreHarnessJournal(workspaceID, in.ConversationDest); err != nil {
+			return "", err
+		}
 	}
 	if in.RolloutDest != "" {
 		// `codex resume` finds it by the id its first line names.
@@ -1777,13 +1817,16 @@ func (s *Service) conversationDest(worktree, sessionID string) (string, error) {
 // (its rollout's), else Claude's — the JSONL basename without extension — or
 // nil when the agent never recorded a conversation.
 func (s *Service) sessionID(workspaceID string) *string {
+	if f, _ := s.getFacts(workspaceID); f.Harness != nil && f.Agent == AgentClaude && f.ClaudeSessionID != "" {
+		return &f.ClaudeSessionID
+	}
 	if f, _ := s.getFacts(workspaceID); f.Agent == AgentCodex {
 		if f.CodexSessionID == "" {
 			return nil
 		}
 		return &f.CodexSessionID
 	}
-	log := s.SessionLog(workspaceID)
+	log := s.nativeLog(workspaceID)
 	if log == "" {
 		return nil
 	}
@@ -1964,9 +2007,8 @@ func (s *Service) Activity() (last time.Time, turnInProgress, unknown bool) {
 	defer cancel()
 	if reason := s.recoverRunningSummaries(ctx); reason != "" {
 		// Protect active work when tmux is temporarily unreadable or a live
-		// session has lost its persisted facts. The two-hour bound matches the
-		// reconciler's stuck-turn limit; afterward this unknown state is eligible
-		// for the ordinary idle pause instead of holding a box forever.
+		// session has lost its persisted facts. Unknown activity is never proof
+		// of completed work, regardless of how long the user has been away.
 		last, turnInProgress = s.unknownActivity(reason)
 		return last, turnInProgress, true
 	}
@@ -2005,24 +2047,18 @@ func (s *Service) recoverRunningSummaries(ctx context.Context) string {
 	return unknown
 }
 
-const (
-	unknownActivityGrace       = 2 * time.Hour
-	unknownActivityLogInterval = 10 * time.Minute
-)
+const unknownActivityLogInterval = 10 * time.Minute
 
-// unknownActivity keeps the reconciler fail-safe for the same two-hour window
-// it already grants a known in-progress turn. Its timestamp does not move on
-// every poll, so persistent tmux failures and orphan sessions eventually
-// become eligible for the ordinary idle pause. Warnings are rate-limited per
-// service instance while still making the reason and age visible.
+// unknownActivity protects unfinished work until live sessions can be observed
+// again. Persist its original timestamp for diagnostics across service restarts;
+// uncertainty never expires into permission to pause. Warnings are rate-limited.
 func (s *Service) unknownActivity(reason string) (time.Time, bool) {
 	now := time.Now().UTC()
-	knownLast, knownTurn := s.summariesActivity()
+	knownLast, _ := s.summariesActivity()
 	s.activityMu.Lock()
 	defer s.activityMu.Unlock()
 	if s.activityUnknownSince.IsZero() {
 		s.activityUnknownClearAttempted = false
-		s.activityUnknownExpiredLogged = false
 		if !s.activityUnknownClearFailed {
 			s.activityUnknownSince = s.readUnknownActivitySince()
 		}
@@ -2034,19 +2070,10 @@ func (s *Service) unknownActivity(reason string) (time.Time, bool) {
 	s.activityUnknownReason = reason
 	if s.activityUnknownLogged.IsZero() || now.Sub(s.activityUnknownLogged) >= unknownActivityLogInterval {
 		age := now.Sub(s.activityUnknownSince).Round(time.Second)
-		log.Printf("runtime-agent: activity remains unknown for %s (%s); unknown-only protection window %s, expired=%t", age, s.activityUnknownReason, unknownActivityGrace, age >= unknownActivityGrace)
+		log.Printf("runtime-agent: activity remains unknown for %s (%s); keeping the box running until work can be confirmed idle", age, s.activityUnknownReason)
 		s.activityUnknownLogged = now
 	}
-	if now.Sub(s.activityUnknownSince) < unknownActivityGrace {
-		return laterOf(s.activityUnknownSince, knownLast), true
-	}
-	if !s.activityUnknownExpiredLogged {
-		log.Printf("runtime-agent: unknown-activity protection window elapsed after %s; falling back to observed summaries and idle state", now.Sub(s.activityUnknownSince).Round(time.Second))
-		s.activityUnknownExpiredLogged = true
-	}
-	// A collector that is still making progress can see activity even when
-	// tmux's session list is unavailable. Keep its normal turn protection.
-	return laterOf(s.activityUnknownSince, knownLast), knownTurn
+	return laterOf(s.activityUnknownSince, knownLast), true
 }
 
 func (s *Service) summariesActivity() (last time.Time, turnInProgress bool) {
@@ -2090,13 +2117,11 @@ func (s *Service) clearUnknownActivity() {
 	s.activityUnknownSince = time.Time{}
 	s.activityUnknownReason = ""
 	s.activityUnknownLogged = time.Time{}
-	s.activityUnknownExpiredLogged = false
 	s.activityMu.Unlock()
 }
 
-// Persist the start of an unknown-activity interval so restarting
-// runtime-agent cannot keep resetting the protection window for an orphaned
-// session or a tmux server that never answers.
+// Persist the start of an unknown-activity interval so diagnostics retain its
+// age across runtime-agent restarts.
 func (s *Service) unknownActivityPath() string {
 	return filepath.Join(s.Root, "runtime-agent-activity-unknown-since")
 }

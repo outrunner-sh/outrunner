@@ -140,6 +140,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /git-credential", s.gitCredential)
 	mux.HandleFunc("POST /session-tools", s.sessionTool)
 	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
+	mux.HandleFunc("POST /workspaces/{id}/harness", s.authed(s.switchHarness))
+	mux.HandleFunc("GET /workspaces/{id}/harness", s.authed(s.harnessSelection))
 	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
 	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
 	mux.HandleFunc("POST /config", s.authed(s.setAgentConfig))
@@ -173,7 +175,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureCodexSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots, protocol.FeatureRewind, protocol.FeatureCodexAccessToken, protocol.FeatureCodexAccount},
+		Features: []string{featureHarnessSwitch, protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureCodexSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots, protocol.FeatureRewind, protocol.FeatureCodexAccessToken, protocol.FeatureCodexAccount},
 	})
 }
 
@@ -432,8 +434,9 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
 		last = used
 	}
 	writeJSON(w, http.StatusOK, protocol.Activity{
-		LastActivity:   last.UTC().Format(time.RFC3339),
-		TurnInProgress: turnInProgress,
+		LastActivity:        last.UTC().Format(time.RFC3339),
+		TurnInProgress:      turnInProgress,
+		TurnTrackingVersion: 1,
 	})
 }
 
@@ -1197,7 +1200,7 @@ func modelChoice(req protocol.SetModelRequest) (workspace.ModelChoice, error) {
 	if req.Effort != "" && !claude.ValidEffort(req.Effort) {
 		return workspace.ModelChoice{}, errors.New("invalid effort")
 	}
-	return workspace.ModelChoice{Model: req.Model, Gateway: gateway, Token: req.Token, Effort: req.Effort}, nil
+	return workspace.ModelChoice{Model: req.Model, Gateway: gateway, Token: req.Token, Effort: req.Effort, Selection: req.Selection}, nil
 }
 
 // setAuth gives the workspace's session its own credential, or takes it away;
@@ -1835,6 +1838,10 @@ func (s *Server) eventsWS(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func respond(w http.ResponseWriter, ok string, err error) {
+	if errors.Is(err, workspace.ErrHarnessConflict) {
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+		return
+	}
 	if errors.Is(err, workspace.ErrUnknownWorkspace) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
 		return
