@@ -42,7 +42,7 @@ func gitCredentialService(t *testing.T, base []string, exe string) (*Service, *a
 // sessions'; without them, nothing else changes (the GitHub token's own
 // config, TestSessionEnvironmentGivesGitTheGitHubTokenForGitHubOnly).
 func TestSessionEnvironmentDropsTheCredentialLaunchVariables(t *testing.T) {
-	env, _ := sessionEnvironment([]string{"PATH=/usr/bin", "RUNTIME_SANDBOX_ID=sbx", "OUTRUNNER_APP_URL=https://app.outrunner.sh"})
+	env, _ := sessionEnvironment([]string{"PATH=/usr/bin", "RUNTIME_SANDBOX_ID=sbx", "OUTRUNNER_APP_URL=https://app.outrunner.sh", "RUNTIME_MEMORY_AUTOSCALING=1"})
 	if !slices.Equal(env, []string{"PATH=/usr/bin"}) {
 		t.Fatalf("env = %q", env)
 	}

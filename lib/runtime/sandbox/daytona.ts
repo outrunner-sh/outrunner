@@ -129,7 +129,10 @@ export class DaytonaBackend implements SandboxBackend {
 
   async alive(id: string): Promise<boolean> {
     try {
-      return (await (await this.daytona()).get(id)).state === "started";
+      const state = (await (await this.daytona()).get(id)).state;
+      // A hot resize preserves processes; the reconciler must not mark the
+      // computer lost while Daytona applies its new allocation.
+      return state === "started" || state === "resizing";
     } catch (error) {
       if (error instanceof DaytonaNotFoundError) return false;
       throw error;
@@ -305,6 +308,13 @@ export function box(sandbox: Sandbox): SandboxBox {
     id: sandbox.id,
     cpu: sandbox.cpu,
     memoryGb: sandbox.memory,
+    growMemory: async (memoryGb) => {
+      if (sandbox.state !== "started") throw new Error("Only a running sandbox can grow memory");
+      if (!Number.isFinite(memoryGb) || memoryGb <= sandbox.memory) {
+        throw new Error("Memory scaling must increase the allocation");
+      }
+      await sandbox.resize({ memory: memoryGb }, 60);
+    },
     io,
     gitExec,
     // Default images aren't /home/runtime; the agent + mirror hang off $HOME.

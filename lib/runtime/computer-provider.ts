@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { RESOURCE_PROBE, resourceReading, type ComputerReading } from "@/lib/session/session-info";
 import { optionalEnv } from "@/lib/env";
+import { growMemoryUnderPressure, type MemoryScaleResult } from "@/lib/runtime/memory-scaling";
 import { gitCredentialEnvironment } from "@/lib/runtime/git-credential";
 import type { AgentTarget } from "@/lib/runtime/agent-client";
 import { AgentEndpointCache } from "@/lib/runtime/agent-endpoint-cache";
@@ -269,7 +270,7 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       const boot = () => timer.stage("agent_boot", () =>
         deployClaude(box.io, binary, input.secret, {
           root: home,
-          sessionEnv: boxEnvironment(box.id, input.sessionEnv),
+          sessionEnv: boxEnvironment(box.id, input.sessionEnv, !!box.growMemory),
         }),
       );
       if (restored) {
@@ -589,6 +590,12 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     return (await this.backend.get(sandboxId)).cpu;
   }
 
+  /** Only inspect a running box; autoscaling never resumes an idle one. */
+  async scaleComputerMemory(sandboxId: string, maxMemoryGb: number, resizeBefore?: number): Promise<MemoryScaleResult> {
+    if (!await this.backend.alive(sandboxId)) return { outcome: "unavailable" };
+    return growMemoryUnderPressure(await this.backend.get(sandboxId), maxMemoryGb, resizeBefore);
+  }
+
   /** Pause the box, keeping its disk for the next session to resume. */
   async pauseComputer(sandboxId: string): Promise<void> {
     if (!this.backend.pause) throw new Error(`${this.name} can't pause a box`);
@@ -646,7 +653,7 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       const box = await this.backend.get(sandboxId);
       await deployClaude(box.io, await this.binary(), secret, {
         root: await box.home(),
-        sessionEnv: boxEnvironment(sandboxId, sessionEnv),
+        sessionEnv: boxEnvironment(sandboxId, sessionEnv, !!box.growMemory),
       });
     })().finally(() => UPGRADING.delete(key));
     UPGRADING.set(key, upgrade);
@@ -773,6 +780,10 @@ export function boxGone(error: unknown): boolean {
 
 /** A box's agent boots with its user's environment, and with what it asks
  *  Outrunner for GitHub tokens with (lib/runtime/git-credential.ts). */
-function boxEnvironment(sandboxId: string, sessionEnv: Record<string, string> | undefined): Record<string, string> {
-  return { ...sessionEnv, ...gitCredentialEnvironment(sandboxId, optionalEnv("RUNTIME_BASE_URL")) };
+function boxEnvironment(sandboxId: string, sessionEnv: Record<string, string> | undefined, scalesMemory: boolean): Record<string, string> {
+  return {
+    ...sessionEnv,
+    ...gitCredentialEnvironment(sandboxId, optionalEnv("RUNTIME_BASE_URL")),
+    RUNTIME_MEMORY_AUTOSCALING: scalesMemory ? "1" : "0",
+  };
 }

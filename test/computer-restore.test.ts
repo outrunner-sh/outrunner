@@ -72,6 +72,29 @@ function restoringBackend(log: string[], restoresTo: SandboxBox | null): Sandbox
 
 const request = { secret: "s3cret", repoFullName: "acme/app", previousSandboxId: "sb-ended" };
 
+test("new and upgraded agents monitor memory only on backends that can grow it", async () => {
+  for (const enabled of [true, false]) {
+    const log: string[] = [];
+    const sandbox = fakeBox("sb-monitor", log);
+    if (enabled) sandbox.growMemory = async () => {};
+    const launches: string[] = [];
+    sandbox.io.launch = async (command) => { launches.push(command); };
+    const backend = restoringBackend(log, null);
+    backend.create = async () => sandbox;
+    backend.get = async () => sandbox;
+    const provider = new ComputerRuntimeProvider("daytona", backend);
+    // A user's environment cannot turn on resizing for an unsupported box.
+    const sessionEnv = { RUNTIME_MEMORY_AUTOSCALING: enabled ? "0" : "1" };
+    await provider.provisionComputer({ secret: "secret", sessionEnv });
+    await provider.upgradeAgent(sandbox.id, "secret", sessionEnv);
+    assert.equal(launches.length, 2);
+    for (const command of launches) {
+      // Shell quoting may appear between the assignment and its value.
+      assert.match(command, new RegExp(`RUNTIME_MEMORY_AUTOSCALING=[^01]*${enabled ? 1 : 0}`));
+    }
+  }
+});
+
 test("a box that ended comes back on its disk: the agent starts again, and the mirror there catches up", async () => {
   const log: string[] = [];
   const provider = new ComputerRuntimeProvider("user-modal", restoringBackend(log, fakeBox("sb-back", log)));
