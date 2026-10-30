@@ -13,6 +13,25 @@ create index org_github_installations_installation_idx on org_github_installatio
 alter table org_github_installations enable row level security;
 revoke all on table org_github_installations from anon, authenticated;
 
+-- Retain authorization history even after the last link or org is deleted.
+-- A historical installer identity must never turn a revoked connection into
+-- an unused installation that can be claimed by an unrelated organization.
+alter table github_installations add column connected_org_ids uuid[] not null default '{}';
+update github_installations set connected_org_ids = array_remove(array[org_id, removed_from], null);
+create index github_installations_connected_orgs_idx on github_installations using gin (connected_org_ids);
+
+create function remember_github_installation_org() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  update github_installations set connected_org_ids = array_append(connected_org_ids, new.org_id)
+  where installation_id = new.installation_id and not (new.org_id = any(connected_org_ids));
+  return new;
+end;
+$$;
+revoke all on function remember_github_installation_org() from public, anon, authenticated;
+create trigger org_github_installations_remember_org after insert on org_github_installations
+for each row execute function remember_github_installation_org();
+
 insert into org_github_installations (org_id, installation_id, installed_by, created_at)
 select org_id, installation_id, installed_by, created_at
 from github_installations where org_id is not null;
@@ -26,7 +45,7 @@ create index github_installations_installer_idx on github_installations (install
 create view org_github_installation_details with (security_invoker = true) as
 select l.org_id, l.installed_by, l.created_at,
        i.installation_id, i.account_login, i.account_type, i.repository_selection,
-       i.suspended_at, i.installer_id, i.installer_login, i.updated_at
+       i.suspended_at, i.installer_id, i.installer_login, i.updated_at, i.connected_org_ids
 from org_github_installations l
 join github_installations i using (installation_id);
 revoke all on table org_github_installation_details from anon, authenticated;
@@ -40,8 +59,9 @@ create function link_github_installation(target_org uuid, target_installation bi
 returns text language plpgsql set search_path = public as $$
 declare
   installer bigint;
+  prior_orgs uuid[];
 begin
-  select installer_id into installer from github_installations
+  select installer_id, connected_org_ids into installer, prior_orgs from github_installations
   where installation_id = target_installation for update;
   if not found then return 'unknown'; end if;
   if not exists (select 1 from organization_members
@@ -52,13 +72,17 @@ begin
              where org_id = target_org and installation_id = target_installation) then
     return null;
   end if;
-  if exists (select 1 from org_github_installations where installation_id = target_installation) then
-    if not exists (
-      select 1 from org_github_installations l join organization_members m on m.org_id = l.org_id
-      where l.installation_id = target_installation and m.user_id = actor_id and m.role = 'admin'
-    ) then return 'not_admin'; end if;
-  elsif installer is null or github_user_id is distinct from installer then
-    return 'not_installer';
+  -- Admins may reconnect an org that was previously authorized. Sharing
+  -- with a new org needs an active source connection they administer.
+  if not (target_org = any(prior_orgs)) then
+    if cardinality(prior_orgs) > 0 then
+      if not exists (
+        select 1 from org_github_installations l join organization_members m on m.org_id = l.org_id
+        where l.installation_id = target_installation and m.user_id = actor_id and m.role = 'admin'
+      ) then return 'not_admin'; end if;
+    elsif installer is null or github_user_id is distinct from installer then
+      return 'not_installer';
+    end if;
   end if;
   insert into org_github_installations (org_id, installation_id, installed_by)
   values (target_org, target_installation, actor_id) on conflict do nothing;

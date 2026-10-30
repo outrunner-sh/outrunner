@@ -1045,6 +1045,8 @@ type AccessGrantRow = {
 
 type GithubInstallationRow = {
   installation_id: number;
+  /** Authorization history survives disconnects and org deletion. */
+  connected_org_ids: string[];
   account_login: string;
   account_type: "User" | "Organization";
   repository_selection: "all" | "selected";

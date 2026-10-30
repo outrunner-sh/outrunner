@@ -21,6 +21,9 @@ Installation metadata is global (`github_installations`); access is an independe
 connection only removes that organization's link. GitHub uninstallations and suspensions apply to every
 linked organization. Webhook events reach each linked organization's matching projects, with separate
 membership checks and deduplication per project. Queued follow-ups recheck the exact project's connection.
+Authorization history survives disconnects and organization deletion. An admin can reconnect a previously
+authorized organization; sharing with an unrelated organization requires an active source connection.
+The historical GitHub installer cannot reclaim a revoked installation through a new organization.
 
 ## What it does on GitHub
 

@@ -9,6 +9,7 @@ export type OrgInstallation = Installation & { suspended: boolean; installedBy: 
 
 type Row = {
   installation_id: number;
+  connected_org_ids: string[];
   account_login: string;
   account_type: "User" | "Organization";
   repository_selection: "all" | "selected";
@@ -20,7 +21,7 @@ type Row = {
 };
 
 const COLUMNS =
-  "installation_id, account_login, account_type, repository_selection, suspended_at, installed_by, installer_id, installer_login, created_at";
+  "installation_id, account_login, account_type, repository_selection, suspended_at, installed_by, installer_id, installer_login, created_at, connected_org_ids";
 
 function toOrgInstallation(row: Row): OrgInstallation {
   return {
@@ -56,16 +57,19 @@ export async function listAvailableFor(githubId: number | null, orgId: string, u
   if (membershipError) throw membershipError;
   const administered = new Set((memberships ?? []).map((m) => m.org_id));
   if (!administered.has(orgId)) return [];
-  const [installed, shared] = await Promise.all([
+  const [installed, shared, previous] = await Promise.all([
     githubId
       ? supabase.from("github_installations").select("*").eq("installer_id", githubId)
       : Promise.resolve({ data: [], error: null }),
     supabase.from("org_github_installation_details").select(COLUMNS).in("org_id", [...administered]),
+    supabase.from("github_installations").select("*").contains("connected_org_ids", [orgId]),
   ]);
   if (installed.error) throw installed.error;
   if (shared.error) throw shared.error;
+  if (previous.error) throw previous.error;
   const candidates = new Map<number, Row>([
     ...(installed.data ?? []).map((i) => [i.installation_id, { ...i, installed_by: null }] as const),
+    ...(previous.data ?? []).map((i) => [i.installation_id, { ...i, installed_by: null }] as const),
     ...(shared.data ?? []).map((i) => [i.installation_id, i] as const),
   ]);
   if (candidates.size === 0) return [];
@@ -75,7 +79,9 @@ export async function listAvailableFor(githubId: number | null, orgId: string, u
   return [...candidates.values()].filter((i) => {
     const connected = (links ?? []).filter((l) => l.installation_id === i.installation_id);
     return !connected.some((l) => l.org_id === orgId)
-      && (connected.length === 0 || connected.some((l) => administered.has(l.org_id)));
+      && (i.connected_org_ids.includes(orgId)
+        || (i.connected_org_ids.length === 0 && connected.length === 0)
+        || connected.some((l) => administered.has(l.org_id)));
   }).sort((a, b) => a.account_login.localeCompare(b.account_login)).map(toOrgInstallation);
 }
 

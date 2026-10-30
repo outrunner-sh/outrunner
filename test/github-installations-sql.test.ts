@@ -43,6 +43,8 @@ before(() => {
     values (42, '${ORG}', 'neevai-labs', 'Organization', 'all', '${ADMIN}', 7),
            (43, '${ORG}', 'legacy', 'Organization', 'selected', '${ADMIN}', null),
            (44, null, 'fresh', 'User', 'all', null, 7);
+    insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_id, removed_from)
+    values (45, 'previously-removed', 'Organization', 'all', 7, '${ORG}');
   `);
   execFileSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-q", "-f", "supabase/migrations/20261104100000_shared_github_installations.sql"], { stdio: "pipe" });
   // Supabase grants these on pre-existing tables; exercise the invoker RPC
@@ -53,7 +55,7 @@ after(() => { if (server) psql(server, `drop database if exists ${name} with (fo
 
 test("SQL: migration preserves existing and legacy connections", { skip }, () => {
   assert.equal(sql(`select count(*) from org_github_installations where org_id = '${ORG}'`), "2");
-  assert.equal(sql("select count(*) from github_installations"), "3");
+  assert.equal(sql("select count(*) from github_installations"), "4");
   assert.equal(sql("select installed_by from org_github_installation_details where installation_id = 42"), ADMIN);
 });
 
@@ -68,7 +70,7 @@ test("SQL: first connections require the installer; sharing requires administrat
   sql(`delete from org_github_installations where org_id = '${NEW_ORG}' and installation_id = 42`);
   assert.equal(connect(44, 99), "not_installer");
   assert.equal(connect(44, null), "not_installer");
-  assert.equal(connect(42, 7, OTHER), "not_admin");
+  assert.equal(connect(43, 7, OTHER), "not_admin");
   sql(`update organization_members set role = 'member' where org_id = '${NEW_ORG}' and user_id = '${ADMIN}'`);
   assert.equal(connect(), "not_admin");
   sql(`update organization_members set role = 'admin' where org_id = '${NEW_ORG}' and user_id = '${ADMIN}'`);
@@ -105,4 +107,39 @@ test("SQL: browser clients cannot access links or invoke the connection RPC", { 
     assert.throws(() => sql(`set role ${role}; select link_github_installation('${ORG}', 44, 7, '${ADMIN}')`), /permission denied/);
   }
   assert.equal(sql("select has_function_privilege('service_role', 'link_github_installation(uuid,bigint,bigint,uuid)', 'execute')"), "t");
+});
+
+
+test("SQL: the former installer cannot reclaim the final disconnected installation in another org", { skip }, () => {
+  sql(`insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_id)
+       values (90, 'revoked', 'Organization', 'all', 7);
+       insert into org_github_installations (org_id, installation_id) values ('${ORG}', 90);
+       delete from org_github_installations where installation_id = 90;
+       delete from organization_members where org_id = '${ORG}' and user_id = '${ADMIN}'`);
+  assert.equal(connect(90), "not_admin");
+  assert.equal(sql("select count(*) from org_github_installations where installation_id = 90"), "0");
+  assert.equal(sql(`select '${ORG}'::uuid = any(connected_org_ids) from github_installations where installation_id = 90`), "t");
+  sql(`insert into organization_members values ('${ORG}', '${ADMIN}', 'admin')`);
+  // Its current admin can restore the authorized org, then explicitly share.
+  assert.equal(connect(90, null, ADMIN, ORG), "");
+  assert.equal(connect(90, null), "");
+});
+
+test("SQL: deleting the last connected org does not reset installation authorization", { skip }, () => {
+  const deletedOrg = '00000000-0000-0000-0000-000000000099';
+  sql(`insert into organizations values ('${deletedOrg}');
+       insert into organization_members values ('${deletedOrg}', '${ADMIN}', 'admin');
+       insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_id)
+       values (91, 'deleted-org', 'Organization', 'all', 7);
+       insert into org_github_installations (org_id, installation_id) values ('${deletedOrg}', 91);
+       delete from organizations where id = '${deletedOrg}'`);
+  assert.equal(connect(91), "not_admin");
+  assert.equal(sql("select count(*) from org_github_installations where installation_id = 91"), "0");
+});
+
+
+test("SQL: migration retains the old removed_from restriction without making it a first connection", { skip }, () => {
+  assert.equal(connect(45), "not_admin");
+  assert.equal(connect(45, null, ADMIN, ORG), "");
+  assert.equal(connect(45, null), "");
 });
