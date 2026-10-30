@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { AGENT_FEATURE_MULTI_REPO_WARM, AGENT_FEATURE_WARM_HOOKS } from "@/lib/runtime/agent-protocol";
 import {
   type PooledBox,
+  pauseExpiredIntentWarmup,
   projectCheckouts,
   REFILL_BACKOFF_MS,
   refillPool,
@@ -311,4 +312,44 @@ test("an expired intent lease fences a wake that completes after cleanup claims 
   // competes with it for the external box.
   log.push("cleanup pause");
   assert.deepEqual(log, ["wake started", "cleanup claimed", "publish fenced", "cleanup pause"]);
+});
+
+test("a successful expiry pause stays stopped when closing metering fails, so Send resumes it", async () => {
+  const log: string[] = [];
+  const state: { status: "provisioning" | "stopped"; cleanupPending: boolean } = {
+    status: "provisioning",
+    cleanupPending: true,
+  };
+  assert.equal(await pauseExpiredIntentWarmup({
+    pause: async () => void log.push("provider paused"),
+    closeMetering: async () => {
+      log.push("meter close");
+      throw new Error("metering unavailable");
+    },
+    closeMeteringFailed: () => log.push("meter close deferred"),
+    stopped: async () => {
+      state.status = "stopped";
+      state.cleanupPending = false;
+      log.push("recorded stopped");
+    },
+    pauseFailed: async () => void log.push("restored ready"),
+  }), true);
+  const send = state.status === "stopped" && !state.cleanupPending ? "resume" : "skip provisioning";
+  assert.equal(send, "resume");
+  assert.deepEqual(log, ["provider paused", "meter close", "meter close deferred", "recorded stopped"]);
+});
+
+test("a stopped-row write failure remains cleanup-fenced instead of restoring ready", async () => {
+  const log: string[] = [];
+  await assert.rejects(pauseExpiredIntentWarmup({
+    pause: async () => void log.push("provider paused"),
+    closeMetering: async () => void log.push("meter closed"),
+    closeMeteringFailed: () => log.push("meter close deferred"),
+    stopped: async () => {
+      log.push("stopped write");
+      throw new Error("database unavailable");
+    },
+    pauseFailed: async () => void log.push("restored ready"),
+  }), /database unavailable/);
+  assert.deepEqual(log, ["provider paused", "meter closed", "stopped write"]);
 });

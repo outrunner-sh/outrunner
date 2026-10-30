@@ -148,6 +148,31 @@ export async function wakeIntentPool<Restored>(deps: IntentWakeDeps<Restored>): 
   return true;
 }
 
+export type ExpiredIntentPauseDeps = {
+  pause(): Promise<void>;
+  closeMetering(): Promise<void>;
+  closeMeteringFailed(error: unknown): void;
+  stopped(): Promise<void>;
+  pauseFailed(error: unknown): Promise<void>;
+};
+
+/** Settle expiry cleanup without mistaking a post-pause write failure for a
+ * provider pause failure. Once the external box is confirmed paused, it must
+ * be recorded stopped (or remain cleanup-fenced); only an actual provider
+ * failure may restore the live warm lease. */
+export async function pauseExpiredIntentWarmup(deps: ExpiredIntentPauseDeps): Promise<boolean> {
+  try {
+    await deps.pause();
+  } catch (error) {
+    await deps.pauseFailed(error);
+    return false;
+  }
+
+  await deps.closeMetering().catch(deps.closeMeteringFailed);
+  await deps.stopped();
+  return true;
+}
+
 /**
  * Fill the project's pool up to `size` ready boxes, one per free slot, each
  * made, warmed and stopped. How many were made.
