@@ -24,8 +24,7 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { AppUpdate } from "@/components/app-update";
-import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
-import { DeleteSessionDialog } from "@/components/delete-session-dialog";
+import { requestSessionDeletion } from "@/components/delete-session-dialog";
 import { GetStarted } from "@/components/get-started";
 import { HomeUserMenu } from "@/components/home-user-menu";
 import { SidebarMissions } from "@/components/missions/sidebar-missions";
@@ -148,28 +147,6 @@ export function AppSidebar({
     const next = folded.includes(key) ? folded.filter((k) => k !== key) : [...folded, key];
     setFolded(next);
     rememberFoldedProjects(next);
-  };
-
-  // The session whose delete confirmation is open. Leave it before deleting
-  // when it is the one on screen: its page reconnects when the session stops,
-  // and would ask to start it again mid-delete. Once it is gone, re-read both
-  // lists.
-  const [deleting, setDeleting] = useState<DeletingSession | null>(null);
-  const router = useRouter();
-  const onDeleting = (id: string) => {
-    if (id === active) router.push("/");
-  };
-  const onDeleted = () => {
-    router.refresh();
-    refreshLocal();
-  };
-
-  // The session whose archive confirmation is open. Once confirmed, leave it
-  // if it is the one on screen (left open, its page would restore it at
-  // once); the list marks it archived at once (lib/session/optimistic-archive.ts).
-  const [archiving, setArchiving] = useState<ArchivingSession | null>(null);
-  const onArchived = (id: string) => {
-    if (id === active) router.push("/");
   };
 
   // ⌘K (AppFrame): open search, which focuses its field as it mounts.
@@ -311,8 +288,7 @@ export function AppSidebar({
                 folded={folded}
                 searching={query.trim() !== ""}
                 onToggle={toggleFolded}
-                onDelete={setDeleting}
-                onArchive={setArchiving}
+                onDelete={requestSessionDeletion}
               />
             ) : grouping === "status" || shown.length === 0 ? (
               <p className="px-2 py-1 text-[13px] text-muted-foreground">
@@ -326,8 +302,7 @@ export function AppSidebar({
                   active={active}
                   now={now}
                   standings={standings}
-                  onDelete={setDeleting}
-                  onArchive={setArchiving}
+                  onDelete={requestSessionDeletion}
                   folded={folded.includes(group.key)}
                   searching={query.trim() !== ""}
                   onToggle={() => toggleFolded(group.key)}
@@ -337,22 +312,6 @@ export function AppSidebar({
           </div>
         </SkeletonSwap>
       </div>
-
-      <DeleteSessionDialog
-        session={deleting}
-        onOpenChange={(open) => {
-          if (!open) setDeleting(null);
-        }}
-        onDeleting={onDeleting}
-        onDeleted={onDeleted}
-      />
-      <ArchiveSessionDialog
-        session={archiving}
-        onOpenChange={(open) => {
-          if (!open) setArchiving(null);
-        }}
-        onArchived={onArchived}
-      />
 
       {/* Counted once both lists are in, so no step reads undone as they land;
           a project is one the list above shows. */}
@@ -392,7 +351,6 @@ function WorkspaceGroup({
   now,
   standings,
   onDelete,
-  onArchive,
   folded,
   searching,
   onToggle,
@@ -404,8 +362,6 @@ function WorkspaceGroup({
   standings: Record<string, SessionStanding>;
   /** Opens the delete confirmation for one of its sessions. */
   onDelete: (session: DeletingSession) => void;
-  /** Opens the archive confirmation for one of its sessions. */
-  onArchive: (session: ArchivingSession) => void;
   folded: boolean;
   searching: boolean;
   onToggle: () => void;
@@ -484,9 +440,9 @@ function WorkspaceGroup({
         )}
         {shownSessions(group, { folded, searching, active }).map((session) => {
           const isActive = session.id === active;
-          const { deletion, archive } = session;
+          const { deletion } = session;
           const standing = group.local ? undefined : standings[session.id];
-          const hasMenu = !group.local || deletion !== null || archive !== null;
+          const hasMenu = !group.local || deletion !== null;
           // A cloud session warms up as the pointer rests on it, so its click
           // shows the conversation at once. A Mac one is near already, and
           // attaching would start it.
@@ -532,7 +488,6 @@ function WorkspaceGroup({
                 markable={!group.local}
                 standing={standing}
                 onDelete={onDelete}
-                onArchive={onArchive}
                 className="absolute right-1 top-1/2 -translate-y-1/2"
               />
             </div>
@@ -563,8 +518,6 @@ function SidebarSkeleton() {
 const ADD_PROJECT_LABEL = LOCAL_SESSIONS ? "Add a project" : "Add a repository from GitHub";
 
 type DeletingSession = { id: string; title: string; deletion: SessionDeletion };
-
-type ArchivingSession = { id: string; title: string };
 
 function NavLink({
   href,

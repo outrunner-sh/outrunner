@@ -9,7 +9,6 @@ import { selectionMenu } from "./selection-fixtures";
 import { CLAUDE_DEFAULT_MODEL } from "@/lib/runtime/session-models";
 import type { Workspace } from "@/lib/runtime/types";
 import { StartupFixture } from "./startup-fixture";
-import { AppFrame } from "@/components/app-frame";
 import { Automations } from "@/components/automations";
 import { AutomationsLoading } from "@/components/automations-loading";
 import { Markdown } from "@/components/markdown";
@@ -49,13 +48,6 @@ import {
   templates,
 } from "./fixtures";
 
-const chrome = {
-  collapsed: false,
-  folded: [],
-  getStartedSkipped: true,
-  grouping: "status",
-  pickedOrgId: null,
-};
 const subscribe = () => () => {};
 
 /** A standalone test app: fixture navigation and APIs can never reach real resources. */
@@ -250,12 +242,7 @@ export function FixturePage() {
           <OrgGeneralSettings org={org} domain="neev.ai" />
         </SettingsFrame>
       ) : (
-        <AppFrame
-          chrome={<ServerAnswer value={chrome} />}
-          server={<ServerAnswer value={frame} />}
-        >
-          {content}
-        </AppFrame>
+        content
       )}
     </>
   );

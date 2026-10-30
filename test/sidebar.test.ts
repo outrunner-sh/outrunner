@@ -110,7 +110,6 @@ test("sessions nest under their workspace, newest first, with links and times", 
       branch: "runtime/new",
       at: "2026-10-02T00:00:00Z",
       deletion: { kind: "cloud" },
-      archive: { can: true },
       archived: false,
     },
     {
@@ -120,7 +119,6 @@ test("sessions nest under their workspace, newest first, with links and times", 
       branch: "runtime/old",
       at: "2026-10-01T00:00:00Z",
       deletion: { kind: "cloud" },
-      archive: { can: true },
       archived: false,
     },
   ]);
@@ -405,7 +403,7 @@ test("a cloud session can be deleted from a settled status, or a setup that stal
       ["archived", true],
       ["failed", true],
       ["provisioning", false],
-      ["destroying", false],
+      ["destroying", undefined],
       ["resuming", false],
       ["stalled creating", true],
     ],
@@ -430,7 +428,7 @@ test("deleting a local session removes its worktree, or only forgets an in-place
   );
 });
 
-test("a cloud session offers Archive, an archived one says so, and a Mac one offers neither", () => {
+test("an archived cloud session remains identifiable and deletable", () => {
   const at = "2026-10-01T00:00:00Z";
   const [cloud] = buildSidebarGroups(
     [project("p1", "outrunner")],
@@ -444,11 +442,11 @@ test("a cloud session offers Archive, an archived one says so, and a Mac one off
     [],
   );
   assert.deepEqual(
-    Object.fromEntries(cloud.sessions.map((s) => [s.id, [s.archive?.can ?? null, s.archived]])),
-    { live: [true, false], setup: [false, false], shelved: [null, true], legacy: [null, false] },
+    Object.fromEntries(cloud.sessions.map((s) => [s.id, [s.deletion !== null, s.archived]])),
+    { live: [true, false], setup: [true, false], shelved: [true, true], legacy: [true, false] },
   );
   const [mac] = buildSidebarGroups([], [], [local("tree", "/Users/ada/app", at)]);
-  assert.deepEqual([mac.sessions[0].archive, mac.sessions[0].archived], [null, false]);
+  assert.deepEqual([mac.sessions[0].deletion, mac.sessions[0].archived], [{ kind: "local-worktree" }, false]);
 });
 
 test("the delete confirmation says what goes and what stays", () => {
@@ -495,4 +493,14 @@ test("while new local sessions are off, a Mac folder lists its sessions but star
   const [group] = buildSidebarGroups([], [], [local("a", "/Users/ada/app", "2026-10-01T00:00:00Z", "Write the README")]);
   assert.equal(group.start, null);
   assert.deepEqual(group.sessions.map((s) => s.href), ["/local/a"]);
+});
+
+test("deleted workspaces disappear from both sidebar groupings before the server list refreshes", () => {
+  const at = "2026-10-01T00:00:00Z";
+  const groups = buildSidebarGroups([project("p1")], [
+    workspace("kept", "p1", at),
+    { ...workspace("deleting", "p1", at), status: "destroying" },
+    { ...workspace("deleted", "p1", at), status: "destroyed" },
+  ], []);
+  assert.deepEqual(groups.flatMap((group) => group.sessions.map((session) => session.id)), ["kept"]);
 });
