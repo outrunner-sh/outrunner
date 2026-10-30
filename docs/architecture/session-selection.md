@@ -86,6 +86,13 @@ Explicit forks remain separate chats. Sent-message editing is unavailable after
 a harness boundary in this version; files/history are preserved and follow-up
 messages remain available. Automatic fallback chains are not enabled here.
 
+A fresh chat starts with the harness, model and effort saved for the chat the
+user is currently viewing. The server rereads that selection when the chat is
+created, so a model change or harness handoff made after the header loaded is
+not lost. When the user explicitly chooses another harness, its newest saved
+setup in the session is reused; a harness not used there yet starts from its
+configured eligible default.
+
 The isolated browser fixtures in `test/browser` exercise real new-session and
 WorkspaceStudio composers at desktop and mobile sizes. Their APIs and runtime
 responses are synthetic; they do not validate provider inference or create
