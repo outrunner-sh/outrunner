@@ -121,8 +121,8 @@ browser on and email off until you change them.
 ## Missions
 
 A **Mission** is a long-lived session that owns one area of a project and
-delegates instead of coding: each piece of work goes to a **Runner**, a cloud
-session of its own with only the brief the Mission wrote. Runners' turns,
+delegates instead of coding: each piece of work goes to a **Ship**, a cloud
+session of its own with only the brief the Mission wrote. Ships' turns,
 pull requests (ready, needs attention, merged) and failures come back to the
 Mission exactly once, and it writes to you only when it needs a decision or a
 pull request is ready. Start one with `+` next to **Missions** in the sidebar.
@@ -143,7 +143,7 @@ threat model included.
 
 - Weekly changelog (October 26–November 1, 2026) — [`docs/changelog/2026-10-26.md`](docs/changelog/2026-10-26.md)
 - API — [`docs/api.md`](docs/api.md)
-- Missions and Runners — [`docs/missions.md`](docs/missions.md)
+- Missions and Ships — [`docs/missions.md`](docs/missions.md)
 - Doppler and Infisical secret sync — [`docs/secret-sync.md`](docs/secret-sync.md)
 - Previews, and who can reach what through one — [`docs/previews.md`](docs/previews.md)
 - Architecture — [`docs/architecture/runtime-v1-plan.md`](docs/architecture/runtime-v1-plan.md)

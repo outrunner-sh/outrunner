@@ -11,10 +11,10 @@ import { createCloudSession, type SessionRequest } from "@/lib/session/create-cl
 export const maxDuration = 60;
 
 /**
- * Start a Runner (docs/missions.md): a cloud session of the chosen project
+ * Start a Mission (docs/missions.md): a cloud session of the chosen project
  * (an `environments` row), set up as any session is, whose box also gets the
- * Runner's tools, notes and instructions (lib/missions/setup.ts). Its first
- * message names it, as a session's does. Claude Code only: the Runner's
+ * Mission's tools, notes and instructions (lib/missions/setup.ts). Its first
+ * message names it, as a session's does. Claude Code only: the Mission's
  * tools reach its agent through Claude Code's MCP config.
  */
 export async function POST(request: Request) {
@@ -29,15 +29,15 @@ export async function POST(request: Request) {
     body.environmentId = (await defaultEnvironmentId(owner.id, body.projectId)) ?? undefined;
   }
   if (!body || typeof body.environmentId !== "string") {
-    return NextResponse.json({ error: "Choose a project for the Runner." }, { status: 400 });
+    return NextResponse.json({ error: "Choose a project for the Mission." }, { status: 400 });
   }
   if ((body.agent !== undefined && body.agent !== null && body.agent !== "claude") || body.provider === "codex") {
-    return NextResponse.json({ error: "Runners run on Claude Code." }, { status: 400 });
+    return NextResponse.json({ error: "Missions run on Claude Code." }, { status: 400 });
   }
   const environment = await getEnvironment(owner.id, body.environmentId);
   const projectId = environment?.defaultForProjectId ?? environment?.repos[0]?.projectId;
   if (!environment || !projectId) {
-    return NextResponse.json({ error: "That project isn't one you can start a Runner in." }, { status: 404 });
+    return NextResponse.json({ error: "That project isn't one you can start a Mission in." }, { status: 404 });
   }
   const { environmentId: _, projectId: __, ...session } = body;
   void _;
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
   });
 }
 
-/** The owner's Runners in the org the sidebar shows, with their Ships
+/** The owner's Missions in the org the sidebar shows, with their Ships
  *  (lib/missions/view.ts): the sidebar and the Ships pane poll it. */
 export async function GET() {
   const owner = await getOwner();

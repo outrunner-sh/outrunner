@@ -8,23 +8,23 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-/** One of the owner's Runners, with its Ships grouped (the Ships pane). */
+/** One of the owner's Missions, with its Ships grouped (the Ships pane). */
 export async function GET(_request: Request, context: RouteContext) {
   const owner = await getOwner();
   if (!owner) return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   const { id } = await context.params;
   const [mission] = await missionsFor(owner.id, null, id);
-  if (!mission) return NextResponse.json({ error: "Runner not found." }, { status: 404 });
+  if (!mission) return NextResponse.json({ error: "Mission not found." }, { status: 404 });
   return NextResponse.json({ mission }, { headers: { "cache-control": "no-store" } });
 }
 
-/** Rename the Runner, or give it another icon from the set. */
+/** Rename the Mission, or give it another icon from the set. */
 export async function PATCH(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   const owner = await getOwner();
   if (!owner) return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   const { id } = await context.params;
-  if (!(await ownsMission(owner.id, id))) return NextResponse.json({ error: "Runner not found." }, { status: 404 });
+  if (!(await ownsMission(owner.id, id))) return NextResponse.json({ error: "Mission not found." }, { status: 404 });
   const body = (await request.json().catch(() => null)) as { title?: unknown; icon?: unknown } | null;
   // Both checked before either is written: a bad field writes nothing.
   const icon = typeof body?.icon === "string" ? body.icon : null;
@@ -36,7 +36,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     // rename, said as one.
     const { data, error } = await (await createSupabaseServerClient()).from("workspaces").update({ title }).eq("id", id).select("id");
     if (error) throw error;
-    if (!data?.length) return NextResponse.json({ error: "Runner not found." }, { status: 404 });
+    if (!data?.length) return NextResponse.json({ error: "Mission not found." }, { status: 404 });
   }
   if (icon !== null) await setMissionProfile(id, { icon });
   return NextResponse.json({ ok: true });

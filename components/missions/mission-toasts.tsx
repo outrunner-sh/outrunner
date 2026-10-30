@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * A Runner's news as a toast in the corner while the user is looking: a
- * Ship's pull request ready (pr_ready), or the Runner needing them
+ * A Mission's news as a toast in the corner while the user is looking: a
+ * Ship's pull request ready (pr_ready), or the Mission needing them
  * (needs_input, errored). They are the notifications the server records
  * (lib/notifications), heard from the page's feed (hooks/use-notifications.ts),
  * so they follow the user's preferences, and away from the page the same
@@ -71,7 +71,7 @@ export function MissionToasts() {
                 {pr ? `#${pr.number} is ready to review` : t.kind === "ready" ? "A pull request is ready to review" : `${t.title} needs you`}
               </p>
               <p className="mt-0.5 truncate text-[12px] text-[#8f8f8f]">{pr ? `${pr.title} · ${t.title}` : t.body}</p>
-              {/* Never the Runner on screen: the feed leaves out what the user
+              {/* Never the Mission on screen: the feed leaves out what the user
                   is looking at. */}
               <Link
                 href={`/workspaces/${t.missionId}`}

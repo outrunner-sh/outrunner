@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * A Runner's Ships, in the right pane of its page (docs/missions.md):
+ * A Mission's Ships, in the right pane of its page (docs/missions.md):
  * grouped as Needs you, Ready to merge, Ready to review, Working and
  * Shipping, each with its task in a line, its pull request, its size and its
  * checks (listed on hover). A Ship clicked opens here, with its latest
@@ -89,7 +89,7 @@ export function RunnersPane({ missionId, onClose }: { missionId: string; onClose
             </span>
             <p className="text-[13px] text-[#ededed]">No Ships yet</p>
             <p className="mx-auto mt-1.5 max-w-[240px] text-[12px] leading-relaxed text-[#7a7a7a]">
-              Tell the Runner what you need. It starts a Ship for each piece of work, and they show up here as they go.
+              Tell the Mission what you need. It starts a Ship for each piece of work, and they show up here as they go.
             </p>
           </div>
         ) : (

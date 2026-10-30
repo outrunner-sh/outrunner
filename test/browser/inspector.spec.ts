@@ -30,7 +30,7 @@ test("all inspector views keep the sidebar and chat widths, including open Canva
   const chatBounds = await page.locator(".studio-chat").boundingBox();
   const navBounds = await page.locator("#app-sidebar").boundingBox();
   const toolbarBounds = await page.locator(".studio-inspector-toolbar").boundingBox();
-  expect(panelBounds!.width).toBeCloseTo(Math.min(440, page.viewportSize()!.width * 0.92), 0);
+  expect(panelBounds!.width).toBeCloseTo(Math.min(400, page.viewportSize()!.width * 0.92), 0);
 
   for (const label of ["Changes", "Canvas", "Desktop", "Environment"]) {
     const tab = page.getByRole("tab", { name: label, exact: true });

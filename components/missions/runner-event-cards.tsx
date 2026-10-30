@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * A message of `<runner_event>` blocks in a Runner's conversation (lib/missions/events.ts),
+ * A message of `<runner_event>` blocks in a Mission's conversation (lib/missions/events.ts),
  * shown as what it is: news from its Ships, one compact card each, labelled
  * with where it came from, rather than the raw markup. A card with more to
  * say (a Ship's whole response) opens.
