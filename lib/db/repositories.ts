@@ -740,9 +740,9 @@ export async function markPooledReady(id: string, sandboxId: string): Promise<bo
   return (data ?? []).length > 0;
 }
 
-/** Publish an intent wake only while its lease is still live, or after Send
- * has taken the same row. Expiry cleanup clears the lease while leaving the
- * row pooled, which fences a late wake from making that box claimable again. */
+/** Publish an intent wake while its lease is live or after Send took it. If
+ * expiry cleanup owns the row, persist the fresh endpoint without exposing
+ * it until that provider pause succeeds or fails. */
 export async function completePooledWarmup(
   id: string,
   restored: {
@@ -753,26 +753,15 @@ export async function completePooledWarmup(
   },
 ): Promise<boolean> {
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("runtime_computers")
-    .update({
-      status: "ready",
-      daytona_sandbox_id: restored.sandboxId,
-      provider: restored.provider,
-      agent_base_url: restored.agentBaseUrl,
-      provision_timings: restored.timings,
-      error_message: null,
-      last_active_at: new Date().toISOString(),
-    })
-    .eq("id", id)
-    .eq("status", "provisioning")
-    // Send clears both fields after taking the row; cleanup clears only the
-    // lease. This OR admits the former and fences the latter.
-    .or("pooled.eq.false,warm_expires_at.not.is.null")
-    .select("id")
-    .maybeSingle();
+  const { data, error } = await supabase.rpc("complete_pooled_warmup", {
+    requested_computer_id: id,
+    requested_sandbox_id: restored.sandboxId,
+    requested_provider: restored.provider,
+    requested_agent_base_url: restored.agentBaseUrl,
+    requested_timings: restored.timings,
+  });
   if (error) throw error;
-  return Boolean(data);
+  return data;
 }
 
 /** Mark a pooled box's refill failed, for the project's back-off, keeping the

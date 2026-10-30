@@ -251,6 +251,8 @@ type RuntimeComputerRow = {
   generation: number | null;
   /** Short lease while a pooled box is awake for a new-session composer. */
   warm_expires_at: string | null;
+  /** Expiry cleanup owns this warm-up until its provider pause settles. */
+  warm_cleanup_pending: boolean;
   status: RuntimeComputerStatusDb;
   image_version: string;
   daytona_sandbox_id: string | null;
@@ -2123,6 +2125,20 @@ export type Database = {
           max_live_computers?: number | null;
         };
         Returns: Array<{ runtime_computer_id: string; should_wake: boolean }>;
+      };
+      complete_pooled_warmup: {
+        Args: {
+          requested_computer_id: string;
+          requested_sandbox_id: string;
+          requested_provider: string;
+          requested_agent_base_url: string;
+          requested_timings: Json;
+        };
+        Returns: boolean;
+      };
+      retry_pooled_warmup_pause: {
+        Args: { requested_computer_id: string; retry_at: string };
+        Returns: boolean;
       };
       claim_workspace_computer: {
         Args: {

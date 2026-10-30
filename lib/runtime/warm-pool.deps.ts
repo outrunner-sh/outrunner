@@ -448,8 +448,9 @@ export async function sweepAbandonedPools(provider: ComputerRuntimeProvider): Pr
 
 /** Pause intent-warmed pool boxes whose composer never sent. The conditional
  * update claims each row before any provider call: if Send claimed it first,
- * `pooled` is already false and it is untouched. Clearing warm_expires_at
- * also makes a claimed-for-pause row ineligible to a later Send. */
+ * `pooled` is already false and it is untouched. The cleanup flag keeps a
+ * failed/in-flight pause ineligible to Send until the wake endpoint is
+ * durable or the provider confirms the box stopped. */
 export async function sweepExpiredIntentWarmups(
   provider: ComputerRuntimeProvider,
   now = new Date(),
@@ -460,6 +461,7 @@ export async function sweepExpiredIntentWarmups(
     .update({
       status: "provisioning",
       warm_expires_at: null,
+      warm_cleanup_pending: true,
       error_message: "Pausing an unused session pre-warm.",
     })
     .eq("pooled", true)
@@ -478,26 +480,22 @@ export async function sweepExpiredIntentWarmups(
       await closeIntervalOf(row.daytona_sandbox_id, now);
       const { error: updateError } = await supabase
         .from("runtime_computers")
-        .update({ status: "stopped", error_message: null })
+        .update({ status: "stopped", warm_cleanup_pending: false, error_message: null })
         .eq("id", row.id)
         .eq("pooled", true)
-        .eq("status", "provisioning");
+        .eq("status", "provisioning")
+        .eq("warm_cleanup_pending", true);
       if (updateError) throw updateError;
       paused += 1;
     } catch (pauseError) {
-      // Leave it metered and retry after another short lease. Never label a
-      // box stopped while it may still be running.
-      const { error: restoreError } = await supabase
-        .from("runtime_computers")
-        .update({
-          status: "ready",
-          warm_expires_at: new Date(now.getTime() + INTENT_WARM_MS).toISOString(),
-          error_message: "The unused pre-warm could not be paused; retrying.",
-        })
-        .eq("id", row.id)
-        .eq("pooled", true)
-        .eq("status", "provisioning");
-      if (restoreError) console.error(`Could not restore warm-pool row ${row.id} after pause failed`, restoreError);
+      // Keep it metered and retry after another short lease. The row stays
+      // cleanup-owned and therefore cannot be handed to Send while an
+      // unfinished wake still lacks its fresh agent endpoint.
+      const { error: retryError } = await supabase.rpc("retry_pooled_warmup_pause", {
+        requested_computer_id: row.id,
+        retry_at: new Date(now.getTime() + INTENT_WARM_MS).toISOString(),
+      });
+      if (retryError) console.error(`Could not restore warm-pool row ${row.id} after pause failed`, retryError);
       console.error(`Could not pause expired warm-pool box ${row.id}`, pauseError);
     }
   }
