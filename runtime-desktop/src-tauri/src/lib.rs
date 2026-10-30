@@ -139,9 +139,9 @@ fn deliver_callback(app: &tauri::AppHandle, site: &str, query: &str) {
 /// and can route sign-in through the system browser.
 const INIT_JS: &str = "window.__RUNTIME_DESKTOP__ = true;";
 
-/// The app's background (globals.css `--background`, #121212), for the window
+/// The app's dark background (globals.css `--background`, #060505), for the window
 /// behind the page and its title bar.
-const APP_BACKGROUND: Color = Color(18, 18, 18, 255);
+const APP_BACKGROUND: Color = Color(6, 5, 5, 255);
 
 /// Reveal + focus the main window (from the tray, dock, or a second launch).
 fn show_main(app: &tauri::AppHandle) {
@@ -222,8 +222,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             let builder = builder.title_bar_style(tauri::TitleBarStyle::Transparent);
             builder
-                // The size Droid's window opens at.
-                .inner_size(1200.0, 800.0)
+                // Leave room for the sidebar, conversation, and inspector.
+                .inner_size(1440.0, 900.0)
                 .min_inner_size(720.0, 480.0)
                 .initialization_script(INIT_JS)
                 // Files dropped on the window go to the page, as in a browser:
