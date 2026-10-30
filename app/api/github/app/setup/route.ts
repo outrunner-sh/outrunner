@@ -7,7 +7,7 @@ import { memberRole } from "@/lib/db/orgs";
 import { getInstallation, githubAppConfig, readInstallState, signInstallState } from "@/lib/github/app";
 import { appClientSecret, authorizeUrl } from "@/lib/github/installer";
 import { appUrl } from "@/lib/orgs/notify";
-import { setActiveOrg } from "@/lib/orgs/server";
+import { getOrgContext, setActiveOrg } from "@/lib/orgs/server";
 
 /** How long to wait for GitHub's webhook saying who installed it, which can
  *  land just after the admin does. */
@@ -17,14 +17,11 @@ const WAIT_FOR_WEBHOOK_MS = 8_000;
  * Where GitHub sends an org's admin back after installing the App, or after
  * changing which repositories it reaches ("Redirect on update").
  *
- * - From our install link (a signed state naming the org and admin): the
- *   installation is claimed for that org, and only if the signed-in admin
- *   is the GitHub user GitHub's webhook says installed it. Installing on an
- *   organization takes one of its owners or App managers, so that is who
- *   may hand it to an org. An installation id in a link is no proof. An
- *   admin GitHub doesn't know as the installer (no GitHub account linked, or
- *   another one) is asked to sign in to GitHub for the App once, so GitHub
- *   can say who they are (app/api/github/app/verify).
+ * - From our signed install link: the admin can connect an installation
+ *   already used by another org they administer. A first connection needs
+ *   the GitHub installer named by the webhook. When that identity differs
+ *   from the admin's sign-in, ask them to authorize the App once on GitHub
+ *   (app/api/github/app/verify). An installation id alone grants no access.
  * - Without a state (an update, or an install begun on GitHub): only an
  *   installation the org has already, refreshed. Anything else is sent back
  *   to start from Outrunner's link.
@@ -49,14 +46,15 @@ export async function GET(request: Request) {
 
     let holder = await installationHolder(installationId);
     // No state: only one the org has, from GitHub's "Redirect on update".
-    const orgId = state?.orgId ?? holder?.orgId;
+    const activeOrg = state ? null : (await getOrgContext())?.active;
+    const orgId = state?.orgId ?? (activeOrg && holder?.orgIds.includes(activeOrg.id) ? activeOrg.id : null);
     if (!orgId) return back("error=link_expired");
     if ((await memberRole(orgId, owner.id)) !== "admin") return back("error=not_admin");
 
     const installation = await getInstallation(config, installationId);
     if (!installation) return back("error=no_installation");
 
-    if (holder?.orgId === orgId) {
+    if (holder?.orgIds.includes(orgId)) {
       await refreshInstallation(orgId, installation);
       if (state?.next) {
         await setActiveOrg(orgId).catch(() => {});
@@ -73,9 +71,9 @@ export async function GET(request: Request) {
     }
     if (!holder) return back("pending=1");
 
-    // Not the installer as far as we know: ask GitHub who they are.
+    // A first connection by another identity: ask GitHub who they are.
     const clientSecret = appClientSecret();
-    if (!holder.orgId && holder.installerId !== owner.githubId && clientSecret) {
+    if (holder.orgIds.length === 0 && holder.installerId !== owner.githubId && clientSecret) {
       const verifyState = signInstallState(config.webhookSecret, { ...state, installationId });
       return NextResponse.redirect(authorizeUrl(config.clientId, appUrl("/api/github/app/verify", origin), verifyState));
     }
@@ -93,7 +91,7 @@ export async function GET(request: Request) {
     return back(`installed=${encodeURIComponent(installation.accountLogin)}`);
   } catch (error) {
     if (error instanceof ClaimError) {
-      const code = { taken: "taken", unknown: "no_installation", not_installer: "not_installer", removed_elsewhere: "removed_elsewhere" };
+      const code = { unknown: "no_installation", not_installer: "not_installer", not_admin: "not_admin" };
       return back(`error=${code[error.reason]}`);
     }
     console.error(`Could not keep GitHub installation ${installationId}`, error);

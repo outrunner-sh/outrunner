@@ -4,10 +4,7 @@ import { recordAudit } from "@/lib/audit/record";
 import { listOrgInstallations, unclaimInstallation } from "@/lib/db/github-installations";
 import { orgCaller } from "@/lib/orgs/routes";
 
-/** Let an installation go from the org: Outrunner stops using it, and it's
- *  unclaimed, for whoever installed it to add again (here, or to another
- *  org). It stays installed on GitHub until someone uninstalls it there. The
- *  org's admins may. */
+/** Disconnect only this org; other orgs and the GitHub installation keep access. */
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string; installationId: string }> }) {
   const { id, installationId } = await params;
   const caller = await orgCaller(request, id, { admin: true });

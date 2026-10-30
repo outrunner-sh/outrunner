@@ -6,9 +6,8 @@ import { getInstallation, githubAppConfig } from "@/lib/github/app";
 import { orgCaller } from "@/lib/orgs/routes";
 
 /**
- * Claim an installation for the org, `{ installationId }`: one no org has
- * claimed, that the signed-in admin installed on GitHub (what Settings → Org
- * → GitHub offers when GitHub's word of the install came after them).
+ * Connect an installation to the org, `{ installationId }`, including an
+ * installation already connected to another org the admin administers.
  */
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -35,13 +34,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   } catch (error) {
     if (error instanceof ClaimError) {
       const message =
-        error.reason === "taken"
-          ? "Another Outrunner org has this installation."
-          : error.reason === "not_installer"
-            ? "Only whoever installed it on GitHub can add it to an org."
-            : error.reason === "removed_elsewhere"
-              ? "Another org removed this installation: only it can add it back. Install it afresh on GitHub to use it here."
-              : "Outrunner hasn't heard of this installation from GitHub.";
+        error.reason === "not_installer"
+          ? "Only whoever installed it on GitHub can make its first org connection."
+          : error.reason === "not_admin"
+            ? "You must administer this org and an org already connected to this installation."
+            : "Outrunner hasn't heard of this installation from GitHub.";
       return NextResponse.json({ error: message, code: error.reason }, { status: 409 });
     }
     console.error(`Could not claim installation ${installationId}`, error);

@@ -38,30 +38,33 @@ export async function githubMember(githubUserId: number, orgId: string): Promise
   return (data as string | null) ?? null;
 }
 
-/** The org holding an installation (claimed, not suspended), and its
- *  project that is the repository. */
+/** Every linked organization's project matching this repository, while the
+ * installation is live. Unconnected organizations are never in scope. */
+export async function installationProjects(
+  installationId: number,
+  repoFullName: string,
+): Promise<{ orgId: string; projectId: string }[]> {
+  const supabase = db();
+  const { data: holders, error } = await supabase
+    .from("org_github_installation_details").select("org_id")
+    .eq("installation_id", installationId).is("suspended_at", null);
+  if (error) throw error;
+  if (!holders?.length) return [];
+  const { data: projects, error: projectError } = await supabase
+    .from("projects").select("id, org_id").in("org_id", holders.map((h) => h.org_id))
+    .ilike("full_name", repoFullName.replace(/[\\%_]/g, "\\$&"));
+  if (projectError) throw projectError;
+  return (projects ?? []).flatMap((p) => p.org_id ? [{ orgId: p.org_id, projectId: p.id }] : []);
+}
+
+/** Resolve a queued follow-up's exact project, or an unambiguous scope. */
 export async function installationProject(
   installationId: number,
   repoFullName: string,
+  projectId?: string,
 ): Promise<{ orgId: string; projectId: string } | null> {
-  const supabase = db();
-  const { data: holder, error } = await supabase
-    .from("github_installations")
-    .select("org_id")
-    .eq("installation_id", installationId)
-    .is("suspended_at", null)
-    .maybeSingle();
-  if (error) throw error;
-  if (!holder?.org_id) return null;
-  const { data: project, error: projectError } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("org_id", holder.org_id)
-    .ilike("full_name", repoFullName.replace(/[\\%_]/g, "\\$&"))
-    .limit(1)
-    .maybeSingle();
-  if (projectError) throw projectError;
-  return project ? { orgId: holder.org_id, projectId: project.id } : null;
+  const projects = await installationProjects(installationId, repoFullName);
+  return projectId ? projects.find((p) => p.projectId === projectId) ?? null : projects.length === 1 ? projects[0] : null;
 }
 
 /** Statuses a session is still there in: woken or restored, it takes a

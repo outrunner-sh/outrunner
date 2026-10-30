@@ -9,7 +9,7 @@
  *   close    an issue or pull request closed (or merged): the sessions
  *            working on it are archived, while the org's default says so.
  *
- * Only members of the org holding the installation steer a session, and only
+ * Only members of each org connected to the installation steer its sessions, and only
  * on repositories Roles & access lets them read: a GitHub account counts as
  * the member whose GitHub identity it is. A session runs as its owner, so
  * another member's word reaches it only if they may write to the repository. Each act is claimed by what it's
@@ -40,9 +40,11 @@ export type LinkedSession = { id: string; ownerId: string; status: string };
 export type LinkTarget = { projectId: string; target: "issue" | "pull"; number: number; headRef?: string | null };
 
 export type LoopDeps = {
-  /** The org holding the installation (claimed, not suspended), and its
+  /** The connected org being handled (while the installation is live), and its
    *  project that is the repository; null when there's none. */
   scope(installationId: number, repoFullName: string): Promise<{ orgId: string; projectId: string } | null>;
+  /** Suppress denial replies when another connected org may handle the mention. */
+  quietDenials?: boolean;
   /** Claim an act by its key: false when it was claimed already. */
   claim(key: string): Promise<boolean>;
   /** Give a claim back, so a redelivery tries again. */
@@ -104,7 +106,7 @@ export async function handleMention(event: string | null, payload: unknown, deps
   if (typeof mention === "string") return "ignored";
   const scope = await deps.scope(mention.installationId, mention.repoFullName);
   if (!scope) return "ignored";
-  const key = mentionKey(mention);
+  const key = `${mentionKey(mention)}:${scope.projectId}`;
   if (!(await deps.claim(key))) return "repeat";
 
   // Said on GitHub: a reply that fails is logged, not retried, as what it
@@ -119,13 +121,13 @@ export async function handleMention(event: string | null, payload: unknown, deps
     const userId = await deps.member(mention.author.id, scope.orgId);
     if (!userId) {
       acted = true;
-      if (associated(mention.authorAssociation)) await say({ kind: "not_member" });
+      if (!deps.quietDenials && associated(mention.authorAssociation)) await say({ kind: "not_member" });
       return "not_member";
     }
     const level = await deps.level(userId, scope.projectId);
     if (!allows(level, "read")) {
       acted = true;
-      if (associated(mention.authorAssociation)) await say({ kind: "no_access", repoFullName: mention.repoFullName });
+      if (!deps.quietDenials && associated(mention.authorAssociation)) await say({ kind: "no_access", repoFullName: mention.repoFullName });
       return "no_access";
     }
     await deps

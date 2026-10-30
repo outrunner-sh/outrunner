@@ -44,7 +44,7 @@ export async function GET(request: Request) {
     return back(`installed=${encodeURIComponent(installation.accountLogin)}`);
   } catch (error) {
     if (error instanceof ClaimError) {
-      const codes = { taken: "taken", unknown: "no_installation", not_installer: "not_installer", removed_elsewhere: "removed_elsewhere" };
+      const codes = { unknown: "no_installation", not_installer: "not_installer", not_admin: "not_admin" };
       return back(`error=${codes[error.reason]}`);
     }
     console.error(`Could not keep GitHub installation ${state.installationId}`, error);

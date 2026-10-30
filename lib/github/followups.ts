@@ -344,7 +344,7 @@ export type DueFollowUp = {
 export type PullState = { open: boolean; headSha: string; headRef: string };
 
 export type FollowUpDeps = {
-  scope(installationId: number, repoFullName: string): Promise<{ orgId: string; projectId: string } | null>;
+  scope(installationId: number, repoFullName: string, projectId?: string): Promise<{ orgId: string; projectId: string } | null>;
   claim(key: string): Promise<boolean>;
   linkedSessions(link: LinkTarget, orgId: string): Promise<LinkedSession[]>;
   /** The pull request a session recorded for a branch, when GitHub named
@@ -448,7 +448,7 @@ export async function queueReview(event: string | null, payload: unknown, deps: 
     scope.orgId,
   );
   if (sessions.length === 0) return null;
-  const key = `review:${review.reviewId}`;
+  const key = `review:${review.reviewId}:${scope.projectId}`;
   if (!(await deps.claim(key))) return null;
   let queued: Awaited<ReturnType<FollowUpDeps["queue"]>>;
   try {
@@ -532,7 +532,7 @@ async function sendCi(f: DueFollowUp, deps: FollowUpDeps): Promise<string> {
     await deps.settle(f.id, outcome);
     return outcome;
   };
-  const scope = await deps.scope(f.installationId, f.repoFullName);
+  const scope = await deps.scope(f.installationId, f.repoFullName, f.projectId);
   if (!scope) return settle("no_scope");
   const pull = await deps.pull(f.installationId, f.repoFullName, f.prNumber);
   if (!pull) throw new Error(`couldn't read ${f.repoFullName}#${f.prNumber}`);
@@ -591,7 +591,7 @@ async function sendReviews(f: DueFollowUp, deps: FollowUpDeps): Promise<string> 
     await deps.settle(f.id, outcome);
     return outcome;
   };
-  const scope = await deps.scope(f.installationId, f.repoFullName);
+  const scope = await deps.scope(f.installationId, f.repoFullName, f.projectId);
   if (!scope) return settle("no_scope");
   const pull = await deps.pull(f.installationId, f.repoFullName, f.prNumber);
   if (!pull) throw new Error(`couldn't read ${f.repoFullName}#${f.prNumber}`);

@@ -7,6 +7,24 @@ organization and the repositories they pick. A deployment configures it with `GI
 webhook is `POST /api/github/webhook`, and its setup URL (with "Redirect on update") is
 `GET /api/github/app/setup`.
 
+## Sharing a GitHub organization
+
+A GitHub App installation can connect to multiple Outrunner organizations. In the new organization's
+**Settings → Org → GitHub**, select **Add to <org>** under **Available GitHub connections**. There is no
+need to uninstall or reinstall the App. The connecting admin must administer both the destination organization and
+an organization already using the installation. This also supports older installations without a recorded
+installer and admins who signed in without GitHub. An installation that is not connected anywhere can be
+connected by its verified GitHub installer, who must administer the destination organization.
+
+Installation metadata is global (`github_installations`); access is an independent link per organization
+(`org_github_installations`). Existing links are preserved by migration `20261104100000`. Removing a
+connection only removes that organization's link. GitHub uninstallations and suspensions apply to every
+linked organization. Webhook events reach each linked organization's matching projects, with separate
+membership checks and deduplication per project. Queued follow-ups recheck the exact project's connection.
+Authorization history survives disconnects and organization deletion. An admin can reconnect a previously
+authorized organization; sharing with an unrelated organization requires an active source connection.
+The historical GitHub installer cannot reclaim a revoked installation through a new organization.
+
 ## What it does on GitHub
 
 **Automations** (Automations page): a pull request opened, or new commits on one, starts the org's automations
@@ -25,7 +43,7 @@ on its repository. Each run's session reviews it as the App and comments; a clos
   request's head branch and pushes there. An issue's session starts on the default branch and ends in a pull
   request that closes the issue. Either is told the comment and the issue's or pull request's description.
 - The comment gets 👀 when Outrunner picks it up, and a reply linking the session.
-- Only members of the Outrunner org holding the installation can steer, on repositories that **Roles & access**
+- Only members of each Outrunner org connected to the installation can steer, on repositories that **Roles & access**
   lets them read. The GitHub account has to be the GitHub identity linked to their Outrunner account. A session
   runs as its owner, with their GitHub access, so another member's comment reaches it only if that member may
   write to the repository. A member who may only read gets a new session of their own instead. Someone

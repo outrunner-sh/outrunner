@@ -8,6 +8,7 @@ import {
   resetCiTurns,
   githubMember,
   installationProject,
+  installationProjects,
   linkedSessions,
   linkSession,
   releaseLoopAct,
@@ -29,9 +30,9 @@ async function token(installationId: number): Promise<string> {
   return installationToken(config, installationId);
 }
 
-export function loopDeps(): LoopDeps {
+export function loopDeps(scope?: { orgId: string; projectId: string }): LoopDeps {
   return {
-    scope: installationProject,
+    scope: scope ? async () => scope : installationProject,
     claim: claimLoopAct,
     release: releaseLoopAct,
     async member(githubUserId, orgId) {
@@ -88,27 +89,46 @@ export const LOOP_EVENTS: ReadonlySet<string> = new Set([
 /** The loop's part of a webhook event, run after GitHub has its answer.
  *  Never throws: what failed is logged. */
 export async function runGitHubLoop(event: string, payload: unknown, appSlug: string): Promise<void> {
-  const deps = loopDeps();
+  const p = payload as { installation?: { id?: number }; repository?: { full_name?: string } };
+  if (!p?.installation?.id || !p.repository?.full_name) return;
   try {
-    if (event === "issue_comment" || event === "pull_request_review_comment") {
-      await handleMention(event, payload, deps, appSlug);
-    } else if (event === "issues" || event === "pull_request") {
-      await archiveClosed(event, payload, deps);
-    } else if (event === "pull_request_review") {
-      // A review joins its pull request's batch, sent once reviews stop
-      // coming (lib/github/followups.ts). The review that began the batch
-      // waits for it; the others only put it later.
-      const { followUpDeps, flushWhenDue } = await import("@/lib/github/followups.deps");
-      const batch = await queueReview(event, payload, followUpDeps());
-      if (batch) await flushWhenDue([batch]);
-    } else if (event === "check_suite" || event === "check_run" || event === "workflow_run") {
-      // CI failing: one turn per commit, once its burst of events is over.
-      // The burst's first event waits for it; the others only put it later.
-      const { followUpDeps, flushWhenDue } = await import("@/lib/github/followups.deps");
-      const made = await queueCiFailure(event, payload, followUpDeps(), appSlug);
-      if (made.length) await flushWhenDue(made);
-    }
+    const scopes = await installationProjects(p.installation.id, p.repository.full_name);
+    await Promise.all(scopes.map(async (scope) => {
+      try {
+        await runScopedLoop(event, payload, appSlug, scope, scopes.length > 1);
+      } catch (error) {
+        console.error(`GitHub loop: ${event} for org ${scope.orgId} failed`, error);
+      }
+    }));
   } catch (error) {
     console.error(`GitHub loop: ${event} failed`, error);
+  }
+}
+
+async function runScopedLoop(
+  event: string,
+  payload: unknown,
+  appSlug: string,
+  scope: { orgId: string; projectId: string },
+  shared: boolean,
+): Promise<void> {
+  const deps = { ...loopDeps(scope), quietDenials: shared };
+  if (event === "issue_comment" || event === "pull_request_review_comment") {
+    await handleMention(event, payload, deps, appSlug);
+  } else if (event === "issues" || event === "pull_request") {
+    await archiveClosed(event, payload, deps);
+  } else if (event === "pull_request_review") {
+    // A review joins its pull request's batch, sent once reviews stop
+    // coming (lib/github/followups.ts). The review that began the batch
+    // waits for it; the others only put it later.
+    const { followUpDeps, flushWhenDue } = await import("@/lib/github/followups.deps");
+    const batch = await queueReview(event, payload, followUpDeps(scope));
+    if (batch) await flushWhenDue([batch]);
+  } else if (event === "check_suite" || event === "check_run" || event === "workflow_run") {
+    // CI failing: one turn per commit, once its burst of events is over.
+    // The burst's first event waits for it; the others only put it later.
+    const { followUpDeps, flushWhenDue } = await import("@/lib/github/followups.deps");
+    const made = await queueCiFailure(event, payload, followUpDeps(scope), appSlug);
+    if (made.length) await flushWhenDue(made);
   }
 }

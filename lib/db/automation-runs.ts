@@ -96,9 +96,8 @@ async function candidatesOf(
 }
 
 /**
- * The enabled automations on `repoFullName` in the org that has the
- * installation the event came through (github_installations, claimed and not
- * suspended): no other org gets anything from its events.
+ * The enabled automations on `repoFullName` in every org linked to the
+ * installation, while it is not suspended.
  */
 export async function automationsForPullRequest(installationId: number, repoFullName: string): Promise<RunCandidate[]> {
   const supabase = createSupabaseAdminClient();
@@ -109,32 +108,31 @@ export async function automationsForPullRequest(installationId: number, repoFull
     .select("automation_id, project_id")
     .in("project_id", scope.projectIds);
   if (error) throw error;
-  return candidatesOf(supabase, scope.orgId, repos ?? []);
+  return (await Promise.all(scope.orgIds.map((orgId) => candidatesOf(supabase, orgId, repos ?? [])))).flat();
 }
 
-/** The org holding the installation (claimed and not suspended), and its
- *  projects that are `repoFullName`: no other org's are an event's. */
+/** The linked orgs and their projects that are `repoFullName`. */
 async function installationProjects(
   supabase: ReturnType<typeof createSupabaseAdminClient>,
   installationId: number,
   repoFullName: string,
-): Promise<{ orgId: string; projectIds: string[] } | null> {
-  const { data: holder, error } = await supabase
-    .from("github_installations")
+): Promise<{ orgIds: string[]; projectIds: string[] } | null> {
+  const { data: holders, error } = await supabase
+    .from("org_github_installation_details")
     .select("org_id")
     .eq("installation_id", installationId)
-    .is("suspended_at", null)
-    .maybeSingle();
+    .is("suspended_at", null);
   if (error) throw error;
-  if (!holder?.org_id) return null;
+  const orgIds = (holders ?? []).map((h) => h.org_id);
+  if (orgIds.length === 0) return null;
   const { data: projects, error: projectsError } = await supabase
     .from("projects")
     .select("id")
-    .eq("org_id", holder.org_id)
+    .in("org_id", orgIds)
     .ilike("full_name", repoFullName.replace(/[\\%_]/g, "\\$&"));
   if (projectsError) throw projectsError;
   const projectIds = (projects ?? []).map((p) => p.id);
-  return projectIds.length === 0 ? null : { orgId: holder.org_id, projectIds };
+  return projectIds.length === 0 ? null : { orgIds, projectIds };
 }
 
 /**
@@ -401,7 +399,7 @@ export async function automationCandidates(automationIds: readonly string[]): Pr
   const candidates = (await Promise.all([...byOrg].map(([orgId, l]) => candidatesOf(supabase, orgId, l)))).flat();
   if (candidates.length === 0) return [];
   const { data: installations, error } = await supabase
-    .from("github_installations")
+    .from("org_github_installation_details")
     .select("org_id, account_login")
     .in("org_id", [...byOrg.keys()])
     .is("suspended_at", null);
@@ -648,7 +646,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
     .maybeSingle();
   if (coveringError) throw coveringError;
   const { data: installations, error: installationsError } = await supabase
-    .from("github_installations")
+    .from("org_github_installation_details")
     .select("installation_id, account_login, suspended_at")
     .eq("org_id", orgId);
   if (installationsError) throw installationsError;

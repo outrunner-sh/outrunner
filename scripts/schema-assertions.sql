@@ -1517,72 +1517,72 @@ begin
   raise notice 'ok: grants and roles change in one step, and a refused change keeps what was there';
 end $$;
 
--- 36. The GitHub App's installations: one org each, the server's alone, and
--- gone with their org.
+-- 36. GitHub installation metadata and per-org links are server-only.
+-- One installation may be linked to multiple orgs, once per org.
 do $$
 declare personal uuid := (select id from organizations where personal_owner_id = '33333333-3333-3333-3333-333333333333');
 begin
   if has_table_privilege('authenticated', 'github_installations', 'select')
-     or has_table_privilege('anon', 'github_installations', 'select') then
-    raise exception 'FAIL: users may read the App''s installations';
+     or has_table_privilege('anon', 'github_installations', 'select')
+     or has_table_privilege('authenticated', 'org_github_installations', 'select')
+     or has_table_privilege('anon', 'org_github_installation_details', 'select') then
+    raise exception 'FAIL: users may read the App''s installations or org links';
   end if;
-  insert into github_installations (installation_id, org_id, account_login, account_type, repository_selection)
-  values (12345, personal, 'third', 'User', 'all');
+  insert into github_installations (installation_id, account_login, account_type, repository_selection)
+  values (12345, 'third', 'User', 'all');
+  insert into org_github_installations (org_id, installation_id)
+  values (personal, 12345), ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 12345);
   begin
-    insert into github_installations (installation_id, org_id, account_login, account_type, repository_selection)
-    values (12345, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'third', 'User', 'all');
-    raise exception 'FAIL: one installation kept by two orgs';
-  exception when unique_violation then
-    null;
+    insert into org_github_installations (org_id, installation_id) values (personal, 12345);
+    raise exception 'FAIL: duplicate installation link for one org';
+  exception when unique_violation then null;
   end;
   begin
-    insert into github_installations (installation_id, org_id, account_login, account_type, repository_selection)
-    values (999, personal, 'x', 'Enterprise', 'all');
+    insert into github_installations (installation_id, account_login, account_type, repository_selection)
+    values (999, 'x', 'Enterprise', 'all');
     raise exception 'FAIL: an installation on an account GitHub has no such type of';
-  exception when check_violation then
-    null;
+  exception when check_violation then null;
   end;
-  raise notice 'ok: an installation is one org''s, and only the server reaches it';
+  raise notice 'ok: multiple orgs can link one installation, with server-only access';
 end $$;
 
--- 37. An installation GitHub told of but no org has claimed keeps who
--- installed it; one with neither isn't kept.
+-- 37. An installation keeps its installer's numeric GitHub identity.
 do $$
 begin
   insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_id, installer_login)
   values (777, 'acme', 'Organization', 'all', 4242, 'acme-owner');
-  begin
-    insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_login)
-    values (778, 'acme', 'Organization', 'all', 'only-a-login');
-    raise exception 'FAIL: an unclaimed installation with no installer to claim it';
-  exception when check_violation then
-    null;
-  end;
-  raise notice 'ok: an unclaimed installation keeps its installer';
-end $$;
-
--- 38. An installation an org removed remembers which, gone with that org.
-do $$
-begin
-  update github_installations set removed_from = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' where installation_id = 777;
-  if (select removed_from from github_installations where installation_id = 777) <> 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' then
-    raise exception 'FAIL: removed_from not kept';
+  if (select installer_id from github_installations where installation_id = 777) <> 4242 then
+    raise exception 'FAIL: installation lost its installer';
   end if;
-  raise notice 'ok: an installation remembers the org that removed it';
+  raise notice 'ok: an installation keeps its installer';
 end $$;
 
--- 39. Deleting the org that removed an installation deletes it with the org,
--- rather than clearing the mark that keeps it from other orgs.
+-- 38. Disconnecting one org leaves the installation and other orgs connected.
+do $$
+declare personal uuid := (select id from organizations where personal_owner_id = '33333333-3333-3333-3333-333333333333');
+begin
+  delete from org_github_installations where installation_id = 12345 and org_id = personal;
+  if not exists (select 1 from org_github_installation_details
+                 where installation_id = 12345 and org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') then
+    raise exception 'FAIL: disconnect removed another org''s access';
+  end if;
+  raise notice 'ok: disconnecting one org preserves other connections';
+end $$;
+
+-- 39. Deleting an org deletes only its installation links.
 do $$
 declare doomed uuid;
 begin
   insert into organizations (name, created_by) values ('Doomed', null) returning id into doomed;
-  update github_installations set removed_from = doomed where installation_id = 777;
+  insert into org_github_installations (org_id, installation_id)
+  values (doomed, 777), ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 777);
   delete from organizations where id = doomed;
-  if exists (select 1 from github_installations where installation_id = 777) then
-    raise exception 'FAIL: an installation outlived the org that removed it, claimable by any org';
+  if not exists (select 1 from org_github_installation_details
+                 where installation_id = 777 and org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+     or exists (select 1 from org_github_installations where org_id = doomed) then
+    raise exception 'FAIL: org deletion did not preserve other installation links';
   end if;
-  raise notice 'ok: an installation goes with the org that removed it';
+  raise notice 'ok: deleting an org preserves shared GitHub installations';
 end $$;
 
 -- 40. A user's GitHub identity is their own sign-in until they choose the App,
