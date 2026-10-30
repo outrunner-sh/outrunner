@@ -11,6 +11,8 @@ import { CONVERSATIONS } from "@/lib/session/conversation-cache";
  * socket opens on a URL still good to open.
  */
 export const WARM_URLS_FOR_MS = 45_000;
+/** A sidebar warm-up must never hold opening a session behind a slow probe. */
+export const WARM_WAIT_MS = 200;
 /** How long a warm-up streams the conversation in when no click follows. */
 const WARM_STREAM_FOR_MS = 20_000;
 
@@ -70,7 +72,15 @@ export async function takeWarmUrls(workspaceId: string): Promise<SessionUrls | n
   warming.delete(workspaceId);
   warm.stop();
   if (Date.now() - warm.at >= WARM_URLS_FOR_MS) return null;
-  return warm.urls;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      warm.urls,
+      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), WARM_WAIT_MS); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /**

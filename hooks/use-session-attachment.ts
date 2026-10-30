@@ -12,8 +12,9 @@ import {
   localTarget,
   type LocalTarget,
 } from "@/lib/desktop/local-runtime";
-import { SessionUrls, WorkspaceSummary } from "@/lib/runtime/agent-protocol";
-import { chatRoute, MAIN_CHAT } from "@/lib/session/chats";
+import { type SessionUrls, WorkspaceSummary } from "@/lib/runtime/agent-protocol";
+import { MAIN_CHAT } from "@/lib/session/chats";
+import { AttachError, attachCloudSession } from "@/lib/session/attach-session";
 import { keptStreamUrls } from "@/lib/session/kept-streams";
 import { refreshSessionOnReturn } from "@/lib/session/refresh-on-return";
 import { keepSessionUrls, takeWarmUrls } from "@/lib/session/warm-session";
@@ -147,6 +148,7 @@ export function useSessionAttachment(
           lastValidatedAt.current = fetchedAt;
           setAttachId((n) => n + 1);
           setStatus("attached");
+          setError(null);
           return;
         }
         const warm = fresh || !main ? null : await takeWarmUrls(workspaceId);
@@ -159,26 +161,14 @@ export function useSessionAttachment(
           lastValidatedAt.current = fetchedAt;
           setAttachId((n) => n + 1);
           setStatus("attached");
+          setError(null);
           return;
         }
-        const res = await fetch(chatRoute(workspaceId, chatId, `session${fresh ? "?fresh=1" : ""}`), {
-          method: "POST",
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as
-            | { error?: string; code?: string }
-            | null;
-          throw new AttachError(body?.error ?? "Couldn't reach this session's box.", body?.code ?? null);
-        }
-        const raw = (await res.json()) as unknown;
-        const parsed = SessionUrls.safeParse(raw);
-        if (!parsed.success) {
-          throw new Error("Malformed session response from server");
-        }
-        attachedWith.current = main ? { urls: parsed.data, at: fetchedAt } : null;
+        const answer = await attachCloudSession(workspaceId, chatId, fresh, controller.signal);
+        if (controller.signal.aborted) return;
+        attachedWith.current = main ? { urls: answer, at: fetchedAt } : null;
         lastValidatedAt.current = fetchedAt;
-        setUrls(parsed.data);
+        setUrls(answer);
         setAttachId((n) => n + 1);
         setStatus("attached");
         setError(null);
@@ -248,13 +238,4 @@ export function useSessionAttachment(
     refresh,
     reconnect,
   };
-}
-
-class AttachError extends Error {
-  readonly code: string | null;
-  constructor(message: string, code: string | null) {
-    super(message);
-    this.name = "AttachError";
-    this.code = code;
-  }
 }

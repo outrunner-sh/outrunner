@@ -38,7 +38,9 @@ export async function bringBack(
   if (computerMadeBy(computer) !== provider.name) return null;
   let ended = endedBoxOf(computer, provider.name);
   if (computer.status === "ready" && computer.daytonaSandboxId) {
-    if (await provider.computerAlive(computer.daytonaSandboxId)) return null;
+    // A failed provider query says nothing about whether the box stopped.
+    // Keep the ready row and its secret intact until the provider confirms it.
+    if (await provider.computerRunning(computer.daytonaSandboxId)) return null;
     await markRuntimeComputerStoppedIfReady(computer.id, computer.daytonaSandboxId);
     ended = computer.daytonaSandboxId;
   } else if (!ended && computer.status !== "provisioning") {
