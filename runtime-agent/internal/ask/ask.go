@@ -214,7 +214,7 @@ func (b *Broker) Ask(ctx context.Context, workspaceID, requestID string, questio
 	if err := Validate(questions); err != nil {
 		return Reply{}, err
 	}
-	return b.held.wait(ctx, workspaceID, requestID, questions)
+	return b.held.wait(ctx, workspaceID, requestID, questions, nil)
 }
 
 // Answer delivers the user's reply to the questions a session is waiting on.
@@ -252,7 +252,7 @@ func newHolder[Q, R any]() holder[Q, R] { return holder[Q, R]{waiting: map[strin
 // wait holds request as the session's waiting one until its reply, a newer
 // call with the same requestID takes over (ErrReplaced), or ctx ends. One
 // with another requestID while one waits is ErrBusy.
-func (h *holder[Q, R]) wait(ctx context.Context, workspaceID, requestID string, request Q) (R, error) {
+func (h *holder[Q, R]) wait(ctx context.Context, workspaceID, requestID string, request Q, started func() error) (R, error) {
 	var none R
 	w := &waiter[Q, R]{requestID: requestID, request: request, replies: make(chan R, 1), replaced: make(chan struct{})}
 	h.mu.Lock()
@@ -264,6 +264,15 @@ func (h *holder[Q, R]) wait(ctx context.Context, workspaceID, requestID string, 
 		close(old.replaced)
 	}
 	h.waiting[workspaceID] = w
+	// Publish only after accepting the request, and before an answer can
+	// arrive. The browser must never see a form that isn't answerable yet.
+	if started != nil {
+		if err := started(); err != nil {
+			delete(h.waiting, workspaceID)
+			h.mu.Unlock()
+			return none, err
+		}
+	}
 	h.mu.Unlock()
 
 	select {

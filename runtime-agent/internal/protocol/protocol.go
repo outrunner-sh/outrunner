@@ -434,9 +434,12 @@ const FeatureEnvironment = "session-environment"
 // agent ignores them.
 const FeatureInstructions = "project-instructions"
 
-// FeatureRequestSecrets is a Claude session's request_secrets tool and
+// FeatureRequestSecrets is a session's request_secrets tool and
 // POST /workspaces/{id}/secrets, the user's answer to it.
 const FeatureRequestSecrets = "request-secrets"
+
+// FeatureCodexSecrets includes runtime form records for code-mode requests.
+const FeatureCodexSecrets = "codex-request-secrets"
 
 // ProvideSecretsRequest is the user's answer to the request for secrets a
 // session is waiting on (POST /workspaces/{id}/secrets): the request's

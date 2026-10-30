@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"runtime-agent/internal/ask"
+	"runtime-agent/internal/codex"
 )
 
 // A Claude session asks the user questions through the ask_user tool (package
@@ -24,9 +25,8 @@ import (
 // anything its launch was given: the address the agent announces when it
 // starts, and the session's token, kept for the life of the session.
 //
-// Codex sessions don't get the tool yet: Codex's default model calls tools
-// from a script (code mode), so its transcript doesn't show the question while
-// it waits, and nobody could answer it.
+// Codex gets request_secrets too. Its runtime writes a form record directly
+// to the conversation, so a call hidden inside code mode can still be answered.
 
 // askTimeoutSeconds is how long an agent waits on the user's answer before giving the
 // call up. A session's question can sit unanswered while its user is away.
@@ -131,6 +131,27 @@ func (s *Service) claudeAskArgs(workspaceID string) []string {
 		"--mcp-config", path,
 		"--allowedTools", ask.QualifiedToolName, ask.QualifiedSecretsToolName, ask.QualifiedMediaToolName,
 		"--disallowedTools", "AskUserQuestion",
+	}
+}
+
+// codexSecretsArgs gives every Codex launch the secret tool, including ones
+// using the user's own Codex home. Restrict this relay to the supported tool;
+// normal questions retain their existing Codex behavior.
+func (s *Service) codexSecretsArgs(workspaceID string) []string {
+	if !s.askReady(workspaceID) {
+		return nil
+	}
+	args := make([]string, 0)
+	for _, arg := range s.relayArgs(workspaceID) {
+		args = append(args, codex.TOMLString(arg))
+	}
+	key := "mcp_servers." + ask.ServerName + "."
+	return []string{
+		"-c", key + "command=" + codex.TOMLString(s.RelayExecutable),
+		"-c", key + "args=[" + strings.Join(args, ", ") + "]",
+		"-c", key + "enabled=true",
+		"-c", key + "enabled_tools=[" + codex.TOMLString(ask.SecretsToolName) + "]",
+		"-c", key + "tool_timeout_sec=" + strconv.Itoa(askTimeoutSeconds),
 	}
 }
 

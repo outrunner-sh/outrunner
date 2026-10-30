@@ -3,9 +3,13 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"time"
+
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime-agent/internal/protocol"
 	"slices"
 	"sort"
 	"strings"
@@ -14,7 +18,7 @@ import (
 	"runtime-agent/internal/claude"
 )
 
-// A Claude session asks the user for secrets through request_secrets (package
+// A session asks the user for secrets through request_secrets (package
 // ask); the values the user provides are the session's own, kept apart from
 // its project's environment, which SetEnvironment replaces on a restore:
 //
@@ -61,7 +65,36 @@ func (s *Service) RequestSecrets(ctx context.Context, workspaceID, requestID str
 	if err := ask.ValidateSecretRequest(req, ValidEnvName); err != nil {
 		return "", err
 	}
-	reply, err := s.secretAsks.Request(ctx, workspaceID, requestID, req)
+	f, _ := s.getFacts(workspaceID)
+	var started func() error
+	published := false
+	toolID := "secret-request-" + requestID
+	if f.Agent == AgentCodex {
+		started = func() error {
+			input, _ := json.Marshal(req)
+			if err := s.recordCodexSecretRequest(workspaceID, toolID, protocol.ContentBlock{
+				Type: "tool_use", ID: toolID, Name: ask.QualifiedSecretsToolName, Input: input,
+			}); err != nil {
+				return err
+			}
+			published = true
+			return nil
+		}
+	}
+	reply, err := s.secretAsks.RequestStarted(ctx, workspaceID, requestID, req, started)
+	if published && !errors.Is(err, ask.ErrReplaced) {
+		text := "This secret request ended without an answer."
+		if err == nil {
+			text = ask.FormatSecrets(req, reply)
+		}
+		// Only names and instructions: supplied values never enter the log.
+		content, _ := json.Marshal(text)
+		if recordErr := s.recordCodexSecretRequest(workspaceID, toolID, protocol.ContentBlock{
+			Type: "tool_result", ToolUseID: toolID, Content: content,
+		}); err == nil && recordErr != nil {
+			return "", recordErr
+		}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -108,7 +141,8 @@ func (s *Service) ProvideSecrets(workspaceID string, names []string, values map[
 		sort.Slice(provided, func(i, j int) bool {
 			return slices.Index(names, provided[i]) < slices.Index(names, provided[j])
 		})
-		return ask.SecretReply{Provided: provided, EnvFile: s.ProvidedEnvPath(workspaceID)}, nil
+		f, _ := s.getFacts(workspaceID)
+		return ask.SecretReply{Provided: provided, EnvFile: s.ProvidedEnvPath(workspaceID), SourceRequired: f.Agent == AgentCodex}, nil
 	})
 }
 
@@ -233,4 +267,38 @@ func (s *Service) removeProvided(workspaceID string) {
 	_ = os.Remove(s.providedJSONPath(workspaceID))
 	s.refreshLiveSecrets()
 	_ = os.Remove(filepath.Join(s.Root, "ask", workspaceID+".settings.json"))
+}
+
+// recordCodexSecretRequest gives the shared stream a form even when Codex's
+// rollout only shows a code-mode script. Its stable ids also replay after a
+// browser reload. Serialize with the rollout translator to keep records whole
+// and flush older tool calls before writing the form or its result.
+func (s *Service) recordCodexSecretRequest(workspaceID, toolID string, block protocol.ContentBlock) error {
+	s.codexTailsMu.Lock()
+	tail := s.codexTails[workspaceID]
+	s.codexTailsMu.Unlock()
+	if tail != nil {
+		tail.mu.Lock()
+		defer tail.mu.Unlock()
+		tail.readLocked()
+		if tail.tr != nil {
+			tail.write(tail.tr.Flush())
+		}
+		if len(tail.pending) > 0 {
+			return fmt.Errorf("couldn't write the secret request to the conversation")
+		}
+	}
+	role, suffix := "assistant", "call"
+	if block.Type == "tool_result" {
+		role, suffix = "user", "result"
+	}
+	line, err := json.Marshal(map[string]any{
+		"type": role, "uuid": toolID + "-" + suffix, "parentUuid": nil,
+		"timestamp": time.Now().UTC().Format(time.RFC3339Nano),
+		"message":   map[string]any{"role": role, "content": []protocol.ContentBlock{block}},
+	})
+	if err != nil {
+		return err
+	}
+	return s.appendCodexRecords(workspaceID, append(line, '\n'))
 }

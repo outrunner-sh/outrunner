@@ -183,7 +183,7 @@ test("the learnings block reaches a box that takes it after setup; empty does no
 });
 
 test("a Codex session's box with MCP servers to load is upgraded first when its Codex wouldn't get them", async () => {
-  let features = ["session-environment", "agent-config"];
+  let features = ["session-environment", "agent-config", "codex-request-secrets"];
   const order: string[] = [];
   const b = box([]);
   const client = {
@@ -211,7 +211,7 @@ test("a Codex session's box with MCP servers to load is upgraded first when its 
     console.warn = (...args: unknown[]) => void warned.push(args);
     try {
       await deliverSessionSetup(
-        { ...box(all).client, upgrade: async () => void (upgraded = true) },
+        { ...box([...all, "codex-request-secrets"]).client, upgrade: async () => void (upgraded = true) },
         { environment: null, ...setup, downloadUrl },
       );
     } finally {
@@ -266,4 +266,16 @@ test("a transient capability read failure can be retried within the setup", asyn
   assert.deepEqual(await client.features(), ["ready"]);
   assert.deepEqual(await client.features(), ["ready"]);
   assert.equal(reads, 2);
+});
+
+
+test("a Codex session upgrades for secret forms even without imported MCP servers", async () => {
+  let features = [...all];
+  let upgrades = 0;
+  await deliverSessionSetup({
+    ...box(all).client,
+    features: async () => features,
+    upgrade: async () => { upgrades++; features = [...features, "codex-request-secrets"]; },
+  }, { environment: null, agentConfig: null, agent: "codex", downloadUrl });
+  assert.equal(upgrades, 1);
 });

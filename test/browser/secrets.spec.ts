@@ -5,7 +5,7 @@ import { stubSelectionApis } from "./selection-api-fixture";
 
 // Exercise the real session composer and stream handling. All credentials
 // and endpoints here are fixtures; no real project or agent is changed.
-test("Claude's secret request opens the form, retries failed delivery and saves without opting in", async ({ page }, info) => {
+for (const harness of ["claude", "codex"] as const) test(`${harness} secret request opens the form, retries failed delivery and saves without opting in`, async ({ page }, info) => {
   await stubSelectionApis(page);
   const frames = [
     { id: "1", data: { t: "state", workspaceId: "preview-0", state: "running" } },
@@ -23,8 +23,8 @@ test("Claude's secret request opens the form, retries failed delivery and saves 
     if (answers.length === 1) return route.fulfill({ status: 502, json: { error: "Couldn't send them. Please try again." } });
     return route.fulfill({ json: { result: "provided", saved: true } });
   });
-  await page.goto("/workspaces/preview-0?harness=claude");
-  const card = page.getByRole("group", { name: "Claude Code is asking for secrets" });
+  await page.goto(`/workspaces/preview-0?harness=${harness}`);
+  const card = page.getByRole("group", { name: `${harness === "claude" ? "Claude Code" : "Codex"} is asking for secrets` });
   await expect(card).toBeVisible();
   await expect(card.getByText("Saved to this project for future sessions.", { exact: false })).toBeVisible();
   await expect(card.getByRole("checkbox")).toHaveCount(0);
@@ -33,7 +33,7 @@ test("Claude's secret request opens the form, retries failed delivery and saves 
   await expect(card.locator("#secret-APP_TOKEN")).toHaveAttribute("type", "password");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await mkdir(".context/secrets", { recursive: true });
-  await card.screenshot({ path: `.context/secrets/form-${info.project.name}.png` });
+  await card.screenshot({ path: `.context/secrets/form-${harness}-${info.project.name}.png` });
   await card.getByRole("button", { name: "Provide", exact: true }).click();
   await expect(card).toBeVisible();
   await expect(page.getByText("Couldn't send them. Please try again.", { exact: true })).toBeVisible();

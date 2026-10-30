@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"runtime-agent/internal/ask"
+	"runtime-agent/internal/conversation"
 	"runtime-agent/internal/redact"
 )
 
@@ -215,5 +217,122 @@ func waitUntil(t *testing.T, cond func() bool) {
 			t.Fatal("timed out")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Code mode may record only its outer script. The runtime must publish an
+// answerable form before that script can finish, without a native tool call.
+func TestCodexSecretRequestIsVisibleBeforeItsToolReturns(t *testing.T) {
+	s := NewService(t.TempDir())
+	rollout := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(rollout, []byte(`{"type":"session_meta","payload":{"id":"test-codex"}}
+{"type":"response_item","timestamp":"2026-10-30T10:00:00Z","payload":{"type":"function_call","name":"functions.exec","call_id":"outer-script","arguments":"{}"}}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.setFacts("ws-c", workspaceFacts{Agent: AgentCodex, CodexRollout: rollout})
+	s.startCodexTail("ws-c")
+	defer s.stopCodexTail("ws-c")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan string, 1)
+	go func() {
+		text, err := s.RequestSecrets(ctx, "ws-c", "code-mode-call", ask.SecretRequest{
+			Reason: "Connect the API", Keys: []ask.SecretKey{{Name: "APP_TOKEN"}},
+		})
+		if err != nil {
+			t.Errorf("request: %v", err)
+		}
+		done <- text
+	}()
+	waitUntil(t, func() bool { return s.secretAsks.Waiting("ws-c") })
+	log := s.SessionLog("ws-c")
+	events, err := conversation.Read(log, 0)
+	if err != nil || len(events) != 2 {
+		t.Fatalf("waiting form: %d events, %v", len(events), err)
+	}
+	block := events[1].Message.Content[0]
+	if block.Type != "tool_use" || block.Name != ask.QualifiedSecretsToolName || block.ID != "secret-request-code-mode-call" {
+		t.Fatalf("waiting form = %+v", block)
+	}
+	select {
+	case <-done:
+		t.Fatal("tool returned before the browser supplied a value")
+	default:
+	}
+	if err := s.ProvideSecrets("ws-c", []string{"APP_TOKEN"}, map[string]string{"APP_TOKEN": "fixture-secret-'token"}, false); err != nil {
+		t.Fatal(err)
+	}
+	text := <-done
+	if !strings.Contains(text, "Load them before each shell command") || strings.Contains(text, "set in your Bash environment from your next") {
+		t.Fatalf("Codex loading instructions: %s", text)
+	}
+	events, err = conversation.Read(log, 0)
+	if err != nil || len(events) != 3 || events[2].Message.Content[0].ToolUseID != block.ID {
+		t.Fatalf("answered form: %d events, %v", len(events), err)
+	}
+	if data, _ := os.ReadFile(log); strings.Contains(string(data), "fixture-secret-") {
+		t.Fatal("secret in conversation")
+	}
+	out, err := exec.Command("sh", "-c", `. "$1" && printf '%s' "$APP_TOKEN"`, "sh", s.ProvidedEnvPath("ws-c")).Output()
+	if err != nil || string(out) != "fixture-secret-'token" {
+		t.Fatalf("Codex couldn't load values: %q, %v", out, err)
+	}
+}
+
+func TestCanceledCodexSecretRequestClosesItsFormAndBusyCallsPublishNothing(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.setFacts("ws-c", workspaceFacts{Agent: AgentCodex})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	req := ask.SecretRequest{Reason: "Connect", Keys: []ask.SecretKey{{Name: "APP_TOKEN"}}}
+	go func() { _, err := s.RequestSecrets(ctx, "ws-c", "first", req); done <- err }()
+	waitUntil(t, func() bool { return s.secretAsks.Waiting("ws-c") })
+	if _, err := s.RequestSecrets(context.Background(), "ws-c", "second", req); !errors.Is(err, ask.ErrBusy) {
+		t.Fatalf("second request = %v", err)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled request = %v", err)
+	}
+	events, err := conversation.Read(s.SessionLog("ws-c"), 0)
+	if err != nil || len(events) != 2 || events[1].Message.Content[0].ToolUseID != events[0].Message.Content[0].ID {
+		t.Fatalf("canceled form: %d events, %v", len(events), err)
+	}
+}
+
+func TestCodexLaunchGetsSecretToolInEitherHomeAndProjectValuesInItsShell(t *testing.T) {
+	for _, ownHome := range []bool{false, true} {
+		t.Run(fmt.Sprint("own-home=", ownHome), func(t *testing.T) {
+			s := NewService(t.TempDir())
+			s.RelayExecutable = "/opt/runtime-agent"
+			facts := workspaceFacts{Agent: AgentCodex}
+			if ownHome {
+				facts.Auth = AuthOpenAIAPIKey
+			}
+			s.setFacts("ws-c", facts)
+			if err := s.SetEnvironment(context.Background(), "ws-c", map[string]string{"APP_TOKEN": "project-token"}, nil, ""); err != nil {
+				t.Fatal(err)
+			}
+			argv := s.launchCommand("ws-c", t.TempDir(), false)
+			joined := strings.Join(argv, " ")
+			for _, want := range []string{"mcp_servers.outrunner.command=", "mcp_servers.outrunner.enabled_tools=[\"request_secrets\"]", "tool_timeout_sec=86400", "Available variables: APP_TOKEN"} {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("launch missing %s: %q", want, argv)
+				}
+			}
+			// A harmless Codex fixture inspects the actual launch environment.
+			bin := t.TempDir()
+			if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nprintf '%s' \"$APP_TOKEN\"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(argv[0], argv[1:]...)
+			cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			out, err := cmd.CombinedOutput()
+			if err != nil || string(out) != "project-token" {
+				t.Fatalf("Codex environment: %q, %v", out, err)
+			}
+		})
 	}
 }

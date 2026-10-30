@@ -15,6 +15,7 @@ import {
   AGENT_FEATURE_AGENT_CONFIG,
   AGENT_FEATURE_AGENT_CONTEXT,
   AGENT_FEATURE_CODEX_MCP,
+  AGENT_FEATURE_CODEX_SECRETS,
   AGENT_FEATURE_ENVIRONMENT,
   AGENT_FEATURE_GIT_CREDENTIAL,
   AGENT_FEATURE_INSTRUCTIONS,
@@ -62,6 +63,10 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
   const capabilities = cachedFeatures(client);
   // First: an upgrade boots the agent again, asking with what it needs to.
   if (setup.appIdentity) await supports(capabilities, AGENT_FEATURE_GIT_CREDENTIAL, "work on GitHub as Outrunner's GitHub App");
+
+  if (setup.agent === "codex") {
+    await supports(capabilities, AGENT_FEATURE_CODEX_SECRETS, "let Codex request secrets through a form");
+  }
 
   const config = setup.agentConfig;
   if (config && (config.archive || Object.keys(config.mcpServers).length > 0 || Object.keys(config.settings).length > 0)) {

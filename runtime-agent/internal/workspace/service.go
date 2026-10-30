@@ -131,6 +131,7 @@ type Service struct {
 	factsWriteMu sync.Mutex
 
 	// codexTails translate the running Codex sessions' rollouts.
+	codexLogMu   sync.Mutex // serializes all appends to translated conversations
 	codexTailsMu sync.Mutex
 	codexTails   map[string]*codexTail
 
