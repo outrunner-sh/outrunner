@@ -109,7 +109,7 @@ test("a Mission is named from its first sentence, short", () => {
     "Own the end-to-end test docs under…",
   );
   assert.equal(missionName("**Onboarding**: first session under a minute"), "Onboarding");
-  assert.equal(missionName("   "), "New Runner");
+  assert.equal(missionName("   "), "New Mission");
   // A heading-style first line is the name it was given.
   assert.equal(missionName("Billing\nOwn invoices and keep Stripe in step. Then more."), "Billing");
   assert.equal(missionName("\n\n## Onboarding\nFirst session under a minute"), "Onboarding");

@@ -5,9 +5,9 @@ import { refreshMissions } from "@/hooks/use-missions";
 import { missionArchiveConsequence, requestMissionArchive } from "@/lib/missions/archive";
 
 /**
- * Confirm archiving a Runner with its Ships (lib/missions/archive.ts): how
+ * Confirm archiving a Mission with its Ships (lib/missions/archive.ts): how
  * many go with it and how they come back, then a click (it's undone by
- * opening it, so no hold). The Runners are read again either way: a refusal
+ * opening it, so no hold). The Missions are read again either way: a refusal
  * may have archived some of its Ships. `onArchived` runs once it is, to leave
  * it if it's on screen: left open, its page would restore it at once.
  */
@@ -16,7 +16,7 @@ export function ArchiveMissionDialog({
   onOpenChange,
   onArchived,
 }: {
-  /** The Runner to archive, and its Ships that aren't archived; null keeps
+  /** The Mission to archive, and its Ships that aren't archived; null keeps
    *  the dialog closed. */
   mission: { id: string; title: string; ships: number } | null;
   onOpenChange: (open: boolean) => void;
@@ -29,10 +29,10 @@ export function ArchiveMissionDialog({
       description={missionArchiveConsequence(mission?.ships ?? 0)}
       // Each Ship's work is saved as it's archived, a few at a time.
       busyLabel={mission?.ships ? "Archiving it and its Ships" : "Archiving"}
-      failure="Could not archive this Runner."
+      failure="Could not archive this Mission."
       confirm={(go) => (
         <button type="button" onClick={go} className="route-state-button is-primary">
-          Archive Runner
+          Archive Mission
         </button>
       )}
       run={async () => {

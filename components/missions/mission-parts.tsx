@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * The small parts the Runners UI is made of (the sidebar's section, the
- * Ships pane, the header): a Runner's icon with its status, a Ship's
+ * The small parts the Missions UI is made of (the sidebar's section, the
+ * Ships pane, the header): a Mission's icon with its status, a Ship's
  * state, and a pull request's chip, its checks on hover.
  */
 
@@ -35,7 +35,7 @@ export function StatusDot({ status, className }: { status: MissionStatus; classN
   );
 }
 
-/** The Runner's icon in its tile, its status a dot at the corner. */
+/** The Mission's icon in its tile, its status a dot at the corner. */
 export function MissionGlyph({
   id,
   icon,
@@ -80,7 +80,7 @@ const GROUP_GLYPH: Record<RunnerGroup, { Icon: typeof Check; className: string; 
  * A Ship's state as one small glyph. Where it stands as any session does
  * (at work, or needing a person: a question, a plan, secrets, an error),
  * the sidebar's own mark (StandingMark), so a Ship reads like every other
- * session; where it's the Runner's own (a pull request ready to merge or
+ * session; where it's the Mission's own (a pull request ready to merge or
  * review, shipping, one needing attention), a glyph of its group's.
  */
 export function RunnerGlyph({

@@ -95,13 +95,13 @@ export function WorkspaceStudio({
   const [infoOpen, setInfoOpen] = useState(false);
   // Beside the title: the repository by its short name, or this Mac's folder.
   const place = local ? local.name : projectName?.split("/").pop();
-  // A Runner's page: its header, and its Ships where a session's
+  // A Mission's page: its header, and its Ships where a session's
   // Environment is (components/missions).
   const isMission = workspace.kind === "mission";
   const { mission } = useMission(isMission ? workspace.id : undefined);
-  // Runners archive their Ships together. Individual cloud sessions are deleted.
+  // Missions archive their Ships together. Individual cloud sessions are deleted.
   const archive = !isLocal && isMission ? missionArchiveOffer(workspace) : null;
-  const archiveLabel = "Archive Runner";
+  const archiveLabel = "Archive Mission";
   const [archiving, setArchiving] = useState(false);
   const now = useNow(60_000);
   const deletable = !isLocal && !isMission && canDestroy(workspace, now);

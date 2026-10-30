@@ -1,9 +1,9 @@
 /**
- * The Runner's tools for its Ships (docs/missions.md), as plain functions:
- * the Runner's MCP endpoint (app/api/missions/mcp) serves them, and the
+ * The Mission's tools for its Ships (docs/missions.md), as plain functions:
+ * the Mission's MCP endpoint (app/api/missions/mcp) serves them, and the
  * org-wide MCP server can register the same ones later. Each is called for
- * one Runner (`scope`, from its token), and reaches only that Runner's
- * Ships: a Ship of another Runner, or any other session, reads as no Ship at
+ * one Mission (`scope`, from its token), and reaches only that Mission's
+ * Ships: a Ship of another Mission, or any other session, reads as no Ship at
  * all, so a token can't even learn that one exists.
  *
  * What touches the world comes in as `deps` (lib/missions/tools.deps.ts), so
@@ -23,12 +23,12 @@ import {
 } from "@/lib/missions/rules";
 import type { Workspace } from "@/lib/runtime/types";
 
-/** The Runner a call is for: the one its token names. */
+/** The Mission a call is for: the one its token names. */
 export type MissionScope = { missionId: string };
 
 /** What spawn_runner asks for when starting a Ship. */
 export type RunnerStart = {
-  /** Its brief, as the Runner wrote it: kept, and its name's source. */
+  /** Its brief, as the Mission wrote it: kept, and its name's source. */
   brief: string;
   /** Plan first: its first message asks for a plan before any change. */
   planMode: boolean;
@@ -39,10 +39,10 @@ export type RunnerStart = {
 };
 
 export type MissionToolDeps = {
-  /** Why the Runner's owner may no longer use its tools (they lost read on
+  /** Why the Mission's owner may no longer use its tools (they lost read on
    *  its project, or left its org), or null when they may. Asked on every call. */
   access(mission: Workspace): Promise<string | null>;
-  /** Why a Ship can't be started from the Runner's project now (gone,
+  /** Why a Ship can't be started from the Mission's project now (gone,
    *  archived, no repositories), or null when one can. */
   environmentReady(mission: Workspace): Promise<string | null>;
   /** Any session by id, whoever's. */
@@ -76,13 +76,13 @@ export const MISSION_TOOLS: ToolDefinition[] = [
   {
     name: "spawn_runner",
     description:
-      `Start a Ship: a new cloud session delegated by this Runner, in its project, with its own box and branch, to work on one task. It sees only the brief you write, so make it self-contained: the goal, the context it needs, what done looks like (usually a pull request). Runs on this Runner's model unless model, agent or effort says otherwise. At most ${MAX_RUNNERS} Ships that aren't archived.`,
+      `Start a Ship: a new cloud session delegated by this Mission, in its project, with its own box and branch, to work on one task. It sees only the brief you write, so make it self-contained: the goal, the context it needs, what done looks like (usually a pull request). Runs on this Mission's model unless model, agent or effort says otherwise. At most ${MAX_RUNNERS} Ships that aren't archived.`,
     inputSchema: {
       type: "object",
       properties: {
         prompt: { type: "string", description: "The Ship's brief: everything it knows about the task." },
-        name: { type: "string", description: "A short name for the Ship, shown under the Runner in the sidebar." },
-        model: { type: "string", description: "A model id to run it on instead of this Runner's." },
+        name: { type: "string", description: "A short name for the Ship, shown under the Mission in the sidebar." },
+        model: { type: "string", description: "A model id to run it on instead of this Mission's." },
         agent: { type: "string", enum: ["claude", "codex"], description: "The coding agent to run." },
         effort: { type: "string", enum: ["low", "medium", "high", "xhigh", "max"], description: "Thinking effort." },
         plan_mode: { type: "boolean", description: "Have it reply with a plan first and change nothing until told to go ahead." },
@@ -109,7 +109,7 @@ export const MISSION_TOOLS: ToolDefinition[] = [
   {
     name: "list_runners",
     description:
-      "List this Runner's Ships: each one's state (setting_up, working, idle, asleep, archived, failed), its pull requests with their CI checks and mergeability, and messages queued for it.",
+      "List this Mission's Ships: each one's state (setting_up, working, idle, asleep, archived, failed), its pull requests with their CI checks and mergeability, and messages queued for it.",
     inputSchema: {
       type: "object",
       properties: { include_archived: { type: "boolean", description: "Include archived Ships too." } },
@@ -137,12 +137,12 @@ export const MISSION_TOOLS: ToolDefinition[] = [
   },
   {
     name: "read_notes",
-    description: `Read this Runner's notes. They are also on your box at ${NOTES_FILE}, as they were when it started.`,
+    description: `Read this Mission's notes. They are also on your box at ${NOTES_FILE}, as they were when it started.`,
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     name: "write_notes",
-    description: `Replace this Runner's notes with content (Markdown, up to ${NOTES_MAX_CHARS} characters). Saved notes outlive this box; edits to ${NOTES_FILE} alone don't.`,
+    description: `Replace this Mission's notes with content (Markdown, up to ${NOTES_MAX_CHARS} characters). Saved notes outlive this box; edits to ${NOTES_FILE} alone don't.`,
     inputSchema: {
       type: "object",
       properties: { content: { type: "string", description: "The whole of the notes." } },
@@ -152,7 +152,7 @@ export const MISSION_TOOLS: ToolDefinition[] = [
   },
 ];
 
-const NO_SUCH_RUNNER: ToolResult = { text: "This Runner has no Ship with that id. list_runners shows its Ships.", isError: true };
+const NO_SUCH_RUNNER: ToolResult = { text: "This Mission has no Ship with that id. list_runners shows its Ships.", isError: true };
 
 function refuse(text: string): ToolResult {
   return { text, isError: true };
@@ -162,14 +162,14 @@ function json(value: unknown): ToolResult {
   return { text: JSON.stringify(value, null, 2) };
 }
 
-/** The Runner the scope names, if it is one still. */
+/** The Mission the scope names, if it is one still. */
 async function missionOf(scope: MissionScope, deps: MissionToolDeps): Promise<Workspace | null> {
   const mission = await deps.session(scope.missionId);
   if (!mission || mission.kind !== "mission" || mission.status === "destroyed" || mission.status === "destroying") return null;
   return mission;
 }
 
-/** One of the Runner's own Ships, or null for any other id. */
+/** One of the Mission's own Ships, or null for any other id. */
 export async function ownRunner(mission: Workspace, runnerId: unknown, deps: MissionToolDeps): Promise<Workspace | null> {
   if (typeof runnerId !== "string" || !runnerId) return null;
   const runner = await deps.session(runnerId);
@@ -210,7 +210,7 @@ async function runnerView(runner: Workspace, deps: MissionToolDeps, queued: numb
   };
 }
 
-/** Run one tool for the Runner the scope names. */
+/** Run one tool for the Mission the scope names. */
 export async function callMissionTool(
   scope: MissionScope,
   name: string,
@@ -218,7 +218,7 @@ export async function callMissionTool(
   deps: MissionToolDeps,
 ): Promise<ToolResult> {
   const mission = await missionOf(scope, deps);
-  if (!mission) return refuse("This Runner is gone, so its tools no longer work.");
+  if (!mission) return refuse("This Mission is gone, so its tools no longer work.");
   // Rechecked each call: access taken away since the box started counts now.
   const denied = await deps.access(mission);
   if (denied) return refuse(denied);
@@ -256,7 +256,7 @@ async function spawnRunner(mission: Workspace, args: Record<string, unknown>, de
   if (notReady) return refuse(`The Ship didn't start: ${notReady}`);
   const places = runnerPlacesLeft(await deps.runners(mission.id));
   if (places === 0) {
-    return refuse(`This Runner already has ${MAX_RUNNERS} Ships that aren't archived. Archive a finished one (archive_runner) first.`);
+    return refuse(`This Mission already has ${MAX_RUNNERS} Ships that aren't archived. Archive a finished one (archive_runner) first.`);
   }
   const started = await deps.startRunner(mission, {
     brief: prompt,
@@ -291,7 +291,7 @@ async function messageRunner(mission: Workspace, args: Record<string, unknown>, 
   if (!(await deps.send(runner, message))) {
     return refuse(
       runner.status === "archived" && runnerPlacesLeft(await deps.runners(mission.id)) === 0
-        ? `That Ship is archived, and restoring it would put this Runner over ${MAX_RUNNERS} Ships. Archive another first.`
+        ? `That Ship is archived, and restoring it would put this Mission over ${MAX_RUNNERS} Ships. Archive another first.`
         : "The Ship couldn't take the message (its box didn't answer). Try again shortly.",
     );
   }

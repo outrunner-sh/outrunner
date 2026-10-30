@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * A Runner's page header: its icon (click to pick another), its name (click
+ * A Mission's page header: its icon (click to pick another), its name (click
  * to rename), its project, and how many Ships it has out of how many.
  */
 
@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 /** The icon picker's columns, as its grid-cols-5 lays them out. */
 const GRID_COLUMNS = 5;
 
-/** Save a change to the Runner; the reason it wasn't saved, or null. */
+/** Save a change to the Mission; the reason it wasn't saved, or null. */
 async function patch(id: string, body: { title?: string; icon?: string }): Promise<string | null> {
   try {
     const response = await fetch(`/api/missions/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -79,13 +79,13 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
         }}
       >
         <DropdownMenuTrigger
-          aria-label={`Runner icon: ${current.label}. Change it`}
+          aria-label={`Mission icon: ${current.label}. Change it`}
           className="rounded-md outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-white/30"
         >
           <MissionGlyph id={missionId} icon={shownIcon} size="md" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-[212px] p-2">
-          <DropdownMenuLabel className="px-1 pt-0 pb-2 text-[11.5px] font-normal text-muted-foreground">Runner icon</DropdownMenuLabel>
+          <DropdownMenuLabel className="px-1 pt-0 pb-2 text-[11.5px] font-normal text-muted-foreground">Mission icon</DropdownMenuLabel>
           {/* Capture arrows before Radix's item handlers move focus in a
               single list; leave selection and typeahead to the menu. */}
           <div ref={grid} className="grid grid-cols-5 gap-1" onKeyDownCapture={moveInGrid}>
@@ -128,7 +128,7 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
               setEditing(false);
             }
           }}
-          aria-label="Runner name"
+          aria-label="Mission name"
           maxLength={120}
           className="h-7 min-w-0 rounded-md border border-white/20 bg-transparent px-2 text-[14px] text-[#ededed] outline-none"
         />

@@ -14,14 +14,14 @@ export const maxDuration = 300;
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-/** Archive one of the owner's Runners with its Ships (lib/missions/archive.ts). */
+/** Archive one of the owner's Missions with its Ships (lib/missions/archive.ts). */
 export async function POST(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   const owner = await getOwner();
   if (!owner) return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   const { id } = await context.params;
   const mission = await ownsMission(owner.id, id);
-  if (!mission) return NextResponse.json({ error: "Runner not found." }, { status: 404 });
+  if (!mission) return NextResponse.json({ error: "Mission not found." }, { status: 404 });
   const result = await archiveMission(mission, missionArchiveDeps());
   if (!result.archived) {
     // Ships archived without their files on an ask that ran out of time

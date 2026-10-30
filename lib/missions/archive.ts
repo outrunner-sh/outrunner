@@ -1,5 +1,5 @@
 /**
- * Archiving a Runner with its Ships (docs/missions.md), the parts with no
+ * Archiving a Mission with its Ships (docs/missions.md), the parts with no
  * network: when it's offered, what the server does in what order, and the
  * browser's ask for it. The wiring is lib/missions/archive.deps.ts; the route
  * is POST /api/missions/[id]/archive.
@@ -14,7 +14,7 @@ import { ARCHIVED_UNSAVED } from "@/lib/session/archive-notice";
 export const ARCHIVE_CONCURRENCY = 4;
 
 /**
- * Archive for a Runner: offered only on a Runtime Computer, the one kind with
+ * Archive for a Mission: offered only on a Runtime Computer, the one kind with
  * a Snapshot to restore from (as a session's is). Pressable while its box is
  * up or asleep (one asleep is woken to save its work), shown disabled saying
  * why while it's between those, and not offered once archived, deleted or
@@ -49,7 +49,7 @@ export function missionArchiveOffer(runner: Pick<Workspace, "status" | "provider
   return null;
 }
 
-/** What the confirmation says will happen, for a Runner with `ships` Ships
+/** What the confirmation says will happen, for a Mission with `ships` Ships
  *  that aren't archived. */
 export function missionArchiveConsequence(ships: number): string {
   const them =
@@ -110,7 +110,7 @@ export function unsavedNote(unsaved: ShipUnsaved[]): string {
 }
 
 /** No Ship is started on after this long in one ask, so the last ones (a
- *  wake and a save, about 75 seconds each) and then the Runner's own end
+ *  wake and a save, about 75 seconds each) and then the Mission's own end
  *  inside the route's 300. */
 export const ARCHIVE_BUDGET_MS = 120_000;
 
@@ -139,13 +139,13 @@ const shipName = (ship: Workspace) => ship.title ?? ship.branch;
 const toArchive = (ships: Workspace[]) => ships.filter((ship) => !["archived", "destroying", "destroyed"].includes(ship.status));
 
 /**
- * Archive `mission`'s Ships, then the Runner itself: the Runner goes only
+ * Archive `mission`'s Ships, then the Mission itself: the Mission goes only
  * once every Ship has, so none is left at work with no one to hear it.
  *
  * Nothing is touched while any Ship can't be archived now (one setting up,
  * say): the answer names them. Each Ship's queued messages are taken as it's
  * archived and given back if it isn't. Ships are read again before the
- * Runner goes, so one it started meanwhile keeps it; and each row is read
+ * Mission goes, so one it started meanwhile keeps it; and each row is read
  * as its turn comes, as minutes may have passed. An ask that runs out of
  * time leaves the rest for the next (`more`); those archived stay archived.
  */
@@ -153,7 +153,7 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
   const started = deps.now();
   const listed = await deps.runners(mission.id);
   // A previous attempt may have archived an unreachable Ship before a real
-  // save failure stopped the Runner. Keep that warning across manual retries.
+  // save failure stopped the Mission. Keep that warning across manual retries.
   const unsaved: ShipUnsaved[] = listed
     .filter((ship) => ship.status === "archived" && ship.errorMessage === ARCHIVED_UNSAVED)
     .map((ship) => ({ id: ship.id, name: shipName(ship) }));
@@ -165,7 +165,7 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
     const named = refused.map((s) => `“${s.name}” (${s.why})`).join(", ");
     const why = more
       ? `${plural(toGo)} still to archive. Try again to finish.`
-      : `${ships > 0 ? `${plural(ships)} archived. ` : ""}The Runner wasn't archived: ${refused.length === 1 ? "a Ship" : plural(refused.length)} couldn't be yet: ${named}` +
+      : `${ships > 0 ? `${plural(ships)} archived. ` : ""}The Mission wasn't archived: ${refused.length === 1 ? "a Ship" : plural(refused.length)} couldn't be yet: ${named}` +
         `${toGo > 0 ? `, and ${plural(toGo)} still to archive` : ""}.` +
         (unsaved.length > 0 ? ` ${unsavedNote(unsaved)}` : "");
     return { archived: false, ships, left, why, more, ...(unsaved.length > 0 && { unsaved }) };
@@ -212,7 +212,7 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
     }
   };
   await Promise.all(Array.from({ length: Math.min(ARCHIVE_CONCURRENCY, live.length) }, worker));
-  // One the Runner started, or a message brought back, while the rest were
+  // One the Mission started, or a message brought back, while the rest were
   // archived, or one another ask is archiving: up still, and not already said.
   const said = new Set(left.map((s) => s.id));
   for (const ship of toArchive(await deps.runners(mission.id))) {
@@ -227,18 +227,18 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
   if (runner && runner.status !== "archived") {
     const offer = missionArchiveOffer(runner);
     const answer = runnerAnswer = offer?.can ? await deps.archive(runner).catch(errorText) : offer ? offer.why.replace(/\.$/, "").toLowerCase() : "it isn't running";
-    // The Runner's own box out of reach: archived all the same, as a Ship is.
+    // The Mission's own box out of reach: archived all the same, as a Ship is.
     const why = typeof answer === "string" ? answer : null;
     if (why !== null) {
       const also = unsaved.length > 0 ? ` ${unsavedNote(unsaved)}` : "";
-      return { archived: false, ships, left, why: `Its Ships are archived, but the Runner itself couldn't be: ${why}.${also}`, more: false, ...(unsaved.length > 0 && { unsaved }) };
+      return { archived: false, ships, left, why: `Its Ships are archived, but the Mission itself couldn't be: ${why}.${also}`, more: false, ...(unsaved.length > 0 && { unsaved }) };
     }
   }
   const runnerUnsaved = (runnerAnswer !== null && typeof runnerAnswer === "object") ||
     (runner?.status === "archived" && runner.errorMessage === ARCHIVED_UNSAVED);
   const notes = [
     ...(unsaved.length > 0 ? [unsavedNote(unsaved)] : []),
-    ...(runnerUnsaved ? ["The Runner itself was archived without its files, its box out of reach."] : []),
+    ...(runnerUnsaved ? ["The Mission itself was archived without its files, its box out of reach."] : []),
   ];
   return { archived: true, ships, ...(unsaved.length > 0 && { unsaved }), ...(notes.length > 0 && { note: notes.join(" ") }) };
 }
@@ -248,7 +248,7 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
 const MAX_ASKS = 5;
 
 /**
- * Archive the Runner `id` with its Ships, from the browser: asked again while
+ * Archive the Mission `id` with its Ships, from the browser: asked again while
  * the server only ran out of time. Throws with a sentence to show when it (or
  * one of its Ships) couldn't be; answers what to say once it is, when there's
  * something (Ships archived without their files), else null.
@@ -272,7 +272,7 @@ export async function requestMissionArchive(id: string, fetchImpl: typeof fetch 
     }
     if (res.ok) return notes.length > 0 ? notes.join(" ") : null;
     if (body.more === true && ask < MAX_ASKS) continue;
-    const why = typeof body.error === "string" ? body.error : "Could not archive this Runner. Please try again.";
+    const why = typeof body.error === "string" ? body.error : "Could not archive this Mission. Please try again.";
     // A refusal at the end says its own; the earlier asks' notes go with it.
     throw new Error([why, ...notes.filter((n) => !why.includes(n))].join(" "));
   }

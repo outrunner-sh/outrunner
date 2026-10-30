@@ -105,7 +105,7 @@ test("a Mission's token reaches its own Runners and nothing else", async () => {
     for (const tool of ["message_runner", "read_runner", "archive_runner"]) {
       const result = await callMissionTool(scope, tool, { runner_id: other, message: "hi" }, deps);
       assert.equal(result.isError, true, `${tool} ${other}`);
-      // Another Runner's Ship reads exactly as no Ship: nothing learned.
+      // Another Mission's Ship reads exactly as no Ship: nothing learned.
       assert.match(result.text, /no Ship with that id/, `${tool} ${other}`);
     }
   }
@@ -215,7 +215,7 @@ test("a Runner's state reads from its status and whether it's mid-turn", () => {
 test("access is asked on every call: taken away, the tools stop", async () => {
   const { deps, calls, state } = world();
   assert.equal((await callMissionTool({ missionId: "m1" }, "message_runner", { runner_id: "r1", message: "a" }, deps)).isError, undefined);
-  state.denied = "The Runner's owner can no longer read its project, so its tools are off.";
+  state.denied = "The Mission's owner can no longer read its project, so its tools are off.";
   for (const tool of ["list_runners", "read_notes", "spawn_runner", "message_runner"]) {
     const result = await callMissionTool({ missionId: "m1" }, tool, { runner_id: "r1", message: "b", prompt: "x" }, deps);
     assert.equal(result.isError, true, tool);
@@ -226,9 +226,9 @@ test("access is asked on every call: taken away, the tools stop", async () => {
 
 test("spawn_runner says why when the project isn't ready", async () => {
   const { deps, started, state } = world();
-  state.notReady = "the Runner's project is gone or archived.";
+  state.notReady = "the Mission's project is gone or archived.";
   const result = await callMissionTool({ missionId: "m1" }, "spawn_runner", { prompt: "do it" }, deps);
   assert.equal(result.isError, true);
-  assert.match(result.text, /didn't start: the Runner's project is gone/);
+  assert.match(result.text, /didn't start: the Mission's project is gone/);
   assert.equal(started.length, 0);
 });

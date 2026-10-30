@@ -29,7 +29,7 @@ function session(id: string, status: WorkspaceStatus, patch: Partial<Workspace> 
 
 const runner = (status: WorkspaceStatus = "ready") => session("m1", status, { kind: "mission", parentMissionId: null });
 
-/** A Runner and its Ships, archived as the lifecycle would. Rows are read
+/** A Mission and its Ships, archived as the lifecycle would. Rows are read
  *  fresh from `rows`, which a test may change mid-archive. */
 function world(ships: Workspace[], mission = runner()) {
   const rows = new Map([mission, ...ships].map((s) => [s.id, s]));
@@ -71,7 +71,7 @@ function world(ships: Workspace[], mission = runner()) {
   return { mission, rows, deps, archived, order, refuse, queued, returned, hooks, mostAtOnce: () => mostAtOnce, tick: (ms: number) => void (clock += ms) };
 }
 
-test("its Ships are archived, at work or asleep, then the Runner, last", async () => {
+test("its Ships are archived, at work or asleep, then the Mission, last", async () => {
   const w = world([
     session("working", "ready"),
     session("idle", "idle"),
@@ -96,7 +96,7 @@ test("a Ship's queued messages are taken as it's archived, and given back if it 
   assert.deepEqual(w.returned, ["qb"]);
 });
 
-test("a Ship another ask is archiving keeps the Runner, up front or by the end", async () => {
+test("a Ship another ask is archiving keeps the Mission, up front or by the end", async () => {
   const before = world([session("a", "ready"), session("going", "archiving")]);
   const first = await archiveMission(before.mission, before.deps);
   assert.equal(first.archived, false);
@@ -140,7 +140,7 @@ test("a Ship that can't go now: nothing is touched, and it's named", async () =>
   assert.match(result.why, /“legacy” \(its computer can't archive\)/);
 });
 
-test("one that fails is left and named; the rest are archived, the Runner kept", async () => {
+test("one that fails is left and named; the rest are archived, the Mission kept", async () => {
   const w = world([session("stuck", "ready"), session("fine", "idle"), session("throws", "ready")]);
   w.refuse.set("stuck", "its box didn't answer");
   const archive = w.deps.archive;
@@ -154,7 +154,7 @@ test("one that fails is left and named; the rest are archived, the Runner kept",
   assert.match(result.why, /“throws” \(boom\)/);
 });
 
-test("a Ship started while the others are archived keeps the Runner", async () => {
+test("a Ship started while the others are archived keeps the Mission", async () => {
   const w = world([session("a", "ready")]);
   w.hooks.onArchive = (id) => {
     if (id === "a") w.rows.set("new", session("new", "creating"));
@@ -165,7 +165,7 @@ test("a Ship started while the others are archived keeps the Runner", async () =
   if (!result.archived) assert.deepEqual(result.left.map((s) => s.id), ["new"]);
 });
 
-test("a Ship a message brings back while the others are archived keeps the Runner", async () => {
+test("a Ship a message brings back while the others are archived keeps the Mission", async () => {
   const w = world([session("a", "ready"), session("b", "ready")]);
   w.hooks.onArchive = (id) => {
     if (id === "b") queueMicrotask(() => w.rows.set("a", session("a", "restoring")));
@@ -226,13 +226,13 @@ test("a few Ships at a time", async () => {
   assert.ok(w.mostAtOnce() <= 4);
 });
 
-test("a Runner archived already: its Ships still go, and it isn't archived again", async () => {
+test("a Mission archived already: its Ships still go, and it isn't archived again", async () => {
   const w = world([session("a", "ready")], runner("archived"));
   assert.deepEqual(await archiveMission(w.mission, w.deps), { archived: true, ships: 1 });
   assert.deepEqual(w.archived, ["a"]);
 });
 
-test("a Runner that can't be archived says why, its Ships archived", async () => {
+test("a Mission that can't be archived says why, its Ships archived", async () => {
   const w = world([session("a", "ready")], runner("restoring"));
   const result = await archiveMission(w.mission, w.deps);
   assert.equal(result.archived, false);
@@ -261,7 +261,7 @@ test("the confirmation counts its Ships", () => {
     "failed Ships count, while archived Shipping rows do not");
 });
 
-test("manual Runner archive includes failed Ships and does not forget their work", async () => {
+test("manual Mission archive includes failed Ships and does not forget their work", async () => {
   const w = world([session("failed-with-work", "failed"), session("dead", "ready"), session("already-archived", "archived")]);
   const saved = w.deps.archive;
   w.deps.archive = async (ship) => {
@@ -334,7 +334,7 @@ test("the browser's ask: again while there's more, else the route's error, said"
   await assert.rejects(requestMissionArchive("m1", offline), /Could not reach Outrunner/);
 });
 
-test("a Ship whose box is out of reach is archived without its files, and the Runner goes, saying so", async () => {
+test("a Ship whose box is out of reach is archived without its files, and the Mission goes, saying so", async () => {
   const w = world([session("dead", "ready", { title: "Click Blink" }), session("asleep", "suspended", { title: "Instant Routes" }), session("fine", "idle")]);
   const archive = w.deps.archive;
   w.deps.archive = async (s) => {
@@ -353,16 +353,16 @@ test("a Ship whose box is out of reach is archived without its files, and the Ru
   assert.doesNotMatch(result.note ?? "", /setup/);
 });
 
-test("a Runner archived without its own files says so too", async () => {
+test("a Mission archived without its own files says so too", async () => {
   const w = world([]);
   const archive = w.deps.archive;
   w.deps.archive = async (s) => ((await archive(s)) === null ? { note: "Archived without its files." } : null);
   const result = await archiveMission(w.mission, w.deps);
   assert.equal(result.archived, true);
-  if (result.archived) assert.match(result.note ?? "", /The Runner itself was archived without its files/);
+  if (result.archived) assert.match(result.note ?? "", /The Mission itself was archived without its files/);
 });
 
-test("a Ship archived without its files is still said when another keeps the Runner", async () => {
+test("a Ship archived without its files is still said when another keeps the Mission", async () => {
   const w = world([session("dead", "ready", { title: "Click Blink" }), session("stuck", "ready")]);
   w.refuse.set("stuck", "Your plan's cloud hours are used up");
   const archive = w.deps.archive;

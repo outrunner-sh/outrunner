@@ -7,7 +7,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 type RouteContext = { params: Promise<{ id: string; runnerId: string }> };
 
-/** A Ship under the owner's Runner, opened in the Ships pane: its brief
+/** A Ship under the owner's Mission, opened in the Ships pane: its brief
  *  and its latest response (from its box, else as last recorded). */
 export async function GET(_request: Request, context: RouteContext) {
   const owner = await getOwner();
