@@ -2,6 +2,9 @@
 
 import { RotateCw } from "lucide-react";
 import { DRAFTS } from "@/lib/client/drafts";
+import { useViewerScope } from "@/components/app-data";
+import { RECENT_SELECTION } from "@/lib/session/kept-selection";
+import { sessionModelToRemember } from "@/lib/session/recent-selection";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { type AgentEvent, ChangesResponse, FilesResponse, PlanActionResponse, RewindResponse } from "@/lib/runtime/agent-protocol";
@@ -62,7 +65,6 @@ import {
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { eligibleHarnesses, selectionForHarness } from "@/lib/runtime/selection";
 import { exhaustion, hasUnfinishedRequest, HarnessSelection, PendingHarness } from "@/lib/session/harness-switch";
-import { isProviderId } from "@/lib/providers/registry";
 import { EMPTY_LOADOUT } from "@/lib/runtime/model-loadout";
 import {
   defaultModel,
@@ -78,6 +80,7 @@ import {
 } from "@/lib/runtime/session-models";
 import { sessionTitle } from "@/lib/nav/session-title";
 import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
+import { pickedProvider, rememberPickedProvider } from "@/lib/session/picked-provider";
 import { chatRoute, chatStateKey, MAIN_CHAT } from "@/lib/session/chats";
 import { followUpRoute } from "@/lib/session/chat-preferences";
 import { editQueued, moveQueued, type QueuedPrompt, queueDrains, readQueue, writeQueue } from "@/lib/session/prompt-queue";
@@ -423,6 +426,18 @@ export function WorkspaceSession({
   // reply too. Picks in this page continue to take over as they did before.
   const savedModel = boundary && !useLocalSelection && !picked ? savedSelection?.model.id : undefined;
   const shownModel = picked && !repliedSincePick ? picked.model : (savedModel ?? activeModel ?? recorded?.model.id);
+  // Carry this chat's actual selection to the next new session. A staged or
+  // failed switch never changes it; successful switches update shownModel.
+  const viewerScope = useViewerScope();
+  const currentModel = sessionModelToRemember(modelGroups(menu, accountsHere(menu.agents, local, null), agent), shownModel, providerPicked ?? undefined, recorded?.model);
+  const currentProvider = currentModel?.provider;
+  const currentModelId = currentModel?.id;
+  const selectionReady = !startup;
+  useEffect(() => {
+    if (selectionReady && viewerScope && currentProvider && currentModelId) {
+      RECENT_SELECTION.remember({ provider: currentProvider, id: currentModelId, agent, effort }, viewerScope);
+    }
+  }, [selectionReady, viewerScope, currentProvider, currentModelId, agent, effort]);
   // Stopping the turn under way (the composer's stop button): the agent
   // presses Escape in the session and answers once the turn has stopped.
   const [stopping, setStopping] = useState(false);
@@ -1717,25 +1732,6 @@ async function stopCloudTurn(workspaceId: string, chatId: string): Promise<void>
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't stop the turn. Please try again.");
-}
-
-/** Local sessions have no server model row; their last explicit provider is
- * retained only as a hint. Cloud sessions always prefer the recorded choice. */
-function pickedProvider(workspaceId: string): ModelProvider | null {
-  try {
-    const saved = window.localStorage.getItem(`outrunner:model-key:${workspaceId}`);
-    if (saved === "own") return "openrouter";
-    if (saved === "neev") return "outrunner";
-    return saved === "outrunner" || saved === "claude" || saved === "codex" || isProviderId(saved) ? saved : null;
-  } catch { return null; }
-}
-
-function rememberPickedProvider(workspaceId: string, provider: ModelProvider): void {
-  try {
-    window.localStorage.setItem(`outrunner:model-key:${workspaceId}`, provider);
-  } catch {
-    // Blocked storage only costs the tick going back to the default.
-  }
 }
 
 /** A bubble's prompt as the session will log it: with its files' header

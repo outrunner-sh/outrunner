@@ -3,6 +3,7 @@
 import { GitBranch, GitFork, Inbox } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
+import { useAppData, useViewerScope } from "@/components/app-data";
 import { ProjectEnvironmentPicker } from "@/components/import-setup-picker";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
@@ -30,6 +31,8 @@ import type { Project } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { newSessionDetails } from "@/lib/session/new-session-target";
 import { warmNewSession } from "@/lib/session/warm-new-session";
+import { RECENT_SELECTION } from "@/lib/session/kept-selection";
+import { lastSessionSelection, recentSelectionFor } from "@/lib/session/recent-selection";
 
 /** One item in the row above the composer: where, what, which branch, how. */
 const CHIP = "inline-flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground [&_svg]:size-3.5";
@@ -71,14 +74,17 @@ export function NewSessionForm({
 }) {
   const { projects, projectId, selectProject, selected, isCreating, message, messageAction, refusedPrompt, refusedAttachments, takeRefusedAttachments, create, createLocal } =
     useCreateSession(listed, initialProjectId);
-  // Explicit session selection, then personal/org preferences, then the
-  // eligible runtime default. The server uses the same selection rules.
+  const scope = useViewerScope();
+  const data = useAppData();
+  const keptSelection = RECENT_SELECTION.useKept(scope);
+  const recent = keptSelection ?? (scope ? lastSessionSelection(data?.workspaces ?? [], scope.split(":")[0]) : null);
+  // Explicit choice, then the current/recent session, then saved defaults.
   const menu = useOutrunnerModels(undefined, selected?.id);
-  // The model picked in the composer, else the loadout's default: its agent
+  // The model picked in the composer, else the recent session or default: its agent
   // decides what this Mac needs for a local session (Claude Code, or Codex).
   const [picked, setPicked] = useState<SessionModel | null>(initialPick?.model ?? null);
   // The effort picked in the composer; undefined until one is, when the
-  // loadout's for its default model shows, else DEFAULT_EFFORT.
+  // recent session's effort or the loadout's for its default model shows.
   const [pickedEffort, setPickedEffort] = useState<Effort | null | undefined>(initialPick ? initialPick.effort : undefined);
   // The agent asked for (Codex on Outrunner's models), kept across model
   // picks: it runs those it can (agentOf), and a cloud session only. Kept
@@ -105,7 +111,7 @@ export function NewSessionForm({
     if (focusComposer) setFocusAsks(focusAsks + 1);
   }
   const workItem = useWorkItemPrompt(workItemId);
-  const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude", askedAgent));
+  const where = useSessionLocation(agentOf((picked ?? recent ?? menu?.loadout.default)?.provider ?? "claude", askedAgent ?? recent?.agent));
   const local = where.location === "local";
   // A repository's first cloud session can bring its environment from this Mac.
   const environment = useFirstSessionEnvironment(selected, !local);
@@ -130,7 +136,8 @@ export function NewSessionForm({
   const allGroups = targetMenu ? modelGroups(targetMenu, accounts) : [];
   const available = eligibleHarnesses(allGroups, targetMenu?.harnesses);
   const eligibleAsked = askedAgent && available.includes(askedAgent) ? askedAgent : undefined;
-  const fallback = menu ? initialSelection(allGroups, menu.loadout, eligibleAsked, targetMenu?.harnesses) : null;
+  const recentPick = recentSelectionFor(allGroups, recent, targetMenu?.harnesses, eligibleAsked);
+  const fallback = recentPick ?? (menu ? initialSelection(allGroups, menu.loadout, eligibleAsked, targetMenu?.harnesses) : null);
   // A stale pick stays in memory for when its credentials return, but cannot be
   // sent to a target that does not offer it.
   const offeredPick = picked ? offeredModel(allGroups, picked) : undefined;
@@ -142,6 +149,7 @@ export function NewSessionForm({
   const startModel = startsOn ?? undefined;
   const effort = offeredPick && pickedEffort !== undefined
     ? compatibleEffort(offeredPick, pickedEffort)
+    : !offeredPick && recentPick ? recentPick.effort
     : startsOn ? effortOnPick(menu?.loadout, startsOn) : null;
 
   // Either kind of session opens in about a second (a cloud one shows its

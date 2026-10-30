@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 
-import { useAppData } from "@/components/app-data";
+import { useAppData, useViewerScope } from "@/components/app-data";
 import type { AgentId } from "@/lib/agents/registry";
 import { LocalAgentAuthError, signInLocalAgent } from "@/lib/desktop/local-agent-auth";
 import {
@@ -45,7 +45,9 @@ import {
   useFailedCreate,
 } from "@/lib/session/pending-sessions";
 import { rememberEffort } from "@/lib/session/picked-effort";
+import { rememberPickedProvider } from "@/lib/session/picked-provider";
 import { sendCreate } from "@/lib/session/send-create";
+import { RECENT_SELECTION } from "@/lib/session/kept-selection";
 
 type CreateResponse = {
   /** The new session's row, whole, so its page opens on it at once. */
@@ -73,6 +75,7 @@ function localBranch(workspaceId: string): string {
  * the caller supplies the layout.
  */
 export function useCreateSession(projects: Project[], initialProjectId?: string) {
+  const viewerScope = useViewerScope();
   const router = useRouter();
   // The one picked here; until then the one the form starts on, which follows
   // the list as it arrives (a cold start streams it in).
@@ -329,6 +332,12 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         }
       }
       rememberEffort(workspaceId, startedAt);
+      if (model) rememberPickedProvider(workspaceId, model.provider);
+      // Local sessions have no server model row. Keep the confirmed choice
+      // before navigation, including a session that has not replied yet.
+      if (viewerScope && model) {
+        RECENT_SELECTION.remember({ provider: model.provider, id: model.id, agent, effort: startedAt }, viewerScope);
+      }
       router.push(`/local/${workspaceId}${firstPromptQuery({ prompt, attachmentIds: [] })}`);
       resolve(true);
     }));
