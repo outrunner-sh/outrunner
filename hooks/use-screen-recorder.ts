@@ -22,6 +22,7 @@ import {
   type StoppedBy,
   withLastFrame,
 } from "@/lib/session/screen-recording";
+import { WEBM_HEAD_BYTES, webmWithDuration } from "@/lib/session/webm-duration";
 
 export type ScreenRecording = { video: File; frames: File[]; stoppedBy: StoppedBy; durationMs: number };
 
@@ -66,6 +67,18 @@ function grabFrame(video: HTMLVideoElement, atMs: number): Promise<Frame | null>
   canvas.height = height;
   canvas.getContext("2d")?.drawImage(video, 0, 0, width, height);
   return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob && { atMs, blob }), "image/jpeg", 0.85));
+}
+
+/** The recording with its length written in, so players show it and a seek
+ *  bar (lib/session/webm-duration.ts); as it was if it can't be. */
+async function withDuration(video: Blob, durationMs: number): Promise<Blob> {
+  try {
+    const head = new Uint8Array(await video.slice(0, WEBM_HEAD_BYTES).arrayBuffer());
+    const patched = webmWithDuration(head, durationMs);
+    return patched ? new Blob([patched.head, video.slice(patched.consumed)], { type: video.type }) : video;
+  } catch {
+    return video;
+  }
 }
 
 /** Put the tab's title back, unless the app has changed it since. */
@@ -203,7 +216,9 @@ export function useScreenRecorder({
       setStartedAt(null);
       if (chunks.length === 0) return restoreTitle(current.title);
       const base = recordingBase(new Date(current.startedAt));
-      const file = new File(chunks, `${base}.${current.format.extension}`, { type: fileType(current.format) });
+      const type = fileType(current.format);
+      const recorded = new Blob(chunks, { type });
+      const file = new File([type === "video/webm" ? await withDuration(recorded, durationMs) : recorded], `${base}.${current.format.extension}`, { type });
       const frames = pickFrames(withLastFrame(current.frames, last)).map(
         (frame) => new File([frame.blob], frameName(base, frame.atMs), { type: "image/jpeg" }),
       );
