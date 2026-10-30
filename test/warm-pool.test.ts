@@ -8,6 +8,7 @@ import {
   REFILL_BACKOFF_MS,
   refillPool,
   STALE_REFILL_MS,
+  wakeIntentPool,
   warmRefusal,
   type WarmPoolDeps,
 } from "@/lib/runtime/warm-pool";
@@ -248,4 +249,66 @@ test("an agent that can't warm the project leaves its box unwarmed, and says why
   assert.match(warmRefusal([AGENT_FEATURE_WARM_HOOKS], true) ?? "", /several repositories/);
   assert.match(warmRefusal(undefined, false) ?? "", /can't run warm hooks/);
   assert.match(warmRefusal([AGENT_FEATURE_MULTI_REPO_WARM], true) ?? "", /can't run warm hooks/);
+});
+
+test("an intent wake pauses before recording stopped when ready persistence fails", async () => {
+  const log: string[] = [];
+  await assert.rejects(
+    wakeIntentPool({
+      wake: async () => (log.push("wake"), { sandboxId: "sb-1" }),
+      publish: async () => {
+        log.push("publish");
+        throw new Error("database unavailable");
+      },
+      meter: async () => void log.push("meter"),
+      meterFailed: () => log.push("meter failed"),
+      pause: async () => void log.push("pause"),
+      stopped: async () => void log.push("stopped"),
+    }),
+    /database unavailable/,
+  );
+  assert.deepEqual(log, ["wake", "publish", "pause", "stopped"]);
+});
+
+test("an intent wake keeps its ready row when only metering fails", async () => {
+  const log: string[] = [];
+  assert.equal(
+    await wakeIntentPool({
+      wake: async () => (log.push("wake"), { sandboxId: "sb-1" }),
+      publish: async () => (log.push("publish"), true),
+      meter: async () => {
+        log.push("meter");
+        throw new Error("metering unavailable");
+      },
+      meterFailed: () => log.push("meter failed"),
+      pause: async () => void log.push("pause"),
+      stopped: async () => void log.push("stopped"),
+    }),
+    true,
+  );
+  assert.deepEqual(log, ["wake", "publish", "meter", "meter failed"]);
+});
+
+test("an expired intent lease fences a wake that completes after cleanup claims it", async () => {
+  const log: string[] = [];
+  let finishWake!: (restored: { sandboxId: string }) => void;
+  const waking = wakeIntentPool({
+    wake: () => new Promise((resolve) => {
+      finishWake = resolve;
+      log.push("wake started");
+    }),
+    // False is the compare-and-set result after cleanup clears the lease.
+    publish: async () => (log.push("publish fenced"), false),
+    meter: async () => void log.push("meter"),
+    meterFailed: () => log.push("meter failed"),
+    pause: async () => void log.push("worker pause"),
+    stopped: async () => void log.push("stopped"),
+  });
+  log.push("cleanup claimed");
+  finishWake({ sandboxId: "sb-1" });
+  assert.equal(await waking, false);
+  // Cleanup owns the pause; the late worker neither publishes ready nor
+  // competes with it for the external box.
+  log.push("cleanup pause");
+  assert.deepEqual(log, ["wake started", "cleanup claimed", "publish fenced", "cleanup pause"]);
 });

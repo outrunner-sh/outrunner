@@ -117,6 +117,37 @@ export type WarmPoolDeps = {
   now(): number;
 };
 
+/** The external wake and its durable handoff to either Send or expiry
+ * cleanup. Publishing is a compare-and-set: false means cleanup cleared the
+ * lease first and now owns pausing the box. */
+export type IntentWakeDeps<Restored> = {
+  wake(): Promise<Restored>;
+  publish(restored: Restored): Promise<boolean>;
+  meter(restored: Restored): Promise<void>;
+  meterFailed(error: unknown): void;
+  pause(restored: Restored): Promise<void>;
+  stopped(): Promise<void>;
+};
+
+/** Wake a leased pool box without letting a late wake undo expiry cleanup.
+ * A failed publish pauses before the row is labelled stopped. Once ready is
+ * published, metering is best effort: reconciliation repairs a missing
+ * interval, and the running ready row must never be rolled back. */
+export async function wakeIntentPool<Restored>(deps: IntentWakeDeps<Restored>): Promise<boolean> {
+  let restored: Restored | null = null;
+  try {
+    restored = await deps.wake();
+    if (!(await deps.publish(restored))) return false;
+  } catch (error) {
+    if (restored !== null) await deps.pause(restored);
+    await deps.stopped();
+    throw error;
+  }
+
+  await deps.meter(restored).catch(deps.meterFailed);
+  return true;
+}
+
 /**
  * Fill the project's pool up to `size` ready boxes, one per free slot, each
  * made, warmed and stopped. How many were made.

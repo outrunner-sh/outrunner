@@ -22,6 +22,7 @@ import { gitTokensFor, optionalGitToken } from "@/lib/github/identity.deps";
 import {
   claimPooledComputer,
   claimPooledWarmup,
+  completePooledWarmup,
   createPooledComputer,
   deletePooledComputer,
   getPooledComputers,
@@ -39,7 +40,14 @@ import { type ComputerRuntimeProvider, isComputerProvider } from "@/lib/runtime/
 import { providerForNewSessions, providerNamed } from "@/lib/runtime/sandbox-choice";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import type { Project, ProviderName } from "@/lib/runtime/types";
-import { POOL_SIZE, projectCheckouts, refillPool, STALE_REFILL_MS, warmRefusal } from "@/lib/runtime/warm-pool";
+import {
+  POOL_SIZE,
+  projectCheckouts,
+  refillPool,
+  STALE_REFILL_MS,
+  wakeIntentPool,
+  warmRefusal,
+} from "@/lib/runtime/warm-pool";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** Whether `provider`'s boxes are pooled: Outrunner's own, on a provider
@@ -105,39 +113,38 @@ export async function intentWarmProject(owner: Owner, projectId: string): Promis
 
   const computer = await getRuntimeComputerById(warm.computerId);
   const secret = await readRuntimeComputerSecret(warm.computerId);
-  if (!computer?.daytonaSandboxId || !secret) return;
+  const sandboxId = computer?.daytonaSandboxId;
+  if (!computer || !sandboxId || !secret) return;
 
-  try {
-    const restored = await provider.provisionComputer({
+  await wakeIntentPool({
+    wake: () => provider.provisionComputer({
       secret,
       repoFullName: project.fullName,
       githubToken,
       sessionEnv,
-      previousSandboxId: computer.daytonaSandboxId,
-    });
-    await updateRuntimeComputer(computer.id, {
-      status: "ready",
-      daytonaSandboxId: restored.sandboxId,
+      previousSandboxId: sandboxId,
+    }),
+    publish: (restored) => completePooledWarmup(computer.id, {
+      sandboxId: restored.sandboxId,
       provider: provider.name,
       agentBaseUrl: restored.agentBaseUrl,
-      provisionTimings: restored.timings,
-      errorMessage: null,
-      touchActive: true,
-    });
-    await openInterval({
+      timings: restored.timings,
+    }),
+    meter: (restored) => openInterval({
       computerId: computer.id,
       sandboxId: restored.sandboxId,
       cpu: restored.cpu ?? SMALL_BOX_CPU,
       at: new Date(),
-    });
-  } catch (error) {
-    await updateRuntimeComputer(computer.id, {
+    }),
+    meterFailed: (error) =>
+      console.error(`Could not meter intent-warmed box ${computer.id}; reconciliation will retry`, error),
+    pause: (restored) => provider.pauseComputer(restored.sandboxId),
+    stopped: () => updateRuntimeComputer(computer.id, {
       status: "stopped",
       warmExpiresAt: null,
       errorMessage: "The session pre-warm did not finish; Send can try again.",
-    }).catch(() => {});
-    throw error;
-  }
+    }),
+  });
 }
 
 /** A pooled box of the project for a new session to take, made by
