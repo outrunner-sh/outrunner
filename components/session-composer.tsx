@@ -143,6 +143,7 @@ export function SessionComposer({
   editing = null,
   comments,
   listFiles,
+  onIntent,
   className,
 }: {
   /** Send a prompt, in `mode` where the session has modes. When it returns
@@ -223,6 +224,9 @@ export function SessionComposer({
   /** The session's files, for @ mentions (lib/session/file-mentions.ts):
    *  asked for once, as the first @ is typed. Without it @ is just text. */
   listFiles?: () => Promise<FilesResponse>;
+  /** The user focused or typed in a composer whose destination can prepare
+   *  work ahead of Send. Best effort and safe to call repeatedly. */
+  onIntent?: () => void;
   /** A surrounding screen's layout and sizing, such as the home composer. */
   className?: string;
 }) {
@@ -644,8 +648,10 @@ export function SessionComposer({
           aria-label={messageLabel}
           spellCheck={false}
           disabled={!canSend}
+          onFocus={onIntent}
           onChange={(event) => {
             setValue(event.target.value);
+            onIntent?.();
             // Typing over a recalled prompt makes it this one's.
             setRecall(null);
             followCaret(event.target.value, event.target.selectionStart);

@@ -11,7 +11,7 @@ import { bearerMatches } from "@/lib/http/bearer";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { sweepOrphanedBoxes } from "@/lib/runtime/orphan-boxes.deps";
-import { sweepAbandonedPools } from "@/lib/runtime/warm-pool.deps";
+import { sweepAbandonedPools, sweepExpiredIntentWarmups } from "@/lib/runtime/warm-pool.deps";
 import { sweepRemovals } from "@/lib/orgs/removal.deps";
 import { sweepOpenChecks } from "@/lib/automations/checks.deps";
 import { sweepStalledRuns } from "@/lib/db/automation-runs";
@@ -56,6 +56,12 @@ export async function POST(request: Request) {
     const poolsSwept = isComputerProvider(provider)
       ? await sweepAbandonedPools(provider).catch((error: unknown) => {
           console.error("Sweeping abandoned pooled boxes failed", error);
+          return null;
+        })
+      : 0;
+    const intentWarmsPaused = isComputerProvider(provider)
+      ? await sweepExpiredIntentWarmups(provider).catch((error: unknown) => {
+          console.error("Pausing expired session pre-warms failed", error);
           return null;
         })
       : 0;
@@ -139,6 +145,7 @@ export async function POST(request: Request) {
       slackKeysRetired,
       githubFollowUps,
       poolsSwept,
+      intentWarmsPaused,
       removalsSettled,
       runsSwept,
       checksClosed,
