@@ -72,8 +72,6 @@ pub struct LocalRuntime {
     codex_login: Mutex<Option<(u32, Child)>>,
     /// Attempt numbers, shared by every agent CLI's logins.
     next_login: AtomicU32,
-    login_generation: AtomicU32,
-    codex_login_generation: AtomicU32,
 }
 
 struct Agent {
@@ -140,15 +138,10 @@ impl LocalRuntime {
         }
     }
 
-    fn login_generation(&self, cli: &AgentCli) -> &AtomicU32 {
-        match cli.id { AgentCliId::Claude => &self.login_generation, AgentCliId::Codex => &self.codex_login_generation }
-    }
-
     /// Stop `cli`'s login in progress, if any. It holds a localhost port open
     /// for the browser's redirect until it ends.
     fn stop_login(&self, cli: &AgentCli) {
         let mut login = self.login_slot(cli).lock().unwrap_or_else(PoisonError::into_inner);
-        self.login_generation(cli).fetch_add(1, Ordering::SeqCst);
         if let Some((_, mut child)) = login.take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -210,7 +203,6 @@ fn spawn_agent() -> Result<Agent, String> {
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     // Sessions run the `claude` linked here; make sure it is the one that works.
     let _ = find_claude();
-    let _ = crate::managed_codex::find();
     let log_path = root.join("agent.log");
     let log = OpenOptions::new()
         .create(true)
@@ -687,7 +679,7 @@ impl AgentCli {
     fn find(&self) -> Option<PathBuf> {
         match self.lookup {
             Lookup::Claude => find_claude().ok(),
-            Lookup::SessionPath => crate::managed_codex::find(),
+            Lookup::SessionPath => which(self.binary).map(PathBuf::from),
         }
     }
 
@@ -878,61 +870,47 @@ pub async fn local_claude_login(state: State<'_, LocalRuntime>) -> Result<(), St
 
 /// Log `cli` in, if this Mac has one; else its `missing` error.
 async fn log_in(state: &LocalRuntime, cli: &'static AgentCli) -> Result<(), String> {
-    state.stop_login(cli);
-    let generation = state.login_generation(cli).load(Ordering::SeqCst);
     let path = tauri::async_runtime::spawn_blocking(move || cli.find())
         .await
         .map_err(|error| error.to_string())?
         .ok_or(cli.missing)?;
-    run_login_if_current(state, cli, &path, Some(generation)).await
+    run_login(state, cli, &path).await
 }
 
 /// Run `cli`'s login at `path` to its end: resolved when it exits cleanly.
 /// Starting one stops an earlier one of the same CLI, never another CLI's.
 /// Takes the binary, so a test can stand in for it.
-#[cfg(test)]
 async fn run_login(state: &LocalRuntime, cli: &AgentCli, path: &Path) -> Result<(), String> {
-    run_login_if_current(state, cli, path, None).await
-}
-
-async fn run_login_if_current(state: &LocalRuntime, cli: &AgentCli, path: &Path, generation: Option<u32>) -> Result<(), String> {
+    state.stop_login(cli);
     let slot = state.login_slot(cli);
+    let mut child = user_command(path)
+        .args(cli.login_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("login-failed: {error}"))?;
+    // Keep what it prints, for the error if it fails; draining both pipes also
+    // means it can never block on a full one.
     let output = Arc::new(Mutex::new(String::new()));
-    let attempt = {
-        let mut guard = slot.lock().unwrap_or_else(PoisonError::into_inner);
-        if generation.is_some_and(|g| state.login_generation(cli).load(Ordering::SeqCst) != g) {
-            return Err("login-cancelled".into());
-        }
-        if let Some((_, mut old)) = guard.take() { let _ = old.kill(); let _ = old.wait(); }
-        let mut child = user_command(path)
-            .args(cli.login_args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("login-failed: {error}"))?;
-        // Keep what it prints, for the error if it fails; draining both pipes also
-        // means it can never block on a full one.
-        for pipe in [
-            child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
-            child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let output = Arc::clone(&output);
-            std::thread::spawn(move || {
-                for line in BufReader::new(pipe).lines().map_while(Result::ok) {
-                    let mut output = output.lock().unwrap_or_else(PoisonError::into_inner);
-                    output.push_str(&line);
-                    output.push('\n');
-                }
-            });
-        }
-        let attempt = state.next_login.fetch_add(1, Ordering::Relaxed);
-        *guard = Some((attempt, child));
-        attempt
-    };
+    for pipe in [
+        child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
+        child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let output = Arc::clone(&output);
+        std::thread::spawn(move || {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                let mut output = output.lock().unwrap_or_else(PoisonError::into_inner);
+                output.push_str(&line);
+                output.push('\n');
+            }
+        });
+    }
+    let attempt = state.next_login.fetch_add(1, Ordering::Relaxed);
+    *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((attempt, child));
 
     let deadline = Instant::now() + LOGIN_TIMEOUT;
     loop {
@@ -2377,34 +2355,5 @@ echo 'Logged in using ChatGPT' >&2"#,
         let mut mac = Hmac::<Sha256>::new_from_slice(b"secret").unwrap();
         mac.update(format!("{}.{}", parts[0], parts[1]).as_bytes());
         assert_eq!(parts[2], URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()));
-    }
-}
-
-/// Prepare only the selected agent, without changing a login or the user's PATH.
-#[tauri::command]
-pub async fn local_agent_setup(agent: String) -> Result<(), String> {
-    match agent.as_str() {
-        "claude" => {
-            if tauri::async_runtime::spawn_blocking(find_claude).await.map_err(|e| e.to_string())?.is_err() {
-                crate::managed_claude::ensure().await?;
-            }
-        }
-        "codex" => { crate::managed_codex::ensure().await?; }
-        _ => return Err("Unknown coding agent.".into()),
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod login_generation_tests {
-    use super::*;
-    #[test]
-    fn cancel_while_finding_a_cli_never_starts_the_old_login() {
-        let state = LocalRuntime::default();
-        let generation = state.login_generation(&CODEX).load(Ordering::SeqCst);
-        state.stop_login(&CODEX);
-        assert_eq!(tauri::async_runtime::block_on(run_login_if_current(&state, &CODEX, Path::new("/must-not-run-codex"), Some(generation))), Err("login-cancelled".into()));
-        // Canceling Codex does not invalidate Claude's reservation.
-        assert_eq!(state.login_generation(&CLAUDE).load(Ordering::SeqCst), 0);
     }
 }

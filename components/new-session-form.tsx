@@ -12,7 +12,6 @@ import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/comp
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useWorkItemPrompt } from "@/hooks/use-work-item-prompt";
 import { type FirstSessionEnvironment, useFirstSessionEnvironment } from "@/hooks/use-first-session-environment";
-import { useLocalCodexModels } from "@/hooks/use-local-codex-models";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { eligibleHarnesses, groupsForHarness, initialSelection, selectionForHarness } from "@/lib/runtime/selection";
@@ -49,8 +48,6 @@ export function NewSessionForm({
   openPicker = false,
   focusComposer = false,
   initialPick,
-  initialTarget,
-  initialFolder,
   workItemId,
   children,
 }: {
@@ -67,8 +64,6 @@ export function NewSessionForm({
    *  agent picked in onboarding), as though picked there. Read once, as the
    *  form mounts: the route drops it from the URL straight after. */
   initialPick?: StartingPick;
-  initialTarget?: "cloud" | "local";
-  initialFolder?: string;
   /** The triage item to start from (Start session): its prompt fills the
    *  composer, and the session is linked to it. */
   workItemId?: string;
@@ -110,7 +105,7 @@ export function NewSessionForm({
     if (focusComposer) setFocusAsks(focusAsks + 1);
   }
   const workItem = useWorkItemPrompt(workItemId);
-  const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude", askedAgent), initialTarget, initialFolder);
+  const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude", askedAgent));
   const local = where.location === "local";
   // A repository's first cloud session can bring its environment from this Mac.
   const environment = useFirstSessionEnvironment(selected, !local);
@@ -131,10 +126,7 @@ export function NewSessionForm({
   const accounts = menu
     ? accountsHere(menu.agents, local, where.runtime.state === "ready" ? where.runtime.status : null)
     : [];
-  const nativeCodex = local && menu?.agents.codex.local === "mac-login";
-  const localCodex = useLocalCodexModels(nativeCodex);
-  const waitingForLocalCodex = nativeCodex && askedAgent === "codex" && (!localCodex || localCodex.models.length === 0);
-  const targetMenu = local && menu?.localMenu ? { ...menu.localMenu, harnesses: AGENT_IDS, ...(nativeCodex && { codexModels: localCodex?.models ?? [] }) } : local ? undefined : menu;
+  const targetMenu = local ? menu?.localMenu : menu;
   const allGroups = targetMenu ? modelGroups(targetMenu, accounts) : [];
   const available = eligibleHarnesses(allGroups, targetMenu?.harnesses);
   const eligibleAsked = askedAgent && available.includes(askedAgent) ? askedAgent : undefined;
@@ -158,7 +150,6 @@ export function NewSessionForm({
   return (
     <div className="flex min-h-full flex-col px-4 py-12 sm:px-6 sm:pb-12 sm:pt-[12vh]">
       <div className="mx-auto my-auto w-full max-w-3xl">
-        {localCodex?.error && <p role="alert" className="text-destructive mb-4 text-sm">{localCodex.error}</p>}
         <h1 className="mb-8 text-balance text-center text-3xl font-semibold tracking-tight sm:text-4xl">
           What would you like to build?
         </h1>
@@ -268,7 +259,7 @@ export function NewSessionForm({
                       ),
                   )
           }
-          sendDisabledReason={waitingForLocalCodex ? localCodex?.error ?? "Loading Codex models on this Mac" : !menu ? "Loading available harnesses and models" : !startsOn ? "Connect a supported coding agent or provider in Settings" : undefined}
+          sendDisabledReason={!menu ? "Loading available harnesses and models" : !startsOn ? "Connect a supported coding agent or provider in Settings" : undefined}
           model={startsOn?.id}
           modelChoice={
             groups.length > 0 || connect.length > 0

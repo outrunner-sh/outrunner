@@ -1,85 +1,22 @@
-# Desktop onboarding
+# Desktop signup and browser onboarding
 
-After signing into Outrunner, desktop users choose Claude Code or Codex and
-whether to run on this Mac or in the cloud. The existing Google/GitHub system
-browser sign-in and callback remain unchanged.
+Sessions run in the cloud. The desktop app opens the system browser for account signup/sign-in and the existing agent/repository onboarding. It never inspects or installs a local CLI during this flow.
 
-`liveEnv` checks native `local_status` alongside server credential metadata.
-Detection never imports the CLI's credentials or automatically chooses an agent,
-execution target, billing method or organization scope. Unknown login status is
-shown as unknown and must be confirmed before onboarding completes.
+After finishing or skipping onboarding, a desktop-origin user sees **Open desktop app** and **Continue on web**. Returning users go straight to that choice. A normal web signup keeps its existing behavior. The chosen organization, repository and model survive either continuation.
 
-## On this Mac
+## Authentication handoff
 
-An installed, authenticated CLI is reused without another login. If necessary,
-the app prepares the selected CLI and launches its normal browser sign-in. The
-saved method is `local`. Users choose a local folder instead of connecting
-GitHub. The agent, execution target and folder travel to the new-session form in
-the URL, including when browser storage is unavailable. New local sessions are
-enabled again; the native runtime check keeps web sessions in the cloud.
+- The native shell generates a random state and PKCE verifier in memory. It opens `/auth/desktop/start` with the state, SHA-256 challenge and intended destination. The verifier stays in the app.
+- A sealed, HttpOnly, SameSite=Lax cookie retains desktop context for one hour through Google/GitHub OAuth, email OTP, repository authorization and reloads. OAuth/OTP completes in the browser, so onboarding has a real browser session.
+- Only an explicit **Open desktop app** click calls the same-origin, authenticated handoff endpoint. It generates a single-use Supabase magic-link token for the signed-in account without sending email. The result must name that exact user ID.
+- The encrypted return ticket expires after 60 seconds and binds the token to the native challenge, state, app origin, selected organization and safe destination. `runtime://signin` opens the installed app; a loopback link on the existing port 47823 supports an already-running app when scheme registration is unavailable.
+- The native shell accepts only the matching pending attempt and focuses its window. The waiting webview posts the ticket with its native verifier. Supabase consumes the token once and creates a separate desktop session; the browser's rotating refresh token is never copied. The account and current access allowlist are checked before continuation.
+- **Continue on web** clears the desktop context and navigates within the browser. It does not issue a desktop login or invoke a native command.
 
-Claude uses the existing private managed installation. Codex uses a native
-platform package from the official npm registry, pinned to the runtime's tested
-version in `managed_codex.rs`. The archive's SHA-512 integrity is verified before
-extraction, the native executable is checked, and its bundled companion tools
-and resources are retained. It lives under `~/.outrunner/codex/<version>` and
-does not change the user's shell PATH or install npm/Node. A working installed
-version at least as new as the pin is preferred. Bump the pin with
-`lib/runtime/box-image.ts`.
+Expired attempts ask the user to restart sign-in from the desktop app and retain the web option. Provider-linking flows retain their existing loopback OAuth path.
 
-For a local Codex login, `local_codex_models` asks the CLI's app-server
-`model/list` for models and capabilities. The model picker doesn't rely on an
-unrelated cloud credential or invent account models when discovery fails.
+## Release and validation
 
-## Cloud
+Ship the native shell changes along with the web changes: the flow uses two new Tauri commands and their remote-origin permissions. The existing `runtime` scheme and loopback listener are reused; no additional Supabase redirect allowlist entry or database migration is needed. Server-side Supabase admin access and `CREDENTIALS_ENCRYPTION_KEY` are required, as for existing account administration and stored credentials.
 
-The desktop can reuse effective personal/organization connections or explicitly
-select another method. Claude subscription connection keeps its existing native
-setup-token flow. API keys and Outrunner models remain available.
-
-The desktop Codex card replaces the web's copy-and-run CLI instructions:
-
-1. A same-origin, signed-in POST to `/api/settings/codex/desktop` starts an
-   attempt through the existing connection manager. Personal scope is the
-   default; organization scope is explicit and requires an admin.
-2. The server returns an encrypted ten-minute capability bound to the actor,
-   deployment origin, scope and attempt. It is not a general CLI or API token.
-3. Native `connect_codex_start` prepares Codex and starts the bundled runtime
-   helper `desktop-codex-auth`. The capability is passed over stdin, never argv.
-4. The helper reuses the existing isolated `codex login --device-auth` flow.
-   Only the allowlisted official approval URL and device code reach the UI. The
-   native app opens the system browser. Provider tokens never cross the webview.
-5. The helper sends the fresh login directly over HTTPS to
-   `/api/desktop/codex`. The capability permits only checking, completing or
-   canceling that exact attempt. Provider verification, current membership/admin
-   checks, SQL attempt fences, encrypted storage, centralized refresh and
-   runtime inference grants remain the existing connection manager's job.
-
-Cancel, leaving the page or exiting the app closes the helper's stdin. The
-helper cancels the provider process group and removes its temporary Codex home.
-The server's cancellation/expiry/replacement checks reject late uploads. A failed
-replacement leaves an existing connection intact. Desktop connection requires
-the updated native app and controller, plus the existing Codex database
-migration; it needs no separate npm CLI release. The browser keeps its existing
-CLI-based connection path.
-
-## Validation
-
-The browser suite `desktop-onboarding.spec.ts` runs production components with
-synthetic native/API boundaries: reuse, missing install, logged-out/unknown
-login, first-session folder/target/model handoff, cloud approval and cancellation
-at desktop and narrow window sizes. Go tests exercise actual child processes,
-scoped HTTPS uploads and EOF cancellation with synthetic provider credentials.
-TypeScript tests cover capability integrity/expiry/deployment binding, request
-scope/actor/attempt restrictions, cancellation and progress recovery. Rust tests
-cover the native URL boundary, catalog conversion and installer version pin.
-
-Optional native download probe (no provider approval required):
-
-```
-cd runtime-desktop/src-tauri
-cargo test --lib managed_codex::tests::downloads_and_runs -- --ignored
-```
-
-Live browser approval and a signed macOS application release are separate from
-these checks. Do not report synthetic approval as a real provider connection.
+Unit tests cover context/ticket integrity, expiry, PKCE/state/origin binding, destination safety, account matching, OTP replay handling and access revocation. Native tests cover correlation, duplicate and stale callbacks. Browser tests exercise the real onboarding components, final choices, retry/errors, web-only behavior and desktop waiting. Provider OAuth and a packaged macOS launch still require release-environment validation.

@@ -15,8 +15,6 @@ export function NewSessionCreator({
   openPicker = false,
   focusComposer = false,
   initialPick,
-  initialTarget,
-  initialFolder,
   showBack = false,
   workItemId,
   children,
@@ -31,8 +29,6 @@ export function NewSessionCreator({
   focusComposer?: boolean;
   /** What the session starts on until another is picked. */
   initialPick?: StartingPick;
-  initialTarget?: "cloud" | "local";
-  initialFolder?: string;
   /** /new is reached from somewhere and needs a way back where the sidebar is
    *  hidden (narrow windows); home is home already. */
   showBack?: boolean;
@@ -55,8 +51,6 @@ export function NewSessionCreator({
         openPicker={openPicker}
         focusComposer={focusComposer}
         initialPick={initialPick}
-        initialTarget={initialTarget}
-        initialFolder={initialFolder}
         workItemId={workItemId}
       >
         {children}

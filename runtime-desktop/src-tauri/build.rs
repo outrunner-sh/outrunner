@@ -13,17 +13,14 @@ fn main() {
     tauri_build::try_build(
         tauri_build::Attributes::new().app_manifest(
             tauri_build::AppManifest::new().commands(&[
+                "desktop_signin_start",
+                "desktop_signin_poll",
                 "connect_claude_start",
                 "connect_claude_submit",
                 "connect_claude_poll",
                 "connect_claude_debug",
                 "connect_claude_cancel",
                 "local_status",
-                "local_agent_setup",
-                "connect_codex_start",
-                "local_codex_models",
-                "connect_codex_poll",
-                "connect_codex_cancel",
                 "local_claude_login",
                 "local_claude_login_cancel",
                 "local_codex_login",

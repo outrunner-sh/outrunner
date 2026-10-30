@@ -3,14 +3,11 @@
 import { Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { DesktopAgentStep } from "@/components/onboarding/desktop-agent-step";
-import { FolderStep } from "@/components/onboarding/folder-step";
-import type { RunTarget } from "@/lib/agents/registry";
 import { AgentStep } from "@/components/onboarding/agent-step";
 import { ReposStep } from "@/components/onboarding/repos-step";
 import { Stepper } from "@/components/onboarding/stepper";
-import { resumeAt, resumeDesktopAt } from "@/lib/onboarding/rules";
-import type { AgentChoices, AgentPick, AgentStatus, OnboardingEnv, OnboardingStep as Step } from "@/lib/onboarding/types";
+import { resumeAt } from "@/lib/onboarding/rules";
+import type { AgentPick, AgentStatus, OnboardingEnv, OnboardingStep as Step } from "@/lib/onboarding/types";
 import { cn } from "@/lib/utils";
 
 /** What's taken as connected when it can't be checked: nothing. */
@@ -33,8 +30,6 @@ const STEPS: { id: Step; label: string }[] = [
  */
 export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: (href: string) => void }) {
   const [step, setStep] = useState<Step>("agent");
-  const [target, setTarget] = useState<RunTarget>("cloud");
-  const [choices, setChoices] = useState<AgentChoices | null>(null);
   const [status, setStatus] = useState<AgentStatus | null>(null);
   // What the first session starts on, as the Agent step left it.
   const [runOn, setRunOn] = useState<AgentPick>("outrunner");
@@ -52,7 +47,7 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
         env.agentStatus().catch(() => null),
         env.agentChoices().catch(() => null),
       ]);
-      let at: ReturnType<typeof resumeAt> = env.desktop ? resumeDesktopAt(saved, found) : resumeAt(saved, found, choices);
+      let at = resumeAt(saved, found, choices);
       if (at.save) {
         // Sessions sign in that way from now on, as the Agent step's
         // Continue says; if that can't be saved, the Agent step is where.
@@ -62,20 +57,18 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
         );
         if (!chosen) at = resumeAt(saved, found, null);
       }
-      return { found, at, choices };
+      return { found, at };
     };
     void open()
       // Whatever goes wrong, onboarding opens where it was left, or at its
       // start; never stuck.
-      .catch(() => ({ found: null, at: resumeAt(saved, null, null), choices: null }))
-      .then(({ found, at, choices }) => {
+      .catch(() => ({ found: null, at: resumeAt(saved, null, null) }))
+      .then(({ found, at }) => {
         if (stale) return;
         setStatus(found ?? NOTHING_CONNECTED);
         setStep(at.step);
         setDone(new Set(at.done));
         setRunOn(at.runOn);
-        setChoices(choices);
-        setTarget(env.desktop ? at.target ?? "local" : "cloud");
         setResumed(true);
       });
     return () => {
@@ -84,8 +77,8 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
   }, [env]);
 
   useEffect(() => {
-    if (resumed) env.saveProgress({ step, done: [...done], runOn, ...(env.desktop && { target }) });
-  }, [env, resumed, step, done, runOn, target]);
+    if (resumed) env.saveProgress({ step, done: [...done], runOn });
+  }, [env, resumed, step, done, runOn]);
 
   const finish = (which: Step, next: Step) => {
     setDone((current) => new Set(current).add(which));
@@ -113,7 +106,7 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
       </header>
 
       <div className={cn("border-border/60 mt-6 w-full border-b pb-6", !resumed && "invisible")}>
-        <Stepper steps={STEPS.map((s) => s.id === "repos" && env.desktop && target === "local" ? { ...s, label: "Project" } : s)} current={step} done={done} onGo={setStep} />
+        <Stepper steps={STEPS} current={step} done={done} onGo={setStep} />
       </div>
 
       <main className="flex w-full max-w-xl flex-1 flex-col justify-center py-10">
@@ -121,7 +114,7 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
           <p className="text-muted-foreground text-sm">Checking what you&apos;ve connected…</p>
         ) : (
           <>
-            {step === "agent" && (env.desktop ? <DesktopAgentStep env={env} status={status} choices={choices} onStatus={setStatus} initialTarget={target} onDone={(picked, location) => { setRunOn(picked); setTarget(location); finish("agent", "repos"); }} /> :
+            {step === "agent" && (
               <AgentStep
                 env={env}
                 status={status}
@@ -132,9 +125,8 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
                 }}
               />
             )}
-            {step === "repos" && (env.desktop && target === "local" ?
-              <FolderStep env={env} onDone={(path) => env.finish(undefined, runOn, "local", path).then(onLeave)} /> :
-              <ReposStep env={env} onDone={(picked) => env.finish(picked[0]?.id, runOn, env.desktop ? "cloud" : undefined).then(onLeave)} />
+            {step === "repos" && (
+              <ReposStep env={env} onDone={(picked) => env.finish(picked[0]?.id, runOn).then(onLeave)} />
             )}
           </>
         )}

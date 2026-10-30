@@ -5,27 +5,15 @@
 // thin: a window whose close button quits the app, a tray menu,
 // single-instance focus, and self-update for the native parts (updater.rs).
 //
-// Auth: GitHub OAuth is completed in the system browser, not the embedded
-// webview — providers block embedded webviews, and the browser's URL bar is the
-// user's anti-phishing signal. We (1) flag the page as running in the desktop
-// app, (2) open any off-site navigation (the OAuth provider) in the system
-// browser, and (3) receive the authorization code back and hand it to the
-// webview's own `/auth/callback`, so the PKCE verifier never leaves the webview
-// and the session cookie lands in the right jar.
-//
-// The code comes back over a LOOPBACK redirect (`http://127.0.0.1:PORT/`), which
-// RFC 8252 recommends for native apps. The `runtime://` deep link is kept as a
-// fallback: on macOS a custom scheme only resolves once the .app bundle is
-// registered with Launch Services, so it silently does nothing under
-// `tauri dev`, and any app may claim the same scheme. Loopback needs no OS
-// registration and takes an ordinary http entry in the provider's allowlist.
+// Auth: signup and onboarding run in the system browser. The final desktop
+// choice returns a short-lived, PKCE-bound grant to create a separate webview
+// session. Provider linking still uses the legacy loopback OAuth callback.
 
 mod claude_login;
+mod desktop_signin;
 mod import;
 mod local_runtime;
 mod managed_claude;
-mod managed_codex;
-mod codex_login;
 mod updater;
 
 use tauri::{
@@ -130,6 +118,19 @@ const SIGNED_IN_PAGE: &str = r#"<!doctype html>
 /// therefore the session cookie) happens there rather than in the browser.
 /// Shared by the loopback listener and the deep-link fallback.
 fn deliver_callback(app: &tauri::AppHandle, site: &str, query: &str) {
+    // A browser onboarding handoff must match the native attempt. Never route
+    // it through the legacy OAuth exchange or navigate before redeeming it.
+    if tauri::Url::parse(&format!("http://localhost/?{query}"))
+        .is_ok_and(|url| url.query_pairs().any(|(name, _)| name == "desktop_ticket"))
+    {
+        if desktop_signin::accept_callback(
+            &app.state::<desktop_signin::DesktopSigninState>(),
+            query,
+        ) {
+            show_main(app);
+        }
+        return;
+    }
     let target = format!("{site}/auth/callback?{query}");
     if let (Some(window), Ok(parsed)) = (app.get_webview_window("main"), target.parse()) {
         let _ = window.navigate(parsed);
@@ -170,21 +171,18 @@ pub fn run() {
     install_crypto_provider();
     tauri::Builder::default()
         .manage(claude_login::ClaudeLoginState::default())
-        .manage(codex_login::CodexLoginState::default())
+        .manage(desktop_signin::DesktopSigninState::default())
         .manage(local_runtime::LocalRuntime::default())
         .manage(updater::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
+            desktop_signin::desktop_signin_start,
+            desktop_signin::desktop_signin_poll,
             claude_login::connect_claude_start,
             claude_login::connect_claude_submit,
             claude_login::connect_claude_poll,
             claude_login::connect_claude_debug,
             claude_login::connect_claude_cancel,
             local_runtime::local_status,
-            local_runtime::local_agent_setup,
-            codex_login::connect_codex_start,
-            codex_login::local_codex_models,
-            codex_login::connect_codex_poll,
-            codex_login::connect_codex_cancel,
             local_runtime::local_claude_login,
             local_runtime::local_claude_login_cancel,
             local_runtime::local_codex_login,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 
 import { ClaudeFromTerminal } from "@/components/claude-from-terminal";
 import { ConnectionStatus, DetailRow, Details, SectionHeader } from "@/components/settings-details";
@@ -88,11 +88,6 @@ export function ClaudeConnection({
   // The attempt whose token was taken, by the poll or by a pasted code. The two
   // can race for it; the loser's "no login in progress" is not an error.
   const claimed = useRef(0);
-
-  useEffect(() => () => {
-    attempt.current++;
-    if (isDesktopApp()) void cancelClaudeLogin().catch(() => {});
-  }, []);
 
   /** The one way a login finishes: save its token, once, if still wanted. */
   const complete = useCallback(
@@ -328,8 +323,8 @@ export function ClaudeConnection({
             onClick={() => void connect()}
           />
           <p className="text-xs text-muted-foreground">
-            Outrunner prepares Claude Code on this Mac and opens sign-in.
-            Approve in your browser and it finishes automatically.
+            Runs <code className="font-mono">claude setup-token</code> on this machine, so Claude Code must be
+            installed. Approve in the browser and it finishes by itself.
           </p>
         </div>
       )}

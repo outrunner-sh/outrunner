@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
-import { OnboardingFlow } from "@/components/onboarding/onboarding-flow";
-import { liveEnv } from "@/lib/onboarding/live-env";
+import { DesktopSignIn } from "@/components/desktop-signin";
+import { DesktopWelcome } from "@/components/desktop-welcome";
+import { OnboardingLive } from "@/components/onboarding/onboarding-live";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { usePendingSession } from "@/lib/session/pending-sessions";
 import { selectionMenu } from "./selection-fixtures";
@@ -91,7 +92,9 @@ export function FixturePage() {
     [state],
   );
   let content: React.ReactNode;
-  if (view === "onboarding") content = <OnboardingFixture />;
+  if (view === "desktop-signin") content = <DesktopSignIn next="/"><p>Browser sign-in</p></DesktopSignIn>;
+  else if (view === "web-onboarding") content = <OnboardingLive user={{ id: "desktop-browser-user", name: "Ada", login: "ada", avatarUrl: null }} outrunnerModels desktopReturn />;
+  else if (view === "desktop-ready" || pathname === "/auth/desktop/ready") content = <DesktopWelcome email="ada@example.com" next={params.get("next") ?? "/new?project=p1&start=codex"} expired={state === "expired"} />;
   else if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} agent={params.get("harness") === "claude" ? "claude" : "codex"} />;
   else if (view === "project")
     content = (
@@ -292,10 +295,4 @@ function SavedFixtureSession({ workspace, mission }: { workspace: Workspace; mis
   }, []);
   if (!saved) return null;
   return <WorkspaceStudio workspace={{ ...workspace, ...saved, status: "ready", ...(mission && { kind: "mission" as const }) }} projectName="fixture/composer" pullRequest={null} />;
-}
-
-function OnboardingFixture() {
-  const env = useMemo(() => liveEnv({ id: "11111111-1111-4111-8111-111111111111", name: "Ada", login: "ada", avatarUrl: null }, { outrunnerModels: true }), []);
-  const [left, setLeft] = useState<string | null>(null);
-  return left ? <a data-testid="onboarding-destination" href={left}>Start your first session</a> : <OnboardingFlow env={env} onLeave={setLeft} />;
 }
