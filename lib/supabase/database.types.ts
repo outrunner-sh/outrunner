@@ -249,6 +249,8 @@ type RuntimeComputerRow = {
   pool_slot: number;
   /** The project's setup_generation it was made from. */
   generation: number | null;
+  /** Short lease while a pooled box is awake for a new-session composer. */
+  warm_expires_at: string | null;
   status: RuntimeComputerStatusDb;
   image_version: string;
   daytona_sandbox_id: string | null;
@@ -2112,6 +2114,15 @@ export type Database = {
       claim_pooled_computer: {
         Args: { requested_workspace_id: string; requested_provider: string; requested_generation?: number | null };
         Returns: string | null;
+      };
+      claim_pooled_warmup: {
+        Args: {
+          requested_project_id: string;
+          requested_provider: string;
+          requested_generation?: number | null;
+          max_live_computers?: number | null;
+        };
+        Returns: Array<{ runtime_computer_id: string; should_wake: boolean }>;
       };
       claim_workspace_computer: {
         Args: {

@@ -487,6 +487,15 @@ export async function getRuntimeComputer(scope: ComputerScope): Promise<RuntimeC
   return data ? toRuntimeComputer(data) : null;
 }
 
+/** One Runtime Computer by id, still owner-scoped by RLS. Used after an
+ * atomic pool claim, whose row may stop being pooled before it is read. */
+export async function getRuntimeComputerById(id: string): Promise<RuntimeComputer | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("runtime_computers").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data ? toRuntimeComputer(data) : null;
+}
+
 /** The project's shared box from before each session had its own, if it has one. */
 export function getRuntimeComputerByProject(projectId: string): Promise<RuntimeComputer | null> {
   return getRuntimeComputer({ projectId });
@@ -645,6 +654,33 @@ export async function claimPooledComputer(
   return typeof data === "string" ? data : null;
 }
 
+/** Start or extend a short wake-up lease on one of the project's pooled
+ * boxes. Null means there is no ready pooled box to warm. The database owns
+ * the plan-cap check and stopped -> provisioning transition atomically. */
+export async function claimPooledWarmup(input: {
+  projectId: string;
+  provider: ProviderName;
+  generation: number | null;
+  maxLiveComputers: number | null;
+}): Promise<{ computerId: string; shouldWake: boolean } | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("claim_pooled_warmup", {
+    requested_project_id: input.projectId,
+    requested_provider: input.provider,
+    ...(input.generation !== null && { requested_generation: input.generation }),
+    max_live_computers: input.maxLiveComputers,
+  });
+  // A deploy before the migration simply cannot intent-warm; Send retains
+  // the existing stopped-pool/cold provisioning path.
+  if (error && (error.code === "PGRST202" || error.code === "42883" || probeStatus(error) === "outdated")) {
+    console.warn("No intent warm pool yet: run the migrations", error.message);
+    return null;
+  }
+  if (error) throw error;
+  const claim = data?.[0];
+  return claim ? { computerId: claim.runtime_computer_id, shouldWake: claim.should_wake } : null;
+}
+
 /** A member's pooled boxes of the project, in whatever state: each member
  *  of an org has their own (20261028120000). */
 export async function getPooledComputers(projectId: string, ownerId: string): Promise<RuntimeComputer[]> {
@@ -741,6 +777,7 @@ export async function updateRuntimeComputer(
     agentBaseUrl?: string | null;
     provisionTimings?: ProvisionTimings | null;
     errorMessage?: string | null;
+    warmExpiresAt?: string | null;
     touchActive?: boolean;
   },
 ): Promise<void> {
@@ -762,6 +799,9 @@ export async function updateRuntimeComputer(
         }),
         ...(patch.errorMessage !== undefined && {
           error_message: patch.errorMessage,
+        }),
+        ...(patch.warmExpiresAt !== undefined && {
+          warm_expires_at: patch.warmExpiresAt,
         }),
         ...(patch.touchActive && { last_active_at: new Date().toISOString() }),
       })

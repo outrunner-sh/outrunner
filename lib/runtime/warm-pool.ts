@@ -1,11 +1,12 @@
 /**
  * The warm pool: two boxes per project made ready ahead of its next sessions
- * and stopped (20261025120000_warm_pool.sql, 20261028150000_warm_hooks.sql),
+ * and normally stopped (20261025120000_warm_pool.sql, 20261028150000_warm_hooks.sql),
  * each warmed with the project's warm hook first (runtime-agent warm.go). A new session takes it instead of
  * making a box: it starts again on its disk in about a second, its tools,
  * agent and repository already there, so the session opens in about 4
  * seconds rather than 19 (measured on Daytona), and a large repository is
- * fetched rather than cloned for minutes.
+ * fetched rather than cloned for minutes. A new-session composer can wake one
+ * briefly before Send (warm-pool.deps.ts), bringing the common path lower.
  *
  * Made after a session of the project is set up, for the next one: a
  * project's first session makes its box as before. Only on Outrunner's own
