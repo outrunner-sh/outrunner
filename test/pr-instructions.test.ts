@@ -21,6 +21,13 @@ test("the instructions name the branch, its target and what's uncommitted", () =
   assert.match(md, /`gh pr create --base develop --title "…" --body-file <file>`/);
 });
 
+test("the instructions require the prompting user's co-author trailer on every commit", () => {
+  const md = instructions({ footer: { ...FOOTER, coAuthors: ["Ada <1+ada@users.noreply.github.com>"] } });
+  assert.match(md, /project variables `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL`/);
+  assert.match(md, /`Co-Authored-By: Ada <1\+ada@users\.noreply\.github\.com>`/);
+  assert.match(md, /Before pushing, inspect every commit unique to the branch/);
+});
+
 test("one uncommitted change is singular, none says so", () => {
   assert.match(instructions({ uncommitted: 1 }), /^There is 1 uncommitted change\.$/m);
   assert.match(instructions({ uncommitted: 0 }), /^There are no uncommitted changes\.$/m);

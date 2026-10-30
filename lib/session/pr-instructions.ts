@@ -12,6 +12,7 @@
  */
 
 import {
+  commitAttributionSection,
   type EvidenceTools,
   evidenceSection,
   type PrFooterInput,
@@ -61,7 +62,7 @@ Follow these steps to create a PR:
 
 - If you have any skills related to creating PRs, invoke them now. Instructions there should take precedence over these instructions.
 - Run \`git diff\` to review uncommitted changes
-- Commit them. Follow any instructions the user gave you about writing commit messages.
+- Commit them. Follow any instructions the user gave you about writing commit messages and the attribution rules below.
 - Run \`git diff origin/${baseBranch}...\` to review the whole PR diff, and decide whether it changes UI or behaviour a person can see.
 - If it does, produce the evidence now, before pushing (below). Backend-only and docs changes skip this.
 - Push to origin (\`git push -u origin ${branch}\`).
@@ -69,6 +70,8 @@ Follow these steps to create a PR:
 - Otherwise write the body from the template below to a file and run \`gh pr create --base ${baseBranch} --title "…" --body-file <file>\` to create a PR onto the target branch, unless the user instructed you otherwise. Describe not just changes made in this session but ALL changes in the workspace diff.
 
 If any of these steps fail, ask the user for help.
+
+${commitAttributionSection(footer.coAuthors)}
 
 ## Evidence
 

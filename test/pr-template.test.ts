@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { CreateWorkspaceRequest } from "@/lib/runtime/agent-protocol";
-import { bullets, EVIDENCE_RULES, evidenceToolsFor, PR_BODY_TEMPLATE, prFooter, prGuide } from "@/lib/session/pr-template";
+import { bullets, commitAttributionSection, EVIDENCE_RULES, evidenceToolsFor, PR_BODY_TEMPLATE, prFooter, prGuide } from "@/lib/session/pr-template";
 
 const INPUT = {
   tools: { desktop: true },
@@ -27,6 +27,14 @@ test("the footer credits the user and links the session, with their trailers", (
   // No name known: the agent takes the session's git user, which is the user's.
   assert.match(prFooter({ sessionUrl: "https://app/workspaces/w" }), /Created by \*\*<the session's git user\.name>\*\*/);
   assert.doesNotMatch(prFooter({ sessionUrl: "https://app/workspaces/w", userName: "Ada" }), /Co-Authored-By/);
+});
+
+test("commits credit the prompting user from project variables, then their GitHub fallback", () => {
+  const section = commitAttributionSection(["Ada <1+ada@users.noreply.github.com>"]);
+  assert.match(section, /Every commit made for this pull request must credit the user who prompted the work/);
+  assert.match(section, /project variables `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL`/);
+  assert.match(section, /`Co-Authored-By: Ada <1\+ada@users\.noreply\.github\.com>`/);
+  assert.match(section, /inspect every commit unique to the branch and amend or rebase any that is missing/);
 });
 
 test("the evidence rules are the media guide's", () => {
@@ -59,8 +67,10 @@ test("only Daytona's boxes have a desktop", () => {
 });
 
 test("a session's standing guide has the template, the evidence flow and its footer", () => {
-  const guide = prGuide(INPUT);
+  const guide = prGuide({ ...INPUT, coAuthors: ["Ada <1+ada@users.noreply.github.com>"] });
   assert.match(guide, /^# Pull requests\n\nWhenever you open or update a pull request, write it this way\./);
+  assert.match(guide, /Every commit made for this pull request must credit the user who prompted the work/);
+  assert.match(guide, /Co-Authored-By: Ada <1\+ada@users\.noreply\.github\.com>/);
   assert.match(guide, /## How it works/);
   assert.match(guide, /verify the change on this branch in Chromium on the session desktop/);
   assert.match(guide, /refresh the Evidence section with `gh pr edit --body-file`, keeping the footer/);
