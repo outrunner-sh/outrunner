@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { ownerFromUser } from "@/lib/auth/owner";
+import { openAgentSecretOrNull } from "@/lib/db/computer-secret";
 import { memoryStore } from "@/lib/db/memories";
 import { optionalEnv } from "@/lib/env";
 import { learningActor, learningDeps } from "@/lib/learnings/actions.deps";
@@ -43,7 +44,10 @@ export async function POST(request: Request) {
     signature: request.headers.get("x-outrunner-signature"),
     body,
   };
-  const computer = (computers ?? []).find((c) => c.agent_secret && boxRequestValid(PURPOSE, c.agent_secret, signed));
+  const computer = (computers ?? []).find((c) => {
+    const secret = openAgentSecretOrNull(c.agent_secret, c.id);
+    return secret !== null && boxRequestValid(PURPOSE, secret, signed);
+  });
   if (!computer) return NextResponse.json({ error: "Bad signature." }, { status: 401 });
 
   let call: { workspace?: unknown; tool?: unknown; args?: unknown };

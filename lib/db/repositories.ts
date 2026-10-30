@@ -1,4 +1,5 @@
 import type { AgentId } from "@/lib/agents/registry";
+import { storeAgentSecret, openAgentSecretOrNull } from "@/lib/db/computer-secret";
 import { isUuid } from "@/lib/ids";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
@@ -566,7 +567,7 @@ export async function createRuntimeComputer(input: {
     .insert({
       owner_id: input.ownerId,
       project_id: input.projectId,
-      agent_secret: input.agentSecret,
+      agent_secret: storeAgentSecret(input.agentSecret),
       status: "provisioning",
       ...(input.imageVersion && { image_version: input.imageVersion }),
     })
@@ -598,12 +599,12 @@ export async function claimRuntimeComputer(input: {
     "workspaceId" in scope
       ? supabase.rpc("claim_workspace_computer", {
           requested_workspace_id: scope.workspaceId,
-          requested_agent_secret: input.agentSecret,
+          requested_agent_secret: storeAgentSecret(input.agentSecret),
           max_live_computers: input.maxLiveComputers ?? null,
         })
       : supabase.rpc("claim_runtime_computer", {
           requested_project_id: scope.projectId,
-          requested_agent_secret: input.agentSecret,
+          requested_agent_secret: storeAgentSecret(input.agentSecret),
           ...(withCap && { max_live_computers: input.maxLiveComputers ?? null }),
         });
 
@@ -712,7 +713,7 @@ export async function createPooledComputer(input: {
       owner_id: input.ownerId,
       project_id: input.projectId,
       provider: input.provider,
-      agent_secret: input.agentSecret,
+      agent_secret: storeAgentSecret(input.agentSecret),
       status: "provisioning",
       pooled: true,
       pool_slot: input.slot,
@@ -883,7 +884,7 @@ export async function readRuntimeComputerSecret(
     .maybeSingle();
 
   if (error) throw error;
-  return data?.agent_secret ?? null;
+  return openAgentSecretOrNull(data?.agent_secret, id);
 }
 
 // --- jobs ------------------------------------------------------------------

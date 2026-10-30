@@ -5,6 +5,10 @@
 
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
+/** How long a token works since it was made (cli_tokens.expires_at, 365 days
+ *  in the migration): after that the CLI signs in again. */
+export const CLI_TOKEN_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+
 export type StoredLoginCode = {
   userId: string;
   challenge: string;
@@ -49,17 +53,24 @@ export async function takeLoginCode(codeHash: string): Promise<StoredLoginCode |
 export async function saveCliToken(userId: string, tokenHash: string, deviceName: string): Promise<void> {
   const { error } = await createSupabaseAdminClient()
     .from("cli_tokens")
-    .insert({ user_id: userId, token_hash: tokenHash, device_name: deviceName });
+    .insert({
+      user_id: userId,
+      token_hash: tokenHash,
+      device_name: deviceName,
+      expires_at: new Date(Date.now() + CLI_TOKEN_TTL_MS).toISOString(),
+    });
   if (error) throw error;
 }
 
-/** Whose token this is, or null for none or a revoked one. Marks it used. */
+/** Whose token this is, or null for none, a revoked one or an expired one.
+ * Marks it used. */
 export async function cliTokenUserId(tokenHash: string): Promise<string | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("cli_tokens")
     .update({ last_used_at: new Date().toISOString() })
     .eq("token_hash", tokenHash)
     .is("revoked_at", null)
+    .gt("expires_at", new Date().toISOString())
     .select("user_id")
     .maybeSingle();
   if (error) throw error;

@@ -1,6 +1,7 @@
 import { connection, NextResponse } from "next/server";
 
 import { billingMode } from "@/lib/billing/mode";
+import { bearerMatches } from "@/lib/http/bearer";
 import { optionalEnv, providerName } from "@/lib/env";
 import { keySource } from "@/lib/openrouter/keys";
 import { codexCliVersion, probeCodexSchema } from "@/lib/codex/rollout";
@@ -14,8 +15,14 @@ import {
  * Configuration and connectivity report for the DEPLOYMENT. Exposes only
  * booleans about which settings are present, never their values, and nothing
  * about any individual user's credentials.
+ *
+ * To anyone anonymous — the Worker's deploy check among them — it says only
+ * `ok` and `build`, which is all that check reads. The rest (which settings
+ * are configured, per-table migration state) is a deployment's own map of
+ * its attack surface, so it goes to whoever holds BILLING_CRON_SECRET (the
+ * reconciler's caller — `curl -H "Authorization: Bearer $BILLING_CRON_SECRET"`).
  */
-export async function GET() {
+export async function GET(request: Request) {
   // Per request, never prerendered at build (Cache Components prerenders a
   // GET that reads nothing of the request first).
   await connection();
@@ -80,6 +87,17 @@ export async function GET() {
   }
 
   const ok = configured.supabase && configured.credentialEncryption && database.ok;
+  // The commit this server was built from (Dockerfile OUTRUNNER_BUILD), so
+  // the Worker and the deploy check can tell it's the one just deployed.
+  const build = process.env.OUTRUNNER_BUILD || null;
+
+  // Not the deployment's operator: the check the Worker makes of a container
+  // and the readiness a load balancer asks for, answered as thinly as that.
+  const cronSecret = optionalEnv("BILLING_CRON_SECRET");
+  if (!cronSecret || !bearerMatches(request.headers.get("authorization"), cronSecret)) {
+    return NextResponse.json({ ok, build }, { status: ok ? 200 : 503 });
+  }
+
   // Report optional feature rollout separately: a missing Codex migration
   // must not break existing API-key sessions or the core health check.
   const codexSchema = configured.supabaseServiceRole ? await probeCodexSchema() : "not configured";
@@ -103,9 +121,7 @@ export async function GET() {
       database,
       codex,
       ...(nextStep ? { nextStep } : {}),
-      // The commit this server was built from (Dockerfile OUTRUNNER_BUILD),
-      // so the Worker and the deploy check can tell it's the one just deployed.
-      build: process.env.OUTRUNNER_BUILD || null,
+      build,
       time: new Date().toISOString(),
     },
     { status: ok ? 200 : 503 },

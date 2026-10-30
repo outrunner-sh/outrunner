@@ -174,13 +174,15 @@ export async function touchApiKey(id: string): Promise<void> {
   if (error) throw error;
 }
 
-/** The CLI token with this hash still working: its id and whose it is. */
+/** The CLI token with this hash still working (not revoked, not expired —
+ *  cli_tokens.expires_at): its id and whose it is. */
 export async function findCliToken(tokenHash: string): Promise<{ id: string; userId: string } | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("cli_tokens")
     .select("id, user_id")
     .eq("token_hash", tokenHash)
     .is("revoked_at", null)
+    .gt("expires_at", new Date().toISOString())
     .maybeSingle();
   if (error) throw error;
   return data ? { id: data.id, userId: data.user_id } : null;

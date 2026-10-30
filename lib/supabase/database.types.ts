@@ -1071,6 +1071,8 @@ type CliTokenRow = {
   last_used_at: string | null;
   revoked_at: string | null;
   created_at: string;
+  // supabase/migrations/20261104090000_cli_token_expiry.sql
+  expires_at: string;
 };
 
 // supabase/migrations/20261102120000_api_keys.sql

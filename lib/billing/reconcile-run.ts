@@ -54,6 +54,8 @@ export async function runReconcile(): Promise<ReconcileReport> {
 /** What the box's agent reports, or null when it can't say: one from before
  *  /activity (404) or one that can't be reached. Its box is then not paused. */
 async function activityOf(provider: ComputerRuntimeProvider, computer: MeteredComputer): Promise<Activity | null> {
+  // A secret that won't open leaves the box's agent unreachable.
+  if (!computer.agentSecret) return null;
   try {
     const target = await provider.agentTarget(computer.sandboxId, computer.agentSecret);
     return await new AgentClient(target).activity({

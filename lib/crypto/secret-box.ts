@@ -97,6 +97,12 @@ export function sameSecret(a: string, b: string): boolean {
   return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
 }
 
+/** Whether a stored value is one this module sealed (`v1.…`), rather than a
+ * plaintext write from before the column holding it was sealed. */
+export function isSealed(stored: string): boolean {
+  return stored.startsWith(`${VERSION}.`);
+}
+
 /**
  * Aliases for the names PR #18's credential code imports. Same primitive, same
  * key: a second AES implementation reading a second env var would mean two

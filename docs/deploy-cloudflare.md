@@ -70,9 +70,10 @@ done
 `CREDENTIALS_ENCRYPTION_KEY` is required and easy to miss. It seals every
 user's GitHub and Claude credential at rest (`openssl rand -base64 32`).
 Without it the site loads, sign-in works, and then **every** Connect Claude
-fails on save and every workspace create is refused — so check
-`/api/health` reports `credentialEncryption: true` before telling anyone the
-deploy is up. Losing or rotating it makes stored credentials undecryptable;
+fails on save and every workspace create is refused — so check the health
+report (`curl -H "Authorization: Bearer $BILLING_CRON_SECRET" …/api/health`)
+says `credentialEncryption: true` before telling anyone the deploy is up.
+Losing or rotating it makes stored credentials undecryptable;
 users are asked to reconnect rather than seeing an error.
 
 **Outrunner's models** (optional, but new cloud sessions start on them): set
@@ -222,7 +223,9 @@ Worker + Durable Object + `app.outrunner.sh` (and the old domain's redirect).
 ## Smoke test
 
 1. `https://app.outrunner.sh/api/health` → healthy; `https://outrunner.neev.ai`
-   redirects to it.
+   redirects to it. The full report — which secrets are configured, the
+   database's migration state — goes to the cron secret's holder:
+   `curl -H "Authorization: Bearer $BILLING_CRON_SECRET" https://app.outrunner.sh/api/health`.
 2. Sign in; create a workspace → a Runtime Computer provisions; open it → the
    terminal WS connects **directly to Daytona** (unchanged by the host swap).
 3. Close/reopen the tab → session resumes.
