@@ -22,8 +22,8 @@ import { CHAT_NAME_MAX, MAIN_CHAT, type SessionChat } from "@/lib/session/chats"
 /**
  * The chats of a session, beside its title: the one shown, opening onto the
  * others to switch to, each renamed or deleted from its row, and a new chat
- * or a fork of the one shown, on either agent. `+` starts a new chat on the
- * shown one's agent at once.
+ * or a fork of the one shown. A fork stays on its source chat's agent; `+`
+ * starts a new chat on the shown one's agent at once.
  */
 export function ChatSwitcher({
   chats,
@@ -135,12 +135,9 @@ export function ChatSwitcher({
             ))}
             <DropdownMenuSeparator />
             <NewChatItems label="New chat" icon={<Plus className="size-4" />} agents={offered} onStart={(agent) => start({ agent })} />
-            <NewChatItems
-              label="Fork this chat"
-              icon={<GitFork className="size-4" />}
-              agents={offered}
-              onStart={(agent) => start({ agent, from: current.id })}
-            />
+            <DropdownMenuItem className="gap-2" onSelect={() => start({ from: current.id })}>
+              <GitFork className="size-4" /> Fork this chat
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       )}
