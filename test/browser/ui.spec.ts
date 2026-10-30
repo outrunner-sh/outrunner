@@ -332,6 +332,40 @@ test("merged sidebar icon remains identifiable without checks or a visible numbe
   await expect(page.getByText("#284", { exact: true })).toHaveCount(2);
 });
 
+test("working sessions use the boxed thinking animation in the sidebar", async ({ page }) => {
+  const at = new Date().toISOString();
+  await page.route("**/api/sessions/standings", (route) =>
+    route.fulfill({
+      json: {
+        standings: {
+          "preview-0": {
+            standing: "working",
+            reason: null,
+            moved: false,
+            pinned: false,
+            unread: false,
+            replyPreview: null,
+            at,
+          },
+        },
+        ids: frame.appData.workspaces.map((workspace) => workspace.id),
+      },
+    }),
+  );
+  await openFixture(page, "/");
+  // The live standings feed reads on focus after its initial layout value.
+  const mark = page.getByRole("img", { name: "Working" });
+  await expect.poll(async () => {
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    return mark.count();
+  }).toBe(1);
+  await expect(mark).toBeVisible();
+  await expect(mark.locator(".dot-matrix-cell")).toHaveCount(9);
+  await expect(mark).not.toHaveClass(/spinner/);
+  await mkdir(".context/sidebar-thinking", { recursive: true });
+  await page.locator("#app-sidebar").screenshot({ path: ".context/sidebar-thinking/after.png" });
+});
+
 test("member automation controls are disabled; failed admin changes retain their state", async ({
   page,
 }) => {

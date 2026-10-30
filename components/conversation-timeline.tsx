@@ -26,7 +26,7 @@ import { type MessageFile, MessageAttachments, promptFiles } from "@/components/
 import { ImageBoxContext, Markdown } from "@/components/markdown";
 import { type PlanActions, PlanCard } from "@/components/plan-card";
 import { TickingFact } from "@/components/ui/notice";
-import { DotMatrix } from "@/components/ui/loaders";
+import { DotMatrix, ThinkingIcon } from "@/components/ui/loaders";
 import { useStreamedText } from "@/hooks/use-streamed-text";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import {
@@ -355,7 +355,7 @@ function WorkingIndicator({ label, since, stepSince = null }: { label: string; s
   const step = stepSince ? now - from(stepSince) : 0;
   return (
     <div role="status" className="flex items-center gap-2.5 py-1 text-[13px] text-muted-foreground">
-      <DotMatrix rows={3} cols={3} cell={3} gap={1.5} />
+      <ThinkingIcon />
       <span>{label}</span>
       {/* The timer ticks ten times a second, so it stays out of the live
           region; the label is the announcement, once per step. */}

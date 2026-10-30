@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { Spinner } from "@/components/ui/loaders";
+import { Spinner, ThinkingIcon } from "@/components/ui/loaders";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -186,7 +186,7 @@ export function StandingMark({ standing, className }: { standing: SessionStandin
     case "needs_you":
       return <CircleAlert aria-label={label} className={cn(box, "text-amber-400")} />;
     case "working":
-      return <Spinner label={label} className={cn(box, "text-muted-foreground")} />;
+      return <ThinkingIcon label={label} className={box} />;
     case "in_review":
       return <GitPullRequest aria-label={label} className={cn(box, "text-emerald-400")} />;
     case "done":
