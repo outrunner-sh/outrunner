@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestArgsSelectsRuntimesServer(t *testing.T) {
@@ -88,5 +89,73 @@ func TestNewSessionHidesTheStatusLine(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(out)); got != "status off" {
 		t.Errorf("session status option = %q, want %q", got, "status off")
+	}
+}
+
+func TestNewSessionWithLongInstructions(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	defer func(socket, config string) { socketName, configFile = socket, config }(socketName, configFile)
+	socketName, configFile = "runtime-long-"+strconv.Itoa(os.Getpid()), os.DevNull
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	defer func() { _ = Command(context.Background(), "kill-server").Run() }()
+	root := t.TempDir()
+	launchDir := filepath.Join(root, "launch files 'quoted'")
+	if err := os.Mkdir(launchDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", launchDir)
+	output := filepath.Join(root, "received")
+	// Runners add their delegation instructions to the agent's system prompt.
+	// Include shell syntax to ensure spilling argv never interprets its contents.
+	want := strings.Repeat("Runner instructions: 'quotes' \"double\" $HOME `false` $(false) \\ 中文\n", 700)
+	command := []string{"sh", "-c", `printf '%s' "$1" > "$2"; exec sleep 30`, "test-launch", want, output}
+	m := New()
+	if err := m.NewSession(ctx, "ws-long", root, command, os.Environ()); err != nil {
+		t.Fatalf("NewSession with %d instruction bytes: %v", len(want), err)
+	}
+	for {
+		got, err := os.ReadFile(output)
+		if err == nil && string(got) == want {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("command did not receive the exact instructions: %v (read: %v, bytes: %d)", ctx.Err(), err, len(got))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if files, err := os.ReadDir(launchDir); err != nil || len(files) != 0 {
+		t.Fatalf("launch files retained after start: %v, %v", files, err)
+	}
+	// Refusing a duplicate session must clean up the unexecuted launch too.
+	if err := m.NewSession(ctx, "ws-long", root, command, os.Environ()); err == nil {
+		t.Fatal("duplicate NewSession unexpectedly succeeded")
+	}
+	if files, err := os.ReadDir(launchDir); err != nil || len(files) != 0 {
+		t.Fatalf("launch files retained after failure: %v, %v", files, err)
+	}
+}
+
+func TestLaunchScriptIsPrivateAndRejectsNUL(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TMPDIR", root)
+	path, err := writeLaunchScript([]string{"true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("launch script permissions: %v, %v", info, err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeLaunchScript([]string{"true", "invalid\x00argument"}); err == nil {
+		t.Fatal("NUL argument was accepted")
+	}
+	if files, err := os.ReadDir(root); err != nil || len(files) != 0 {
+		t.Fatalf("invalid launch left files: %v, %v", files, err)
 	}
 }

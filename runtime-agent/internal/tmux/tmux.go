@@ -59,15 +59,64 @@ func New() *Manager { return &Manager{} }
 // `workdir`, with the given extra environment. Returns an error if it already
 // exists or tmux fails.
 func (m *Manager) NewSession(ctx context.Context, name, workdir string, command []string, env []string) error {
+	// tmux packs argv into a fixed-size command message. A Runner's system
+	// prompt can exceed it before the agent even starts. Send only a private
+	// script's path; the shell passes the original arguments to exec verbatim.
+	var launchPath string
+	if len(command) > 0 {
+		var err error
+		launchPath, err = writeLaunchScript(command)
+		if err != nil {
+			return fmt.Errorf("tmux launch script: %w", err)
+		}
+		command = []string{"/bin/sh", launchPath}
+	}
 	args := []string{"new-session", "-d", "-s", name, "-c", workdir}
 	args = append(args, command...)
 	cmd := Command(ctx, args...)
 	cmd.Env = env
 	if out, err := cmd.CombinedOutput(); err != nil {
+		if launchPath != "" {
+			_ = os.Remove(launchPath)
+		}
 		return fmt.Errorf("tmux new-session %s: %v: %s", name, err, out)
 	}
 	m.HideStatus(ctx, name)
 	return nil
+}
+
+// The script is readable only by this user and removes itself before exec,
+// so launch arguments don't linger on disk. On a failed tmux call its caller
+// removes it instead. In particular, don't remove it on a successful return:
+// the child shell may not have opened it yet.
+func writeLaunchScript(command []string) (string, error) {
+	for _, arg := range command {
+		if strings.ContainsRune(arg, 0) {
+			return "", errors.New("command argument contains NUL")
+		}
+	}
+	file, err := os.CreateTemp("", "outrunner-launch-*.sh")
+	if err != nil {
+		return "", err
+	}
+	quote := func(arg string) string { return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'" }
+	var script strings.Builder
+	script.WriteString("#!/bin/sh\n/bin/rm -f -- " + quote(file.Name()) + "\nexec")
+	for _, arg := range command {
+		script.WriteByte(' ')
+		script.WriteString(quote(arg))
+	}
+	script.WriteByte('\n')
+	if _, err := file.WriteString(script.String()); err != nil {
+		_ = file.Close()
+		_ = os.Remove(file.Name())
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(file.Name())
+		return "", err
+	}
+	return file.Name(), nil
 }
 
 // HideStatus turns off tmux's status line for one session. Claude Code draws
