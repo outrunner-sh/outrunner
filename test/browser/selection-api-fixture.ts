@@ -35,9 +35,10 @@ export async function stubSelectionApis(page: Page, failedFork = false, menu: Ou
       response = path.endsWith("/model") ? { model: stored.model.id, effort: stored.effort } : { workspace: { ...frame.appData.workspaces[0], id: body.id, agent: selected.agent, model: stored, status: "ready" } };
     } else if (path.endsWith("/chats") && request.method() === "POST") {
       if (failedFork) { await route.fulfill({ status: 409, json: { error: "This computer cannot run that harness." } }); return; }
-      const model = chatSelection({ agent: "codex", model: stored }, body.agent, groups, menu.loadout);
-      evidence.push({ stage: "fork request", body, model });
-      response = { chat: { id: "66666666-6666-4666-8666-666666666666", name: "Fork of Main", agent: body.agent, kind: "chat", forkedFrom: body.from, model, createdAt: "2026-10-29T00:00:00Z" } };
+      const agent = body.agent ?? "codex";
+      const model = chatSelection({ agent: "codex", model: stored }, agent, groups, menu.loadout);
+      evidence.push({ stage: body.from ? "fork request" : "new chat request", body, model });
+      response = { chat: { id: "66666666-6666-4666-8666-666666666666", name: body.from ? "Fork of Main" : "Chat 2", agent, kind: "chat", forkedFrom: body.from ?? null, model, createdAt: "2026-10-29T00:00:00Z" } };
     }
     await route.fulfill({ json: response });
   });

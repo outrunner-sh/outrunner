@@ -55,6 +55,20 @@ test("existing composer applies only model-supported effort and keeps a draft wh
   await expect(page.getByRole("menuitemradio", { name: "High", exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+test("new chat asks the server for the active chat's live harness, model and effort", async ({ page }) => {
+  const state = await fixture(page); await open(page, "/workspaces/preview-0");
+  await menu(page, "Effort");
+  await page.getByRole("menuitemradio", { name: "Low", exact: true }).click();
+  await expect.poll(() => state.stored().effort).toBe("low");
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
+  await expect(page).toHaveURL(/chat=66666666/);
+  await expect(page.getByRole("button", { name: /^Harness: Codex.*Low effort/ })).toBeVisible();
+  expect(state.evidence).toContainEqual(expect.objectContaining({
+    stage: "new chat request",
+    body: { selectionFrom: "main" },
+    model: expect.objectContaining({ effort: "low" }),
+  }));
+});
 test("existing harness action forks through the supported API and moves the draft and image", async ({ page }) => {
   const state = await fixture(page); await open(page, "/workspaces/preview-0");
   await page.getByRole("textbox", { name: "Message Codex" }).fill("Continue this draft");

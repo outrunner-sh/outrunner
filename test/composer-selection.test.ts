@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { chatSelection } from "@/lib/session/chat-selection";
+import { chatSelection, rememberedChatSelection } from "@/lib/session/chat-selection";
 import { codexCatalog } from "@/lib/codex/model-catalog";
 import { withOrgDefault } from "@/lib/orgs/defaults";
 import { parseLoadout, setEntryAgent, setEntryEffort } from "@/lib/runtime/model-loadout";
@@ -87,6 +87,20 @@ test("forks keep source selections on the same harness and resolve compatible de
   const fork = chatSelection(source, "claude", groups, preference);
   assert.equal(fork?.model.provider, "claude");
   assert.equal(fork?.effort, "high");
+});
+
+test("fresh chats keep the active saved setup, then the latest setup for an explicitly chosen harness", () => {
+  const oldClaude = { model: modelChoice("claude", "haiku")!, effort: "low" as const };
+  const latestClaude = { model: modelChoice("claude", "opus")!, effort: "high" as const };
+  const activeCodex = { agent: "codex" as const, model: { model: catalog[0], effort: "low" as const } };
+  const chats = [
+    { agent: "claude" as const, model: oldClaude },
+    activeCodex,
+    { agent: "claude" as const, model: latestClaude },
+  ];
+  assert.deepEqual(rememberedChatSelection(activeCodex, "codex", chats), activeCodex.model);
+  assert.deepEqual(rememberedChatSelection(activeCodex, "claude", chats), latestClaude);
+  assert.equal(rememberedChatSelection({ agent: "codex", model: null }, "codex", []), undefined);
 });
 
 test("an org harness default applies when a personal loadout has that model but no default or harness choice", () => {
