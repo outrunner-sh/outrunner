@@ -8,7 +8,6 @@ import {
   isIdle,
   reconcile,
   RUN_DEADLINE_MS,
-  STUCK_TURN_AFTER_MS,
 } from "@/lib/billing/reconcile";
 
 const NOW = new Date("2026-10-17T12:00:00Z");
@@ -21,8 +20,8 @@ function computer(id: string): MeteredComputer {
 function interval(id: string, sandboxId: string, lastSeenMinutesAgo = 2): OpenInterval {
   return { id, sandboxId, startedAt: new Date(ago(60 * MIN)), lastSeenAt: new Date(ago(lastSeenMinutesAgo * MIN)) };
 }
-const active: BoxState = { running: true, activity: { lastActivity: ago(1 * MIN), turnInProgress: false } };
-const idle: BoxState = { running: true, activity: { lastActivity: ago(20 * MIN), turnInProgress: false } };
+const active: BoxState = { running: true, activity: { lastActivity: ago(1 * MIN), turnTrackingVersion: 1, turnInProgress: false } };
+const idle: BoxState = { running: true, activity: { lastActivity: ago(20 * MIN), turnTrackingVersion: 1, turnInProgress: false } };
 
 /** A world of computers, their boxes' states, and open intervals; every
  *  write lands in `log`. */
@@ -60,16 +59,19 @@ function world(opts: {
   return { deps, log: { writes, all: log } };
 }
 
-test("idle is 15 quiet minutes, or 2 hours with a turn that never ended", () => {
-  assert.equal(isIdle({ lastActivity: ago(IDLE_AFTER_MS - MIN), turnInProgress: false }, NOW), false);
-  assert.equal(isIdle({ lastActivity: ago(IDLE_AFTER_MS), turnInProgress: false }, NOW), true);
-  // A long, quiet tool run (a test suite) isn't idle...
-  assert.equal(isIdle({ lastActivity: ago(60 * MIN), turnInProgress: true }, NOW), false);
-  // ...but a turn left open for hours (Claude killed mid-turn) is.
-  assert.equal(isIdle({ lastActivity: ago(STUCK_TURN_AFTER_MS), turnInProgress: true }, NOW), true);
+test("only completed turns become idle after 15 quiet minutes", () => {
+  assert.equal(isIdle({ lastActivity: ago(IDLE_AFTER_MS - MIN), turnTrackingVersion: 1, turnInProgress: false }, NOW), false);
+  assert.equal(isIdle({ lastActivity: ago(IDLE_AFTER_MS), turnTrackingVersion: 1, turnInProgress: false }, NOW), true);
+  // Quiet execution and user absence never turn unfinished work into idle.
+  assert.equal(isIdle({ lastActivity: ago(60 * MIN), turnTrackingVersion: 1, turnInProgress: true }, NOW), false);
+  for (const hours of [2, 24, 168]) {
+    assert.equal(isIdle({ lastActivity: ago(hours * 60 * MIN), turnTrackingVersion: 1, turnInProgress: true }, NOW), false);
+  }
+  // An old agent cannot reliably distinguish commentary from a final answer.
+  assert.equal(isIdle({ lastActivity: ago(24 * 60 * MIN), turnInProgress: false }, NOW), false);
   // An agent that couldn't say, or said nonsense, is never paused.
   assert.equal(isIdle(null, NOW), false);
-  assert.equal(isIdle({ lastActivity: "not a date", turnInProgress: false }, NOW), false);
+  assert.equal(isIdle({ lastActivity: "not a date", turnTrackingVersion: 1, turnInProgress: false }, NOW), false);
 });
 
 test("a busy box is seen; one with no interval gets one", async () => {
@@ -183,4 +185,16 @@ test("where paused boxes can't come back (jcode), idle boxes are still metered, 
   assert.deepEqual(logs.writes(), ["seen i-a"]);
   assert.equal(report.paused, 0);
   assert.equal(report.seen, 1);
+});
+
+test("unfinished work stays running and metered after a day without output", async () => {
+  const busy: BoxState = { running: true, activity: { lastActivity: ago(24 * 60 * MIN), turnTrackingVersion: 1, turnInProgress: true } };
+  const { deps, log: logs } = world({ computers: [computer("a")], states: { a: busy }, open: [interval("i-a", "sb-a")] });
+  const report = await reconcile(deps);
+  assert.deepEqual(logs.writes(), ["seen i-a"]);
+  assert.equal(report.paused, 0);
+
+  // Completion makes the same box eligible for the ordinary idle policy.
+  deps.observe = async () => ({ running: true, activity: { lastActivity: ago(24 * 60 * MIN), turnTrackingVersion: 1, turnInProgress: false } });
+  assert.equal((await reconcile(deps)).paused, 1);
 });

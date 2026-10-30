@@ -223,3 +223,23 @@ func TestSummaryTurnIsOpenUntilClaudeAnswersWithText(t *testing.T) {
 		t.Error("an exited session still has a turn open")
 	}
 }
+
+func TestSummaryDoesNotEndTurnsOnCommentaryOrThinking(t *testing.T) {
+	sum := newSummary("ws", t.TempDir())
+	for _, msg := range []protocol.ConversationMessage{
+		{Role: "user", Content: []protocol.ContentBlock{{Type: "text", Text: "do the work"}}},
+		{Role: "assistant", UUID: "codex-legacy-commentary", Content: []protocol.ContentBlock{{Type: "text", Text: "Old translated commentary."}}},
+		{Role: "assistant", StopReason: "in_progress", Content: []protocol.ContentBlock{{Type: "text", Text: "Still working."}}},
+		{Role: "assistant", Content: []protocol.ContentBlock{{Type: "thinking", Text: "considering"}}},
+		{Role: "assistant", StopReason: "tool_use", Content: []protocol.ContentBlock{{Type: "text", Text: "Starting a tool."}}},
+	} {
+		sum.applyEvent(conversation.Event{Message: &msg})
+		if _, open := sum.activity(); !open {
+			t.Fatalf("turn ended on %+v", msg)
+		}
+	}
+	sum.applyEvent(conversation.Event{Message: &protocol.ConversationMessage{Role: "assistant", StopReason: "end_turn", Content: []protocol.ContentBlock{{Type: "text", Text: "Finished."}}}})
+	if _, open := sum.activity(); open {
+		t.Fatal("finished turn still open")
+	}
+}

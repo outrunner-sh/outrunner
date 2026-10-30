@@ -75,7 +75,6 @@ type Service struct {
 	activityUnknownSince          time.Time
 	activityUnknownReason         string
 	activityUnknownLogged         time.Time
-	activityUnknownExpiredLogged  bool
 	activityUnknownClearAttempted bool
 	activityUnknownClearFailed    bool
 	lifetimeID                    func() string
@@ -1962,9 +1961,8 @@ func (s *Service) Activity() (last time.Time, turnInProgress, unknown bool) {
 	defer cancel()
 	if reason := s.recoverRunningSummaries(ctx); reason != "" {
 		// Protect active work when tmux is temporarily unreadable or a live
-		// session has lost its persisted facts. The two-hour bound matches the
-		// reconciler's stuck-turn limit; afterward this unknown state is eligible
-		// for the ordinary idle pause instead of holding a box forever.
+		// session has lost its persisted facts. Unknown activity is never proof
+		// of completed work, regardless of how long the user has been away.
 		last, turnInProgress = s.unknownActivity(reason)
 		return last, turnInProgress, true
 	}
@@ -2003,24 +2001,18 @@ func (s *Service) recoverRunningSummaries(ctx context.Context) string {
 	return unknown
 }
 
-const (
-	unknownActivityGrace       = 2 * time.Hour
-	unknownActivityLogInterval = 10 * time.Minute
-)
+const unknownActivityLogInterval = 10 * time.Minute
 
-// unknownActivity keeps the reconciler fail-safe for the same two-hour window
-// it already grants a known in-progress turn. Its timestamp does not move on
-// every poll, so persistent tmux failures and orphan sessions eventually
-// become eligible for the ordinary idle pause. Warnings are rate-limited per
-// service instance while still making the reason and age visible.
+// unknownActivity protects unfinished work until live sessions can be observed
+// again. Persist its original timestamp for diagnostics across service restarts;
+// uncertainty never expires into permission to pause. Warnings are rate-limited.
 func (s *Service) unknownActivity(reason string) (time.Time, bool) {
 	now := time.Now().UTC()
-	knownLast, knownTurn := s.summariesActivity()
+	knownLast, _ := s.summariesActivity()
 	s.activityMu.Lock()
 	defer s.activityMu.Unlock()
 	if s.activityUnknownSince.IsZero() {
 		s.activityUnknownClearAttempted = false
-		s.activityUnknownExpiredLogged = false
 		if !s.activityUnknownClearFailed {
 			s.activityUnknownSince = s.readUnknownActivitySince()
 		}
@@ -2032,19 +2024,10 @@ func (s *Service) unknownActivity(reason string) (time.Time, bool) {
 	s.activityUnknownReason = reason
 	if s.activityUnknownLogged.IsZero() || now.Sub(s.activityUnknownLogged) >= unknownActivityLogInterval {
 		age := now.Sub(s.activityUnknownSince).Round(time.Second)
-		log.Printf("runtime-agent: activity remains unknown for %s (%s); unknown-only protection window %s, expired=%t", age, s.activityUnknownReason, unknownActivityGrace, age >= unknownActivityGrace)
+		log.Printf("runtime-agent: activity remains unknown for %s (%s); keeping the box running until work can be confirmed idle", age, s.activityUnknownReason)
 		s.activityUnknownLogged = now
 	}
-	if now.Sub(s.activityUnknownSince) < unknownActivityGrace {
-		return laterOf(s.activityUnknownSince, knownLast), true
-	}
-	if !s.activityUnknownExpiredLogged {
-		log.Printf("runtime-agent: unknown-activity protection window elapsed after %s; falling back to observed summaries and idle state", now.Sub(s.activityUnknownSince).Round(time.Second))
-		s.activityUnknownExpiredLogged = true
-	}
-	// A collector that is still making progress can see activity even when
-	// tmux's session list is unavailable. Keep its normal turn protection.
-	return laterOf(s.activityUnknownSince, knownLast), knownTurn
+	return laterOf(s.activityUnknownSince, knownLast), true
 }
 
 func (s *Service) summariesActivity() (last time.Time, turnInProgress bool) {
@@ -2088,13 +2071,11 @@ func (s *Service) clearUnknownActivity() {
 	s.activityUnknownSince = time.Time{}
 	s.activityUnknownReason = ""
 	s.activityUnknownLogged = time.Time{}
-	s.activityUnknownExpiredLogged = false
 	s.activityMu.Unlock()
 }
 
-// Persist the start of an unknown-activity interval so restarting
-// runtime-agent cannot keep resetting the protection window for an orphaned
-// session or a tmux server that never answers.
+// Persist the start of an unknown-activity interval so diagnostics retain its
+// age across runtime-agent restarts.
 func (s *Service) unknownActivityPath() string {
 	return filepath.Join(s.Root, "runtime-agent-activity-unknown-since")
 }

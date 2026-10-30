@@ -136,8 +136,9 @@ const ListingWorkspaceID = "*"
 // activity in any session or from a user (terminal input, a control call), and
 // whether Claude is mid-turn anywhere. The control plane pauses an idle box.
 type Activity struct {
-	LastActivity   string `json:"lastActivity"` // RFC3339 UTC
-	TurnInProgress bool   `json:"turnInProgress"`
+	LastActivity        string `json:"lastActivity"` // RFC3339 UTC
+	TurnInProgress      bool   `json:"turnInProgress"`
+	TurnTrackingVersion int    `json:"turnTrackingVersion"`
 }
 
 // LocalSession is one local session the agent on a user's Mac knows about, as
