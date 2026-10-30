@@ -353,6 +353,9 @@ test("working sessions use the boxed thinking animation in the sidebar", async (
     }),
   );
   await openFixture(page, "/");
+  if ((page.viewportSize()?.width ?? 1440) < 640) {
+    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+  }
   // The live standings feed reads on focus after its initial layout value.
   const mark = page.getByRole("img", { name: "Working" });
   await expect.poll(async () => {
