@@ -23,3 +23,17 @@ test("a newer warm-up isn't replaced by older URLs", async () => {
   keepSessionUrls("w3", urls, Date.now() - 10_000);
   assert.deepEqual(await takeWarmUrls("w3"), newer);
 });
+
+test("a stalled sidebar warm-up cannot block opening a session", async () => {
+  const { warmSession, WARM_WAIT_MS } = await import("@/lib/session/warm-session");
+  const original = globalThis.fetch;
+  globalThis.fetch = () => new Promise<Response>(() => {});
+  try {
+    warmSession("stalled-warm");
+    const since = Date.now();
+    assert.equal(await takeWarmUrls("stalled-warm"), null);
+    assert.ok(Date.now() - since < WARM_WAIT_MS + 1000, "opening falls back instead of waiting for the stuck probe");
+  } finally {
+    globalThis.fetch = original;
+  }
+});

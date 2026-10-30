@@ -254,7 +254,7 @@ export function WorkspaceStudio({
         ) : hasLiveSession || setup !== "ended" ? (
           <WorkspaceSession
             // Each chat its own page state: its conversation, queue, picks.
-            key={current.id}
+            key={`${workspace.id}:${current.id}`}
             workspaceId={workspace.id}
             startup={setup !== "ended" ? { startedAt: workspace.createdAt, stalled: setup === "stalled", onDetails: () => setInfoOpen(true) } : undefined}
             chatId={current.id}

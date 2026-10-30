@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
@@ -40,6 +40,10 @@ export type ConversationStreamState = {
 // backs off exponentially and gives up after a bounded number of consecutive
 // failures rather than hammering /session against a genuinely-down endpoint.
 
+const subscribeReady = () => () => {};
+const clientReady = () => true;
+const serverReady = () => false;
+
 /**
  * Subscribe to the Workspace Session's AgentEvent stream. State events (which
  * aren't resumable) are re-observed on every fresh connect and de-duplicated
@@ -67,7 +71,10 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     reconnect,
     refresh,
   } = attachment;
-  const [kept] = useState(() => CONVERSATIONS.get(workspaceId));
+  // Hydration must match the empty server shell. A later client navigation
+  // can take its cached history immediately; a reload restores it before paint.
+  const hydrated = useSyncExternalStore(subscribeReady, clientReady, serverReady);
+  const [kept] = useState(() => hydrated ? CONVERSATIONS.get(workspaceId) : undefined);
   const [events, setEvents] = useState<AgentEvent[]>(kept?.events ?? []);
   const [ws, dispatch] = useReducerState();
   const lastEventIdRef = useRef<string | null>(kept?.lastEventId ?? null);
@@ -75,15 +82,29 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
   const seenIdsRef = useRef<Set<string>>(new Set(kept?.seenIds));
   // The edits taken in, which the stream is told of so it tells only of newer.
   const rewindsRef = useRef<number>(kept?.rewinds ?? 0);
+  const cacheRestored = useRef(hydrated);
+  useLayoutEffect(() => {
+    if (cacheRestored.current) return;
+    cacheRestored.current = true;
+    const cached = CONVERSATIONS.get(workspaceId);
+    if (!cached) return;
+    lastEventIdRef.current = cached.lastEventId;
+    seenIdsRef.current = new Set(cached.seenIds);
+    rewindsRef.current = cached.rewinds ?? 0;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Restore browser-only history after hydration, before paint.
+    setEvents(cached.events);
+  }, [workspaceId]);
   // Keep what this page has seen for the next time the session is opened.
   useEffect(() => {
+    // Do not overwrite the saved conversation with the empty hydration shell.
+    if (!hydrated) return;
     CONVERSATIONS.set(workspaceId, {
       events,
       lastEventId: lastEventIdRef.current,
       seenIds: seenIdsRef.current,
       rewinds: rewindsRef.current,
     });
-  }, [workspaceId, events]);
+  }, [workspaceId, events, hydrated]);
   const rewind = useCallback((cut: { at: number; uuid: string; rewinds: number }) => {
     // A lower counter belongs to a restored history. Only the stream can
     // reset and replay it; applying that reset locally would erase history
