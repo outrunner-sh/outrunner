@@ -301,15 +301,15 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	argv = withAgentConfig(argv)
 	if askArgs := s.claudeAskArgs(workspaceID); len(askArgs) > 0 {
 		argv = append(argv, askArgs...)
-		// With the tools, secrets the user provides reach the running Claude
-		// (secrets.go): its settings, the user's own and the hooks, replace
-		// the user's alone.
-		if env, settings := s.claudeSecretsLaunch(workspaceID); settings != "" {
+	}
+	// Install the environment hook even without the ask relay when the
+	// session has project variables. This also applies to its other chats.
+	if s.RelayExecutable != "" || fileExists(s.envFiles().path(s.owner(workspaceID))) {
+		if settings := s.claudeSecretsLaunch(workspaceID); settings != "" {
 			argv = append(withoutFlag(argv, "--settings"), "--settings", settings)
-			argv = append(append([]string{"env"}, env...), argv...)
 		}
 	}
-	// Its own flags, after the env prefix the secrets may have put first.
+	// Desktop tools are added after the user and project MCP servers.
 	argv = append(argv, s.claudeDesktopArgs(workspaceID, worktree)...)
 	if f.Gateway != claude.NoGateway {
 		// The model rides in the gateway file: --model refuses a gateway's names.

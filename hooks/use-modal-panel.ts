@@ -8,6 +8,14 @@ const LAYER = "[role=dialog], [role=alertdialog], [role=menu], [role=listbox], [
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+function tabStops(node: HTMLElement): HTMLElement[] {
+  // A native control can match FOCUSABLE even when a roving tab list gives
+  // it a negative tabIndex. Match the browser's sequential navigation.
+  return [...node.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+    (el) => el.tabIndex >= 0 && el.offsetParent !== null,
+  );
+}
+
 /**
  * A panel that covers the page while `open` (the sidebar as a drawer on a
  * phone, the Environment over a narrow window's chat): focus moves into it
@@ -27,7 +35,7 @@ export function useModalPanel<T extends HTMLElement = HTMLDivElement>(open: bool
     const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const node = panel.current;
     if (node && !node.contains(document.activeElement)) {
-      (node.querySelector<HTMLElement>(FOCUSABLE) ?? node).focus({ preventScroll: true });
+      (tabStops(node)[0] ?? node).focus({ preventScroll: true });
     }
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !event.defaultPrevented) {
@@ -40,7 +48,7 @@ export function useModalPanel<T extends HTMLElement = HTMLDivElement>(open: bool
       // Focus in a layer opened from the panel (a row's menu, an Archive or
       // Delete dialog) is portaled outside it, and that layer's to move.
       if (at && !node.contains(at) && at.closest(LAYER)) return;
-      const items = [...node.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null);
+      const items = tabStops(node);
       if (items.length === 0) return;
       const first = items[0];
       const last = items[items.length - 1];

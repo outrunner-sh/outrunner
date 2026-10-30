@@ -5,15 +5,30 @@
 
 import { randomBytes } from "node:crypto";
 
-import { isMetered } from "@/lib/billing/metering-store";
+import type { Owner } from "@/lib/auth/owner";
+import { SMALL_BOX_CPU } from "@/lib/billing/hours";
+import { cloudBoxStartGate } from "@/lib/billing/limits";
+import { closeIntervalOf, isMetered, openInterval } from "@/lib/billing/metering-store";
 import { getSandboxSettings, ownSandboxKeys } from "@/lib/db/credentials";
-import { environmentSetup, getEnvironment, recordWarmRun, sessionCheckouts } from "@/lib/db/environments";
+import {
+  defaultEnvironmentId,
+  environmentSetup,
+  getEnvironment,
+  recordWarmRun,
+  sessionCheckouts,
+  setupGeneration,
+} from "@/lib/db/environments";
 import { gitTokensFor, optionalGitToken } from "@/lib/github/identity.deps";
 import {
   claimPooledComputer,
+  claimPooledWarmup,
+  completePooledWarmup,
   createPooledComputer,
   deletePooledComputer,
   getPooledComputers,
+  getProject,
+  getRuntimeComputerById,
+  readRuntimeComputerSecret,
   releasePooledComputer,
   markPooledFailed,
   markPooledReady,
@@ -25,13 +40,112 @@ import { type ComputerRuntimeProvider, isComputerProvider } from "@/lib/runtime/
 import { providerForNewSessions, providerNamed } from "@/lib/runtime/sandbox-choice";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import type { Project, ProviderName } from "@/lib/runtime/types";
-import { POOL_SIZE, projectCheckouts, refillPool, STALE_REFILL_MS, warmRefusal } from "@/lib/runtime/warm-pool";
+import {
+  POOL_SIZE,
+  pauseExpiredIntentWarmup,
+  projectCheckouts,
+  refillPool,
+  STALE_REFILL_MS,
+  wakeIntentPool,
+  warmRefusal,
+} from "@/lib/runtime/warm-pool";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** Whether `provider`'s boxes are pooled: Outrunner's own, on a provider
  *  that pauses a box and brings it back on its disk. */
 export function poolsBoxes(provider: ComputerRuntimeProvider): boolean {
   return provider.pausesBoxes && provider.restoresBoxes && isMetered(provider.name);
+}
+
+/** How long a composer intent keeps an otherwise unused pooled box running. */
+export const INTENT_WARM_MS = 90_000;
+
+/**
+ * Wake one prepared box while the user is composing a new session. Best
+ * effort: Send always retains the ordinary stopped-pool/cold path.
+ *
+ * The database claim is the handoff point. A Send may turn the row from
+ * pooled into the workspace's own while provisionComputer is restoring it;
+ * both then wait on/update the same computer id and secret.
+ */
+export async function intentWarmProject(owner: Owner, projectId: string): Promise<void> {
+  const project = await getProject(projectId);
+  if (!project) return;
+
+  const settings = await getSandboxSettings(owner.id);
+  const provider = providerForNewSessions(settings, ownSandboxKeys(owner.id));
+  if (!isComputerProvider(provider) || !poolsBoxes(provider)) return;
+
+  // A repeated intent extends this project's existing reservation even when
+  // it currently occupies the plan's final slot.
+  const gate = await cloudBoxStartGate(owner, project.orgId, provider.name, {
+    warmProjectId: project.id,
+  });
+  if ("denial" in gate) return;
+
+  const environmentId = await defaultEnvironmentId(owner.id, project.id).catch(() => null);
+  const [generation, githubToken, sessionEnv] = await Promise.all([
+    setupGeneration(owner.id, environmentId).catch(() => null),
+    optionalGitToken(owner.id, { orgId: project.orgId, fullName: project.fullName }),
+    runtimeSessionEnvironment(owner.id, null),
+  ]);
+
+  const claim = () => claimPooledWarmup({
+    projectId: project.id,
+    provider: provider.name,
+    generation,
+    maxLiveComputers: gate.cap,
+  });
+  let warm = await claim();
+  // A project's first composer can prepare its pool too. If Send wins this
+  // race it simply takes the cold path; the refill remains useful next time.
+  if (!warm) {
+    await refillProjectPool({
+      provider,
+      ownerId: owner.id,
+      project,
+      environmentId,
+      githubToken,
+      sessionEnv,
+    });
+    warm = await claim();
+  }
+  if (!warm?.shouldWake) return;
+
+  const computer = await getRuntimeComputerById(warm.computerId);
+  const secret = await readRuntimeComputerSecret(warm.computerId);
+  const sandboxId = computer?.daytonaSandboxId;
+  if (!computer || !sandboxId || !secret) return;
+
+  await wakeIntentPool({
+    wake: () => provider.provisionComputer({
+      secret,
+      repoFullName: project.fullName,
+      githubToken,
+      sessionEnv,
+      previousSandboxId: sandboxId,
+    }),
+    publish: (restored) => completePooledWarmup(computer.id, {
+      sandboxId: restored.sandboxId,
+      provider: provider.name,
+      agentBaseUrl: restored.agentBaseUrl,
+      timings: restored.timings,
+    }),
+    meter: (restored) => openInterval({
+      computerId: computer.id,
+      sandboxId: restored.sandboxId,
+      cpu: restored.cpu ?? SMALL_BOX_CPU,
+      at: new Date(),
+    }),
+    meterFailed: (error) =>
+      console.error(`Could not meter intent-warmed box ${computer.id}; reconciliation will retry`, error),
+    pause: (restored) => provider.pauseComputer(restored.sandboxId),
+    stopped: () => updateRuntimeComputer(computer.id, {
+      status: "stopped",
+      warmExpiresAt: null,
+      errorMessage: "The session pre-warm did not finish; Send can try again.",
+    }),
+  });
 }
 
 /** A pooled box of the project for a new session to take, made by
@@ -331,6 +445,73 @@ export async function sweepAbandonedPools(provider: ComputerRuntimeProvider): Pr
     }
   }
   return swept;
+}
+
+/** Pause intent-warmed pool boxes whose composer never sent. The conditional
+ * update claims each row before any provider call: if Send claimed it first,
+ * `pooled` is already false and it is untouched. The cleanup flag keeps a
+ * failed/in-flight pause ineligible to Send until the wake endpoint is
+ * durable or the provider confirms the box stopped. */
+export async function sweepExpiredIntentWarmups(
+  provider: ComputerRuntimeProvider,
+  now = new Date(),
+): Promise<number> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("runtime_computers")
+    .update({
+      status: "provisioning",
+      warm_expires_at: null,
+      warm_cleanup_pending: true,
+      error_message: "Pausing an unused session pre-warm.",
+    })
+    .eq("pooled", true)
+    .eq("provider", provider.name)
+    .in("status", ["provisioning", "ready"])
+    .not("warm_expires_at", "is", null)
+    .lte("warm_expires_at", now.toISOString())
+    .select("id, daytona_sandbox_id");
+  if (error) throw error;
+
+  let paused = 0;
+  for (const row of data ?? []) {
+    const sandboxId = row.daytona_sandbox_id;
+    if (!sandboxId) continue;
+    try {
+      const didPause = await pauseExpiredIntentWarmup({
+        pause: () => provider.pauseComputer(sandboxId),
+        closeMetering: () => closeIntervalOf(sandboxId, now),
+        closeMeteringFailed: (meterError) =>
+          console.error(`Could not close metering for paused warm-pool box ${row.id}; reconciliation will retry`, meterError),
+        stopped: async () => {
+          const { error: updateError } = await supabase
+            .from("runtime_computers")
+            .update({ status: "stopped", warm_cleanup_pending: false, error_message: null })
+            .eq("id", row.id)
+            .eq("pooled", true)
+            .eq("status", "provisioning")
+            .eq("warm_cleanup_pending", true);
+          if (updateError) throw updateError;
+        },
+        pauseFailed: async (pauseError) => {
+          // Keep it metered and retry after another short lease. The row
+          // stays cleanup-owned until its fresh endpoint is durable.
+          const { error: retryError } = await supabase.rpc("retry_pooled_warmup_pause", {
+            requested_computer_id: row.id,
+            retry_at: new Date(now.getTime() + INTENT_WARM_MS).toISOString(),
+          });
+          if (retryError) console.error(`Could not restore warm-pool row ${row.id} after pause failed`, retryError);
+          console.error(`Could not pause expired warm-pool box ${row.id}`, pauseError);
+        },
+      });
+      if (didPause) paused += 1;
+    } catch (settleError) {
+      // The provider pause succeeded, so never restore ready here. Leaving
+      // cleanup_pending set keeps Send fenced until a later repair.
+      console.error(`Could not record paused warm-pool box ${row.id}`, settleError);
+    }
+  }
+  return paused;
 }
 
 /**

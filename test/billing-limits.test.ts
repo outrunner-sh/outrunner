@@ -47,8 +47,23 @@ test("a live box: ready, or provisioning while fresh, and never the owner's own"
   const stale = new Date(now.getTime() - STALE_PROVISION_MS - 1).toISOString();
   assert.equal(isLiveMeteredComputer(box("provisioning", "daytona", stale), now), false);
   assert.equal(isLiveMeteredComputer(box("stopped", null, fresh.toISOString()), now), false);
-  // A pooled box, made ahead and stopped, runs no one's session.
+  // An ordinary pooled box runs no one's session; a short intent-warm lease
+  // consumes the slot that Send will inherit.
   assert.equal(isLiveMeteredComputer({ ...box("provisioning", "daytona", fresh.toISOString()), pooled: true }, now), false);
+  assert.equal(
+    isLiveMeteredComputer(
+      { ...box("provisioning", "daytona", fresh.toISOString()), pooled: true, warmExpiresAt: fresh.toISOString() },
+      now,
+    ),
+    true,
+  );
+  assert.equal(
+    isLiveMeteredComputer(
+      { ...box("ready", "daytona", fresh.toISOString()), pooled: true, warmExpiresAt: fresh.toISOString() },
+      now,
+    ),
+    true,
+  );
   // The owner's own Daytona or Modal is their bill, not the plan's.
   assert.equal(isLiveMeteredComputer(box("ready", "user-daytona", fresh.toISOString()), now), false);
   assert.equal(isLiveMeteredComputer(box("ready", "user-modal", fresh.toISOString()), now), false);
@@ -79,6 +94,14 @@ test("a session's box is live only when that box is", () => {
   assert.equal(boxLive(boxes, { projectId: "p-2" }, now), false);
   // A new session always starts a box.
   assert.equal(boxLive(boxes, null, now), false);
+  // Except one with a live intent-warmed box reserved for its project.
+  const intent = {
+    ...box("ready", "daytona", fresh.toISOString(), "p-warm"),
+    pooled: true,
+    warmExpiresAt: fresh.toISOString(),
+  };
+  assert.equal(boxLive([intent], { warmProjectId: "p-warm" }, now), true);
+  assert.equal(boxLive([intent], { warmProjectId: "p-other" }, now), false);
   // Its box paused, or its provision died: the session starts one.
   assert.equal(boxLive([box("stopped", null, "x", "p-1", "w-1")], { workspaceId: "w-1" }, now), false);
   const stale = new Date(now.getTime() - STALE_PROVISION_MS - 1).toISOString();

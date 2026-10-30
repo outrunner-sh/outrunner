@@ -445,6 +445,9 @@ export type AnswerRequest = z.infer<typeof AnswerRequest>;
  *  (POST /workspaces/{id}/secrets). */
 export const AGENT_FEATURE_REQUEST_SECRETS = "request-secrets";
 
+/** Codex request_secrets, including forms for calls made inside code mode. */
+export const AGENT_FEATURE_CODEX_SECRETS = "codex-request-secrets";
+
 /**
  * POST /workspaces/{id}/secrets: the user's answer to the request for
  * secrets the session is waiting on (runtime-agent/internal/ask/secrets.go).

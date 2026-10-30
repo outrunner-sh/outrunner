@@ -11,7 +11,7 @@ import { type PendingSecretRequest, providedValues } from "@/lib/runtime/pending
  * The secrets the session's agent asked for (request_secrets), in place of
  * the composer: a password field per variable, a box to paste a whole .env
  * into (it fills the fields it names), and, where the session has a project,
- * whether to keep them there for its next sessions. Enter sends once every
+ * they are saved there for its next sessions. Enter sends once every
  * required variable has a value; Escape skips.
  *
  * The values never touch the conversation: they go to the session's agent,
@@ -28,22 +28,18 @@ export function SecretsCard({
   request: PendingSecretRequest;
   /** Who asks: "Claude". */
   agentLabel: string;
-  /** Whether the values can be kept in the session's project too: a cloud
-   *  session's. */
+  /** Cloud sessions save supplied values to their project automatically. */
   canSave: boolean;
   /** Kept mounted, hidden, while the answer is on the way, so a failed send
    *  offers it again with the values as they were. */
   hidden?: boolean;
-  onProvide: (values: Record<string, string>, save: boolean) => void;
+  onProvide: (values: Record<string, string>) => void;
   onSkip: () => void;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
   const [pasting, setPasting] = useState(false);
   const [pasted, setPasted] = useState("");
-  // Opt-in: the session gets them either way, and keeping a secret for every
-  // later session should be a choice made, not one missed.
-  const [save, setSave] = useState(false);
   const firstRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -53,7 +49,7 @@ export function SecretsCard({
 
   const ready = providedValues(request, values);
   const submit = () => {
-    if (ready) onProvide(ready, canSave && save);
+    if (ready) onProvide(ready);
   };
 
   // A pasted .env fills the fields it names; the rest of it is dropped.
@@ -147,6 +143,7 @@ export function SecretsCard({
       ) : null}
       <p className="studio-secrets-note">
         Sent straight to this session, never into the chat. {agentLabel} only learns which ones you gave.
+        {canSave && " Saved to this project for future sessions."}
       </p>
       <div className="studio-question-foot">
         <span className="inline-flex items-center gap-3">
@@ -154,12 +151,6 @@ export function SecretsCard({
             <button type="button" className="studio-secrets-paste" onClick={() => setPasting(true)}>
               <ClipboardPaste /> Paste a .env
             </button>
-          )}
-          {canSave && (
-            <label className="studio-secrets-save">
-              <input type="checkbox" checked={save} onChange={(event) => setSave(event.target.checked)} />
-              Save to project for new sessions
-            </label>
           )}
         </span>
         <span className="studio-secrets-actions">
