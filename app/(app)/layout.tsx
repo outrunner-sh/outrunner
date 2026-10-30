@@ -6,6 +6,7 @@ import { ServerAnswer } from "@/components/server-answer";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProjects, listWorkspacePullRequests } from "@/lib/db/repositories";
 import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
+import { githubCoAuthor } from "@/lib/github/co-author";
 import { countTriage, triageActor } from "@/lib/db/work-items";
 import { GET_STARTED_COOKIE } from "@/lib/nav/get-started";
 import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
@@ -131,6 +132,7 @@ async function SidebarData() {
     <ServerAnswer<FrameData>
       value={{
         appData: {
+          coAuthor: githubCoAuthor(owner),
           projects: listed,
           hiddenProjects: hidden,
           workspaces,

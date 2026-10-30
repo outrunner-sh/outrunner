@@ -24,6 +24,16 @@ export const PR_PROMPT = "Create a PR";
 
 export const PR_INSTRUCTIONS_FILENAME = "PR instructions.md";
 
+/** The footer details the Environment panel sends with its explicit Create PR
+ *  request. Keep the trusted identity here so those one-off instructions and
+ *  the standing session guide enforce the same commit attribution. */
+export function prInstructionFooter(sessionUrl: string, coAuthor?: string | null): PrFooterInput {
+  return {
+    sessionUrl,
+    ...(coAuthor ? { coAuthors: [coAuthor] } : {}),
+  };
+}
+
 /** The steps, from the session's branch, its target and how many files are
  *  uncommitted: null when the count can't be read yet, and then left out. */
 export function prInstructions(input: {

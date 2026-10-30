@@ -4,6 +4,9 @@ import type { SessionStanding } from "@/lib/session/standing";
 /** What the app layout loaded for the sidebar, shared with the pages under it
  *  (components/app-data.tsx). */
 export type AppData = {
+  /** The signed-in user's trusted GitHub commit identity. Optional because a
+   *  list kept by an older app version may not have it yet. */
+  coAuthor?: string | null;
   /** The repositories listed to start sessions in. */
   projects: Project[];
   /** Hidden ones a session belongs to, only for naming it. */

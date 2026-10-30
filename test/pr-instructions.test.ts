@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { prInstructions } from "@/lib/session/pr-instructions";
+import { prInstructionFooter, prInstructions } from "@/lib/session/pr-instructions";
 
 const DESKTOP = { desktop: true };
 const NO_DESKTOP = { desktop: false };
@@ -26,6 +26,13 @@ test("the instructions require the prompting user's co-author trailer on every c
   assert.match(md, /project variables `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL`/);
   assert.match(md, /`Co-Authored-By: Ada <1\+ada@users\.noreply\.github\.com>`/);
   assert.match(md, /Before pushing, inspect every commit unique to the branch/);
+});
+
+test("the Environment panel's Create PR footer carries the trusted co-author", () => {
+  const footer = prInstructionFooter("https://app/workspaces/w", "Ada <1+ada@users.noreply.github.com>");
+  const md = instructions({ footer });
+  assert.deepEqual(footer.coAuthors, ["Ada <1+ada@users.noreply.github.com>"]);
+  assert.match(md, /`Co-Authored-By: Ada <1\+ada@users\.noreply\.github\.com>`/);
 });
 
 test("one uncommitted change is singular, none says so", () => {

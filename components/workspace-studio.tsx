@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons, MobileNavButton } from "@/components/app-frame";
+import { useAppData } from "@/components/app-data";
 import { ChatSwitcher } from "@/components/chat-switcher";
 import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
 import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
@@ -83,6 +84,7 @@ export function WorkspaceStudio({
   const inspector = useModalPanel<HTMLElement>(overlay, () => setRightOpen(false));
   // How the Environment panel's Create PR sends into the session, while it can.
   const [sender, setSender] = useState<SessionSender | null>(null);
+  const coAuthor = useAppData()?.coAuthor;
   const isLocal = local !== undefined;
   const { state: setup, phase, hasComputer, keepWaiting } = useWorkspaceSetup(workspace, !isLocal);
   // An archived session (one imported from a Mac) comes back as it opens.
@@ -380,6 +382,7 @@ export function WorkspaceStudio({
                 pullRequest={pullRequest}
                 isReady={isReady}
                 sender={sender}
+                coAuthor={coAuthor}
                 onClose={() => setRightOpen(false)}
               />
             )}

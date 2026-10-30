@@ -59,6 +59,7 @@ export const frame: FrameData = {
   activeOrgId: null,
   triageCount: 0,
   appData: {
+    coAuthor: "immad sahin <84772210+immadsahin@users.noreply.github.com>",
     projects: [project],
     hiddenProjects: [],
     pullRequests: {},

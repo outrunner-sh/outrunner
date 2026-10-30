@@ -32,7 +32,7 @@ import type { PullRequestStatus } from "@/lib/github/client";
 import { previewsSupported } from "@/lib/previews/rules";
 import { onRuntimeComputer, opensInBrowser, type ProviderName, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { changeTotals, environmentSummary } from "@/lib/session/environment";
-import { PR_INSTRUCTIONS_FILENAME, PR_PROMPT, prInstructions } from "@/lib/session/pr-instructions";
+import { PR_INSTRUCTIONS_FILENAME, PR_PROMPT, prInstructionFooter, prInstructions } from "@/lib/session/pr-instructions";
 import { evidenceToolsFor } from "@/lib/session/pr-template";
 import { pullRequestVerdict, type PullRequestVerdict } from "@/lib/session/pull-request-status";
 import {
@@ -56,6 +56,7 @@ export function WorkspaceEnvironment({
   pullRequest,
   isReady,
   sender,
+  coAuthor,
   onClose,
 }: {
   workspace: Workspace;
@@ -64,6 +65,8 @@ export function WorkspaceEnvironment({
   isReady: boolean;
   /** Sends into the session while it can (the Create PR and Review prompts). */
   sender: SessionSender | null;
+  /** The signed-in user's trusted GitHub commit identity. */
+  coAuthor?: string | null;
   /** Closes the panel; shown where the panel covers the chat (narrow windows). */
   onClose: () => void;
 }) {
@@ -180,6 +183,7 @@ export function WorkspaceEnvironment({
             uncommitted={isReady && changes.files ? changes.files.length : null}
             pullRequest={pullRequest}
             sender={isReady ? sender : null}
+            coAuthor={coAuthor}
           />
         )}
         {/* A session of several repositories: a pull request in each, a row
@@ -196,6 +200,7 @@ export function WorkspaceEnvironment({
               uncommitted={isReady && changes.files ? changes.files.filter((f) => f.path.startsWith(`${c.checkout}/`)).length : null}
               pullRequest={pullRequest?.projectId === c.projectId ? pullRequest : null}
               sender={isReady ? sender : null}
+              coAuthor={coAuthor}
               repo={{ projectId: c.projectId, checkout: c.checkout, fullName: c.fullName }}
             />
           ))}
@@ -429,6 +434,7 @@ function PullRequestRow({
   uncommitted,
   pullRequest,
   sender,
+  coAuthor,
   repo,
   provider,
 }: {
@@ -441,6 +447,7 @@ function PullRequestRow({
   uncommitted: number | null;
   pullRequest: WorkspacePullRequest | null;
   sender: SessionSender | null;
+  coAuthor?: string | null;
   /** One repository of a session of several: the row is its pull request's. */
   repo?: { projectId: string; checkout: string; fullName: string };
 }) {
@@ -557,7 +564,7 @@ function PullRequestRow({
         uncommitted,
         ...(repo && { repo }),
         tools: evidenceToolsFor(provider),
-        footer: { sessionUrl: `${window.location.origin}/workspaces/${workspaceId}` },
+        footer: prInstructionFooter(`${window.location.origin}/workspaces/${workspaceId}`, coAuthor),
       }),
     );
     if (result.error) setError({ message: result.error, reconnect: false });
