@@ -86,7 +86,9 @@ async function startTransition(
   return transitionWorkspace({
     id: workspace.id,
     from,
-    patch: { status, errorMessage: null },
+    // A failed setup is deleted by Try again. Keep its diagnostic on the
+    // retained row through teardown, including if the request is cut off.
+    patch: { status, ...(status !== "destroying" && { errorMessage: null }) },
   });
 }
 
@@ -626,7 +628,6 @@ async function endWorkspace(workspace: Workspace, teardown?: () => Promise<void>
       sandboxId: null,
       volumeName: null,
       worktreePath: null,
-      errorMessage: null,
     },
   });
   return completed
@@ -764,7 +765,6 @@ async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider)
         sandboxId: null,
         volumeName: null,
         worktreePath: null,
-        errorMessage: null,
       },
     });
     if (completed) {

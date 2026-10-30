@@ -7,6 +7,7 @@ import { useState } from "react";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import { RouteMessage } from "@/components/route-states";
 import { InlineMessage } from "@/components/ui/notice";
+import { refreshMissions } from "@/hooks/use-missions";
 import { DRAFTS } from "@/lib/client/drafts";
 import { transferQueue } from "@/lib/session/prompt-queue";
 import { workspaceLabel } from "@/lib/nav/session-title";
@@ -23,7 +24,8 @@ import {
 /**
  * Start a fresh session on `workspace`'s repository in its place, on the model
  * and effort it was started on, carrying over the first prompt still waiting in
- * this tab, and go to it. The one it replaces is deleted, so its box stops
+ * this tab, and go to it. A Runner stays a Runner in its original project.
+ * The one it replaces is deleted, so its box stops
  * setting up and it leaves the sidebar.
  */
 export function useStartOver(workspace: Workspace) {
@@ -36,13 +38,20 @@ export function useStartOver(workspace: Workspace) {
     // The last reason stays until this attempt has its own answer: clearing it
     // now would blink it off and on again when the answer comes back at once.
     try {
-      const res = await fetch(`/api/projects/${workspace.projectId}/workspaces`, {
+      const isMission = workspace.kind === "mission";
+      const res = await fetch(isMission ? "/api/missions" : `/api/projects/${workspace.projectId}/workspaces`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         // Its branch isn't carried: the session it replaces still holds it.
         body: JSON.stringify({
           branch: "",
           agent: workspace.agent,
+          ...(isMission && {
+            // Older Runners have only a repository; the missions endpoint
+            // resolves its default project when no environment is recorded.
+            ...(workspace.environmentId ? { environmentId: workspace.environmentId } : { projectId: workspace.projectId }),
+            prompt: workspace.title ?? "",
+          }),
           ...(workspace.model && {
             provider: workspace.model.model.provider,
             model: workspace.model.model.id,
@@ -68,6 +77,7 @@ export function useStartOver(workspace: Workspace) {
         setRetrying(false);
         return;
       }
+      if (isMission) void refreshMissions();
       const draft = DRAFTS.get(`ws:${workspace.id}`);
       if (draft) {
         DRAFTS.update(`ws:${body.workspace.id}`, () => draft);

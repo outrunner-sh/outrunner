@@ -232,7 +232,7 @@ export function FixturePage() {
         </Dialog>
       </PageLayout>
     );
-  else if (view === "startup") content = <StartupFixture agent={params.get("harness") === "codex" ? "codex" : "claude"} shared={params.get("shared") === "1"} />;
+  else if (view === "startup") content = <StartupFixture agent={params.get("harness") === "codex" ? "codex" : "claude"} shared={params.get("shared") === "1"} mission={params.get("kind") === "mission"} legacy={params.get("legacy") === "1"} />;
   else content = pathname === "/new" ? <NewSessionRoute server={<ServerAnswer value={null} />} /> : <HomeSessionRoute />;
   return (
     <>
@@ -251,6 +251,8 @@ export function FixturePage() {
 function FixtureSession({ id, agent }: { id: string; agent: "claude" | "codex" }) {
   const params = useSearchParams();
   const pending = usePendingSession(id);
+  // The mission endpoint in runner-retry.spec.ts returns this Runner.
+  if (id === "runner-replacement") return <WorkspaceStudio workspace={{ ...frame.appData.workspaces[0], id, kind: "mission", title: "Security audit", agent: "claude", status: "ready" }} projectName="fixture/composer" pullRequest={null} />;
   const sourceClaude = params.get("agent") === "claude" || agent === "claude";
   const workspace = pending?.workspace ?? { ...frame.appData.workspaces[0], id, agent: sourceClaude ? "claude" as const : "codex" as const,
     model: { model: sourceClaude ? CLAUDE_DEFAULT_MODEL : selectionMenu.codexModels![0], effort: "high" as const } };
