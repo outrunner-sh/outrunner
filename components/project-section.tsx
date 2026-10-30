@@ -17,15 +17,15 @@ import { type ActionStatus } from "@/components/ui/loading-button";
 export function SectionTitle({ title, detail }: { title: string; detail: string }) {
   return (
     <div className="space-y-1">
-      <h2 className="text-base font-semibold text-foreground">{title}</h2>
+      <h2 className="text-base font-medium text-foreground">{title}</h2>
       <p className="text-[13px] text-muted-foreground">{detail}</p>
     </div>
   );
 }
 
-/** A bordered panel of rows, as Replicas' sections are. */
+/** Quiet sections on a shared surface, with dividers between related rows. */
 export function Panel({ children }: { children: React.ReactNode }) {
-  return <div className="divide-y divide-border/60 rounded-lg border border-border/60">{children}</div>;
+  return <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card/30">{children}</div>;
 }
 
 /** Delete a variable, a file or anything else of a project's: a trash button

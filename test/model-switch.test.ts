@@ -218,7 +218,7 @@ test("a chosen provider without a saved key, or an agent older than it, says so"
       model: { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "deepseek" },
       fallback: GLM,
     }),
-    (error: unknown) => error instanceof NoStartingModelError && /Save your DeepSeek key in Settings → Providers/.test(error.message),
+    (error: unknown) => error instanceof NoStartingModelError && /Save your DeepSeek key in Personal → Coding agents/.test(error.message),
   );
   await assert.rejects(
     startingModel({
@@ -272,7 +272,7 @@ test("a box too old for efforts says to update, and fails rather than run at ano
     (error: unknown) => error instanceof EffortUnsupportedError,
   );
   await assert.rejects(
-    startingModel({ setModel: old, model: modelChoice("codex", "gpt-6-sol")!, effort: "high", fallback: null, keyFor: async () => KEY, hasClaude: true }),
+    startingModel({ setModel: old, model: { ...modelChoice("codex", "gpt-6-sol")!, efforts: ["high"] }, effort: "high", fallback: null, keyFor: async () => KEY, hasClaude: true }),
     (error: unknown) => error instanceof NoStartingModelError && /too old to set the effort/.test(error.message),
   );
   assert.deepEqual(switchFailure(new EffortUnsupportedError(), GLM), { status: 409, message: new EffortUnsupportedError().message });

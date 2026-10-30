@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { PageHeader, PageLayout } from "@/components/page-layout";
 import { SettingsTabs } from "@/components/settings-tabs";
 import { buttonVariants } from "@/components/ui/button";
 import { InlineMessage } from "@/components/ui/notice";
@@ -83,82 +84,73 @@ export function Automations({
     runs: runs?.length ? `${runs.length}${runs.length >= runsLimit ? "+" : ""}` : null,
   };
 
-  // The page fills the pane and the tab under the automations takes what's
-  // left, scrolling on its own, so a long list of runs doesn't scroll the
-  // header and the automations away with it.
+  // Long automation lists stay bounded; the page can scroll on short screens.
   return (
-    <div className="flex h-full flex-col px-8 py-8">
-      <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col gap-6">
-        <header className="flex items-start justify-between gap-4">
-          <div className="min-w-0 space-y-1">
-            <h1 className="text-lg font-semibold text-foreground">Automations</h1>
-            <p className="text-[13px] text-muted-foreground">
-              Shared workflows for {org.personal ? "your personal org" : org.name}: a session that starts on its own,
-              like a code review on every pull request.
-            </p>
-          </div>
-          {admin ? (
-            <Link href="/automations/new" className={cn(buttonVariants({ size: "sm" }), "shrink-0")}>
-              <Plus /> Create automation
-            </Link>
-          ) : null}
-        </header>
-
-        <GitHubAppStatus appSlug={appSlug} installations={installations} admin={admin} />
-
-        <AutomationList
-          orgId={org.id}
-          automations={automations}
-          runs={runs}
-          now={now}
-          admin={admin}
-          byConnector={!org.personal}
-        />
-
-        {active ? (
-          <section className="flex min-h-64 flex-1 flex-col gap-3">
-            <SettingsTabs
-              ids={tabs}
-              active={active}
-              onOpen={setPicked}
-              label="Automations"
-              idPrefix="automations"
-              tabLabel={(id) => (
-                <>
-                  {TAB_LABELS[id]}
-                  {count[id] ? <span className="text-xs tabular-nums text-muted-foreground">{count[id]}</span> : null}
-                </>
-              )}
-            />
-            <div
-              role="tabpanel"
-              id={`automations-panel-${active}`}
-              aria-labelledby={`automations-tab-${active}`}
-              className="flex min-h-0 flex-1 flex-col"
-            >
-              {active === "templates" ? (
-                <TemplateGrid templates={templates} />
-              ) : (
-                <RecentRuns
-                  orgId={org.id}
-                  runs={runs}
-                  kind={runKind}
-                  // The kinds its automations have, and the one narrowed to
-                  // (a bookmark's, after its last automation went), so its
-                  // pill shows which.
-                  kinds={TRIGGER_KINDS.filter(
-                    (k) => k === runKind || automations?.some((a) => a.triggers.some((t) => triggerKind(t) === k)),
-                  )}
-                  now={now}
-                  admin={admin}
-                  byConnector={!org.personal}
-                />
-              )}
-            </div>
-          </section>
+    <PageLayout className="flex min-h-full flex-col gap-8">
+      <PageHeader
+        title="Automations"
+        description={`Recurring and event-driven workflows for ${org.personal ? "your projects" : org.name}.`}
+        actions={admin ? (
+          <Link href="/automations/new" className={cn(buttonVariants({ size: "sm" }), "shrink-0")}>
+            <Plus /> Create automation
+          </Link>
         ) : null}
-      </div>
-    </div>
+      />
+
+      <GitHubAppStatus appSlug={appSlug} installations={installations} admin={admin} />
+
+      <AutomationList
+        orgId={org.id}
+        automations={automations}
+        runs={runs}
+        now={now}
+        admin={admin}
+        byConnector={!org.personal}
+      />
+
+      {active ? (
+        <section className="flex min-h-64 flex-1 flex-col gap-3">
+          <SettingsTabs
+            ids={tabs}
+            active={active}
+            onOpen={setPicked}
+            label="Automations"
+            idPrefix="automations"
+            tabLabel={(id) => (
+              <>
+                {TAB_LABELS[id]}
+                {count[id] ? <span className="text-xs tabular-nums text-muted-foreground">{count[id]}</span> : null}
+              </>
+            )}
+          />
+          <div
+            role="tabpanel"
+            id={`automations-panel-${active}`}
+            aria-labelledby={`automations-tab-${active}`}
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            {active === "templates" ? (
+              <TemplateGrid templates={templates} />
+            ) : (
+              <RecentRuns
+                orgId={org.id}
+                runs={runs}
+                kind={runKind}
+                // The kinds its automations have, and the one narrowed to
+                // (a bookmark's, after its last automation went), so its
+                // pill shows which.
+                kinds={TRIGGER_KINDS.filter(
+                  (k) => k === runKind || automations?.some((a) => a.triggers.some((t) => triggerKind(t) === k)),
+                )}
+                now={now}
+                admin={admin}
+                byConnector={!org.personal}
+              />
+            )}
+          </div>
+        </section>
+      ) : null}
+    </PageLayout>
   );
 }
 
@@ -172,7 +164,7 @@ function TriggerChips({ triggers, schedules = [] }: { triggers: AutomationTrigge
   return (
     <div className="flex flex-wrap gap-1">
       {triggers.map((trigger) => (
-        <span key={trigger} className="rounded bg-muted px-1.5 py-0.5 text-xs text-foreground/80">
+        <span key={trigger} className="rounded-md bg-muted/70 px-1.5 py-0.5 text-[11px] text-muted-foreground">
           {trigger === "schedule" && schedules.length > 0
             ? `${describeSchedule(schedules[0])}${schedules.length > 1 ? ` +${schedules.length - 1}` : ""}`
             : TRIGGER_LABELS[trigger]}
@@ -190,7 +182,7 @@ function TemplateGrid({ templates }: { templates: TemplateCard[] }) {
       <div className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Link
           href="/automations/new"
-          className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border p-4 text-center transition-colors hover:bg-accent"
+          className="flex min-h-44 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border p-5 text-center transition-colors hover:border-border hover:bg-accent/40"
         >
           <span className="grid size-8 place-items-center rounded-md bg-muted text-muted-foreground">
             <Plus className="size-4" />
@@ -202,10 +194,10 @@ function TemplateGrid({ templates }: { templates: TemplateCard[] }) {
           <Link
             key={template.id}
             href={`/automations/new?template=${encodeURIComponent(template.id)}`}
-            className="group flex flex-col gap-3 rounded-lg border border-border/60 p-4 transition-colors hover:border-border hover:bg-accent/50"
+            className="group flex flex-col gap-4 rounded-xl border border-border/60 bg-card/30 p-5 transition-colors hover:border-border hover:bg-card/60"
           >
             <div className="flex items-center gap-2">
-              <span className="grid size-8 shrink-0 place-items-center rounded-md bg-positive/10 text-positive">
+              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
                 <GitPullRequest className="size-4" />
               </span>
               <span className="text-xs text-muted-foreground">{template.category}</span>
@@ -214,7 +206,7 @@ function TemplateGrid({ templates }: { templates: TemplateCard[] }) {
               <div className="text-[13px] font-medium text-foreground">{template.name}</div>
               <div className="text-xs text-muted-foreground">{template.description}</div>
             </div>
-            <div className="flex items-end justify-between gap-2">
+            <div className="flex flex-wrap items-end justify-between gap-2">
               <TriggerChips triggers={template.triggers} />
               <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors group-hover:text-foreground">
                 Use template <ArrowRight className="size-3" />
@@ -248,10 +240,10 @@ function GitHubAppStatus({
           ? `Not installed for this org yet: automations run once ${admin ? "it is" : "an admin installs it"}, and post as ${appSlug}[bot].`
           : `Automations post as ${appSlug}[bot]. Installed on ${accounts?.join(", ")}.`;
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5 text-[13px]">
+    <div className={cn("flex items-start gap-3 text-xs", !installations?.length && "rounded-lg border border-warning/20 bg-warning/5 p-3")}>
       <Github className="size-4 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
-        <span className="text-foreground">Outrunner GitHub App</span>
+        <span className="text-foreground">GitHub connection</span>
         <span className="text-muted-foreground"> · {detail}</span>
       </div>
       {appSlug !== null ? (
@@ -375,104 +367,58 @@ function AutomationList({
           </p>
         </div>
       ) : (
-        // Bounded, so a long list scrolls in place rather than pushing the
-        // runs below it out of the pane.
-        <div className="max-h-[40vh] overflow-auto rounded-lg border border-border/60">
-          <table className="w-full text-[13px]">
-            <thead className={PINNED_HEAD}>
-              <tr className={HEAD_ROW}>
-                <th className="px-3 py-2 font-normal">Name</th>
-                <th className="px-3 py-2 font-normal">Trigger</th>
-                <th className="px-3 py-2 font-normal">Repositories</th>
-                <th className="px-3 py-2 font-normal">Last run</th>
-                <th className="px-3 py-2 font-normal">Enabled</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/60">
-              {automations.map((automation) => {
-                const last = lastRun.get(automation.id);
-                const runsAs = byConnector ? CONNECTOR_NAME : automation.runsAs?.login ? `@${automation.runsAs.login}` : null;
-                return (
-                  <tr key={automation.id} className="transition-colors hover:bg-muted/20">
-                    <td className="px-3 py-2.5">
-                      <div className="flex items-center gap-2.5">
-                        <span className="grid size-7 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
-                          <GitPullRequest className="size-3.5" />
-                        </span>
-                        <div className="min-w-0">
-                          <Link href={`/automations/${automation.id}`} className="text-foreground hover:underline">
-                            {automation.name}
-                          </Link>
-                          <div className="text-xs text-muted-foreground">
-                            {runsAs ? `Runs as ${runsAs} · ` : ""}Created {DATE.format(new Date(automation.createdAt))}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <TriggerChips triggers={automation.triggers} schedules={automation.schedules} />
-                    </td>
-                    <td className="px-3 py-2.5 text-foreground/75">
-                      {automation.repos.length === 0
-                        ? "None"
-                        : `${automation.repos[0].fullName}${automation.repos.length > 1 ? ` +${automation.repos.length - 1}` : ""}`}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2.5 text-xs">
-                      {last ? (
-                        <div className="space-y-0.5">
-                          {/* "Running" for a run from days ago would read as still going: here,
-                              a run that got going says when it started. */}
-                          <RunStatus status={last.status} label={last.status === "ready" ? "Started" : undefined} />
-                          <div className="text-muted-foreground">
-                            <Ago at={last.createdAt} now={now} />
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={automation.enabled}
-                        aria-label={`${automation.name}: ${automation.enabled ? "enabled" : "disabled"}`}
-                        disabled={!admin || switching !== null}
-                        onClick={() => void setEnabled(automation)}
-                        className="flex items-center gap-2 text-xs text-muted-foreground disabled:cursor-default"
-                      >
-                        <span
-                          aria-hidden
-                          className={cn(
-                            "relative h-4 w-7 rounded-full transition-colors",
-                            automation.enabled ? "bg-primary" : "bg-muted-foreground/30",
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              "absolute top-0.5 size-3 rounded-full bg-background transition-[left]",
-                              automation.enabled ? "left-3.5" : "left-0.5",
-                            )}
-                          />
-                        </span>
-                        {automation.enabled ? "Enabled" : automation.archived ? "Archived" : "Disabled"}
-                      </button>
-                      {/* Run a count of times: how far it is, or that it's done
-                          (switching it on counts afresh). */}
-                      {automation.maxRuns !== null ? (
-                        <div className="pt-0.5 text-xs text-muted-foreground">
-                          {(automation.runsUsed ?? 0) >= automation.maxRuns
-                            ? `Done: ran ${automation.maxRuns === 1 ? "once" : `${automation.maxRuns} times`}`
-                            : `${automation.runsUsed ?? 0} of ${automation.maxRuns} runs`}
-                        </div>
-                      ) : null}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <ul className="max-h-[40vh] divide-y divide-border/60 overflow-auto rounded-xl border border-border/60 bg-card/20">
+          {automations.map((automation) => {
+            const last = lastRun.get(automation.id);
+            const runsAs = byConnector ? CONNECTOR_NAME : automation.runsAs?.login ? `@${automation.runsAs.login}` : null;
+            return (
+              <li key={automation.id} className="flex flex-wrap items-center gap-4 px-4 py-4">
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+                  <GitPullRequest className="size-4" />
+                </span>
+                <div className="min-w-0 flex-1 basis-48 space-y-1.5">
+                  <Link href={`/automations/${automation.id}`} title={`Created ${DATE.format(new Date(automation.createdAt))}`} className="block truncate text-[13px] font-medium text-foreground hover:underline">
+                    {automation.name}
+                  </Link>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {automation.repos.length ? `${automation.repos[0].fullName}${automation.repos.length > 1 ? ` +${automation.repos.length - 1}` : ""}` : "No repositories"}
+                    {runsAs && ` · ${runsAs}`}
+                  </p>
+                  <TriggerChips triggers={automation.triggers} schedules={automation.schedules} />
+                </div>
+                {last && (
+                  <div className="space-y-1 text-xs sm:text-right">
+                    <RunStatus status={last.status} label={last.status === "ready" ? "Started" : undefined} />
+                    <div className="text-muted-foreground"><Ago at={last.createdAt} now={now} /></div>
+                  </div>
+                )}
+                <div className="ml-auto min-w-20 space-y-1 text-right">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={automation.enabled}
+                    aria-label={`${automation.name}: ${automation.enabled ? "enabled" : "disabled"}`}
+                    disabled={!admin || switching !== null}
+                    onClick={() => void setEnabled(automation)}
+                    className="inline-flex items-center gap-2 rounded-sm text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-60"
+                  >
+                    <span aria-hidden className={cn("relative h-4 w-7 rounded-full transition-colors", automation.enabled ? "bg-primary" : "bg-muted-foreground/30")}>
+                      <span className={cn("absolute top-0.5 size-3 rounded-full bg-background transition-[left]", automation.enabled ? "left-3.5" : "left-0.5")} />
+                    </span>
+                    <span className="hidden sm:inline">{automation.enabled ? "Enabled" : automation.archived ? "Archived" : "Disabled"}</span>
+                  </button>
+                  {automation.maxRuns !== null && (
+                    <div className="text-xs text-muted-foreground">
+                      {(automation.runsUsed ?? 0) >= automation.maxRuns
+                        ? `Done: ran ${automation.maxRuns === 1 ? "once" : `${automation.maxRuns} times`}`
+                        : `${automation.runsUsed ?? 0} of ${automation.maxRuns} runs`}
+                    </div>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       )}
       {error ? <InlineMessage actions={[{ label: "Dismiss", onClick: () => setError(null) }]}>{error}</InlineMessage> : null}
     </section>

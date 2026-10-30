@@ -23,7 +23,7 @@ import { providerSettingsHref } from "@/lib/settings-links";
 
 /** A credential handed to the agent for one session (POST /workspaces/{id}/auth). */
 export type SessionCredential = {
-  kind: "claude-oauth-token" | "anthropic-api-key" | "openai-api-key";
+  kind: "claude-oauth-token" | "anthropic-api-key" | "openai-api-key" | "codex-access-token" | "codex-account";
   token: string;
 };
 
@@ -72,16 +72,16 @@ function agentAuthMessage(agent: AgentId, method: AuthMethodId, reason: AgentAut
   const { label } = AGENTS[agent];
   const way = authMethod(agent, method);
   if (reason === "local-only") {
-    return `${label} is set to sign in with ${way?.label ?? method}, which works for sessions on your Mac only. Choose API key under Settings → Providers → ${label} for sessions here.`;
+    return `${label} is set to sign in with ${way?.label ?? method}, which works for sessions on your Mac only. Choose API key under Personal → Coding agents → ${label} for sessions here.`;
   }
   const credential = way?.credential;
   if (credential?.kind === "claude-slot") {
-    return `Connect your Claude subscription under Settings → Providers → ${label} to run it.`;
+    return `Connect your Claude subscription under Personal → Coding agents → ${label} to run it.`;
   }
   if (credential?.kind === "provider-key") {
-    return `Save your ${PROVIDERS[credential.provider].label} API key under Settings → Providers → ${label} to run it.`;
+    return `Save your ${PROVIDERS[credential.provider].label} API key under Personal → Coding agents → ${label} to run it.`;
   }
-  return `Sign ${label} in under Settings → Providers → ${label} to run it.`;
+  return `Sign ${label} in under Personal → Coding agents → ${label} to run it.`;
 }
 
 /** The way an agent runs when the user hasn't picked one: as it did before
@@ -107,6 +107,7 @@ function firstCloudMethod(agent: AgentId): AuthMethodId {
 /** The session credential for a way of signing in that needs one. */
 function sessionCredential(credential: AuthCredential, token: string): SessionCredential | null {
   switch (credential.kind) {
+    case "codex-account": return { kind: "codex-account", token };
     case "claude-slot":
       // The slot holds subscription tokens; one from before keys moved out of
       // it still runs as the API key it is.

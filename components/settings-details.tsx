@@ -37,7 +37,7 @@ export function ConnectionStatus({ connected }: { connected: boolean }) {
 /** A bordered table of terms and their values, one {@link DetailRow} each. */
 export function Details({ children }: { children: React.ReactNode }) {
   return (
-    <dl className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border/60 text-[13px]">{children}</dl>
+    <dl className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card/30 text-[13px]">{children}</dl>
   );
 }
 
@@ -45,9 +45,9 @@ export function Details({ children }: { children: React.ReactNode }) {
  *  less. */
 export function DetailRow({ term, children }: { term: string; children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[7rem_1fr]">
-      <dt className="bg-muted/30 px-3 py-2 text-muted-foreground">{term}</dt>
-      <dd className="px-3 py-2 text-foreground/75">{children}</dd>
+    <div className="grid gap-1 px-4 py-3 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+      <dt className="text-muted-foreground">{term}</dt>
+      <dd className="min-w-0 break-words text-foreground/90">{children}</dd>
     </div>
   );
 }

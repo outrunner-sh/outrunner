@@ -1240,6 +1240,9 @@ type SlackConversationRow = {
 
 // supabase/migrations/20261031170000_slack_proactive.sql
 type SlackChannelRow = {
+  shared_by: string | null;
+  shared_projects: string[];
+  shared_revision: string | null;
   team_id: string;
   channel_id: string;
   org_id: string;
@@ -1281,6 +1284,10 @@ type Insert<Row, Required extends keyof Row> = Pick<Row, Required> &
 export type Database = {
   public: {
     Tables: {
+      codex_connections: {
+        Row: import("@/lib/codex/account").Connection & { user_id: string | null; org_id: string | null; lease_id: string | null; lease_until: string | null };
+        Insert: never; Update: never; Relationships: [];
+      };
       organizations: {
         Row: OrganizationRow;
         Insert: Insert<OrganizationRow, "name">;
@@ -1905,6 +1912,12 @@ export type Database = {
     };
     Views: Record<never, never>;
     Functions: {
+      set_slack_channel_access: {
+        Args: { target_team: string; target_channel: string; target_org: string; admin_id: string; project_ids: string[]; slack_user_id: string };
+        Returns: undefined;
+      };
+      codex_connection_use: { Args: { k: string; actor: string; requested_org: string | null; gen: string }; Returns: boolean };
+      codex_connection_change: { Args: { k: string; op: string; a?: Json }; Returns: Json };
       // supabase/migrations/20261102200000_missions.sql
       claim_mission_delivery: {
         Args: { target: string; lease_seconds: number; settle_seconds: number; max_wait_seconds: number };

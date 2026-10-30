@@ -7,6 +7,8 @@ import { type AgentEvent, ChangesResponse, FilesResponse, PlanActionResponse, Re
 import { ConversationTimeline } from "@/components/conversation-timeline";
 import { ImageBoxContext } from "@/components/markdown";
 import { QueuedPrompts } from "@/components/queued-prompts";
+import { QueuedFirstPrompt, StartupStatus, type SessionStartup } from "@/components/workspace-creating";
+import { useQueuedFirstPrompt } from "@/hooks/use-queued-first-prompt";
 import { QuestionCard } from "@/components/question-card";
 import { pendingSecretRequest, type PendingSecretRequest } from "@/lib/runtime/pending-secrets";
 import { SecretsCard } from "@/components/secrets-card";
@@ -57,18 +59,20 @@ import {
   type FirstPrompt,
 } from "@/lib/session/first-prompt";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
+import { eligibleHarnesses } from "@/lib/runtime/selection";
 import { isProviderId } from "@/lib/providers/registry";
 import { EMPTY_LOADOUT } from "@/lib/runtime/model-loadout";
 import {
   defaultModel,
   type Effort,
   modelGroups,
+  compatibleEffort,
+  matchModel,
   type ModelProvider,
   parseAgentConnections,
   type RecordedModel,
   runsOnOwnAccount,
   type SessionModel,
-  takesEffort,
 } from "@/lib/runtime/session-models";
 import { sessionTitle } from "@/lib/nav/session-title";
 import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
@@ -104,13 +108,14 @@ const QUEUED_ECHO_WAIT_MS = 30_000;
 const COMPACT_WAIT_MS = 5 * 60_000;
 
 /** How a prompt goes: in a mode, and answering the plan the agent waits on. */
-type SendHow = { mode?: SessionMode; dismiss?: boolean };
+type SendHow = { mode?: SessionMode; dismiss?: boolean; queuedKey?: string; sentAt?: number };
 
 const MENU_UNTIL_ANSWERED: OutrunnerModels = {
-  outrunner: true,
+  outrunner: false,
   allowance: false,
   keys: [],
-  available: true,
+  available: false,
+  codexModels: [],
   loadout: EMPTY_LOADOUT,
   agents: parseAgentConnections(undefined),
 };
@@ -123,6 +128,7 @@ export type SessionSender = {
 
 export function WorkspaceSession({
   workspaceId,
+  startup,
   chatId = MAIN_CHAT,
   projectId,
   agent = "claude",
@@ -135,8 +141,10 @@ export function WorkspaceSession({
   initialAttachmentIds,
   onSender,
   onSideChat,
+  onHarnessFork,
 }: {
   workspaceId: string;
+  startup?: SessionStartup;
   /** The chat it shows (lib/session/chats.ts): its main one unless another
    *  is picked. Each keeps its own conversation, queue and model here. */
   chatId?: string;
@@ -170,14 +178,18 @@ export function WorkspaceSession({
   /** `/btw <question>`: ask it in a side chat about this one (the studio
    *  starts it and shows it); resolves whether it went. */
   onSideChat?: (question: string) => Promise<boolean>;
+  /** Continue this conversation in another harness using the chat fork API. */
+  onHarnessFork?: (agent: AgentId) => Promise<void>;
 }) {
   // What this page keeps of the chat (its conversation, queue, picks): the
   // session's own keys for its main chat, as before there were others.
   const stateKey = chatStateKey(workspaceId, chatId);
   // Whether a follow-up sent mid-turn steers it or queues (Settings → Account).
   const chatPreferences = useChatPreferences();
-  const attachment = useSessionAttachment(workspaceId, local, agent, chatId);
+  const attachment = useSessionAttachment(workspaceId, local, agent, chatId, !startup);
   const conversation = useConversationStream(attachment, stateKey);
+  const firstQueued = useQueuedFirstPrompt(workspaceId, { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [], ...(initialPromptKey && { key: initialPromptKey }) });
+  const [initialDeliveryComplete, setInitialDeliveryComplete] = useState(false);
 
   // The jcode engine has no PTY: prompts go over the /message API and the reply
   // streams back on the Conversation SSE. So input readiness and errors come
@@ -289,7 +301,7 @@ export function WorkspaceSession({
     how: SendHow = {},
   ) => {
     // The stream may record the prompt before the session answers.
-    const sentAt = userPromptCount(eventsRef.current);
+    const sentAt = how.sentAt ?? userPromptCount(eventsRef.current);
     if (local) {
       return localAgentRequest(
         localTarget(workspaceId),
@@ -307,12 +319,13 @@ export function WorkspaceSession({
     return fetch(chatRoute(workspaceId, chatId, "message"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: text, attachmentIds, ...(firstPromptKey && { firstPromptKey }), ...how }),
+      body: JSON.stringify({ content: text, attachmentIds, ...(firstPromptKey && { firstPromptKey }), ...(how.mode && { mode: how.mode }), ...(how.dismiss && { dismiss: true }), ...(how.queuedKey && { queuedKey: how.queuedKey }) }),
     }).then(
       async (res) => {
-        const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string; code?: string };
+        const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string; code?: string; result?: string };
         if (!res.ok) return failed(body.error ?? "Could not send that message.", body.code);
-        anchor(pendingId, sentAt);
+        if (body.result === "already") setPending((prev) => prev.filter((p) => p.id !== pendingId));
+        else anchor(pendingId, sentAt);
         // The first prompt just named this session, as the server names it:
         // the sidebar shows the name at once (lib/session/rows-ahead.ts).
         const title = body.titled ? sessionTitle(text) : null;
@@ -331,10 +344,10 @@ export function WorkspaceSession({
     sendRef.current = send;
   });
   useEffect(() => {
-    if (!canSend || !onSender) return;
+    if (!canSend || startup || !initialDeliveryComplete || !onSender) return;
     onSender({ send: (text, attachmentIds) => sendRef.current(text, attachmentIds) });
     return () => onSender(null);
-  }, [canSend, onSender]);
+  }, [canSend, startup, initialDeliveryComplete, onSender]);
 
   // The model of the most recent assistant turn — shown in the composer so it
   // reflects what's actually running, not a hardcoded label. Claude Code's
@@ -352,18 +365,18 @@ export function WorkspaceSession({
   // actually ran.
   const [switching, setSwitching] = useState(false);
   // What the model menu offers: Outrunner's models, the user's own keys
-  // (Settings → Providers), and their Claude. Until the first answer, as if
-  // all were on offer.
-  const menu = useOutrunnerModels() ?? MENU_UNTIL_ANSWERED;
+  // (Settings → Providers), and connected accounts. Before the verified
+  // menu arrives, keep the recorded selection without offering guessed models.
+  const menu = useOutrunnerModels(local ? undefined : workspaceId) ?? MENU_UNTIL_ANSWERED;
   // Whose entry the menu ticks when a model is offered by two: the one last
   // picked here, else the one a new session starts on.
-  const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => pickedProvider(stateKey));
+  const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => local && !recorded ? pickedProvider(stateKey) : null);
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
   // The effort it runs at, as last put on from here (lib/session/picked-effort.ts);
   // none put on from here (a session started from onboarding, or another
   // browser), as its row records. Undefined until either says.
   const [effortHere, setEffortHere] = useState<Effort | null | undefined>(
-    () => rememberedEffort(stateKey) ?? undefined,
+    () => local && !recorded ? rememberedEffort(stateKey) ?? undefined : undefined,
   );
   const effort = effortHere !== undefined ? effortHere : (recorded?.effort ?? null);
   const repliedSincePick =
@@ -490,8 +503,25 @@ export function WorkspaceSession({
   // and go one at a time as each turn ends. One whose send failed holds the
   // queue (`queueHeld`) until the user retries it or sends it now, so a box
   // that's down doesn't fail the whole queue in a row.
-  const [queue, setQueue] = useState<QueuedPrompt[]>(() => readQueue(tabStorage(), stateKey));
-  useEffect(() => writeQueue(tabStorage(), stateKey, queue), [stateKey, queue]);
+  const [queue, setQueue] = useState<QueuedPrompt[]>([]);
+  const [queueLoadedFor, setQueueLoadedFor] = useState<string | null>(null);
+  const queueRef = useRef<QueuedPrompt[]>([]);
+  // Hydration sees the same empty queue as the server. Load before enabling
+  // drains, and never overwrite a kept queue with that initial empty snapshot.
+  useEffect(() => {
+    let live = true;
+    void Promise.resolve().then(() => {
+      if (!live) return;
+      const saved = readQueue(tabStorage(), stateKey);
+      queueRef.current = saved;
+      setQueue(saved);
+      setQueueLoadedFor(stateKey);
+    });
+    return () => { live = false; };
+  }, [stateKey]);
+  useEffect(() => {
+    if (queueLoadedFor === stateKey) writeQueue(tabStorage(), stateKey, queue);
+  }, [stateKey, queue, queueLoadedFor]);
   const [queueHeld, setQueueHeld] = useState(false);
   // Held by a stop, rather than by a failed send: the user stopped the agent,
   // so what they queued for it waits for them too, until they send another
@@ -514,21 +544,48 @@ export function WorkspaceSession({
       setQueuePaused(false);
       setQueueHeld(false);
     }
-    setQueue((q) => [...q, { id: crypto.randomUUID(), text, attachmentIds, ...(queuedMode && { mode: queuedMode }) }]);
+    const durable = !!startup || !initialDeliveryComplete;
+    const next = [...queueRef.current, { id: crypto.randomUUID(), text, attachmentIds, ...(queuedMode && { mode: queuedMode }), ...(durable && { startup: true }) }];
+    // Acknowledging the composer transfers ownership of its files and draft.
+    // During startup, persist first so a navigation/reload cannot lose them.
+    if (durable && !writeQueue(tabStorage(), stateKey, next)) {
+      setSendError({ message: "Couldn't save the queued message in this tab. Your draft is still here; try again." });
+      return Promise.resolve(false);
+    }
+    queueRef.current = next;
+    setQueue(next);
     setSendError(null);
     return Promise.resolve(true);
   };
   /** Send a queued prompt now: out of the queue, and back at its head, the
    *  queue held, if it doesn't go (its Retry sends it again). */
   const sendQueued = (prompt: QueuedPrompt): Promise<boolean> => {
-    setQueue((q) => q.filter((p) => p.id !== prompt.id));
+    const recorded = prompt.sentAt ?? userPromptCount(eventsRef.current);
+    const item = prompt.startup ? { ...prompt, sentAt: recorded } : prompt;
+    const next = prompt.startup
+      ? queueRef.current.map((p) => p.id === prompt.id ? item : p)
+      : queueRef.current.filter((p) => p.id !== prompt.id);
+    if (prompt.startup && !writeQueue(tabStorage(), stateKey, next)) {
+      setQueueHeld(true);
+      setSendError({ message: "Couldn't save this queued message before sending. It is still queued; try again." });
+      return Promise.resolve(false);
+    }
+    queueRef.current = next;
+    setQueue(next);
     setQueueHeld(false);
-    const recorded = userPromptCount(eventsRef.current);
-    const how = prompt.mode ? { mode: prompt.mode } : {};
-    return send(prompt.text, prompt.attachmentIds, () => void sendQueuedNow(prompt, false), undefined, undefined, how).then((landed) => {
-      if (landed) setQueuedAt(recorded);
+    const how = { ...(prompt.mode && { mode: prompt.mode }), ...(prompt.startup && { queuedKey: prompt.id, sentAt: recorded }) };
+    return send(prompt.text, prompt.attachmentIds, () => void sendQueuedNow(item, false), undefined, undefined, how).then((landed) => {
+      if (landed) {
+        const rest = queueRef.current.filter((p) => p.id !== prompt.id);
+        if (prompt.startup) writeQueue(tabStorage(), stateKey, rest);
+        queueRef.current = rest;
+        setQueue(rest);
+        setQueuedAt(recorded);
+      }
       else {
-        setQueue((q) => [prompt, ...q.filter((p) => p.id !== prompt.id)]);
+        const kept = [item, ...queueRef.current.filter((p) => p.id !== prompt.id)];
+        queueRef.current = kept;
+        setQueue(kept);
         setQueueHeld(true);
       }
       return landed;
@@ -547,8 +604,10 @@ export function WorkspaceSession({
       await runQueuedAction(sendingQueued, {
         take: () => {
           if (position < 0) return null;
-          queueRef.current = queueRef.current.filter((item) => item.id !== prompt.id);
-          setQueue((q) => q.filter((item) => item.id !== prompt.id));
+          if (!prompt.startup) {
+            queueRef.current = queueRef.current.filter((item) => item.id !== prompt.id);
+            setQueue((q) => q.filter((item) => item.id !== prompt.id));
+          }
           setQueueHeld(true);
           setQueuePaused(false);
           return prompt;
@@ -570,18 +629,27 @@ export function WorkspaceSession({
       setStopError(local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't stop the turn.");
     }
   };
-  const queueRef = useRef(queue);
   useEffect(() => {
     queueRef.current = queue;
   }, [queue]);
+  const updateQueue = (change: (q: QueuedPrompt[]) => QueuedPrompt[]): boolean => {
+    const next = change(queueRef.current);
+    if (queueRef.current.some((p) => p.startup) && !writeQueue(tabStorage(), stateKey, next)) {
+      setSendError({ message: "Couldn't save the queue change in this tab. Try again." });
+      return false;
+    }
+    queueRef.current = next;
+    setQueue(next);
+    return true;
+  };
   const removeQueued = (prompt: QueuedPrompt) => {
-    setQueue((q) => q.filter((p) => p.id !== prompt.id));
+    if (!updateQueue((q) => q.filter((p) => p.id !== prompt.id))) return;
     // The one that failed sits at the head; with it gone, the rest go on.
     // Not when a stop held them: that holds the rest as well.
     if (queue[0]?.id === prompt.id && !queuePaused) setQueueHeld(false);
     if (queuedEditing?.id === prompt.id) setQueuedEditing(null);
     // Its files were uploaded for it alone.
-    for (const id of prompt.attachmentIds) void fetch(`/api/attachments/${id}`, { method: "DELETE" }).catch(() => {});
+    for (const id of prompt.sentAt === undefined ? prompt.attachmentIds : []) void fetch(`/api/attachments/${id}`, { method: "DELETE" }).catch(() => {});
   };
   const awaitingLast = queuedAt !== null && delivered <= queuedAt;
   // A prompt the agent took but the stream never shows (Claude dropped it, or a
@@ -594,7 +662,7 @@ export function WorkspaceSession({
   }, [awaitingLast, working]);
   const drains = queueDrains({
     queued: queue.length,
-    attached,
+    attached: attached && initialDeliveryComplete && queueLoadedFor === stateKey,
     working,
     // A plan waiting on approval is answered by the user, not by what's queued.
     waitingOnUser: waitingOnUser || waitingOnPlan,
@@ -623,6 +691,7 @@ export function WorkspaceSession({
   // menu first, and goes in the mode the composer is in (Plan revises it,
   // Build approves it with changes).
   const sendOrQueue = (text: string, attachmentIds: string[], sentMode?: SessionMode) => {
+    if (startup || !initialDeliveryComplete) return enqueue(text, attachmentIds, sentMode);
     if (editing) return sendEdit(editing.uuid, text, attachmentIds, sentMode);
     if (queuePaused) {
       // Sending again is going on: the queue first, then this.
@@ -881,15 +950,35 @@ export function WorkspaceSession({
   // agent is already running on this Mac, so its own login there counts.
   const accounts = accountsHere(menu.agents, local, null);
   const modelChoice: ModelChoice = {
-    groups: modelGroups(menu, accounts, agent),
+    groups: modelGroups(local ? (menu.localMenu ?? { ...menu, keys: [], codexModels: [] }) : menu, accounts, agent),
+    agent,
+    selectedModel: matchModel(modelGroups(menu, accounts, agent), shownModel, providerPicked ?? recorded?.model.provider)
+      ?? (recorded && recorded.model.id === shownModel ? recorded.model : undefined),
+    harnessChoice: onHarnessFork ? {
+      available: [...new Set([agent, ...eligibleHarnesses(modelGroups(menu, accounts), menu.harnesses)])],
+      fork: true,
+      disabledReason: "Changing harness creates a fork with the conversation and the same files. Your draft follows it.",
+      onChange: (next) => {
+        if (next === agent || switching) return;
+        setSwitching(true);
+        setSwitchError(null);
+        void onHarnessFork(next).catch((error: unknown) => setSwitchError({
+          label: AGENTS[next].label, message: error instanceof Error ? error.message : "Couldn't fork this chat.",
+        })).finally(() => setSwitching(false));
+      },
+    } : { available: [agent], disabledReason: "This chat's harness is fixed here. A cloud session's chat menu can fork a conversation with another harness; local sessions and Runners use a new session." },
     // The session's own agent's account, where it isn't connected here.
     connect: accounts.includes(agent) ? [] : [agent],
     effort,
     loadout: menu.loadout,
     preferredProvider: providerPicked ?? recorded?.model.provider ?? defaultModel(menu)?.provider,
     switching,
-    disabledReason: !attached
+    disabledReason: editing || queuedEditing
+      ? "Finish or cancel editing the prompt before changing selection"
+      : !attached
       ? "Waiting for the session to connect"
+      : !initialDeliveryComplete || queue.some((prompt) => prompt.startup)
+        ? "Finish sending or remove the queued startup messages before changing selection"
       : waitingOnUser
         ? waitingOnSecrets
           ? `Answer ${AGENTS[agent].label}'s request first`
@@ -899,7 +988,7 @@ export function WorkspaceSession({
           : null,
     onChange: (model, pickedEffort) => {
       // What the agent is told: an effort goes only with a model that takes one.
-      const next = takesEffort(model) ? pickedEffort : null;
+      const next = compatibleEffort(model, pickedEffort);
       setSwitching(true);
       setSendError(null);
       setSwitchError(null);
@@ -994,10 +1083,13 @@ export function WorkspaceSession({
   // (the cut-off send got there). Forgotten as soon as it was offered, a
   // second reload before any of those, after a send the server had let go,
   // left it nowhere: never sent, and never offered again.
-  const settleCutOff = () => forgetFirstPromptOn(cutOffPath.current);
+  const settleCutOff = () => {
+    forgetFirstPromptOn(cutOffPath.current);
+    setInitialDeliveryComplete(true);
+  };
   const cutOffLanded = cutOff !== null && conversation.status === "connected" && userPromptCount(conversation.events) > 0;
   useEffect(() => {
-    if (cutOffLanded) settleCutOff();
+    if (cutOffLanded) void Promise.resolve().then(settleCutOff);
     // settleCutOff reads only props that don't change for this session, and a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cutOffLanded]);
@@ -1013,7 +1105,10 @@ export function WorkspaceSession({
       : local
         ? null
         : rememberedFirstPrompt(tabStorage(), workspaceId);
-    if (!first) return;
+    if (!first) {
+      void Promise.resolve().then(() => setInitialDeliveryComplete(true));
+      return;
+    }
     sentInitial.current = true;
     // send() queues an optimistic bubble (setState); this is a one-time guarded
     // fire on ready, not a render cascade. Another mount of this session may be
@@ -1051,7 +1146,10 @@ export function WorkspaceSession({
         },
         first.key,
       ).then((landed) => {
-        if (landed) itWent();
+        if (landed) {
+          itWent();
+          setInitialDeliveryComplete(true);
+        }
         else if (!local) markFirstPromptGoing(tabStorage(), workspaceId, false);
         return landed;
       });
@@ -1061,14 +1159,17 @@ export function WorkspaceSession({
     void sendFirstPromptOnce(workspaceId, attempt).then((outcome) => {
       // Another page of this tab sent it first: its send cleaned up after
       // itself, but this URL may still be the one carrying the prompt.
-      if (outcome === "already") itWent();
+      if (outcome === "already") {
+        itWent();
+        setInitialDeliveryComplete(true);
+      }
     });
     // send is stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attached, initialPrompt, initialPromptKey, initialAttachmentIds]);
 
   return (
-    <div ref={sessionRef} className="studio-live-session" data-testid="workspace-session">
+    <div ref={sessionRef} className="studio-live-session min-w-0" data-testid="workspace-session">
       {conversation.lost ? (
         <Notice
           tone="warning"
@@ -1127,12 +1228,13 @@ export function WorkspaceSession({
         />
       )}
 
-      <section className="studio-convo-panel" aria-label="Claude conversation">
+      <section className="studio-convo-panel" aria-label={`${AGENTS[agent].label} conversation`}>
         <div className="studio-convo-body">
           {/* Images Claude shows by path are on a cloud session's box; this
               Mac's are out of the server's reach. */}
           <ImageBoxContext value={local ? null : workspaceId}>
-            <ConversationTimeline
+            {startup && firstQueued ? <QueuedFirstPrompt first={firstQueued} /> : <ConversationTimeline
+              agentLabel={AGENTS[agent].label}
               events={timelineEvents}
               working={working && !compacting}
               compacting={compacting}
@@ -1141,16 +1243,17 @@ export function WorkspaceSession({
               // Only between turns: an edit cuts the conversation under the
               // agent, which must not be writing to it.
               onEdit={attached && !working && !waitingOnUser && !waitingOnPlan ? editMessage : undefined}
-              placeholder={conversationPlaceholder({
+              placeholder={startup ? null : conversationPlaceholder({
                 events: timelineEvents,
                 attachment: attachment.status,
                 stream: conversation.status,
               })}
-            />
+            />}
           </ImageBoxContext>
         </div>
       </section>
 
+      {startup && <StartupStatus startup={startup} />}
       {question && (
         <QuestionCard
           key={question.toolUseId}
@@ -1227,17 +1330,18 @@ export function WorkspaceSession({
         <QueuedPrompts
           queue={queue}
           working={working}
-          canSendNow={attached && !stopping}
+          canSendNow={attached && initialDeliveryComplete && !stopping}
           editing={queuedEditing}
           onEditingChange={(next) => {
             if (next && sendingQueued.current) return;
             setQueuedEditing(next);
           }}
           paused={queuePaused && queue.length > 0}
+          starting={!!startup || !initialDeliveryComplete}
           onSteer={(prompt) => void sendQueuedNow(prompt, false)}
           onSendNow={(prompt) => void sendQueuedNow(prompt)}
-          onEdit={(prompt, words) => setQueue((q) => editQueued(q, prompt.id, words))}
-          onMove={(prompt, by) => setQueue((q) => moveQueued(q, prompt.id, by))}
+          onEdit={(prompt, words) => { updateQueue((q) => editQueued(q, prompt.id, words)); }}
+          onMove={(prompt, by) => { updateQueue((q) => moveQueued(q, prompt.id, by)); }}
           onRemove={removeQueued}
         />
       )}
@@ -1248,13 +1352,13 @@ export function WorkspaceSession({
           onSend={sendWithComments}
           comments={{ items: diffComments.items, onRemove: diffComments.remove }}
           modeChoice={{ mode, onChange: setMode }}
-          onCompact={compact}
+          onCompact={startup ? undefined : compact}
           onSideChat={onSideChat}
           context={contextUsage(conversation.events, shownModel)}
           focusSignal={reviseSignal}
           editing={editing && { key: editing.uuid, text: editing.text, onCancel: () => setEditing(null) }}
           placeholder={
-            waitingOnPlan
+            startup ? "Queue a message while your session starts…" : waitingOnPlan
               ? `Tell ${AGENTS[agent].label} what to change in the plan…`
               : working
                 ? followUpRoute({ working, queued: queue.length, steerFollowUps: chatPreferences.steerFollowUps, agent }) === "steer"
@@ -1272,6 +1376,7 @@ export function WorkspaceSession({
           }
           model={shownModel}
           modelChoice={modelChoice}
+          sendDisabledReason={switching ? "Wait for the harness or model change to finish" : undefined}
           allowAttachments={!local}
           sendError={connectionError ? null : (sendError?.message ?? null)}
           sendErrorNoRetry={sendIsDeadEnd(sendError?.code)}
@@ -1279,7 +1384,7 @@ export function WorkspaceSession({
           onDismissSendError={() => setSendError(null)}
           onRetrySendError={sendError?.retry}
           stop={stopNow}
-          listFiles={listFiles}
+          listFiles={startup ? undefined : listFiles}
         />
       )}
     </div>
@@ -1521,19 +1626,15 @@ async function stopCloudTurn(workspaceId: string, chatId: string): Promise<void>
   throw new Error(data.error ?? "Couldn't stop the turn. Please try again.");
 }
 
-/** Who served a session's model when it was last picked here (a convenience:
- *  the reply names only the model, the same from either provider). */
+/** Local sessions have no server model row; their last explicit provider is
+ * retained only as a hint. Cloud sessions always prefer the recorded choice. */
 function pickedProvider(workspaceId: string): ModelProvider | null {
   try {
     const saved = window.localStorage.getItem(`outrunner:model-key:${workspaceId}`);
-    // Saved before providers: "own" was the user's OpenRouter key, and
-    // "neev" Outrunner's, before the rename.
     if (saved === "own") return "openrouter";
     if (saved === "neev") return "outrunner";
     return saved === "outrunner" || saved === "claude" || saved === "codex" || isProviderId(saved) ? saved : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function rememberPickedProvider(workspaceId: string, provider: ModelProvider): void {

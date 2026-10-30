@@ -44,7 +44,7 @@ export async function importProvider(ownerId: string): Promise<string> {
   }
   if (!isComputerProvider(provider)) {
     throw new ImportError(
-      "Imported sessions run on Outrunner's cloud computers. Choose one under Settings → Sandbox.",
+      "Imported sessions require a cloud computer. Ask your deployment administrator to check runtime configuration.",
       409,
     );
   }

@@ -1,11 +1,12 @@
 "use client";
 
-import { FileText, KeyRound, Plug, Plus, Settings2, Sparkles, SquareTerminal, X } from "lucide-react";
+import { ArrowLeft, FileText, KeyRound, Plug, Plus, Settings2, Sparkles, SquareTerminal, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { GitHubIcon } from "@/components/brand-icons";
+import { PageHeader, PageLayout } from "@/components/page-layout";
 import { failedLinks, SecretSyncPanel } from "@/components/secret-sync-panel";
 import { McpServersSection } from "@/components/project-mcp-servers";
 import { DeleteButton, Panel, SectionTitle, useSave } from "@/components/project-section";
@@ -40,7 +41,7 @@ function isSection(tab: string | null): tab is SectionId {
 }
 
 /**
- * A project's settings page, laid out as Replicas' environment page: the
+ * A project's settings page: the
  * project's name and a way to start a session in it, then a section nav
  * beside the section. Everything here is what a new session of the project
  * starts with; a running session keeps what it started with.
@@ -74,83 +75,80 @@ export function ProjectSettings({
   const readOnly = environment.access !== "write";
 
   return (
-    <div className="px-8 py-8">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <header className="flex items-start justify-between gap-4">
-          <div className="min-w-0 space-y-1">
-            <h1 className="truncate text-lg font-semibold text-foreground">{environment.name}</h1>
-            <p className="text-[13px] text-muted-foreground">
-              {environment.description ?? "New sessions in this project start with everything below."}
-            </p>
-          </div>
-          {repo && (
-            <Button asChild size="sm">
-              <Link href={newSessionHref({ kind: "cloud", projectId: repo.projectId })}>
-                <Plus /> New session
-              </Link>
-            </Button>
-          )}
-        </header>
+    <PageLayout className="space-y-8">
+      <Link href="/projects" className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="size-3.5" /> Projects
+      </Link>
+      <PageHeader
+        title={environment.name}
+        description="Manage the environment and defaults for new sessions."
+        actions={repo && (
+          <Button asChild size="sm">
+            <Link href={newSessionHref({ kind: "cloud", projectId: repo.projectId })}>
+              <Plus /> New session
+            </Link>
+          </Button>
+        )}
+      />
 
-        <div className="grid grid-cols-[200px_1fr] gap-8">
-          <nav aria-label="Project settings" className="space-y-0.5">
-            {SECTIONS.map(({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setSection(id)}
-                aria-current={section === id ? "page" : undefined}
-                className={cn(
-                  "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] [&_svg]:size-3.5",
-                  section === id
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              >
-                <Icon /> {label}
-              </button>
-            ))}
-          </nav>
-          <main className="min-w-0 space-y-4">
-            {/* Read access: everything shows, nothing changes (the server
-                refuses a change too). A disabled fieldset disables every
-                field and button in it. */}
-            {readOnly && (
-              <InlineMessage tone="info">
-                You can see this project and start sessions in it, but not change it. Ask an admin of its org for write
-                access.
-              </InlineMessage>
-            )}
-            {failed.length > 0 && section !== "variables" && (
-              <InlineMessage
-                tone="warning"
-                actions={[{ label: "View", onClick: () => setSection("variables") }]}
-              >
-                {failed.map((l) => PROVIDER_LABELS[l.provider]).join(" and ")}&apos;s last sync failed: new sessions start
-                without {failed.length > 1 ? "their" : "its"} secrets.
-              </InlineMessage>
-            )}
-            <fieldset disabled={readOnly} className="min-w-0">
-              {section === "general" && <GeneralSection environment={environment} onSaved={setEnvironment} />}
-              {section === "variables" && (
-                <VariablesSection
-                  environment={environment}
-                  onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))}
-                  secretSync={secretSync}
-                  onSyncChange={setSecretSync}
-                />
+      <div className="grid gap-8 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-10">
+        <nav aria-label="Project settings" className="flex gap-1 overflow-x-auto border-b border-border/60 pb-3 lg:flex-col lg:self-start lg:border-0 lg:pb-0">
+          {SECTIONS.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setSection(id)}
+              aria-current={section === id ? "page" : undefined}
+              className={cn(
+                "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full [&_svg]:size-3.5 [&_svg]:shrink-0",
+                section === id
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
               )}
-              {section === "setup" && <SetupSection environment={environment} onSaved={setEnvironment} />}
-              {section === "files" && (
-                <FilesSection environment={environment} onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))} />
-              )}
-              {section === "skills" && <SkillsSection environment={environment} />}
-              {section === "mcp" && <McpServersSection environment={environment} />}
-            </fieldset>
-          </main>
+            >
+              <Icon /> {label}
+            </button>
+          ))}
+        </nav>
+        <div className="min-w-0 space-y-4">
+          {/* Read access: everything shows, nothing changes (the server
+              refuses a change too). A disabled fieldset disables every
+              field and button in it. */}
+          {readOnly && (
+            <InlineMessage tone="info">
+              You can see this project and start sessions in it, but not change it. Ask an admin of its org for write
+              access.
+            </InlineMessage>
+          )}
+          {failed.length > 0 && section !== "variables" && (
+            <InlineMessage
+              tone="warning"
+              actions={[{ label: "View", onClick: () => setSection("variables") }]}
+            >
+              {failed.map((l) => PROVIDER_LABELS[l.provider]).join(" and ")}&apos;s last sync failed: new sessions start
+              without {failed.length > 1 ? "their" : "its"} secrets.
+            </InlineMessage>
+          )}
+          <fieldset disabled={readOnly} className="min-w-0">
+            {section === "general" && <GeneralSection environment={environment} onSaved={setEnvironment} />}
+            {section === "variables" && (
+              <VariablesSection
+                environment={environment}
+                onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))}
+                secretSync={secretSync}
+                onSyncChange={setSecretSync}
+              />
+            )}
+            {section === "setup" && <SetupSection environment={environment} onSaved={setEnvironment} />}
+            {section === "files" && (
+              <FilesSection environment={environment} onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))} />
+            )}
+            {section === "skills" && <SkillsSection environment={environment} />}
+            {section === "mcp" && <McpServersSection environment={environment} />}
+          </fieldset>
         </div>
       </div>
-    </div>
+    </PageLayout>
   );
 }
 
@@ -193,8 +191,8 @@ function RepositoriesEditor({ environment, onSaved }: { environment: Environment
 
   return (
     <>
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-0.5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 basis-64 space-y-0.5">
           <SectionHeader title="Repositories" />
           <p className="text-xs text-muted-foreground">
             {several
@@ -237,7 +235,7 @@ function RepositoriesEditor({ environment, onSaved }: { environment: Environment
             aria-label="Repository to add"
             value={picked}
             onChange={(e) => setPicked(e.target.value)}
-            className={cn("h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-[13px] text-foreground dark:bg-input/30", SELECT_OPTIONS)}
+            className={cn("h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-[13px] text-foreground", SELECT_OPTIONS)}
           >
             <option value="">{addable === null ? "Loading repositories…" : addable.length ? "Pick a repository" : "No other connected repositories"}</option>
             {addable?.map((r) => (
@@ -288,23 +286,33 @@ function GeneralSection({ environment, onSaved }: { environment: Environment; on
 
   return (
     <section className="space-y-5">
-      <SectionTitle title="General" detail="Repositories, instructions and the project's name." />
+      <SectionTitle title="General" detail="The essentials for this project." />
       <Panel>
-        <div className="space-y-3 p-4">
-          <SectionHeader title="Name" />
-          <Input value={name} onChange={(e) => setName(e.target.value)} aria-label="Project name" maxLength={80} />
-          <Input
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Add a description"
-            aria-label="Description"
-            maxLength={500}
-          />
+        <div className="space-y-5 p-5">
+          <div className="space-y-2">
+            <label htmlFor="project-name" className="text-[13px] font-medium">Project name</label>
+            <Input id="project-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} />
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="project-description" className="text-[13px] font-medium">Description <span className="font-normal text-muted-foreground">(optional)</span></label>
+            <Input
+              id="project-description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Add a description"
+              aria-label="Description"
+              maxLength={500}
+            />
+          </div>
         </div>
-        <div className="space-y-3 p-4">
+      </Panel>
+      <Panel>
+        <div className="space-y-4 p-5">
           <RepositoriesEditor environment={environment} onSaved={onSaved} />
         </div>
-        <div className="space-y-3 p-4">
+      </Panel>
+      <Panel>
+        <div className="space-y-3 p-5">
           <div className="space-y-0.5">
             <SectionHeader title="Instructions" />
             <p className="text-xs text-muted-foreground">Given to the agent in every session, after your own CLAUDE.md.</p>
@@ -318,7 +326,7 @@ function GeneralSection({ environment, onSaved }: { environment: Environment; on
           />
         </div>
       </Panel>
-      <div className="flex items-center justify-end gap-3">
+      <div className="flex flex-wrap items-center justify-end gap-3">
         {save.error && <InlineMessage>{save.error}</InlineMessage>}
         <LoadingButton
           status={save.status}

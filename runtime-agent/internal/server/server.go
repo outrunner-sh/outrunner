@@ -35,6 +35,7 @@ import (
 	"runtime-agent/internal/ptyx"
 	"runtime-agent/internal/redact"
 	"runtime-agent/internal/sessiontools"
+	"runtime-agent/internal/snapshot"
 	"runtime-agent/internal/workspace"
 )
 
@@ -172,7 +173,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots, protocol.FeatureRewind},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots, protocol.FeatureRewind, protocol.FeatureCodexAccessToken, protocol.FeatureCodexAccount},
 	})
 }
 
@@ -302,7 +303,10 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	manifest, err := s.ws.Archive(r.Context(), r.PathValue("id"), req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		var body protocol.ErrorResponse
+		body.Error.Code, body.Error.Message = "INTERNAL", err.Error()
+		body.Error.Snapshot = snapshot.DiagnosticOf(err)
+		writeJSON(w, http.StatusInternalServerError, body)
 		return
 	}
 	writeJSON(w, http.StatusOK, manifest)
@@ -1362,7 +1366,7 @@ func validAuth(req protocol.SetAuthRequest) error {
 	if !workspace.ValidAuthKind(req.Kind) {
 		return fmt.Errorf("unknown credential kind %q", req.Kind)
 	}
-	if (req.Kind == workspace.AuthNone) != (req.Token == "") || (req.Token != "" && !claude.ValidGatewayToken(req.Token)) {
+	if (req.Kind == workspace.AuthNone) != (req.Token == "") || (req.Token != "" && !workspace.ValidAuthToken(req.Kind, req.Token)) {
 		return errors.New("a credential needs a valid token, and none takes one")
 	}
 	return nil

@@ -1,5 +1,7 @@
 "use client";
 
+import { PageHeader } from "@/components/page-layout";
+
 import { useRouter } from "next/navigation";
 import { ExternalLink } from "lucide-react";
 import { useState } from "react";
@@ -106,7 +108,7 @@ export function OrgGitHubSettings({
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">GitHub</h1>
+        <PageHeader title={"GitHub"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           {`Install the Outrunner GitHub App on the GitHub accounts and organizations ${org.name} works in. Outrunner then reaches their repositories with the App, rather than each member's own GitHub sign-in.`}
         </p>

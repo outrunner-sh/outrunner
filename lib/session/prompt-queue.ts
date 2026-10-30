@@ -13,7 +13,7 @@ import { parseCommentQuotes, withComments } from "@/lib/session/diff-comments";
 
 /** `mode` is the one it was queued in (lib/session/session-mode.ts), and goes
  *  in; absent from a queue kept before modes, which goes in the session's. */
-export type QueuedPrompt = { id: string; text: string; attachmentIds: string[]; mode?: SessionMode };
+export type QueuedPrompt = { id: string; text: string; attachmentIds: string[]; mode?: SessionMode; startup?: boolean; sentAt?: number };
 
 /** Where the queue is kept: sessionStorage, or a stand-in in tests. */
 export type QueueStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -22,8 +22,10 @@ const key = (workspaceId: string) => `outrunner:queue:${workspaceId}`;
 
 function isQueuedPrompt(value: unknown): value is QueuedPrompt {
   if (!value || typeof value !== "object") return false;
-  const { id, text, attachmentIds, mode } = value as Record<string, unknown>;
+  const { id, text, attachmentIds, mode, startup, sentAt } = value as Record<string, unknown>;
   return (
+    (startup === undefined || typeof startup === "boolean") &&
+    (sentAt === undefined || (typeof sentAt === "number" && Number.isSafeInteger(sentAt) && sentAt >= 0)) &&
     typeof id === "string" &&
     (mode === undefined || mode === "plan" || mode === "build") &&
     typeof text === "string" &&
@@ -46,12 +48,15 @@ export function readQueue(storage: QueueStorage | null, workspaceId: string): Qu
 }
 
 /** Keep `queue` for the tab; an empty one is forgotten. */
-export function writeQueue(storage: QueueStorage | null, workspaceId: string, queue: QueuedPrompt[]): void {
+export function writeQueue(storage: QueueStorage | null, workspaceId: string, queue: QueuedPrompt[]): boolean {
   try {
-    if (queue.length > 0) storage?.setItem(key(workspaceId), JSON.stringify(queue));
-    else storage?.removeItem(key(workspaceId));
+    if (!storage) return false;
+    if (queue.length > 0) storage.setItem(key(workspaceId), JSON.stringify(queue));
+    else storage.removeItem(key(workspaceId));
+    return true;
   } catch {
-    // Storage full or blocked: the queue still works, until a reload.
+    // The caller can retain the draft rather than accept an undurable send.
+    return false;
   }
 }
 
@@ -87,7 +92,7 @@ export function queueDrains(state: {
  *  with nothing to send. */
 export function editQueued(queue: QueuedPrompt[], id: string, words: string): QueuedPrompt[] {
   return queue.map((prompt) => {
-    if (prompt.id !== id) return prompt;
+    if (prompt.id !== id || prompt.sentAt !== undefined) return prompt;
     const { quotes } = parseCommentQuotes(prompt.text);
     const text = withComments(words.trim(), quotes);
     return text.trim() || prompt.attachmentIds.length > 0 ? { ...prompt, text } : prompt;
@@ -105,4 +110,21 @@ export function moveQueued(queue: QueuedPrompt[], id: string, by: number): Queue
   const [moved] = next.splice(from, 1);
   next.splice(to, 0, moved);
   return next;
+}
+
+/** Start over carries waiting input to the replacement session. Its new
+ * conversation gets fresh echo anchors; its per-message keys remain stable. */
+export function transferQueue(storage: QueueStorage | null, from: string, to: string): boolean {
+  const queue = readQueue(storage, from);
+  if (queue.length === 0) return true;
+  const existing = readQueue(storage, to);
+  const ids = new Set(existing.map((p) => p.id));
+  const carried = queue.filter((p) => !ids.has(p.id)).map((p) => {
+    const waiting = { ...p };
+    delete waiting.sentAt;
+    return waiting;
+  });
+  if (!writeQueue(storage, to, [...existing, ...carried])) return false;
+  writeQueue(storage, from, []);
+  return true;
 }

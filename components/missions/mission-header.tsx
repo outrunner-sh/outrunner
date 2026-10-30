@@ -130,7 +130,7 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
           }}
           aria-label="Runner name"
           maxLength={120}
-          className="h-7 min-w-0 rounded-md border border-white/20 bg-black/30 px-2 text-[14px] text-[#ededed] outline-none"
+          className="h-7 min-w-0 rounded-md border border-white/20 bg-transparent px-2 text-[14px] text-[#ededed] outline-none"
         />
       ) : (
         <button

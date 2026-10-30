@@ -30,28 +30,28 @@
 }
 
 .dark {
-  --background: #121212;
+  --background: #060505;
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
+  --popover: var(--background);
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.922 0 0);
   --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
+  --secondary: #171716;
   --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
+  --muted: #191918;
   --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
+  --accent: #1c1c1b;
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
   --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 18%);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
   --ring: oklch(0.556 0 0);
   --success: oklch(0.696 0.17 162.48);
   --warning: oklch(0.769 0.157 70.08);
-  --sidebar: #171717;
+  --sidebar: #0B0B0A;
 }
 
 @theme inline {
@@ -84,7 +84,7 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
   --font-display: var(--font-pixel), var(--font-geist-mono), ui-monospace, monospace;
-  /* The landing page's accents (neevai-labs/outrunner-landing). */
+  /* The existing orange brand accent, used sparingly alongside neutral controls. */
   --color-brand: #ff8800;
   --color-positive: #49a147;
   /* GitHub's merged purple, for a pull request once it's in. */
@@ -97,6 +97,11 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+  /* Closed fields blend into their surface; native option lists stay readable. */
+  select option,
+  select optgroup {
+    @apply bg-popover text-popover-foreground;
   }
   /* An app, not a page: a panel scrolled to its end mustn't hand the scroll
      on to the document, which in the Mac app's webview bounces the whole
@@ -113,8 +118,8 @@
    text on the black composer in light mode). The app is dark only — see the
    ThemeProvider in app/layout.tsx. */
 :root {
-  --studio-bg: #121212;
-  --studio-panel: #121212;
+  --studio-bg: var(--background);
+  --studio-panel: var(--background);
   --studio-panel-2: #1b1b1b;
   --studio-hover: #1e1e1e;
   --studio-selected: #232323;
@@ -194,7 +199,17 @@
 .studio-queue-actions { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; }
 .studio-queue-actions button[aria-label="Move up"], .studio-queue-actions button[aria-label="Move down"], .studio-queue-actions button[aria-label="Edit"] { padding: 0 6px; border-color: transparent; color: #8a8a8a; }
 .studio-queue-edit { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid var(--studio-border); border-radius: 3px; color: var(--studio-text); background: transparent; font: 13px var(--font-geist-sans); resize: none; outline: none; }
+/* Startup input must stay readable and its controls reachable on a phone. */
+@media (max-width: 720px) {
+  .studio-queue.is-starting .studio-queue-item { flex-wrap: wrap; }
+  .studio-queue.is-starting .studio-queue-text { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; }
+  .studio-queue.is-starting .studio-queue-actions { margin-left: auto; }
+}
+
 .studio-composer textarea { display:block; width:100%; resize:none; min-height:56px; padding:14px 16px 10px; border:0; outline:0; color:var(--studio-text); background:transparent; font:14px var(--font-geist-sans); }
+.studio-composer:focus-within { border-color: color-mix(in oklab, var(--ring) 65%, var(--studio-border)); }
+.new-session-composer.studio-composer { width: 100%; max-width: none; margin: 0; border-radius: 8px; }
+.new-session-composer textarea { min-height: 112px; }
 .studio-composer textarea::placeholder { color:#6f6f6f !important; opacity:1; }
 .studio-composer textarea:disabled { cursor:not-allowed; opacity:.7; }
 /* Files staged on the composer: images as square tiles of their own picture,
@@ -236,7 +251,7 @@
 .message-attachment-file svg { width: 13px; height: 13px; flex-shrink: 0; }
 @keyframes skeleton-pulse { 50% { background: rgba(255,255,255,.08); } }
 /* An image full size, over the page. */
-.image-lightbox { width: auto; max-width: min(92vw, 1400px); padding: 12px; gap: 8px; border-radius: 6px; background: #0d0d0d; }
+.image-lightbox { width: auto; max-width: min(92vw, 1400px); padding: 12px; gap: 8px; border-radius: 6px; }
 .image-lightbox img { display: block; max-width: 100%; max-height: 84vh; margin: 0 auto; object-fit: contain; }
 .image-lightbox-name { margin: 0; padding-right: 28px; color: #8a8a8a; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .studio-composer-notice { margin: 0; padding: 10px 16px 0; color: color-mix(in oklab, var(--foreground) 60%, transparent); font-size: 12px; animation: placeholder-in .3s cubic-bezier(.23, 1, .32, 1) both; }
@@ -244,9 +259,11 @@
    bordered box of one height, the send button among them. */
 .studio-composer-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px; border-top:1px solid var(--studio-border); }
 .studio-composer-footer > span { display:flex; align-items:center; gap:8px; min-width:0; }
+.studio-composer-footer > span:first-child { flex:1; }
+.studio-composer-footer > span:last-child, .studio-composer-footer > span > button { flex-shrink:0; }
 .studio-composer-footer button, .studio-composer-model { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:30px; min-width:30px; padding:0 10px; border:1px solid var(--studio-border); border-radius:3px; color:var(--studio-text); background:transparent; font:13px var(--font-geist-sans); white-space:nowrap; }
 .studio-composer-footer button { padding:0 7px; cursor:pointer; transition: background-color .15s, border-color .15s; }
-.studio-composer-footer .studio-composer-model-picker { padding:0 10px 0 12px; }
+.studio-composer-footer .studio-composer-model-picker { min-width:0; flex-shrink:1; padding:0 10px 0 12px; }
 .studio-composer-footer button:hover:not(:disabled) { color:var(--studio-text); border-color:rgba(255,255,255,.24); background:var(--studio-hover); }
 .studio-composer-footer button:disabled { color:#555; cursor:not-allowed; }
 .studio-composer-footer svg { width:14px; height:14px; flex-shrink:0; }
@@ -293,7 +310,7 @@
 .studio-secrets-field { display: grid; gap: 4px; }
 .studio-secrets-field label { display: flex; align-items: baseline; gap: 8px; font: 12.5px var(--font-geist-mono); }
 .studio-secrets-field label small { color: var(--studio-muted); font: 12px var(--font-geist-sans); }
-.studio-secrets-input { display: flex; align-items: center; gap: 6px; padding: 0 4px 0 10px; border: 1px solid var(--studio-border); border-radius: 3px; background: rgba(255,255,255,.02); }
+.studio-secrets-input { display: flex; align-items: center; gap: 6px; padding: 0 4px 0 10px; border: 1px solid var(--studio-border); border-radius: 3px; background: transparent; }
 .studio-secrets-input:focus-within { border-color: #4a4a4a; }
 .studio-secrets-input input { flex: 1; min-width: 0; height: 30px; padding: 0; border: 0; outline: 0; color: var(--studio-text); background: transparent; font: 13px var(--font-geist-mono); }
 .studio-secrets-input input::placeholder { color: #6f6f6f; font-family: var(--font-geist-sans); }
@@ -309,7 +326,7 @@
 .studio-secrets-note { margin: 8px 0 0; color: var(--studio-muted); font-size: 12px; }
 
 /* An effort as a row of bars (components/effort-meter.tsx): lit up to its
-   level in the brand's orange, the rest dim. */
+   level in the interface accent, the rest dim. */
 .effort-meter { display:inline-flex; align-items:center; gap:2px; }
 .effort-meter > * { display:block; width:5px; height:12px; padding:0; border:0; border-radius:1px; background:rgba(255,255,255,.18); }
 .effort-meter > [data-on] { background:var(--color-brand); }
@@ -396,7 +413,7 @@
 .studio-preview-mode { height: 22px; padding: 0 7px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; color: rgba(255,255,255,.6); background: transparent; font-size: 11px; cursor: pointer; transition: border-color .15s, color .15s; }
 .studio-preview-mode:hover, .studio-preview-mode.is-picked { border-color: rgba(255,255,255,.35); color: var(--studio-text); }
 .studio-preview-mode.is-public { border-color: color-mix(in oklab, var(--color-warning, #f5a524) 55%, transparent); color: var(--color-warning, #f5a524); }
-.studio-preview-input { height: 28px; padding: 0 8px; border: 1px solid rgba(255,255,255,.14); border-radius: 6px; color: var(--studio-text); background: rgba(255,255,255,.03); font-size: 13px; }
+.studio-preview-input { height: 28px; padding: 0 8px; border: 1px solid rgba(255,255,255,.14); border-radius: 6px; color: var(--studio-text); background: transparent; font-size: 13px; }
 .studio-preview-input:focus { outline: none; border-color: rgba(255,255,255,.35); }
 .studio-preview-confirm { height: 26px; padding: 0 10px; border: 1px solid rgba(255,255,255,.2); border-radius: 6px; color: var(--studio-text); background: rgba(255,255,255,.06); font-size: 12px; cursor: pointer; }
 .studio-preview-confirm:hover { background: rgba(255,255,255,.1); }
@@ -583,8 +600,8 @@
 .md-body ol { list-style: decimal; }
 .md-body li { margin: 4px 0; }
 .md-body li::marker { color: #666; }
-.md-body a { color: #7cc7ff; text-decoration: underline; text-underline-offset: 2px; }
-.md-body a:hover { color: #a5d6ff; }
+.md-body a { color: var(--foreground); text-decoration: underline; text-underline-offset: 2px; }
+.md-body a:hover { color: #ffffff; }
 .md-body strong { color: #f0f0f0; font-weight: 650; }
 .md-body blockquote { margin: 0 0 12px; padding: 2px 0 2px 13px; border-left: 2px solid #333; color: #9a9a9a; }
 .md-body hr { margin: 20px 0; border: 0; border-top: 1px solid rgba(255,255,255,.1); }

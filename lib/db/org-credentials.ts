@@ -10,6 +10,7 @@
 
 import { open, seal } from "@/lib/crypto/secret-box";
 import { memberRole } from "@/lib/db/orgs";
+import { memberOrgCredential } from "@/lib/orgs/credential-access";
 import { isKeyProviderId, KEY_PROVIDER_IDS, type KeyProviderId } from "@/lib/providers/registry";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -74,21 +75,21 @@ export async function sealedOrgKeys(
 ): Promise<Map<KeyProviderId, string>> {
   const sealed = new Map<KeyProviderId, string>();
   if (!orgId || (providers && providers.length === 0)) return sealed;
-  const [role, read] = await Promise.all([
-    memberRole(orgId, userId),
-    (() => {
+  const rows = await memberOrgCredential(userId, orgId, {
+    memberRole,
+    async read(id) {
       let query = createSupabaseAdminClient()
         .from("org_provider_keys")
         .select("provider, key_ciphertext")
-        .eq("org_id", orgId);
+        .eq("org_id", id);
       if (providers) query = query.in("provider", [...providers]);
-      return query;
-    })(),
-  ]);
-  if (read.error && beforeOrgKeys(read.error)) return sealed;
-  if (read.error) throw read.error;
-  if (!role) return sealed;
-  for (const row of read.data) {
+      const read = await query;
+      if (read.error && beforeOrgKeys(read.error)) return [];
+      if (read.error) throw read.error;
+      return read.data;
+    },
+  });
+  for (const row of rows ?? []) {
     if (isKeyProviderId(row.provider)) sealed.set(row.provider, row.key_ciphertext);
   }
   return sealed;

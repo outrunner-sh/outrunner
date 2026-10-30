@@ -12,7 +12,9 @@
  *                 that PR (lib/automations/templates.ts)
  */
 
-import { isOwner } from "@/lib/auth/allowlist";
+import { channelReader, restrictToChannel, slackAccountActive } from "@/lib/slack/channel-access";
+import { CHANNEL_ACCESS_HELP, configureChannelAccess, runChannelQuestion } from "@/lib/slack/shared-channel";
+import { sharedChannelDeps } from "@/lib/slack/shared-channel.deps";
 import { listOrgProjects } from "@/lib/db/org-access";
 import {
   sessionSummary,
@@ -119,7 +121,7 @@ async function actorFor(teamId: string, slackUserId: string): Promise<TriageActo
   const target = await slackLinkTarget(teamId, slackUserId);
   if (!target) return null;
   const { data, error } = await createSupabaseAdminClient().auth.admin.getUserById(target.ownerId);
-  if (error || !data.user || !isOwner(data.user)) return null;
+  if (error || !data.user || !slackAccountActive(data.user)) return null;
   return triageActor(target.ownerId, target.orgId);
 }
 
@@ -132,7 +134,7 @@ async function askToConnect(install: SlackInstallation, message: { channel: stri
   );
   await postEphemeral(install.botToken, {
     ...message,
-    text: `Connect Slack to your Outrunner account first: <${link}|Connect Slack to Outrunner> (valid for 10 minutes). Then mention me again.`,
+    text: `Connect Slack to your Outrunner account first: <${link}|Connect Slack to Outrunner> (valid for 10 minutes). Then mention me again. ${CHANNEL_ACCESS_HELP}`,
   });
 }
 
@@ -159,15 +161,44 @@ export async function handleAgentMessage(message: AgentMessage): Promise<void> {
   }
 
   try {
+    const linked = await actorFor(message.teamId, message.user);
+    const sharedDeps = sharedChannelDeps(install, message);
+    if (message.mention || message.channelType === "im") {
+      const configured = await configureChannelAccess(message.text, install.botUserId, message, linked, sharedDeps);
+      if (configured !== null) {
+        await reply(configured);
+        return;
+      }
+    }
     let conversation = await getConversation(message.teamId, message.channel, threadTs);
+    if (!conversation && !message.mention && message.channelType !== "im") return;
+    if (!linked) {
+      // An invalid/disabled personal link must never elevate to delegated access.
+      const hasLink = await slackLinkTarget(message.teamId, message.user);
+      const reader = !hasLink ? await channelReader(message, sharedDeps) : null;
+      if (reader && (!conversation || conversation.orgId === reader.orgId)) {
+        const answer = await runChannelQuestion(reader, message.text, sharedDeps);
+        await reply(answer ?? "Shared channel access changed or was revoked. Ask an org admin to configure it again.");
+      } else {
+        await askToConnect(install, { channel: message.channel, user: message.user, threadTs });
+      }
+      return;
+    }
+    if (conversation && conversation.orgId !== linked.orgId) {
+      await postEphemeral(install.botToken, { channel: message.channel, user: message.user, threadTs,
+        text: "Your Slack account is connected to a different Outrunner org than this thread's." });
+      return;
+    }
+    const settings = message.channelType !== "im" ? await channelSettings(message.teamId, message.channel) : null;
+    if (settings && settings.orgId !== linked.orgId) {
+      await postEphemeral(install.botToken, { channel: message.channel, user: message.user, threadTs,
+        text: "This channel is configured for a different Outrunner org." });
+      return;
+    }
     if (!conversation) {
       // Only a mention, or a DM, starts one: other threads aren't the agent's.
       if (!message.mention && message.channelType !== "im") return;
-      const starter = await actorFor(message.teamId, message.user);
-      if (!starter) {
-        await askToConnect(install, { channel: message.channel, user: message.user, threadTs });
-        return;
-      }
+      const starter = linked;
       conversation = await openConversation({
         teamId: message.teamId,
         channelId: message.channel,
@@ -201,7 +232,7 @@ export async function handleAgentMessage(message: AgentMessage): Promise<void> {
 /** A message in a filed thread: a note on its item, by whoever said it. */
 async function noteOnItem(conversation: SlackConversation, message: AgentMessage) {
   if (!conversation.itemId || !conversation.startedBy) return;
-  const actor = (await actorFor(message.teamId, message.user)) ?? (await triageActor(conversation.startedBy, conversation.orgId));
+  const actor = await actorFor(message.teamId, message.user);
   if (!actor || actor.orgId !== conversation.orgId) return;
   const item = await getWorkItem(actor, conversation.itemId);
   const body = slackToMarkdown(message.text).trim();
@@ -225,17 +256,14 @@ async function runTurn(install: SlackInstallation, conversation: SlackConversati
   const { channel } = message;
   const threadTs = conversation.threadTs;
   const reply = (text: string) => postMessage(install.botToken, { channel, threadTs, text });
-  const starter = conversation.startedBy ? await triageActor(conversation.startedBy, conversation.orgId) : null;
-  if (!starter) {
-    await reply("Whoever started this thread is no longer in the Outrunner org, so I can't file from it.");
-    return;
-  }
-  // Lookups and research run as whoever asked, with what they may read. Someone
-  // who hasn't connected their account can still help with intake, but gets
-  // no lookups.
+  // Resolve the actual speaker every turn; never fall back to the starter.
   const linked = await actorFor(message.teamId, message.user);
   const asker = linked && linked.orgId === conversation.orgId ? linked : null;
-  const viewer = asker ?? starter;
+  if (!asker) {
+    await askToConnect(install, { channel, user: message.user, threadTs });
+    return;
+  }
+  const viewer = restrictToChannel(asker, await channelReader(message, sharedChannelDeps(install, message)));
 
   let key: string;
   try {
@@ -262,7 +290,7 @@ async function runTurn(install: SlackInstallation, conversation: SlackConversati
   const [messages, projects, openItems] = await Promise.all([
     threadReplies(install.botToken, channel, threadTs),
     listOrgProjects(conversation.orgId),
-    openItemTitles(conversation.orgId),
+    openItemTitles(viewer),
   ]);
   const visible = projects.filter((p) => viewer.levels.has(p.id));
   const repos = visible.map((p) => ({ fullName: p.fullName, description: null }));
@@ -277,15 +305,12 @@ async function runTurn(install: SlackInstallation, conversation: SlackConversati
   );
   if (chat.length === 0) return;
 
-  const noAccess = async () => JSON.stringify({ error: "Connect your Slack account to Outrunner to look this up." });
-  const lookups: Lookups = asker
-    ? {
-        recent_work: (args) => recentWork(asker, args),
-        find_items: (args) => findItems(asker, args),
-        item_status: (args) => itemStatus(asker, args),
-        channel_settings: (args) => changeChannel(asker, message, args),
-      }
-    : { recent_work: noAccess, find_items: noAccess, item_status: noAccess, channel_settings: noAccess };
+  const lookups: Lookups = {
+    recent_work: (args) => recentWork(viewer, args),
+    find_items: (args) => findItems(viewer, args),
+    item_status: (args) => itemStatus(viewer, args),
+    channel_settings: (args) => changeChannel(asker, message, args),
+  };
   const context = { repos, openItems, rounds: conversation.rounds };
   const repoNames = repos.map((r) => r.fullName);
   const call = [{ role: "system" as const, content: systemPrompt(context) }, ...chat];
@@ -362,6 +387,16 @@ export async function handleCardAction(action: CardAction): Promise<void> {
   try {
     if (action.actionId === SPEC_ACTIONS.refine) {
       if (conversation.state !== "proposed") return;
+      const actor = await actorFor(action.teamId, action.user);
+      if (!actor) {
+        await askToConnect(install, { ...where, user: action.user });
+        return;
+      }
+      if (actor.orgId !== conversation.orgId ||
+          (conversation.proposal?.repo && !(await resolveProject(actor, conversation.proposal.repo)))) {
+        await tellClicker("Only a connected member who can read this repository can refine its proposal.");
+        return;
+      }
       await updateConversation(conversation.id, { state: "gathering" });
       await reply("Sure. What should change? Mention me with it.");
       return;

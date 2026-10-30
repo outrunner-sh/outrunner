@@ -1,5 +1,7 @@
 "use client";
 
+import { PageHeader } from "@/components/page-layout";
+
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -102,7 +104,7 @@ export function BillingSettings({
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Billing</h1>
+        <PageHeader title={"Billing"} />
         <p className="text-sm text-muted-foreground">
           {!org || org.personal
             ? "Your plan, and what it includes."

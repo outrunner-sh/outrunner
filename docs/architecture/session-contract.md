@@ -87,3 +87,21 @@ Every future change to Runtime asks the same two questions:
 2. Which event does it subscribe to?
 
 If either answer is "a new one," update this document in the same PR.
+
+Archive failures preserve the session and its disk. The authorized lifecycle
+response includes a `diagnostic.reference`, also included in the persisted error
+message and an `archive_failed` server log entry. Diagnostics contain the control
+plane stage and, when known, the agent HTTP/code and the Snapshot stage,
+artifact, cause and storage status. They never contain signed URLs, storage
+response bodies, command output or private paths. New agents attach this
+structured evidence at the failing operation; old agents' exact known upload
+rejection format supplies only the artifact and HTTP status. Unknown failures
+remain unknown and still block archive. Invalid optional diagnostics never strip
+an otherwise valid agent error envelope or make it an availability failure.
+
+For an incident, first read the existing Cloudflare Container log entry for the
+session and reference. Do not archive, resume, upgrade or delete production
+sessions to diagnose it. A deployed app build does not establish an existing
+box's agent capabilities. If the prior attempt predates diagnostic references,
+read its existing `archive failed during capture` exception in the runtime logs;
+without that access the exact save failure cannot be inferred from the dialog.

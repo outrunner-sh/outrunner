@@ -17,7 +17,7 @@ export type ModelProvider = "outrunner" | "claude" | "codex" | ProviderId;
 /** `id` is the provider's name for the model: a Claude alias, an OpenRouter
  *  slug, or a provider's own. `supportsImages` says whether it can see an
  *  image it is sent; absent where that isn't known (an id typed in). */
-export type SessionModel = { id: string; label: string; provider: ModelProvider; supportsImages?: boolean };
+export type SessionModel = { id: string; label: string; provider: ModelProvider; supportsImages?: boolean; efforts?: Effort[]; defaultEffort?: Effort; isDefault?: boolean };
 
 /** `custom`: the group takes a model id typed in, as well as its list. */
 export type ModelGroup = { label: string; provider: ModelProvider; models: SessionModel[]; custom: boolean };
@@ -104,17 +104,17 @@ export function runsOnOwnAccount(model: { provider: ModelProvider }): boolean {
   return model.provider === "claude" || model.provider === "codex";
 }
 
-/** Connected everywhere: what a menu assumes of a server from before it
- *  said, or one it couldn't reach, so it offers what it always did. */
-const ASSUMED_CONNECTED: AgentConnection = { cloud: true, local: true };
+/** Disconnected until verified: what a menu assumes of a server from before it
+ *  said, or one it couldn't reach, so it offers no unverified account. */
+const UNVERIFIED_CONNECTION: AgentConnection = { cloud: false, local: false };
 
 /** The server's `agents` (GET /api/outrunner-models), each made sound; an
- *  agent it says nothing sound of is assumed connected. */
+ *  agent it says nothing sound of is unavailable until verified. */
 export function parseAgentConnections(raw: unknown): Record<AgentId, AgentConnection> {
   const parse = (value: unknown): AgentConnection => {
-    if (!value || typeof value !== "object") return ASSUMED_CONNECTED;
+    if (!value || typeof value !== "object") return UNVERIFIED_CONNECTION;
     const { cloud, local } = value as { cloud?: unknown; local?: unknown };
-    if (typeof cloud !== "boolean" || (typeof local !== "boolean" && local !== "mac-login")) return ASSUMED_CONNECTED;
+    if (typeof cloud !== "boolean" || (typeof local !== "boolean" && local !== "mac-login")) return UNVERIFIED_CONNECTION;
     return { cloud, local };
   };
   const agents = raw && typeof raw === "object" ? (raw as Partial<Record<AgentId, unknown>>) : {};
@@ -144,7 +144,7 @@ export function providerModels(provider: ProviderId): SessionModel[] {
 /** What a user's menu is built from (GET /api/outrunner-models): whether the
  *  server runs Outrunner's models, whether each user's use of them is a capped
  *  allowance, and which providers the user has a key for. */
-export type ModelMenu = { outrunner: boolean; allowance: boolean; keys: ProviderId[] };
+export type ModelMenu = { outrunner: boolean; allowance: boolean; keys: ProviderId[]; codexModels?: SessionModel[]; harnesses?: AgentId[] };
 
 /** The menu: Outrunner's models first, where the server has them; then each
  *  provider the user has a key for; the user's Claude, and Codex last, each
@@ -174,9 +174,12 @@ export function modelGroups(menu: ModelMenu, accounts: readonly AgentId[], agent
     groups.push({ label: "Claude account", provider: "claude", models: CLAUDE_MODELS, custom: false });
   }
   if (accounts.includes("codex")) {
-    groups.push({ label: "Codex", provider: "codex", models: CODEX_MODELS, custom: true });
+    groups.push({ label: "Codex", provider: "codex", models: menu.codexModels ?? CODEX_MODELS, custom: menu.codexModels === undefined });
   }
-  return agent ? groups.filter((group) => agentsFor(group.provider).includes(agent)) : groups;
+  return groups.filter((group) =>
+    (!agent || agentsFor(group.provider).includes(agent)) &&
+    (!menu.harnesses || agentsFor(group.provider).some((a) => menu.harnesses!.includes(a))),
+  );
 }
 
 /**
@@ -215,19 +218,32 @@ export function isEffort(value: unknown): value is Effort {
   return typeof value === "string" && (EFFORTS as readonly string[]).includes(value);
 }
 
-/** The Claude account's models that take an effort. Haiku isn't one: Claude
- *  Code sends no effort for a model without it, so a pick would do nothing. */
-const CLAUDE_EFFORT_MODELS = new Set(["opus", "sonnet"]);
+/** Claude Code 2.1.304's direct Anthropic aliases resolve to the 5.5
+ * families, all of which support effort (code.claude.com/docs/en/model-config).
+ * Gateway IDs are deliberately excluded: their effort is not routed by us. */
+const CLAUDE_EFFORT_MODELS = new Set(["opus", "sonnet", "haiku"]);
 
 /**
- * Whether a model runs at an effort the user picks: Opus and Sonnet on the
+ * Whether a model runs at an effort the user picks: the direct aliases on the
  * user's Claude, and Codex's models. One through a gateway runs at its own:
  * Claude Code knows nothing of another provider's model's reasoning, so an
  * effort there would show a choice the model never gets.
  */
-export function takesEffort(model: { provider: ModelProvider; id: string }): boolean {
-  if (model.provider === "codex") return true;
-  return model.provider === "claude" && CLAUDE_EFFORT_MODELS.has(model.id);
+export function effortsFor(model: { provider: ModelProvider; id: string; efforts?: Effort[] }): readonly Effort[] {
+  if (model.efforts) return model.efforts;
+  // Unknown Codex IDs have no verified effort metadata. Never infer capabilities
+  // from a name: account catalogs can differ from API-key catalogs.
+  if (model.provider === "codex") return [];
+  return model.provider === "claude" && CLAUDE_EFFORT_MODELS.has(model.id) ? EFFORTS : [];
+}
+
+export function takesEffort(model: { provider: ModelProvider; id: string; efforts?: Effort[] }): boolean {
+  return effortsFor(model).length > 0;
+}
+
+/** Drop inherited effort when the new model cannot apply it. */
+export function compatibleEffort(model: Pick<SessionModel, "id" | "provider" | "efforts">, effort?: Effort | null): Effort | null {
+  return effort && effortsFor(model).includes(effort) ? effort : null;
 }
 
 /** A request body's effort: undefined when it names none, null when it names
@@ -343,7 +359,8 @@ export async function setModelRequest(
   keyFor: (holder: KeyHolder) => Promise<string>,
   effort?: Effort | null,
 ): Promise<SetModelRequest> {
-  const at = effort && takesEffort(model) ? { effort } : {};
+  const applied = compatibleEffort(model, effort);
+  const at = applied ? { effort: applied } : {};
   if (model.provider === "claude" || model.provider === "codex") return { model: model.id, ...at };
   const gateway: ProviderId = model.provider === "outrunner" ? "openrouter" : model.provider;
   return { model: model.id, gateway, token: await keyFor(model.provider), ...at };

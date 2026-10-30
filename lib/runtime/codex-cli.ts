@@ -7,12 +7,18 @@ import { npmInstallGlobal } from "@/lib/runtime/npm-global";
  * version can change either. Bump it with the agent's Codex fixtures
  * re-recorded on that version.
  */
-export const CODEX_PACKAGE = `@openai/codex@${BOX_TOOLS.codex}`;
+export const CODEX_CLI_VERSION = BOX_TOOLS.codex;
+export const CODEX_PACKAGE = `@openai/codex@${CODEX_CLI_VERSION}`;
 
-/** Install Codex where there is none: npm's global install, which puts
- *  `codex` on the PATH every user has. `sudo` where the installer isn't root.
- *  Grouped, so it chains after `&&` as one step: a failure before it isn't
- *  hidden by the install that follows succeeding. */
+/** Bring missing/older Codex installations up to the tested minimum, including
+ * restored computers. Older CLIs can accept the stored login but exit during
+ * interactive account bootstrap. Preserve newer versions and verify the actual
+ * PATH after installation, so a shadowing old binary fails during setup. */
 export function codexInstallCommand({ sudo }: { sudo: boolean }): string {
-  return `{ command -v codex >/dev/null || ${npmInstallGlobal(CODEX_PACKAGE, { sudo })}; }`;
+  const pinned = CODEX_CLI_VERSION;
+  const current = `{ v=$(codex --version 2>/dev/null | awk '{print $NF}'); printf '%s\\n' "$v" | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+$' && [ "$(printf '%s\\n' ${pinned} "$v" | sort -V | head -n1)" = ${pinned} ]; }`;
+  return (
+    `{ ${current} || { ${npmInstallGlobal(CODEX_PACKAGE, { sudo })} && hash -r && ${current}; } || ` +
+    `{ echo "Could not bring Codex (\${v:-none}) up to ${pinned}"; false; }; }`
+  );
 }

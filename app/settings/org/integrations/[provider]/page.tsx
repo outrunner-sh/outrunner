@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import Link from "next/link";
 import { ArrowLeft, KeyRound, Vault } from "lucide-react";
 import { notFound, redirect } from "next/navigation";
@@ -52,7 +54,7 @@ async function SecretSyncSection({ provider }: { provider: SecretProvider }) {
         <div className="flex items-center gap-3">
           <Icon className="size-7" />
           <div>
-            <h1 className="text-lg font-semibold text-foreground">{PROVIDER_LABELS[provider]}</h1>
+            <PageHeader title={PROVIDER_LABELS[provider]} />
             <p className="text-sm text-muted-foreground">{ABOUT[provider]}</p>
           </div>
         </div>

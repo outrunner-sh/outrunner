@@ -119,7 +119,7 @@ type SetModelRequest struct {
 
 // SetAuthRequest gives a workspace's session its own credential, applied at
 // its next launch: Kind is "claude-oauth-token" or "anthropic-api-key" for a
-// Claude session, "openai-api-key" for a Codex one, or "none" to take it
+// Claude session, "openai-api-key" or "codex-access-token" for a Codex one, or "none" to take it
 // away (the agent's own login applies again), which carries no Token.
 type SetAuthRequest struct {
 	Kind  string `json:"kind"`
@@ -422,6 +422,11 @@ type SetAgentContextRequest struct {
 // FeatureAgentContext is POST /agent-context.
 const FeatureAgentContext = "agent-context"
 
+// FeatureCodexAccessToken accepts a Codex workspace access token, separately
+// from an OpenAI Platform API key.
+const FeatureCodexAccount = "codex-account"
+const FeatureCodexAccessToken = "codex-access-token"
+
 // FeatureEnvironment is POST /workspaces/{id}/environment.
 const FeatureEnvironment = "session-environment"
 
@@ -534,10 +539,21 @@ const FeatureGitCredential = "git-credential"
 const FeatureMessageKeys = "message-keys"
 
 // ErrorResponse is the stable error envelope for control-plane failures.
+// SnapshotFailure contains no arbitrary strings: it is safe to show to the
+// session owner even when the underlying error includes credentials or paths.
+type SnapshotFailure struct {
+	Stage      string `json:"stage"`
+	Artifact   string `json:"artifact,omitempty"`
+	Cause      string `json:"cause"`
+	HTTPStatus int    `json:"httpStatus,omitempty"`
+	ExitCode   *int   `json:"exitCode,omitempty"`
+}
+
 type ErrorResponse struct {
 	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code     string           `json:"code"`
+		Message  string           `json:"message"`
+		Snapshot *SnapshotFailure `json:"snapshot,omitempty"`
 	} `json:"error"`
 }
 

@@ -5,7 +5,7 @@ import { resetCiTurnsOfSession } from "@/lib/db/github-loop";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { claimFirstPrompt, markFirstPromptSent, recordWorkspaceMode, releaseFirstPrompt, renewFirstPrompt } from "@/lib/db/repositories";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
-import { AGENT_FEATURE_PLAN_MODE, SessionMode } from "@/lib/runtime/agent-protocol";
+import { AGENT_FEATURE_MESSAGE_KEYS, AGENT_FEATURE_PLAN_MODE, SessionMode } from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 import { boxUpgrade } from "@/lib/runtime/session-environment";
@@ -53,7 +53,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const body = (await request.json().catch(() => null)) as
-    | { content?: string; attachmentIds?: unknown; firstPromptKey?: unknown; mode?: unknown; dismiss?: unknown }
+    | { content?: string; attachmentIds?: unknown; firstPromptKey?: unknown; queuedKey?: unknown; mode?: unknown; dismiss?: unknown }
     | null;
   const content = body?.content?.trim() ?? "";
   const attachmentIds = Array.isArray(body?.attachmentIds)
@@ -69,6 +69,11 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "A prompt's mode is build or plan." }, { status: 400 });
   }
   const dismiss = body?.dismiss === true;
+  const queuedKey = firstPromptKey(body?.queuedKey);
+  if (body?.queuedKey !== undefined && !queuedKey) {
+    return NextResponse.json({ error: "Invalid queued message key." }, { status: 400 });
+  }
+
 
   const { id } = await context.params;
   const reach = await reachWorkspaceAgent(id, owner.id, {
@@ -107,6 +112,21 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 409 },
     );
   if (gate.outcome === "sending") return stillGoing();
+
+  // A startup queue retains an in-flight item across reloads and retries.
+  // Require durable agent keys before accepting it; an older box must never
+  // silently turn a retry into a second prompt.
+  if (queuedKey) {
+    try {
+      await requireFeature({
+        features: async () => (await agent.health(identity)).features ?? [],
+        upgrade: boxUpgrade(provider, sandboxId, secret, owner.id, workspace.id),
+      }, AGENT_FEATURE_MESSAGE_KEYS, "send queued messages safely");
+    } catch (error) {
+      await gate.release();
+      return NextResponse.json({ error: error instanceof OutdatedComputerError ? error.message : "Couldn't connect to send the queued message. It is still queued." }, { status: 409 });
+    }
+  }
 
   let prompt = content;
   try {
@@ -157,7 +177,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
-    await agent.sendMessage(identity, prompt, { ...(asked && { mode: asked }), ...(dismiss && { dismiss }) }, chat);
+    await agent.sendMessage(identity, prompt, { ...(asked && { mode: asked }), ...(dismiss && { dismiss }), ...(queuedKey && { key: `startup-${queuedKey}` }) }, chat);
   } catch (error) {
     console.error(`Message: send failed for ${workspace.id}`, error);
     // Released on any failure, an unclear one too (a timeout, a reset after

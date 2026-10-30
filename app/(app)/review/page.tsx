@@ -26,8 +26,8 @@ export const unstable_instant = {
 
 /**
  * Review: every open pull request in the org's repositories the viewer may
- * read, newest activity first, in a dense table with its checks, author,
- * lines by kind, and Outrunner session and item. Each opens its page, where
+ * read, newest activity first, with checks, author and compact change counts.
+ * Each opens its page, where
  * it can be asked about, sent back to its session, or merged.
  *
  * While GitHub is read, what Review last showed stands in for it
@@ -45,13 +45,13 @@ export default function ReviewPage() {
 async function ServerReview() {
   const viewer = await reviewViewer();
   if (!viewer) redirect("/signin?next=/review");
-  const { pulls, unreachable } = await listOpenPulls(viewer.actor).catch((error: unknown) => {
+  const data: { pulls: PullSummary[]; unreachable: string[]; error?: string } = await listOpenPulls(viewer.actor).catch((error: unknown) => {
     console.error("Review: could not list pull requests", error);
-    return { pulls: [] as PullSummary[], unreachable: [] as string[] };
+    return { pulls: [], unreachable: [], error: "Couldn't load pull requests. Please try again." };
   });
   return (
     <ReviewList
-      data={{ orgName: viewer.orgName, pulls, unreachable }}
+      data={{ orgName: viewer.orgName, ...data }}
       scope={viewerScope(viewer.owner.id, viewer.actor.orgId)}
     />
   );

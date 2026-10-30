@@ -611,3 +611,21 @@ test("a temporary edit and its pending send preserve the ordinary draft across r
   assert.equal(reloaded.get(edit), null);
   release();
 });
+
+test("a successful harness fork moves its draft and uploaded files without discarding them", () => {
+  const { drafts, run, discarded } = page(new FakeStorage());
+  drafts.update("ws:source", () => ({ text: "Unsent work", attachments: [ready("image")] }));
+  drafts.move("ws:source", "ws:fork");
+  assert.equal(drafts.get("ws:fork")?.text, "Unsent work");
+  assert.equal(drafts.get("ws:fork")?.attachments[0].id, "image");
+  assert.equal(drafts.get("ws:source")?.text, "");
+  run();
+  assert.deepEqual(discarded, []);
+});
+test("an uploading draft remains with its source until upload callbacks finish", () => {
+  const { drafts } = page(null);
+  drafts.update("ws:source", () => ({ text: "Still uploading", attachments: [ready("image", { status: "uploading" })] }));
+  drafts.move("ws:source", "ws:fork");
+  assert.equal(drafts.get("ws:fork"), null);
+  assert.equal(drafts.get("ws:source")?.text, "Still uploading");
+});

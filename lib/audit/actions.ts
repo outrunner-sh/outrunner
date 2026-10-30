@@ -8,6 +8,10 @@
  */
 
 export type AuditAction =
+  | "slack_channel.shared"
+  | "slack_channel.revoked"
+  | "slack_channel.asked"
+  | "slack_channel.lookup"
   | "org.renamed"
   | "member.invited"
   | "invite.revoked"
@@ -79,7 +83,7 @@ export type AuditGroup = keyof typeof AUDIT_GROUPS;
 export function auditGroup(action: string): AuditGroup {
   const [kind] = action.split(".");
   if (kind === "member" || kind === "invite" || kind === "request") return "members";
-  if (kind === "role" || kind === "access" || kind === "preview") return "access";
+  if (kind === "role" || kind === "access" || kind === "preview" || kind === "slack_channel") return "access";
   if (kind === "key" || kind === "api_key" || kind === "secret_sync") return "keys";
   if (kind === "github") return "github";
   if (kind === "billing") return "billing";
@@ -93,6 +97,14 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
   const what = event.resourceLabel ?? "";
   const d = event.details;
   switch (event.action) {
+    case "slack_channel.shared":
+      return `enabled shared read-only questions in ${what}`;
+    case "slack_channel.revoked":
+      return `revoked shared questions in ${what}`;
+    case "slack_channel.asked":
+      return `asked a shared channel question in ${what}`;
+    case "slack_channel.lookup":
+      return `looked up ${text(d.tool) ?? "status"} in ${what}`;
     case "org.renamed":
       return `renamed the org from ${text(d.from) ?? "?"} to ${text(d.to) ?? what}`;
     case "member.invited":

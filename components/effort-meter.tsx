@@ -37,17 +37,19 @@ export function EffortPicker({
   onChange,
   label,
   disabled,
+  levels = EFFORTS,
 }: {
   effort: Effort | null;
   onChange: (effort: Effort | null) => void;
   /** Whose effort, for screen readers: "Opus effort". */
   label: string;
   disabled?: boolean;
+  levels?: readonly Effort[];
 }) {
   const lit = filled(effort);
   return (
     <span role="group" aria-label={label} title={`Effort: ${effortName(effort)}`} className="effort-meter effort-picker">
-      {EFFORTS.map((level, i) => (
+      {levels.map((level, i) => (
         <button
           key={level}
           type="button"

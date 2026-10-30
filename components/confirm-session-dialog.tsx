@@ -73,7 +73,7 @@ export function ConfirmSessionDialog({
         onOpenChange(next);
       }}
     >
-      <DialogContent className="max-w-sm gap-5 bg-[#0d0d0d]" showClose={!state.busy}>
+      <DialogContent className="max-w-sm gap-5" showClose={!state.busy}>
         <div className="space-y-2">
           <DialogTitle className="text-[15px] font-medium leading-snug">{title}</DialogTitle>
           <DialogDescription className="text-[13px] text-muted-foreground">{description}</DialogDescription>

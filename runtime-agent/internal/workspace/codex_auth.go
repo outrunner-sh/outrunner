@@ -15,8 +15,9 @@ import (
 	"runtime-agent/internal/codex"
 )
 
-// A Codex session given an OpenAI API key runs in a Codex home of its own,
-// $ROOT/codex/<id>, logged in with that key: Codex reads its login from its
+// A Codex session given an OpenAI API key or Codex workspace access token runs
+// in a Codex home of its own, $ROOT/codex/<id>, logged in with that credential:
+// Codex reads its login from its
 // home (CODEX_HOME), not from the environment, and the user's own home on a
 // Mac holds their ChatGPT login, which the session must neither use nor
 // replace. So does one on a gateway (Outrunner's models through OpenRouter):
@@ -35,7 +36,7 @@ func (s *Service) codexHome(workspaceID string) string {
 // ownCodexHome reports whether a session runs in a Codex home of its own.
 func (s *Service) ownCodexHome(workspaceID string) bool {
 	f, _ := s.getFacts(workspaceID)
-	return f.Auth == AuthOpenAIAPIKey || f.Gateway != claude.NoGateway
+	return f.Auth == AuthOpenAIAPIKey || f.Auth == AuthCodexAccessToken || f.Auth == AuthCodexAccount || f.Gateway != claude.NoGateway
 }
 
 // prepareCodexHome readies a session's own Codex home for a launch: owner-
@@ -44,13 +45,21 @@ func (s *Service) ownCodexHome(workspaceID string) bool {
 // no trust question waits for an answer), with the computer's MCP servers
 // (codex.MCPServersConfig) and, on a gateway, putting Codex on it with the
 // session's gateway key (codex.ProviderConfig). With an OpenAI
-// key, it is then logged in with it, given on stdin, never on a command line.
+// key or Codex workspace token, it is then logged in with it, given on stdin,
+// never on a command line.
 // Rewritten each launch from the session's facts, so a model switched to or
 // from a gateway, or a key replaced, is what the next launch runs on.
 func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) error {
 	f, _ := s.getFacts(workspaceID)
-	key := s.authFiles().value(workspaceID, "OPENAI_API_KEY")
-	if f.Auth == AuthOpenAIAPIKey && key == "" {
+	credentialEnv, loginFlag := "OPENAI_API_KEY", "--with-api-key"
+	if f.Auth == AuthCodexAccessToken {
+		credentialEnv, loginFlag = "CODEX_ACCESS_TOKEN", "--with-access-token"
+	}
+	if f.Auth == AuthCodexAccount {
+		credentialEnv = "OUTRUNNER_CODEX_GRANT"
+	}
+	key := s.authFiles().value(workspaceID, credentialEnv)
+	if (f.Auth == AuthOpenAIAPIKey || f.Auth == AuthCodexAccessToken || f.Auth == AuthCodexAccount) && key == "" {
 		return ErrAuthMissing
 	}
 	provider := ""
@@ -61,6 +70,14 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 		}
 		if provider = codex.ProviderConfig(f.Gateway, token); provider == "" {
 			return ErrGatewayUnsupported
+		}
+	}
+	accountAuth := ""
+	if f.Auth == AuthCodexAccount && f.Gateway == claude.NoGateway {
+		var err error
+		provider, accountAuth, err = codex.AccountConfig(key)
+		if err != nil {
+			return err
 		}
 	}
 	home := s.codexHome(workspaceID)
@@ -85,14 +102,25 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 	if err := writeKeysFile(filepath.Join(home, "config.toml"), config); err != nil {
 		return err
 	}
+	if accountAuth != "" {
+		if err := writeKeysFile(filepath.Join(home, "auth.json"), accountAuth); err != nil {
+			return err
+		}
+	}
 	copyAgentsMD(home) // the user's instructions, as the computer's own home has them
-	if f.Auth != AuthOpenAIAPIKey {
-		return nil // on a gateway alone: nothing to log in with, nor needed
+	if f.Auth != AuthOpenAIAPIKey && f.Auth != AuthCodexAccessToken {
+		return nil // gateway or host-managed account: no provider login on the computer
 	}
 	ctx, cancel := context.WithTimeout(ctx, codexLoginTimeout)
 	defer cancel()
-	env := append(withoutEnv(s.env, "CODEX_HOME", "OPENAI_API_KEY"), "CODEX_HOME="+home)
-	if out, err := s.runCommand(ctx, env, key+"\n", "codex", "login", "--with-api-key"); err != nil {
+	env := append(withoutEnv(s.env, "CODEX_HOME", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OUTRUNNER_CODEX_GRANT"), "CODEX_HOME="+home)
+	if out, err := s.runCommand(ctx, env, key+"\n", "codex", "login", loginFlag); err != nil {
+		if f.Auth == AuthCodexAccessToken {
+			// An access-token login can exchange credentials. Do not forward
+			// its output, which could include a derived credential as well as
+			// the input token. Neither belongs in control-plane logs or UI.
+			return fmt.Errorf("codex workspace access-token login failed: %w", err)
+		}
 		msg := strings.ReplaceAll(strings.TrimSpace(string(out)), key, "[key]")
 		return fmt.Errorf("codex login: %v: %s", err, msg)
 	}
@@ -101,13 +129,13 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 
 // codexEnvironment is what a session's Codex runs with, for the ${VAR}s of
 // its MCP servers (codex.MCPServersConfig), in the order its launch makes
-// it: the agent's own environment, less OPENAI_API_KEY and with its Codex
+// it: the agent's own environment, less OpenAI credentials and with its Codex
 // home (codexLaunchEnv); the project's variables, which its launch sources
 // (withEnvironment); then what the user provided in the session, which wins
 // (withProvided).
 func (s *Service) codexEnvironment(workspaceID string) func(string) (string, bool) {
 	env := map[string]string{}
-	for _, entry := range withoutEnv(s.env, "OPENAI_API_KEY", "CODEX_HOME") {
+	for _, entry := range withoutEnv(s.env, "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OUTRUNNER_CODEX_GRANT", "CODEX_HOME") {
 		if name, value, ok := strings.Cut(entry, "="); ok {
 			env[name] = value
 		}
@@ -158,13 +186,13 @@ func shellUnquote(quoted string) string {
 // codexLaunchEnv is the argv prefix that points a session's Codex at its own
 // home. It rides the command line, not tmux's environment, which a running
 // tmux server doesn't take from a new session's client. The home's path is no
-// secret; an OPENAI_API_KEY in the agent's environment is dropped, so the
+// secret; OpenAI credentials in the agent's environment are dropped, so the
 // session runs on its own key, or its gateway's, rather than the computer's.
 func (s *Service) codexLaunchEnv(workspaceID string) []string {
 	if !s.ownCodexHome(workspaceID) {
 		return nil
 	}
-	return []string{"env", "-u", "OPENAI_API_KEY", "CODEX_HOME=" + s.codexHome(workspaceID)}
+	return []string{"env", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN", "-u", "OUTRUNNER_CODEX_GRANT", "CODEX_HOME=" + s.codexHome(workspaceID)}
 }
 
 // withoutEnv is env without the named variables.

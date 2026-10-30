@@ -1,5 +1,7 @@
 "use client";
 
+import { PageHeader } from "@/components/page-layout";
+
 import { useState } from "react";
 
 import { AgentAuthPanel, savedCredential } from "@/components/agent-auth-panel";
@@ -68,10 +70,9 @@ export function ProviderSettingsForm({ initial, place }: { initial: ProviderSett
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Providers (BYOK)</h1>
+        <PageHeader title="Coding agents" />
         <p className="text-[13px] text-muted-foreground">
-          How your coding agents sign in, and your own API keys. Models on them are billed by each provider, not
-          counted against your Outrunner plan.
+          Personal · Your subscription connections and external provider API keys stay private to you. Models on them are billed by each provider, outside your organization’s shared allowance.
         </p>
       </div>
 

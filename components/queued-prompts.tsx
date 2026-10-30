@@ -23,6 +23,7 @@ export function QueuedPrompts({
   onMove,
   canSendNow,
   paused = false,
+  starting = false,
   editing,
   onEditingChange,
 }: {
@@ -45,6 +46,7 @@ export function QueuedPrompts({
   /** Held since the user stopped the turn: the next prompt sent lets them
    *  go, ahead of it. */
   paused?: boolean;
+  starting?: boolean;
 }) {
   // The prompt whose words are being edited, and the words so far.
   if (queue.length === 0) return null;
@@ -53,9 +55,9 @@ export function QueuedPrompts({
     onEditingChange(null);
   };
   return (
-    <section className="studio-queue" aria-label="Queued messages">
+    <section className={`studio-queue${starting ? " is-starting" : ""}`} aria-label="Queued messages">
       <p className="studio-queue-label">
-        {paused ? "Queued · held since you stopped the turn; your next message goes after them" : "Queued · sends when the current turn ends"}
+        {starting ? "Queued · sends in order after startup" : paused ? "Queued · held since you stopped the turn; your next message goes after them" : "Queued · sends when the current turn ends"}
       </p>
       <ol>
         {queue.map((prompt, index) => {
@@ -123,8 +125,9 @@ export function QueuedPrompts({
                   </button>
                   <button
                     type="button"
+                    disabled={prompt.sentAt !== undefined}
+                    title={prompt.sentAt !== undefined ? "Retry this message before editing; delivery may still complete" : "Edit before it sends"}
                     onClick={() => onEditingChange({ id: prompt.id, words: text })}
-                    title="Edit before it sends"
                     aria-label="Edit"
                   >
                     <Pencil aria-hidden />

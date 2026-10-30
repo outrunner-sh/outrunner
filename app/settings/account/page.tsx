@@ -1,20 +1,16 @@
+import { PageHeader } from "@/components/page-layout";
+
 import Image from "next/image";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { signOut } from "@/app/auth/actions";
-import { GitHubIdentitySettings, type IdentityOrgView } from "@/components/github-identity-settings";
-import { ChatSettings } from "@/components/chat-settings";
-import { NotificationSettings } from "@/components/notification-settings";
+
 import { SettingsLoading } from "@/components/settings-loading";
 import { SignInButton } from "@/components/signin-button";
 import { SignOutButton } from "@/components/sign-out-button";
 import { hasGithubIdentity } from "@/lib/auth/identity";
 import { getAuthUser, getOwnerSafe } from "@/lib/auth/owner";
-import { getGithubIdentity } from "@/lib/db/credentials";
-import { listOrgInstallations } from "@/lib/db/github-installations";
-import { githubAppConfig } from "@/lib/github/app";
-import { getOrgContext } from "@/lib/orgs/server";
 
 /** Opens at once, its data streaming in behind: the build checks it. */
 export const unstable_instant = {
@@ -38,7 +34,7 @@ const LINK_ERRORS: Record<string, string> = {
 
 export default function AccountSettings({ searchParams }: { searchParams: Promise<{ link_error?: string }> }) {
   return (
-    <Suspense fallback={<SettingsLoading title="Account" />}>
+    <Suspense fallback={<SettingsLoading title="Profile" />}>
       <AccountSection searchParams={searchParams} />
     </Suspense>
   );
@@ -53,11 +49,6 @@ async function AccountSection({ searchParams }: { searchParams: Promise<{ link_e
     : null;
   const owner = await getOwnerSafe();
   if (!owner) redirect("/signin");
-  const appConfigured = githubAppConfig() !== null;
-  const [identity, org] = await Promise.all([
-    getGithubIdentity(owner.id).catch(() => "personal" as const),
-    appOrg(appConfigured),
-  ]);
   const user = await getAuthUser();
   const githubLinked = user ? hasGithubIdentity(user) : false;
   const providers = [
@@ -68,7 +59,7 @@ async function AccountSection({ searchParams }: { searchParams: Promise<{ link_e
 
   return (
     <section className="space-y-6">
-      <h1 className="text-lg font-semibold text-foreground">Account</h1>
+      <PageHeader title="Profile" />
 
       <div className="flex items-center gap-3">
         {owner.avatarUrl ? (
@@ -92,19 +83,8 @@ async function AccountSection({ searchParams }: { searchParams: Promise<{ link_e
         </div>
       </div>
 
-      <NotificationSettings />
-
-      <ChatSettings />
-
       {githubLinked ? (
         <>
-          <GitHubIdentitySettings
-            initial={identity}
-            login={owner.githubLogin}
-            appConfigured={appConfigured}
-            org={org}
-          />
-
           <div className="space-y-2">
             <p className="text-muted-foreground text-sm">
               If GitHub stops working (repositories won’t load, or publishing fails),
@@ -138,17 +118,4 @@ async function AccountSection({ searchParams }: { searchParams: Promise<{ link_e
       )}
     </section>
   );
-}
-
-/** The org being looked at, and the accounts its App is installed on. */
-async function appOrg(appConfigured: boolean): Promise<IdentityOrgView | null> {
-  if (!appConfigured) return null;
-  const org = (await getOrgContext().catch(() => undefined))?.active;
-  if (!org) return null;
-  const installations = await listOrgInstallations(org.id).catch(() => []);
-  return {
-    name: org.name,
-    installedOn: installations.filter((i) => !i.suspended).map((i) => i.accountLogin),
-    admin: org.role === "admin",
-  };
 }

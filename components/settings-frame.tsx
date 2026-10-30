@@ -6,13 +6,14 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 import { SettingsNav } from "@/components/settings-nav";
+import { settingsNavigationTitle } from "@/lib/settings-navigation";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useModalPanel } from "@/hooks/use-modal-panel";
 import { cn } from "@/lib/utils";
 
 /** Settings keeps its section navigation in a drawer on phones, leaving the
  *  page the full width. The desktop navigation stays beside the page. */
-export function SettingsFrame({ children }: { children: React.ReactNode }) {
+export function SettingsFrame({ children, orgName }: { children: React.ReactNode; orgName?: string }) {
   const pathname = usePathname();
   const wide = useMediaQuery("(min-width: 640px)");
   const [drawerOn, setDrawerOn] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export function SettingsFrame({ children }: { children: React.ReactNode }) {
           open ? "fixed inset-y-0 left-0 z-50 w-[min(264px,85vw)] shadow-2xl shadow-black/60" : "hidden",
         )}
       >
-        <SettingsNav onClose={close} />
+        <SettingsNav onClose={close} orgName={orgName} />
       </div>
       <header className="flex h-11 items-center gap-2 border-b border-border/60 px-2 sm:hidden">
         <button
@@ -57,8 +58,13 @@ export function SettingsFrame({ children }: { children: React.ReactNode }) {
           <ArrowLeft className="size-3.5" /> Back to app
         </Link>
       </header>
-      <main className="min-h-0 min-w-0 overflow-y-auto px-4 py-6 sm:px-6 sm:py-10 lg:px-10">
-        <div className="mx-auto max-w-2xl">{children}</div>
+      <main className="min-h-0 min-w-0 overflow-y-auto">
+        <div className="hidden h-12 items-center gap-3 border-b border-border/60 px-6 text-xs sm:flex">
+          <span className="text-muted-foreground">Settings</span>
+          <span aria-hidden className="text-muted-foreground/40">/</span>
+          <span>{settingsNavigationTitle(pathname)}</span>
+        </div>
+        <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-8 sm:py-12">{children}</div>
       </main>
     </div>
   );

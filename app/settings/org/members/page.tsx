@@ -1,24 +1,58 @@
+import { PageHeader } from "@/components/page-layout";
+
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
+import AccessSection from "@/app/settings/org/access/page";
+import { SettingsSectionTabs } from "@/components/settings-section-tabs";
 import { OrgMembersSettings } from "@/components/org-members";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { listRoles } from "@/lib/db/org-access";
-import { listJoinRequests, listMembers, listOpenInvites } from "@/lib/db/org-members";
+import {
+  listJoinRequests,
+  listMembers,
+  listOpenInvites,
+} from "@/lib/db/org-members";
 import { canSendEmail } from "@/lib/email/send";
 import { getOrgContext } from "@/lib/orgs/server";
 
 /** Opens at once, its data streaming in behind: the build checks it. */
-export const unstable_instant = { prefetch: "static" };
+export const unstable_instant = {
+  prefetch: "static",
+  samples: [{ searchParams: { tab: null } }],
+};
 
 /** Settings → Org → Members: who's in the org the app is showing, and for its
  *  admins, invites and requests to join. */
-export default function OrgMembers() {
+export default function OrgMembers({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
   return (
-    <Suspense fallback={<SettingsLoading title="Members" />}>
-      <MembersSection />
+    <Suspense fallback={<SettingsLoading title="Members & access" />}>
+      <MembersPage searchParams={searchParams} />
     </Suspense>
+  );
+}
+async function MembersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const { tab } = await searchParams;
+  return (
+    <section className="space-y-6">
+      <PageHeader title="Members & access" />
+      <SettingsSectionTabs
+        labels={["Members", "Roles & permissions"]}
+        initial={tab === "roles" ? "second" : "first"}
+        prefix="members"
+      >
+        {[<MembersSection key="members" />, <AccessSection key="roles" />]}
+      </SettingsSectionTabs>
+    </section>
   );
 }
 
@@ -29,8 +63,10 @@ async function MembersSection() {
   if (!context) {
     return (
       <section className="space-y-6">
-        <h1 className="text-lg font-semibold text-foreground">Members</h1>
-        <p className="text-sm text-muted-foreground">Couldn&apos;t load your orgs. Reload the page to try again.</p>
+        <PageHeader title="Members" />
+        <p className="text-sm text-muted-foreground">
+          Couldn&apos;t load your orgs. Reload the page to try again.
+        </p>
       </section>
     );
   }

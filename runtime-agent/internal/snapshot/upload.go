@@ -42,7 +42,7 @@ func uploadAll(ctx context.Context, uploads []protocol.ArchiveUpload, paths map[
 	// complete, so it must never precede an artifact it points at.
 	for _, artifact := range payloadArtifacts {
 		if err := PutFile(ctx, byArtifact[artifact], paths[artifact]); err != nil {
-			return fmt.Errorf("upload %s: %w", artifact, err)
+			return FailureAt("upload", artifact, fmt.Errorf("upload %s: %w", artifact, err))
 		}
 	}
 	// An optional artifact the session has (Produce put it in paths only
@@ -52,17 +52,17 @@ func uploadAll(ctx context.Context, uploads []protocol.ArchiveUpload, paths map[
 			continue
 		}
 		if err := PutFile(ctx, byArtifact[artifact], paths[artifact]); err != nil {
-			return fmt.Errorf("upload %s: %w", artifact, err)
+			return FailureAt("upload", artifact, fmt.Errorf("upload %s: %w", artifact, err))
 		}
 	}
 	// The chats' artifacts, before the manifest that names them.
 	for _, chat := range chats {
 		if err := PutFile(ctx, chat.url, chat.path); err != nil {
-			return fmt.Errorf("upload %s: %w", chat.name, err)
+			return FailureAt("upload", "chat", fmt.Errorf("upload %s: %w", chat.name, err))
 		}
 	}
 	if err := PutFile(ctx, byArtifact["manifest"], paths["manifest"]); err != nil {
-		return fmt.Errorf("upload manifest: %w", err)
+		return FailureAt("upload", "manifest", fmt.Errorf("upload manifest: %w", err))
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { ChangeCard, type ChangeTrack } from "@/components/review/change-card";
 import { dropQuote, usePickedQuote } from "@/components/review/quote-store";
+import { useReviewPanelVisible } from "@/components/review/panel-visibility";
 import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -50,7 +51,7 @@ function keepChanges(repo: string, number: number, messages: Message[]): void {
 
 function QuoteChip({ quote, onDrop }: { quote: LineQuote; onDrop?: () => void }) {
   return (
-    <div className="rounded-md border border-sky-500/30 bg-sky-500/5 text-[11px]">
+    <div className="rounded-md border border-foreground/30 bg-foreground/5 text-[11px]">
       <div className="flex items-center justify-between gap-2 px-2 py-1 text-muted-foreground">
         <span className="truncate font-mono">{quoteLabel(quote)}</span>
         {onDrop && (
@@ -59,7 +60,7 @@ function QuoteChip({ quote, onDrop }: { quote: LineQuote; onDrop?: () => void })
           </button>
         )}
       </div>
-      <pre className="max-h-24 overflow-hidden border-t border-sky-500/20 px-2 py-1 font-mono text-[11px] whitespace-pre-wrap text-foreground/80">
+      <pre className="max-h-24 overflow-hidden border-t border-foreground/20 px-2 py-1 font-mono text-[11px] whitespace-pre-wrap text-foreground/80">
         {quote.code}
       </pre>
     </div>
@@ -74,6 +75,7 @@ function QuoteChip({ quote, onDrop }: { quote: LineQuote; onDrop?: () => void })
  * quoted into either.
  */
 export function ReviewChat({ repo, number, canChange }: { repo: string; number: number; canChange: boolean }) {
+  const visible = useReviewPanelVisible();
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useDraftText(`review:${repo}#${number}`);
   const [busy, setBusy] = useState<"ask" | "change" | null>(null);
@@ -93,12 +95,12 @@ export function ReviewChat({ repo, number, canChange }: { repo: string; number: 
   // Lines picked in the diff come here, ready to ask about or to change.
   const picked = usePickedQuote(`${repo}#${number}`);
   useEffect(() => {
-    if (!picked) return;
+    if (!picked || !visible) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- a pick is an event from the diff, taken in as it comes
     setQuote(picked.quote);
     setIntent(picked.intent === "change" && canChange ? "change" : "ask");
     input.current?.focus();
-  }, [picked, canChange]);
+  }, [picked, canChange, visible]);
 
   const scrollDown = () => setTimeout(() => end.current?.scrollIntoView({ behavior: "smooth" }), 50);
   const clearQuote = () => {
@@ -188,12 +190,11 @@ export function ReviewChat({ repo, number, canChange }: { repo: string; number: 
   const primary = intent === "change" && canChange ? requestChange : () => ask(draft);
 
   return (
-    <aside className="flex h-full min-h-0 flex-col border-l border-border/60">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
         {messages.length === 0 && (
           <p className="text-[13px] text-muted-foreground">
-            Ask anything about this PR, or ask for a change. Pick lines in the diff to quote them. The agent reads the
-            diff and the code; a change goes to the PR&apos;s session, which pushes it here.
+            Ask about this pull request or select lines in Files to discuss a specific change.
           </p>
         )}
         {messages.map((m, i) =>
@@ -273,6 +274,6 @@ export function ReviewChat({ repo, number, canChange }: { repo: string; number: 
           </span>
         </div>
       </div>
-    </aside>
+    </div>
   );
 }

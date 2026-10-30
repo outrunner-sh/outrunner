@@ -4,6 +4,12 @@
  * starts on a user's behalf (lib/session/server-session.ts).
  */
 
+import { getModelLoadout } from "@/lib/db/model-loadout";
+import { withOrgDefault } from "@/lib/orgs/defaults";
+import { agentConnection } from "@/lib/agents/resolve";
+import { codexModelsFor } from "@/lib/codex/model-catalog.deps";
+import { creationSelection } from "@/lib/runtime/selection";
+import { optionalEnv } from "@/lib/env";
 import { randomUUID } from "node:crypto";
 
 import { after, NextResponse } from "next/server";
@@ -63,7 +69,8 @@ import { provisionFailureMessage } from "@/lib/runtime/provision-failure";
 import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { NO_OUTRUNNER_MODELS, NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
 import {
-  agentOf,
+  compatibleEffort,
+  modelGroups,
   agentsFor,
   defaultModel,
   type Effort,
@@ -122,7 +129,7 @@ function needsClaude(error: string) {
 }
 
 function needsSandbox(error: string) {
-  return NextResponse.json({ error, settingsHref: "/settings/sandbox" }, { status: 409 });
+  return NextResponse.json({ error: `${error} Ask your deployment administrator to check runtime configuration.` }, { status: 409 });
 }
 
 /** What the new-session screen asks for, as it sends it (each checked below). */
@@ -242,12 +249,12 @@ async function createOnce(
     if (made) return NextResponse.json({ workspace: made }, { status: 202 });
   }
   // The model chosen on the new-session screen; none, the menu's default.
-  const chosenModel = requestedModel(body);
+  let chosenModel = requestedModel(body);
   if (chosenModel === null) {
     return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
   }
   // Picked with it; none, the model's own.
-  const chosenEffort = requestedEffort(body);
+  let chosenEffort = requestedEffort(body);
   if (chosenEffort === null) {
     return NextResponse.json({ error: "Choose one of the offered efforts." }, { status: 400 });
   }
@@ -255,12 +262,48 @@ async function createOnce(
   // must run the model chosen with it; none, the model's own: Codex for
   // Codex's models, Claude Code for every other, and for none.
   const askedAgent = requestedAgent(body);
-  if (askedAgent === null || (askedAgent && (!chosenModel || !agentsFor(chosenModel.provider).includes(askedAgent)))) {
+  if (askedAgent === null || (askedAgent && chosenModel && !agentsFor(chosenModel.provider).includes(askedAgent))) {
     return NextResponse.json({ error: "Choose a model the agent runs." }, { status: 400 });
   }
-  const agentId = agentOf(chosenModel?.provider ?? "claude", askedAgent);
-  // With the org's keys: a member with none of their own runs on them.
-  const menu = await modelMenu(owner.id, project.orgId);
+  // The same personal > organization > eligible runtime precedence as the
+  // composer, also for API callers that omit a model. Do not write preferences.
+  const store = agentAuthStore(owner.id, project.orgId);
+  const [baseMenu, mine, orgDefaults, claude, codex, catalog] = await Promise.all([
+    modelMenu(owner.id, project.orgId), getModelLoadout(owner.id), orgDefaultsFor(project.orgId),
+    agentConnection(store, "claude"), agentConnection(store, "codex"),
+    chosenModel && chosenModel.provider !== "codex" ? Promise.resolve([]) : codexModelsFor(store),
+  ]);
+  const menu = { ...baseMenu, codexModels: catalog };
+  const accounts: AgentId[] = [...(claude.cloud ? ["claude" as const] : []), ...(codex.cloud ? ["codex" as const] : [])];
+  const groups = modelGroups(menu, accounts);
+  const keys = ownSandboxKeys(owner.id);
+  let sandboxSettings: SandboxSettings;
+  let provider: RuntimeProvider;
+  try {
+    // Outrunner's sandboxes, or the user's own Daytona or Modal (Settings → Sandbox).
+    sandboxSettings = await getSandboxSettings(owner.id);
+    provider = providerForNewSessions(sandboxSettings, keys);
+  } catch (error) {
+    if (error instanceof NoDaytonaKeyError || error instanceof NoModalTokenError) return needsSandbox(error.message);
+    console.error("Runtime provider is unavailable", error);
+    return NextResponse.json(
+      { error: "The configured provider is not available." },
+      { status: 503 },
+    );
+  }
+  const supported: AgentId[] = isComputerProvider(provider) && optionalEnv("RUNTIME_ENGINE") !== "jcode" ? ["claude", "codex"] : ["claude"];
+  let agentId: AgentId;
+  try {
+    const selection = creationSelection(groups, withOrgDefault(mine, orgDefaults.defaultModel), {
+      model: chosenModel, agent: askedAgent, effort: chosenEffort,
+      defaultEffort: body.effort === undefined, supported,
+    });
+    chosenModel = selection.model;
+    chosenEffort = selection.effort ?? undefined;
+    agentId = selection.agent;
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Choose an eligible harness and model." }, { status: 409 });
+  }
   // First: it turns on the server's setup alone, and no credential of the
   // user's would change it.
   if (options.meteredOnly && !menu.allowance) {
@@ -335,39 +378,24 @@ async function createOnce(
     );
   }
 
-  const keys = ownSandboxKeys(owner.id);
-  let sandboxSettings: SandboxSettings;
-  let provider: RuntimeProvider;
-  try {
-    // Outrunner's sandboxes, or the user's own Daytona or Modal (Settings → Sandbox).
-    sandboxSettings = await getSandboxSettings(owner.id);
-    provider = providerForNewSessions(sandboxSettings, keys);
-  } catch (error) {
-    if (error instanceof NoDaytonaKeyError || error instanceof NoModalTokenError) return needsSandbox(error.message);
-    console.error("Runtime provider is unavailable", error);
-    return NextResponse.json(
-      { error: "The configured provider is not available." },
-      { status: 503 },
-    );
-  }
   // Only a Runtime Computer's agent can put a session on another model, or
   // run Codex.
   if (agentId === "codex" && !isComputerProvider(provider)) {
     return NextResponse.json(
-      { error: "Codex runs on Outrunner's cloud computers. Choose one under Settings → Sandbox.", settingsHref: "/settings/sandbox" },
+      { error: "Codex requires a cloud computer. Ask your deployment administrator to check runtime configuration." },
       { status: 409 },
     );
   }
   // A first message is delivered to a Runtime Computer's agent; no other
   // sandbox takes one from the server.
   if (options.firstMessage && !isComputerProvider(provider)) {
-    return needsSandbox("Sessions the server starts (automations, the API) run on Outrunner's or your Daytona sandboxes. Choose one under Settings → Sandbox.");
+    return needsSandbox("Sessions the server starts (automations, the API) require a cloud computer.");
   }
   // Only a Runtime Computer switches models: on any other sandbox, a session
   // runs on the user's Claude or not at all, whatever the menu offers.
   if (agentId === "claude" && !hasClaude && !isComputerProvider(provider)) {
     return needsClaude(
-      "Sessions on this sandbox run only on your Claude account. Connect Claude in Settings, or choose another sandbox under Settings → Sandbox.",
+      "Sessions on this runtime require your Claude account. Connect it under Personal → Coding agents.",
     );
   }
 
@@ -397,7 +425,7 @@ async function createOnce(
   if (checkouts) {
     if (!isComputerProvider(provider)) {
       return NextResponse.json(
-        { error: "Projects with several repositories run on Outrunner's or your Daytona sandboxes. Choose one in Settings → Sandbox." },
+        { error: "Projects with several repositories require a cloud computer. Ask your deployment administrator to check runtime configuration." },
         { status: 409 },
       );
     }
@@ -428,6 +456,11 @@ async function createOnce(
       parentMissionId: options.parentMissionId,
     });
     progress.inserted = true;
+    if (chosenModel) {
+      const intended = { model: chosenModel, effort: compatibleEffort(chosenModel, chosenEffort) };
+      await recordWorkspaceModel(workspace.id, intended);
+      workspace = { ...workspace, model: intended };
+    }
   } catch (error) {
     // The id is taken, not the branch: the same create sent again after its
     // answer was lost. The user's own session of this repository is the one
@@ -609,7 +642,14 @@ async function provisionWorkspace({
   // last one it reached.
   const began = Date.now();
   const elapsed = () => `${Math.round((Date.now() - began) / 1000)}s into setup`;
+  let phaseStarted = began;
+  const logPhase = (next: string) => {
+    const now = Date.now();
+    console.info("Session startup", JSON.stringify({ workspaceId: workspace.id, stage: phase ?? "preparing", ms: now - phaseStarted, elapsedMs: now - began, next }));
+    phaseStarted = now;
+  };
   const setPhase = async (next: ProvisionPhase) => {
+    logPhase(next);
     console.log(`Workspace ${workspace.id}: ${next} (${elapsed()})`);
     phase = next;
     await settle({ status: "provisioning", phase: next });
@@ -779,12 +819,13 @@ async function provisionWorkspace({
         effort: chosenEffort,
         // None chosen: the user's Claude where it's connected (Opus, at
         // DEFAULT_EFFORT), as the new-session screen shows; else the menu's.
-        fallback: hasClaude ? null : defaultModel(menu),
+        fallback: defaultModel(menu),
       });
       // So its next relaunch goes back on it, its key fetched again.
       await recordWorkspaceModel(workspace.id, startsOn);
       await setPhase("health_check");
       await agent.startWorkspace(identity);
+      logPhase("ready");
       console.log(`Workspace ${workspace.id}: ready (${elapsed()})`);
 
       const ready = await settle({

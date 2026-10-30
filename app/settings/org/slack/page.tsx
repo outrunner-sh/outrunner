@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { redirect } from "next/navigation";
@@ -51,7 +53,7 @@ async function SlackSection() {
         <div className="flex items-center gap-3">
           <SlackIcon className="size-7" />
           <div>
-            <h1 className="text-lg font-semibold text-foreground">Slack</h1>
+            <PageHeader title={"Slack"} />
             <p className="text-sm text-muted-foreground">
               Mention @Outrunner in a channel, or DM it. It asks what it must, and a click starts the session: the
               thread and the session stay in step.

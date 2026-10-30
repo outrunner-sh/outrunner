@@ -141,6 +141,7 @@ threat model included.
 
 ## Docs
 
+- Weekly changelog (October 26–November 1, 2026) — [`docs/changelog/2026-10-26.md`](docs/changelog/2026-10-26.md)
 - API — [`docs/api.md`](docs/api.md)
 - Missions and Runners — [`docs/missions.md`](docs/missions.md)
 - Doppler and Infisical secret sync — [`docs/secret-sync.md`](docs/secret-sync.md)

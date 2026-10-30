@@ -149,6 +149,9 @@ export const AGENT_FEATURE_SKILLS = "environment-skills";
  *  `mcpServers`), as a Claude one always has; an older agent gives them to
  *  Claude alone. */
 export const AGENT_FEATURE_CODEX_MCP = "codex-mcp";
+/** A Codex workspace credential passed to `codex login --with-access-token`. */
+export const AGENT_FEATURE_CODEX_ACCOUNT = "codex-account";
+export const AGENT_FEATURE_CODEX_ACCESS_TOKEN = "codex-access-token";
 
 /** POST /agent-context: what every session on the computer reads besides
  *  its orientation, as Markdown placed in a block in agent instruction files. */
@@ -415,7 +418,8 @@ const CredentialToken = z.string().regex(/^[\x21-\x26\x28-\x5b\x5d-\x7e]{20,400}
 /**
  * POST /workspaces/{id}/auth: the session's own credential, applied at its
  * next launch. claude-oauth-token and anthropic-api-key are a Claude
- * session's, openai-api-key a Codex session's (another agent's is refused);
+ * session's, openai-api-key and codex-access-token a Codex session's
+ * (another agent's is refused);
  * none takes the credential away and carries no token. An unknown session is
  * 404 with the NOT_FOUND envelope (an agent without the route: a bare 404);
  * a credential on an engine that runs sessions on its own login (jcode),
@@ -458,8 +462,14 @@ export type ProvideSecretsRequest = z.infer<typeof ProvideSecretsRequest>;
 
 export const SetAuthRequest = z
   .object({
-    kind: z.enum(["none", "claude-oauth-token", "anthropic-api-key", "openai-api-key"]),
-    token: CredentialToken.optional(),
+    kind: z.enum(["none", "claude-oauth-token", "anthropic-api-key", "openai-api-key", "codex-access-token", "codex-account"]),
+    // Access tokens are opaque and may be longer than API keys. Keep the
+    // existing API-key limit, and the same shell-safe character set.
+    token: z.string().regex(/^[\x21-\x26\x28-\x5b\x5d-\x7e]{20,16384}$/).optional(),
+  })
+  .refine((v) => v.token === undefined || ["codex-access-token", "codex-account"].includes(v.kind) || CredentialToken.safeParse(v.token).success, {
+    message: "invalid credential token",
+    path: ["token"],
   })
   .refine((v) => (v.kind === "none") === (v.token === undefined), {
     message: "a credential needs its token, and none takes one",
@@ -689,8 +699,25 @@ export const ErrorCode = z.enum([
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
+/** Safe archive diagnostics: enum values and numbers only, never file paths,
+ * signed URLs, command output or conversation content. Optional on old agents. */
+export const SnapshotFailure = z.object({
+  stage: z.enum(["capture", "upload", "chats", "stop"]),
+  artifact: z.enum(["conversation", "cast", "bundle", "patch", "summary", "manifest", "rollout", "tree", "chat", "staging"]).optional(),
+  cause: z.enum(["storage_http", "network", "missing_file", "permission_denied", "command_failed", "other"]),
+  httpStatus: z.number().int().min(400).max(599).optional(),
+  exitCode: z.number().int().min(0).max(255).optional(),
+});
+export type SnapshotFailure = z.infer<typeof SnapshotFailure>;
+
 export const ErrorResponse = z.object({
-  error: z.object({ code: ErrorCode, message: z.string() }),
+  error: z.object({
+    code: ErrorCode,
+    message: z.string(),
+    // Bad optional metadata must not turn an agent's real application
+    // refusal into an unstructured proxy/availability error.
+    snapshot: SnapshotFailure.optional().catch(undefined),
+  }),
 });
 export type ErrorResponse = z.infer<typeof ErrorResponse>;
 

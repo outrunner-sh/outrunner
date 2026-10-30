@@ -1,5 +1,7 @@
 "use client";
 
+import { PageHeader } from "@/components/page-layout";
+
 import { useState } from "react";
 
 import { InlineMessage } from "@/components/ui/notice";
@@ -67,7 +69,7 @@ export function OrgUsageSettings({
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-lg font-semibold text-foreground">Usage</h1>
+        <PageHeader title="Usage &amp; limits" />
         <p className="max-w-prose text-sm text-muted-foreground">
           {`${org.name}'s cloud hours this period, shared by all its members' sessions, against its ${hours.planLabel} plan's.`}
         </p>
@@ -95,7 +97,7 @@ export function OrgUsageSettings({
         {admin ? (
           <select
             id="org-usage-limit"
-            className="block w-full max-w-sm rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+            className="block w-full max-w-sm rounded-md border border-border bg-transparent px-2 py-1.5 text-sm"
             disabled={saving}
             value={controls.limitPercent ?? ""}
             onChange={(event) =>

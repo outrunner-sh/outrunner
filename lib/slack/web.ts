@@ -143,3 +143,20 @@ export async function removeReaction(token: string, message: { channel: string; 
     if (!(error instanceof SlackApiError && error.code === "no_reaction")) throw error;
   }
 }
+
+/** Rechecked on delegated reads: Slack Connect/shared channels are not eligible. */
+export async function channelIdentity(token: string, channel: string) {
+  const answer = await call<{ channel: {
+    id: string; is_im?: boolean; is_mpim?: boolean; is_member?: boolean;
+    is_ext_shared?: boolean; is_org_shared?: boolean; is_shared?: boolean;
+    shared_team_ids?: string[];
+  } }>(token, "conversations.info", { channel }, "form");
+  return answer.channel;
+}
+
+export async function senderIdentity(token: string, user: string) {
+  const answer = await call<{ user: { id: string; team_id?: string; deleted?: boolean; is_bot?: boolean; is_stranger?: boolean } }>(
+    token, "users.info", { user }, "form",
+  );
+  return answer.user;
+}

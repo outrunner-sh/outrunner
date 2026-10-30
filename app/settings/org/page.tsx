@@ -1,6 +1,9 @@
+import { PageHeader } from "@/components/page-layout";
+
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
+import OrgDefaults from "@/app/settings/org/defaults/page";
 import { OrgGeneralSettings } from "@/components/org-settings";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
@@ -29,7 +32,7 @@ async function OrgSection() {
   if (context === undefined) {
     return (
       <section className="space-y-6">
-        <h1 className="text-lg font-semibold text-foreground">Org</h1>
+        <PageHeader title={"Org"} />
         <p className="text-sm text-muted-foreground">Couldn&apos;t load your orgs. Reload the page to try again.</p>
       </section>
     );
@@ -37,12 +40,12 @@ async function OrgSection() {
   if (!context) {
     return (
       <section className="space-y-6">
-        <h1 className="text-lg font-semibold text-foreground">Org</h1>
+        <PageHeader title={"Org"} />
         <p className="text-sm text-muted-foreground">Orgs aren&apos;t set up on this Outrunner yet.</p>
       </section>
     );
   }
   const { active } = context;
   const domain = active.personal ? null : await orgDomain(active.id).catch(() => null);
-  return <OrgGeneralSettings org={active} domain={domain} />;
+  return <div className="space-y-10"><OrgGeneralSettings org={active} domain={domain} />{!active.personal && <OrgDefaults />}</div>;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { GitBranch, GitFork, Inbox } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { ProjectEnvironmentPicker } from "@/components/import-setup-picker";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
@@ -14,14 +14,13 @@ import { useWorkItemPrompt } from "@/hooks/use-work-item-prompt";
 import { type FirstSessionEnvironment, useFirstSessionEnvironment } from "@/hooks/use-first-session-environment";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
-import { AGENT_IDS } from "@/lib/agents/registry";
+import { eligibleHarnesses, groupsForHarness, initialSelection, selectionForHarness } from "@/lib/runtime/selection";
+import { AGENT_IDS, type AgentId } from "@/lib/agents/registry";
 import { accountsHere } from "@/lib/desktop/local-runtime";
-import { effortOnPick, loadoutDefault } from "@/lib/runtime/model-loadout";
+import { effortOnPick, offeredModel } from "@/lib/runtime/model-loadout";
 import {
   agentOf,
-  CLAUDE_DEFAULT_MODEL,
-  DEFAULT_EFFORT,
-  defaultModel,
+  compatibleEffort,
   type Effort,
   modelGroups,
   type SessionModel,
@@ -31,17 +30,15 @@ import type { Project } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { newSessionDetails } from "@/lib/session/new-session-target";
 
-/** One item in the row beneath the wordmark: where, what, which branch, how. */
+/** One item in the row above the composer: where, what, which branch, how. */
 const CHIP = "inline-flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground [&_svg]:size-3.5";
 const CHIP_BUTTON = `${CHIP} transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50`;
 
 /**
- * The new-session screen, filling the page: a faded wordmark with what the
- * session would run on beneath it (cloud or this Mac, the repository or folder,
- * its branch, and whether it gets a worktree), and the composer pinned to the
- * bottom, where the session's own composer sits once it opens. Submitting
- * creates a workspace and opens it, carrying the first prompt so the session
- * starts on that instruction once its box is ready.
+ * The shared home and new-session form: a centered heading, the session's
+ * repository or folder and branch, then the composer. Home can show recent
+ * sessions beneath it. Submitting creates a workspace and opens it, carrying
+ * the first prompt so the session starts on it once its box is ready.
  */
 export function NewSessionForm({
   projects: listed,
@@ -51,6 +48,7 @@ export function NewSessionForm({
   focusComposer = false,
   initialPick,
   workItemId,
+  children,
 }: {
   projects: Project[];
   /** False until the list arrives (a cold start): it is not yet "none". */
@@ -68,13 +66,13 @@ export function NewSessionForm({
   /** The triage item to start from (Start session): its prompt fills the
    *  composer, and the session is linked to it. */
   workItemId?: string;
+  children?: React.ReactNode;
 }) {
   const { projects, projectId, selectProject, selected, isCreating, message, messageAction, refusedPrompt, refusedAttachments, takeRefusedAttachments, create, createLocal } =
     useCreateSession(listed, initialProjectId);
-  // The model the session starts on, picked in the composer as in a session;
-  // none picked, what it starts on anyway: the user's Claude, on
-  // CLAUDE_DEFAULT_MODEL, where it's connected; otherwise the menu's default.
-  const menu = useOutrunnerModels();
+  // Explicit session selection, then personal/org preferences, then the
+  // eligible runtime default. The server uses the same selection rules.
+  const menu = useOutrunnerModels(undefined, selected?.id);
   // The model picked in the composer, else the loadout's default: its agent
   // decides what this Mac needs for a local session (Claude Code, or Codex).
   const [picked, setPicked] = useState<SessionModel | null>(initialPick?.model ?? null);
@@ -84,7 +82,8 @@ export function NewSessionForm({
   // The agent asked for (Codex on Outrunner's models), kept across model
   // picks: it runs those it can (agentOf), and a cloud session only. Kept
   // from the mount, as the pick is: the route drops `?start=` straight after.
-  const [askedAgent] = useState(initialPick?.agent);
+  const [askedAgent, setAskedAgent] = useState<AgentId | undefined>(initialPick?.agent ?? (initialPick ? agentOf(initialPick.model.provider) : undefined));
+  const remembered = useRef<Partial<Record<AgentId, { model: SessionModel; effort: Effort | null }>>>({});
   // Asked to open the picker, until it has been shut once: the cloud picker
   // can give way to the Mac's as this Mac's agent answers, and that one opens
   // in its place.
@@ -105,7 +104,7 @@ export function NewSessionForm({
     if (focusComposer) setFocusAsks(focusAsks + 1);
   }
   const workItem = useWorkItemPrompt(workItemId);
-  const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude"));
+  const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude", askedAgent));
   const local = where.location === "local";
   // A repository's first cloud session can bring its environment from this Mac.
   const environment = useFirstSessionEnvironment(selected, !local);
@@ -126,42 +125,36 @@ export function NewSessionForm({
   const accounts = menu
     ? accountsHere(menu.agents, local, where.runtime.state === "ready" ? where.runtime.status : null)
     : [];
-  const groups = menu ? modelGroups(menu, accounts) : [];
+  const targetMenu = local ? menu?.localMenu : menu;
+  const allGroups = targetMenu ? modelGroups(targetMenu, accounts) : [];
+  const available = eligibleHarnesses(allGroups, targetMenu?.harnesses);
+  const eligibleAsked = askedAgent && available.includes(askedAgent) ? askedAgent : undefined;
+  const fallback = menu ? initialSelection(allGroups, menu.loadout, eligibleAsked, targetMenu?.harnesses) : null;
+  // A stale pick stays in memory for when its credentials return, but cannot be
+  // sent to a target that does not offer it.
+  const offeredPick = picked ? offeredModel(allGroups, picked) : undefined;
+  const startsOn = offeredPick ?? fallback?.model ?? null;
+  const startAgent = startsOn ? agentOf(startsOn.provider, eligibleAsked ?? fallback?.agent) : undefined;
+  const groups = startAgent ? groupsForHarness(allGroups, startAgent) : [];
   const connect = menu ? AGENT_IDS.filter((agent) => !accounts.includes(agent)) : [];
-  // Without the user's Claude here (or on a Mac whose Claude Code isn't
-  // logged in), a session starts on the menu's default: Outrunner's model, or
-  // one on their key.
   const onDefault = !accounts.includes("claude") || (local && where.outrunnerModel);
-  // The loadout's default (Settings → Default models) where the menu offers
-  // it here; else what a session starts on without one: the menu's default,
-  // or, where it starts on the user's Claude, Opus.
-  const chosenDefault = menu ? (loadoutDefault(menu.loadout, groups) ?? null) : null;
-  const startsOn = picked ?? chosenDefault ?? (menu ? (onDefault ? defaultModel(menu) : CLAUDE_DEFAULT_MODEL) : null);
-  const startModel = picked ?? chosenDefault ?? undefined;
-  // Named only where the agent asked for isn't the model's own default.
-  const startAgent =
-    startModel && askedAgent && agentOf(startModel.provider, askedAgent) !== agentOf(startModel.provider) ? askedAgent : undefined;
-  // What the session is started at: none picked, the loadout's default goes
-  // with its effort, and the user's Claude with DEFAULT_EFFORT (the server's
-  // and createLocal's for it).
-  const effort =
-    pickedEffort !== undefined ? pickedEffort : chosenDefault ? effortOnPick(menu?.loadout, chosenDefault) : DEFAULT_EFFORT;
+  const startModel = startsOn ?? undefined;
+  const effort = offeredPick && pickedEffort !== undefined
+    ? compatibleEffort(offeredPick, pickedEffort)
+    : startsOn ? effortOnPick(menu?.loadout, startsOn) : null;
 
   // Either kind of session opens in about a second (a cloud one shows its
   // setup progress on its own page), so the form only waits, disabled; one
   // that fails hands its prompt back.
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10">
-        <p
-          aria-hidden
-          className="pointer-events-none mb-10 select-none text-center font-display text-[13vw] leading-none text-foreground/20 sm:text-[112px]"
-        >
-          outrunner
-        </p>
+    <div className="flex min-h-full flex-col px-4 py-12 sm:px-6 sm:pb-12 sm:pt-[12vh]">
+      <div className="mx-auto my-auto w-full max-w-3xl">
+        <h1 className="mb-8 text-balance text-center text-3xl font-semibold tracking-tight sm:text-4xl">
+          What would you like to build?
+        </h1>
 
         {noRepositories ? (
-          <div className="flex w-full max-w-md flex-col items-center gap-4 rounded-2xl border border-dashed py-10 text-center">
+          <div className="mx-auto mb-4 flex w-full max-w-md flex-col items-center gap-4 rounded-2xl border border-dashed px-4 py-6 text-center">
             <p className="text-sm font-medium">No repositories synchronized</p>
             <p className="text-muted-foreground max-w-xs text-xs">
               Pull in the repositories your GitHub token can access to start a session.
@@ -178,7 +171,7 @@ export function NewSessionForm({
             )}
           </div>
         ) : (
-          <div className="flex max-w-full flex-wrap items-center justify-center gap-x-3 gap-y-2 text-[13px]">
+          <div className="mb-3 flex max-w-full flex-wrap items-center gap-x-3 gap-y-2 text-[13px]">
             {LOCAL_SESSIONS && <SessionLocationMenu state={where} disabled={busy} className={CHIP_BUTTON} />}
             {local ? (
               <LocalRepositoryButton
@@ -220,16 +213,13 @@ export function NewSessionForm({
           </div>
         )}
 
-        <LocalBlocker state={where} className="mt-4 text-center" />
+        <LocalBlocker state={where} className="mb-4" />
         {!local && !noRepositories && <EnvironmentOffer environment={environment} disabled={busy} />}
-      </div>
-
-      <div className="shrink-0">
         {message && (
           // A failure with a fix to make first is a step, not an error. One
           // that points at what is in the way (a taken branch) still didn't start.
           <Notice
-            className="mx-auto w-[calc(100%-32px)] max-w-[720px]"
+            className="mb-3"
             tone={messageAction?.kind === "step" ? "info" : "error"}
             title={messageAction?.kind === "step" ? "One step before this session starts" : "Couldn't start the session"}
             detail={message}
@@ -239,6 +229,7 @@ export function NewSessionForm({
           />
         )}
         <SessionComposer
+          className="new-session-composer"
           onSend={(text, attachmentIds) =>
             where.localFolder
               ? createLocal(
@@ -248,6 +239,7 @@ export function NewSessionForm({
                   startModel,
                   where.runtime.state === "ready" ? where.runtime.status : null,
                   effort,
+                  startAgent,
                 )
               : // Kept first, so the session's box starts with it; one that
                 // fails keeps the prompt, and the session isn't started.
@@ -266,14 +258,30 @@ export function NewSessionForm({
                       ),
                   )
           }
+          sendDisabledReason={!menu ? "Loading available harnesses and models" : !startsOn ? "Connect a supported coding agent or provider in Settings" : undefined}
           model={startsOn?.id}
           modelChoice={
             groups.length > 0 || connect.length > 0
               ? {
                   groups,
                   connect,
+                  selectedModel: startsOn ?? undefined,
+                  agent: startAgent,
+                  harnessChoice: {
+                    available,
+                    onChange: (agent) => {
+                      if (!menu) return;
+                      if (startAgent && startsOn) remembered.current[startAgent] = { model: startsOn, effort };
+                      const next = selectionForHarness(allGroups, menu.loadout, agent, remembered.current[agent]);
+                      if (!next) return;
+                      setAskedAgent(agent);
+                      setPicked(next.model);
+                      setPickedEffort(next.effort);
+                    },
+                  },
                   effort,
                   onChange: (model, effort) => {
+                    setAskedAgent(agentOf(model.provider, startAgent));
                     setPicked(model);
                     setPickedEffort(effort);
                   },
@@ -313,6 +321,7 @@ export function NewSessionForm({
           // triage item's prompt has its own.
           draftKey={workItemId ? `new:triage:${workItemId}` : "new"}
         />
+        {children}
       </div>
     </div>
   );
@@ -326,7 +335,7 @@ export function NewSessionForm({
 function EnvironmentOffer({ environment: env, disabled }: { environment: FirstSessionEnvironment; disabled: boolean }) {
   if (!env.offer || !env.pick) return null;
   return (
-    <section className="mt-8 w-full max-w-xl space-y-3 rounded-lg border border-border/60 p-4 text-left">
+    <section className="mb-4 w-full space-y-3 rounded-lg border border-border/60 p-4 text-left">
       <div>
         <h2 className="text-sm font-medium">Bring {env.offer.repo}&apos;s environment from this Mac</h2>
         <p className="text-muted-foreground text-xs">

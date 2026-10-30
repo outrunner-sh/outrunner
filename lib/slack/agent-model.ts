@@ -21,14 +21,14 @@ type Message =
 /** A lookup the agent may call, by name: its arguments in, JSON out. */
 export type Lookups = Record<string, (args: Record<string, unknown>) => Promise<string>>;
 
-async function complete(key: string, messages: Message[]) {
+async function complete(key: string, messages: Message[], allowedTools: ReadonlySet<string>) {
   const response = await fetch(COMPLETIONS_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Outrunner Slack agent" },
     body: JSON.stringify({
       model: agentModel(),
       messages,
-      tools: AGENT_TOOLS,
+      tools: AGENT_TOOLS.filter((tool) => tool.function.name === REPLY_TOOL || allowedTools.has(tool.function.name)),
       // Newer Claude models refuse a forced tool_choice: the prompt asks for
       // the reply tool, and plain text is taken as an answer.
       tool_choice: "auto",
@@ -57,7 +57,7 @@ export async function agentTurn(key: string, conversation: ChatMessage[], lookup
     if (round === MAX_TOOL_ROUNDS) {
       messages.push({ role: "user", content: "That's enough looking up: call the reply tool now with what you have." });
     }
-    const message = await complete(key, messages);
+    const message = await complete(key, messages, new Set(Object.keys(lookups)));
     const calls = message?.tool_calls ?? [];
     const reply = calls.find((c) => c.function.name === REPLY_TOOL);
     if (reply) return reply.function.arguments;

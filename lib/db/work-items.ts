@@ -14,6 +14,7 @@ import { isUuid } from "@/lib/ids";
 import type { AccessLevel } from "@/lib/orgs/access";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
+import { canReadItem, type StatusReader } from "@/lib/slack/channel-access";
 import { canCapture, canMoveTo, canSee, canTriage, type TriageActor } from "@/lib/triage/access";
 import {
   isOpen,
@@ -75,16 +76,16 @@ export async function setWorkItemPrompt(orgId: string, itemId: string, prompt: s
 
 /** Open items of the org, newest first: the Slack agent checks for one that
  *  already covers a request. */
-export async function openItemTitles(orgId: string, limit = 30): Promise<{ key: string; title: string }[]> {
+export async function openItemTitles(actor: StatusReader, limit = 30): Promise<{ key: string; title: string }[]> {
   const { data, error } = await db()
     .from("work_items")
-    .select("number, title")
-    .eq("org_id", orgId)
+    .select("number, title, project_id")
+    .eq("org_id", actor.orgId)
     .in("status", ["triage", "todo", "in_progress"])
     .order("updated_at", { ascending: false })
     .limit(limit);
   if (error) throw error;
-  return (data ?? []).map((row) => ({ key: `OR-${row.number}`, title: row.title }));
+  return (data ?? []).filter((row) => canReadItem(actor, { projectId: row.project_id })).map((row) => ({ key: `OR-${row.number}`, title: row.title }));
 }
 
 /** Why a change was refused, for the route to answer with: 400 for a bad

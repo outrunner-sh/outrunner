@@ -9,11 +9,11 @@ import { listOrgProjects } from "@/lib/db/org-access";
 import { sessionSummary } from "@/lib/db/slack-agent";
 import { githubGet, repoToken } from "@/lib/slack/github";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
-import { canSee, type TriageActor } from "@/lib/triage/access";
+import { canReadItem, type StatusReader } from "@/lib/slack/channel-access";
 import { itemUrl } from "@/lib/triage/urls";
 
 /** The org's repositories the actor may read, by full name. */
-async function readableRepos(actor: TriageActor): Promise<{ id: string; fullName: string }[]> {
+async function readableRepos(actor: StatusReader): Promise<{ id: string; fullName: string }[]> {
   return (await listOrgProjects(actor.orgId)).filter((p) => actor.levels.has(p.id));
 }
 
@@ -26,7 +26,7 @@ export type MergedPull = { repo: string; number: number; title: string; author: 
  * names the repositories it can't read.
  */
 export async function mergedPulls(
-  actor: TriageActor,
+  actor: StatusReader,
   input: { days?: unknown; repo?: unknown },
 ): Promise<{ days: number; merged: MergedPull[]; unreachable: string[]; error?: string }> {
   const days = Math.min(30, Math.max(1, Number(input.days) || 7));
@@ -64,7 +64,7 @@ export async function mergedPulls(
 }
 
 /** The recent_work tool: mergedPulls, for the model. */
-export async function recentWork(actor: TriageActor, input: { days?: unknown; repo?: unknown }): Promise<string> {
+export async function recentWork(actor: StatusReader, input: { days?: unknown; repo?: unknown }): Promise<string> {
   const result = await mergedPulls(actor, input);
   if (result.error) return JSON.stringify({ error: result.error });
   return JSON.stringify({
@@ -75,7 +75,7 @@ export async function recentWork(actor: TriageActor, input: { days?: unknown; re
 }
 
 /** Triage items the actor may see, by words in the title and by status. */
-export async function findItems(actor: TriageActor, input: { query?: unknown; status?: unknown }): Promise<string> {
+export async function findItems(actor: StatusReader, input: { query?: unknown; status?: unknown }): Promise<string> {
   const statuses = ["triage", "todo", "in_progress", "done", "declined", "duplicate"];
   let query = createSupabaseAdminClient()
     .from("work_items")
@@ -93,7 +93,7 @@ export async function findItems(actor: TriageActor, input: { query?: unknown; st
   if (error) throw error;
   const names = new Map((await listOrgProjects(actor.orgId)).map((p) => [p.id, p.fullName]));
   const items = (data ?? [])
-    .filter((row) => canSee(actor, { projectId: row.project_id }))
+    .filter((row) => canReadItem(actor, { projectId: row.project_id }))
     .map((row) => ({
       key: `OR-${row.number}`,
       title: row.title,
@@ -106,7 +106,7 @@ export async function findItems(actor: TriageActor, input: { query?: unknown; st
 }
 
 /** Where one item stands: its status, its session, and the session's PR. */
-export async function itemStatus(actor: TriageActor, input: { key?: unknown }): Promise<string> {
+export async function itemStatus(actor: StatusReader, input: { key?: unknown }): Promise<string> {
   const number = Number(String(input.key ?? "").replace(/^OR-/i, ""));
   if (!Number.isInteger(number) || number < 1) return JSON.stringify({ error: "Give an item key like OR-42." });
   const db = createSupabaseAdminClient();
@@ -117,9 +117,13 @@ export async function itemStatus(actor: TriageActor, input: { key?: unknown }): 
     .eq("number", number)
     .maybeSingle();
   if (error) throw error;
-  if (!item || !canSee(actor, { projectId: item.project_id })) return JSON.stringify({ error: `No OR-${number} you can see.` });
-  const session = item.workspace_id ? await sessionSummary(item.workspace_id).catch(() => null) : null;
-  const { data: pr } = item.workspace_id
+  if (!item || !canReadItem(actor, { projectId: item.project_id })) return JSON.stringify({ error: `No OR-${number} you can see.` });
+  const foundSession = item.workspace_id ? await sessionSummary(item.workspace_id).catch(() => null) : null;
+  // An item may have moved since its session started. Its old repository
+  // does not become readable through the item's new project.
+  const repos = await readableRepos(actor);
+  const session = foundSession && repos.some((p) => p.id === foundSession.projectId) ? foundSession : null;
+  const { data: pr } = session && item.workspace_id
     ? await db.from("pull_requests").select("github_number, url, title").eq("workspace_id", item.workspace_id).limit(1).maybeSingle()
     : { data: null };
   return JSON.stringify({

@@ -265,7 +265,7 @@ export function ClaudeConnection({
                 aria-label="Authorization code"
                 autoFocus
                 spellCheck={false}
-                className="border-border bg-background/60 h-9 flex-1 rounded-md border px-3 text-sm"
+                className="border-border bg-transparent h-9 flex-1 rounded-md border px-3 text-sm"
               />
               <LoadingButton
                 status={busy ? "pending" : "idle"}

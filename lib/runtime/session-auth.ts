@@ -19,6 +19,7 @@ import {
 } from "@/lib/agents/resolve";
 import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
 import { type AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { AGENT_FEATURE_CODEX_ACCESS_TOKEN, AGENT_FEATURE_CODEX_ACCOUNT } from "@/lib/runtime/agent-protocol";
 import { SessionKeyRemovedError } from "@/lib/runtime/model-switch";
 import { type RecordedModel, runsOnOwnAccount } from "@/lib/runtime/session-models";
 
@@ -34,6 +35,9 @@ export type SessionAuthClient = {
    *  before the list, which runs Claude Code alone and takes no per-session
    *  credential. */
   agents(): Promise<AgentId[] | null>;
+  /** New credential kinds need an explicit capability, even on a box that
+   *  already runs Codex and accepts its older API-key credential. */
+  features?(): Promise<string[]>;
   /** Bring the box's agent up to this release's, in place; absent where the
    *  provider can't. */
   upgrade?(): Promise<void>;
@@ -51,6 +55,7 @@ export function sessionAuthClient(
   return {
     setAuth: (credential) => client.setAuth(identity, credential, chat),
     agents: async () => (await client.health(identity)).agents ?? null,
+    features: async () => (await client.health(identity)).features ?? [],
     ...(upgrade && { upgrade }),
   };
 }
@@ -103,6 +108,22 @@ function mustTake(agent: AgentId, auth: ResolvedAuth): boolean {
  *  must, upgrading its agent in place where it can. */
 export async function readyBox(client: SessionAuthClient, agent: AgentId, auth: ResolvedAuth): Promise<void> {
   await readyAgents(client, agent, mustTake(agent, auth));
+  await readyCredential(client, auth);
+}
+
+/** Refuse before writing auth or restoring anything on an older runtime.
+ *  A Codex workspace token must never be treated as a Platform API key. */
+async function readyCredential(client: SessionAuthClient, auth: ResolvedAuth): Promise<void> {
+  const kind = auth.credential?.kind;
+  if (kind !== "codex-access-token" && kind !== "codex-account") return;
+  const feature = kind === "codex-account" ? AGENT_FEATURE_CODEX_ACCOUNT : AGENT_FEATURE_CODEX_ACCESS_TOKEN;
+  const supports = async () => (await client.features?.() ?? []).includes(feature);
+  if (await supports()) return;
+  if (client.upgrade) {
+    await client.upgrade();
+    if (await supports()) return;
+  }
+  throw outdated(`can't sign Codex in with ${kind === "codex-account" ? "a ChatGPT account" : "a workspace access token"}`);
 }
 
 /**
@@ -122,6 +143,7 @@ export async function restoreSignedIn(
   restore: (credential?: SessionCredential) => Promise<unknown>,
 ): Promise<void> {
   const agents = await readyAgents(client, agent, mustTake(agent, auth));
+  await readyCredential(client, auth);
   const fallsBack = agent === "claude" && !auth.picked;
   if (!auth.credential || (agents === null && fallsBack)) {
     await restore();
@@ -164,6 +186,11 @@ function takesNoSessionAuth(error: unknown): boolean {
  * another account. Neither has one to take away.
  */
 export async function deliverSessionAuth(client: SessionAuthClient, agent: AgentId, auth: ResolvedAuth): Promise<void> {
+  // Delivery is also used without readyBox (resume/switch). Keep its own
+  // capability check: create pays a second health request rather than reusing
+  // a preflight result across intervening runtime/restore operations. A failed
+  // readyBox throws before creation reaches this boundary.
+  await readyCredential(client, auth);
   if (!auth.credential) {
     try {
       await client.setAuth(SIGNED_OUT);

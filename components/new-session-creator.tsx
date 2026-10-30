@@ -17,6 +17,7 @@ export function NewSessionCreator({
   initialPick,
   showBack = false,
   workItemId,
+  children,
 }: {
   projects: Project[];
   /** False until the list arrives (a cold start). */
@@ -33,6 +34,8 @@ export function NewSessionCreator({
   showBack?: boolean;
   /** The triage item to start from (`?triage=`). */
   workItemId?: string;
+  /** Home's recent sessions, below the shared creation form. */
+  children?: React.ReactNode;
 }) {
   return (
     <div className="relative h-full">
@@ -49,7 +52,9 @@ export function NewSessionCreator({
         focusComposer={focusComposer}
         initialPick={initialPick}
         workItemId={workItemId}
-      />
+      >
+        {children}
+      </NewSessionForm>
     </div>
   );
 }

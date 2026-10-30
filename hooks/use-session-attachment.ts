@@ -90,6 +90,7 @@ export function useSessionAttachment(
   local = false,
   agent: AgentId = "claude",
   chatId: string = MAIN_CHAT,
+  enabled = true,
 ): SessionAttachment {
   const main = chatId === MAIN_CHAT;
   const [urls, setUrls] = useState<SessionUrls | null>(null);
@@ -106,6 +107,7 @@ export function useSessionAttachment(
   // `fresh` for every attach after the first: something failed, and the box's
   // endpoint the server keeps may be what did (POST …/session?fresh=1).
   const attach = useCallback((fresh: boolean) => {
+    if (!enabled) return;
     if (reconnectTimer.current) {
       clearTimeout(reconnectTimer.current);
       reconnectTimer.current = null;
@@ -189,7 +191,7 @@ export function useSessionAttachment(
         if (inflight.current === controller) inflight.current = null;
       }
     })();
-  }, [workspaceId, local, agent, chatId, main]);
+  }, [workspaceId, local, agent, chatId, main, enabled]);
   const refresh = useCallback(() => attach(true), [attach]);
 
   const reconnect = useCallback(() => {
@@ -206,6 +208,7 @@ export function useSessionAttachment(
   }, [refresh]);
 
   useEffect(() => {
+    if (!enabled) return;
     attach(false);
     return () => {
       if (attachedWith.current) keepSessionUrls(workspaceId, attachedWith.current.urls, attachedWith.current.at);
@@ -216,7 +219,7 @@ export function useSessionAttachment(
       inflight.current?.abort();
       inflight.current = null;
     };
-  }, [attach, workspaceId]);
+  }, [attach, workspaceId, enabled]);
 
   return {
     urls,

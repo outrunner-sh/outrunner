@@ -15,7 +15,7 @@ const OAT = "sk-ant-oat01-" + "t".repeat(40);
 const ANTHROPIC = "sk-ant-api03-" + "a".repeat(40);
 const OPENAI = "sk-proj-" + "o".repeat(40);
 
-type Saved = { slot?: string; anthropic?: string; openai?: string };
+type Saved = { "codex-account"?: string; slot?: string; anthropic?: string; openai?: string };
 
 /** A store holding `saved`, with `choice` picked, that records what it opened. */
 function store(choice: AuthMethodId | string | null, saved: Saved, opened: string[] = []): AgentAuthStore {
@@ -25,7 +25,7 @@ function store(choice: AuthMethodId | string | null, saved: Saved, opened: strin
         choice: choice as AuthMethodId | null,
         open(credential: AuthCredential) {
           if (credential.kind === "own-login") throw new Error("an own login has nothing to open");
-          const which = credential.kind === "claude-slot" ? "slot" : credential.provider;
+          const which = credential.kind === "claude-slot" ? "slot" : credential.kind === "codex-account" ? "codex-account" : credential.provider;
           opened.push(which);
           return saved[which as keyof Saved] ?? null;
         },
@@ -56,7 +56,7 @@ const CASES: Case[] = [
   { name: "codex, box, no pick: the API key", agent: "codex", target: "cloud", choice: null, saved: { openai: OPENAI },
     want: { method: "api-key", credential: { kind: "openai-api-key", token: OPENAI }, picked: false } },
   { name: "codex, box, no pick, no key: nothing to run on", agent: "codex", target: "cloud", choice: null, saved: {},
-    want: { reason: "not-connected", method: "api-key" } },
+    want: { reason: "not-connected", method: "codex-account" } },
   { name: "codex, Mac, no pick: its own login", agent: "codex", target: "local", choice: null, saved: {},
     want: { method: "local", credential: null, picked: false } },
 
@@ -101,7 +101,7 @@ for (const c of CASES) {
         assert.equal(error.reason, reason);
         assert.equal(error.method, method);
         assert.equal(error.agent, c.agent);
-        assert.equal(error.settingsHref, `/settings/providers?tab=${c.agent}&method=${method}`);
+        assert.equal(error.settingsHref, `/settings/coding-agents?tab=${c.agent}&method=${method}`);
         return true;
       });
     } else {
@@ -121,9 +121,9 @@ test("only the credential the pick needs is opened", async () => {
 });
 
 test("the errors say what to do, and where", async () => {
-  await assert.rejects(resolveAgentAuth(store("chatgpt", {}), "codex", "cloud"), /sign in with ChatGPT, which works for sessions on your Mac only\. Choose API key under Settings → Providers → Codex/);
-  await assert.rejects(resolveAgentAuth(store("api-key", {}), "codex", "local"), /Save your OpenAI API key under Settings → Providers → Codex/);
-  await assert.rejects(resolveAgentAuth(store("subscription", {}), "claude", "cloud"), /Connect your Claude subscription under Settings → Providers → Claude Code/);
+  await assert.rejects(resolveAgentAuth(store("chatgpt", {}), "codex", "cloud"), /sign in with ChatGPT, which works for sessions on your Mac only\. Choose API key under Personal → Coding agents → Codex/);
+  await assert.rejects(resolveAgentAuth(store("api-key", {}), "codex", "local"), /Save your OpenAI API key under Personal → Coding agents → Codex/);
+  await assert.rejects(resolveAgentAuth(store("subscription", {}), "claude", "cloud"), /Connect your Claude subscription under Personal → Coding agents → Claude Code/);
 });
 
 test("on a model on a key, a pick that can't run signs in to nothing instead", async () => {
@@ -164,4 +164,13 @@ test("where each agent's own account is connected", async () => {
   assert.deepEqual(await connection("codex", "chatgpt", {}), { cloud: false, local: "mac-login" });
   // No pick, a key saved: on a box; on the Mac a session runs on its own login.
   assert.deepEqual(await connection("claude", null, { anthropic: ANTHROPIC }), { cloud: true, local: "mac-login" });
+});
+
+test("Codex account choice preserves API-key picks and legacy Mac login", async () => {
+  const grant = "synthetic-outrunner-grant";
+  const saved = { "codex-account": grant, openai: OPENAI };
+  assert.equal((await resolveAgentAuth(store("api-key", saved), "codex", "cloud")).credential?.kind, "openai-api-key");
+  assert.equal((await resolveAgentAuth(store("codex-account", saved), "codex", "cloud")).credential?.kind, "codex-account");
+  assert.equal((await resolveAgentAuth(store(null, saved), "codex", "cloud")).credential?.kind, "codex-account");
+  await assert.rejects(resolveAgentAuth(store("chatgpt", saved), "codex", "cloud"), AgentAuthError);
 });

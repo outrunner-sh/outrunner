@@ -5,6 +5,7 @@ import { useEffect } from "react";
 
 import { useAppData } from "@/components/app-data";
 import { NewSessionCreator } from "@/components/new-session-creator";
+import { RecentSessions } from "@/components/recent-sessions";
 import { useServerAnswer } from "@/components/server-answer";
 import { parseAgentPick, startingPick } from "@/lib/onboarding/rules";
 import type { Project } from "@/lib/runtime/types";
@@ -26,7 +27,9 @@ export function HomeSessionRoute() {
       projects={projects}
       projectsKnown={data !== null}
       initialProjectId={lastSessionProjectId(projects, data?.workspaces ?? [])}
-    />
+    >
+      <RecentSessions />
+    </NewSessionCreator>
   );
 }
 

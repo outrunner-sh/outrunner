@@ -14,7 +14,7 @@ export type AgentId = "claude" | "codex";
 /** The agents, in the order their tabs show. */
 export const AGENT_IDS: AgentId[] = ["claude", "codex"];
 
-export type AuthMethodId = "subscription" | "chatgpt" | "local" | "api-key";
+export type AuthMethodId = "subscription" | "codex-account" | "chatgpt" | "local" | "api-key";
 
 /** Where a session runs: a box Outrunner runs, or the user's own Mac. */
 export type RunTarget = "cloud" | "local";
@@ -25,6 +25,7 @@ export type RunTarget = "cloud" | "local";
  *   - `own-login`: whatever the agent's CLI on the Mac is logged in with.
  *     Outrunner never sees it, so it can't reach a box Outrunner runs. */
 export type AuthCredential =
+  | { kind: "codex-account" }
   | { kind: "claude-slot" }
   | { kind: "provider-key"; provider: KeyProviderId }
   | { kind: "own-login" };
@@ -91,6 +92,13 @@ export const AGENTS: Record<AgentId, Agent> = {
     label: "Codex",
     command: "codex",
     methods: [
+      {
+        id: "codex-account",
+        label: "ChatGPT account",
+        description: "Your ChatGPT plan through Codex. Connect personally, or use a shared organization connection for cloud sessions.",
+        targets: ["cloud"],
+        credential: { kind: "codex-account" },
+      },
       {
         id: "chatgpt",
         label: "ChatGPT",

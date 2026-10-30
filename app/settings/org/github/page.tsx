@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
@@ -39,7 +41,7 @@ async function GitHubSection({ searchParams }: { searchParams: Promise<Query> })
   if (!org) {
     return (
       <section className="space-y-6">
-        <h1 className="text-lg font-semibold text-foreground">GitHub</h1>
+        <PageHeader title={"GitHub"} />
         <p className="text-sm text-muted-foreground">Couldn&apos;t load your orgs. Reload the page to try again.</p>
       </section>
     );

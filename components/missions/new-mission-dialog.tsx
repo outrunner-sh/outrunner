@@ -75,7 +75,7 @@ export function NewMissionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[520px] gap-0 overflow-hidden rounded-xl border-white/10 bg-[#141414] p-0">
+      <DialogContent className="max-w-[520px] gap-0 overflow-hidden rounded-xl border-white/10 p-0">
         <div className="flex items-start gap-3 border-b border-white/[0.07] px-5 pt-5 pb-4">
           <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-white/10 bg-white/[0.04]">
             <Rocket className="size-[18px] text-[#e5e5e5]" strokeWidth={1.75} />
@@ -123,7 +123,7 @@ export function NewMissionDialog({
             <label htmlFor="mission-prompt" className="mb-1.5 block text-[12px] text-[#8f8f8f]">
               What it owns, and what to start on
             </label>
-            <div className="rounded-md border border-white/10 bg-black/20 focus-within:border-white/25">
+            <div className="rounded-md border border-white/10 bg-transparent focus-within:border-white/25">
               <textarea
                 ref={text}
                 id="mission-prompt"

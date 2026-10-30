@@ -87,7 +87,7 @@ export function CreateOrgDialog({ open, onOpenChange }: { open: boolean; onOpenC
         if (!next) close();
       }}
     >
-      <DialogContent className="max-w-sm gap-5 bg-[#0d0d0d]">
+      <DialogContent className="max-w-sm gap-5">
         <div className="space-y-2">
           <DialogTitle className="text-[15px] font-medium leading-snug">New team org</DialogTitle>
           <DialogDescription className="text-[13px] text-muted-foreground">

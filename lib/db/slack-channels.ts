@@ -7,6 +7,9 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 export type ChannelSettings = {
+  sharedBy: string | null;
+  sharedProjects: string[];
+  sharedRevision: string | null;
   teamId: string;
   channelId: string;
   orgId: string;
@@ -19,6 +22,9 @@ export type ChannelSettings = {
 };
 
 type Row = {
+  shared_by: string | null;
+  shared_projects: string[];
+  shared_revision: string | null;
   team_id: string;
   channel_id: string;
   org_id: string;
@@ -32,6 +38,9 @@ type Row = {
 
 function toSettings(row: Row): ChannelSettings {
   return {
+    sharedBy: row.shared_by,
+    sharedProjects: row.shared_projects,
+    sharedRevision: row.shared_revision,
     teamId: row.team_id,
     channelId: row.channel_id,
     orgId: row.org_id,
@@ -62,6 +71,7 @@ export async function setChannelSettings(
   patch: Partial<{ watch: boolean; digest: "daily" | "weekly" | null; digestHour: number; digestTz: string }>,
 ): Promise<ChannelSettings> {
   const current = await channelSettings(where.teamId, where.channelId);
+  if (current && current.orgId !== where.orgId) throw new Error("This channel belongs to another Outrunner org.");
   const { data, error } = await createSupabaseAdminClient()
     .from("slack_channels")
     .upsert(

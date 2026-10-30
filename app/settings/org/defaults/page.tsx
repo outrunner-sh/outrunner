@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/page-layout";
+import { codexOrgModelsFor } from "@/lib/codex/model-catalog.deps";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
@@ -33,7 +35,7 @@ async function DefaultsSection() {
   if (!org || org.personal) {
     return (
       <section className="space-y-6">
-        <h1 className="text-lg font-semibold text-foreground">Defaults</h1>
+        <PageHeader title={"Defaults"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           {!org
             ? "Couldn't load your orgs. Reload the page to try again."
@@ -45,9 +47,9 @@ async function DefaultsSection() {
   // Every model a member could start on, whatever keys they or the org have:
   // one a member can't run falls to Outrunner's own default for them.
   const source = keySource();
-  const groups = modelGroups({ outrunner: source !== null, allowance: source === "per-user", keys: PROVIDER_IDS }, AGENT_IDS);
+  const groups = modelGroups({ outrunner: source !== null, allowance: source === "per-user", keys: PROVIDER_IDS, codexModels: await codexOrgModelsFor(owner.id, org.id) }, AGENT_IDS);
   const options = groups.flatMap((group) =>
-    group.models.map((model) => ({ provider: model.provider, id: model.id, label: model.label, group: group.label })),
+    group.models.map((model) => ({ ...model, group: group.label })),
   );
   return <OrgDefaultsSettings org={org} initial={await getOrgDefaults(org.id)} options={options} />;
 }

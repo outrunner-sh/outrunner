@@ -3,6 +3,8 @@ import { Suspense } from "react";
 
 import { ModelLoadoutSettings } from "@/components/model-loadout-settings";
 import { SettingsLoading } from "@/components/settings-loading";
+import { codexModelsFor } from "@/lib/codex/model-catalog.deps";
+import { agentAuthStore } from "@/lib/db/credentials";
 import { AGENT_IDS } from "@/lib/agents/registry";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { modelMenu } from "@/lib/db/credentials";
@@ -28,8 +30,8 @@ async function DefaultModelsSection() {
   if (!owner) redirect("/signin?next=/settings/models");
   // With the active org's keys: its models may be a default for its cloud sessions.
   const orgId = await activeOrgId().catch(() => undefined);
-  const [menu, loadout] = await Promise.all([modelMenu(owner.id, orgId), getModelLoadout(owner.id)]);
+  const [menu, loadout, catalog] = await Promise.all([modelMenu(owner.id, orgId), getModelLoadout(owner.id), codexModelsFor(agentAuthStore(owner.id, orgId))]);
   // Every agent's models, connected or not: a loadout is set up here ahead,
   // and the picker shows only those it offers at the time.
-  return <ModelLoadoutSettings groups={modelGroups(menu, AGENT_IDS)} initial={loadout} />;
+  return <ModelLoadoutSettings groups={modelGroups({ ...menu, codexModels: catalog }, AGENT_IDS)} initial={loadout} />;
 }

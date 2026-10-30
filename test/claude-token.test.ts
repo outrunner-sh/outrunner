@@ -21,5 +21,5 @@ test("junk is refused with the command to get a token", () => {
 
 test("an API key is sent to Providers, not saved as a subscription", () => {
   const checked = checkClaudeToken("sk-ant-api03-" + "a".repeat(40));
-  assert.ok("error" in checked && checked.error.includes("Settings → Providers"));
+  assert.ok("error" in checked && checked.error.includes("Personal → Coding agents"));
 });
