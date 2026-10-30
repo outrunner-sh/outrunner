@@ -7,11 +7,13 @@ import { modelGroups, requestedModel, type RecordedModel } from "@/lib/runtime/s
 import { startingModel } from "@/lib/runtime/model-switch";
 import { chatSelection } from "@/lib/session/chat-selection";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
+import type { AgentId } from "@/lib/agents/registry";
 
-export async function stubSelectionApis(page: Page, failedFork = false, menu: OutrunnerModels = selectionMenu, initialEvents: AgentEvent[] = []) {
+export async function stubSelectionApis(page: Page, failedFork = false, menu: OutrunnerModels = selectionMenu, initialEvents: AgentEvent[] = [], saved?: { agent: AgentId; recorded: RecordedModel }) {
   const groups = modelGroups(menu, ["claude", "codex"]);
   const evidence: unknown[] = [];
-  let stored: RecordedModel = { model: menu.codexModels![0], effort: "high" };
+  let stored: RecordedModel = saved?.recorded ?? { model: menu.codexModels![0], effort: "high" };
+  let storedAgent: AgentId = saved?.agent ?? "codex";
   const history = [...initialEvents];
   let socket: { send: (data: string) => void } | null = null;
   await page.routeWebSocket("**/fixture-events", (ws) => {
@@ -23,7 +25,8 @@ export async function stubSelectionApis(page: Page, failedFork = false, menu: Ou
     const request = route.request(); const path = new URL(request.url()).pathname;
     const body = request.method() === "POST" && request.headers()["content-type"]?.includes("application/json") ? request.postDataJSON() : null;
     let response: unknown = {};
-    if (path === "/api/missions") response = { missions: [] };
+    if (path === "/api/fixture-selection") response = { agent: storedAgent, model: stored };
+    else if (path === "/api/missions") response = { missions: [] };
     else if (path === "/api/notifications") response = { notifications: [], now: new Date().toISOString(), kinds: [] };
     else if (path.includes("standing")) response = { standings: {}, ids: [] };
     else if (path === "/api/outrunner-models") response = menu;
@@ -38,13 +41,14 @@ export async function stubSelectionApis(page: Page, failedFork = false, menu: Ou
       if (failedFork) { await route.fulfill({ status: 409, json: { error: "This computer cannot run that harness." } }); return; }
       const selected = creationSelection(groups, menu.loadout, { model: requestedModel(body) ?? undefined, agent: body.agent, effort: body.effort });
       stored = { model: selected.model, effort: selected.effort };
+      storedAgent = selected.agent;
       const boundary: AgentEvent = { t: "message", uuid: `harness-${body.id}`, parentUuid: null, role: "assistant", timestamp: "", content: [], harness: { from: body.expectedAgent, to: body.agent, selection: stored } };
       history.push(boundary);
       socket?.send(JSON.stringify({ id: String(history.length), data: boundary }));
       response = { agent: selected.agent, recorded: stored, operationId: body.id };
     }
     else if ((path.startsWith("/api/projects/") && path.endsWith("/workspaces")) || path.endsWith("/model")) {
-      const selected = creationSelection(groups, menu.loadout, { model: requestedModel(body) ?? undefined, agent: body.agent ?? (path.endsWith("/model") ? "codex" : undefined), effort: body.effort });
+      const selected = creationSelection(groups, menu.loadout, { model: requestedModel(body) ?? undefined, agent: body.agent ?? (path.endsWith("/model") ? storedAgent : undefined), effort: body.effort });
       evidence.push({ stage: "client request", path, body });
       stored = await startingModel({ model: selected.model, effort: selected.effort ?? undefined, hasClaude: true, fallback: null, keyFor: async () => "synthetic-fixture-key",
         setModel: async (runtimeRequest) => { evidence.push({ stage: "runtime request", agent: selected.agent, runtimeRequest }); return runtimeRequest; } });
@@ -58,5 +62,8 @@ export async function stubSelectionApis(page: Page, failedFork = false, menu: Ou
     }
     await route.fulfill({ json: response });
   });
-  return { evidence, stored: () => stored };
+  return { evidence, stored: () => stored, emit: (data: AgentEvent) => {
+    history.push(data);
+    socket?.send(JSON.stringify({ id: String(history.length), data }));
+  } };
 }

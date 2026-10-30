@@ -214,7 +214,13 @@ export function WorkspaceSession({
   const localBoundaryIndex = activeSelection ? conversation.events.findIndex((event) => event.t === "message" && event.uuid === `harness-${activeSelection.operationId}`) : -1;
   const useLocalSelection = activeSelection !== null && (localBoundaryIndex < 0 || !boundary || conversation.events.indexOf(boundary) <= localBoundaryIndex);
   const agent = useLocalSelection ? activeSelection.agent : boundary?.t === "message" && boundary.harness ? boundary.harness.to : initialAgent;
-  const recorded = useLocalSelection ? activeSelection.recorded : carriedSelection.success ? carriedSelection.data as RecordedModel : initialRecorded;
+  const savedSelection = initialAgent === agent ? initialRecorded : null;
+  // A boundary records the choice at handoff, before any later model/effort
+  // changes. On reload the saved row is current for its harness; a boundary
+  // only supplies a selection when the page still belongs to the old harness.
+  const recorded = useLocalSelection ? activeSelection.recorded
+    : savedSelection ? savedSelection
+    : carriedSelection.success ? carriedSelection.data as RecordedModel : initialRecorded;
   const firstQueued = useQueuedFirstPrompt(workspaceId, { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [], ...(initialPromptKey && { key: initialPromptKey }) });
   const [initialDeliveryComplete, setInitialDeliveryComplete] = useState(false);
 
@@ -413,8 +419,10 @@ export function WorkspaceSession({
     conversation.events
       .slice(picked.events)
       .some((event) => event.t === "message" && event.role === "assistant" && event.model);
-  // Before its first reply, the model its row records it starts on.
-  const shownModel = picked && !repliedSincePick ? picked.model : (activeModel ?? recorded?.model.id);
+  // After a handoff/reload, the saved choice can be newer than the last
+  // reply too. Picks in this page continue to take over as they did before.
+  const savedModel = boundary && !useLocalSelection && !picked ? savedSelection?.model.id : undefined;
+  const shownModel = picked && !repliedSincePick ? picked.model : (savedModel ?? activeModel ?? recorded?.model.id);
   // Stopping the turn under way (the composer's stop button): the agent
   // presses Escape in the session and answers once the turn has stopped.
   const [stopping, setStopping] = useState(false);

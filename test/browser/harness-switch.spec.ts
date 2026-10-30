@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { stubSelectionApis } from "./selection-api-fixture";
 import { selectionMenu } from "./selection-fixtures";
+import { CLAUDE_DEFAULT_MODEL } from "@/lib/runtime/session-models";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 
 test.use({ video: "on" });
@@ -12,6 +13,33 @@ const failedRequest: AgentEvent[] = [
 ];
 
 for (const mission of [false, true]) {
+  for (const change of ["effort", "model"] as const) {
+    test(`${mission ? "Mission" : "workspace"} retains a later ${change} selection after handoff and reload`, async ({ page }) => {
+      const state = await stubSelectionApis(page, false, selectionMenu, failedRequest, { agent: "claude", recorded: { model: CLAUDE_DEFAULT_MODEL, effort: "high" } });
+      await page.goto(`/workspaces/preview-0?selection=saved${mission ? "&kind=mission" : ""}`);
+      await page.getByRole("textbox", { name: "Message Claude Code" }).fill("Keep my draft across reload");
+      await page.getByRole("button", { name: /^Harness:/ }).click();
+      await page.getByRole("menuitem", { name: /^Harness / }).click();
+      await page.getByRole("menuitemradio", { name: "Codex", exact: true }).click();
+      await page.getByRole("button", { name: "Switch & resume", exact: true }).click();
+      await expect(page.getByText("Claude Code → Codex · Context handed over", { exact: true })).toBeVisible();
+      expect(state.stored().effort).toBe("high");
+      state.emit({ t: "message", uuid: "old-model-reply", parentUuid: null, role: "assistant", model: "account-code", stopReason: "end_turn", timestamp: "", content: [{ type: "text", text: "Finished the handoff task." }] });
+      await expect(page.getByText("Finished the handoff task.", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: /^Harness:/ }).click();
+      await page.getByRole("menuitem", { name: new RegExp(`^${change === "effort" ? "Effort" : "Model"} `) }).click();
+      if (change === "model") await page.getByRole("menuitem", { name: "All models…", exact: true }).click();
+      await page.getByRole("menuitemradio", { name: change === "effort" ? "Low" : "Account text model", exact: true }).click();
+      await expect.poll(() => change === "effort" ? state.stored().effort : state.stored().model.id).toBe(change === "effort" ? "low" : "account-text");
+      const expected = change === "effort" ? /^Harness: Codex.*Account coding model.*Low effort/ : /^Harness: Codex.*Account text model/;
+      await expect(page.getByRole("button", { name: expected })).toBeVisible();
+      await page.reload();
+      await expect(page.getByText("Claude Code → Codex · Context handed over", { exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: expected })).toBeVisible();
+      await expect(page.getByRole("textbox", { name: "Message Codex" })).toHaveValue("Keep my draft across reload");
+      expect(state.evidence.filter((event) => (event as { stage: string }).stage === "harness request")).toHaveLength(1);
+    });
+  }
   test(`${mission ? "Mission" : "workspace"} resumes a failed request on another harness without a new prompt`, async ({ page }, info) => {
     const state = await stubSelectionApis(page, false, selectionMenu, failedRequest);
     await page.goto(`/workspaces/preview-0?agent=claude${mission ? "&kind=mission" : ""}`);
