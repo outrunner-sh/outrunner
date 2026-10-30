@@ -132,6 +132,9 @@ export function useScreenRecorder({
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [starting, setStarting] = useState(false);
   const session = useRef<Session | null>(null);
+  // Whether the composer is still here: the picker can be answered after it
+  // has gone, and nothing would be left to stop what that started.
+  const mounted = useRef(false);
   const handlers = useRef({ onRecorded, onNotice });
   useEffect(() => {
     handlers.current = { onRecorded, onNotice };
@@ -162,9 +165,14 @@ export function useScreenRecorder({
         audio: false,
       });
     } catch (error) {
+      if (!mounted.current) return;
       const notice = recordingStartNotice(error);
       if (notice) handlers.current.onNotice(notice);
       setStarting(false);
+      return;
+    }
+    if (!mounted.current) {
+      for (const track of stream.getTracks()) track.stop();
       return;
     }
 
@@ -208,6 +216,9 @@ export function useScreenRecorder({
       if (shouldStopForSize(bytes, event.data.size)) stop("size");
     };
     recorder.onstop = async () => {
+      // The recorder can stop by itself (its tracks all ended, an encoding
+      // error), past stop(): its timers go here too.
+      current.clearTimers();
       const durationMs = Date.now() - current.startedAt;
       const last = await current.lastFrame;
       for (const track of current.stream.getTracks()) track.stop();
@@ -252,7 +263,13 @@ export function useScreenRecorder({
 
   // The composer going mid-recording (a question card stands in for it, or
   // the page moves on) ends the recording into the draft, as Stop does.
-  useEffect(() => () => stop(), [stop]);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      stop();
+    };
+  }, [stop]);
 
   return { supported: format !== null, starting, recording: startedAt !== null, startedAt, start, stop: () => stop() };
 }
