@@ -2,15 +2,14 @@
  * The sidebar by where each session stands (lib/session/standing.ts), the
  * other way to list it than by project: pinned sessions first, then Needs
  * you, Working, In review, Done and Backlog, each most recent first. Built
- * from the project groups (lib/nav/sidebar.ts), so search, deletion and
- * archive work the same either way.
+ * from the project groups (lib/nav/sidebar.ts), so search and deletion
+ * work the same either way.
  *
  * Pure, so it is unit-tested without React.
  */
 
 import type { SidebarGroup, SidebarSession } from "@/lib/nav/sidebar";
 import {
-  BACKLOG_AFTER_MS,
   sortStandings,
   STANDING_LABEL,
   STANDINGS,
@@ -48,15 +47,15 @@ export type StatusSection = {
 
 /**
  * A session the server hasn't placed (one on this Mac, or one made since the
- * last read): working while it is set up, else done, or backlog once it's
- * quiet for three days. An archived one is never working.
+ * last read): working while it is set up, else backlog. Done requires a merged pull
+ * request from the server.
  */
 export function fallbackStanding(at: string, now: number, settingUp = false): SessionStanding {
-  const quiet = now - Date.parse(at);
+  void now;
   return {
     // One being set up — just started here, ahead of the server's read — is
     // at work, as the server will say once it reads it.
-    standing: settingUp ? "working" : quiet >= BACKLOG_AFTER_MS ? "backlog" : "done",
+    standing: settingUp ? "working" : "backlog",
     reason: null,
     moved: false,
     pinned: false,

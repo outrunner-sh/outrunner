@@ -13,6 +13,20 @@ import (
 
 var update = flag.Bool("update", false, "rewrite the golden translation in testdata")
 
+func TestTranslateRuntimeErrorAsAFailedReply(t *testing.T) {
+	raw := []byte(`{"type":"session_meta","payload":{"id":"fixture-session"}}
+{"type":"event_msg","payload":{"type":"error","message":"You've hit your usage limit"}}
+`)
+	translated := translateAll(t, raw)
+	var rec record
+	if err := json.Unmarshal(bytes.TrimSpace(translated), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Message.Model != "<synthetic>" || rec.Message.Role != "assistant" || !bytes.Contains(translated, []byte("usage limit")) {
+		t.Fatalf("runtime failure lost: %s", translated)
+	}
+}
+
 // translateAll translates a whole rollout at once, as a session's tail does
 // when it catches up, and flushes what is left at the end.
 func translateAll(t *testing.T, rollout []byte) []byte {

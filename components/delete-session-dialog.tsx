@@ -1,9 +1,42 @@
 "use client";
 
+import { usePathname, useRouter } from "next/navigation";
+
+import { useLocalSessions } from "@/hooks/use-local-sessions";
+import { store, useStore } from "@/lib/client/store";
 import { ConfirmSessionDialog } from "@/components/confirm-session-dialog";
 import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
-import { deletionConsequence, type SessionDeletion } from "@/lib/nav/sidebar";
+import { activeSessionId, deletionConsequence, type SessionDeletion } from "@/lib/nav/sidebar";
 import { deleteSession } from "@/lib/session/delete-session";
+
+type DeletionTarget = { id: string; title: string; deletion: SessionDeletion };
+const TARGET = store<DeletionTarget | null>(null);
+
+/** Open the app's persistent confirmation, including from a session header. */
+export function requestSessionDeletion(session: DeletionTarget): void {
+  TARGET.set(session);
+}
+
+/** Kept in AppFrame so navigation and a collapsed sidebar cannot hide errors. */
+export function SessionDeletionDialog() {
+  const session = useStore(TARGET, null);
+  const router = useRouter();
+  const pathname = usePathname();
+  const { refresh } = useLocalSessions();
+  return (
+    <DeleteSessionDialog
+      session={session}
+      onOpenChange={(open) => { if (!open) TARGET.set(null); }}
+      onDeleting={(id) => {
+        if (id === activeSessionId(pathname)) router.push("/");
+      }}
+      onDeleted={() => {
+        router.refresh();
+        refresh();
+      }}
+    />
+  );
+}
 
 /**
  * Confirm deleting a session: what goes and what stays, then a hold (not a

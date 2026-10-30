@@ -1,14 +1,13 @@
 "use client";
 
-import { Archive, Files, GitBranch, MessageSquarePlus, Monitor, PanelsTopLeft, PanelRight, PanelRightClose } from "lucide-react";
+import { Archive, Files, GitBranch, MessageSquarePlus, Monitor, PanelsTopLeft, PanelRight, PanelRightClose, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { DRAFTS } from "@/lib/client/drafts";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons, MobileNavButton } from "@/components/app-frame";
 import { ChatSwitcher } from "@/components/chat-switcher";
-import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
+import { requestSessionDeletion } from "@/components/delete-session-dialog";
 import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
 import { SessionInfo } from "@/components/session-info";
 import { MissionHeader } from "@/components/missions/mission-header";
@@ -36,9 +35,10 @@ import { missionArchiveOffer, unarchivedShipCount } from "@/lib/missions/archive
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
-import { archiveOffer } from "@/lib/session/archive-control";
+import { canDestroy } from "@/lib/session/provisioning";
+import { useNow } from "@/hooks/use-now";
 import { type InspectorTabId, inspectorTabs, shownTab } from "@/lib/session/inspector-tabs";
-import { chatRoute, chatStateKey, MAIN_CHAT, mainChatOf, parseChatId, type SessionChat } from "@/lib/session/chats";
+import { chatRoute, MAIN_CHAT, mainChatOf, parseChatId, type SessionChat } from "@/lib/session/chats";
 import { askSideChat } from "@/lib/session/chat-actions";
 import { cn } from "@/lib/utils";
 
@@ -97,12 +97,12 @@ export function WorkspaceStudio({
   // Environment is (components/missions).
   const isMission = workspace.kind === "mission";
   const { mission } = useMission(isMission ? workspace.id : undefined);
-  // Archive, for a cloud session that has a Snapshot to restore from; a
-  // Runner's takes its Ships with it. Once it is archived, leave it: left
-  // open, this page would restore it at once.
-  const archive = isLocal ? null : isMission ? missionArchiveOffer(workspace) : archiveOffer(workspace);
-  const archiveLabel = isMission ? "Archive Runner" : "Archive session";
+  // Runners archive their Ships together. Individual cloud sessions are deleted.
+  const archive = !isLocal && isMission ? missionArchiveOffer(workspace) : null;
+  const archiveLabel = "Archive Runner";
   const [archiving, setArchiving] = useState(false);
+  const now = useNow(60_000);
+  const deletable = !isLocal && !isMission && canDestroy(workspace, now);
   const router = useRouter();
   const leave = () => {
     router.push("/");
@@ -218,6 +218,16 @@ export function WorkspaceStudio({
               <Archive />
             </button>
           )}
+          {deletable && (
+            <button
+              className="studio-icon-button"
+              onClick={() => requestSessionDeletion({ id: workspace.id, title: workspaceLabel(workspace), deletion: { kind: "cloud" } })}
+              title="Delete session"
+              aria-label="Delete session"
+            >
+              <Trash2 />
+            </button>
+          )}
           <button
             className="studio-icon-button"
             onClick={() => setRightOpen(!rightOpen)}
@@ -228,18 +238,11 @@ export function WorkspaceStudio({
           </button>
         </div>
       </header>
-      {isMission ? (
+      {isMission && (
         <ArchiveMissionDialog
           mission={archiving ? { id: workspace.id, title: mission?.title ?? workspaceLabel(workspace), ships: unarchivedShipCount(mission?.runners ?? []) } : null}
           onOpenChange={setArchiving}
           onArchived={leave}
-        />
-      ) : (
-        <ArchiveSessionDialog
-          session={archiving ? { id: workspace.id, title: workspaceLabel(workspace) } : null}
-          onOpenChange={setArchiving}
-          // The sidebar marks it archived at once (lib/session/optimistic-archive.ts).
-          onArchived={() => router.push("/")}
         />
       )}
 
@@ -267,14 +270,7 @@ export function WorkspaceStudio({
             initialAttachmentIds={current.id === MAIN_CHAT ? initialAttachmentIds : undefined}
             onSender={setSender}
             onSideChat={chatsOffered ? askAside : undefined}
-            onHarnessFork={chatsOffered ? async (agent) => {
-              const fork = await chats.start({ from: current.id, agent });
-              if (!chats.isCurrent()) return;
-              const sourceKey = `ws:${chatStateKey(workspace.id, current.id)}`;
-              const targetKey = `ws:${chatStateKey(workspace.id, fork.id)}`;
-              DRAFTS.move(sourceKey, targetKey);
-              pick(fork);
-            } : undefined}
+            allowHarnessSwitch={hasLiveSession && !isLocal}
           />
         ) : restore.state === "restoring" ? (
           <div className="studio-offline">

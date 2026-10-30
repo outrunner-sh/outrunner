@@ -88,6 +88,13 @@ function decodeLine(line: string): AgentEvent | null {
     return null; // tolerate unparseable lines
   }
   if (!isObject(rec)) return null;
+  if (rec.type === "outrunner_harness_switch" && isObject(rec.outrunnerHarness)) {
+    const h = rec.outrunnerHarness;
+    if ((h.from === "claude" || h.from === "codex") && (h.agent === "claude" || h.agent === "codex")) {
+      return { t: "message", uuid: typeof rec.uuid === "string" ? rec.uuid : "", parentUuid: null, role: "assistant", timestamp: "", content: [], harness: { from: h.from, to: h.agent, ...(h.selection ? { selection: h.selection } : {}) } };
+    }
+    return null;
+  }
   if (rec.type === "attachment") return decodeQueuedPrompt(rec);
   if (rec.type === "system" && rec.subtype === "compact_boundary") return compaction(rec);
   if (rec.type !== "user" && rec.type !== "assistant") return null; // whitelist

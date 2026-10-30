@@ -164,7 +164,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
-    checkEffortApplied(req, await agent.setModel(identity, req, chat));
+    checkEffortApplied(req, await agent.setModel(identity, { ...req,selection:{model,effort:req.effort??null} }, chat));
   } catch (error) {
     const { status, message } = switchFailure(error, model);
     if (status >= 500) console.error(`Model: switch failed for ${workspace.id}`, error);

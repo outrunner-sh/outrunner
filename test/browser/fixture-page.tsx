@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { usePendingSession } from "@/lib/session/pending-sessions";
 import { selectionMenu } from "./selection-fixtures";
+import { CLAUDE_DEFAULT_MODEL } from "@/lib/runtime/session-models";
+import type { Workspace } from "@/lib/runtime/types";
 import { StartupFixture } from "./startup-fixture";
-import { AppFrame } from "@/components/app-frame";
 import { Automations } from "@/components/automations";
 import { AutomationsLoading } from "@/components/automations-loading";
 import { Markdown } from "@/components/markdown";
@@ -47,13 +48,6 @@ import {
   templates,
 } from "./fixtures";
 
-const chrome = {
-  collapsed: false,
-  folded: [],
-  getStartedSkipped: true,
-  grouping: "status",
-  pickedOrgId: null,
-};
 const subscribe = () => () => {};
 
 /** A standalone test app: fixture navigation and APIs can never reach real resources. */
@@ -73,34 +67,6 @@ export function FixturePage() {
     personal: false,
     role: state === "member" ? ("member" as const) : ("admin" as const),
   };
-  const frameData =
-    state === "merged-sidebar"
-      ? {
-          ...frame,
-          appData: {
-            ...frame.appData,
-            pullRequests: {
-              "preview-0": {
-                id: "pull-request-1",
-                workspaceId: "preview-0",
-                projectId: "project-1",
-                number: 343,
-                url: "https://github.com/neevai-labs/outrunner/pull/343",
-                title: "Improve workspace navigation",
-                baseBranch: "main",
-                headBranch: "runtime/preview-0",
-                createdAt: "2026-10-30T07:00:00Z",
-                state: "merged" as const,
-                stateAt: "2026-10-30T10:00:00Z",
-              },
-            },
-            standings: {
-              "preview-0": sidebarDone("2026-10-30T10:00:00Z"),
-              "preview-1": sidebarDone("2026-10-30T09:00:00Z"),
-            },
-          },
-        }
-      : frame;
   const detail = useMemo(
     () => ({
       ...pull,
@@ -276,32 +242,32 @@ export function FixturePage() {
           <OrgGeneralSettings org={org} domain="neev.ai" />
         </SettingsFrame>
       ) : (
-        <AppFrame
-          chrome={<ServerAnswer value={chrome} />}
-          server={<ServerAnswer value={frameData} />}
-        >
-          {content}
-        </AppFrame>
+        content
       )}
     </>
   );
 }
 
-function sidebarDone(at: string) {
-  return {
-    standing: "done" as const,
-    reason: null,
-    moved: false,
-    pinned: false,
-    unread: false,
-    replyPreview: null,
-    at,
-  };
+function FixtureSession({ id, agent }: { id: string; agent: "claude" | "codex" }) {
+  const params = useSearchParams();
+  const pending = usePendingSession(id);
+  const sourceClaude = params.get("agent") === "claude" || agent === "claude";
+  const workspace = pending?.workspace ?? { ...frame.appData.workspaces[0], id, agent: sourceClaude ? "claude" as const : "codex" as const,
+    model: { model: sourceClaude ? CLAUDE_DEFAULT_MODEL : selectionMenu.codexModels![0], effort: "high" as const } };
+  if (params.get("selection") === "saved") return <SavedFixtureSession workspace={workspace} mission={params.get("kind") === "mission"} />;
+  return <WorkspaceStudio workspace={{ ...workspace, status: "ready", ...(params.get("kind") === "mission" && { kind: "mission" as const }) }} projectName="fixture/composer" pullRequest={null} />;
 }
 
-function FixtureSession({ id, agent }: { id: string; agent: "claude" | "codex" }) {
-  const pending = usePendingSession(id);
-  const workspace = pending?.workspace ?? { ...frame.appData.workspaces[0], id, agent,
-    model: { model: selectionMenu.codexModels![0], effort: "high" as const } };
-  return <WorkspaceStudio workspace={{ ...workspace, status: "ready" }} projectName="fixture/composer" pullRequest={null} />;
+/** Reload with the selection the API last persisted, as the real page does. */
+function SavedFixtureSession({ workspace, mission }: { workspace: Workspace; mission: boolean }) {
+  const [saved, setSaved] = useState<Pick<Workspace, "agent" | "model"> | null>(null);
+  useEffect(() => {
+    let live = true;
+    void fetch("/api/fixture-selection").then((response) => response.json()).then((selection) => {
+      if (live) setSaved(selection);
+    });
+    return () => { live = false; };
+  }, []);
+  if (!saved) return null;
+  return <WorkspaceStudio workspace={{ ...workspace, ...saved, status: "ready", ...(mission && { kind: "mission" as const }) }} projectName="fixture/composer" pullRequest={null} />;
 }

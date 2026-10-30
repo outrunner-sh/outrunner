@@ -36,7 +36,7 @@ import { useSkeletonSwap } from "@/hooks/use-skeleton-swap";
 import { relativeTime, type SessionDeletion, type SidebarSession } from "@/lib/nav/sidebar";
 import { shownRows, type StatusRow, type StatusSection } from "@/lib/nav/status-groups";
 import type { WorkspacePullRequest } from "@/lib/runtime/types";
-import { isStanding, REASON_LABEL, STANDING_LABEL, STANDINGS, type SessionStanding } from "@/lib/session/standing";
+import { isStanding, REASON_LABEL, STANDING_LABEL, MOVABLE_STANDINGS, type SessionStanding } from "@/lib/session/standing";
 import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
 import { cn } from "@/lib/utils";
 
@@ -44,7 +44,7 @@ import { cn } from "@/lib/utils";
  * The sidebar's sessions by where they stand (lib/nav/status-groups.ts): a
  * heading for each group, folded with its chevron like a project, and its
  * sessions, each with a mark for its standing, a dot for a reply not seen,
- * and a menu to pin it, move it, archive or delete it.
+ * and a menu to pin it, move it or delete it.
  */
 export function StatusSections({
   sections,
@@ -55,7 +55,6 @@ export function StatusSections({
   searching,
   onToggle,
   onDelete,
-  onArchive,
 }: {
   sections: StatusSection[];
   /** The pull request each cloud session shows, keyed by workspace id. */
@@ -67,7 +66,6 @@ export function StatusSections({
   searching: boolean;
   onToggle: (key: string) => void;
   onDelete: (session: { id: string; title: string; deletion: SessionDeletion }) => void;
-  onArchive: (session: { id: string; title: string }) => void;
 }) {
   // Sections opened past their first few rows, for this visit.
   const [expanded, setExpanded] = useState<string[]>([]);
@@ -108,7 +106,6 @@ export function StatusSections({
                 active={row.id === active}
                 now={now}
                 onDelete={onDelete}
-                onArchive={onArchive}
               />
             ))}
             {hidden > 0 && (
@@ -133,14 +130,12 @@ function StatusRowLink({
   active,
   now,
   onDelete,
-  onArchive,
 }: {
   row: StatusRow;
   merged: boolean;
   active: boolean;
   now: number;
   onDelete: (session: { id: string; title: string; deletion: SessionDeletion }) => void;
-  onArchive: (session: { id: string; title: string }) => void;
 }) {
   const { standing } = row;
   // As the project view's rows: a cloud session warms as the pointer rests.
@@ -178,7 +173,6 @@ function StatusRowLink({
         markable={row.markable}
         standing={standing}
         onDelete={onDelete}
-        onArchive={onArchive}
         className="absolute right-1 top-1/2 -translate-y-1/2"
       />
     </div>
@@ -226,7 +220,7 @@ export function StandingMark({
 
 /**
  * A session's menu: Pin, Move to (a group by hand, or back to Automatic),
- * Archive and Delete, each where it applies. Shown on the row's hover, as
+ * and Delete, each where it applies. Shown on the row's hover, as
  * its buttons were.
  */
 export function SessionMenu({
@@ -234,19 +228,17 @@ export function SessionMenu({
   markable,
   standing,
   onDelete,
-  onArchive,
   className,
 }: {
-  session: Pick<SidebarSession, "id" | "title" | "deletion" | "archive">;
+  session: Pick<SidebarSession, "id" | "title" | "deletion">;
   /** A cloud session: Pin and Move to are offered. */
   markable: boolean;
   standing: SessionStanding | undefined;
   onDelete: (session: { id: string; title: string; deletion: SessionDeletion }) => void;
-  onArchive: (session: { id: string; title: string }) => void;
   className?: string;
 }) {
-  const { deletion, archive } = session;
-  if (!markable && !deletion && !archive) return null;
+  const { deletion } = session;
+  if (!markable && !deletion) return null;
   const mark = (change: Parameters<typeof markSession>[1]) => {
     void markSession(session.id, change).catch((error: unknown) => {
       console.error(`Couldn't change ${session.id}'s marks`, error);
@@ -284,7 +276,7 @@ export function SessionMenu({
                   {/* Where the server puts it, as its agent and pull request go. */}
                   <DropdownMenuRadioItem value="auto">Automatic</DropdownMenuRadioItem>
                   <DropdownMenuSeparator />
-                  {STANDINGS.map((s) => (
+                  {MOVABLE_STANDINGS.map((s) => (
                     <DropdownMenuRadioItem key={s} value={s}>
                       {STANDING_LABEL[s]}
                     </DropdownMenuRadioItem>
@@ -294,17 +286,7 @@ export function SessionMenu({
             </DropdownMenuSub>
           </>
         )}
-        {markable && standing && (archive || deletion) && <DropdownMenuSeparator />}
-        {archive && (
-          <DropdownMenuItem
-            disabled={!archive.can}
-            title={archive.can ? undefined : archive.why}
-            onSelect={() => onArchive({ id: session.id, title: session.title })}
-          >
-            <Archive />
-            Archive
-          </DropdownMenuItem>
-        )}
+        {markable && standing && deletion && <DropdownMenuSeparator />}
         {deletion && (
           <DropdownMenuItem
             variant="destructive"

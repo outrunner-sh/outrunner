@@ -376,6 +376,8 @@ function NodeRow({
   onEdit?: (uuid: string, text: string) => void;
 }) {
   switch (node.kind) {
+    case "harness":
+      return <div className="timeline-compact" role="note">{node.from === "claude" ? "Claude Code" : "Codex"} → {node.to === "claude" ? "Claude Code" : "Codex"} · Context handed over</div>;
     case "plan":
       return <PlanCard text={node.text} actions={plan} />;
     case "compact":
