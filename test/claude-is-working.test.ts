@@ -47,3 +47,13 @@ test("a stopped Codex turn reads as stopped once the agent records the stop", ()
     '{"type":"user","uuid":"interrupted-1","parentUuid":null,"timestamp":"t","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}';
   assert.equal(claudeIsWorking(parseConversation([...lines.slice(0, next), stop].join("\n"))), false);
 });
+
+test("Codex commentary remains working in the live stream and after replay", () => {
+  assert.equal(claudeIsWorking([prompt, said([{ type: "text", text: "Still working." }], "in_progress")]), true);
+  const translated = readFileSync(new URL("../runtime-agent/internal/codex/testdata/rollout.translated.jsonl", import.meta.url), "utf8");
+  const lines = translated.trim().split("\n");
+  const commentary = lines.findIndex((line) => line.includes('"stop_reason":"in_progress"') && line.includes('"type":"text"'));
+  assert.ok(commentary >= 0, "real Codex fixture contains commentary");
+  assert.equal(claudeIsWorking(parseConversation(lines.slice(0, commentary + 1).join("\n"))), true);
+  assert.equal(claudeIsWorking(parseConversation(translated)), false, "final answer ends the turn");
+});

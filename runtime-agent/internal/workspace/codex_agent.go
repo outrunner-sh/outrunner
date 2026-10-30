@@ -11,8 +11,8 @@ import (
 	"runtime-agent/internal/codex"
 )
 
-// codexAgent runs OpenAI's Codex CLI (codex-cli 0.146.0, whose screens the
-// readers below were written against: see the pane captures in testdata).
+// codexAgent runs OpenAI's Codex CLI. The pane captures cover 0.146.0 and
+// 0.162.1; the native account probe checks startup, delivery and transcript reading.
 type codexAgent struct{ s *Service }
 
 // ErrCodexMissing is a Codex session on a computer without the Codex CLI:
@@ -43,6 +43,7 @@ func (a codexAgent) command(workspaceID, worktree string, _ bool) []string {
 	s := a.s
 	f, _ := s.getFacts(workspaceID)
 	argv := codex.Command(s.permissionMode(workspaceID), f.CodexSessionID, f.Model, f.Effort, s.orientation(workspaceID, worktree))
+	argv = append(argv, s.codexSecretsArgs(workspaceID)...)
 	argv = append(argv, s.codexDesktopArgs(workspaceID, worktree)...)
 	return append(s.codexLaunchEnv(workspaceID), argv...)
 }

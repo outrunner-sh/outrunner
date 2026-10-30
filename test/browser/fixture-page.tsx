@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { usePendingSession } from "@/lib/session/pending-sessions";
 import { selectionMenu } from "./selection-fixtures";
+import { CLAUDE_DEFAULT_MODEL } from "@/lib/runtime/session-models";
+import type { Workspace } from "@/lib/runtime/types";
 import { StartupFixture } from "./startup-fixture";
-import { AppFrame } from "@/components/app-frame";
 import { Automations } from "@/components/automations";
 import { AutomationsLoading } from "@/components/automations-loading";
 import { Markdown } from "@/components/markdown";
@@ -47,13 +48,6 @@ import {
   templates,
 } from "./fixtures";
 
-const chrome = {
-  collapsed: false,
-  folded: [],
-  getStartedSkipped: true,
-  grouping: "status",
-  pickedOrgId: null,
-};
 const subscribe = () => () => {};
 
 /** A standalone test app: fixture navigation and APIs can never reach real resources. */
@@ -94,7 +88,7 @@ export function FixturePage() {
     [state],
   );
   let content: React.ReactNode;
-  if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} />;
+  if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} agent={params.get("harness") === "claude" ? "claude" : "codex"} />;
   else if (view === "project")
     content = (
       <ProjectSettings
@@ -248,20 +242,32 @@ export function FixturePage() {
           <OrgGeneralSettings org={org} domain="neev.ai" />
         </SettingsFrame>
       ) : (
-        <AppFrame
-          chrome={<ServerAnswer value={chrome} />}
-          server={<ServerAnswer value={frame} />}
-        >
-          {content}
-        </AppFrame>
+        content
       )}
     </>
   );
 }
 
-function FixtureSession({ id }: { id: string }) {
+function FixtureSession({ id, agent }: { id: string; agent: "claude" | "codex" }) {
+  const params = useSearchParams();
   const pending = usePendingSession(id);
-  const workspace = pending?.workspace ?? { ...frame.appData.workspaces[0], id, agent: "codex" as const,
-    model: { model: selectionMenu.codexModels![0], effort: "high" as const } };
-  return <WorkspaceStudio workspace={{ ...workspace, status: "ready" }} projectName="fixture/composer" pullRequest={null} />;
+  const sourceClaude = params.get("agent") === "claude" || agent === "claude";
+  const workspace = pending?.workspace ?? { ...frame.appData.workspaces[0], id, agent: sourceClaude ? "claude" as const : "codex" as const,
+    model: { model: sourceClaude ? CLAUDE_DEFAULT_MODEL : selectionMenu.codexModels![0], effort: "high" as const } };
+  if (params.get("selection") === "saved") return <SavedFixtureSession workspace={workspace} mission={params.get("kind") === "mission"} />;
+  return <WorkspaceStudio workspace={{ ...workspace, status: "ready", ...(params.get("kind") === "mission" && { kind: "mission" as const }) }} projectName="fixture/composer" pullRequest={null} />;
+}
+
+/** Reload with the selection the API last persisted, as the real page does. */
+function SavedFixtureSession({ workspace, mission }: { workspace: Workspace; mission: boolean }) {
+  const [saved, setSaved] = useState<Pick<Workspace, "agent" | "model"> | null>(null);
+  useEffect(() => {
+    let live = true;
+    void fetch("/api/fixture-selection").then((response) => response.json()).then((selection) => {
+      if (live) setSaved(selection);
+    });
+    return () => { live = false; };
+  }, []);
+  if (!saved) return null;
+  return <WorkspaceStudio workspace={{ ...workspace, ...saved, status: "ready", ...(mission && { kind: "mission" as const }) }} projectName="fixture/composer" pullRequest={null} />;
 }

@@ -220,6 +220,22 @@ func awaitsAnswer(pane string) bool {
 	return false
 }
 
+// Claude 2.1.304 and 2.1.310 open this menu after a quota error. A switch may
+// dismiss it with Escape: waiting for the old provider is exactly what the
+// user is switching away from. Other questions and approvals stay blocked.
+func isClaudeLimitDialog(pane string) bool {
+	if isComposer(pane) {
+		return false
+	}
+	lines := nonBlankLines(pane)
+	if len(lines) < 4 || strings.TrimSpace(lines[len(lines)-1]) != "Enter to confirm · Esc to cancel" {
+		return false
+	}
+	return strings.TrimSpace(lines[len(lines)-4]) == "What do you want to do?" &&
+		strings.Contains(lines[len(lines)-3], "1. Stop and wait for limit to reset") &&
+		strings.Contains(lines[len(lines)-2], "2. Wait here, then continue automatically at ")
+}
+
 // firstRunKey answers the screens Claude Code shows the first time it runs on
 // a Mac, before any session can start: logging in through Outrunner doesn't
 // get past them. The theme picker takes the theme it preselects, the security
@@ -281,7 +297,7 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	}
 	var argv []string
 	switch {
-	case f.ClaudeSessionID != "" && s.SessionLog(workspaceID) != "":
+	case f.ClaudeSessionID != "" && a.sessionLog(workspaceID) != "":
 		argv = claude.ResumeCommand(mode, f.ClaudeSessionID, orientation)
 	case f.ClaudeSessionID != "":
 		argv = claude.SessionCommand(mode, f.ClaudeSessionID, orientation)
@@ -301,15 +317,15 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	argv = withAgentConfig(argv)
 	if askArgs := s.claudeAskArgs(workspaceID); len(askArgs) > 0 {
 		argv = append(argv, askArgs...)
-		// With the tools, secrets the user provides reach the running Claude
-		// (secrets.go): its settings, the user's own and the hooks, replace
-		// the user's alone.
-		if env, settings := s.claudeSecretsLaunch(workspaceID); settings != "" {
+	}
+	// Install the environment hook even without the ask relay when the
+	// session has project variables. This also applies to its other chats.
+	if s.RelayExecutable != "" || fileExists(s.envFiles().path(s.owner(workspaceID))) {
+		if settings := s.claudeSecretsLaunch(workspaceID); settings != "" {
 			argv = append(withoutFlag(argv, "--settings"), "--settings", settings)
-			argv = append(append([]string{"env"}, env...), argv...)
 		}
 	}
-	// Its own flags, after the env prefix the secrets may have put first.
+	// Desktop tools are added after the user and project MCP servers.
 	argv = append(argv, s.claudeDesktopArgs(workspaceID, worktree)...)
 	if f.Gateway != claude.NoGateway {
 		// The model rides in the gateway file: --model refuses a gateway's names.

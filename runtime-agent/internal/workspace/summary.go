@@ -33,10 +33,8 @@ type Summary struct {
 	tokenUsage           protocol.TokenUsageAmounts
 	lastAssistantMessage string
 	hasAssistantMessage  bool
-	// turnOpen: Claude is mid-turn, by the last message: a user one (a prompt
-	// or a tool's result) waits on the model, and an assistant one asking for
-	// a tool waits on the tool. An assistant one with only text ends the turn,
-	// and so does the record of a stop.
+	// turnOpen tracks unfinished work across prompts, tools, reasoning, and
+	// commentary. Only a final reply, interruption, or process exit ends it.
 	turnOpen bool
 
 	cancel context.CancelFunc // stops the collector goroutine when non-nil
@@ -112,21 +110,23 @@ func (s *Summary) applyEvent(ev conversation.Event) {
 	if ev.Message != nil {
 		switch ev.Message.Role {
 		case "assistant":
-			s.turnOpen = false
+			// A reply can contain only commentary or thinking while work continues.
+			// Stop reasons preserve this distinction across translated engines.
+			s.turnOpen = ev.Message.StopReason == "tool_use" || ev.Message.StopReason == "in_progress" ||
+				(strings.HasPrefix(ev.Message.UUID, "codex-") && ev.Message.StopReason == "")
 			for _, block := range ev.Message.Content {
 				if block.Type == "text" && block.Text != "" {
 					s.lastAssistantMessage = block.Text
 					s.hasAssistantMessage = true
 				}
-				if block.Type == "tool_use" {
+				if block.Type == "tool_use" || block.Type == "thinking" {
 					s.turnOpen = true
 				}
 			}
 		case "user":
 			// Claude records a stop as a user message, which waits on nothing:
-			// counted as a prompt, a stopped session looked mid-turn, so the
-			// control plane left its box running for the 2h a stuck turn gets
-			// rather than pausing it once idle.
+			// counted as a prompt, a stopped session would look unfinished
+			// and keep its box running indefinitely.
 			s.turnOpen = !conversation.IsInterruption(ev.Message)
 		}
 	}

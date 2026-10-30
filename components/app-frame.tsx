@@ -6,6 +6,7 @@ import { Menu, PanelLeftOpen, Plus } from "lucide-react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { AppDataProvider, ViewerScopeProvider } from "@/components/app-data";
+import { SessionDeletionDialog } from "@/components/delete-session-dialog";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ArchiveNotice } from "@/components/archive-session-dialog";
 import { MissionToasts } from "@/components/missions/mission-toasts";
@@ -306,6 +307,7 @@ export function AppFrame({
                 loading={frame === null && !sidebarFromCache}
                 projects={sidebarProjects}
                 workspaces={sidebarWorkspaces}
+                pullRequests={appData?.pullRequests}
                 ownerLogin={frame?.ownerLogin ?? ""}
                 ownerAvatarUrl={frame?.ownerAvatarUrl ?? null}
                 orgs={frame?.orgs ?? NO_ORGS}
@@ -352,6 +354,7 @@ export function AppFrame({
       {chromeSlot}
       {slot}
       <ArchiveNotice />
+      <SessionDeletionDialog />
       {/* A Mission's news while the user looks, whatever the sidebar does
           (components/missions/mission-toasts.tsx). */}
       <MissionToasts />

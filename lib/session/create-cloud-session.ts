@@ -406,7 +406,11 @@ async function createOnce(
 
   // A box is about to start, the new session's own: the plan's hours and box
   // count get their say before anything is created.
-  const gate = await cloudBoxStartGate(owner, project.orgId, provider.name, null);
+  // An intent-warmed pooled box already consumes this session's slot. Let
+  // this create inherit it even when that makes the plan look full.
+  const gate = await cloudBoxStartGate(owner, project.orgId, provider.name, {
+    warmProjectId: project.id,
+  });
   if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
 
   // The project the session starts from: the repository's own, made on its

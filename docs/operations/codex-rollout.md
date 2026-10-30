@@ -1,5 +1,23 @@
 # Codex account sign-in: production rollout
 
+## Model availability follow-up (2026-10-30)
+
+The cloud image, restored-computer installer and native account catalog query
+now use Codex **0.162.1**, replacing 0.146.0, which predates GPT-6.1 Sol.
+Model choices still come from the selected account's native catalog; a CLI
+upgrade does not grant access to a model the account does not have.
+
+Deploy the broker and runtime changes together with the new box image. Native
+startup now requires authenticated local `api/codex/accounts/check` routing;
+the response points at `RUNTIME_BASE_URL` and never exposes the provider account.
+The runtime also reads paginated `UserMessage` completion events for prompt
+delivery and transcript translation. Codex removed the `untrusted` approval
+option, so the default mode uses `workspace-write` with `on-request` approvals.
+
+Native probes use a local TLS fixture, not a user's provider login. They verify
+headless and interactive inference, session delivery and translated replies.
+The recorded 0.162.1 panes and rollout supplement the legacy fixtures below.
+
 The application, database, runtime and published terminal CLI have separate
 release paths. Deploying the app alone does not publish the CLI or apply SQL.
 Do not remove the supported-release guard or use the mutable npm `latest` tag

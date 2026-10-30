@@ -48,6 +48,22 @@ export function DotMatrix({
   );
 }
 
+/** The compact animated mark for a model that is thinking. Shared by the
+ * conversation and session lists so a working session has one visual language
+ * everywhere. */
+export function ThinkingIcon({ className, label }: { className?: string; label?: string }) {
+  return (
+    <span
+      role={label ? "img" : undefined}
+      aria-label={label}
+      aria-hidden={label ? undefined : true}
+      className={cn("inline-flex shrink-0 items-center justify-center", className)}
+    >
+      <DotMatrix rows={3} cols={3} cell={3} gap={1.5} />
+    </span>
+  );
+}
+
 /** A thin arc on a faint track: the in-progress mark for a row or a button.
  *  Inherits the text colour and sizes to the text (1em) unless told. */
 export function Spinner({ className, label }: { className?: string; label?: string }) {

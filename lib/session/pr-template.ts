@@ -90,6 +90,10 @@ export const EVIDENCE_RULES = [
   "Screenshots taken only to check your own work stay on the box: upload only what goes in the PR.",
 ];
 
+/** PR evidence is also shown in the chat where the user asked for the work. */
+export const EVIDENCE_REPLY_RULE =
+  "Final chat reply: after creating or updating a PR, include its link. If the PR includes screenshots or GIFs as evidence, also paste every uploaded Markdown image embed from that evidence into your final reply, so the same media renders inline in Outrunner chat. Reuse the exact uploaded embed lines (`![descriptive name](public URL)`); a PR link, bare media URL or local file path is not enough. If evidence was required but could not be captured or uploaded, explain why in the reply.";
+
 /** Running the app to verify a change in the browser, Docker included. */
 export const RUN_APP_STEPS = [
   "Start the app as the repository says (README, CLAUDE.md or AGENTS.md, the project's instructions). Its dev server's port is reachable from the desktop's Chromium at http://localhost:<port>.",
@@ -151,6 +155,7 @@ export function evidenceSteps(tools: EvidenceTools, baseBranch: string): string[
 export function evidenceSection(tools: EvidenceTools, baseBranch: string): string {
   const parts = [bullets(evidenceSteps(tools, baseBranch))];
   if (tools.desktop) parts.push(`Running the app:\n\n${bullets(RUN_APP_STEPS)}`, `Evidence rules:\n\n${bullets(EVIDENCE_RULES)}`);
+  parts.push(EVIDENCE_REPLY_RULE);
   return parts.join("\n\n");
 }
 

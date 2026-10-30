@@ -134,7 +134,7 @@ export function ChatSwitcher({
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
-            <NewChatItems label="New chat" icon={<Plus className="size-4" />} agents={offered} onStart={(agent) => start({ agent })} />
+            <NewChatItems label="New chat" icon={<Plus className="size-4" />} agents={offered} onStart={(agent) => start({ agent, selectionFrom: current.id })} />
             <DropdownMenuItem className="gap-2" onSelect={() => start({ from: current.id })}>
               <GitFork className="size-4" /> Fork this chat
             </DropdownMenuItem>
@@ -145,8 +145,8 @@ export function ChatSwitcher({
         type="button"
         className="studio-icon-button"
         disabled={busy}
-        onClick={() => void start({ agent: current.agent })}
-        title={`New chat on ${AGENTS[current.agent].label}, in this session's worktree`}
+        onClick={() => void start({ selectionFrom: current.id })}
+        title={`New chat using this chat's current harness and model, in this session's worktree`}
         aria-label="New chat"
       >
         <Plus />

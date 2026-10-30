@@ -32,7 +32,7 @@ func TestValidateSecretRequest(t *testing.T) {
 func TestFormatSecretsNamesNoValues(t *testing.T) {
 	req := SecretRequest{Reason: "x", Keys: []SecretKey{{Name: "A"}, {Name: "B", Optional: true}}}
 	text := FormatSecrets(req, SecretReply{Provided: []string{"A"}, EnvFile: "/root/env/ws.provided"})
-	for _, want := range []string{"provided A.", "left out B", ". /root/env/ws.provided && <command>", "Never print"} {
+	for _, want := range []string{"provided A.", "left out B", ". '/root/env/ws.provided' && <command>", "Never print"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("result %q lacks %q", text, want)
 		}

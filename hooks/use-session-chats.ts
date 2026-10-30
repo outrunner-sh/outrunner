@@ -6,9 +6,10 @@ import type { AgentId } from "@/lib/agents/registry";
 import { requestJson } from "@/lib/http/request-json";
 import { mergeChatList, MAIN_CHAT, type SessionChat } from "@/lib/session/chats";
 
-/** How a new chat starts: afresh, a fork of one (`from`), or a side chat
- *  about one (`side`), on an agent of its own (`agent`, else its source's). */
-export type NewChat = { agent?: AgentId; from?: string; side?: boolean; question?: string };
+/** How a new chat starts: afresh, using the live saved setup of the chat the
+ *  user is on (`selectionFrom`); a fork of one (`from`); or a side chat about
+ *  one (`side`). An explicit `agent` chooses another available harness. */
+export type NewChat = { agent?: AgentId; selectionFrom?: string; from?: string; side?: boolean; question?: string };
 
 export type SessionChats = {
   /** The session's chats, its main one first; just the main one until read. */

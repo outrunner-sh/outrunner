@@ -109,9 +109,10 @@ const FeatureMultiRepo = "multi-repo"
 // gateway ("openrouter") the session runs through it on Token instead of the
 // user's Claude credential, and Model is the gateway's name for the model.
 type SetModelRequest struct {
-	Model   string `json:"model"`
-	Gateway string `json:"gateway,omitempty"`
-	Token   string `json:"token,omitempty"`
+	Selection json.RawMessage `json:"selection,omitempty"`
+	Model     string          `json:"model"`
+	Gateway   string          `json:"gateway,omitempty"`
+	Token     string          `json:"token,omitempty"`
 	// Effort is the reasoning effort to run at ("low" … "max"); empty runs at
 	// the model's own.
 	Effort string `json:"effort,omitempty"`
@@ -136,8 +137,9 @@ const ListingWorkspaceID = "*"
 // activity in any session or from a user (terminal input, a control call), and
 // whether Claude is mid-turn anywhere. The control plane pauses an idle box.
 type Activity struct {
-	LastActivity   string `json:"lastActivity"` // RFC3339 UTC
-	TurnInProgress bool   `json:"turnInProgress"`
+	LastActivity        string `json:"lastActivity"` // RFC3339 UTC
+	TurnInProgress      bool   `json:"turnInProgress"`
+	TurnTrackingVersion int    `json:"turnTrackingVersion"`
 }
 
 // LocalSession is one local session the agent on a user's Mac knows about, as
@@ -434,9 +436,12 @@ const FeatureEnvironment = "session-environment"
 // agent ignores them.
 const FeatureInstructions = "project-instructions"
 
-// FeatureRequestSecrets is a Claude session's request_secrets tool and
+// FeatureRequestSecrets is a session's request_secrets tool and
 // POST /workspaces/{id}/secrets, the user's answer to it.
 const FeatureRequestSecrets = "request-secrets"
+
+// FeatureCodexSecrets includes runtime form records for code-mode requests.
+const FeatureCodexSecrets = "codex-request-secrets"
 
 // ProvideSecretsRequest is the user's answer to the request for secrets a
 // session is waiting on (POST /workspaces/{id}/secrets): the request's
@@ -625,11 +630,12 @@ const MaxImageBlockData = 2 << 20
 
 // ConversationMessage is a structured turn derived from Claude's JSONL.
 type ConversationMessage struct {
-	T          string  `json:"t"` // "message"
-	UUID       string  `json:"uuid"`
-	ParentUUID *string `json:"parentUuid"`
-	Role       string  `json:"role"`
-	Model      string  `json:"model,omitempty"` // assistant turns only
+	Harness    *HarnessChange `json:"harness,omitempty"`
+	T          string         `json:"t"` // "message"
+	UUID       string         `json:"uuid"`
+	ParentUUID *string        `json:"parentUuid"`
+	Role       string         `json:"role"`
+	Model      string         `json:"model,omitempty"` // assistant turns only
 	// Why the assistant reply stopped, as Claude logs it ("tool_use": the turn
 	// goes on; "end_turn" and the like: it's over). Empty where the log says
 	// none (a user turn, a Codex translation).
@@ -655,6 +661,12 @@ type ConversationMessage struct {
 	// reminder, …; `isMeta` in the JSONL), which the timeline tucks behind a
 	// disclosure rather than showing inline. Omitted when false.
 	Meta bool `json:"meta,omitempty"`
+}
+
+type HarnessChange struct {
+	From      string          `json:"from"`
+	To        string          `json:"to"`
+	Selection json.RawMessage `json:"selection,omitempty"`
 }
 
 // Compaction is a conversation summarized to free its context: asked for

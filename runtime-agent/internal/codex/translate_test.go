@@ -13,6 +13,20 @@ import (
 
 var update = flag.Bool("update", false, "rewrite the golden translation in testdata")
 
+func TestTranslateRuntimeErrorAsAFailedReply(t *testing.T) {
+	raw := []byte(`{"type":"session_meta","payload":{"id":"fixture-session"}}
+{"type":"event_msg","payload":{"type":"error","message":"You've hit your usage limit"}}
+`)
+	translated := translateAll(t, raw)
+	var rec record
+	if err := json.Unmarshal(bytes.TrimSpace(translated), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Message.Model != "<synthetic>" || rec.Message.Role != "assistant" || !bytes.Contains(translated, []byte("usage limit")) {
+		t.Fatalf("runtime failure lost: %s", translated)
+	}
+}
+
 // translateAll translates a whole rollout at once, as a session's tail does
 // when it catches up, and flushes what is left at the end.
 func translateAll(t *testing.T, rollout []byte) []byte {
@@ -57,6 +71,27 @@ func TestTranslateARealRollout(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("translation differs from %s (run with -update after checking it):\n%s", golden, got)
+	}
+}
+
+func TestTranslatePaginatedNativeRollout(t *testing.T) {
+	rollout, err := os.ReadFile(filepath.Join("testdata", "rollout-0.162.1.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(translateAll(t, rollout)), []byte("\n"))
+	if len(lines) != 2 {
+		t.Fatalf("want one prompt and one reply, got %d: %s", len(lines), bytes.Join(lines, []byte("\n")))
+	}
+	var prompt, reply record
+	if json.Unmarshal(lines[0], &prompt) != nil || string(prompt.Message.Content) != `"Reply with broker verified."` || prompt.Message.Role != "user" {
+		t.Fatalf("wrong canonical prompt: %s", lines[0])
+	}
+	if json.Unmarshal(lines[1], &reply) != nil || reply.Message.Role != "assistant" || reply.Message.Model != "gpt-6.1-sol" || !bytes.Contains(reply.Message.Content, []byte("broker verified")) {
+		t.Fatalf("wrong reply: %s", lines[1])
+	}
+	if reply.Message.Usage == nil || reply.Message.Usage.InputTokens != 1 || reply.Message.Usage.OutputTokens != 2 {
+		t.Fatalf("lost model usage: %s", lines[1])
 	}
 }
 
@@ -360,5 +395,27 @@ func TestLateUsageIsntCountedAsContext(t *testing.T) {
 	}
 	if total := m.Usage.InputTokens + m.Usage.CacheReadInputTokens; total != 101_000 {
 		t.Errorf("usage input = %d, want both calls' kept for the totals", total)
+	}
+}
+
+func TestTranslationPreservesWhetherAssistantWorkContinues(t *testing.T) {
+	for _, tc := range []struct{ payload, want string }{
+		{`{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"Working."}]}`, "in_progress"},
+		{`{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Done."}]}`, "end_turn"},
+		{`{"type":"reasoning","summary":[{"type":"summary_text","text":"Thinking"}]}`, "in_progress"},
+		{`{"type":"function_call","call_id":"c1","name":"exec","arguments":"{}"}`, "tool_use"},
+	} {
+		out := translateAll(t, []byte(`{"type":"response_item","payload":`+tc.payload+"}\n"))
+		var rec struct {
+			Message struct {
+				StopReason string `json:"stop_reason"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(out), &rec); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Message.StopReason != tc.want {
+			t.Errorf("payload %s: stop reason %q, want %q", tc.payload, rec.Message.StopReason, tc.want)
+		}
 	}
 }

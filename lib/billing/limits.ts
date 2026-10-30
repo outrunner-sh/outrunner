@@ -86,7 +86,7 @@ export function boxesDenial(plan: Plan, live: number): CloudLimitDenial | null {
 export type MeteredComputerRow = Pick<
   RuntimeComputer,
   "projectId" | "workspaceId" | "status" | "provider" | "updatedAt"
-> & { pooled?: boolean };
+> & { pooled?: boolean; warmExpiresAt?: string | null };
 
 /** Whether one of the owner's computers is a box the plan limits: running
  *  (ready, or provisioning while still fresh — a claim whose provision died
@@ -96,8 +96,10 @@ export type MeteredComputerRow = Pick<
  *  together. */
 export function isLiveMeteredComputer(computer: MeteredComputerRow, now: Date): boolean {
   if (computer.provider === "user-daytona" || computer.provider === "user-modal") return false;
-  // Made ahead and stopped: running no one's session (lib/runtime/warm-pool.ts).
-  if (computer.pooled) return false;
+  // Made ahead and stopped: running no one's session. An intent-warmed pool
+  // box has a short lease and consumes the slot the imminent session will
+  // inherit (20261103200000_intent_warm_pool.sql).
+  if (computer.pooled && !computer.warmExpiresAt) return false;
   if (computer.status === "ready") return true;
   return (
     computer.status === "provisioning" &&
@@ -114,10 +116,19 @@ export function liveMeteredComputers(computers: readonly MeteredComputerRow[], n
  *  it, and starts no box. A new session (no scope) always starts one. */
 export function boxLive(
   computers: readonly MeteredComputerRow[],
-  scope: ComputerScope | null,
+  scope: ComputerScope | { warmProjectId: string } | null,
   now: Date,
 ): boolean {
-  return scope !== null && computers.some((computer) => inScope(computer, scope) && isLiveMeteredComputer(computer, now));
+  if (scope === null) return false;
+  if ("warmProjectId" in scope) {
+    return computers.some((computer) =>
+      computer.projectId === scope.warmProjectId &&
+      computer.pooled === true &&
+      Boolean(computer.warmExpiresAt) &&
+      isLiveMeteredComputer(computer, now),
+    );
+  }
+  return computers.some((computer) => inScope(computer, scope) && isLiveMeteredComputer(computer, now));
 }
 
 /** Whether this login appears in the explicit plan-limit exemption list.
@@ -144,7 +155,7 @@ export async function cloudBoxStartGate(
   owner: Owner,
   orgId: string,
   provider: ProviderName,
-  scope: ComputerScope | null,
+  scope: ComputerScope | { warmProjectId: string } | null,
 ): Promise<CloudBoxStartGate> {
   // Loaded here, not at the top, so the pure rules above stay testable in the
   // Node test runner: these pull Next's request scope (next/headers) through

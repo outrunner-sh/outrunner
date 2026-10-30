@@ -15,6 +15,7 @@ import {
 import { SessionUrls, WorkspaceSummary } from "@/lib/runtime/agent-protocol";
 import { chatRoute, MAIN_CHAT } from "@/lib/session/chats";
 import { keptStreamUrls } from "@/lib/session/kept-streams";
+import { refreshSessionOnReturn } from "@/lib/session/refresh-on-return";
 import { keepSessionUrls, takeWarmUrls } from "@/lib/session/warm-session";
 
 /**
@@ -99,6 +100,7 @@ export function useSessionAttachment(
   const [attachId, setAttachId] = useState(0);
 
   const inflight = useRef<AbortController | null>(null);
+  const lastValidatedAt = useRef(0);
   // The cloud URLs attached with, and when they were fetched, kept as the page
   // is left (keepSessionUrls) so going back attaches at once.
   const attachedWith = useRef<{ urls: SessionUrls; at: number } | null>(null);
@@ -142,6 +144,7 @@ export function useSessionAttachment(
           void takeWarmUrls(workspaceId);
           attachedWith.current = null;
           setUrls(kept);
+          lastValidatedAt.current = fetchedAt;
           setAttachId((n) => n + 1);
           setStatus("attached");
           return;
@@ -153,6 +156,7 @@ export function useSessionAttachment(
           // would outlive them, so they aren't kept again.
           attachedWith.current = null;
           setUrls(warm);
+          lastValidatedAt.current = fetchedAt;
           setAttachId((n) => n + 1);
           setStatus("attached");
           return;
@@ -173,6 +177,7 @@ export function useSessionAttachment(
           throw new Error("Malformed session response from server");
         }
         attachedWith.current = main ? { urls: parsed.data, at: fetchedAt } : null;
+        lastValidatedAt.current = fetchedAt;
         setUrls(parsed.data);
         setAttachId((n) => n + 1);
         setStatus("attached");
@@ -193,6 +198,18 @@ export function useSessionAttachment(
     })();
   }, [workspaceId, local, agent, chatId, main, enabled]);
   const refresh = useCallback(() => attach(true), [attach]);
+
+  useEffect(() => {
+    if (!enabled || local) return;
+    return refreshSessionOnReturn({
+      page: document,
+      window,
+      now: () => Date.now(),
+      lastValidatedAt: () => lastValidatedAt.current,
+      attaching: () => inflight.current !== null,
+      refresh,
+    });
+  }, [enabled, local, refresh]);
 
   const reconnect = useCallback(() => {
     // Both browser projections can notice the same network close. The

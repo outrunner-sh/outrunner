@@ -6,7 +6,7 @@ import { orgDefaultsFor } from "@/lib/db/org-defaults";
 import { withOrgDefault } from "@/lib/orgs/defaults";
 import { checkEffortApplied, modelGroups } from "@/lib/runtime/session-models";
 import { recordedModelRequest } from "@/lib/runtime/model-switch";
-import { chatSelection } from "@/lib/session/chat-selection";
+import { chatSelection, configuredChatSelection, rememberedChatSelection } from "@/lib/session/chat-selection";
 import { NextResponse } from "next/server";
 
 import { AGENTS, isAgentId } from "@/lib/agents/registry";
@@ -23,7 +23,7 @@ import { OutdatedComputerError, signInFailure } from "@/lib/runtime/session-auth
 import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 import { chatNamed } from "@/lib/session/chat-target";
-import { chatName, defaultChatName, MAIN_CHAT, mainChatOf, orderedChats } from "@/lib/session/chats";
+import { chatName, defaultChatName, MAIN_CHAT, mainChatOf, orderedChats, type SessionChat } from "@/lib/session/chats";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -51,7 +51,7 @@ export async function POST(request: Request, context: RouteContext) {
   const owner = await getOwner();
   if (!owner) return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   const body = (await request.json().catch(() => null)) as
-    | { agent?: unknown; from?: unknown; side?: unknown; name?: unknown; question?: unknown }
+    | { agent?: unknown; selectionFrom?: unknown; from?: unknown; side?: unknown; name?: unknown; question?: unknown }
     | null;
   if (body?.agent !== undefined && !isAgentId(body.agent)) {
     return NextResponse.json({ error: "Choose Claude Code or Codex." }, { status: 400 });
@@ -79,7 +79,17 @@ export async function POST(request: Request, context: RouteContext) {
     if (!named.ok) return named.response;
     from = named.chat;
   }
-  const chatAgent = isAgentId(body?.agent) ? body.agent : (from?.agent ?? workspace.agent);
+  // A fresh chat names the chat visible when it was requested. Read that row
+  // now rather than trusting the header's cached agent/model: either may have
+  // changed through the composer or a harness handoff since the list loaded.
+  let selectionFrom: SessionChat | null = null;
+  if (!from && body?.selectionFrom !== undefined) {
+    const named = await chatNamed(body.selectionFrom, workspace);
+    if (!named.ok) return named.response;
+    selectionFrom = named.chat;
+  }
+  const active = selectionFrom ?? mainChatOf(workspace);
+  const chatAgent = isAgentId(body?.agent) ? body.agent : (from?.agent ?? active.agent);
   const existing = await listChats(workspace.id);
   const name =
     chatName(body?.name) ??
@@ -102,18 +112,22 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Couldn't reach the Runtime Computer. Try again." }, { status: 502 });
   }
 
-  // A chat on its source's agent goes on its model; on another, on that
-  // agent's own default until the user picks one.
-  const source = from ?? mainChatOf(workspace);
-  let model = source.model;
-  if (source.agent !== chatAgent) {
+  // A fork stays on its source selection. A fresh chat uses the active saved
+  // setup, or the newest saved setup for a harness explicitly picked in the
+  // menu. Only a harness not used here yet falls back to its configured default.
+  const main = mainChatOf(workspace);
+  const source = from ?? active;
+  let model = from ? source.model : rememberedChatSelection(active, chatAgent, [main, ...existing]);
+  if ((from && source.agent !== chatAgent) || (!from && model === undefined)) {
     try {
       const store = agentAuthStore(owner.id, workspace.orgId);
       const [menu, mine, org, account, catalog] = await Promise.all([
         modelMenu(owner.id, workspace.orgId), getModelLoadout(owner.id), orgDefaultsFor(workspace.orgId),
         agentConnection(store, chatAgent), chatAgent === "codex" ? codexModelsFor(store) : Promise.resolve([]),
       ]);
-      model = chatSelection(source, chatAgent, modelGroups({ ...menu, codexModels: catalog }, account.cloud ? [chatAgent] : [], chatAgent), withOrgDefault(mine, org.defaultModel));
+      const groups = modelGroups({ ...menu, codexModels: catalog }, account.cloud ? [chatAgent] : [], chatAgent);
+      const loadout = withOrgDefault(mine, org.defaultModel);
+      model = from ? chatSelection(source, chatAgent, groups, loadout) : configuredChatSelection(chatAgent, groups, loadout);
     } catch (error) {
       return NextResponse.json({ error: error instanceof Error ? error.message : "Choose an eligible harness." }, { status: 409 });
     }
@@ -128,7 +142,7 @@ export async function POST(request: Request, context: RouteContext) {
       agent: chatAgent,
       kind: side ? "side" : "chat",
       forkedFrom: from?.id ?? null,
-      model,
+      model: model ?? null,
     });
   } catch (error) {
     console.error(`Chat: couldn't record a chat in ${workspace.id}`, error);

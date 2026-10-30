@@ -2,6 +2,7 @@ import { store, useStore } from "@/lib/client/store";
 import { forgetKeptMission } from "@/lib/missions/kept-missions";
 import { forgetCachedSession } from "@/lib/session/app-data-cache";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
+import { patchRowAhead } from "@/lib/session/rows-ahead";
 import { forgetListedSession } from "@/lib/session/listed-sessions";
 import { localAgentRequest, localTarget } from "@/lib/desktop/local-runtime";
 import type { SessionDeletion } from "@/lib/nav/sidebar";
@@ -54,6 +55,7 @@ export async function deleteSession(id: string, deletion: SessionDeletion): Prom
  *  (lib/missions/kept-missions.ts): a reload must not bring it back. */
 function forgetDeleted(id: string): void {
   DELETED.set(new Set([...DELETED.get(), id]));
+  patchRowAhead(id, { status: "destroyed" });
   CONVERSATIONS.forget(id);
   forgetCachedSession(id);
   forgetListedSession(id);

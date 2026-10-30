@@ -1,15 +1,14 @@
 "use client";
 
-import { Archive, MessageSquarePlus, PanelRight, PanelRightClose } from "lucide-react";
+import { Archive, Files, GitBranch, MessageSquarePlus, Monitor, PanelsTopLeft, PanelRight, PanelRightClose, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { DRAFTS } from "@/lib/client/drafts";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons, MobileNavButton } from "@/components/app-frame";
 import { useAppData } from "@/components/app-data";
 import { ChatSwitcher } from "@/components/chat-switcher";
-import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
+import { requestSessionDeletion } from "@/components/delete-session-dialog";
 import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
 import { SessionInfo } from "@/components/session-info";
 import { MissionHeader } from "@/components/missions/mission-header";
@@ -37,9 +36,10 @@ import { missionArchiveOffer, unarchivedShipCount } from "@/lib/missions/archive
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
-import { archiveOffer } from "@/lib/session/archive-control";
+import { canDestroy } from "@/lib/session/provisioning";
+import { useNow } from "@/hooks/use-now";
 import { type InspectorTabId, inspectorTabs, shownTab } from "@/lib/session/inspector-tabs";
-import { chatRoute, chatStateKey, MAIN_CHAT, mainChatOf, parseChatId, type SessionChat } from "@/lib/session/chats";
+import { chatRoute, MAIN_CHAT, mainChatOf, parseChatId, type SessionChat } from "@/lib/session/chats";
 import { askSideChat } from "@/lib/session/chat-actions";
 import { cn } from "@/lib/utils";
 
@@ -99,19 +99,18 @@ export function WorkspaceStudio({
   // Environment is (components/missions).
   const isMission = workspace.kind === "mission";
   const { mission } = useMission(isMission ? workspace.id : undefined);
-  // Archive, for a cloud session that has a Snapshot to restore from; a
-  // Runner's takes its Ships with it. Once it is archived, leave it: left
-  // open, this page would restore it at once.
-  const archive = isLocal ? null : isMission ? missionArchiveOffer(workspace) : archiveOffer(workspace);
-  const archiveLabel = isMission ? "Archive Runner" : "Archive session";
+  // Runners archive their Ships together. Individual cloud sessions are deleted.
+  const archive = !isLocal && isMission ? missionArchiveOffer(workspace) : null;
+  const archiveLabel = "Archive Runner";
   const [archiving, setArchiving] = useState(false);
+  const now = useNow(60_000);
+  const deletable = !isLocal && !isMission && canDestroy(workspace, now);
   const router = useRouter();
   const leave = () => {
     router.push("/");
     router.refresh();
   };
-  // The right pane's tabs, its strip shown where there are two or more. The
-  // pane remembers the one chosen while it's closed, not across pages.
+  // The pane remembers its selected tab while closed, not across pages.
   const tabs = inspectorTabs(workspace, isLocal);
   const [chosenTab, setChosenTab] = useState<InspectorTabId>("environment");
   const tab = shownTab(tabs, chosenTab);
@@ -165,7 +164,6 @@ export function WorkspaceStudio({
         "studio-shell",
         !rightOpen && "no-inspector",
         isMission && "is-mission",
-        rightOpen && tab === "desktop" && "desktop-open",
       )}
     >
       <header className="studio-header">
@@ -222,6 +220,16 @@ export function WorkspaceStudio({
               <Archive />
             </button>
           )}
+          {deletable && (
+            <button
+              className="studio-icon-button"
+              onClick={() => requestSessionDeletion({ id: workspace.id, title: workspaceLabel(workspace), deletion: { kind: "cloud" } })}
+              title="Delete session"
+              aria-label="Delete session"
+            >
+              <Trash2 />
+            </button>
+          )}
           <button
             className="studio-icon-button"
             onClick={() => setRightOpen(!rightOpen)}
@@ -232,18 +240,11 @@ export function WorkspaceStudio({
           </button>
         </div>
       </header>
-      {isMission ? (
+      {isMission && (
         <ArchiveMissionDialog
           mission={archiving ? { id: workspace.id, title: mission?.title ?? workspaceLabel(workspace), ships: unarchivedShipCount(mission?.runners ?? []) } : null}
           onOpenChange={setArchiving}
           onArchived={leave}
-        />
-      ) : (
-        <ArchiveSessionDialog
-          session={archiving ? { id: workspace.id, title: workspaceLabel(workspace) } : null}
-          onOpenChange={setArchiving}
-          // The sidebar marks it archived at once (lib/session/optimistic-archive.ts).
-          onArchived={() => router.push("/")}
         />
       )}
 
@@ -271,14 +272,7 @@ export function WorkspaceStudio({
             initialAttachmentIds={current.id === MAIN_CHAT ? initialAttachmentIds : undefined}
             onSender={setSender}
             onSideChat={chatsOffered ? askAside : undefined}
-            onHarnessFork={chatsOffered ? async (agent) => {
-              const fork = await chats.start({ from: current.id, agent });
-              if (!chats.isCurrent()) return;
-              const sourceKey = `ws:${chatStateKey(workspace.id, current.id)}`;
-              const targetKey = `ws:${chatStateKey(workspace.id, fork.id)}`;
-              DRAFTS.move(sourceKey, targetKey);
-              pick(fork);
-            } : undefined}
+            allowHarnessSwitch={hasLiveSession && !isLocal}
           />
         ) : restore.state === "restoring" ? (
           <div className="studio-offline">
@@ -338,9 +332,8 @@ export function WorkspaceStudio({
       </section>
 
       {overlay && <div aria-hidden className="studio-inspector-backdrop" onClick={() => setRightOpen(false)} />}
-      {/* Each tab's panel mounts only while it is open: the rows poll for
-          changes, and the desktop is started, and its socket held, only
-          while someone looks at it. */}
+        {/* Desktop starts and holds its socket only while its tab is open.
+            Environment keeps its PR watch across Changes/Canvas switches. */}
       <aside
         ref={inspector}
         className={cn("studio-inspector", isMission ? "studio-runners" : "studio-env", overlay && "is-overlay")}
@@ -350,28 +343,52 @@ export function WorkspaceStudio({
         aria-label={isMission ? "Ships" : (tabs.find((t) => t.id === tab)?.label ?? "Environment")}
       >
         {rightOpen && isMission && <RunnersPane missionId={workspace.id} onClose={() => setRightOpen(false)} />}
-        {rightOpen && tabs.length > 1 && (
-          <div className="studio-tabs" role="tablist" aria-label="Session panels">
-            {tabs.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                role="tab"
-                id={`studio-tab-${t.id}`}
-                aria-selected={t.id === tab}
-                aria-controls="studio-tabpanel"
-                onClick={() => setChosenTab(t.id)}
-                className="studio-tab"
-              >
-                {t.label}
-              </button>
-            ))}
+        {rightOpen && !isMission && (
+          <div className="studio-inspector-toolbar">
+            <div className="studio-tabs" role="tablist" aria-label="Session panels">
+              {tabs.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="tab"
+                  id={`studio-tab-${t.id}`}
+                  aria-selected={t.id === tab}
+                  aria-label={t.label}
+                  aria-controls="studio-tabpanel"
+                  title={t.label}
+                  tabIndex={t.id === tab ? 0 : -1}
+                  onClick={() => setChosenTab(t.id)}
+                  onKeyDown={(event) => {
+                    const index = tabs.findIndex((item) => item.id === t.id);
+                    const next = event.key === "ArrowRight" ? (index + 1) % tabs.length
+                      : event.key === "ArrowLeft" ? (index - 1 + tabs.length) % tabs.length
+                      : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
+                    if (next === null) return;
+                    event.preventDefault();
+                    setChosenTab(tabs[next].id);
+                    document.getElementById(`studio-tab-${tabs[next].id}`)?.focus();
+                  }}
+                  className="studio-tab"
+                >
+                  {t.id === "desktop" ? <Monitor aria-hidden="true" />
+                    : t.id === "changes" ? <Files aria-hidden="true" />
+                    : t.id === "canvas" ? <PanelsTopLeft aria-hidden="true" />
+                    : <GitBranch aria-hidden="true" />}
+                  {t.id === tab && <span>{t.label}</span>}
+                </button>
+              ))}
+            </div>
+            <button type="button" onClick={() => setRightOpen(false)} className="studio-icon-button" title="Hide panel" aria-label="Hide panel">
+              <PanelRightClose />
+            </button>
           </div>
         )}
         {rightOpen && !isMission && (
           <div
             className="studio-tabpanel"
-            {...(tabs.length > 1 && { id: "studio-tabpanel", role: "tabpanel", "aria-labelledby": `studio-tab-${tab}` })}
+            id="studio-tabpanel"
+            role="tabpanel"
+            aria-labelledby={`studio-tab-${tab}`}
           >
             {tab === "desktop" ? (
               <WorkspaceDesktop workspaceId={workspace.id} isReady={isReady} onClose={() => setRightOpen(false)} />
@@ -384,6 +401,12 @@ export function WorkspaceStudio({
                 sender={sender}
                 coAuthor={coAuthor}
                 onClose={() => setRightOpen(false)}
+                view={tab === "changes" || tab === "canvas" ? tab : "overview"}
+                onViewChange={(view) => {
+                  const selected = view === "overview" ? "environment" : view;
+                  setChosenTab(selected);
+                  document.getElementById(`studio-tab-${selected}`)?.focus();
+                }}
               />
             )}
           </div>

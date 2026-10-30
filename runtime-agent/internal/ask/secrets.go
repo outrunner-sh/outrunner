@@ -58,6 +58,8 @@ type SecretReply struct {
 	// EnvFile is where the values are, for the agent to source itself if its
 	// shell hasn't picked them up.
 	EnvFile string
+	// SourceRequired: an already running Codex cannot inherit new variables.
+	SourceRequired bool
 }
 
 // ValidateSecretRequest checks a request as the agent made it; validName is
@@ -114,9 +116,13 @@ func FormatSecrets(req SecretRequest, reply SecretReply) string {
 	if len(missing) > 0 {
 		fmt.Fprintf(&b, " They left out %s: don't ask for them again.", strings.Join(missing, ", "))
 	}
-	b.WriteString(" They are set in your Bash environment from your next command.")
+	if reply.SourceRequired {
+		b.WriteString(" Load them before each shell command that needs them; your running process cannot inherit new variables.")
+	} else {
+		b.WriteString(" They are set in your Bash environment from your next command.")
+	}
 	if reply.EnvFile != "" {
-		fmt.Fprintf(&b, " If a command doesn't see them, run it as `. %s && <command>`.", reply.EnvFile)
+		fmt.Fprintf(&b, " Run commands with `. %s && <command>` to load the current values.", quoteShellPath(reply.EnvFile))
 	}
 	b.WriteString(" Restart anything you started earlier that needs them. Never print, echo, log or commit their values.")
 	return b.String()
@@ -135,7 +141,17 @@ func NewSecretsBroker() *SecretsBroker {
 // Request waits for the user to answer a session's request, until ctx ends
 // (the relay gave the call up). requestID names the call, as Broker.Ask's.
 func (b *SecretsBroker) Request(ctx context.Context, workspaceID, requestID string, req SecretRequest) (SecretReply, error) {
-	return b.held.wait(ctx, workspaceID, requestID, req)
+	return b.RequestStarted(ctx, workspaceID, requestID, req, nil)
+}
+
+// RequestStarted publishes a runtime-owned form when the request becomes
+// answerable. Codex code-mode calls otherwise stay invisible until answered.
+func (b *SecretsBroker) RequestStarted(ctx context.Context, workspaceID, requestID string, req SecretRequest, started func() error) (SecretReply, error) {
+	return b.held.wait(ctx, workspaceID, requestID, req, started)
+}
+
+func quoteShellPath(path string) string {
+	return "'" + strings.ReplaceAll(path, "'", "'\"'\"'") + "'"
 }
 
 // Answer gives the user's answer to the request a session is waiting on,

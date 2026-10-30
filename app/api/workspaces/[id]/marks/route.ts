@@ -5,7 +5,7 @@ import { getOwner } from "@/lib/auth/owner";
 import { getWorkspace } from "@/lib/db/repositories";
 import { updateMark } from "@/lib/db/session-standing";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { STANDINGS } from "@/lib/session/standing";
+import { MOVABLE_STANDINGS } from "@/lib/session/standing";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -13,7 +13,7 @@ const MarkChange = z
   .object({
     pinned: z.boolean().optional(),
     /** A group to hold it in; null hands it back to the server's reading. */
-    movedTo: z.enum(STANDINGS).nullable().optional(),
+    movedTo: z.enum(MOVABLE_STANDINGS).nullable().optional(),
     /** The user has seen it as it is now: its replies are read. */
     seen: z.literal(true).optional(),
   })

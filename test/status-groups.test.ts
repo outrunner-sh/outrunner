@@ -15,7 +15,6 @@ const session = (id: string, minutesAgo: number): SidebarSession => ({
   branch: `runtime/${id}`,
   at: ago(minutesAgo * 60_000),
   deletion: { kind: "cloud" },
-  archive: { can: true },
   archived: false,
 });
 const group = (key: string, sessions: SidebarSession[], local = false): SidebarGroup => ({
@@ -54,17 +53,16 @@ test("sessions are grouped by where they stand, pinned first, in the groups' ord
   assert.equal(sections[1].rows[0].project, "api");
 });
 
-test("a session the server hasn't placed (one on this Mac) is done, or backlog once quiet", () => {
+test("a session without a server standing stays in backlog until a merge is known", () => {
   const sections = buildStatusSections([group("~/code", [session("m", 1), session("old", BACKLOG_AFTER_MS / 60_000 + 1)], true)], {}, NOW);
   assert.deepEqual(
     sections.map((s) => [s.key, s.rows.map((r) => r.id)]),
     [
-      ["done", ["m"]],
-      ["backlog", ["old"]],
+      ["backlog", ["m", "old"]],
     ],
   );
   assert.equal(sections[0].rows[0].markable, false, "a Mac session has no marks on the server");
-  assert.equal(fallbackStanding("not a date", NOW).standing, "done");
+  assert.equal(fallbackStanding("not a date", NOW).standing, "backlog");
 });
 
 test("a section shows its first few, keeps the one on screen, and shows all while searching", () => {

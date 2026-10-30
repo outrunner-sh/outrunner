@@ -1,6 +1,7 @@
 "use client";
 
 import { RotateCw } from "lucide-react";
+import { DRAFTS } from "@/lib/client/drafts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { type AgentEvent, ChangesResponse, FilesResponse, PlanActionResponse, RewindResponse } from "@/lib/runtime/agent-protocol";
@@ -59,7 +60,8 @@ import {
   type FirstPrompt,
 } from "@/lib/session/first-prompt";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
-import { eligibleHarnesses } from "@/lib/runtime/selection";
+import { eligibleHarnesses, selectionForHarness } from "@/lib/runtime/selection";
+import { exhaustion, hasUnfinishedRequest, HarnessSelection, PendingHarness } from "@/lib/session/harness-switch";
 import { isProviderId } from "@/lib/providers/registry";
 import { EMPTY_LOADOUT } from "@/lib/runtime/model-loadout";
 import {
@@ -131,8 +133,8 @@ export function WorkspaceSession({
   startup,
   chatId = MAIN_CHAT,
   projectId,
-  agent = "claude",
-  recorded = null,
+  agent: initialAgent = "claude",
+  recorded: initialRecorded = null,
   initialMode = "build",
   local = false,
   untitled = false,
@@ -141,7 +143,7 @@ export function WorkspaceSession({
   initialAttachmentIds,
   onSender,
   onSideChat,
-  onHarnessFork,
+  allowHarnessSwitch = false,
 }: {
   workspaceId: string;
   startup?: SessionStartup;
@@ -178,16 +180,47 @@ export function WorkspaceSession({
   /** `/btw <question>`: ask it in a side chat about this one (the studio
    *  starts it and shows it); resolves whether it went. */
   onSideChat?: (question: string) => Promise<boolean>;
-  /** Continue this conversation in another harness using the chat fork API. */
-  onHarnessFork?: (agent: AgentId) => Promise<void>;
+  allowHarnessSwitch?: boolean;
 }) {
   // What this page keeps of the chat (its conversation, queue, picks): the
   // session's own keys for its main chat, as before there were others.
   const stateKey = chatStateKey(workspaceId, chatId);
+  const [activeSelection, setActiveSelection] = useState<{ agent: AgentId; recorded: RecordedModel; operationId: string } | null>(null);
+  const [pendingHarness, setPendingHarness] = useState<PendingHarness | null>(null);
+  const harnessSending = useRef(false);
+  const harnessStorageKey = `harness-switch:${stateKey}`;
+  const keepHarness = (next: PendingHarness | null) => {
+    try {
+      if (next) tabStorage()?.setItem(harnessStorageKey, JSON.stringify(next));
+      else tabStorage()?.removeItem(harnessStorageKey);
+    } catch { return false; }
+    setPendingHarness(next);
+    return true;
+  };
+  useEffect(() => {
+    let saved: PendingHarness | null = null;
+    try {
+      const parsed = PendingHarness.safeParse(JSON.parse(tabStorage()?.getItem(harnessStorageKey) ?? "null"));
+      if (parsed.success) saved = parsed.data;
+    } catch { /* no saved transition */ }
+    queueMicrotask(() => setPendingHarness(saved));
+  }, [harnessStorageKey]);
   // Whether a follow-up sent mid-turn steers it or queues (Settings → Account).
   const chatPreferences = useChatPreferences();
-  const attachment = useSessionAttachment(workspaceId, local, agent, chatId, !startup);
+  const attachment = useSessionAttachment(workspaceId, local, activeSelection?.agent ?? initialAgent, chatId, !startup);
   const conversation = useConversationStream(attachment, stateKey);
+  const boundary = [...conversation.events].reverse().find((event) => event.t === "message" && event.harness);
+  const carriedSelection = HarnessSelection.safeParse(boundary?.t === "message" ? boundary.harness?.selection : undefined);
+  const localBoundaryIndex = activeSelection ? conversation.events.findIndex((event) => event.t === "message" && event.uuid === `harness-${activeSelection.operationId}`) : -1;
+  const useLocalSelection = activeSelection !== null && (localBoundaryIndex < 0 || !boundary || conversation.events.indexOf(boundary) <= localBoundaryIndex);
+  const agent = useLocalSelection ? activeSelection.agent : boundary?.t === "message" && boundary.harness ? boundary.harness.to : initialAgent;
+  const savedSelection = initialAgent === agent ? initialRecorded : null;
+  // A boundary records the choice at handoff, before any later model/effort
+  // changes. On reload the saved row is current for its harness; a boundary
+  // only supplies a selection when the page still belongs to the old harness.
+  const recorded = useLocalSelection ? activeSelection.recorded
+    : savedSelection ? savedSelection
+    : carriedSelection.success ? carriedSelection.data as RecordedModel : initialRecorded;
   const firstQueued = useQueuedFirstPrompt(workspaceId, { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [], ...(initialPromptKey && { key: initialPromptKey }) });
   const [initialDeliveryComplete, setInitialDeliveryComplete] = useState(false);
 
@@ -354,6 +387,8 @@ export function WorkspaceSession({
   // own stand-ins (an API error's `<synthetic>`) name no model, and are passed.
   const activeModel = useMemo<string | undefined>(() => {
     for (let i = conversation.events.length - 1; i >= 0; i--) {
+      const event = conversation.events[i];
+      if (event.t === "message" && event.harness) return undefined;
       const model = replyModel(conversation.events[i]);
       if (model) return model;
     }
@@ -384,8 +419,10 @@ export function WorkspaceSession({
     conversation.events
       .slice(picked.events)
       .some((event) => event.t === "message" && event.role === "assistant" && event.model);
-  // Before its first reply, the model its row records it starts on.
-  const shownModel = picked && !repliedSincePick ? picked.model : (activeModel ?? recorded?.model.id);
+  // After a handoff/reload, the saved choice can be newer than the last
+  // reply too. Picks in this page continue to take over as they did before.
+  const savedModel = boundary && !useLocalSelection && !picked ? savedSelection?.model.id : undefined;
+  const shownModel = picked && !repliedSincePick ? picked.model : (savedModel ?? activeModel ?? recorded?.model.id);
   // Stopping the turn under way (the composer's stop button): the agent
   // presses Escape in the session and answers once the turn has stopped.
   const [stopping, setStopping] = useState(false);
@@ -418,10 +455,7 @@ export function WorkspaceSession({
   // conversation, Approve and Revise on it. The composer stays: what is typed
   // while it waits revises it. An answer on its way puts the card's buttons
   // away, as a question's card is, until its result reaches the stream.
-  const plan = useMemo(
-    () => pendingPlan(conversation.events, { plansInProse: agent === "codex", working: claudeIsWorking(conversation.events) }),
-    [conversation.events, agent],
-  );
+  const plan = pendingPlan(conversation.events, { plansInProse: agent === "codex", working: claudeIsWorking(conversation.events) });
   const waitingOnPlan = plan !== null && !answeredHere.has(plan.id);
   // A compaction asked for, the stream's length then, until the stream shows
   // one after it: the session is busy meanwhile, and the queue waits.
@@ -463,7 +497,7 @@ export function WorkspaceSession({
       setAnswerError(local ? messageForLocalError(error, agent) : raw || "Couldn't send your answer.");
     });
   };
-  const provideSecrets = (asked: PendingSecretRequest, reply: { values: Record<string, string>; save: boolean } | null) => {
+  const provideSecrets = (asked: PendingSecretRequest, reply: { values: Record<string, string> } | null) => {
     setAnsweredHere((prev) => new Set(prev).add(asked.toolUseId));
     setSendError(null);
     setAnswerError(null);
@@ -473,7 +507,7 @@ export function WorkspaceSession({
     const body = reply ? { keys, values: reply.values } : { keys, skipped: true };
     (local
       ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/secrets`, body).then(() => null)
-      : provideCloudSecrets(workspaceId, chatId, { ...body, save: reply?.save ?? false })
+      : provideCloudSecrets(workspaceId, chatId, body)
     )
       .then((saveError) => setSecretsSaveError(saveError))
       .catch((error: unknown) => {
@@ -666,7 +700,7 @@ export function WorkspaceSession({
     working,
     // A plan waiting on approval is answered by the user, not by what's queued.
     waitingOnUser: waitingOnUser || waitingOnPlan,
-    held: queueHeld,
+    held: queueHeld || switching || pendingHarness !== null,
     editing: queuedEditing !== null,
     awaitingLast,
   });
@@ -691,6 +725,8 @@ export function WorkspaceSession({
   // menu first, and goes in the mode the composer is in (Plan revises it,
   // Build approves it with changes).
   const sendOrQueue = (text: string, attachmentIds: string[], sentMode?: SessionMode) => {
+    if (pendingHarness?.request) return Promise.resolve(false);
+    if (pendingHarness) return switchAndSend(text, attachmentIds, false, sentMode);
     if (startup || !initialDeliveryComplete) return enqueue(text, attachmentIds, sentMode);
     if (editing) return sendEdit(editing.uuid, text, attachmentIds, sentMode);
     if (queuePaused) {
@@ -949,31 +985,75 @@ export function WorkspaceSession({
   // The user's own accounts this session can switch to. A local session's
   // agent is already running on this Mac, so its own login there counts.
   const accounts = accountsHere(menu.agents, local, null);
+  const pickerAgent = pendingHarness?.agent ?? agent;
+  const switchAndSend = async (text: string, attachmentIds: string[], resume: boolean, sentMode?: SessionMode): Promise<boolean> => {
+    if (!pendingHarness || harnessSending.current) return false;
+    const operation: PendingHarness = { ...pendingHarness, request: pendingHarness.request ?? { content: text, attachmentIds, resume, mode: sentMode ?? mode } };
+    if (!keepHarness(operation)) {
+      setSwitchError({ label: "Harness", message: "Couldn't save the pending switch in this tab. Your draft is still here." });
+      return false;
+    }
+    harnessSending.current = true;
+    setSwitching(true);
+    setSwitchError(null);
+    try {
+      const selected = operation.selection as RecordedModel;
+      const response = await fetch(chatRoute(workspaceId, chatId, "harness"), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: operation.id, agent: operation.agent, expectedAgent: operation.expectedAgent,
+          provider: selected.model.provider, model: selected.model.id, effort: selected.effort,
+          ...operation.request }),
+      });
+      const data = await response.json() as { agent: AgentId; recorded: RecordedModel; operationId: string; error?: string; sourceUnchanged?: boolean };
+      if (!response.ok) {
+        if (data.sourceUnchanged) keepHarness({ ...operation, request: undefined });
+        throw new Error(data.error ?? "Couldn't change harness. Retry to finish this switch.");
+      }
+      setActiveSelection({ agent: data.agent, recorded: data.recorded, operationId: data.operationId });
+      setProviderPicked(data.recorded.model.provider);
+      setEffortHere(data.recorded.effort);
+      setPicked({ model: data.recorded.model.id, events: eventsRef.current.length });
+      if (operation.request && !operation.request.resume) {
+        const sent = operation.request;
+        DRAFTS.update(`ws:${stateKey}`, (draft) => draft.text === sent.content &&
+          draft.attachments.length === sent.attachmentIds.length && draft.attachments.every((item) => item.id && sent.attachmentIds.includes(item.id))
+          ? { text: "", attachments: [] } : draft);
+      }
+      keepHarness(null);
+      setQueuePaused(false);
+      setQueueHeld(false);
+      conversation.refresh();
+      return true;
+    } catch (error) {
+      setSwitchError({ label: AGENTS[operation.agent].label, message: error instanceof Error ? error.message : "Couldn't change harness. Retry to finish this switch." });
+      return false;
+    } finally { harnessSending.current = false; setSwitching(false); }
+  };
   const modelChoice: ModelChoice = {
-    groups: modelGroups(local ? (menu.localMenu ?? { ...menu, keys: [], codexModels: [] }) : menu, accounts, agent),
-    agent,
-    selectedModel: matchModel(modelGroups(menu, accounts, agent), shownModel, providerPicked ?? recorded?.model.provider)
+    groups: modelGroups(local ? (menu.localMenu ?? { ...menu, keys: [], codexModels: [] }) : menu, accounts, pickerAgent),
+    agent: pickerAgent,
+    selectedModel: pendingHarness?.selection.model as SessionModel | undefined ?? matchModel(modelGroups(menu, accounts, agent), shownModel, providerPicked ?? recorded?.model.provider)
       ?? (recorded && recorded.model.id === shownModel ? recorded.model : undefined),
-    harnessChoice: onHarnessFork ? {
+    harnessChoice: allowHarnessSwitch && !local ? {
       available: [...new Set([agent, ...eligibleHarnesses(modelGroups(menu, accounts), menu.harnesses)])],
-      fork: true,
-      disabledReason: "Changing harness creates a fork with the conversation and the same files. Your draft follows it.",
+      disabledReason: "Choose a harness and model, then send to continue this chat with its history and files.",
       onChange: (next) => {
-        if (next === agent || switching) return;
-        setSwitching(true);
-        setSwitchError(null);
-        void onHarnessFork(next).catch((error: unknown) => setSwitchError({
-          label: AGENTS[next].label, message: error instanceof Error ? error.message : "Couldn't fork this chat.",
-        })).finally(() => setSwitching(false));
+        if (switching || pendingHarness?.request) return;
+        if (next === agent) { keepHarness(null); return; }
+        const selected = selectionForHarness(modelGroups(menu, accounts), menu.loadout, next);
+        if (!selected) return;
+        keepHarness({ id: crypto.randomUUID(), agent: next, expectedAgent: agent, selection: { model: selected.model, effort: selected.effort } });
       },
-    } : { available: [agent], disabledReason: "This chat's harness is fixed here. A cloud session's chat menu can fork a conversation with another harness; local sessions and Runners use a new session." },
+    } : { available: [agent], disabledReason: "Harness changes are available once a cloud chat is connected. Start a new session to change a local session's harness." },
     // The session's own agent's account, where it isn't connected here.
-    connect: accounts.includes(agent) ? [] : [agent],
-    effort,
+    connect: accounts.includes(pickerAgent) ? [] : [pickerAgent],
+    effort: pendingHarness ? pendingHarness.selection.effort : effort,
     loadout: menu.loadout,
     preferredProvider: providerPicked ?? recorded?.model.provider ?? defaultModel(menu)?.provider,
     switching,
-    disabledReason: editing || queuedEditing
+    disabledReason: pendingHarness?.request
+      ? "Retry the pending harness switch before changing selection"
+      : editing || queuedEditing
       ? "Finish or cancel editing the prompt before changing selection"
       : !attached
       ? "Waiting for the session to connect"
@@ -983,10 +1063,14 @@ export function WorkspaceSession({
         ? waitingOnSecrets
           ? `Answer ${AGENTS[agent].label}'s request first`
           : `Answer ${AGENTS[agent].label}'s question first`
-        : working
+        : working && !allowHarnessSwitch
           ? `Switch models once ${AGENTS[agent].label} has finished this turn`
           : null,
     onChange: (model, pickedEffort) => {
+      if (pendingHarness) {
+        keepHarness({ ...pendingHarness, id: crypto.randomUUID(), selection: { model, effort: compatibleEffort(model, pickedEffort) } });
+        return;
+      }
       // What the agent is told: an effort goes only with a model that takes one.
       const next = compatibleEffort(model, pickedEffort);
       setSwitching(true);
@@ -1242,7 +1326,7 @@ export function WorkspaceSession({
               plan={planActions}
               // Only between turns: an edit cuts the conversation under the
               // agent, which must not be writing to it.
-              onEdit={attached && !working && !waitingOnUser && !waitingOnPlan ? editMessage : undefined}
+              onEdit={attached && !boundary && !working && !waitingOnUser && !waitingOnPlan ? editMessage : undefined}
               placeholder={startup ? null : conversationPlaceholder({
                 events: timelineEvents,
                 attachment: attachment.status,
@@ -1271,7 +1355,7 @@ export function WorkspaceSession({
           agentLabel={AGENTS[agent].label}
           canSave={!local}
           hidden={!waitingOnSecrets}
-          onProvide={(values, save) => provideSecrets(secretRequest, { values, save })}
+          onProvide={(values) => provideSecrets(secretRequest, { values })}
           onSkip={() => provideSecrets(secretRequest, null)}
         />
       )}
@@ -1346,6 +1430,14 @@ export function WorkspaceSession({
         />
       )}
       {!waitingOnUser && (
+        <>
+        {allowHarnessSwitch && exhaustion(conversation.events) && !pendingHarness && <InlineMessage tone="info">{AGENTS[agent].label} reached its {exhaustion(conversation.events) === "credits" ? "credit" : "usage"} limit. Choose another connected harness below to continue this chat.</InlineMessage>}
+        {pendingHarness && <InlineMessage tone="info" actions={pendingHarness.request ? [{ label: "Retry switch", onClick: () => { void switchAndSend("", [], false); } }] : [
+          ...(hasUnfinishedRequest(conversation.events) ? [{ label: "Switch & resume", onClick: () => { void switchAndSend("", [], true); } }] : []),
+          { label: "Cancel", onClick: () => { keepHarness(null); } },
+        ]}>
+          {switching ? "Handing over the conversation…" : `${AGENTS[agent].label} → ${AGENTS[pendingHarness.agent].label}. ${pendingHarness.request ? "Retry to finish the saved switch." : "Your next message will continue this chat on the selected harness."}`}
+        </InlineMessage>}
         <SessionComposer
           // Kept while a question or secrets card stands in for it, too.
           draftKey={`ws:${stateKey}`}
@@ -1376,7 +1468,7 @@ export function WorkspaceSession({
           }
           model={shownModel}
           modelChoice={modelChoice}
-          sendDisabledReason={switching ? "Wait for the harness or model change to finish" : undefined}
+          sendDisabledReason={switching ? "Wait for the harness or model change to finish" : pendingHarness?.request ? "Use Retry switch to finish the saved request. Your draft is kept." : undefined}
           allowAttachments={!local}
           sendError={connectionError ? null : (sendError?.message ?? null)}
           sendErrorNoRetry={sendIsDeadEnd(sendError?.code)}
@@ -1386,6 +1478,7 @@ export function WorkspaceSession({
           stop={stopNow}
           listFiles={startup ? undefined : listFiles}
         />
+        </>
       )}
     </div>
   );

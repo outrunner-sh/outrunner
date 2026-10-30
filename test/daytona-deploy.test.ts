@@ -361,11 +361,13 @@ test("claudeInstallScript brings an old Claude Code up to the pinned version", (
   assert.equal(box.tries().trim(), `sudo install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`);
 });
 
-test("restored Codex 0.128 is upgraded before account TUI startup", () => {
-  const box = claudeBox(CLAUDE_CODE_VERSION, { codexVersion: "0.128.0" });
-  const result = box.run();
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.equal(box.npm().trim(), `install -g ${CODEX_PACKAGE}`);
+test("restored Codex versions predating GPT-6.1 Sol are upgraded before account TUI startup", () => {
+  for (const codexVersion of ["0.128.0", "0.146.0", "0.156.1"]) {
+    const box = claudeBox(CLAUDE_CODE_VERSION, { codexVersion });
+    const result = box.run();
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(box.npm().trim(), `install -g ${CODEX_PACKAGE}`);
+  }
 });
 
 test("current and newer Codex versions are retained without npm", () => {
@@ -382,7 +384,7 @@ test("a shadowing old or unparseable Codex fails setup after an ineffective inst
     const box = claudeBox(CLAUDE_CODE_VERSION, { codexVersion, npmTakes: false });
     const result = box.run();
     assert.notEqual(result.status, 0);
-    assert.match(result.stdout, /Could not bring Codex .* up to 0\.146\.0/);
+    assert.ok(result.stdout.includes(`up to ${CODEX_CLI_VERSION}`), result.stdout);
     assert.equal(box.npm().trim(), `install -g ${CODEX_PACKAGE}`);
   }
 });

@@ -19,6 +19,20 @@ import (
 
 const fixtureSessionID = "01a1596f-41f4-7f30-88f4-b569d1b5bf76"
 
+func TestPaginatedPromptDeliveryCountsCanonicalUserItems(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "codex", "testdata", "rollout-0.162.1.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := countUserMessages(path); got != 1 {
+		t.Fatalf("counted %d prompts; injected context and message copies must not count", got)
+	}
+}
+
 // fixtureRollout is the real rollout in internal/codex/testdata, recorded in
 // folder instead of the redacted /work/repo.
 func fixtureRollout(t *testing.T, folder string) []byte {
@@ -146,8 +160,9 @@ func TestARolloutIsFoundByItsFolderAndRemembered(t *testing.T) {
 	if got := s.userTurns(id); got != 4 {
 		t.Errorf("userTurns = %d, want the rollout's 4 prompts", got)
 	}
-	// A rollout found is kept, newer ones notwithstanding, and resumed by id.
-	writeRollout(t, sessions, now, "rollout-2026-10-20T11-00-00-newer.jsonl", fixtureRollout(t, resolved), now.Add(time.Minute))
+	// A newer, different conversation cannot replace the session resumed by id.
+	other := bytes.ReplaceAll(fixtureRollout(t, resolved), []byte(fixtureSessionID), []byte("01a1596f-41f4-7f30-88f4-b569d1b5bf77"))
+	writeRollout(t, sessions, now, "rollout-2026-10-20T11-00-00-newer.jsonl", other, now.Add(time.Minute))
 	if got := s.codexRollout(id); got != own {
 		t.Errorf("codexRollout moved to %q", got)
 	}
@@ -168,6 +183,61 @@ func TestARolloutInASessionsOwnHomeIsItsNewest(t *testing.T) {
 	newest := writeRollout(t, sessions, now.AddDate(0, 0, -3), "rollout-b.jsonl", fixtureRollout(t, "/y"), now)
 	if got := s.codexRollout(id); got != newest {
 		t.Errorf("codexRollout = %q, want the newest in its own home %q", got, newest)
+	}
+}
+
+func TestCodexFollowsTheResumedRolloutInsteadOfAStaleCopy(t *testing.T) {
+	s, id, link, sessions := localCodexSession(t)
+	resolved, _ := filepath.EvalSymlinks(link)
+	data := fixtureRollout(t, resolved)
+	now := time.Now()
+	// A restored copy can be newer when the agent first discovers the log,
+	// while Codex resumes writing the original path for the same session ID.
+	live := writeRollout(t, sessions, now.AddDate(0, 0, -1), "rollout-original-"+fixtureSessionID+".jsonl", data, now.Add(-time.Minute))
+	copy := writeRollout(t, sessions, now, "rollout-restored-"+fixtureSessionID+".jsonl", data, now)
+	s.updateFacts(id, func(f *workspaceFacts) {
+		f.CodexSessionID, f.CodexRollout = fixtureSessionID, copy
+	})
+	tail := &codexTail{s: s, workspaceID: id}
+	drain(tail)
+	if got := s.userTurns(id); got != 4 {
+		t.Fatalf("initial prompt count = %d, want 4", got)
+	}
+
+	more := append(bytes.Clone(data), []byte(`{"timestamp":"2026-10-30T08:21:00Z","type":"event_msg","payload":{"type":"user_message","message":"what is happening?"}}`+"\n")...)
+	if err := os.WriteFile(live, more, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(live, now.Add(time.Second), now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	// A newer conversation in the same home must never take this one over.
+	otherID := "01a1596f-41f4-7f30-88f4-b569d1b5bf77"
+	other := bytes.ReplaceAll(data, []byte(fixtureSessionID), []byte(otherID))
+	writeRollout(t, sessions, now, "rollout-other-"+otherID+".jsonl", other, now.Add(time.Minute))
+	// The filename alone is not sufficient to establish the session ID.
+	writeRollout(t, sessions, now, "rollout-misnamed-"+fixtureSessionID+".jsonl", other, now.Add(time.Minute))
+
+	if got := s.userTurns(id); got != 5 {
+		t.Errorf("prompt count after Codex resumed = %d, want 5", got)
+	}
+	drain(tail)
+	if got := logUUIDs(t, []byte(readFileString(t, conversationPath(s.Root, id)))); !slices.Equal(got, translatedUUIDs(t, more)) {
+		t.Errorf("stream after resuming has %d records, want %d without duplicated history", len(got), len(translatedUUIDs(t, more)))
+	}
+	if f, _ := NewService(s.Root).getFacts(id); f.CodexRollout != live || f.CodexSessionID != fixtureSessionID {
+		t.Errorf("persisted facts point to %q, want the live rollout %q", f.CodexRollout, live)
+	}
+	// A later restore/touch of the shorter copy must not roll the stream or
+	// its prompt count back to the older snapshot.
+	writeRollout(t, sessions, now, "rollout-another-copy-"+fixtureSessionID+".jsonl", data, now.Add(2*time.Minute))
+	if got := s.userTurns(id); got != 5 {
+		t.Errorf("a newer stale copy changed the prompt count to %d, want 5", got)
+	}
+	// A retry of the message already recorded must not paste or submit it again.
+	s.sendLock(id).staged = &stagedPrompt{content: "what is happening?", baseline: 4, at: time.Now()}
+	if err := s.SendMessage(id, "what is happening?"); err != nil {
+		t.Errorf("retry of a delivered Codex prompt = %v, want success", err)
 	}
 }
 

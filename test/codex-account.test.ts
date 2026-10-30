@@ -375,6 +375,39 @@ test("membership removal while renewal waits prevents the upstream call", async 
   assert.equal(result.status, 403);
 });
 
+test("native account routing stays on the broker for personal and org connections and rejects revoked grants", async () => {
+  for (const key of ["personal:alice", "org:one"]) {
+    const f = fixture();
+    const row = await f.connect(key);
+    let allowed = true;
+    const proxy = createCodexProxy({
+      accounts: f.accounts,
+      brokerOrigin: "https://app.example",
+      readGrant: () => ({ purpose: "codex-inference", user: "alice", org: key.startsWith("org:") ? "one" : null, key, generation: row.generation }),
+      authorize: async () => {
+        if (!allowed) throw new CodexError("revoked", "Unavailable");
+      },
+      fetch: (async () => assert.fail("Routing must not expose or forward the provider account")) as typeof fetch,
+    });
+    const request = (path: string, method = "GET") => proxy(
+      new Request(`http://internal:3000/api/runtime/codex/${path}`, { method, headers: { authorization: "Bearer alice" } }),
+      { params: Promise.resolve({ path: path.split("/") }) },
+    );
+    const routing = await request("api/codex/accounts/check");
+    assert.equal(routing.status, 200);
+    assert.equal(routing.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await routing.json(), { accounts: [{ id: "outrunner", workspace_backend_origin: "https://app.example", account_routing_override: "NO_CONSTRAINT" }] });
+    for (const path of ["api/codex/tasks", "api/codex/config/bundle", "oauth/token"])
+      assert.equal((await request(path)).status, 404);
+    assert.equal((await request("api/codex/accounts/check", "POST")).status, 404);
+    allowed = false;
+    assert.equal((await request("api/codex/accounts/check")).status, 403);
+    allowed = true;
+    await f.store.change(key, "disconnect");
+    assert.equal((await request("api/codex/accounts/check")).status, 403);
+  }
+});
+
 test("actual scope resolver preserves personal/key precedence and checks current org membership after reading", async () => {
   const f = fixture();
   const shared = await f.connect("org:one");

@@ -29,6 +29,7 @@ import type { StartingPick } from "@/lib/onboarding/rules";
 import type { Project } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { newSessionDetails } from "@/lib/session/new-session-target";
+import { warmNewSession } from "@/lib/session/warm-new-session";
 
 /** One item in the row above the composer: where, what, which branch, how. */
 const CHIP = "inline-flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground [&_svg]:size-3.5";
@@ -320,6 +321,7 @@ export function NewSessionForm({
           // and however often "New Session" opens it, until it is sent; a
           // triage item's prompt has its own.
           draftKey={workItemId ? `new:triage:${workItemId}` : "new"}
+          onIntent={!local && selected ? () => warmNewSession(selected.id) : undefined}
         />
         {children}
       </div>

@@ -58,6 +58,8 @@ export function WorkspaceEnvironment({
   sender,
   coAuthor,
   onClose,
+  view,
+  onViewChange,
 }: {
   workspace: Workspace;
   local?: LocalSession;
@@ -69,32 +71,16 @@ export function WorkspaceEnvironment({
   coAuthor?: string | null;
   /** Closes the panel; shown where the panel covers the chat (narrow windows). */
   onClose: () => void;
+  view: "overview" | "changes" | "canvas";
+  onViewChange: (view: "overview" | "changes" | "canvas") => void;
 }) {
-  const [view, setView] = useState<"overview" | "changes" | "canvas">("overview");
-  // Focus follows the view: into the list's back arrow on the way in, back to
-  // the Changes row on the way out, so the keyboard is never left on nothing.
-  const changesRow = useRef<HTMLButtonElement>(null);
-  const canvasRow = useRef<HTMLButtonElement>(null);
-  const returnTo = useRef<"changes" | "canvas">("changes");
-  const backButton = useRef<HTMLButtonElement>(null);
-  const returning = useRef(false);
-  useEffect(() => {
-    if (view !== "overview") {
-      returnTo.current = view;
-      backButton.current?.focus();
-    } else if (returning.current) (returnTo.current === "canvas" ? canvasRow : changesRow).current?.focus();
-    returning.current = false;
-  }, [view]);
-  const backToOverview = () => {
-    returning.current = true;
-    setView("overview");
-  };
+  const backToOverview = () => onViewChange("overview");
   const [branchOpen, setBranchOpen] = useState(false);
   const changes = useWorkspaceChanges({ workspaceId: workspace.id, local: local !== undefined, active: isReady });
   const summary = environmentSummary(workspace, local);
 
-  // Both views stay mounted, the one not in use hidden: leaving the overview
-  // for Changes must not stop the watch for a pull request being opened.
+  // Keep the overview mounted under Changes and Canvas so its pull-request
+  // watch continues while another tab is shown.
   return (
     <>
       {view === "changes" && (
@@ -105,14 +91,13 @@ export function WorkspaceEnvironment({
             active={isReady}
             baseBranch={summary.baseBranch}
             onBack={backToOverview}
-            backRef={backButton}
             onClose={onClose}
           />
         </div>
       )}
       {view === "canvas" && (
         <div className="studio-env-body">
-          <WorkspaceCanvas workspaceId={workspace.id} active={isReady} onBack={backToOverview} backRef={backButton} />
+          <WorkspaceCanvas workspaceId={workspace.id} active={isReady} onBack={backToOverview} />
         </div>
       )}
       <div hidden={view !== "overview"} className="studio-env-body">
@@ -123,8 +108,7 @@ export function WorkspaceEnvironment({
         </div>
 
         <EnvRow
-          ref={changesRow}
-          onClick={() => setView("changes")}
+          onClick={() => onViewChange("changes")}
           icon={<Plus />}
           right={
             <>
@@ -139,7 +123,7 @@ export function WorkspaceEnvironment({
         {/* What the agent wrote for the user to read: a cloud session's,
             off its box. */}
         {!local && onRuntimeComputer(workspace.provider) && (
-          <EnvRow ref={canvasRow} onClick={() => setView("canvas")} icon={<PanelsTopLeft />} right={<ChevronRight />}>
+          <EnvRow onClick={() => onViewChange("canvas")} icon={<PanelsTopLeft />} right={<ChevronRight />}>
             Canvas
           </EnvRow>
         )}

@@ -141,11 +141,10 @@
 /* Workspace studio: the session screen. */
 .studio-shell {
   display: grid;
-  /* A header across the top; beneath it the chat, and its Environment panel
-     as a narrow column of rows on the same background, no rule between them (it
-     widens for Changes, below, where diffs open); just the chat when the
-     panel is closed. The app sidebar is the layout's, outside this grid. */
-  grid-template-columns: minmax(0, 1fr) 300px;
+  /* Every inspector tab shares one width, so switching panels never moves
+     the chat. The app's navigation sidebar is outside this grid. */
+  --studio-inspector-width: 440px;
+  grid-template-columns: minmax(0, 1fr) var(--studio-inspector-width);
   grid-template-rows: auto minmax(0, 1fr);
   /* Definite height (not min-height) so the grid tracks are bounded: the chat
      column's conversation scrolls internally and its composer stays pinned at
@@ -364,17 +363,21 @@
 .studio-env-merge svg { width: 13px; height: 13px; }
 .studio-env-merge:focus-visible { outline: 2px solid color-mix(in oklab, var(--color-positive) 60%, transparent); outline-offset: 2px; }
 .studio-env-merge[aria-busy="true"] { cursor: progress; }
-/* The right pane's tabs (lib/session/inspector-tabs.ts): a quiet strip over
-   its panel, there only where the pane has more than one. */
-.studio-tabs { display: flex; flex-shrink: 0; align-items: center; gap: 2px; padding: 8px 12px 0; }
-.studio-tab { height: 28px; padding: 0 8px; border-radius: 6px; color: rgba(255,255,255,.5); background: transparent; font-size: 13px; cursor: pointer; transition: background-color .15s, color .15s; }
+/* A fixed toolbar above the independently scrolling panel. Only the active
+   tab shows its label; every icon keeps its accessible name and tooltip. */
+.studio-inspector { min-width: 0; border-left: 1px solid var(--studio-line); }
+.studio-inspector-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 8px; min-height: 52px; padding: 8px 12px; }
+.studio-tabs { display: flex; min-width: 0; align-items: center; gap: 4px; }
+.studio-tab { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 8px; height: 36px; min-width: 36px; padding: 0 10px; border-radius: 7px; color: rgba(255,255,255,.5); background: transparent; font-size: 13px; cursor: pointer; transition: background-color .15s, color .15s; }
+.studio-tab svg { width: 18px; height: 18px; }
 .studio-tab:hover { color: var(--studio-text); background: rgba(255,255,255,.04); }
 .studio-tab[aria-selected="true"] { color: var(--studio-text); background: rgba(255,255,255,.07); }
 .studio-tab:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
-.studio-tabpanel { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; }
+.studio-tabpanel { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.studio-tabpanel .studio-env-close { display: none; }
 /* The Desktop tab (components/workspace-desktop.tsx): the box's desktop at the
-   pane's width, at its own 16:10, its state and controls above it. */
-.studio-desktop { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; padding: 8px 12px 12px; overflow-y: auto; background: var(--studio-bg); }
+   pane's fixed width, scaled to fit the available height. */
+.studio-desktop { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; min-height: 0; padding: 0 12px 12px; overflow: hidden; background: var(--studio-bg); }
 .studio-desktop-bar { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; height: 32px; padding: 0 8px; color: rgba(255,255,255,.55); font-size: 13px; }
 .studio-desktop-state { display: inline-flex; align-items: center; gap: 8px; }
 .studio-desktop-actions { display: inline-flex; align-items: center; gap: 4px; }
@@ -384,7 +387,7 @@
 .studio-desktop-toggle svg { width: 13px; height: 13px; }
 /* Interact on: lit like the composer's Send, so it's plain the pointer reaches the box. */
 .studio-desktop-toggle[aria-pressed="true"], .studio-desktop-toggle[aria-pressed="true"]:hover { color: #0a0a0a; border-color: #ededed; background: #ededed; }
-.studio-desktop-screen { position: relative; flex-shrink: 0; width: 100%; aspect-ratio: 16 / 10; margin-top: 6px; overflow: hidden; border: 1px solid var(--studio-border); border-radius: 4px; background: #0a0a0a; }
+.studio-desktop-screen { position: relative; flex: 1 1 0; min-height: 0; width: 100%; margin-top: 6px; overflow: hidden; border: 1px solid var(--studio-border); border-radius: 8px; background: #0a0a0a; }
 .studio-desktop-screen.is-interacting { border-color: rgba(255,255,255,.4); }
 .studio-desktop-canvas { position: absolute; inset: 0; }
 .studio-desktop-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 16px; color: var(--studio-muted); font-size: 13px; text-align: center; }
@@ -396,10 +399,6 @@
 .studio-desktop:fullscreen .studio-desktop-bar { padding: 0 12px; }
 .studio-desktop:fullscreen .studio-desktop-screen { flex: 1 1 0; aspect-ratio: auto; margin: 0; border: 0; border-radius: 0; }
 .studio-desktop:fullscreen .studio-desktop-note { display: none; }
-/* A 1280×800 desktop in the rows' 300px is a thumbnail: the pane widens while
-   the Desktop tab is open, and its overlay on narrow windows likewise. */
-@media (min-width: 1101px) { .studio-shell.desktop-open:not(.no-inspector) { grid-template-columns: minmax(0, 1fr) min(45vw, 720px); } }
-@media (max-width: 1100px) { .studio-shell.desktop-open .studio-inspector { width: min(720px, 92vw); } }
 /* Previews (components/workspace-previews.tsx): icon actions, the mode pill, and the inline questions. */
 .studio-preview-action { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; color: rgba(255,255,255,.5); background: transparent; cursor: pointer; transition: background-color .15s, color .15s; }
 .studio-preview-action:hover { color: var(--studio-text); background: rgba(255,255,255,.06); }
@@ -416,25 +415,9 @@
 .studio-preview-confirm:disabled, .studio-preview-cancel:disabled { cursor: not-allowed; opacity: .5; }
 .studio-preview-cancel { display: inline-flex; align-items: center; height: 26px; padding: 0 8px; border-radius: 6px; color: rgba(255,255,255,.55); background: transparent; font-size: 12px; cursor: pointer; }
 .studio-preview-cancel:hover { color: var(--studio-text); background: rgba(255,255,255,.06); }
-/* Conductor-style changes: a single scrollable list of files, each an inline
-   expandable diff (no separate select-a-file pane). */
-/* Scoped to wide screens so it can't out-specify the responsive breakpoints
-   (media queries add no specificity) and crush the chat column on phones. */
+/* All tabs, including open diffs and Canvas files, stay inside the same
+   column. Their contents scroll without changing the surrounding layout. */
 @media (min-width: 1101px) {
-  /* Changes lists diffs, which want more room than the rows do. The panel
-     widens over the chat's empty margin rather than taking a wider column,
-     so opening it leaves the conversation and its composer where they are:
-     its width is the margin beside the 736px chat, less a 16px gap (the
-     shell is the container), never less than 360px nor more than 640px. */
-  .studio-shell { position: relative; container-type: inline-size; }
-  .studio-shell:has(.studio-changes) .studio-inspector {
-    position: absolute; z-index: 5; top: 44px; right: 0; bottom: 0;
-    width: clamp(360px, calc(284px + (100cqw - 1036px) / 2), 640px);
-    border-left: 1px solid var(--studio-line); box-shadow: -16px 0 32px rgba(0,0,0,.35);
-  }
-  /* The Canvas: wider still with a file open, a page or a plan to read. */
-  .studio-shell:has(.studio-canvas) { grid-template-columns: minmax(0, 1fr) minmax(360px, 0.5fr); }
-  .studio-shell:has(.studio-canvas.is-open) { grid-template-columns: minmax(0, 1fr) minmax(420px, 0.8fr); }
   .studio-shell.no-inspector { grid-template-columns: minmax(0, 1fr); }
 }
 .studio-changes { display: flex; flex-direction: column; height: 100%; min-height: 0; }

@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"runtime-agent/internal/testtls"
 )
 
 // Optional real-native-CLI probe. No provider account/network is involved:
@@ -24,7 +26,15 @@ func TestAccountNativeCLIUsesHostManagedBroker(t *testing.T) {
 		t.Skip("CODEX_TEST_BINARY isn't set")
 	}
 	var inference atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	var cert string
+	server, cert = testtls.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Logf("Broker request: %s %s", r.Method, r.URL.Path)
+		if r.URL.Path == "/api/runtime/codex/api/codex/accounts/check" {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"accounts":[{"id":"outrunner","workspace_backend_origin":%q,"account_routing_override":"NO_CONSTRAINT"}]}`, server.URL)
+			return
+		}
 		if r.URL.Path == "/api/runtime/codex/models" {
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, `{"models":[]}`)
@@ -40,7 +50,7 @@ func TestAccountNativeCLIUsesHostManagedBroker(t *testing.T) {
 		inference.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		events := []string{`{"type":"response.created","response":{"id":"r1"}}`,
-			`{"type":"response.output_item.done","output_index":0,"item":{"id":"m1","type":"message","role":"assistant","content":[{"type":"output_text","text":"broker verified"}]}}`,
+			`{"type":"response.output_item.done","output_index":0,"item":{"id":"m1","type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"broker verified"}]}}`,
 			`{"type":"response.completed","response":{"id":"r1","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}`}
 		for _, event := range events {
 			fmt.Fprintf(w, "data: %s\n\n", event)
@@ -62,7 +72,7 @@ func TestAccountNativeCLIUsesHostManagedBroker(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, "exec", "--skip-git-repo-check", "--sandbox", "read-only", "-m", "gpt-6.1-sol", "Return broker verified.")
-	command.Env = []string{"HOME=" + home, "CODEX_HOME=" + home, "PATH=" + os.Getenv("PATH")}
+	command.Env = []string{"HOME=" + home, "CODEX_HOME=" + home, "PATH=" + os.Getenv("PATH"), "CODEX_CA_CERTIFICATE=" + cert, "SSL_CERT_FILE=" + cert}
 	command.Dir = home
 	out, err := command.CombinedOutput()
 	if err != nil {
@@ -89,7 +99,7 @@ func TestAccountNativeCLIUsesHostManagedBroker(t *testing.T) {
 		run := func(args ...string) string {
 			t.Helper()
 			cmd := exec.CommandContext(ctx, "tmux", append([]string{"-L", socket}, args...)...)
-			cmd.Env = []string{"HOME=" + home, "CODEX_HOME=" + home, "PATH=" + os.Getenv("PATH")}
+			cmd.Env = command.Env
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("tmux %s: %v: %s", args[0], err, out)
@@ -112,7 +122,7 @@ func TestAccountNativeCLIUsesHostManagedBroker(t *testing.T) {
 			if strings.TrimSpace(run("display-message", "-p", "-t", "fixture:codex", "#{pane_dead}")) == "1" {
 				t.Fatalf("native interactive startup exited: %s", pane)
 			}
-			if time.Since(launched) >= 2*time.Second && strings.Contains(pane, "›") && strings.Contains(pane, "gpt-6.1-sol") && strings.Contains(pane, " · ") && !strings.Contains(pane, "Press enter to") {
+			if time.Since(launched) >= 2*time.Second && strings.Contains(pane, "›") && strings.Contains(strings.ToLower(pane), "gpt-6.1-sol") && strings.Contains(pane, " · ") && !strings.Contains(pane, "Press enter to") {
 				ready = true
 				break
 			}

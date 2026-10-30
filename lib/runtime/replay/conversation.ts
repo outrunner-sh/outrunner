@@ -88,6 +88,13 @@ function decodeLine(line: string): AgentEvent | null {
     return null; // tolerate unparseable lines
   }
   if (!isObject(rec)) return null;
+  if (rec.type === "outrunner_harness_switch" && isObject(rec.outrunnerHarness)) {
+    const h = rec.outrunnerHarness;
+    if ((h.from === "claude" || h.from === "codex") && (h.agent === "claude" || h.agent === "codex")) {
+      return { t: "message", uuid: typeof rec.uuid === "string" ? rec.uuid : "", parentUuid: null, role: "assistant", timestamp: "", content: [], harness: { from: h.from, to: h.agent, ...(h.selection ? { selection: h.selection } : {}) } };
+    }
+    return null;
+  }
   if (rec.type === "attachment") return decodeQueuedPrompt(rec);
   if (rec.type === "system" && rec.subtype === "compact_boundary") return compaction(rec);
   if (rec.type !== "user" && rec.type !== "assistant") return null; // whitelist
@@ -123,6 +130,7 @@ function decodeLine(line: string): AgentEvent | null {
     // unexpected role as "assistant".
     role: (typeof message.role === "string" ? message.role : "") as "user" | "assistant",
     ...(model ? { model } : {}),
+    ...(typeof message.stop_reason === "string" && message.stop_reason ? { stopReason: message.stop_reason } : {}),
     // Claude's injected record (a skill's instructions, a reminder); mirrors the
     // Go `omitempty`, so it's set only when true and replay stays byte-equivalent.
     ...(rec.isMeta === true ? { meta: true } : {}),

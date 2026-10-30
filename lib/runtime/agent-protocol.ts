@@ -445,6 +445,9 @@ export type AnswerRequest = z.infer<typeof AnswerRequest>;
  *  (POST /workspaces/{id}/secrets). */
 export const AGENT_FEATURE_REQUEST_SECRETS = "request-secrets";
 
+/** Codex request_secrets, including forms for calls made inside code mode. */
+export const AGENT_FEATURE_CODEX_SECRETS = "codex-request-secrets";
+
 /**
  * POST /workspaces/{id}/secrets: the user's answer to the request for
  * secrets the session is waiting on (runtime-agent/internal/ask/secrets.go).
@@ -803,6 +806,8 @@ export const Activity = z.object({
   /** RFC3339 UTC. */
   lastActivity: z.string(),
   turnInProgress: z.boolean(),
+  /** Version 1 distinguishes commentary from completion; older agents are unsafe to pause. */
+  turnTrackingVersion: z.number().optional(),
 });
 export type Activity = z.infer<typeof Activity>;
 
@@ -858,6 +863,7 @@ const ReplyUsage = z.object({
 });
 
 export const ConversationMessage = z.object({
+  harness: z.object({ from: z.enum(["claude", "codex"]), to: z.enum(["claude", "codex"]), selection: z.unknown().optional() }).optional(),
   t: z.literal("message"),
   uuid: z.string(),
   parentUuid: z.string().nullable(),

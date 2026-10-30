@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { CreateWorkspaceRequest } from "@/lib/runtime/agent-protocol";
-import { bullets, commitAttributionSection, EVIDENCE_RULES, evidenceToolsFor, PR_BODY_TEMPLATE, prFooter, prGuide } from "@/lib/session/pr-template";
+import { bullets, commitAttributionSection, EVIDENCE_REPLY_RULE, EVIDENCE_RULES, evidenceToolsFor, PR_BODY_TEMPLATE, prFooter, prGuide } from "@/lib/session/pr-template";
 
 const INPUT = {
   tools: { desktop: true },
@@ -68,6 +68,7 @@ test("only Daytona's boxes have a desktop", () => {
 
 test("a session's standing guide has the template, the evidence flow and its footer", () => {
   const guide = prGuide({ ...INPUT, coAuthors: ["Ada <1+ada@users.noreply.github.com>"] });
+  assert.ok(guide.includes(EVIDENCE_REPLY_RULE), "the standing guide requires PR evidence in the final chat reply");
   assert.match(guide, /^# Pull requests\n\nWhenever you open or update a pull request, write it this way\./);
   assert.match(guide, /Every commit made for this pull request must credit the user who prompted the work/);
   assert.match(guide, /Co-Authored-By: Ada <1\+ada@users\.noreply\.github\.com>/);
@@ -78,6 +79,7 @@ test("a session's standing guide has the template, the evidence flow and its foo
   // Without a desktop: the fallback, and none of the desktop's steps.
   const without = prGuide({ ...INPUT, tools: { desktop: false } });
   assert.match(without, /Still use the template, and don't fail the PR/);
+  assert.ok(without.includes(EVIDENCE_REPLY_RULE), "evidence sharing applies even without a built-in desktop");
   assert.doesNotMatch(without, /record_start|get\.docker\.com/);
   // It rides with the session's create, within the protocol's bound.
   assert.ok(CreateWorkspaceRequest.safeParse({ workspaceId: "w", repoFullName: "a/b", branch: "b", baseBranch: "main", guide }).success);

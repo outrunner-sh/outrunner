@@ -8,8 +8,8 @@
  *              error), or it is stuck
  *   working    the agent is mid-turn (or the session is setting up)
  *   in_review  its pull request is open
- *   done       its pull request merged, or it is idle with nothing pending
- *   backlog    quiet for three days, with no pull request
+ *   done       its pull request merged
+ *   backlog    idle without a merged or open pull request
  *
  * Worked out on the server from what it records (session_activity, the pull
  * request's state, the user's marks), so every tab and the Mac app agree; the
@@ -25,6 +25,9 @@ import { isSettingUp, SETUP_STALLS_AFTER_MS } from "@/lib/session/provisioning";
 
 export const STANDINGS = ["needs_you", "working", "in_review", "done", "backlog"] as const;
 export type Standing = (typeof STANDINGS)[number];
+
+/** Done follows a merged pull request and cannot be assigned by hand. */
+export const MOVABLE_STANDINGS = STANDINGS.filter((standing) => standing !== "done");
 
 export function isStanding(value: unknown): value is Standing {
   return typeof value === "string" && (STANDINGS as readonly string[]).includes(value);
@@ -56,7 +59,7 @@ export const REASON_LABEL: Record<NeedsYouReason, string> = {
  *  slow test suite. */
 export const STUCK_AFTER_MS = 30 * 60_000;
 
-/** Quiet this long with no pull request, a session is backlog. */
+/** An unread reply or error this old no longer needs attention. */
 export const BACKLOG_AFTER_MS = 3 * 24 * 60 * 60_000;
 
 /** What the server keeps of a session's agent (session_activity). */
@@ -126,7 +129,7 @@ export function sessionStanding({ workspace, activity, pullRequest, mark, owner,
   const movedAt = mark?.movedAt ? Date.parse(mark.movedAt) : NaN;
   const needsYouSinceMove =
     auto.standing === "needs_you" && !(Date.parse(auto.since ?? "") <= movedAt);
-  const moved = Boolean(mark?.movedTo) && !needsYouSinceMove;
+  const moved = Boolean(mark?.movedTo && mark.movedTo !== "done") && !needsYouSinceMove;
   const standing = moved ? (mark!.movedTo as Standing) : auto.standing;
   return {
     standing,
@@ -192,11 +195,7 @@ function automatic({
   }
   if (pullRequest?.state === "merged") return { standing: "done", reason: null, since: null };
   if (open) return { standing: "in_review", reason: null, since: null };
-  const quietSince = latest(workspace.lastActiveAt, activity?.eventAt, activity?.repliedAt, workspace.createdAt);
-  if (!pullRequest && quietSince && now - Date.parse(quietSince) >= BACKLOG_AFTER_MS) {
-    return { standing: "backlog", reason: null, since: null };
-  }
-  return { standing: "done", reason: null, since: null };
+  return { standing: "backlog", reason: null, since: null };
 }
 
 /** The latest of some times; null when none can be read. */

@@ -9,6 +9,7 @@ import {
   CircleCheck,
   CircleDashed,
   Ellipsis,
+  GitMerge,
   GitPullRequest,
   Pin,
   PinOff,
@@ -17,7 +18,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { Spinner } from "@/components/ui/loaders";
+import { Spinner, ThinkingIcon } from "@/components/ui/loaders";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,7 +35,8 @@ import { markSession } from "@/hooks/use-standings";
 import { useSkeletonSwap } from "@/hooks/use-skeleton-swap";
 import { relativeTime, type SessionDeletion, type SidebarSession } from "@/lib/nav/sidebar";
 import { shownRows, type StatusRow, type StatusSection } from "@/lib/nav/status-groups";
-import { isStanding, REASON_LABEL, STANDING_LABEL, STANDINGS, type SessionStanding } from "@/lib/session/standing";
+import type { WorkspacePullRequest } from "@/lib/runtime/types";
+import { isStanding, REASON_LABEL, STANDING_LABEL, MOVABLE_STANDINGS, type SessionStanding } from "@/lib/session/standing";
 import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
 import { cn } from "@/lib/utils";
 
@@ -42,19 +44,21 @@ import { cn } from "@/lib/utils";
  * The sidebar's sessions by where they stand (lib/nav/status-groups.ts): a
  * heading for each group, folded with its chevron like a project, and its
  * sessions, each with a mark for its standing, a dot for a reply not seen,
- * and a menu to pin it, move it, archive or delete it.
+ * and a menu to pin it, move it or delete it.
  */
 export function StatusSections({
   sections,
+  pullRequests,
   active,
   now,
   folded,
   searching,
   onToggle,
   onDelete,
-  onArchive,
 }: {
   sections: StatusSection[];
+  /** The pull request each cloud session shows, keyed by workspace id. */
+  pullRequests: Record<string, WorkspacePullRequest>;
   active?: string;
   now: number;
   /** Fold keys: `status:<section key>`. */
@@ -62,7 +66,6 @@ export function StatusSections({
   searching: boolean;
   onToggle: (key: string) => void;
   onDelete: (session: { id: string; title: string; deletion: SessionDeletion }) => void;
-  onArchive: (session: { id: string; title: string }) => void;
 }) {
   // Sections opened past their first few rows, for this visit.
   const [expanded, setExpanded] = useState<string[]>([]);
@@ -96,7 +99,14 @@ export function StatusSections({
               />
             </button>
             {rows.map((row) => (
-              <StatusRowLink key={row.id} row={row} active={row.id === active} now={now} onDelete={onDelete} onArchive={onArchive} />
+              <StatusRowLink
+                key={row.id}
+                row={row}
+                merged={pullRequests[row.id]?.state === "merged"}
+                active={row.id === active}
+                now={now}
+                onDelete={onDelete}
+              />
             ))}
             {hidden > 0 && (
               <button
@@ -116,16 +126,16 @@ export function StatusSections({
 
 function StatusRowLink({
   row,
+  merged,
   active,
   now,
   onDelete,
-  onArchive,
 }: {
   row: StatusRow;
+  merged: boolean;
   active: boolean;
   now: number;
   onDelete: (session: { id: string; title: string; deletion: SessionDeletion }) => void;
-  onArchive: (session: { id: string; title: string }) => void;
 }) {
   const { standing } = row;
   // As the project view's rows: a cloud session warms as the pointer rests.
@@ -148,7 +158,7 @@ function StatusRowLink({
               : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
         )}
       >
-        <StandingMark standing={standing} />
+        <StandingMark standing={standing} merged={merged} />
         <span className={cn("min-w-0 flex-1 truncate", standing.unread && "font-medium")}>{row.title}</span>
         {standing.unread && (
           <span aria-label="New reply" title="A reply you haven't seen" className="size-1.5 shrink-0 rounded-full bg-sky-400" />
@@ -163,7 +173,6 @@ function StatusRowLink({
         markable={row.markable}
         standing={standing}
         onDelete={onDelete}
-        onArchive={onArchive}
         className="absolute right-1 top-1/2 -translate-y-1/2"
       />
     </div>
@@ -179,18 +188,31 @@ function rowTooltip(row: StatusRow): string {
 }
 
 /** A session's standing at a glance, in the space a project row's icon has. */
-export function StandingMark({ standing, className }: { standing: SessionStanding; className?: string }) {
+export function StandingMark({
+  standing,
+  merged = false,
+  className,
+}: {
+  standing: SessionStanding;
+  /** A Done session whose pull request was merged. */
+  merged?: boolean;
+  className?: string;
+}) {
   const label = standing.reason ? REASON_LABEL[standing.reason] : STANDING_LABEL[standing.standing];
   const box = cn("size-3.5 shrink-0", className);
   switch (standing.standing) {
     case "needs_you":
       return <CircleAlert aria-label={label} className={cn(box, "text-amber-400")} />;
     case "working":
-      return <Spinner label={label} className={cn(box, "text-muted-foreground")} />;
+      return <ThinkingIcon label={label} className={box} />;
     case "in_review":
       return <GitPullRequest aria-label={label} className={cn(box, "text-emerald-400")} />;
     case "done":
-      return <CircleCheck aria-label={label} className={cn(box, "text-muted-foreground")} />;
+      return merged ? (
+        <GitMerge aria-label="Merged pull request" className={cn(box, "text-[#c4b5fd]")} />
+      ) : (
+        <CircleCheck aria-label={label} className={cn(box, "text-muted-foreground")} />
+      );
     case "backlog":
       return <CircleDashed aria-label={label} className={cn(box, "text-muted-foreground/70")} />;
   }
@@ -198,7 +220,7 @@ export function StandingMark({ standing, className }: { standing: SessionStandin
 
 /**
  * A session's menu: Pin, Move to (a group by hand, or back to Automatic),
- * Archive and Delete, each where it applies. Shown on the row's hover, as
+ * and Delete, each where it applies. Shown on the row's hover, as
  * its buttons were.
  */
 export function SessionMenu({
@@ -206,19 +228,17 @@ export function SessionMenu({
   markable,
   standing,
   onDelete,
-  onArchive,
   className,
 }: {
-  session: Pick<SidebarSession, "id" | "title" | "deletion" | "archive">;
+  session: Pick<SidebarSession, "id" | "title" | "deletion">;
   /** A cloud session: Pin and Move to are offered. */
   markable: boolean;
   standing: SessionStanding | undefined;
   onDelete: (session: { id: string; title: string; deletion: SessionDeletion }) => void;
-  onArchive: (session: { id: string; title: string }) => void;
   className?: string;
 }) {
-  const { deletion, archive } = session;
-  if (!markable && !deletion && !archive) return null;
+  const { deletion } = session;
+  if (!markable && !deletion) return null;
   const mark = (change: Parameters<typeof markSession>[1]) => {
     void markSession(session.id, change).catch((error: unknown) => {
       console.error(`Couldn't change ${session.id}'s marks`, error);
@@ -256,7 +276,7 @@ export function SessionMenu({
                   {/* Where the server puts it, as its agent and pull request go. */}
                   <DropdownMenuRadioItem value="auto">Automatic</DropdownMenuRadioItem>
                   <DropdownMenuSeparator />
-                  {STANDINGS.map((s) => (
+                  {MOVABLE_STANDINGS.map((s) => (
                     <DropdownMenuRadioItem key={s} value={s}>
                       {STANDING_LABEL[s]}
                     </DropdownMenuRadioItem>
@@ -266,17 +286,7 @@ export function SessionMenu({
             </DropdownMenuSub>
           </>
         )}
-        {markable && standing && (archive || deletion) && <DropdownMenuSeparator />}
-        {archive && (
-          <DropdownMenuItem
-            disabled={!archive.can}
-            title={archive.can ? undefined : archive.why}
-            onSelect={() => onArchive({ id: session.id, title: session.title })}
-          >
-            <Archive />
-            Archive
-          </DropdownMenuItem>
-        )}
+        {markable && standing && deletion && <DropdownMenuSeparator />}
         {deletion && (
           <DropdownMenuItem
             variant="destructive"
