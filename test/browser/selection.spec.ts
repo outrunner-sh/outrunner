@@ -118,3 +118,39 @@ test("onboarding's Codex harness choice survives an obsolete suggested model ID"
   await expect(page).toHaveURL(/\/new$/);
   await expect(page.getByRole("button", { name: /^Harness: Codex.*Account coding model/ })).toBeVisible();
 });
+
+const glmDefault = { ...selectionMenu, loadout: { models: [], default: null } };
+
+test("new sessions inherit the active session selection across navigation, reset and reload", async ({ page }) => {
+  const state = await fixture(page, false, glmDefault);
+  await open(page, "/workspaces/preview-0");
+  await menu(page, "Effort");
+  await page.getByRole("menuitemradio", { name: "Low", exact: true }).click();
+  await expect.poll(() => state.stored().effort).toBe("low");
+  await expect(page.getByRole("button", { name: /^Harness: Codex.*Low effort/ })).toBeVisible();
+  await page.keyboard.press("Control+n");
+  await expect(page).toHaveURL(/\/new$/);
+  await expect(page.getByRole("button", { name: /^Harness: Codex.*Account coding model.*Low effort/ })).toBeVisible();
+  await page.keyboard.press("Control+n");
+  await expect(page.getByRole("button", { name: /^Harness: Codex.*Low effort/ })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("button", { name: /^Harness: Codex.*Low effort/ })).toBeVisible();
+  await page.getByRole("textbox", { name: "Message Codex" }).fill("Use the most recent provider");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page).toHaveURL(/\/workspaces\//);
+  expect(state.evidence).toContainEqual(expect.objectContaining({ stage: "client request", body: expect.objectContaining({ agent: "codex", provider: "codex", model: "account-code", effort: "low" }) }));
+});
+
+test("cold-start home and new-session routes use the latest recorded session before defaults", async ({ page }) => {
+  await fixture(page, false, glmDefault);
+  for (const path of ["/?state=recent-selection", "/new?state=recent-selection"]) {
+    await page.goto(path);
+    await expect(page.getByRole("button", { name: /^Harness: Codex.*Account coding model.*Low effort/ })).toBeVisible();
+  }
+});
+
+test("an unavailable recent provider falls back to the eligible default", async ({ page }) => {
+  await fixture(page, false, { ...glmDefault, codexModels: [], agents: { ...glmDefault.agents, codex: { cloud: false, local: false } } });
+  await page.goto("/new?state=recent-selection");
+  await expect(page.getByRole("button", { name: /^Harness: Claude Code.*GLM/ })).toBeVisible();
+});

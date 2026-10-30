@@ -56,7 +56,11 @@ export function FixtureFrame({ children }: { children: React.ReactNode }) {
         },
       };
     }
-    return frame;
+    if (state === "recent-selection") {
+      return { ...frame, activeOrgId: "org-1", appData: { ...frame.appData, workspaces: frame.appData.workspaces.map((workspace, i) =>
+        i === 0 ? { ...workspace, agent: "codex" as const, model: { model: { id: "account-code", provider: "codex" as const, label: "Account coding model" }, effort: "low" as const } } : workspace) } };
+    }
+    return { ...frame, activeOrgId: "org-1" };
   }, [state]);
   if (params.get("view") === "settings") return children;
   return (
