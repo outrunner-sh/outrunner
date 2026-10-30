@@ -19,6 +19,46 @@ const exhaustedChat = `{"type":"user","uuid":"request","message":{"role":"user",
 {"type":"assistant","uuid":"limit","message":{"role":"assistant","model":"<synthetic>","content":"You've hit your limit; resets tomorrow"}}
 `
 
+const claudeLimitMenu = `You've hit your weekly limit · resets Nov 1, 3pm (UTC)
+   What do you want to do?
+   ❯ 1. Stop and wait for limit to reset
+     2. Wait here, then continue automatically at Nov 1, 3pm
+   Enter to confirm · Esc to cancel
+`
+
+func TestHarnessDismissesOnlyTheClaudeQuotaMenu(t *testing.T) {
+	for _, tc := range []struct {
+		name, pane string
+		quota      bool
+	}{
+		{"quota", claudeLimitMenu, true},
+		{"quoted", claudeLimitMenu + composerPane, false},
+		{"approval", realPane(t, "plan-menu"), false},
+		{"trust", realPane(t, "trust"), false},
+		{"permission", "  ❯ 1. Yes\n    2. No\nEnter to confirm · Esc to cancel", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isClaudeLimitDialog(tc.pane); got != tc.quota {
+				t.Fatalf("quota dialog = %t, want %t", got, tc.quota)
+			}
+		})
+	}
+	s, fake, id := harnessFixture(t)
+	s.updateFacts(id, func(f *workspaceFacts) { f.Agent = AgentClaude })
+	writeTranscript(t, s, id, "source.jsonl", exhaustedChat, 0)
+	fake.pane = claudeLimitMenu
+	fake.onKey = func(key string) string {
+		if key == "Escape" {
+			return composerPane + "\n› Ask anything\nfixture high · folder"
+		}
+		return ""
+	}
+	in := harnessChoice("quota-menu", AgentClaude, AgentCodex)
+	if _, err := s.SwitchHarness(context.Background(), id, in); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func harnessFixture(t *testing.T) (*Service, *fakeSessions, string) {
 	t.Helper()
 	s, _ := cloudSession(t, CreateInput{WorkspaceID: "ws-harness", Branch: "b", BaseBranch: "main", Agent: AgentCodex})

@@ -210,7 +210,9 @@ func (s *Service) SwitchHarness(ctx context.Context, id string, in HarnessInput)
 	if in.Auth.Kind != AuthNone && authAgent[in.Auth.Kind] != in.Agent {
 		return nil, ErrAuthMismatch
 	}
-	if s.awaitingAnswer(base, id, sessionName(id)) {
+	pane, paneErr := s.tmux.CapturePane(base, sessionName(id))
+	if paneErr == nil && s.agentFor(id).awaitsAnswer(pane) &&
+		!(agentOrClaude(f.Agent) == AgentClaude && isClaudeLimitDialog(pane)) {
 		return nil, errAwaitsAnswer
 	}
 	if in.Resume {
