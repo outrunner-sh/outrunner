@@ -9,6 +9,7 @@ import {
   CircleCheck,
   CircleDashed,
   Ellipsis,
+  GitMerge,
   GitPullRequest,
   Pin,
   PinOff,
@@ -34,6 +35,7 @@ import { markSession } from "@/hooks/use-standings";
 import { useSkeletonSwap } from "@/hooks/use-skeleton-swap";
 import { relativeTime, type SessionDeletion, type SidebarSession } from "@/lib/nav/sidebar";
 import { shownRows, type StatusRow, type StatusSection } from "@/lib/nav/status-groups";
+import type { WorkspacePullRequest } from "@/lib/runtime/types";
 import { isStanding, REASON_LABEL, STANDING_LABEL, STANDINGS, type SessionStanding } from "@/lib/session/standing";
 import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
 import { cn } from "@/lib/utils";
@@ -46,6 +48,7 @@ import { cn } from "@/lib/utils";
  */
 export function StatusSections({
   sections,
+  pullRequests,
   active,
   now,
   folded,
@@ -55,6 +58,8 @@ export function StatusSections({
   onArchive,
 }: {
   sections: StatusSection[];
+  /** The pull request each cloud session shows, keyed by workspace id. */
+  pullRequests: Record<string, WorkspacePullRequest>;
   active?: string;
   now: number;
   /** Fold keys: `status:<section key>`. */
@@ -96,7 +101,15 @@ export function StatusSections({
               />
             </button>
             {rows.map((row) => (
-              <StatusRowLink key={row.id} row={row} active={row.id === active} now={now} onDelete={onDelete} onArchive={onArchive} />
+              <StatusRowLink
+                key={row.id}
+                row={row}
+                merged={pullRequests[row.id]?.state === "merged"}
+                active={row.id === active}
+                now={now}
+                onDelete={onDelete}
+                onArchive={onArchive}
+              />
             ))}
             {hidden > 0 && (
               <button
@@ -116,12 +129,14 @@ export function StatusSections({
 
 function StatusRowLink({
   row,
+  merged,
   active,
   now,
   onDelete,
   onArchive,
 }: {
   row: StatusRow;
+  merged: boolean;
   active: boolean;
   now: number;
   onDelete: (session: { id: string; title: string; deletion: SessionDeletion }) => void;
@@ -148,7 +163,7 @@ function StatusRowLink({
               : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
         )}
       >
-        <StandingMark standing={standing} />
+        <StandingMark standing={standing} merged={merged} />
         <span className={cn("min-w-0 flex-1 truncate", standing.unread && "font-medium")}>{row.title}</span>
         {standing.unread && (
           <span aria-label="New reply" title="A reply you haven't seen" className="size-1.5 shrink-0 rounded-full bg-sky-400" />
@@ -179,7 +194,16 @@ function rowTooltip(row: StatusRow): string {
 }
 
 /** A session's standing at a glance, in the space a project row's icon has. */
-export function StandingMark({ standing, className }: { standing: SessionStanding; className?: string }) {
+export function StandingMark({
+  standing,
+  merged = false,
+  className,
+}: {
+  standing: SessionStanding;
+  /** A Done session whose pull request was merged. */
+  merged?: boolean;
+  className?: string;
+}) {
   const label = standing.reason ? REASON_LABEL[standing.reason] : STANDING_LABEL[standing.standing];
   const box = cn("size-3.5 shrink-0", className);
   switch (standing.standing) {
@@ -190,7 +214,11 @@ export function StandingMark({ standing, className }: { standing: SessionStandin
     case "in_review":
       return <GitPullRequest aria-label={label} className={cn(box, "text-emerald-400")} />;
     case "done":
-      return <CircleCheck aria-label={label} className={cn(box, "text-muted-foreground")} />;
+      return merged ? (
+        <GitMerge aria-label="Merged pull request" className={cn(box, "text-[#c4b5fd]")} />
+      ) : (
+        <CircleCheck aria-label={label} className={cn(box, "text-muted-foreground")} />
+      );
     case "backlog":
       return <CircleDashed aria-label={label} className={cn(box, "text-muted-foreground/70")} />;
   }

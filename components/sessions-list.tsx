@@ -308,7 +308,7 @@ export function SessionsList() {
                     </td>
                     <td className="border-t border-border/40 py-1.5 pr-3">
                       <div className="flex min-w-0 items-center gap-2">
-                        <StandingMark standing={standing} />
+                        <StandingMark standing={standing} merged={e.pullRequest?.state === "merged"} />
                         {e.mine ? (
                           <Link
                             href={href}

@@ -369,6 +369,15 @@ test("working sessions use the boxed thinking animation in the sidebar", async (
   await page.locator("#app-sidebar").screenshot({ path: ".context/sidebar-thinking/after.png" });
 });
 
+test("merged Done sessions use a merge icon while ordinary Done sessions keep the check", async ({ page }) => {
+  await openFixture(page, "/?state=merged-sidebar");
+  if ((page.viewportSize()?.width ?? 1440) < 640) {
+    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+  }
+  await expect(page.getByRole("img", { name: "Merged pull request" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Done" })).toBeVisible();
+});
+
 test("member automation controls are disabled; failed admin changes retain their state", async ({
   page,
 }) => {

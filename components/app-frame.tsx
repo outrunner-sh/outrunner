@@ -306,6 +306,7 @@ export function AppFrame({
                 loading={frame === null && !sidebarFromCache}
                 projects={sidebarProjects}
                 workspaces={sidebarWorkspaces}
+                pullRequests={appData?.pullRequests}
                 ownerLogin={frame?.ownerLogin ?? ""}
                 ownerAvatarUrl={frame?.ownerAvatarUrl ?? null}
                 orgs={frame?.orgs ?? NO_ORGS}
