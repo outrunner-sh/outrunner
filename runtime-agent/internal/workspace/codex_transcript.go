@@ -76,7 +76,8 @@ func (s *Service) launchCodexHome(workspaceID string) string {
 }
 
 // codexRollout is the session's rollout, or "" before Codex has written one.
-// Once found it is remembered; until then it is looked for:
+// Once found its session ID is remembered and any resumed copy is followed;
+// until then it is looked for:
 //   - in a Codex home of the session's own, every rollout is the session's,
 //     so it is the newest;
 //   - in the user's home, it is a rollout begun since the session launched,
@@ -90,7 +91,7 @@ func (s *Service) codexRollout(workspaceID string) string {
 		return ""
 	}
 	if f.CodexRollout != "" {
-		return f.CodexRollout
+		return s.resumedCodexRollout(workspaceID, f)
 	}
 	// Finding and claiming are one step for every session on this computer:
 	// two sessions started together in one folder must not both take the
@@ -98,7 +99,7 @@ func (s *Service) codexRollout(workspaceID string) string {
 	s.rolloutClaimMu.Lock()
 	defer s.rolloutClaimMu.Unlock()
 	if f, _ = s.getFacts(workspaceID); f.CodexRollout != "" {
-		return f.CodexRollout // claimed while this one waited
+		return s.resumedCodexRollout(workspaceID, f) // claimed while this one waited
 	}
 	sessions := filepath.Join(s.codexHomeFor(workspaceID), "sessions")
 	var found string
@@ -116,6 +117,55 @@ func (s *Service) codexRollout(workspaceID string) string {
 		f.CodexRollout, f.CodexSessionID, f.CodexLaunchedAt = found, meta.ID, ""
 	})
 	return found
+}
+
+// resumedCodexRollout follows the file Codex writes after resuming a session.
+// A restored copy can be the newest when the agent discovers the rollout,
+// while Codex resumes appending to the original path for the same session ID.
+// Keeping the copy forever then freezes both the stream and send confirmations.
+func (s *Service) resumedCodexRollout(workspaceID string, f workspaceFacts) string {
+	if f.CodexSessionID == "" {
+		return f.CodexRollout
+	}
+	latest := f.CodexRollout
+	var modified time.Time
+	var size int64 = -1
+	if info, err := os.Stat(latest); err == nil {
+		modified = info.ModTime()
+		size = info.Size()
+	}
+	// Resumed files retain the session ID in their name, but their timestamp
+	// and date directory can differ. Don't rediscover an unrelated session
+	// just because it is newer or has the same working directory.
+	paths, _ := filepath.Glob(filepath.Join(s.codexHomeFor(workspaceID), "sessions", "*", "*", "*", "rollout-*-"+f.CodexSessionID+".jsonl"))
+	for _, path := range paths {
+		if path == f.CodexRollout {
+			continue
+		}
+		info, err := os.Stat(path)
+		// Touching/restoring an older snapshot must not take the stream back
+		// to a shorter history. Codex appends when it resumes this session ID.
+		if err != nil || !info.ModTime().After(modified) || info.Size() <= size {
+			continue
+		}
+		meta, err := transcript.ReadRolloutMeta(path)
+		if err != nil || meta.ID != f.CodexSessionID {
+			continue
+		}
+		latest, modified, size = path, info.ModTime(), info.Size()
+	}
+	if latest == f.CodexRollout {
+		return latest
+	}
+	s.updateFacts(workspaceID, func(current *workspaceFacts) {
+		// A concurrent rewind or relaunch may have replaced this conversation
+		// while its files were being inspected.
+		if current.CodexSessionID == f.CodexSessionID && current.CodexRollout == f.CodexRollout {
+			current.CodexRollout = latest
+		}
+	})
+	current, _ := s.getFacts(workspaceID)
+	return current.CodexRollout
 }
 
 // findRollout looks for a session's rollout in the user's Codex home.
