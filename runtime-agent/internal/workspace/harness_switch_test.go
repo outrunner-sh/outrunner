@@ -206,6 +206,15 @@ func TestHarnessResumeDoesNotRepeatCompletedWork(t *testing.T) {
 	if _, err := s.resumeRequest(id); err == nil {
 		t.Fatal("completed request would be replayed")
 	}
+	quiet := `{"type":"user","uuid":"quiet","message":{"role":"user","content":"Record this without a reply"}}
+{"type":"assistant","uuid":"quiet-response","message":{"role":"assistant","model":"<synthetic>","content":"No response requested."}}
+`
+	if err := writeKeysFile(conversationPath(s.Root, id), quiet); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.resumeRequest(id); err == nil {
+		t.Fatal("a completed no-response request would be replayed")
+	}
 	if err := writeKeysFile(conversationPath(s.Root, id), exhaustedChat); err != nil {
 		t.Fatal(err)
 	}

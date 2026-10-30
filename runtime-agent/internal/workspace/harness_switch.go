@@ -458,7 +458,7 @@ func (s *Service) resumeRequest(id string) (string, error) {
 		}
 		if m.Role == "assistant" && len(m.Content) > 0 {
 			last := m.Content[len(m.Content)-1]
-			if m.Model == "<synthetic>" {
+			if m.Model == "<synthetic>" && strings.TrimSpace(last.Text) != "No response requested." {
 				unfinished = true
 			} else if last.Type == "text" && m.StopReason != "tool_use" {
 				unfinished = false
