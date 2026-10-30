@@ -69,6 +69,13 @@ export function FixturePage() {
   const state =
     params.get("state") ??
     (pathname.includes("readonly") ? "readonly" : "normal");
+  const shownFrame = useMemo(() => state === "archived" ? {
+    ...frame,
+    appData: {
+      ...frame.appData,
+      workspaces: frame.appData.workspaces.map((workspace, i) => i === 0 ? { ...workspace, status: "archived" as const } : workspace),
+    },
+  } : frame, [state]);
   const org = {
     id: "org-1",
     name: "neev ai",
@@ -252,7 +259,7 @@ export function FixturePage() {
       ) : (
         <AppFrame
           chrome={<ServerAnswer value={chrome} />}
-          server={<ServerAnswer value={frame} />}
+          server={<ServerAnswer value={shownFrame} />}
         >
           {content}
         </AppFrame>

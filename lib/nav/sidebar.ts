@@ -15,7 +15,6 @@ import { groupLocalSessions, localSessionLabel } from "@/lib/desktop/local-sessi
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { buildNavGroups, newestFirst, recency, type NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
-import { archiveOffer, type ArchiveOffer } from "@/lib/session/archive-control";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { canDestroy, isSettingUp } from "@/lib/session/provisioning";
 
@@ -97,9 +96,6 @@ export type SidebarSession = {
   /** What deleting it would do; null while it cannot be deleted (a cloud
    *  session still starting, or mid-way through another change). */
   deletion: SessionDeletion | null;
-  /** Archive for it: null where it isn't offered (a session on this Mac, or
-   *  on a sandbox with no Snapshot to restore from, or one archived already). */
-  archive: ArchiveOffer | null;
   /** Archived: opening it restores it. */
   archived: boolean;
   /** Started from a Slack thread: its link, for the badge. */
@@ -159,7 +155,9 @@ export function buildSidebarGroups(
   const known = new Set(projects.map((p) => p.id));
   // Missions and their Runners are listed in the Missions section instead
   // (components/missions/sidebar-missions.tsx).
-  const sessions = workspaces.filter((w) => w.kind !== "mission" && !w.parentMissionId);
+  const sessions = workspaces.filter((w) =>
+    w.kind !== "mission" && !w.parentMissionId && w.status !== "destroying" && w.status !== "destroyed",
+  );
   const cloud: SidebarGroup[] = buildNavGroups(projects, sessions).map(({ project, items }) => ({
     key: `cloud:${project.id}`,
     label: project.name,
@@ -176,7 +174,6 @@ export function buildSidebarGroups(
       at: recency(w),
       // The server's own rule (the lifecycle route's destroy).
       deletion: canDestroy(w, now) ? { kind: "cloud" } : null,
-      archive: archiveOffer(w),
       // Being archived reads as archived: the user asked for it, and
       // opening it waits for the archive either way.
       archived: w.status === "archived" || w.status === "archiving",
@@ -199,8 +196,6 @@ export function buildSidebarGroups(
         // Last use, not creation: comparable with a cloud session's activity.
         at: s.lastActiveAt || s.createdAt,
         deletion: s.inPlace ? { kind: "local-in-place" as const } : { kind: "local-worktree" as const },
-        // The Mac's agent has no archive of its own.
-        archive: null,
         archived: false,
       }))
       .sort((a, b) => newestFirst(a.at, b.at)),

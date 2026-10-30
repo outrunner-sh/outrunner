@@ -93,7 +93,7 @@ async function stubApis(page: Page) {
 // Wait for hydration before clicking server-rendered controls.
 async function openFixture(page: Page, url: string) {
   await page.goto(url);
-  await expect(page.getByTestId("fixture-ready")).toHaveAttribute("data-ready", "true");
+  await expect(page.getByTestId("fixture-ready")).toHaveAttribute("data-ready", "true", { timeout: 15_000 });
 }
 
 test.beforeEach(async ({ page }) => {
@@ -457,3 +457,33 @@ test("long names and branches fit narrow content panels", async ({ page }) => {
     expect(bounds.scroll).toBeLessThanOrEqual(bounds.width);
   }
 });
+
+for (const state of ["normal", "archived"]) {
+  test(`a ${state} workspace can be permanently deleted from the sidebar`, async ({ page }, testInfo) => {
+    await openFixture(page, `/?state=${state}`);
+    if (testInfo.project.name === "mobile") {
+      await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    }
+    const more = page.getByRole("button", { name: "More for Improve workspace navigation", exact: true });
+    await more.click();
+    await expect(page.getByRole("menuitem", { name: "Archive", exact: true })).toHaveCount(0);
+    await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
+    await expect(page.getByRole("menuitemradio", { name: "Automatic", exact: true })).toBeVisible();
+    await expect(page.getByRole("menuitemradio", { name: "Done", exact: true })).toHaveCount(0);
+    await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
+    const dialog = page.getByRole("dialog").last();
+    await expect(dialog).toContainText("This can't be undone.");
+    if (state === "archived" && testInfo.project.name === "desktop") {
+      await expect(dialog).toHaveCSS("opacity", "1");
+      await expect(page.getByRole("menu")).toHaveCount(0);
+      await page.screenshot({ path: ".context/workspace-delete-confirmation.png" });
+    }
+    const hold = dialog.getByRole("button", { name: "Hold to delete session", exact: true });
+    const deletion = page.waitForRequest((request) => request.url().endsWith("/api/workspaces/preview-0/lifecycle") && request.method() === "POST");
+    await hold.click({ delay: 1_100 });
+    const request = await deletion;
+    expect(request.postDataJSON()).toEqual({ action: "destroy" });
+    await expect(more).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "Delete “Improve workspace navigation”?" })).toHaveCount(0);
+  });
+}

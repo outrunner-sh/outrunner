@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, Check, ChevronDown, GitMerge, GitPullRequest, LayoutList, Search, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, GitMerge, GitPullRequest, LayoutList, Search, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAppData } from "@/components/app-data";
@@ -30,7 +30,6 @@ import {
   useListedSessions,
 } from "@/lib/session/listed-sessions";
 import { relativeTime, type SessionDeletion } from "@/lib/nav/sidebar";
-import { archiveOffer, archiveSession } from "@/lib/session/archive-control";
 import { deleteSession } from "@/lib/session/delete-session";
 import { canDestroy } from "@/lib/session/provisioning";
 import {
@@ -51,7 +50,7 @@ import { cn } from "@/lib/utils";
 /**
  * Every session in the org the user may see: searched, filtered by owner,
  * source and where it stands, newest first. The user's own can be picked
- * several at a time to archive or delete, each after a confirmation.
+ * several at a time to delete, after a confirmation.
  *
  * The page opens on the list the layout already holds — the user's own cloud
  * sessions, and this Mac's — so it shows rows rather than a spinner, and only
@@ -77,7 +76,7 @@ export function SessionsList() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ListFilter>(NO_FILTER);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
-  const [confirming, setConfirming] = useState<"archive" | "delete" | null>(null);
+  const [confirming, setConfirming] = useState<"delete" | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -136,12 +135,9 @@ export function SessionsList() {
     }
     return byId;
   }, [known, local.sessions, now]);
-  const archivable = (e: SessionListEntry) =>
-    !e.local && e.provider !== null && archiveOffer({ status: e.status, provider: e.provider })?.can === true;
-  const pickable = (e: SessionListEntry) => e.mine && (deletions.has(e.id) || archivable(e));
+  const pickable = (e: SessionListEntry) => e.mine && deletions.has(e.id);
 
   const pickedRows = shown.filter((e) => picked.has(e.id));
-  const toArchive = pickedRows.filter(archivable);
   const toDelete = pickedRows.filter((e) => deletions.has(e.id));
   const allPicked = shown.some(pickable) && shown.filter(pickable).every((e) => picked.has(e.id));
 
@@ -157,21 +153,16 @@ export function SessionsList() {
   /** Each in turn; every failure is said, the rest still go. */
   const runEach = async (
     rows: SessionListEntry[],
-    act: (e: SessionListEntry) => Promise<string | null | void>,
+    act: (e: SessionListEntry) => Promise<void>,
     verb: string,
-  ): Promise<string | null> => {
+  ): Promise<void> => {
     const failed: string[] = [];
-    // Done, with something to say: an archive without its files.
-    const noted: string[] = [];
     for (const row of rows) {
-      const note = await act(row).catch(() => void failed.push(row.title));
-      if (note) noted.push(row.title);
+      await act(row).catch(() => void failed.push(row.title));
     }
     if (failed.length > 0) {
       throw new Error(`Couldn't ${verb} ${failed.length === 1 ? `“${failed[0]}”` : `${failed.length} sessions`}. The others were.`);
     }
-    if (noted.length === 0) return null;
-    return `${noted.length === 1 ? `“${noted[0]}” was` : `${noted.length} sessions were`} ${verb}d without ${noted.length === 1 ? "its" : "their"} files: ${noted.length === 1 ? "its box" : "their boxes"} couldn't be reached, so uncommitted changes couldn't be saved. Anything pushed to GitHub is kept.`;
   };
 
   const done = () => {
@@ -249,10 +240,6 @@ export function SessionsList() {
         >
           <span className="tabular-nums">{picked.size} picked</span>
           <span className="flex-1" />
-          <Button size="sm" variant="outline" disabled={toArchive.length === 0} onClick={() => setConfirming("archive")}>
-            <Archive />
-            Archive{toArchive.length > 0 && toArchive.length !== picked.size ? ` ${toArchive.length}` : ""}
-          </Button>
           <Button size="sm" variant="outline" disabled={toDelete.length === 0} onClick={() => setConfirming("delete")}>
             <Trash2 />
             Delete{toDelete.length > 0 && toDelete.length !== picked.size ? ` ${toDelete.length}` : ""}
@@ -372,28 +359,6 @@ export function SessionsList() {
         )}
       </div>
 
-      <ConfirmSessionDialog
-        open={confirming === "archive"}
-        title={`Archive ${toArchive.length === 1 ? `“${toArchive[0]?.title}”` : `${toArchive.length} sessions`}?`}
-        description={
-          <>
-            Each one&apos;s work is saved, uncommitted changes included, and its space on the cloud computer is freed. Opening one again restores it.
-            {toArchive.length < picked.size && ` ${picked.size - toArchive.length} of those picked can't be archived now and stay as they are.`}
-          </>
-        }
-        busyLabel="Archiving"
-        failure="Could not archive them."
-        confirm={(go) => (
-          <button type="button" onClick={go} className="route-state-button is-primary">
-            Archive {toArchive.length === 1 ? "session" : `${toArchive.length} sessions`}
-          </button>
-        )}
-        run={() => runEach(toArchive, (e) => archiveSession(e.id), "archive")}
-        onOpenChange={(open) => {
-          if (!open) setConfirming(null);
-        }}
-        onDone={done}
-      />
       <ConfirmSessionDialog
         open={confirming === "delete"}
         title={`Delete ${toDelete.length === 1 ? `“${toDelete[0]?.title}”` : `${toDelete.length} sessions`}?`}
