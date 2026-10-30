@@ -2,13 +2,39 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { EMPTY_LOADOUT } from "@/lib/runtime/model-loadout";
 import { initialSelection } from "@/lib/runtime/selection";
-import { modelGroups, OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
-import { lastSessionSelection, parseRecentSelection, recentSelectionFor, type RecentSelection } from "@/lib/session/recent-selection";
+import { matchModel, modelChoice, modelGroups, OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
+import { lastSessionSelection, parseRecentSelection, recentSelectionFor, sessionModelToRemember, type RecentSelection } from "@/lib/session/recent-selection";
 import { frame } from "@/test/browser/fixtures";
 import { selectionMenu } from "@/test/browser/selection-fixtures";
 
 const groups = modelGroups(selectionMenu, ["claude", "codex"]);
 const codex: RecentSelection = { provider: "codex", id: "account-code", agent: "codex", effort: "low" };
+
+test("a disconnected confirmed provider is retained when another provider offers the same model ID", () => {
+  const recorded = modelChoice("openrouter", "moonshotai/kimi-k3")!;
+  // The display matcher permits substitution, but persistence must not.
+  assert.equal(matchModel(groups, recorded.id, recorded.provider)?.provider, "outrunner");
+  const current = sessionModelToRemember(groups, recorded.id, undefined, recorded)!;
+  assert.equal(current.provider, "openrouter");
+  const recent = { ...current, agent: "claude" as const, effort: null };
+  assert.equal(recentSelectionFor(groups, recent), null);
+  assert.equal((recentSelectionFor(groups, recent) ?? initialSelection(groups, selectionMenu.loadout))?.model.provider, "codex");
+});
+
+test("a successful provider switch overrides the old provider even for identical model IDs", () => {
+  const recorded = OUTRUNNER_MODELS[1];
+  const switched = sessionModelToRemember(groups, recorded.id, "openrouter", recorded);
+  assert.equal(switched?.provider, "openrouter");
+  assert.equal(switched?.id, recorded.id);
+  const available = modelGroups({ ...selectionMenu, keys: ["openrouter"] }, ["claude", "codex"]);
+  assert.equal(sessionModelToRemember(available, recorded.id, "openrouter", recorded)?.provider, "openrouter");
+});
+
+test("sessions without a confirmed provider can still resolve runtime IDs and Claude aliases", () => {
+  assert.equal(sessionModelToRemember(groups, "account-code")?.provider, "codex");
+  assert.equal(sessionModelToRemember(groups, "claude-opus-5", "claude")?.id, "opus");
+  assert.equal(sessionModelToRemember(groups, undefined), undefined);
+});
 
 test("recent account choice takes precedence over the Claude/GLM default with its exact effort", () => {
   assert.equal(initialSelection(groups, EMPTY_LOADOUT)?.agent, "claude");

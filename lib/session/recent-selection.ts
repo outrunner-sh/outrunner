@@ -1,10 +1,21 @@
 import { isAgentId, type AgentId } from "@/lib/agents/registry";
 import { offeredModel } from "@/lib/runtime/model-loadout";
-import { agentsFor, compatibleEffort, isEffort, modelChoice, type Effort, type ModelGroup, type ModelProvider } from "@/lib/runtime/session-models";
+import { agentsFor, compatibleEffort, isEffort, matchModel, modelChoice, type Effort, type ModelGroup, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
 import type { Workspace } from "@/lib/runtime/types";
 
 /** The last session's complete choice, independent of Settings → Default models. */
 export type RecentSelection = { provider: ModelProvider; id: string; agent: AgentId; effort: Effort | null };
+
+/** A reported ID alone cannot change whose account a session runs on.
+ * Retain a confirmed provider even when its key or catalog entry disappears;
+ * the next session checks availability in recentSelectionFor. */
+export function sessionModelToRemember(groups: ModelGroup[], reported: string | undefined, pickedProvider?: ModelProvider, recorded?: SessionModel): SessionModel | undefined {
+  const provider = pickedProvider ?? recorded?.provider;
+  const candidates = provider ? groups.filter((group) => group.provider === provider) : groups;
+  return matchModel(candidates, reported, provider)
+    ?? (recorded?.id === reported && recorded?.provider === provider ? recorded : undefined)
+    ?? (provider ? modelChoice(provider, reported) ?? undefined : undefined);
+}
 
 export function parseRecentSelection(raw: unknown): RecentSelection | null {
   if (!raw || typeof raw !== "object") return null;

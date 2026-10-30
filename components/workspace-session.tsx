@@ -4,6 +4,7 @@ import { RotateCw } from "lucide-react";
 import { DRAFTS } from "@/lib/client/drafts";
 import { useViewerScope } from "@/components/app-data";
 import { RECENT_SELECTION } from "@/lib/session/kept-selection";
+import { sessionModelToRemember } from "@/lib/session/recent-selection";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { type AgentEvent, ChangesResponse, FilesResponse, PlanActionResponse, RewindResponse } from "@/lib/runtime/agent-protocol";
@@ -428,8 +429,7 @@ export function WorkspaceSession({
   // Carry this chat's actual selection to the next new session. A staged or
   // failed switch never changes it; successful switches update shownModel.
   const viewerScope = useViewerScope();
-  const currentModel = matchModel(modelGroups(menu, accountsHere(menu.agents, local, null), agent), shownModel, providerPicked ?? recorded?.model.provider)
-    ?? (recorded?.model.id === shownModel ? recorded?.model : undefined);
+  const currentModel = sessionModelToRemember(modelGroups(menu, accountsHere(menu.agents, local, null), agent), shownModel, providerPicked ?? undefined, recorded?.model);
   const currentProvider = currentModel?.provider;
   const currentModelId = currentModel?.id;
   const selectionReady = !startup;

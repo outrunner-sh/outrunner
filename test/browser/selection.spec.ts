@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { selectionMenu } from "./selection-fixtures";
 import { stubSelectionApis as fixture } from "./selection-api-fixture";
+import { modelChoice } from "@/lib/runtime/session-models";
 const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aJ0kAAAAASUVORK5CYII=", "base64");
 async function open(page: Page, path = "/new") {
   await page.goto(path);
@@ -153,4 +154,15 @@ test("an unavailable recent provider falls back to the eligible default", async 
   await fixture(page, false, { ...glmDefault, codexModels: [], agents: { ...glmDefault.agents, codex: { cloud: false, local: false } } });
   await page.goto("/new?state=recent-selection");
   await expect(page.getByRole("button", { name: /^Harness: Claude Code.*GLM/ })).toBeVisible();
+});
+
+test("a disconnected confirmed provider cannot be replaced by a provider with the same model ID", async ({ page }) => {
+  await fixture(page, false, selectionMenu, [], {
+    agent: "claude", recorded: { model: modelChoice("openrouter", "moonshotai/kimi-k3")!, effort: null },
+  });
+  await page.goto("/workspaces/preview-0?selection=saved");
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("outrunner:page:session-selection") ?? "null")?.value?.provider)).toBe("openrouter");
+  await page.keyboard.press("Control+n");
+  await expect(page).toHaveURL(/\/new$/);
+  await expect(page.getByRole("button", { name: /^Harness: Codex.*Account coding model/ })).toBeVisible();
 });
