@@ -18,6 +18,7 @@ const TYPED_COMPACT = /^\/compact(\s|$)/;
  *  thought, a tool call (carrying its result, which arrives in a later
  *  message), or its words. */
 export type ConversationNode =
+  | { kind: "harness"; key: string; from: string; to: string }
   | { kind: "state"; key: string; state: string }
   | { kind: "usage"; key: string; event: Extract<AgentEvent, { t: "usage" }> }
   /** `mode` "plan": sent in plan mode. `at` is when it was sent; none on the
@@ -148,6 +149,12 @@ export function conversationNodes(
       nodes.push({ kind: "interrupted", key: `${event.uuid}-${ei}` });
       previousAt = event.timestamp;
       lastWords = null; // a stopped plan is no plan
+      return;
+    }
+    if (event.harness) {
+      endTurn();
+      lastWords = null;
+      nodes.push({ kind: "harness", key: event.uuid, ...event.harness });
       return;
     }
     if (event.compact) {

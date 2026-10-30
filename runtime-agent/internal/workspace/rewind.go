@@ -59,6 +59,9 @@ func (s *Service) Rewind(ctx context.Context, key, uuid string) (Rewound, error)
 	if !ok {
 		return Rewound{}, ErrUnknownWorkspace
 	}
+	if f.Harness != nil {
+		return Rewound{}, fmt.Errorf("%w: messages in a chat that has switched harnesses are retained as history; send a follow-up instead", ErrRewindUnsupported)
+	}
 	// Held throughout, so no prompt lands between the check and the cut.
 	lock := s.lockSend(key)
 	defer lock.Unlock()

@@ -11,6 +11,7 @@ import { putBackOnModel } from "@/lib/runtime/model-switch";
 import { relaunchNeedsAccount, sessionAuthClient, signInSession } from "@/lib/runtime/session-auth";
 import type { Workspace } from "@/lib/runtime/types";
 import type { SessionChat } from "@/lib/session/chats";
+import { reconcileHarnessSelection } from "@/lib/session/harness-selection.deps";
 
 /** Ready `workspace`'s session to relaunch: its failures are signInFailure's
  *  to tell the user. */
@@ -21,6 +22,7 @@ export async function readyRelaunch(
   workspace: Pick<Workspace, "agent" | "model" | "orgId">,
   ownerId: string,
 ): Promise<void> {
+  workspace = { ...workspace, ...await reconcileHarnessSelection(agent, identity, workspace) };
   await signInSession(
     sessionAuthClient(agent, identity, upgrade),
     workspace.agent,
@@ -28,7 +30,7 @@ export async function readyRelaunch(
     relaunchNeedsAccount(workspace.agent, workspace.model),
   );
   await putBackOnModel(
-    { setModel: (req) => agent.setModel(identity, req), keyFor: (holder) => modelKey(ownerId, holder, workspace.orgId) },
+    { setModel: (req) => agent.setModel(identity, { ...req,...(workspace.model && {selection:workspace.model}) }), keyFor: (holder) => modelKey(ownerId, holder, workspace.orgId) },
     workspace.model,
   );
 }
@@ -44,6 +46,7 @@ export async function readyChatRelaunch(
   chat: Pick<SessionChat, "id" | "agent" | "model">,
   ownerId: string,
 ): Promise<void> {
+  chat = { ...chat, ...await reconcileHarnessSelection(agent, identity, chat, chat.id) };
   await signInSession(
     sessionAuthClient(agent, identity, upgrade, chat.id),
     chat.agent,
@@ -51,7 +54,7 @@ export async function readyChatRelaunch(
     relaunchNeedsAccount(chat.agent, chat.model),
   );
   await putBackOnModel(
-    { setModel: (req) => agent.setModel(identity, req, chat.id), keyFor: (holder) => modelKey(ownerId, holder, workspace.orgId) },
+    { setModel: (req) => agent.setModel(identity, { ...req,...(chat.model && {selection:chat.model}) }, chat.id), keyFor: (holder) => modelKey(ownerId, holder, workspace.orgId) },
     chat.model,
   );
 }

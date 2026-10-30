@@ -56,14 +56,35 @@ Resume preserves explicit recorded effort. Runner overrides
 and cross-harness forks resolve compatible choices instead of inheriting an
 unrelated model or effort.
 
-A running chat's harness cannot be changed in place. The menu's **Fork with …**
-action uses the existing chat API and runtime transcript handoff in the same
-worktree. The original conversation and files remain. A successful fork moves
-its unsent draft and uploaded attachments to the new chat; failed forks keep
-them in place. Uploads, active prompt edits, working turns and disconnected
-sessions prevent this operation. Missions and local sessions explain that
-harness forking is unavailable. Capability checks and authentication occur
-before runtime start; failure removes only the newly created chat.
+Cloud chats and Missions can change harness in the same chat. Choosing another
+harness stages its model and effort until Send; selecting the source again or
+Cancel removes the pending choice. **Switch & resume** continues an unfinished
+request without consuming the unsent draft. Failed/uncertain transitions retain
+their operation ID across reloads; definite pre-commit failures allow canceling
+or choosing another target. Local desktop sessions still use a new session.
+
+`POST /api/workspaces/[id]/harness` validates account/model eligibility before
+the runtime transition. The `harness-switch-v1` capability is required. The
+runtime holds lifecycle and send locks through interruption, transcript handoff,
+target readiness and initial delivery. The runtime key and visible chat ID stay
+the same, including `main`, so Mission outbox, Slack and API deliveries continue
+to reach the active harness. Queued prompts wait during the transition.
+
+Each target starts a fresh native session. A public journal retains all prior
+segments, the source log as an unchanged byte prefix, and a context-handoff
+boundary. Native records carry source offsets for restart-safe copying; the
+event stream keeps numeric byte cursors. Archive carries this journal; restore
+extracts only the active segment into its vendor's native transcript. A private
+undo record restores a target that never committed. A committed request marker
+prevents a retry from delivering the continuation again. Checked database
+persistence and runtime acknowledgment precede another switch or archive.
+
+Quota notices require recognized runtime failure records, and do not infer
+exhaustion from ordinary prose or every 429. Manual switching also works after
+an interruption. Model-only changes retain the existing native resume path.
+Explicit forks remain separate chats. Sent-message editing is unavailable after
+a harness boundary in this version; files/history are preserved and follow-up
+messages remain available. Automatic fallback chains are not enabled here.
 
 The isolated browser fixtures in `test/browser` exercise real new-session and
 WorkspaceStudio composers at desktop and mobile sizes. Their APIs and runtime

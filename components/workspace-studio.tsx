@@ -2,7 +2,6 @@
 
 import { Archive, Files, GitBranch, MessageSquarePlus, Monitor, PanelsTopLeft, PanelRight, PanelRightClose } from "lucide-react";
 import Link from "next/link";
-import { DRAFTS } from "@/lib/client/drafts";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
@@ -38,7 +37,7 @@ import { workspaceLabel } from "@/lib/nav/session-title";
 import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { archiveOffer } from "@/lib/session/archive-control";
 import { type InspectorTabId, inspectorTabs, shownTab } from "@/lib/session/inspector-tabs";
-import { chatRoute, chatStateKey, MAIN_CHAT, mainChatOf, parseChatId, type SessionChat } from "@/lib/session/chats";
+import { chatRoute, MAIN_CHAT, mainChatOf, parseChatId, type SessionChat } from "@/lib/session/chats";
 import { askSideChat } from "@/lib/session/chat-actions";
 import { cn } from "@/lib/utils";
 
@@ -267,14 +266,7 @@ export function WorkspaceStudio({
             initialAttachmentIds={current.id === MAIN_CHAT ? initialAttachmentIds : undefined}
             onSender={setSender}
             onSideChat={chatsOffered ? askAside : undefined}
-            onHarnessFork={chatsOffered ? async (agent) => {
-              const fork = await chats.start({ from: current.id, agent });
-              if (!chats.isCurrent()) return;
-              const sourceKey = `ws:${chatStateKey(workspace.id, current.id)}`;
-              const targetKey = `ws:${chatStateKey(workspace.id, fork.id)}`;
-              DRAFTS.move(sourceKey, targetKey);
-              pick(fork);
-            } : undefined}
+            allowHarnessSwitch={hasLiveSession && !isLocal}
           />
         ) : restore.state === "restoring" ? (
           <div className="studio-offline">

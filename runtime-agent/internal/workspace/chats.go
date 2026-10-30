@@ -589,10 +589,17 @@ func (s *Service) snapshotChats(workspaceID string, asked []protocol.ArchiveChat
 			continue
 		}
 		key := ChatKey(workspaceID, chat.ChatID)
+		state, err := s.HarnessSelection(context.Background(), key)
+		if err != nil {
+			return nil, err
+		}
+		if state != nil && !state.Saved {
+			return nil, fmt.Errorf("retry chat %s's harness switch before archiving", chat.ChatID)
+		}
 		f, _ := s.getFacts(key)
 		// A pending fork handoff lives outside the conversation log. Until
 		// snapshots carry that artifact, refuse to discard its source context.
-		if f.Handoff != "" {
+		if f.Handoff != "" && f.Harness == nil {
 			return nil, fmt.Errorf("chat %s has an unspent fork handoff; send its first prompt or delete the chat before archiving", chat.ChatID)
 		}
 		chat.Agent = agentOrClaude(f.Agent)
@@ -662,6 +669,9 @@ func (s *Service) restoreChat(ctx context.Context, workspaceID string, chat prot
 		if err := snapshot.DownloadArtifact(ctx, chat.Conversation, dest); err != nil {
 			return fmt.Errorf("download its conversation: %w", err)
 		}
+		if err := s.restoreHarnessJournal(key, dest); err != nil {
+			return err
+		}
 		if chat.Rollout == "" || sessionID == "" {
 			return nil // no rollout: a new Codex conversation, its history kept
 		}
@@ -684,6 +694,9 @@ func (s *Service) restoreChat(ctx context.Context, workspaceID string, chat prot
 	}
 	if err := snapshot.DownloadArtifact(ctx, chat.Conversation, dest); err != nil {
 		return fmt.Errorf("download its conversation: %w", err)
+	}
+	if err := s.restoreHarnessJournal(key, dest); err != nil {
+		return err
 	}
 	s.updateFacts(key, func(f *workspaceFacts) { f.ClaudeSessionID = sessionID })
 	return nil

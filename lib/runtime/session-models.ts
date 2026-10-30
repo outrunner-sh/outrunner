@@ -342,7 +342,7 @@ export function matchModel(
 
 /** The agent's POST /workspaces/:id/model body: with a gateway, the session
  *  runs through it on `token`; with an effort, at it. */
-export type SetModelRequest = { model: string; gateway?: ProviderId; token?: string; effort?: Effort };
+export type SetModelRequest = { model: string; gateway?: ProviderId; token?: string; effort?: Effort; selection?: RecordedModel };
 
 /** Who holds the key a model runs on: Outrunner, or one of the user's own. */
 export type KeyHolder = Exclude<ModelProvider, "claude" | "codex">;

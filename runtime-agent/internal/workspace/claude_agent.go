@@ -220,6 +220,22 @@ func awaitsAnswer(pane string) bool {
 	return false
 }
 
+// Claude 2.1.304 and 2.1.310 open this menu after a quota error. A switch may
+// dismiss it with Escape: waiting for the old provider is exactly what the
+// user is switching away from. Other questions and approvals stay blocked.
+func isClaudeLimitDialog(pane string) bool {
+	if isComposer(pane) {
+		return false
+	}
+	lines := nonBlankLines(pane)
+	if len(lines) < 4 || strings.TrimSpace(lines[len(lines)-1]) != "Enter to confirm · Esc to cancel" {
+		return false
+	}
+	return strings.TrimSpace(lines[len(lines)-4]) == "What do you want to do?" &&
+		strings.Contains(lines[len(lines)-3], "1. Stop and wait for limit to reset") &&
+		strings.Contains(lines[len(lines)-2], "2. Wait here, then continue automatically at ")
+}
+
 // firstRunKey answers the screens Claude Code shows the first time it runs on
 // a Mac, before any session can start: logging in through Outrunner doesn't
 // get past them. The theme picker takes the theme it preselects, the security
@@ -281,7 +297,7 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	}
 	var argv []string
 	switch {
-	case f.ClaudeSessionID != "" && s.SessionLog(workspaceID) != "":
+	case f.ClaudeSessionID != "" && a.sessionLog(workspaceID) != "":
 		argv = claude.ResumeCommand(mode, f.ClaudeSessionID, orientation)
 	case f.ClaudeSessionID != "":
 		argv = claude.SessionCommand(mode, f.ClaudeSessionID, orientation)
