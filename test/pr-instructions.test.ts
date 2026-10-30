@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { EVIDENCE_REPLY_RULE } from "@/lib/session/pr-template";
 import { prInstructions } from "@/lib/session/pr-instructions";
 
 const DESKTOP = { desktop: true };
@@ -62,10 +63,13 @@ test("without a desktop the template still applies, and Evidence says why there 
   assert.match(md, /each item unchecked with the reason/);
   assert.doesNotMatch(md, /record_start|get\.docker\.com|verify the change on this branch in Chromium/);
   assert.match(md, /## Evidence\n/);
+  assert.ok(md.includes(EVIDENCE_REPLY_RULE));
   assert.match(md, /### Verified in the browser/);
 });
 
 test("a push to an open PR refreshes its evidence, keeping the footer", () => {
+  assert.ok(instructions().includes(EVIDENCE_REPLY_RULE), "Create PR requires the same uploaded embeds in the final chat reply");
+  assert.match(instructions(), /Then share its link and evidence in your final chat reply/);
   assert.match(instructions(), /If this branch already has a pull request, the push updates it\. When a push updates an open PR and the new commits change what a person sees, capture new evidence and refresh the Evidence section with `gh pr edit --body-file`, keeping the footer\./);
 });
 
