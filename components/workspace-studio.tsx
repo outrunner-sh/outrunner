@@ -115,7 +115,8 @@ export function WorkspaceStudio({
   const tabs = inspectorTabs(workspace, isLocal);
   const [chosenTab, setChosenTab] = useState<InspectorTabId>("environment");
   const tab = shownTab(tabs, chosenTab);
-  const [canvasPath, setCanvasPath] = useState<string | null>(null);
+  // A new request id reselects the file even when the same link is clicked again.
+  const [canvasRequest, setCanvasRequest] = useState<{ path: string; id: number } | null>(null);
   // The chat shown (?chat=): the session's main one unless another is
   // picked. A local session, and a Mission, have the main one alone.
   const chatsOffered = hasLiveSession && !isLocal && !isMission;
@@ -161,7 +162,7 @@ export function WorkspaceStudio({
   };
 
   return (
-    <OpenCanvasContext value={(path) => { setCanvasPath(path); setChosenTab("canvas"); setRightOpen(true); }}>
+    <OpenCanvasContext value={(path) => { setCanvasRequest((previous) => ({ path, id: (previous?.id ?? 0) + 1 })); setChosenTab("canvas"); setRightOpen(true); }}>
     <div
       className={cn(
         "studio-shell",
@@ -404,7 +405,7 @@ export function WorkspaceStudio({
                 sender={sender}
                 coAuthor={coAuthor}
                 onClose={() => setRightOpen(false)}
-                canvasPath={canvasPath}
+                canvasRequest={canvasRequest}
                 view={tab === "changes" || tab === "canvas" ? tab : "overview"}
                 onViewChange={(view) => {
                   const selected = view === "overview" ? "environment" : view;
