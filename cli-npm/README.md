@@ -17,3 +17,11 @@ outrunner claude     connect your Claude subscription (runs claude setup-token)
 outrunner whoami     show who this terminal is signed in as
 outrunner logout     sign this terminal out
 ```
+
+## Google Cloud sandboxes
+
+Run `npx outrunner@latest sandbox connect gcp` to connect a billing-enabled
+Google Cloud project. Requires gcloud and permission to configure IAM and
+networking. The wizard uses keyless federation, verifies a temporary VM,
+and asks before selecting GCP for new sessions. See
+[the setup and teardown guide](https://github.com/neevai-labs/outrunner/blob/main/docs/gcp-sandboxes.md).

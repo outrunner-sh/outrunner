@@ -63,7 +63,7 @@ export function FixtureFrame({ children }: { children: React.ReactNode }) {
     }
     return { ...frame, activeOrgId: "org-1" };
   }, [state]);
-  if (["settings", "desktop-signin", "web-onboarding", "desktop-ready"].includes(params.get("view") ?? "") || pathname.startsWith("/auth/desktop/")) return children;
+  if (["settings", "sandbox", "desktop-signin", "web-onboarding", "desktop-ready"].includes(params.get("view") ?? "") || pathname.startsWith("/auth/desktop/")) return children;
   return (
     <AppFrame chrome={<ServerAnswer value={chrome} />} server={<ServerAnswer value={shownFrame} />}>
       {children}

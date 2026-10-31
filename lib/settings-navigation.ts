@@ -12,13 +12,13 @@ export const SETTINGS_REDIRECTS = [
   ["/settings/org/api-keys", "/settings/org/developer"],
   ["/settings/org/access", "/settings/org/members?tab=roles"],
   ["/settings/org/defaults", "/settings/org"],
-  ["/settings/sandbox", "/settings/profile"],
 ] as const;
 
 export const PERSONAL_SETTINGS = [
   ["profile", "Profile"],
   ["preferences", "Preferences"],
   ["coding-agents", "Coding agents"],
+  ["sandbox", "Sandbox"],
   ["connections", "Connections"],
   ["usage", "Usage"],
   ["developer", "Developer"],

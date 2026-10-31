@@ -1,3 +1,4 @@
+import { sweepGcpResources } from "@/lib/runtime/gcp/cleanup";
 import { NextResponse } from "next/server";
 
 import { retireOldSlackKeys } from "@/lib/db/slack-agent";
@@ -114,6 +115,10 @@ export async function POST(request: Request) {
       : 0;
     // And the deployment's boxes something dropped without deleting: no row
     // names them, so nothing above would ever stop them.
+    const gcpResourcesDeleted = await sweepGcpResources().catch(() => {
+      console.error("Could not reconcile recorded GCP resources.");
+      return null;
+    });
     const orphans = await sweepOrphanedBoxes().catch((error: unknown) => {
       console.error("Deleting orphaned Daytona boxes failed", error);
       return null;
@@ -140,6 +145,7 @@ export async function POST(request: Request) {
       : null;
     return NextResponse.json({
       ...report,
+      gcpResourcesDeleted,
       usage,
       allowancesRenewed,
       slackKeysRetired,

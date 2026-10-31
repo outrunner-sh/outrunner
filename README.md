@@ -66,6 +66,13 @@ package per platform. `scripts/build-cli.sh <version>` stages them all.
 cd runtime-agent && go run ./cmd/outrunner --url http://localhost:3000
 ```
 
+## Google Cloud sandboxes
+
+`outrunner sandbox connect gcp` configures your billing-enabled GCP project,
+checks a private sandbox VM, and offers to use it for new sessions. Google
+bills you directly; no JSON service-account key is needed. See
+[`docs/gcp-sandboxes.md`](docs/gcp-sandboxes.md) for permissions, costs and teardown.
+
 ## Triage
 
 Work items live in Outrunner (`/triage`, ⌘I), not in another tracker. They
