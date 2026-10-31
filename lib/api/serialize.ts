@@ -136,6 +136,18 @@ export function environmentJson(environment: Environment): Record<string, unknow
   };
 }
 
+/** One project in full (GET /environments/{id}): its list fields, and its
+ *  instructions, scripts, hooks and files' paths. Never a value. */
+export function environmentDetailJson(environment: Environment): Record<string, unknown> {
+  return {
+    ...environmentJson(environment),
+    instructions: environment.instructions,
+    file_paths: environment.filePaths,
+    scripts: environment.scripts,
+    hooks: environment.hooks,
+  };
+}
+
 export function triageItemJson(item: TriageItem, base: string): Record<string, unknown> {
   return {
     id: item.id,
