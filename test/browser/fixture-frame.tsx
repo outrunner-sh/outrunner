@@ -62,7 +62,7 @@ export function FixtureFrame({ children }: { children: React.ReactNode }) {
     }
     return { ...frame, activeOrgId: "org-1" };
   }, [state]);
-  if (params.get("view") === "settings") return children;
+  if (params.get("view") === "settings" || params.get("view") === "sandbox") return children;
   return (
     <AppFrame chrome={<ServerAnswer value={chrome} />} server={<ServerAnswer value={shownFrame} />}>
       {children}

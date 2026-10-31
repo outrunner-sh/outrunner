@@ -1,3 +1,4 @@
+import { disconnectGcp, gcpConnection, selectGcpConnection } from "@/lib/db/gcp";
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
@@ -34,7 +35,7 @@ import { checkModalToken } from "@/lib/runtime/sandbox/modal-token";
 
 const MIN_KEY_LENGTH = 20;
 const MAX_KEY_LENGTH = 500;
-const CHOICES: readonly SandboxChoice[] = ["outrunner", "daytona", "modal"];
+const CHOICES: readonly SandboxChoice[] = ["outrunner", "daytona", "modal", "gcp"];
 
 function invalid(error: string) {
   return NextResponse.json({ error }, { status: 400 });
@@ -65,14 +66,15 @@ export async function PUT(request: Request) {
     return invalid("Expected a JSON body.");
   }
   const sandbox = CHOICES.find((c) => c === body?.sandbox);
-  if (!sandbox) return invalid("Choose Outrunner's sandbox, or your own Daytona or Modal.");
+  if (!sandbox) return invalid("Choose Outrunner, Daytona, Modal, or Google Cloud.");
   if (body.boxSize !== undefined && !isBoxSizeId(body.boxSize)) return invalid("Choose one of the box sizes.");
   const size = isBoxSizeId(body.boxSize) ? boxSize(body.boxSize) : null;
+  if (sandbox === "gcp" && body.boxSize === "x-small") return invalid("Google Cloud supports Small, Medium, and Large sandboxes.");
   // A size beyond the user's plan isn't for Outrunner's sandboxes; their own
   // Modal is on their bill.
   // Within the plan of the org they're looking at (billing is the org's);
   // a box is still sized within its own org's at start (boxSizeOn).
-  if (size && sandbox !== "modal" && !allowsBoxSize(await planFor(await activeOrgId().catch(() => undefined)), size.id)) {
+  if (size && sandbox !== "modal" && sandbox !== "gcp" && !allowsBoxSize(await planFor(await activeOrgId().catch(() => undefined)), size.id)) {
     return NextResponse.json({ error: `${size.label} needs a higher plan.` }, { status: 403 });
   }
 
@@ -118,7 +120,12 @@ export async function PUT(request: Request) {
       return invalid("Add your Modal token to run sessions on your own Modal.");
     }
 
-    await setSandboxChoice(owner.id, sandbox);
+    if (sandbox === "gcp") {
+      const c = await gcpConnection(owner.id);
+      if (c?.state !== "connected") return invalid("Connect Google Cloud using outrunner sandbox connect gcp first.");
+      const wanted = size?.id ?? (await getSandboxSettings(owner.id)).boxSize;
+      await selectGcpConnection(c, wanted === "x-small" ? "small" : wanted);
+    } else await setSandboxChoice(owner.id, sandbox);
     if (size) await setBoxSize(owner.id, size.id);
     return NextResponse.json(await getSandboxSettings(owner.id));
   });
@@ -132,9 +139,12 @@ export async function DELETE(request: Request) {
   if (!owner) return signInFirst();
 
   const key = new URL(request.url).searchParams.get("key") ?? "daytona";
-  if (key !== "daytona" && key !== "modal") return invalid("Say which key to remove: daytona or modal.");
+  if (key !== "daytona" && key !== "modal" && key !== "gcp") return invalid("Say which connection to remove: daytona, modal, or gcp.");
   return saving(async () => {
-    await (key === "modal" ? clearModalToken(owner.id) : clearDaytonaKey(owner.id));
+    if (key === "gcp") {
+      try { await disconnectGcp(owner.id); }
+      catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Could not disconnect Google Cloud." }, { status: 409 }); }
+    } else await (key === "modal" ? clearModalToken(owner.id) : clearDaytonaKey(owner.id));
     return NextResponse.json(await getSandboxSettings(owner.id));
   });
 }

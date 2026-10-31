@@ -1,3 +1,4 @@
+import { gcpConnection } from "@/lib/db/gcp";
 import { accountForSession, inferenceGrant } from "@/lib/codex/grant";
 /**
  * Per-user third-party credentials — the multi-user replacement for the
@@ -248,7 +249,7 @@ export async function clearAnthropicKey(userId: string): Promise<void> {
  * sandboxes, the deployment's provider and the default, or their own Daytona
  * or Modal account on a key they supply.
  */
-export type SandboxChoice = "outrunner" | "daytona" | "modal";
+export type SandboxChoice = "outrunner" | "daytona" | "modal" | "gcp";
 
 /** A stored key, as the page sees it: whether there is one, and its last 4
  *  characters. */
@@ -256,6 +257,7 @@ export type StoredKey = { connected: boolean; hint: string | null; updatedAt: st
 
 export type SandboxSettings = {
   sandbox: SandboxChoice;
+  gcp?: StoredKey;
   daytona: StoredKey;
   /** The Modal token; its hint is the token id's last 4. */
   modal: StoredKey;
@@ -287,7 +289,9 @@ export async function getSandboxSettings(userId: string): Promise<SandboxSetting
   if (error && probeStatus(error) === "outdated") ({ data, error } = { data: null, error: null });
   if (error) throw error;
   const row = data as Partial<Database["public"]["Tables"]["user_credentials"]["Row"]> | null;
+  const gcp = await gcpConnection(userId);
   return {
+    gcp: { connected: gcp?.state === "connected", hint: gcp?.project_id ?? null, updatedAt: gcp?.verified_at ?? null },
     sandbox: row?.sandbox ?? "outrunner",
     daytona: {
       connected: Boolean(row?.daytona_key_ciphertext),
@@ -372,10 +376,12 @@ export async function clearDaytonaKey(userId: string): Promise<void> {
 /** The user's own sandbox keys (lib/runtime/sandbox-choice.ts), each read
  *  only when a box of theirs is reached. */
 export function ownSandboxKeys(userId: string): {
+  ownerId: string;
+  gcp: () => ReturnType<typeof gcpConnection>;
   daytona: () => Promise<string | null>;
   modal: () => Promise<ModalToken | null>;
 } {
-  return { daytona: () => getDaytonaKey(userId), modal: () => getModalToken(userId) };
+  return { ownerId: userId, gcp: () => gcpConnection(userId), daytona: () => getDaytonaKey(userId), modal: () => getModalToken(userId) };
 }
 
 /** The user's Modal token, or null when unset or unreadable. */

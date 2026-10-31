@@ -39,20 +39,20 @@ const defaultDeps: NeevRelayDeps = {
 
 /** An upgrade handler that takes the relay's own upgrades and returns false
  *  for anything else (such as Next's HMR). */
-export function createNeevRelay(deps: NeevRelayDeps = defaultDeps) {
+export function createNeevRelay(deps: NeevRelayDeps = defaultDeps, prefix = NEEV_RELAY_PREFIX) {
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
   return function relay(req: IncomingMessage, socket: Duplex, head: Buffer): boolean {
     const url = new URL(req.url ?? "/", "http://relay");
-    if (!url.pathname.startsWith(NEEV_RELAY_PREFIX)) return false;
+    if (!url.pathname.startsWith(prefix)) return false;
 
     const [sandboxId = "", portText = "", ticket = "", target = "", ...rest] = url.pathname
-      .slice(NEEV_RELAY_PREFIX.length)
+      .slice(prefix.length)
       .split("/");
     const port = Number(portText);
     const key = deps.key();
     if (!key) return refuse(socket, 503);
-    if (rest.length > 0 || !RELAYED.has(target) || !Number.isInteger(port) || port <= 0) {
+    if (rest.length > 0 || !RELAYED.has(target) || !Number.isInteger(port) || port <= 0 || port > 65535) {
       return refuse(socket, 404);
     }
     if (!relayTicketValid(ticket, sandboxId, port, key)) return refuse(socket, 403);

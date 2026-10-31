@@ -1,3 +1,4 @@
+import { NoGcpConnectionError } from "@/lib/runtime/user-gcp-provider";
 /**
  * The real collaborators of an import's plan and commit: the database through
  * the user's own client (RLS confines every read and write to them), Snapshot
@@ -39,7 +40,7 @@ export async function importProvider(ownerId: string): Promise<string> {
   try {
     provider = providerForNewSessions(await getSandboxSettings(ownerId), ownSandboxKeys(ownerId));
   } catch (error) {
-    if (error instanceof NoDaytonaKeyError || error instanceof NoModalTokenError) throw new ImportError(error.message, 409);
+    if (error instanceof NoDaytonaKeyError || error instanceof NoModalTokenError || error instanceof NoGcpConnectionError) throw new ImportError(error.message, 409);
     throw error;
   }
   if (!isComputerProvider(provider)) {

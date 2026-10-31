@@ -9,6 +9,7 @@ import {
   Building2,
   Code,
   CreditCard,
+  Cloud,
   Gauge,
   Info,
   Plug,
@@ -24,7 +25,7 @@ import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PERSONAL_SETTINGS, ORG_SETTINGS } from "@/lib/settings-navigation";
 import { cn } from "@/lib/utils";
 
-const icons = [User, SlidersHorizontal, Terminal, Plug, BarChart3, Code];
+const icons = [User, SlidersHorizontal, Terminal, Cloud, Plug, BarChart3, Code];
 const orgIcons = [
   Building2,
   Users,

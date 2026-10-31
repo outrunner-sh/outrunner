@@ -2,8 +2,8 @@
 
 import { PageHeader } from "@/components/page-layout";
 
-import { Check, Lock, Pencil, SquareTerminal, Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { Check, Cloud, Copy, Lock, Pencil, SquareTerminal, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { DaytonaIcon, ModalIcon } from "@/components/brand-icons";
 import { type OptionCard, OptionCards } from "@/components/option-cards";
@@ -19,8 +19,9 @@ import { requestJson } from "@/lib/http/request-json";
 import { BOX_SIZES, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import { modalTokenInText, type ModalToken } from "@/lib/runtime/sandbox/modal-token";
 import { cn } from "@/lib/utils";
+import { gcpSetupCommand } from "@/lib/runtime/gcp/setup-command";
 
-type OwnSandbox = Exclude<SandboxChoice, "outrunner">;
+type OwnSandbox = Exclude<SandboxChoice, "outrunner" | "gcp">;
 
 /** What each sandbox is, for its card and the line under the cards. */
 const SANDBOXES: Record<SandboxChoice, { label: string; icon: OptionCard<SandboxChoice>["icon"]; detail: string }> = {
@@ -34,6 +35,11 @@ const SANDBOXES: Record<SandboxChoice, { label: string; icon: OptionCard<Sandbox
     icon: DaytonaIcon,
     detail: "Your Daytona account, on your API key. Daytona bills you for it.",
   },
+  gcp: {
+    label: "Google Cloud",
+    icon: Cloud,
+    detail: "Private sandbox VMs in your Google Cloud project. Google bills you for compute, retained disks, and networking.",
+  },
   modal: {
     label: "Modal",
     icon: ModalIcon,
@@ -42,7 +48,7 @@ const SANDBOXES: Record<SandboxChoice, { label: string; icon: OptionCard<Sandbox
   },
 };
 
-const ORDER: SandboxChoice[] = ["outrunner", "daytona", "modal"];
+const ORDER: SandboxChoice[] = ["outrunner", "daytona", "modal", "gcp"];
 
 /** What a credential change is called when it fails, so the line says which. */
 function credentialSubject(sandbox: OwnSandbox): string {
@@ -66,8 +72,10 @@ export function SandboxSettingsForm({
   initial,
   sizes,
   plan,
+  ownerId,
 }: {
   initial: SandboxSettings;
+  ownerId?: string;
   /** Whether Outrunner's sandboxes can be sized here. */
   sizes: boolean;
   /** The user's plan, which limits the sizes on Outrunner's sandboxes. */
@@ -84,12 +92,14 @@ export function SandboxSettingsForm({
   // names the sandbox in use as it is when it goes out, not when it was made.
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const inUseNow = useRef(initial.sandbox);
+  const saveRevision = useRef(0);
   const busy = status === "pending";
 
   /** Send a change, after any before it; the answer is the settings as the
    *  server has them. `body` is made as it goes out. A change that fails is
    *  called what it was: a removal isn't a save. */
   function send(subject: string, method: "PUT" | "DELETE", body?: () => object, query = ""): Promise<boolean> {
+    saveRevision.current += 1;
     setStatus("pending");
     const verb = method === "DELETE" ? "remove" : "save";
     const run = queue.current.then(async () => {
@@ -128,14 +138,27 @@ export function SandboxSettingsForm({
     return run;
   }
 
+  useEffect(() => {
+    if (shown !== "gcp") return;
+    const controller = new AbortController();
+    const timer = setInterval(() => {
+      if (inUseNow.current !== settings.sandbox) return;
+      const revision = saveRevision.current;
+      void fetch("/api/settings/sandbox", { signal: controller.signal })
+        .then(async (response) => { if (!response.ok) throw new Error("Could not refresh sandbox settings."); return await response.json() as SandboxSettings; })
+        .then((data) => { if (!controller.signal.aborted && revision === saveRevision.current && ORDER.includes(data.sandbox)) { setSettings(data); inUseNow.current = data.sandbox; } }).catch(() => {});
+    }, 5000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [shown, settings.sandbox]);
+
   const inUse = settings.sandbox;
-  const ready = (sandbox: SandboxChoice) => sandbox === "outrunner" || settings[sandbox].connected;
+  const ready = (sandbox: SandboxChoice) => sandbox === "outrunner" || settings[sandbox]?.connected;
   // The size a box really gets on the sandbox in use: on Outrunner's, a saved
   // size beyond the plan is shown as the size new boxes get instead.
   const size = inUse === "outrunner" ? boxSizeWithin(plan, settings.boxSize).id : settings.boxSize;
   // Sized here: Outrunner's sandboxes (where they can be), and the user's own
   // Modal, where every size is theirs to pay for.
-  const sized = (sandbox: SandboxChoice) => (sandbox === "outrunner" && sizes) || sandbox === "modal";
+  const sized = (sandbox: SandboxChoice) => (sandbox === "outrunner" && sizes) || sandbox === "modal" || sandbox === "gcp";
 
   return (
     <section className="space-y-6">
@@ -146,11 +169,12 @@ export function SandboxSettingsForm({
 
       <div className="space-y-3">
         <OptionCards
+          columns={4}
           options={ORDER.map((id) => ({
             id,
             label: SANDBOXES[id].label,
             icon: SANDBOXES[id].icon,
-            connected: id !== "outrunner" && settings[id].connected,
+            connected: id !== "outrunner" && settings[id]?.connected,
           }))}
           chosen={inUse}
           shown={shown}
@@ -166,7 +190,9 @@ export function SandboxSettingsForm({
         <p className="text-sm text-muted-foreground">{SANDBOXES[shown].detail}</p>
       </div>
 
-      {shown !== "outrunner" ? (
+      {shown === "gcp" ? (
+        <GcpConnectionCard ownerId={ownerId} stored={settings.gcp} busy={busy} onRemove={() => void send("the Google Cloud connection", "DELETE", undefined, "?key=gcp")} />
+      ) : shown !== "outrunner" ? (
         <SandboxCredential
           // Its own drafts per provider: a Modal secret typed in mustn't
           // turn up in Daytona's field.
@@ -189,6 +215,7 @@ export function SandboxSettingsForm({
             if (!busy) void send("the new box size", "PUT", () => ({ sandbox: inUseNow.current, boxSize: next }));
           }}
           plan={shown === "outrunner" ? plan : undefined}
+          gcp={shown === "gcp"}
         />
       ) : null}
 
@@ -196,8 +223,8 @@ export function SandboxSettingsForm({
         <div className="space-y-3 rounded-lg border border-border/60 p-4">
           <p className="text-sm text-muted-foreground">
             {ready(shown)
-              ? `New sessions run on ${SANDBOXES[inUse].label} now. Switching applies from your next session in each project: it starts in a new sandbox on ${SANDBOXES[shown].label}, and the project's old sandbox is deleted, with any sessions still in it.`
-              : `Save your ${SANDBOXES[shown].label} ${shown === "modal" ? "token" : "API key"} above to run sessions there.`}
+              ? `New sessions run on ${SANDBOXES[inUse].label} now. Switching applies to new sessions. Existing sessions keep their current sandbox.`
+              : shown === "gcp" ? "Connect your Google Cloud project with the Outrunner CLI to run sessions there." : `Save your ${SANDBOXES[shown].label} ${shown === "modal" ? "token" : "API key"} above to run sessions there.`}
           </p>
           <LoadingButton
             variant="outline"
@@ -222,6 +249,36 @@ export function SandboxSettingsForm({
         </InlineMessage>
       ) : null}
     </section>
+  );
+}
+
+function GcpConnectionCard({ stored, busy, onRemove, ownerId }: { ownerId?: string; stored?: StoredKey; busy: boolean; onRemove: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const [command, setCommand] = useState("npx outrunner@latest sandbox connect gcp");
+  useEffect(() => {
+    // Keep a terminal signed into another account from connecting the project
+    // there: the existing CLI sign-in flow enforces --account.
+    queueMicrotask(() => setCommand(gcpSetupCommand(window.location.origin, ownerId)));
+  }, [ownerId]);
+  return (
+    <div className="space-y-3">
+      <SectionHeader title="Google Cloud project" />
+      <ConnectionStatus connected={stored?.connected ?? false} />
+      <p className="text-sm text-muted-foreground">Run this in your terminal or Google Cloud Shell. Choose a billing-enabled project and approve the setup. The CLI configures access and tests a temporary sandbox; no JSON key is needed.</p>
+      <div className="flex items-center gap-2 rounded-lg border border-border/60 p-3">
+        <code className="min-w-0 flex-1 break-all text-xs">{command}</code>
+        <Button variant="ghost" size="icon" aria-label={copied ? "Command copied" : "Copy setup command"} onClick={() => { void navigator.clipboard.writeText(command).then(() => setCopied(true)); }}>
+          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+        </Button>
+      </div>
+      <Details>
+        {stored?.connected ? <DetailRow term="Project">{stored.hint}</DetailRow> : null}
+        <DetailRow term="Billing">Your Google Cloud account</DetailRow>
+        <DetailRow term="Storage">Files survive pause. Retained disks and Cloud NAT continue to incur charges.</DetailRow>
+      </Details>
+      {stored?.connected ? <Button variant="outline" disabled={busy} onClick={onRemove}>Disconnect Google Cloud</Button> : null}
+      <p className="text-xs text-muted-foreground">Requires gcloud and permission to configure your project. Delete this connection&apos;s sessions before disconnecting; remove the dedicated network and IAM resources in Google Cloud to finish teardown.</p>
+    </div>
   );
 }
 
@@ -363,10 +420,12 @@ function BoxSizePicker({
   value,
   onChange,
   plan,
+  gcp = false,
 }: {
   value: BoxSizeId;
   onChange: (size: BoxSizeId) => void;
   plan?: Plan;
+  gcp?: boolean;
 }) {
   return (
     <div className="space-y-2">
@@ -375,7 +434,7 @@ function BoxSizePicker({
         <p className="text-xs text-muted-foreground">CPU and memory a new sandbox boots with.</p>
       </div>
       <div role="radiogroup" aria-label="Box size" className="divide-y divide-border/60 rounded-md border border-border/60">
-        {BOX_SIZES.map((size) => {
+        {BOX_SIZES.filter((size) => !gcp || size.id !== "x-small").map((size) => {
           const selected = size.id === value;
           const locked = plan !== undefined && !allowsBoxSize(plan, size.id);
           return (

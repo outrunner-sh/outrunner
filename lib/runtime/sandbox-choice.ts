@@ -1,3 +1,5 @@
+import { NoGcpConnectionError, UserGcpRuntimeProvider } from "@/lib/runtime/user-gcp-provider";
+import type { GcpConnection } from "@/lib/runtime/gcp/config";
 import { boxSizeWithin, type Plan } from "@/lib/billing/plans";
 import type { SandboxChoice, SandboxSettings } from "@/lib/db/credentials";
 import { boxSize, type BoxSizeId } from "@/lib/runtime/box-sizes";
@@ -16,6 +18,8 @@ import { NoModalTokenError, UserModalRuntimeProvider } from "@/lib/runtime/user-
  * keys (`keys`, the owner's stored ones), so this stays free of the database.
  */
 export type OwnSandboxKeys = {
+  ownerId?: string;
+  gcp?: () => Promise<GcpConnection | null>;
   daytona: () => Promise<string | null>;
   modal: () => Promise<ModalToken | null>;
 };
@@ -27,6 +31,7 @@ export type OwnSandboxKeys = {
  */
 export function providerNamed(name: ProviderName, keys: OwnSandboxKeys): RuntimeProvider | null {
   if (name === "user-daytona") return new UserDaytonaRuntimeProvider(keys.daytona);
+  if (name === "user-gcp") return new UserGcpRuntimeProvider(keys.ownerId ?? "", keys.gcp ?? (async () => null));
   if (name === "user-modal") return new UserModalRuntimeProvider(keys.modal);
   const deployment = getRuntimeProvider();
   return deployment.name === name ? deployment : null;
@@ -37,6 +42,9 @@ export function providerNamed(name: ProviderName, keys: OwnSandboxKeys): Runtime
  *  their own and its key is gone. */
 export function providerForNewSessions(settings: SandboxSettings, keys: OwnSandboxKeys): RuntimeProvider {
   switch (settings.sandbox) {
+    case "gcp":
+      if (!settings.gcp?.connected || !keys.gcp || !keys.ownerId) throw new NoGcpConnectionError();
+      return new UserGcpRuntimeProvider(keys.ownerId, keys.gcp);
     case "daytona":
       if (!settings.daytona.connected) throw new NoDaytonaKeyError();
       return new UserDaytonaRuntimeProvider(keys.daytona);
@@ -55,6 +63,7 @@ export function providerForNewSessions(settings: SandboxSettings, keys: OwnSandb
  * its own.
  */
 export function boxSizeOn(sandbox: SandboxChoice, size: BoxSizeId, plan: Plan): BoxResources | undefined {
+  if (sandbox === "gcp") return boxSize(size === "x-small" ? "small" : size);
   if (sandbox === "modal") return boxSize(size);
   if (sandbox === "outrunner") return boxSizeWithin(plan, size);
   return undefined;
@@ -65,6 +74,7 @@ export function boxSizeOn(sandbox: SandboxChoice, size: BoxSizeId, plan: Plan): 
 export function sandboxOf(name: ProviderName): SandboxChoice {
   if (name === "user-daytona") return "daytona";
   if (name === "user-modal") return "modal";
+  if (name === "user-gcp") return "gcp";
   return "outrunner";
 }
 

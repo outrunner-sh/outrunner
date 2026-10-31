@@ -1,5 +1,8 @@
 "use client";
 
+import { SandboxSettingsForm } from "@/components/sandbox-settings";
+import { PLANS } from "@/lib/billing/plans";
+
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
@@ -89,7 +92,8 @@ export function FixturePage() {
     [state],
   );
   let content: React.ReactNode;
-  if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} agent={params.get("harness") === "claude" ? "claude" : "codex"} />;
+  if (view === "sandbox") content = <PageLayout><SandboxSettingsForm initial={{ sandbox: state === "connected" ? "gcp" : "outrunner", daytona: { connected: false, hint: null, updatedAt: null }, modal: { connected: false, hint: null, updatedAt: null }, gcp: { connected: state === "connected", hint: state === "connected" ? "sandbox-project" : null, updatedAt: null }, boxSize: "small", boxSizeChosen: true }} sizes plan={PLANS.free} /></PageLayout>;
+  else if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} agent={params.get("harness") === "claude" ? "claude" : "codex"} />;
   else if (view === "project")
     content = (
       <ProjectSettings

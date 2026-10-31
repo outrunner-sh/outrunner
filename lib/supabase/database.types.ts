@@ -1,3 +1,5 @@
+import type { GcpConnection, GcpResource } from "@/lib/runtime/gcp/config";
+
 /**
  * Database types for the Runtime schema.
  *
@@ -615,6 +617,7 @@ type UserAgentConfigRow = {
 // enabled with NO policy, so anon/authenticated match nothing. Reach it through
 // lib/db/credentials.ts, never directly.
 type UserCredentialsRow = {
+  gcp_connection_id: string | null;
   user_id: string;
   github_token_ciphertext: string | null;
   github_token_login: string | null;
@@ -632,7 +635,7 @@ type UserCredentialsRow = {
   neev_allowance_baseline_usd: number | null;
   neev_allowance_limit_usd: number | null;
   // Settings → Sandbox (supabase/migrations/20261013120000_user_sandbox.sql).
-  sandbox: "outrunner" | "daytona" | "modal";
+  sandbox: "outrunner" | "daytona" | "modal" | "gcp";
   daytona_key_ciphertext: string | null;
   daytona_key_hint: string | null;
   daytona_key_updated_at: string | null;
@@ -1791,6 +1794,18 @@ export type Database = {
         Update: Partial<CliTokenRow>;
         Relationships: [];
       };
+      gcp_connections: {
+        Row: GcpConnection;
+        Insert: Insert<GcpConnection, "user_id" | "project_id" | "project_number" | "zone">;
+        Update: Partial<GcpConnection>;
+        Relationships: [];
+      };
+      gcp_resources: {
+        Row: GcpResource;
+        Insert: Insert<GcpResource, "id" | "connection_id" | "user_id" | "instance_name">;
+        Update: Partial<GcpResource>;
+        Relationships: [];
+      };
       user_credentials: {
         Row: UserCredentialsRow;
         Insert: Insert<UserCredentialsRow, "user_id">;
@@ -1935,6 +1950,9 @@ export type Database = {
       };
     };
     Functions: {
+      gcp_cleanup_candidates: { Args: { older_than: string }; Returns: GcpResource[] };
+      select_gcp_connection: { Args: { for_owner: string; for_connection: string; requested_size?: string }; Returns: undefined };
+      disconnect_gcp_connection: { Args: { for_owner: string; for_connection: string }; Returns: undefined };
       link_github_installation: {
         Args: { target_org: string; target_installation: number; github_user_id: number | null; actor_id: string };
         Returns: string | null;

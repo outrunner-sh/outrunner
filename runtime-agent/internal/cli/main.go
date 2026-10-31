@@ -26,6 +26,7 @@ Commands:
            signing in first if needed
   logout   Sign this terminal out
   whoami   Show who this terminal is signed in as
+  sandbox  Connect your Google Cloud project: outrunner sandbox connect gcp
   triage   Add a work item to your triage: outrunner triage "fix the flaky test"
 
 Sessions (the API, docs/api.md; OUTRUNNER_API_KEY instead of a sign-in):
@@ -118,6 +119,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 		fmt.Fprintln(stdout, "\nGo back to your browser to carry on.")
 		return 0
+	case "sandbox":
+		return sandboxCommand(ctx, url, path, config, *account, flags.Args()[1:], in, stdout, stderr)
 	case "triage":
 		return triage(ctx, url, config, flags.Args()[1:], in, stdout, stderr)
 	case "list":

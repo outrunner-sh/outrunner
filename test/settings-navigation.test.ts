@@ -14,6 +14,7 @@ test("settings have exactly the approved personal and organization orders", () =
       "Profile",
       "Preferences",
       "Coding agents",
+      "Sandbox",
       "Connections",
       "Usage",
       "Developer",
@@ -57,5 +58,5 @@ test("old credential/auth, membership, and billing destinations keep compatible 
     redirects.get("/settings/org/access"),
     "/settings/org/members?tab=roles",
   );
-  assert.equal(redirects.get("/settings/sandbox"), "/settings/profile");
+  assert.equal(redirects.has("/settings/sandbox"), false);
 });

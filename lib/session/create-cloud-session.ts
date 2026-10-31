@@ -1,3 +1,4 @@
+import { NoGcpConnectionError } from "@/lib/runtime/user-gcp-provider";
 /**
  * Making a cloud session and setting up its box: what the new-session screen
  * asks for (app/api/projects/[id]/workspaces/route.ts), and what the server
@@ -285,7 +286,7 @@ async function createOnce(
     sandboxSettings = await getSandboxSettings(owner.id);
     provider = providerForNewSessions(sandboxSettings, keys);
   } catch (error) {
-    if (error instanceof NoDaytonaKeyError || error instanceof NoModalTokenError) return needsSandbox(error.message);
+    if (error instanceof NoDaytonaKeyError || error instanceof NoModalTokenError || error instanceof NoGcpConnectionError) return needsSandbox(error.message);
     console.error("Runtime provider is unavailable", error);
     return NextResponse.json(
       { error: "The configured provider is not available." },
