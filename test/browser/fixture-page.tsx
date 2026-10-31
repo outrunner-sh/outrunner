@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
+import { DesktopSignIn } from "@/components/desktop-signin";
+import { DesktopWelcome } from "@/components/desktop-welcome";
+import { OnboardingLive } from "@/components/onboarding/onboarding-live";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { usePendingSession } from "@/lib/session/pending-sessions";
 import { selectionMenu } from "./selection-fixtures";
@@ -89,7 +92,10 @@ export function FixturePage() {
     [state],
   );
   let content: React.ReactNode;
-  if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} agent={params.get("harness") === "claude" ? "claude" : "codex"} />;
+  if (view === "desktop-signin") content = <DesktopSignIn next="/"><p>Browser sign-in</p></DesktopSignIn>;
+  else if (view === "web-onboarding") content = <OnboardingLive user={{ id: "desktop-browser-user", name: "Ada", login: "ada", avatarUrl: null }} outrunnerModels desktopReturn />;
+  else if (view === "desktop-ready" || pathname === "/auth/desktop/ready") content = <DesktopWelcome email="ada@example.com" next={params.get("next") ?? "/new?project=p1&start=codex"} expired={state === "expired"} />;
+  else if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} agent={params.get("harness") === "claude" ? "claude" : "codex"} />;
   else if (view === "project")
     content = (
       <ProjectSettings

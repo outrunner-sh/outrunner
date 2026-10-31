@@ -1,5 +1,8 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { DesktopSignIn } from "@/components/desktop-signin";
+import { DESKTOP_CONTEXT_COOKIE, readDesktopContext } from "@/lib/auth/desktop/grant";
 import { EmailSignIn } from "@/components/email-signin";
 import { SignInButton } from "@/components/signin-button";
 import { getOwnerSafe } from "@/lib/auth/owner";
@@ -39,7 +42,8 @@ export default async function SignInPage({
   searchParams: Promise<{ next?: string; error?: string; org?: string }>;
 }) {
   const { next, error, org } = await searchParams;
-  const target = safeRelativePath(next);
+  const desktop = readDesktopContext((await cookies()).get(DESKTOP_CONTEXT_COOKIE)?.value);
+  const target = safeRelativePath(next, desktop ? "/auth/desktop/ready" : "/");
 
   // Already signed in as the owner — skip the screen entirely.
   if (await getOwnerSafe()) redirect(target);
@@ -47,41 +51,43 @@ export default async function SignInPage({
   const message = errorMessage(error, org);
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-6">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="space-y-4 text-center">
-          {/* The home screen's wordmark, small, as the mark above the welcome. */}
-          <p aria-hidden className="select-none font-display text-4xl leading-none text-foreground/25">
-            outrunner
-          </p>
-          <div className="space-y-1">
-            <h1 className="text-base font-medium text-foreground">Welcome to Outrunner</h1>
-            <p className="text-sm text-muted-foreground">Sign in or create an account</p>
+    <DesktopSignIn next={target}>
+      <main className="flex min-h-screen items-center justify-center px-6">
+        <div className="w-full max-w-sm space-y-6">
+          <div className="space-y-4 text-center">
+            {/* The home screen's wordmark, small, as the mark above the welcome. */}
+            <p aria-hidden className="select-none font-display text-4xl leading-none text-foreground/25">
+              outrunner
+            </p>
+            <div className="space-y-1">
+              <h1 className="text-base font-medium text-foreground">Welcome to Outrunner</h1>
+              <p className="text-sm text-muted-foreground">Sign in or create an account</p>
+            </div>
           </div>
-        </div>
-        {message && (
-          // A request to join waiting on an org's admins isn't a failure.
-          <p
-            role={error === "join_requested" ? "status" : "alert"}
-            className={cn(
-              "text-center text-xs",
-              error === "join_requested" ? "text-muted-foreground" : "text-destructive",
-            )}
-          >
-            {message}
+          {message && (
+            // A request to join waiting on an org's admins isn't a failure.
+            <p
+              role={error === "join_requested" ? "status" : "alert"}
+              className={cn(
+                "text-center text-xs",
+                error === "join_requested" ? "text-muted-foreground" : "text-destructive",
+              )}
+            >
+              {message}
+            </p>
+          )}
+          <div className="space-y-2">
+            <SignInButton provider="github" next={target} />
+            <SignInButton provider="google" next={target} />
+          </div>
+          <p aria-hidden className="flex items-center gap-3 text-[10px] tracking-wider text-muted-foreground uppercase">
+            <span className="h-px flex-1 bg-border" />
+            or
+            <span className="h-px flex-1 bg-border" />
           </p>
-        )}
-        <div className="space-y-2">
-          <SignInButton provider="github" next={target} />
-          <SignInButton provider="google" next={target} />
+          <EmailSignIn next={target} />
         </div>
-        <p aria-hidden className="flex items-center gap-3 text-[10px] tracking-wider text-muted-foreground uppercase">
-          <span className="h-px flex-1 bg-border" />
-          or
-          <span className="h-px flex-1 bg-border" />
-        </p>
-        <EmailSignIn next={target} />
-      </div>
-    </main>
+      </main>
+    </DesktopSignIn>
   );
 }

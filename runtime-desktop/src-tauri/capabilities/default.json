@@ -15,6 +15,8 @@
     "core:default",
     "opener:default",
     "deep-link:default",
+    "allow-desktop-signin-start",
+    "allow-desktop-signin-poll",
     "allow-connect-claude-start",
     "allow-connect-claude-poll",
     "allow-connect-claude-submit",

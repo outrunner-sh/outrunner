@@ -13,6 +13,8 @@ fn main() {
     tauri_build::try_build(
         tauri_build::Attributes::new().app_manifest(
             tauri_build::AppManifest::new().commands(&[
+                "desktop_signin_start",
+                "desktop_signin_poll",
                 "connect_claude_start",
                 "connect_claude_submit",
                 "connect_claude_poll",
