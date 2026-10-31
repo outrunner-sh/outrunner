@@ -11,9 +11,11 @@
  */
 
 import { GET as pullRequestGET } from "@/app/api/workspaces/[id]/pull-request/route";
+import { POST as answerPOST } from "@/app/api/workspaces/[id]/answer/route";
 import { POST as interruptPOST } from "@/app/api/workspaces/[id]/interrupt/route";
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
 import { POST as messagePOST } from "@/app/api/workspaces/[id]/message/route";
+import { POST as secretsPOST } from "@/app/api/workspaces/[id]/secrets/route";
 import {
   conversationPage,
   fenceBefore,
@@ -24,6 +26,7 @@ import {
   turnState,
   type ConversationEntry,
 } from "@/lib/api/conversation";
+import { parseAnswers } from "@/lib/api/answers";
 import { checkAttachments } from "@/lib/api/attachments";
 import { firstPrompt, MAX_PROMPT, parseAttachmentIds, parseCreate, type CreateInput } from "@/lib/api/create-request";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
@@ -485,4 +488,74 @@ function chatJson(chat: SessionChat): Record<string, unknown> {
     model: chat.model ? { provider: chat.model.model.provider, id: chat.model.model.id, effort: chat.model.effort } : null,
     created_at: chat.createdAt,
   };
+}
+
+/** What the session's agent is waiting on in a chat, read from its box:
+ *  the request (docs/api.md's `pending_input`), or the answer to give. */
+async function waitingOn(workspace: Workspace, chat: string | undefined, type: "question" | "secrets"): Promise<Record<string, unknown> | Response> {
+  const turn = await turnJsonOf(workspace, chat);
+  if (!turn) return apiError(409, "The session's box isn't up: there's nothing waiting on an answer.");
+  const pending = turn.pending_input as Record<string, unknown> | null;
+  if (pending?.type !== type) {
+    return apiError(409, type === "question" ? "The session isn't waiting on a question." : "The session isn't asking for secrets.");
+  }
+  return pending;
+}
+
+/** POST /workspaces/{id}/answer: answer the question the agent asked (the
+ *  question card's answer), or dismiss it. */
+export async function answerApi(context: ApiContext, id: string): Promise<Response> {
+  const raw = await jsonBody(context.request);
+  if (raw instanceof Response) return raw;
+  if (raw.dismissed !== undefined && typeof raw.dismissed !== "boolean") return apiError(400, "`dismissed` is true or false.");
+  const workspace = await ownSession(context, id);
+  if (workspace instanceof Response) return workspace;
+  const chat = await apiChat(workspace, raw.chat_id);
+  if (chat instanceof Response) return chat;
+  const pending = await waitingOn(workspace, chat, "question");
+  if (pending instanceof Response) return pending;
+  const questions = pending.questions as unknown[];
+  let body: Record<string, unknown> = { questions, dismissed: true };
+  if (raw.dismissed !== true) {
+    const answers = parseAnswers(raw.answers, questions.length);
+    if (typeof answers === "string") return apiError(400, answers);
+    body = { questions, answers };
+  }
+  const answered = await answerPOST(
+    appRequest(context.base, `/api/workspaces/${id}/answer${chatParam(chat)}`, { body }),
+    routeParams({ id }),
+  );
+  if (!answered.ok) return errorFromRoute(answered, context.base);
+  return Response.json({ result: raw.dismissed === true ? "dismissed" : "answered", workspace_id: id, ...(chat && { chat_id: chat }) });
+}
+
+/** POST /workspaces/{id}/secrets: give the agent the secrets it asked for
+ *  (`values`, by name), or skip them. Never answered back or logged; the
+ *  project keeps them for its next sessions, as the form's do. */
+export async function secretsApi(context: ApiContext, id: string): Promise<Response> {
+  const raw = await jsonBody(context.request);
+  if (raw instanceof Response) return raw;
+  if (raw.skipped !== undefined && typeof raw.skipped !== "boolean") return apiError(400, "`skipped` is true or false.");
+  const values = raw.values ?? {};
+  if (!values || typeof values !== "object" || Array.isArray(values) || !Object.values(values).every((v) => typeof v === "string")) {
+    return apiError(400, "`values` is an object of each secret's name and its value.");
+  }
+  if (raw.skipped !== true && Object.keys(values).length === 0) return apiError(400, "Give the secrets (`values`), or skip them (`skipped`).");
+  const workspace = await ownSession(context, id);
+  if (workspace instanceof Response) return workspace;
+  const chat = await apiChat(workspace, raw.chat_id);
+  if (chat instanceof Response) return chat;
+  const pending = await waitingOn(workspace, chat, "secrets");
+  if (pending instanceof Response) return pending;
+  const keys = pending.keys as string[];
+  const unasked = Object.keys(values).find((name) => !keys.includes(name));
+  if (unasked) return apiError(400, `It didn't ask for ${unasked}: it asked for ${keys.join(", ")}.`);
+  const body = raw.skipped === true ? { keys, skipped: true } : { keys, values };
+  const given = await secretsPOST(
+    appRequest(context.base, `/api/workspaces/${id}/secrets${chatParam(chat)}`, { body }),
+    routeParams({ id }),
+  );
+  if (!given.ok) return errorFromRoute(given, context.base);
+  const result = (await given.json()) as Record<string, unknown>;
+  return Response.json({ ...(snakeKeys(result) as Record<string, unknown>), workspace_id: id, ...(chat && { chat_id: chat }) });
 }
