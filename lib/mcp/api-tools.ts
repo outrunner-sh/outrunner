@@ -240,6 +240,7 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
           },
         },
         dismissed: { type: "boolean", description: "Decline to answer instead." },
+        tool_use_id: { type: "string", description: "pending_input.tool_use_id: refused if that question is over." },
         ...CHAT_ID,
       },
       required: ["workspace_id"],
@@ -252,6 +253,7 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
             body: {
               ...(args.answers !== undefined && { answers: args.answers }),
               ...(args.dismissed !== undefined && { dismissed: args.dismissed }),
+              ...(args.tool_use_id !== undefined && { tool_use_id: args.tool_use_id }),
               ...(args.chat_id !== undefined && { chat_id: args.chat_id }),
             },
           }),
@@ -270,6 +272,7 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
         ...WORKSPACE_ID,
         values: { type: "object", additionalProperties: { type: "string" }, description: "Each secret's name and value." },
         skipped: { type: "boolean", description: "Go on without them." },
+        tool_use_id: { type: "string", description: "pending_input.tool_use_id: refused if that request is over." },
         ...CHAT_ID,
       },
       required: ["workspace_id"],
@@ -282,6 +285,7 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
             body: {
               ...(args.values !== undefined && { values: args.values }),
               ...(args.skipped !== undefined && { skipped: args.skipped }),
+              ...(args.tool_use_id !== undefined && { tool_use_id: args.tool_use_id }),
               ...(args.chat_id !== undefined && { chat_id: args.chat_id }),
             },
           }),

@@ -10,6 +10,7 @@
 import { GET as environmentGET, PATCH as environmentPATCH } from "@/app/api/environments/[id]/route";
 import { DELETE as reposDELETE, POST as reposPOST } from "@/app/api/environments/[id]/repos/route";
 import { PATCH as secretsPATCH } from "@/app/api/environments/[id]/secrets/route";
+import { boxSetupRefusal } from "@/lib/api/auth";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
 import { environmentDetailJson } from "@/lib/api/serialize";
@@ -49,6 +50,9 @@ export async function updateEnvironmentApi(context: ApiContext, id: string): Pro
   const unknown = Object.keys(body).find((key) => !(PROJECT_FIELDS as readonly string[]).includes(key));
   if (unknown) return apiError(400, `A project has no \`${unknown}\` to change: ${PROJECT_FIELDS.join(", ")}.`);
   if (Object.keys(body).length === 0) return apiError(400, `Name something to change: ${PROJECT_FIELDS.join(", ")}.`);
+  // Scripts and hooks run on every member's box.
+  const refusal = "scripts" in body || "hooks" in body ? boxSetupRefusal(context.caller.kind) : null;
+  if (refusal) return apiError(403, refusal);
   const project = await projectOf(context, id);
   if (project instanceof Response) return project;
   const changed = await environmentPATCH(
@@ -75,6 +79,8 @@ export async function editEnvironmentSecretsApi(context: ApiContext, id: string)
   const unknown = Object.keys(body).find((key) => !(key in SECRET_KEYS));
   if (unknown) return apiError(400, `Change variables and files with ${Object.keys(SECRET_KEYS).join(", ")}; not \`${unknown}\`.`);
   if (Object.keys(body).length === 0) return apiError(400, `Name a change: ${Object.keys(SECRET_KEYS).join(", ")}.`);
+  const refusal = boxSetupRefusal(context.caller.kind);
+  if (refusal) return apiError(403, refusal);
   const project = await projectOf(context, id);
   if (project instanceof Response) return project;
   const edit = Object.fromEntries(Object.entries(body).map(([key, value]) => [SECRET_KEYS[key], value]));
@@ -93,6 +99,8 @@ export async function addEnvironmentRepoApi(context: ApiContext, id: string): Pr
   const body = await jsonBody(context.request);
   if (body instanceof Response) return body;
   if (typeof body.project_id !== "string" || !isUuid(body.project_id)) return apiError(400, "Name the repository to add (`project_id`).");
+  const refusal = boxSetupRefusal(context.caller.kind);
+  if (refusal) return apiError(403, refusal);
   const project = await projectOf(context, id);
   if (project instanceof Response) return project;
   const added = await reposPOST(
@@ -108,6 +116,8 @@ export async function addEnvironmentRepoApi(context: ApiContext, id: string): Pr
  *  the project. */
 export async function removeEnvironmentRepoApi(context: ApiContext, id: string, projectId: string): Promise<Response> {
   if (!isUuid(projectId)) return apiError(404, "No repository by that id in the project.");
+  const refusal = boxSetupRefusal(context.caller.kind);
+  if (refusal) return apiError(403, refusal);
   const project = await projectOf(context, id);
   if (project instanceof Response) return project;
   const removed = await reposDELETE(

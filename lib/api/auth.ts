@@ -100,6 +100,20 @@ function refuse(status: 401 | 403 | 404, message: string): ApiAuth {
   return { ok: false, status, message };
 }
 
+/**
+ * Why a credential may not change what runs on the org's boxes (a project's
+ * setup scripts and hooks, variables and files, and repositories), or null
+ * when it may. Those run in every member's session, beside their own GitHub
+ * token, so only an org key may: an admin made it for the org, to manage it.
+ * A personal key or the CLI's token, leaked from one member's machine, can't.
+ * Keys have no scopes yet (20261102120000_api_keys.sql); until they do, this
+ * is the line.
+ */
+export function boxSetupRefusal(kind: ApiCallerKind): string | null {
+  if (kind === "org_key") return null;
+  return "Changing what runs on the project's boxes (setup scripts, hooks, variables, files, repositories) takes an org key: an admin makes one under Settings → Org → API keys.";
+}
+
 /** Where a call names its org: `?org=`, or the `Outrunner-Org` header. */
 export function wantedOrg(request: Request): string | null {
   const named = new URL(request.url).searchParams.get("org") ?? request.headers.get("outrunner-org");

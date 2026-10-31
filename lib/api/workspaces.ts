@@ -29,7 +29,7 @@ import {
   turnState,
   type ConversationEntry,
 } from "@/lib/api/conversation";
-import { parseAnswers } from "@/lib/api/answers";
+import { modelSwitch, parseAnswers, secretNames } from "@/lib/api/answers";
 import { checkAttachments } from "@/lib/api/attachments";
 import { firstPrompt, MAX_PROMPT, parseAttachmentIds, parseCreate, type CreateInput } from "@/lib/api/create-request";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
@@ -495,13 +495,24 @@ function chatJson(chat: SessionChat): Record<string, unknown> {
 }
 
 /** What the session's agent is waiting on in a chat, read from its box:
- *  the request (docs/api.md's `pending_input`), or the answer to give. */
-async function waitingOn(workspace: Workspace, chat: string | undefined, type: "question" | "secrets"): Promise<Record<string, unknown> | Response> {
+ *  the request (docs/api.md's `pending_input`), or the answer to give. Named
+ *  by `toolUseId`, it must be that request still: two clients answering at
+ *  once can't answer one that came after. */
+async function waitingOn(
+  workspace: Workspace,
+  chat: string | undefined,
+  type: "question" | "secrets",
+  toolUseId: unknown,
+): Promise<Record<string, unknown> | Response> {
+  if (toolUseId !== undefined && typeof toolUseId !== "string") return apiError(400, "`tool_use_id` is pending_input's tool_use_id.");
   const turn = await turnJsonOf(workspace, chat);
   if (!turn) return apiError(409, "The session's box isn't up: there's nothing waiting on an answer.");
   const pending = turn.pending_input as Record<string, unknown> | null;
   if (pending?.type !== type) {
     return apiError(409, type === "question" ? "The session isn't waiting on a question." : "The session isn't asking for secrets.");
+  }
+  if (toolUseId !== undefined && pending.tool_use_id !== toolUseId) {
+    return apiError(409, `That request is over: it's waiting on ${String(pending.tool_use_id)} now.`);
   }
   return pending;
 }
@@ -516,12 +527,12 @@ export async function answerApi(context: ApiContext, id: string): Promise<Respon
   if (workspace instanceof Response) return workspace;
   const chat = await apiChat(workspace, raw.chat_id);
   if (chat instanceof Response) return chat;
-  const pending = await waitingOn(workspace, chat, "question");
+  const pending = await waitingOn(workspace, chat, "question", raw.tool_use_id);
   if (pending instanceof Response) return pending;
   const questions = pending.questions as unknown[];
   let body: Record<string, unknown> = { questions, dismissed: true };
   if (raw.dismissed !== true) {
-    const answers = parseAnswers(raw.answers, questions.length);
+    const answers = parseAnswers(raw.answers, questions);
     if (typeof answers === "string") return apiError(400, answers);
     body = { questions, answers };
   }
@@ -545,13 +556,14 @@ export async function secretsApi(context: ApiContext, id: string): Promise<Respo
     return apiError(400, "`values` is an object of each secret's name and its value.");
   }
   if (raw.skipped !== true && Object.keys(values).length === 0) return apiError(400, "Give the secrets (`values`), or skip them (`skipped`).");
+  if (raw.skipped === true && Object.keys(values).length > 0) return apiError(400, "Give the secrets or skip them, not both.");
   const workspace = await ownSession(context, id);
   if (workspace instanceof Response) return workspace;
   const chat = await apiChat(workspace, raw.chat_id);
   if (chat instanceof Response) return chat;
-  const pending = await waitingOn(workspace, chat, "secrets");
+  const pending = await waitingOn(workspace, chat, "secrets", raw.tool_use_id);
   if (pending instanceof Response) return pending;
-  const keys = pending.keys as string[];
+  const keys = secretNames(pending.keys);
   const unasked = Object.keys(values).find((name) => !keys.includes(name));
   if (unasked) return apiError(400, `It didn't ask for ${unasked}: it asked for ${keys.join(", ")}.`);
   const body = raw.skipped === true ? { keys, skipped: true } : { keys, values };
@@ -604,15 +616,14 @@ export async function approvePlanApi(context: ApiContext, id: string): Promise<R
 export async function switchModelApi(context: ApiContext, id: string): Promise<Response> {
   const raw = await jsonBody(context.request);
   if (raw instanceof Response) return raw;
-  for (const key of ["model", "provider", "effort"] as const) {
-    if (raw[key] !== undefined && typeof raw[key] !== "string") return apiError(400, `\`${key}\` must be text.`);
-  }
-  if (raw.model === undefined && raw.effort === undefined) return apiError(400, "Name the `model` to switch to, or an `effort`.");
   const workspace = await ownSession(context, id);
   if (workspace instanceof Response) return workspace;
   const chat = await apiChat(workspace, raw.chat_id);
   if (chat instanceof Response) return chat;
-  const body = Object.fromEntries((["model", "provider", "effort"] as const).filter((k) => raw[k] !== undefined).map((k) => [k, raw[k]]));
+  // An effort alone keeps the model it's on.
+  const current = workspace.model ? { provider: workspace.model.model.provider, id: workspace.model.model.id } : null;
+  const body = modelSwitch(raw, current);
+  if (typeof body === "string") return apiError(400, body);
   const switched = await modelPOST(
     appRequest(context.base, `/api/workspaces/${id}/model${chatParam(chat)}`, { body }),
     routeParams({ id }),

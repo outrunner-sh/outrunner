@@ -21,6 +21,8 @@ export type ApiOperation = {
   body?: "json" | "multipart";
   /** Only the org's admins may. */
   admin?: boolean;
+  /** Only an org key may (it changes what runs on members' boxes). */
+  orgKey?: boolean;
   /** No key needed. */
   open?: boolean;
 };
@@ -36,10 +38,10 @@ export const API_OPERATIONS: ApiOperation[] = [
   { method: "GET", path: "/projects", summary: "The org's repositories the key's maker may start sessions on", tag: "Projects", query: PAGE },
   { method: "GET", path: "/environments", summary: "The org's projects", tag: "Projects", query: PAGE },
   { method: "GET", path: "/environments/{id}", summary: "A project in full", tag: "Projects" },
-  { method: "PATCH", path: "/environments/{id}", summary: "Change a project's name, description, instructions, scripts or hooks", tag: "Projects", body: "json" },
-  { method: "PATCH", path: "/environments/{id}/secrets", summary: "Set and remove a project's variables and files (write-only)", tag: "Projects", body: "json" },
-  { method: "POST", path: "/environments/{id}/repos", summary: "Add a repository to a project", tag: "Projects", body: "json" },
-  { method: "DELETE", path: "/environments/{id}/repos/{projectId}", summary: "Take a repository out of a project", tag: "Projects" },
+  { method: "PATCH", path: "/environments/{id}", summary: "Change a project's name, description, instructions, scripts or hooks (scripts and hooks: org keys only)", tag: "Projects", body: "json" },
+  { method: "PATCH", path: "/environments/{id}/secrets", summary: "Set and remove a project's variables and files (write-only)", tag: "Projects", body: "json", orgKey: true },
+  { method: "POST", path: "/environments/{id}/repos", summary: "Add a repository to a project", tag: "Projects", body: "json", orgKey: true },
+  { method: "DELETE", path: "/environments/{id}/repos/{projectId}", summary: "Take a repository out of a project", tag: "Projects", orgKey: true },
   { method: "GET", path: "/environments/{id}/skills", summary: "The catalog skills enabled on a project", tag: "Skills", query: PAGE },
   { method: "POST", path: "/environments/{id}/skills", summary: "Enable a catalog skill", tag: "Skills", body: "json" },
   { method: "DELETE", path: "/environments/{id}/skills/{skillId}", summary: "Disable a skill", tag: "Skills" },
@@ -79,7 +81,7 @@ export const API_OPERATIONS: ApiOperation[] = [
 
   { method: "GET", path: "/automations", summary: "The org's automations", tag: "Automations", query: PAGE },
   { method: "POST", path: "/automations", summary: "Make an automation", tag: "Automations", body: "json", admin: true },
-  { method: "GET", path: "/automations/runs", summary: "The org's recent automation runs", tag: "Automations", query: ["automation_id", ...PAGE] },
+  { method: "GET", path: "/automations/runs", summary: "The org's 50 most recent automation runs", tag: "Automations", query: ["automation_id", ...PAGE] },
   { method: "GET", path: "/automations/{id}", summary: "One automation", tag: "Automations" },
   { method: "PATCH", path: "/automations/{id}", summary: "Change an automation", tag: "Automations", body: "json", admin: true },
   { method: "DELETE", path: "/automations/{id}", summary: "Delete an automation", tag: "Automations", admin: true },
@@ -117,7 +119,9 @@ export function openApiSpec(base: string): Record<string, unknown> {
       operationId: operationId(op),
       summary: op.summary,
       tags: [op.tag],
-      ...(op.admin && { description: "Only the org's admins may." }),
+      ...((op.admin || op.orgKey) && {
+        description: op.orgKey ? "Only an org key may: it changes what runs on members' boxes." : "Only the org's admins may.",
+      }),
       ...(op.open && { security: [] }),
       ...((params.length || query.length) && { parameters: [...params, ...query] }),
       ...(op.body && {

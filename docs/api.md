@@ -123,7 +123,7 @@ counted apart. The budget refills continuously: every answer carries
 | GET | `/api/v1/automations/{id}` | One automation |
 | PATCH | `/api/v1/automations/{id}` | Change one (admins) |
 | DELETE | `/api/v1/automations/{id}` | Delete one (admins) |
-| GET | `/api/v1/automations/runs` | Recent runs, newest first: `automation_id` |
+| GET | `/api/v1/automations/runs` | The 50 most recent runs, newest first: `automation_id` |
 
 ### Projects and repositories
 
@@ -259,7 +259,10 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 { "id": "…", "filename": "screenshot.png", "content_type": "image/png", "size_bytes": 48211 }
 ```
 
-A file is up to 25 MB, and a message takes up to 10. The files land in the
+A file is up to 25 MB (send a `Content-Length`: a body without one, or
+over the limit, is refused before it's read), and a message takes up to
+10. Up to 100 files (500 MB) a day may wait unsent; past that, uploads are
+`429` until some are sent. The files land in the
 session's worktree under `.attachments/`, named in the message; images are
 named so the agent sees them. Files alone, without `content`, are a message
 too. A file is its uploader's: anyone else's id is `404`.
@@ -279,9 +282,14 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
   "$OUTRUNNER/api/v1/workspaces/$ID/secrets" -d '{ "values": { "STRIPE_SECRET_KEY": "sk_test_…" } }'
 ```
 
-`answers` items are `{ "selected": [labels], "other": "text" }`;
-`{ "dismissed": true }` declines the question, and `{ "skipped": true }`
-goes on without the secrets. Secrets are also kept in the session's
+`answers` has one item per question, in order: `{ "selected": [labels],
+"other": "text" }`, with labels from that question's `options` (one, unless
+it's `multiSelect`). `{ "dismissed": true }` declines the question, and
+`{ "skipped": true }` (without `values`) goes on without the secrets. A
+secrets request's `keys` are `{ "name", "optional" }`. Pass back
+`pending_input.tool_use_id` as `tool_use_id` and an answer meant for a
+request that's since been answered (by another client) is `409` rather than
+answering the next one. Secrets are also kept in the session's
 project, for its next sessions, as the app's form keeps them. Each answers
 `409` when the agent isn't waiting on that, and takes a `chat_id`.
 
@@ -304,7 +312,8 @@ curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces
 ```
 
 `model` takes the menu's ids (as `POST /workspaces` does); the agent
-relaunches on it with the conversation carried on. `changes` lists the
+relaunches on it with the conversation carried on. `effort` alone keeps
+the model it's on. `changes` lists the
 files changed from the session's base branch (committed, pushed or not),
 and with `path` answers `{ "path", "diff" }`, a text diff of that file,
 size-capped.
@@ -482,9 +491,15 @@ curl -X PATCH -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: ap
 A project is what sessions start with: its repositories, `instructions`,
 `scripts` (`setup`, `run`, `archive`), `hooks` (`warm`, `start`), and its
 variables and files. A field left out of a `PATCH` is left as it is; `null`
-clears it. Variables and files are write-only: answers name them, never a
+clears `description` or `instructions`, or one script or hook
+(`"scripts": { "setup": null }`). Variables and files are write-only: answers name them, never a
 value. Changing them makes the project's ready boxes again. Each change
 needs write access to the project (Roles & access).
+
+What runs on the project's boxes (`scripts`, `hooks`, variables, files and
+repositories) runs in every member's session, beside their GitHub token, so
+only an **org key** may change it: a personal key or the CLI's token is
+`403`. Keys have no finer scopes yet.
 
 ### Automations
 

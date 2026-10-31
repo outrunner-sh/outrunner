@@ -9,13 +9,21 @@ import { POST as attachmentsPOST } from "@/app/api/attachments/route";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import type { ApiContext } from "@/lib/api/handler";
 import { snakeKeys } from "@/lib/api/serialize";
-import { type Attachment, getAttachments } from "@/lib/db/attachments";
+import { DAY_MS, UNSENT_MAX, uploadSizeRefusal } from "@/lib/api/upload-limits";
+import { type Attachment, getAttachments, unsentAttachments } from "@/lib/db/attachments";
 
 /** POST /attachments: one file, as multipart form data under `file`. */
 export async function uploadAttachmentApi(context: ApiContext): Promise<Response> {
   const type = context.request.headers.get("content-type") ?? "";
   if (!type.toLowerCase().startsWith("multipart/form-data")) {
     return apiError(400, "Send the file as multipart/form-data, under `file`.");
+  }
+  // Checked before the body is read: the route's own cap runs only after.
+  const tooBig = uploadSizeRefusal(context.request.headers.get("content-length"));
+  if (tooBig) return apiError(tooBig.status, tooBig.message);
+  const unsent = await unsentAttachments(new Date(Date.now() - DAY_MS));
+  if (unsent.count >= UNSENT_MAX.count || unsent.bytes >= UNSENT_MAX.bytes) {
+    return apiError(429, "Too many files uploaded and not yet sent today: send or delete some first.");
   }
   let form: FormData;
   try {
