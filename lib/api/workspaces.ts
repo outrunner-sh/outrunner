@@ -24,7 +24,8 @@ import {
   turnState,
   type ConversationEntry,
 } from "@/lib/api/conversation";
-import { firstPrompt, MAX_PROMPT, parseCreate, type CreateInput } from "@/lib/api/create-request";
+import { checkAttachments } from "@/lib/api/attachments";
+import { firstPrompt, MAX_PROMPT, parseAttachmentIds, parseCreate, type CreateInput } from "@/lib/api/create-request";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
 import { readConversation, readLiveConversation } from "@/lib/api/live";
@@ -87,6 +88,8 @@ export async function createWorkspace(
   if (!project || project.orgId !== caller.orgId || !allows(await projectLevel(owner.id, project.id), "read")) {
     return apiError(404, "No repository by that id that you can see in this org.");
   }
+  const unknownFile = await checkAttachments(input.attachmentIds);
+  if (unknownFile) return unknownFile;
 
   // The kept sign-in stays while the box is set up, after this answer.
   const release = holdActingUser();
@@ -106,6 +109,7 @@ export async function createWorkspace(
       {
         baseBranch: input.baseBranch,
         firstMessage: firstPrompt(input),
+        firstAttachmentIds: input.attachmentIds,
         source: "api",
         boxSize: input.size && isBoxSizeId(input.size) ? input.size : undefined,
         onSettled: async (outcome) => {
@@ -296,17 +300,24 @@ export async function sendMessageApi(
   const raw = await jsonBody(context.request);
   if (raw instanceof Response) return raw;
   const content = typeof raw.content === "string" ? raw.content.trim() : "";
-  if (!content) return apiError(400, "Say something (`content`).");
+  const attachmentIds = parseAttachmentIds(raw.attachment_ids);
+  if (typeof attachmentIds === "string") return apiError(400, attachmentIds);
+  // Files alone are a message too ("here's the log"), as in the composer.
+  if (!content && attachmentIds.length === 0) return apiError(400, "Say something (`content`), or send files (`attachment_ids`).");
   if (content.length > MAX_PROMPT) return apiError(400, "The message is too long.");
   const workspace = await ownSession(context, id);
   if (workspace instanceof Response) return workspace;
+  const unknownFile = await checkAttachments(attachmentIds);
+  if (unknownFile) return unknownFile;
   const chat = await apiChat(workspace, raw.chat_id);
   if (chat instanceof Response) return chat;
   const refused = await wake(context, workspace);
   if (refused) return refused;
   const sentAt = Date.now();
   const sent = await messagePOST(
-    appRequest(context.base, `/api/workspaces/${id}/message${chatParam(chat)}`, { body: { content } }),
+    appRequest(context.base, `/api/workspaces/${id}/message${chatParam(chat)}`, {
+      body: { content, ...(attachmentIds.length && { attachmentIds }) },
+    }),
     routeParams({ id }),
   );
   if (!sent.ok) return errorFromRoute(sent, context.base);
