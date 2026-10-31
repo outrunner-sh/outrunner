@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { AppFrame } from "@/components/app-frame";
 import { ServerAnswer } from "@/components/server-answer";
 import { frame } from "./fixtures";
@@ -16,6 +16,7 @@ const chrome = {
 /** Match the real app: the frame persists across page navigation. */
 export function FixtureFrame({ children }: { children: React.ReactNode }) {
   const params = useSearchParams();
+  const pathname = usePathname();
   const state = params.get("state");
   const shownFrame = useMemo(() => {
     if (state === "archived") {
@@ -62,7 +63,7 @@ export function FixtureFrame({ children }: { children: React.ReactNode }) {
     }
     return { ...frame, activeOrgId: "org-1" };
   }, [state]);
-  if (params.get("view") === "settings" || params.get("view") === "sandbox") return children;
+  if (["settings", "sandbox", "desktop-signin", "web-onboarding", "desktop-ready"].includes(params.get("view") ?? "") || pathname.startsWith("/auth/desktop/")) return children;
   return (
     <AppFrame chrome={<ServerAnswer value={chrome} />} server={<ServerAnswer value={shownFrame} />}>
       {children}
