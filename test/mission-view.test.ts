@@ -63,7 +63,7 @@ test("an archived Runner: shipping while its merge is fresh, then done; its open
   assert.equal(group("archived", [pr({ verdict: "ready" })]).group, "ready_to_review");
 });
 
-const standing = (s: "needs_you" | "working" | "in_review" | "done" | "backlog") => ({ standing: s });
+const standing = (s: "needs_you" | "working" | "in_review" | "done") => ({ standing: s });
 
 test("a Mission needs you only when its own session does; then working, ready, idle", () => {
   const idle = { group: "working" as const, state: "idle" as const, pulls: [] };

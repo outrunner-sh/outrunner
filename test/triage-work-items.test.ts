@@ -138,5 +138,5 @@ test("a tab's items group by workspace, Unsorted first, the rest by name", () =>
       ["Workspace", ["e"]],
     ],
   );
-  assert.deepEqual(tabCounts(items), { triage: 4, backlog: 1, closed: 0 });
+  assert.deepEqual(tabCounts(items), { triage: 4, working: 1, closed: 0 });
 });

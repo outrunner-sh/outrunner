@@ -5,11 +5,10 @@
  *   needs_you  the agent asked a question, waits for a plan's approval or for
  *              secrets, finished a turn the owner hasn't read (with no pull
  *              request open), the session or its last turn errored (an API
- *              error), or it is stuck
+ *              error), it is stuck, or it is idle without an open or merged pull request
  *   working    the agent is mid-turn (or the session is setting up)
  *   in_review  its pull request is open
  *   done       its pull request merged
- *   backlog    idle without a merged or open pull request
  *
  * Worked out on the server from what it records (session_activity, the pull
  * request's state, the user's marks), so every tab and the Mac app agree; the
@@ -23,10 +22,10 @@ import type { WorkspacePullRequest, WorkspaceStatus } from "@/lib/runtime/types"
 import { isErrorPreview, shownPreview, type TurnState, type Waiting } from "@/lib/session/turn-state";
 import { isSettingUp, SETUP_STALLS_AFTER_MS } from "@/lib/session/provisioning";
 
-export const STANDINGS = ["needs_you", "working", "in_review", "done", "backlog"] as const;
+export const STANDINGS = ["needs_you", "working", "in_review", "done"] as const;
 export type Standing = (typeof STANDINGS)[number];
 
-/** Done follows a merged pull request and cannot be assigned by hand. */
+/** Done requires a merged pull request and cannot be assigned by hand. */
 export const MOVABLE_STANDINGS = STANDINGS.filter((standing) => standing !== "done");
 
 export function isStanding(value: unknown): value is Standing {
@@ -39,7 +38,6 @@ export const STANDING_LABEL: Record<Standing, string> = {
   working: "Working",
   in_review: "In review",
   done: "Done",
-  backlog: "Backlog",
 };
 
 /** Why a session needs you. */
@@ -60,7 +58,7 @@ export const REASON_LABEL: Record<NeedsYouReason, string> = {
 export const STUCK_AFTER_MS = 30 * 60_000;
 
 /** An unread reply or error this old no longer needs attention. */
-export const BACKLOG_AFTER_MS = 3 * 24 * 60 * 60_000;
+export const ATTENTION_AFTER_MS = 3 * 24 * 60 * 60_000;
 
 /** What the server keeps of a session's agent (session_activity). */
 export type SessionActivity = Pick<
@@ -129,7 +127,7 @@ export function sessionStanding({ workspace, activity, pullRequest, mark, owner,
   const movedAt = mark?.movedAt ? Date.parse(mark.movedAt) : NaN;
   const needsYouSinceMove =
     auto.standing === "needs_you" && !(Date.parse(auto.since ?? "") <= movedAt);
-  const moved = Boolean(mark?.movedTo && mark.movedTo !== "done") && !needsYouSinceMove;
+  const moved = Boolean(mark?.movedTo && isStanding(mark.movedTo) && mark.movedTo !== "done") && !needsYouSinceMove;
   const standing = moved ? (mark!.movedTo as Standing) : auto.standing;
   return {
     standing,
@@ -169,8 +167,8 @@ function automatic({
     return { standing: "working", reason: null, since: null };
   }
   // Its last turn failed (an API error, a usage limit): it waits on the user
-  // to try again, read or not, until it's as quiet as backlog.
-  if (live?.repliedAt && isErrorPreview(live.replyPreview) && now - Date.parse(live.repliedAt) < BACKLOG_AFTER_MS) {
+  // to try again, read or not, until its attention window expires.
+  if (live?.repliedAt && isErrorPreview(live.replyPreview) && now - Date.parse(live.repliedAt) < ATTENTION_AFTER_MS) {
     return needsYou("error", live.repliedAt);
   }
   // Coming back: worked on again in a moment.
@@ -180,8 +178,8 @@ function automatic({
   const open = Boolean(pullRequest && (pullRequest.state ?? "open") === "open");
   // A turn finished that its owner hasn't read: theirs to look at, until they
   // open it. One with a pull request open stays in review; one from before its
-  // pull request merged or closed was acted on already, and one quiet as long
-  // as backlog has gone there.
+  // pull request merged or closed was acted on already. Older replies no
+  // longer show the recent-reply reason.
   const repliedAt = activity?.repliedAt ? Date.parse(activity.repliedAt) : NaN;
   const settledAt = pullRequest && !open ? Date.parse(pullRequest.stateAt ?? "") : NaN;
   if (
@@ -189,13 +187,13 @@ function automatic({
     !open &&
     !GONE.includes(workspace.status) &&
     (!pullRequest || repliedAt > settledAt) &&
-    now - repliedAt < BACKLOG_AFTER_MS
+    now - repliedAt < ATTENTION_AFTER_MS
   ) {
     return needsYou("replied", activity!.repliedAt);
   }
   if (pullRequest?.state === "merged") return { standing: "done", reason: null, since: null };
   if (open) return { standing: "in_review", reason: null, since: null };
-  return { standing: "backlog", reason: null, since: null };
+  return { standing: "needs_you", reason: null, since: workspace.lastActiveAt ?? workspace.createdAt };
 }
 
 /** The latest of some times; null when none can be read. */

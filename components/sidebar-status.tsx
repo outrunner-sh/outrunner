@@ -7,7 +7,6 @@ import {
   Circle,
   CircleAlert,
   CircleCheck,
-  CircleDashed,
   Ellipsis,
   GitMerge,
   GitPullRequest,
@@ -213,8 +212,6 @@ export function StandingMark({
       ) : (
         <CircleCheck aria-label={label} className={cn(box, "text-muted-foreground")} />
       );
-    case "backlog":
-      return <CircleDashed aria-label={label} className={cn(box, "text-muted-foreground/70")} />;
   }
 }
 

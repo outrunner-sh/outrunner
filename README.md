@@ -97,8 +97,8 @@ server at `/api/mcp`.
 The sidebar lists sessions by where each stands (or by project, its other
 view): **Needs you** (the agent asked a question, waits for a plan's approval
 or for secrets, errored, or is stuck), **Working**, **In review** (an open pull
-request), **Done** (merged, or idle with nothing pending) and **Backlog**
-(quiet for three days, with no pull request). The server works it out
+request), and **Done** (a merged pull request). Idle sessions without a merged
+pull request stay in **Needs you**. The server works it out
 (`lib/session/standing.ts`) from what it reads of each live session's
 conversation stream (`lib/session/watch.ts`: closely after a send, and every
 two minutes from `POST /api/sessions/tick`, which the Cloudflare cron calls

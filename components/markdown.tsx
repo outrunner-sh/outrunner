@@ -21,6 +21,7 @@ import {
   VISUAL_HEIGHT_MESSAGE,
   visualHeight,
 } from "@/lib/session/canvas";
+import { canvasLinkPath } from "@/lib/session/canvas-link";
 import { cn } from "@/lib/utils";
 
 /**
@@ -36,6 +37,8 @@ export const ImageBoxContext = createContext<string | null>(null);
  * image it names from its own folder (`![chart](chart.png)`) loads from the
  * Canvas too; null for a reply.
  */
+export const OpenCanvasContext = createContext<((path: string) => void) | null>(null);
+
 export const CanvasDocContext = createContext<{ workspaceId: string; path: string } | null>(null);
 
 /**
@@ -70,6 +73,18 @@ const COMPONENTS: Components = { img: MarkdownImage, a: MarkdownLink };
 const InLink = createContext(false);
 
 function MarkdownLink({ node, ...props }: ComponentProps<"a"> & ExtraProps) {
+  const workspaceId = useContext(ImageBoxContext);
+  const doc = useContext(CanvasDocContext);
+  const openCanvas = useContext(OpenCanvasContext);
+  const canvasPath = canvasLinkPath(props.href, doc?.workspaceId ?? workspaceId, doc?.path);
+  if (canvasPath && (doc?.workspaceId || workspaceId)) {
+    props.href = canvasFileUrl((doc?.workspaceId || workspaceId)!, canvasPath);
+    if (openCanvas) props.onClick = (event) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      openCanvas(canvasPath);
+    };
+  }
   void node; // react-markdown's syntax node: not an attribute
   return (
     <InLink value>
@@ -81,7 +96,7 @@ function MarkdownLink({ node, ...props }: ComponentProps<"a"> & ExtraProps) {
 /** The default's, but an image's `file://` path is kept for MarkdownImage to
  *  read off the box: the default drops the scheme as unsafe. */
 const urlTransform: UrlTransform = (url, key) =>
-  key === "src" && url.startsWith("file://") ? url : defaultUrlTransform(url);
+  (key === "src" || key === "href") && url.startsWith("file://") ? url : defaultUrlTransform(url);
 
 /** How long a reply's image that didn't load waits before each retry: a
  *  file Claude names may land on the box a moment later, and a box waking

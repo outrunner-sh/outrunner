@@ -3,6 +3,7 @@
 import { Archive, Files, GitBranch, MessageSquarePlus, Monitor, PanelsTopLeft, PanelRight, PanelRightClose, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { OpenCanvasContext } from "@/components/markdown";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons, MobileNavButton } from "@/components/app-frame";
@@ -114,6 +115,7 @@ export function WorkspaceStudio({
   const tabs = inspectorTabs(workspace, isLocal);
   const [chosenTab, setChosenTab] = useState<InspectorTabId>("environment");
   const tab = shownTab(tabs, chosenTab);
+  const [canvasPath, setCanvasPath] = useState<string | null>(null);
   // The chat shown (?chat=): the session's main one unless another is
   // picked. A local session, and a Mission, have the main one alone.
   const chatsOffered = hasLiveSession && !isLocal && !isMission;
@@ -159,6 +161,7 @@ export function WorkspaceStudio({
   };
 
   return (
+    <OpenCanvasContext value={(path) => { setCanvasPath(path); setChosenTab("canvas"); setRightOpen(true); }}>
     <div
       className={cn(
         "studio-shell",
@@ -401,6 +404,7 @@ export function WorkspaceStudio({
                 sender={sender}
                 coAuthor={coAuthor}
                 onClose={() => setRightOpen(false)}
+                canvasPath={canvasPath}
                 view={tab === "changes" || tab === "canvas" ? tab : "overview"}
                 onViewChange={(view) => {
                   const selected = view === "overview" ? "environment" : view;
@@ -413,6 +417,7 @@ export function WorkspaceStudio({
         )}
       </aside>
     </div>
+    </OpenCanvasContext>
   );
 }
 
