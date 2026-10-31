@@ -24,10 +24,11 @@ create table gcp_resources (
   state text not null default 'creating' check (state in ('creating', 'ready', 'stopped', 'deleting', 'deleted')),
   probe boolean not null default false,
   created_at timestamptz not null default now(),
+  cleanup_attempted_at timestamptz,
   unique (connection_id, instance_name)
 );
 create unique index gcp_resources_one_probe_idx on gcp_resources(connection_id) where probe and state <> 'deleted';
-create index gcp_resources_cleanup_idx on gcp_resources(created_at) where state <> 'deleted';
+create index gcp_resources_cleanup_idx on gcp_resources((coalesce(cleanup_attempted_at, created_at)), id) where state <> 'deleted';
 alter table gcp_resources enable row level security;
 revoke all on gcp_resources from anon, authenticated;
 grant all on gcp_resources to service_role;
@@ -101,16 +102,23 @@ end $$;
 revoke all on function disconnect_gcp_connection(uuid, uuid) from public, anon, authenticated;
 grant execute on function disconnect_gcp_connection(uuid, uuid) to service_role;
 
--- Filter at the database so old live sessions cannot starve abandoned intents
--- out of a bounded cleanup batch.
+-- Claim a bounded batch and rotate it behind older attempts even when Google
+-- access is revoked or a worker crashes. Cooldown and row locks prevent
+-- overlapping cron runs from immediately retrying the same resources.
 create function gcp_cleanup_candidates(older_than timestamptz)
-returns setof gcp_resources language sql stable security invoker set search_path = public, pg_temp as $$
-  select r.* from gcp_resources r
-  where r.state <> 'deleted' and r.created_at < older_than
-    and (r.state = 'deleting' or not exists (
-      select 1 from runtime_computers c where c.provider = 'user-gcp' and c.daytona_sandbox_id = r.id::text
-    ))
-  order by r.created_at limit 20
+returns setof gcp_resources language sql volatile security invoker set search_path = public, pg_temp as $$
+  with candidates as (
+    select r.id from gcp_resources r
+    where r.state <> 'deleted' and r.created_at < older_than
+      and (r.cleanup_attempted_at is null or r.cleanup_attempted_at < now() - interval '5 minutes')
+      and (r.state = 'deleting' or not exists (
+        select 1 from runtime_computers c where c.provider = 'user-gcp' and c.daytona_sandbox_id = r.id::text
+      ))
+    order by coalesce(r.cleanup_attempted_at, r.created_at), r.id limit 10
+    for update of r skip locked
+  )
+  update gcp_resources r set cleanup_attempted_at = now()
+  from candidates c where r.id = c.id returning r.*
 $$;
 revoke all on function gcp_cleanup_candidates(timestamptz) from public, anon, authenticated;
 grant execute on function gcp_cleanup_candidates(timestamptz) to service_role;

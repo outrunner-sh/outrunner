@@ -18,6 +18,7 @@ export type GcpResource = {
   state: "creating" | "ready" | "stopped" | "deleting" | "deleted";
   probe: boolean;
   created_at: string;
+  cleanup_attempted_at: string | null;
 };
 export const GCP_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export function checkGcpTarget(value: unknown): { projectId: string; projectNumber: string; zone: string } {

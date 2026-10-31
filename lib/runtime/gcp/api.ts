@@ -25,7 +25,8 @@ export async function gcpToken(c: GcpConnection): Promise<string> {
   const n = gcpNames(c);
   const exchanged = await googleJson<{ access_token: string }>("https://sts.googleapis.com/v1/token", {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
-      audience: n.audience, grantType: "urn:ietf:params:oauth:grant-type:token-exchange", requestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
+      // STS expects a resource name; the JWT retains the configured HTTPS audience.
+      audience: n.audience.replace(/^https:/, ""), grantType: "urn:ietf:params:oauth:grant-type:token-exchange", requestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
       scope: "https://www.googleapis.com/auth/cloud-platform", subjectTokenType: "urn:ietf:params:oauth:token-type:jwt", subjectToken: gcpAssertion(c),
     }),
   }, "workload identity authentication");

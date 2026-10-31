@@ -5,7 +5,8 @@ import { probeStatus } from "@/lib/supabase/probe";
 
 /** A recorded intent is the only authority to sweep. Never enumerate arbitrary
  * customer VMs or delete on a failed database lookup. Two hours protects any
- * create/verify still under way. A bounded run retries failed deletes too. */
+ * create/verify still under way. The RPC claims up to ten resources and rotates
+ * attempts with a cooldown so inaccessible projects cannot starve others. */
 export async function sweepGcpResources(): Promise<number> {
   const db = createSupabaseAdminClient();
   const { data: resources, error } = await db.rpc("gcp_cleanup_candidates", { older_than: new Date(Date.now() - 2 * 3600_000).toISOString() });
@@ -19,7 +20,6 @@ export async function sweepGcpResources(): Promise<number> {
     if (!c) continue;
     try { await new GcpBackend(r.user_id, async () => c).delete(r.id); deleted += 1; }
     catch { console.error(`Could not clean up recorded GCP sandbox ${r.id}; it remains in the resource ledger for retry.`); }
-    if (deleted >= 10) break;
   }
   return deleted;
 }

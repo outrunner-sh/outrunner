@@ -134,6 +134,10 @@ gcloud is needed only on the administrator's setup machine. Leave the billing
 cron enabled for failed-resource cleanup. The existing control-plane build
 supplies the runtime-agent binary used in connection verification.
 
+Cleanup claims at most ten abandoned resources per run, rotates failed attempts
+behind older attempts, and waits at least five minutes before retrying a claim.
+An inaccessible project cannot block cleanup for other customers.
+
 Before release, exercise setup, a real coding turn, terminal reconnect,
 preview access, stop/restore with uncommitted files, and complete deletion in
 a billing-enabled GCP test project. Unit and fixture-browser tests do not

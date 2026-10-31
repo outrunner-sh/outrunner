@@ -13,9 +13,10 @@ test("GCP exchanges a scoped assertion and impersonates only the connection's se
     return Response.json(url.includes("sts.googleapis.com") ? { access_token: "federated-token" } : { accessToken: "service-account-token", expireTime: new Date(Date.now() + 3600_000).toISOString() });
   });
   assert.equal(await gcpToken(c), "service-account-token"); assert.equal(await gcpToken(c), "service-account-token"); assert.equal(calls.length, 2);
-  assert.equal(calls[0].body.audience, gcpNames(c).audience);
+  assert.equal(calls[0].body.audience, "//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/outrunner-0000000000004000/providers/outrunner");
   assert.equal(calls[1].url, `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${gcpNames(c).serviceAccount}:generateAccessToken`);
   const claims = JSON.parse(Buffer.from((calls[0].body.subjectToken as string).split(".")[1], "base64url").toString()); assert.equal(claims.sub, c.id); assert.equal(claims.exp - claims.iat, 300);
+  assert.equal(claims.aud, "https://iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/outrunner-0000000000004000/providers/outrunner");
   await assert.rejects(gcpToken({ ...c, state: "revoked" }), /disconnected/);
 });
 test("GCP errors never echo Google's credential-bearing response body", async () => {

@@ -13,7 +13,7 @@ import { NoGcpConnectionError } from "@/lib/runtime/user-gcp-provider";
 
 const c: GcpConnection = { id: "00000000-0000-4000-a000-000000000001", user_id: "user", project_id: "sandbox-project", project_number: "123456789", zone: "us-central1-a", state: "connected", created_at: "2026-10-31T00:00:00Z", verified_at: "2026-10-31T00:00:00Z" };
 function fixture(options: { missing?: number; broken?: boolean; badTools?: boolean; detachedDisk?: boolean } = {}) {
-  const r: GcpResource = { id: "00000000-0000-4000-a000-000000000002", connection_id: c.id, user_id: c.user_id, instance_name: "outrunner-test", instance_id: "123", state: "stopped", probe: false, created_at: c.created_at };
+  const r: GcpResource = { id: "00000000-0000-4000-a000-000000000002", connection_id: c.id, user_id: c.user_id, instance_name: "outrunner-test", instance_id: "123", state: "stopped", probe: false, created_at: c.created_at, cleanup_attempted_at: null };
   const vm = { id: "123", status: "TERMINATED", labels: { "outrunner-connection": c.id, "outrunner-resource": r.id }, machineType: "e2-custom-2-4096" };
   const log: { method: string; path: string; body?: unknown }[] = [];
   let clock = Date.parse("2026-10-31T01:00:00Z");
