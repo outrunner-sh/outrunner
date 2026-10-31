@@ -186,6 +186,13 @@ export function learningJson(learning: Learning, actor: LearningActor): Record<s
   };
 }
 
+/** A request body's own fields, as the API names them (`max_runs`), as the
+ *  app's routes take them (`maxRuns`). Top level only: nested values (an
+ *  automation's schedules) pass as they are. */
+export function topLevelCamel(body: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(body).map(([key, value]) => [key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase()), value]));
+}
+
 /** Any of a route's own answers in snake_case, keys only, at every depth:
  *  for records passed on whole (a pull request's status from GitHub). */
 export function snakeKeys(value: unknown): unknown {
