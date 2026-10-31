@@ -261,8 +261,9 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 
 A file is up to 25 MB (send a `Content-Length`: a body without one, or
 over the limit, is refused before it's read), and a message takes up to
-10. Up to 100 files (500 MB) a day may wait unsent; past that, uploads are
-`429` until some are sent. The files land in the
+10. About 100 files (500 MB) a day may wait unsent; past that, uploads are
+`429` until some are sent. It limits the rate, not the total: unsent files
+are kept until they're sent or deleted. The files land in the
 session's worktree under `.attachments/`, named in the message; images are
 named so the agent sees them. Files alone, without `content`, are a message
 too. A file is its uploader's: anyone else's id is `404`.
@@ -313,7 +314,8 @@ curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces
 
 `model` takes the menu's ids (as `POST /workspaces` does); the agent
 relaunches on it with the conversation carried on. `effort` alone keeps
-the model it's on. `changes` lists the
+the model it's on (with `chat_id`, that chat's; a chat with none on record
+needs `model` too). `changes` lists the
 files changed from the session's base branch (committed, pushed or not),
 and with `path` answers `{ "path", "diff" }`, a text diff of that file,
 size-capped.
@@ -496,10 +498,12 @@ clears `description` or `instructions`, or one script or hook
 value. Changing them makes the project's ready boxes again. Each change
 needs write access to the project (Roles & access).
 
-What runs on the project's boxes (`scripts`, `hooks`, variables, files and
-repositories) runs in every member's session, beside their GitHub token, so
-only an **org key** may change it: a personal key or the CLI's token is
-`403`. Keys have no finer scopes yet.
+What runs on the project's boxes runs in every member's session, beside
+their GitHub token: `scripts`, `hooks`, variables, files, repositories, MCP
+servers and skills, and the `instructions` every member's agent is given. So
+only an **org key** may change them: a personal key or the CLI's token is
+`403` (a project's `name` and `description` any key with write access may
+change). Keys have no finer scopes yet.
 
 ### Automations
 

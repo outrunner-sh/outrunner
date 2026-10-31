@@ -35,7 +35,7 @@ import { firstPrompt, MAX_PROMPT, parseAttachmentIds, parseCreate, type CreateIn
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
 import { readConversation, readLiveConversation } from "@/lib/api/live";
-import { listChats } from "@/lib/db/chats";
+import { getChat, listChats } from "@/lib/db/chats";
 import { agentChat, chatNamed } from "@/lib/session/chat-target";
 import { mainChatOf, orderedChats, type SessionChat } from "@/lib/session/chats";
 import { pageOf, pageRequest } from "@/lib/api/pagination";
@@ -620,8 +620,11 @@ export async function switchModelApi(context: ApiContext, id: string): Promise<R
   if (workspace instanceof Response) return workspace;
   const chat = await apiChat(workspace, raw.chat_id);
   if (chat instanceof Response) return chat;
-  // An effort alone keeps the model it's on.
-  const current = workspace.model ? { provider: workspace.model.model.provider, id: workspace.model.model.id } : null;
+  // An effort alone keeps the model it's on: the named chat's own (each chat
+  // records its own, lib/session/chats.ts), or the session's for the main
+  // chat. A side chat with none on record needs the model named.
+  const recorded = chat ? (await getChat(workspace.id, chat))?.model ?? null : workspace.model;
+  const current = recorded ? { provider: recorded.model.provider, id: recorded.model.id } : null;
   const body = modelSwitch(raw, current);
   if (typeof body === "string") return apiError(400, body);
   const switched = await modelPOST(

@@ -12,6 +12,7 @@
  * every read and write runs as them (lib/api/handler.ts).
  */
 
+import { apiError } from "@/lib/api/errors";
 import type { ApiCredential } from "@/lib/api/keys";
 import { hashApiKey, keyUsable } from "@/lib/api/keys";
 import type { StoredApiKey } from "@/lib/db/api-keys";
@@ -102,8 +103,8 @@ function refuse(status: 401 | 403 | 404, message: string): ApiAuth {
 
 /**
  * Why a credential may not change what runs on the org's boxes (a project's
- * setup scripts and hooks, variables and files, and repositories), or null
- * when it may. Those run in every member's session, beside their own GitHub
+ * setup scripts and hooks, instructions, variables and files, repositories,
+ * MCP servers and skills), or null when it may. Those run in every member's session, beside their own GitHub
  * token, so only an org key may: an admin made it for the org, to manage it.
  * A personal key or the CLI's token, leaked from one member's machine, can't.
  * Keys have no scopes yet (20261102120000_api_keys.sql); until they do, this
@@ -111,7 +112,13 @@ function refuse(status: 401 | 403 | 404, message: string): ApiAuth {
  */
 export function boxSetupRefusal(kind: ApiCallerKind): string | null {
   if (kind === "org_key") return null;
-  return "Changing what runs on the project's boxes (setup scripts, hooks, variables, files, repositories) takes an org key: an admin makes one under Settings → Org → API keys.";
+  return "Changing what runs on the project's boxes (setup scripts, hooks, instructions, variables, files, repositories, MCP servers, skills) takes an org key: an admin makes one under Settings → Org → API keys.";
+}
+
+/** boxSetupRefusal as the API's 403, or null when the caller may. */
+export function boxSetupRefused(context: { caller: { kind: ApiCallerKind } }): Response | null {
+  const refusal = boxSetupRefusal(context.caller.kind);
+  return refusal ? apiError(403, refusal) : null;
 }
 
 /** Where a call names its org: `?org=`, or the `Outrunner-Org` header. */
