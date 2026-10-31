@@ -265,7 +265,8 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
     name: "provide_secrets",
     description:
       "Give a session's agent the secrets it asked for (turn.pending_input, type secrets: its keys), by name, or skip them. " +
-      "The project keeps them for its next sessions; they are never answered back.",
+      "With an org key the project keeps them for its next sessions; with any other key they're this session's alone. " +
+      "They are never answered back.",
     inputSchema: {
       type: "object",
       properties: {

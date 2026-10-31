@@ -10,6 +10,8 @@
  * the owner reads its conversation or acts on it.
  */
 
+import { after } from "next/server";
+
 import { GET as pullRequestGET } from "@/app/api/workspaces/[id]/pull-request/route";
 import { POST as answerPOST } from "@/app/api/workspaces/[id]/answer/route";
 import { GET as changesGET } from "@/app/api/workspaces/[id]/changes/route";
@@ -31,6 +33,7 @@ import {
 } from "@/lib/api/conversation";
 import { modelSwitch, parseAnswers, secretNames } from "@/lib/api/answers";
 import { checkAttachments } from "@/lib/api/attachments";
+import { boxSetupRefusal } from "@/lib/api/auth";
 import { firstPrompt, MAX_PROMPT, parseAttachmentIds, parseCreate, type CreateInput } from "@/lib/api/create-request";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
@@ -45,6 +48,10 @@ import { toWorkspace } from "@/lib/db/mappers";
 import { projectLevel } from "@/lib/db/org-access";
 import { getProject, getWorkspace } from "@/lib/db/repositories";
 import { isUuid } from "@/lib/ids";
+import { settableEnv } from "@/lib/imports/settable-env";
+import { AgentRequestError } from "@/lib/runtime/agent-client";
+import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { watchSent } from "@/lib/session/watch";
 import { allows } from "@/lib/orgs/access";
 import { isBoxSizeId } from "@/lib/runtime/box-sizes";
 import type { Workspace } from "@/lib/runtime/types";
@@ -544,9 +551,38 @@ export async function answerApi(context: ApiContext, id: string): Promise<Respon
   return Response.json({ result: raw.dismissed === true ? "dismissed" : "answered", workspace_id: id, ...(chat && { chat_id: chat }) });
 }
 
+/** Secrets given to the session's agent alone, not kept in its project: a
+ *  personal key's or the CLI's answer (secretsApi). */
+async function sessionOnlySecrets(
+  context: ApiContext,
+  workspace: Workspace,
+  chat: string | undefined,
+  answer: { keys: string[]; values?: Record<string, string>; skipped?: boolean },
+): Promise<Response> {
+  const refused = Object.keys(answer.values ?? {}).find((name) => !settableEnv(name));
+  if (refused) return apiError(400, `${refused} can't be set here.`);
+  const reach = await reachWorkspaceAgent(workspace.id, context.owner.id, {
+    label: "Secrets",
+    needsComputer: "Providing secrets requires a Runtime Computer provider.",
+  });
+  if (!reach.ok) return errorFromRoute(reach.response, context.base);
+  try {
+    await reach.reached.agent.provideSecrets(reach.reached.identity, answer, chat);
+  } catch (error) {
+    if (error instanceof AgentRequestError && error.error?.code === "CONFLICT") return apiError(409, error.error.message);
+    if (error instanceof AgentRequestError && error.error?.code === "INVALID_REQUEST") return apiError(400, error.error.message);
+    console.error(`API secrets: couldn't reach the session of ${workspace.id}`);
+    return apiError(502, "Couldn't send them to the session. Please try again.");
+  }
+  // No longer waiting on the user: working again, and watched, as the form's.
+  if (!chat) after(() => watchSent(workspace.id, workspace.ownerId));
+  return Response.json({ result: "provided", saved: false, workspace_id: workspace.id, ...(chat && { chat_id: chat }) });
+}
+
 /** POST /workspaces/{id}/secrets: give the agent the secrets it asked for
- *  (`values`, by name), or skip them. Never answered back or logged; the
- *  project keeps them for its next sessions, as the form's do. */
+ *  (`values`, by name), or skip them. Never answered back or logged. With an
+ *  org key the project keeps them for its next sessions, as the form's do;
+ *  with any other credential they're this session's alone. */
 export async function secretsApi(context: ApiContext, id: string): Promise<Response> {
   const raw = await jsonBody(context.request);
   if (raw instanceof Response) return raw;
@@ -566,7 +602,11 @@ export async function secretsApi(context: ApiContext, id: string): Promise<Respo
   const keys = secretNames(pending.keys);
   const unasked = Object.keys(values).find((name) => !keys.includes(name));
   if (unasked) return apiError(400, `It didn't ask for ${unasked}: it asked for ${keys.join(", ")}.`);
-  const body = raw.skipped === true ? { keys, skipped: true } : { keys, values };
+  const body = raw.skipped === true ? { keys, skipped: true } : { keys, values: values as Record<string, string> };
+  // The secrets form also keeps what it's given in the project, for every
+  // member's next session: that's an org key's to do (boxSetupRefusal). Any
+  // other credential gives them to this session only.
+  if (boxSetupRefusal(context.caller.kind)) return sessionOnlySecrets(context, workspace, chat, body);
   const given = await secretsPOST(
     appRequest(context.base, `/api/workspaces/${id}/secrets${chatParam(chat)}`, { body }),
     routeParams({ id }),

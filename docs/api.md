@@ -290,8 +290,12 @@ it's `multiSelect`). `{ "dismissed": true }` declines the question, and
 secrets request's `keys` are `{ "name", "optional" }`. Pass back
 `pending_input.tool_use_id` as `tool_use_id` and an answer meant for a
 request that's since been answered (by another client) is `409` rather than
-answering the next one. Secrets are also kept in the session's
-project, for its next sessions, as the app's form keeps them. Each answers
+answering the next one. It's checked against what the session shows just
+before the answer goes: an identical request asked again in that moment
+could still take it. With an org key, secrets are also kept in
+the session's project for its next sessions, as the app's form keeps them;
+with a personal key or the CLI's token they're the session's alone
+(`"saved": false`), since a project's variables reach every member's box. Each answers
 `409` when the agent isn't waiting on that, and takes a `chat_id`.
 
 A message sent with `"mode": "plan"` asks for a plan first: the agent
