@@ -15,13 +15,18 @@ import { createLearningApi, deleteLearningApi, listLearningsApi, updateLearningA
 import { CREATE_LIMIT } from "@/lib/api/rate-limit";
 import { checkWebhookUrl, messageSent, webhookHooks } from "@/lib/api/webhooks.deps";
 import {
+  answerApi,
+  approvePlanApi,
+  changesApi,
   createWorkspace,
   getWorkspaceApi,
   lifecycleApi,
   listChatsApi,
   listWorkspaces,
   readConversationApi,
+  secretsApi,
   sendMessageApi,
+  switchModelApi,
   waitApi,
 } from "@/lib/api/workspaces";
 import { McpServer, toolResult, type McpTool, type McpToolResult } from "@/lib/mcp/server";
@@ -116,13 +121,25 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
       "this answers with, for its reply. If after_event is null, poll get_workspace until turn.state is working before you wait.",
     inputSchema: {
       type: "object",
-      properties: { ...WORKSPACE_ID, content: { type: "string", description: "The message." }, ...CHAT_ID },
+      properties: {
+        ...WORKSPACE_ID,
+        content: { type: "string", description: "The message." },
+        mode: { type: "string", enum: ["build", "plan"], description: "plan: it replies with a plan and waits for approve_plan." },
+        ...CHAT_ID,
+      },
       required: ["workspace_id", "content"],
     },
     call: async (context, args) =>
       answer(
         await sendMessageApi(
-          asCall(context, { method: "POST", body: { content: args.content, ...(args.chat_id !== undefined && { chat_id: args.chat_id }) } }),
+          asCall(context, {
+            method: "POST",
+            body: {
+              content: args.content,
+              ...(args.mode !== undefined && { mode: args.mode }),
+              ...(args.chat_id !== undefined && { chat_id: args.chat_id }),
+            },
+          }),
           id(args),
           messageSent,
         ),
@@ -202,6 +219,124 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
     description: "Get a session: its status, repository, branch, and where its turn is (working, needs_input, idle).",
     inputSchema: { type: "object", properties: WORKSPACE_ID, required: ["workspace_id"] },
     call: async (context, args) => answer(await getWorkspaceApi(asCall(context, {}), id(args))),
+  },
+  {
+    name: "answer_question",
+    description:
+      "Answer the question a session's agent is waiting on (get_workspace's turn.pending_input, type question): one answer per " +
+      "question, in order, picking options by label or answering in your own words. Then wait_for_workspace.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...WORKSPACE_ID,
+        answers: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              selected: { type: "array", items: { type: "string" }, description: "The labels of the options picked." },
+              other: { type: "string", description: "An answer in your own words." },
+            },
+          },
+        },
+        dismissed: { type: "boolean", description: "Decline to answer instead." },
+        ...CHAT_ID,
+      },
+      required: ["workspace_id"],
+    },
+    call: async (context, args) =>
+      answer(
+        await answerApi(
+          asCall(context, {
+            method: "POST",
+            body: {
+              ...(args.answers !== undefined && { answers: args.answers }),
+              ...(args.dismissed !== undefined && { dismissed: args.dismissed }),
+              ...(args.chat_id !== undefined && { chat_id: args.chat_id }),
+            },
+          }),
+          id(args),
+        ),
+      ),
+  },
+  {
+    name: "provide_secrets",
+    description:
+      "Give a session's agent the secrets it asked for (turn.pending_input, type secrets: its keys), by name, or skip them. " +
+      "The project keeps them for its next sessions; they are never answered back.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...WORKSPACE_ID,
+        values: { type: "object", additionalProperties: { type: "string" }, description: "Each secret's name and value." },
+        skipped: { type: "boolean", description: "Go on without them." },
+        ...CHAT_ID,
+      },
+      required: ["workspace_id"],
+    },
+    call: async (context, args) =>
+      answer(
+        await secretsApi(
+          asCall(context, {
+            method: "POST",
+            body: {
+              ...(args.values !== undefined && { values: args.values }),
+              ...(args.skipped !== undefined && { skipped: args.skipped }),
+              ...(args.chat_id !== undefined && { chat_id: args.chat_id }),
+            },
+          }),
+          id(args),
+        ),
+      ),
+  },
+  {
+    name: "approve_plan",
+    description: "Approve the plan a session's agent is waiting on, so it builds it. To change the plan instead, send_message.",
+    inputSchema: { type: "object", properties: { ...WORKSPACE_ID, ...CHAT_ID }, required: ["workspace_id"] },
+    call: async (context, args) =>
+      answer(
+        await approvePlanApi(
+          asCall(context, { method: "POST", body: args.chat_id !== undefined ? { chat_id: args.chat_id } : {} }),
+          id(args),
+        ),
+      ),
+  },
+  {
+    name: "switch_model",
+    description: "Switch a session to another offered model, or effort, carrying its conversation on.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...WORKSPACE_ID,
+        model: { type: "string" },
+        provider: { type: "string", description: "Where the model runs, when its id alone doesn't say." },
+        effort: { type: "string" },
+        ...CHAT_ID,
+      },
+      required: ["workspace_id"],
+    },
+    call: async (context, args) =>
+      answer(
+        await switchModelApi(
+          asCall(context, {
+            method: "POST",
+            body: Object.fromEntries(
+              (["model", "provider", "effort", "chat_id"] as const).filter((k) => args[k] !== undefined).map((k) => [k, args[k]]),
+            ),
+          }),
+          id(args),
+        ),
+      ),
+  },
+  {
+    name: "get_changes",
+    description: "The files a session changed from its base branch; with path, that file's diff.",
+    inputSchema: {
+      type: "object",
+      properties: { ...WORKSPACE_ID, path: { type: "string", description: "A changed file's path, for its diff." } },
+      required: ["workspace_id"],
+    },
+    call: async (context, args) => answer(await changesApi(asCall(context, { query: { path: args.path } }), id(args))),
   },
   {
     name: "archive_workspace",
