@@ -12,6 +12,9 @@
 
 import { GET as pullRequestGET } from "@/app/api/workspaces/[id]/pull-request/route";
 import { POST as answerPOST } from "@/app/api/workspaces/[id]/answer/route";
+import { GET as changesGET } from "@/app/api/workspaces/[id]/changes/route";
+import { POST as modelPOST } from "@/app/api/workspaces/[id]/model/route";
+import { POST as planPOST } from "@/app/api/workspaces/[id]/plan/route";
 import { POST as interruptPOST } from "@/app/api/workspaces/[id]/interrupt/route";
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
 import { POST as messagePOST } from "@/app/api/workspaces/[id]/message/route";
@@ -308,6 +311,7 @@ export async function sendMessageApi(
   // Files alone are a message too ("here's the log"), as in the composer.
   if (!content && attachmentIds.length === 0) return apiError(400, "Say something (`content`), or send files (`attachment_ids`).");
   if (content.length > MAX_PROMPT) return apiError(400, "The message is too long.");
+  if (raw.mode !== undefined && raw.mode !== "build" && raw.mode !== "plan") return apiError(400, "`mode` is build or plan.");
   const workspace = await ownSession(context, id);
   if (workspace instanceof Response) return workspace;
   const unknownFile = await checkAttachments(attachmentIds);
@@ -319,7 +323,7 @@ export async function sendMessageApi(
   const sentAt = Date.now();
   const sent = await messagePOST(
     appRequest(context.base, `/api/workspaces/${id}/message${chatParam(chat)}`, {
-      body: { content, ...(attachmentIds.length && { attachmentIds }) },
+      body: { content, ...(attachmentIds.length && { attachmentIds }), ...(raw.mode !== undefined && { mode: raw.mode }) },
     }),
     routeParams({ id }),
   );
@@ -558,4 +562,61 @@ export async function secretsApi(context: ApiContext, id: string): Promise<Respo
   if (!given.ok) return errorFromRoute(given, context.base);
   const result = (await given.json()) as Record<string, unknown>;
   return Response.json({ ...(snakeKeys(result) as Record<string, unknown>), workspace_id: id, ...(chat && { chat_id: chat }) });
+}
+
+/** GET /workspaces/{id}/changes: the files it changed from its base branch,
+ *  or, with `path`, that file's diff (the session page's Changes). */
+export async function changesApi(context: ApiContext, id: string): Promise<Response> {
+  const path = new URL(context.request.url).searchParams.get("path");
+  if (path !== null && !path.trim()) return apiError(400, "`path` is a changed file's path.");
+  const workspace = await ownSession(context, id);
+  if (workspace instanceof Response) return workspace;
+  const query = path === null ? "" : `?path=${encodeURIComponent(path)}`;
+  const read = await changesGET(
+    appRequest(context.base, `/api/workspaces/${id}/changes${query}`, { method: "GET" }),
+    routeParams({ id }),
+  );
+  if (!read.ok) return errorFromRoute(read, context.base);
+  const body = (await read.json()) as { files?: unknown[]; diff?: unknown };
+  if (path !== null) return Response.json({ path, diff: snakeKeys(body.diff) });
+  return Response.json({ data: snakeKeys(body.files ?? []) });
+}
+
+/** POST /workspaces/{id}/plan/approve: approve the plan the agent is
+ *  waiting on, so it builds (the plan card's Approve). */
+export async function approvePlanApi(context: ApiContext, id: string): Promise<Response> {
+  const raw = await jsonBody(context.request);
+  if (raw instanceof Response) return raw;
+  const workspace = await ownSession(context, id);
+  if (workspace instanceof Response) return workspace;
+  const chat = await apiChat(workspace, raw.chat_id);
+  if (chat instanceof Response) return chat;
+  const approved = await planPOST(
+    appRequest(context.base, `/api/workspaces/${id}/plan${chatParam(chat)}`, { body: {} }),
+    routeParams({ id }),
+  );
+  if (!approved.ok) return errorFromRoute(approved, context.base);
+  return Response.json({ ...(snakeKeys(await approved.json()) as Record<string, unknown>), workspace_id: id, ...(chat && { chat_id: chat }) });
+}
+
+/** POST /workspaces/{id}/model: switch the session to another of the
+ *  offered models (and effort), its conversation carried on. */
+export async function switchModelApi(context: ApiContext, id: string): Promise<Response> {
+  const raw = await jsonBody(context.request);
+  if (raw instanceof Response) return raw;
+  for (const key of ["model", "provider", "effort"] as const) {
+    if (raw[key] !== undefined && typeof raw[key] !== "string") return apiError(400, `\`${key}\` must be text.`);
+  }
+  if (raw.model === undefined && raw.effort === undefined) return apiError(400, "Name the `model` to switch to, or an `effort`.");
+  const workspace = await ownSession(context, id);
+  if (workspace instanceof Response) return workspace;
+  const chat = await apiChat(workspace, raw.chat_id);
+  if (chat instanceof Response) return chat;
+  const body = Object.fromEntries((["model", "provider", "effort"] as const).filter((k) => raw[k] !== undefined).map((k) => [k, raw[k]]));
+  const switched = await modelPOST(
+    appRequest(context.base, `/api/workspaces/${id}/model${chatParam(chat)}`, { body }),
+    routeParams({ id }),
+  );
+  if (!switched.ok) return errorFromRoute(switched, context.base);
+  return Response.json({ ...(snakeKeys(await switched.json()) as Record<string, unknown>), workspace_id: id, ...(chat && { chat_id: chat }) });
 }
