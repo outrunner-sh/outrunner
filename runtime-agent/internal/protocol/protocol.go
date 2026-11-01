@@ -608,6 +608,9 @@ type ContentBlock struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"toolUseId,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"`
+	// IsError marks a tool result as the tool's failure (Claude's
+	// `is_error`): a command that exited non-zero, an edit that didn't apply.
+	IsError bool `json:"isError,omitempty"`
 	// Source is an image block's picture, as Claude logs one pasted into its
 	// prompt: the bytes in base64 and their type. Data is left out past
 	// MaxImageBlockData, so one huge paste can't swell every frame; the

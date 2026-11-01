@@ -38,6 +38,22 @@ test("each step is a row, a tool's result riding on its call", () => {
   assert.equal(read.kind === "tool" && read.result, null);
 });
 
+test("a failed tool's result says so (NEE-234)", () => {
+  const nodes = conversationNodes([
+    message("assistant", "2026-10-21T10:00:10Z", [
+      { type: "tool_use", id: "t1", name: "Bash", input: { command: "false" } },
+      { type: "tool_use", id: "t2", name: "Bash", input: { command: "true" } },
+    ]),
+    message("user", "2026-10-21T10:00:11Z", [
+      { type: "tool_result", toolUseId: "t1", content: "Exit code 1", isError: true },
+      { type: "tool_result", toolUseId: "t2", content: "", isError: false },
+    ]),
+  ]);
+  const [failed, passed] = nodes;
+  assert.deepEqual(failed.kind === "tool" && failed.result, { content: "Exit code 1", isError: true });
+  assert.deepEqual(passed.kind === "tool" && passed.result, { content: "" });
+});
+
 test("a result that answers no call in the stream is not a row", () => {
   const nodes = conversationNodes([
     message("user", "2026-10-21T10:00:00Z", [{ type: "tool_result", toolUseId: "gone", content: "x" }]),

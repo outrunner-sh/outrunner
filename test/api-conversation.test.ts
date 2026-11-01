@@ -125,6 +125,12 @@ test("events are snake_case, tool results with their call's id", () => {
   });
 });
 
+test("a failed tool result carries is_error", () => {
+  const event = message("u3", "user", [{ type: "tool_result", toolUseId: "t1", content: "boom", isError: true }]) as AgentEvent;
+  const json = eventJson({ id: 8, event }) as { content: unknown[] };
+  assert.deepEqual(json.content, [{ type: "tool_result", tool_use_id: "t1", content: "boom", is_error: true }]);
+});
+
 test("a turn can be over only once its prompt is in the log", () => {
   const entries = [
     { id: 100, event: message("u1", "user", [text("first")]) as AgentEvent },
