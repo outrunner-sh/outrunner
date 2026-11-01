@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { getWorkspace } from "@/lib/db/repositories";
+import { getWorkspace, renameWorkspace } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
+import { cleanTitle, TITLE_MAX } from "@/lib/nav/session-title";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -36,4 +37,36 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   return NextResponse.json({ titled: await nameSessionFromPrompt(workspace, prompt) });
+}
+
+/** Rename a session: the sidebar row's Rename. Only its owner can. */
+export async function PATCH(request: Request, context: RouteContext) {
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
+  }
+  const owner = await getOwner();
+  if (!owner) {
+    return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
+  }
+
+  const body = (await request.json().catch(() => null)) as { title?: unknown } | null;
+  const title = cleanTitle(body?.title);
+  if (!title) {
+    return NextResponse.json({ error: `A title of 1 to ${TITLE_MAX} characters is required.` }, { status: 400 });
+  }
+
+  const { id } = await context.params;
+  const workspace = await getWorkspace(id);
+  if (!workspace || workspace.status === "destroyed") {
+    return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
+  }
+  try {
+    if (!(await renameWorkspace(workspace.id, title))) {
+      return NextResponse.json({ error: "Only the session's owner can rename it." }, { status: 403 });
+    }
+  } catch (error) {
+    console.error(`Title: couldn't rename ${id}`, error);
+    return NextResponse.json({ error: "Couldn't rename this session. Please try again." }, { status: 500 });
+  }
+  return NextResponse.json({ title });
 }

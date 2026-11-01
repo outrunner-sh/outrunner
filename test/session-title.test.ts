@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { TITLE_MAX, sessionTitle, titleToSet, workspaceLabel } from "@/lib/nav/session-title";
+import { cleanTitle, TITLE_MAX, sessionTitle, titleToSet, workspaceLabel } from "@/lib/nav/session-title";
 
 test("a title is the prompt's first non-empty line, whitespace collapsed", () => {
   assert.equal(sessionTitle("Fix the login redirect"), "Fix the login redirect");
@@ -60,4 +60,12 @@ test("a session named from its prompt as it's made keeps that name when the prom
 
 test("a prompt with no text gives no title", () => {
   assert.equal(titleToSet({ title: null }, "  \n  "), null);
+});
+
+test("a renamed title is made one line and trimmed, within the limit (NEE-243)", () => {
+  assert.equal(cleanTitle("  Fix the\n login   bug "), "Fix the login bug");
+  assert.equal(cleanTitle("x".repeat(TITLE_MAX)), "x".repeat(TITLE_MAX));
+  assert.equal(cleanTitle("x".repeat(TITLE_MAX + 1)), null);
+  assert.equal(cleanTitle("   "), null);
+  assert.equal(cleanTitle(undefined), null);
 });

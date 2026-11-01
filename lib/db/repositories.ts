@@ -277,6 +277,15 @@ export async function setWorkspaceTitleIfUnset(id: string, title: string): Promi
   return (data ?? []).length > 0;
 }
 
+/** Rename a session, as its owner (workspaces_owner_all): true when it was
+ *  theirs to rename. */
+export async function renameWorkspace(id: string, title: string): Promise<boolean> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("workspaces").update({ title }).eq("id", id).select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
 /**
  * Claim the session's first prompt for `key`, before it is sent: "claimed"
  * when this call took it (free, or `key`'s own claim abandoned mid-send before
