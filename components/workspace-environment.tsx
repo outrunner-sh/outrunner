@@ -307,6 +307,16 @@ function PortRows({ workspaceId, active }: { workspaceId: string; active: boolea
  *  a description; the page looking again on its next load covers the rest. */
 const PR_POLL_MS = 15_000;
 const PR_WAIT_MS = 10 * 60_000;
+
+/** When each row's Create PR was sent (`workspace:project`), for this tab: the
+ *  panel unmounts as it closes, and its wait must not go with it (NEE-219). */
+const prWaits = new Map<string, number>();
+
+/** How long row `key` still waits for its pull request; 0 when it doesn't. */
+function prWaitLeft(key: string): number {
+  const since = prWaits.get(key);
+  return since === undefined ? 0 : Math.max(0, PR_WAIT_MS - (Date.now() - since));
+}
 /** How often an open pull request's status (checks, mergeability) is re-read. */
 const PR_STATUS_POLL_MS = 30_000;
 /** How often a PR closed unmerged is looked at again, for one that takes its
@@ -438,7 +448,12 @@ function PullRequestRow({
   const router = useRouter();
   const [found, setFound] = useState<WorkspacePullRequest | null>(null);
   const [status, setStatus] = useState<PullRequestStatus | null>(null);
-  const [phase, setPhase] = useState<"idle" | "sending" | "waiting">("idle");
+  const waitKey = `${workspaceId}:${repo?.projectId ?? ""}`;
+  // Still waiting if Create PR was sent before the panel last closed.
+  const [phase, setPhase] = useState<"idle" | "sending" | "waiting">(() => (prWaitLeft(waitKey) > 0 ? "waiting" : "idle"));
+  useEffect(() => {
+    if (phase !== "waiting") prWaits.delete(waitKey);
+  }, [phase, waitKey]);
   const [error, setError] = useState<RowError | null>(null);
   // A repository's row of a session of several starts without its pull
   // request (the page loads the session's own one's): until the first look
@@ -501,13 +516,13 @@ function PullRequestRow({
     if (Date.now() - lastLook.current > PR_POLL_MS / 2) void look();
     if (pollMs === null) return () => void (live = false);
     const poll = setInterval(() => void look(), pollMs);
-    const giveUp = hasPullRequest ? undefined : setTimeout(() => setPhase("idle"), PR_WAIT_MS);
+    const giveUp = hasPullRequest ? undefined : setTimeout(() => setPhase("idle"), prWaitLeft(waitKey) || PR_WAIT_MS);
     return () => {
       live = false;
       clearInterval(poll);
       clearTimeout(giveUp);
     };
-  }, [hasPullRequest, openedNumber, pollMs, workspaceId, router, repo?.projectId]);
+  }, [hasPullRequest, openedNumber, pollMs, workspaceId, router, repo?.projectId, waitKey]);
 
   const errorLine = error && (
     <p aria-live="polite" className="studio-env-unfold text-destructive pt-0 text-xs">
@@ -552,6 +567,7 @@ function PullRequestRow({
       }),
     );
     if (result.error) setError({ message: result.error, reconnect: false });
+    if (result.sent) prWaits.set(waitKey, Date.now());
     setPhase(result.sent ? "waiting" : "idle");
   }
 
