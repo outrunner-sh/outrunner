@@ -38,6 +38,9 @@ import {
 
 const noopSubscribe = () => () => {};
 
+/** The latest Mac app (.github/workflows/desktop-publish.yml's Outrunner.dmg). */
+const MAC_APP_DOWNLOAD = "https://downloads.neev.ai/outrunner/Outrunner.dmg";
+
 /**
  * Moving work from this Mac to the cloud: the desktop app finds sessions
  * (Conductor, Claude Code, Codex) and the user's own agent setup; the user
@@ -148,10 +151,15 @@ export function LocalImport() {
   if (!desktop) {
     return (
       <Page>
-        <p className="text-sm text-muted-foreground">
-          Importing reads the sessions on your Mac, so it runs in the Outrunner Mac app. Open it there to bring
-          over your Conductor, Claude Code and Codex sessions.
-        </p>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Importing reads the sessions on your Mac, so it runs in the Outrunner Mac app. Open it there to bring
+            over your Conductor, Claude Code and Codex sessions.
+          </p>
+          <a href={MAC_APP_DOWNLOAD} className="route-state-button is-primary">
+            Download the Mac app
+          </a>
+        </div>
       </Page>
     );
   }
