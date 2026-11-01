@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/loaders";
 import { renameSession } from "@/lib/session/rename-session";
-import { cleanTitle, TITLE_MAX } from "@/lib/nav/session-title";
+import { cleanTitle, titleProblem } from "@/lib/nav/session-title";
 
 /** Rename a cloud session: its title, typed in place of the one it has. */
 export function RenameSessionDialog({
@@ -21,6 +21,7 @@ export function RenameSessionDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const title = cleanTitle(value);
+  const problem = titleProblem(value);
 
   const save = async () => {
     if (!title || busy) return;
@@ -62,12 +63,13 @@ export function RenameSessionDialog({
             autoFocus
             aria-label="Session title"
             value={value}
-            maxLength={TITLE_MAX}
+            aria-invalid={problem ? true : undefined}
             disabled={busy}
             onChange={(event) => setValue(event.target.value)}
             onFocus={(event) => event.target.select()}
             className="h-8 w-full rounded-md border border-border bg-input/30 px-2.5 text-[13px] text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           />
+          {problem && <p className="text-[12px] text-muted-foreground">{problem}</p>}
           {error && (
             <p role="alert" className="text-[13px] text-destructive">
               {error}

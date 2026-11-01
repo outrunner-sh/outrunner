@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { cleanTitle, TITLE_MAX, sessionTitle, titleToSet, workspaceLabel } from "@/lib/nav/session-title";
+import { cleanTitle, titleProblem, TITLE_MAX, sessionTitle, titleToSet, workspaceLabel } from "@/lib/nav/session-title";
 
 test("a title is the prompt's first non-empty line, whitespace collapsed", () => {
   assert.equal(sessionTitle("Fix the login redirect"), "Fix the login redirect");
@@ -68,4 +68,10 @@ test("a renamed title is made one line and trimmed, within the limit (NEE-243)",
   assert.equal(cleanTitle("x".repeat(TITLE_MAX + 1)), null);
   assert.equal(cleanTitle("   "), null);
   assert.equal(cleanTitle(undefined), null);
+});
+
+test("a title over the limit says why it can't be saved: an automation's run longer", () => {
+  assert.equal(titleProblem("x".repeat(120)), `Up to ${TITLE_MAX} characters (this is 120).`);
+  assert.equal(titleProblem(` ${"x".repeat(TITLE_MAX)} `), null);
+  assert.equal(titleProblem(""), null);
 });
