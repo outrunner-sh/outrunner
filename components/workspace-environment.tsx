@@ -164,7 +164,7 @@ export function WorkspaceEnvironment({
             provider={workspace.provider}
             branch={summary.branch}
             baseBranch={summary.baseBranch ?? workspace.baseBranch}
-            uncommitted={isReady && changes.files ? changes.files.length : null}
+            changedFiles={isReady && changes.files ? changes.files.length : null}
             pullRequest={pullRequest}
             sender={isReady ? sender : null}
             coAuthor={coAuthor}
@@ -181,7 +181,7 @@ export function WorkspaceEnvironment({
               provider={workspace.provider}
               branch={summary.branch!}
               baseBranch={c.baseBranch}
-              uncommitted={isReady && changes.files ? changes.files.filter((f) => f.path.startsWith(`${c.checkout}/`)).length : null}
+              changedFiles={isReady && changes.files ? changes.files.filter((f) => f.path.startsWith(`${c.checkout}/`)).length : null}
               pullRequest={pullRequest?.projectId === c.projectId ? pullRequest : null}
               sender={isReady ? sender : null}
               coAuthor={coAuthor}
@@ -415,7 +415,7 @@ function PullRequestRow({
   workspaceId,
   branch,
   baseBranch,
-  uncommitted,
+  changedFiles,
   pullRequest,
   sender,
   coAuthor,
@@ -427,8 +427,8 @@ function PullRequestRow({
   workspaceId: string;
   branch: string;
   baseBranch: string;
-  /** Files changed and not committed, null while unknown. */
-  uncommitted: number | null;
+  /** Files that differ from the base branch, committed or not; null while unknown. */
+  changedFiles: number | null;
   pullRequest: WorkspacePullRequest | null;
   sender: SessionSender | null;
   coAuthor?: string | null;
@@ -545,7 +545,7 @@ function PullRequestRow({
       prInstructions({
         branch,
         baseBranch,
-        uncommitted,
+        changedFiles,
         ...(repo && { repo }),
         tools: evidenceToolsFor(provider),
         footer: prInstructionFooter(`${window.location.origin}/workspaces/${workspaceId}`, coAuthor),
