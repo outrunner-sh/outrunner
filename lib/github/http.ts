@@ -2,7 +2,7 @@ import { GitHubReconnectError, GitHubSyncError, MissingGithubTokenError } from "
 import { GitIdentityError } from "@/lib/github/identity-error";
 
 /** Where signing out (and so back in, minting a fresh GitHub token) lives. */
-export const GITHUB_RECONNECT_HREF = "/settings/account";
+export const GITHUB_RECONNECT_HREF = "/settings/connections";
 
 /**
  * The response for an error from a route's GitHub work: no usable token is
