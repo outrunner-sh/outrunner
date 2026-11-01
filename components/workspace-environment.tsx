@@ -27,6 +27,7 @@ import type { SessionSender } from "@/components/workspace-session";
 import { uploadAttachment } from "@/hooks/use-attachments";
 import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-workspace-changes";
 import { openPendingTab, TAB_BLOCKED } from "@/lib/client/pending-tab";
+import { store, useStore } from "@/lib/client/store";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { PullRequestStatus } from "@/lib/github/client";
 import { previewsSupported } from "@/lib/previews/rules";
@@ -308,14 +309,25 @@ function PortRows({ workspaceId, active }: { workspaceId: string; active: boolea
 const PR_POLL_MS = 15_000;
 const PR_WAIT_MS = 10 * 60_000;
 
-/** When each row's Create PR was sent (`workspace:project`), for this tab: the
- *  panel unmounts as it closes, and its wait must not go with it (NEE-219). */
-const prWaits = new Map<string, number>();
+/** Each row's Create PR (`workspace:project`) while it's being sent or its
+ *  pull request is awaited, for this tab: the panel unmounts as it closes,
+ *  and the request must not go with it (NEE-219). A row mounted mid-send sees
+ *  the send finish. */
+type PrAsk = { phase: "sending" | "waiting"; since: number };
+const PR_ASKS = store<Partial<Record<string, PrAsk>>>({});
+const NO_ASKS: Partial<Record<string, PrAsk>> = {};
+
+function setPrAsk(key: string, ask: PrAsk | null): void {
+  const next = { ...PR_ASKS.get() };
+  if (ask) next[key] = ask;
+  else delete next[key];
+  PR_ASKS.set(next);
+}
 
 /** How long row `key` still waits for its pull request; 0 when it doesn't. */
 function prWaitLeft(key: string): number {
-  const since = prWaits.get(key);
-  return since === undefined ? 0 : Math.max(0, PR_WAIT_MS - (Date.now() - since));
+  const ask = PR_ASKS.get()[key];
+  return ask?.phase === "waiting" ? Math.max(0, PR_WAIT_MS - (Date.now() - ask.since)) : 0;
 }
 /** How often an open pull request's status (checks, mergeability) is re-read. */
 const PR_STATUS_POLL_MS = 30_000;
@@ -449,10 +461,11 @@ function PullRequestRow({
   const [found, setFound] = useState<WorkspacePullRequest | null>(null);
   const [status, setStatus] = useState<PullRequestStatus | null>(null);
   const waitKey = `${workspaceId}:${repo?.projectId ?? ""}`;
-  // Still waiting if Create PR was sent before the panel last closed.
-  const [phase, setPhase] = useState<"idle" | "sending" | "waiting">(() => (prWaitLeft(waitKey) > 0 ? "waiting" : "idle"));
+  // Still sending or waiting if Create PR was pressed before the panel last closed.
+  const phase = useStore(PR_ASKS, NO_ASKS)[waitKey]?.phase ?? "idle";
+  // A wait that ran out while no row was on screen to end it.
   useEffect(() => {
-    if (phase !== "waiting") prWaits.delete(waitKey);
+    if (phase === "waiting" && prWaitLeft(waitKey) === 0) setPrAsk(waitKey, null);
   }, [phase, waitKey]);
   const [error, setError] = useState<RowError | null>(null);
   // A repository's row of a session of several starts without its pull
@@ -499,7 +512,7 @@ function PullRequestRow({
         // Its first, or one that took over from a PR closed unmerged.
         if (result.pullRequest.number !== openedNumber) {
           setFound(result.pullRequest);
-          setPhase("idle");
+          setPrAsk(waitKey, null);
           router.refresh();
         }
         if (result.status) {
@@ -516,7 +529,7 @@ function PullRequestRow({
     if (Date.now() - lastLook.current > PR_POLL_MS / 2) void look();
     if (pollMs === null) return () => void (live = false);
     const poll = setInterval(() => void look(), pollMs);
-    const giveUp = hasPullRequest ? undefined : setTimeout(() => setPhase("idle"), prWaitLeft(waitKey) || PR_WAIT_MS);
+    const giveUp = hasPullRequest ? undefined : setTimeout(() => setPrAsk(waitKey, null), prWaitLeft(waitKey) || PR_WAIT_MS);
     return () => {
       live = false;
       clearInterval(poll);
@@ -551,7 +564,7 @@ function PullRequestRow({
 
   async function createPr() {
     if (!sender || phase !== "idle") return;
-    setPhase("sending");
+    setPrAsk(waitKey, { phase: "sending", since: Date.now() });
     setError(null);
     const result = await askAgent(
       sender,
@@ -567,8 +580,7 @@ function PullRequestRow({
       }),
     );
     if (result.error) setError({ message: result.error, reconnect: false });
-    if (result.sent) prWaits.set(waitKey, Date.now());
-    setPhase(result.sent ? "waiting" : "idle");
+    setPrAsk(waitKey, result.sent ? { phase: "waiting", since: Date.now() } : null);
   }
 
   const busy = phase !== "idle";
