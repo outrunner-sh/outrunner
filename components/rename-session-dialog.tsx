@@ -7,7 +7,8 @@ import { Spinner } from "@/components/ui/loaders";
 import { renameSession } from "@/lib/session/rename-session";
 import { cleanTitle, titleProblem } from "@/lib/nav/session-title";
 
-/** Rename a cloud session: its title, typed in place of the one it has. */
+/** Rename a cloud session: its title, typed in place of the one it has.
+ *  Mounted only while open (SessionMenu), so it starts from the title. */
 export function RenameSessionDialog({
   session,
   open,
@@ -42,12 +43,7 @@ export function RenameSessionDialog({
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (busy) return;
-        if (next) {
-          setValue(session.title);
-          setError(null);
-        }
-        onOpenChange(next);
+        if (!busy) onOpenChange(next);
       }}
     >
       <DialogContent className="max-w-sm gap-5" showClose={!busy} aria-describedby={undefined}>

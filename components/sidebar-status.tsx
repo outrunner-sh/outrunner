@@ -351,7 +351,8 @@ export function SessionMenu({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
-    {markable && <RenameSessionDialog session={session} open={renaming} onOpenChange={setRenaming} />}
+    {/* Mounted only while open, so each opening starts from the current title. */}
+    {markable && renaming && <RenameSessionDialog session={session} open onOpenChange={setRenaming} />}
     </>
   );
 }
