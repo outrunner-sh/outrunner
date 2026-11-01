@@ -3,6 +3,7 @@
 import Link, { useLinkStatus } from "next/link";
 import {
   Archive,
+  Check,
   ChevronRight,
   Circle,
   CircleAlert,
@@ -19,7 +20,7 @@ import {
   Slack,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { RenameSessionDialog } from "@/components/rename-session-dialog";
 import { Spinner, ThinkingIcon } from "@/components/ui/loaders";
@@ -249,6 +250,13 @@ export function SessionMenu({
   className?: string;
 }) {
   const [renaming, setRenaming] = useState(false);
+  // Copy branch says it copied, the menu kept open for it, as Copy does elsewhere.
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
   const { deletion, branch } = session;
   if (!markable && !deletion && !branch) return null;
   const mark = (change: Parameters<typeof markSession>[1]) => {
@@ -257,9 +265,10 @@ export function SessionMenu({
     });
   };
   const copyBranch = () => {
-    void navigator.clipboard.writeText(branch).catch((error: unknown) => {
-      console.error(`Couldn't copy ${session.id}'s branch`, error);
-    });
+    navigator.clipboard.writeText(branch).then(
+      () => setCopied(true),
+      (error: unknown) => console.error(`Couldn't copy ${session.id}'s branch`, error),
+    );
   };
   return (
     <>
@@ -312,9 +321,14 @@ export function SessionMenu({
         )}
         {(branch || pullRequestUrl) && <DropdownMenuSeparator />}
         {branch && (
-          <DropdownMenuItem onSelect={copyBranch}>
-            <Copy />
-            Copy branch
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault();
+              copyBranch();
+            }}
+          >
+            {copied ? <Check /> : <Copy />}
+            {copied ? "Copied" : "Copy branch"}
           </DropdownMenuItem>
         )}
         {pullRequestUrl && (
