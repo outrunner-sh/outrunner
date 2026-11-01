@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { GITHUB_RECONNECT_MESSAGE, MAX_DETAIL_CHARS, provisionFailureMessage } from "@/lib/runtime/provision-failure";
+import { failureParts, GITHUB_RECONNECT_MESSAGE, MAX_DETAIL_CHARS, provisionFailureMessage } from "@/lib/runtime/provision-failure";
 
 test("a failure names the step it stopped at and its error", () => {
   assert.equal(
@@ -62,4 +62,19 @@ test("git refused by GitHub says to reconnect, not git's message", () => {
   );
   // Any other clone failure still says what happened.
   assert.match(provisionFailureMessage(new Error("fatal: repository not found"), "clone", []), /repository not found/);
+});
+
+test("the page shows a sentence first and what the box said behind Details (NEE-231)", () => {
+  assert.deepEqual(failureParts("Setup failed while cloning the repository: fatal: repository not found"), {
+    summary: "Setup failed while cloning the repository. Try again to start a fresh session.",
+    detail: "fatal: repository not found",
+  });
+  assert.deepEqual(failureParts("Setup failed: boom"), {
+    summary: "Setup failed. Try again to start a fresh session.",
+    detail: "boom",
+  });
+  // Messages with nothing raw in them show as they are.
+  for (const message of ["Setup failed while cloning the repository. Start a new session to try again.", GITHUB_RECONNECT_MESSAGE]) {
+    assert.deepEqual(failureParts(message), { summary: message, detail: null });
+  }
 });

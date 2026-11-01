@@ -703,6 +703,10 @@
 .route-state-message, .is-arriving { animation:skeleton-in .15s ease-out both; }
 @media (prefers-reduced-motion: reduce) { .route-state-message, .is-arriving { animation:none; } }
 .route-state-actions .notice-action { height:32px; padding:0 12px; border-radius:8px; font-size:13px; }
+.route-state-details { max-width: 384px; color: var(--muted-foreground); font-size: 12px; text-align: center; }
+.route-state-details summary { cursor: pointer; }
+.route-state-details summary:hover { color: var(--foreground); }
+.route-state-details p { margin: 8px 0 0; font-family: var(--font-geist-mono); text-align: left; overflow-wrap: anywhere; }
 .dot-matrix.is-still .dot-matrix-cell { animation: none; }
 @media (prefers-reduced-motion: reduce) { .route-state { animation: none; } }
 /* Hold to Confirm (interior.dev): a fill crosses the button while it is held;

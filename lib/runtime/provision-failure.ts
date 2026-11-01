@@ -41,7 +41,7 @@ const GITHUB_REFUSED = /Invalid username or token|Authentication failed for 'htt
 
 /** A session's setup that GitHub refused: only signing in again fixes it. */
 export const GITHUB_RECONNECT_MESSAGE =
-  "GitHub didn't accept your connection, so the repository couldn't be cloned. Sign out and back in to reconnect GitHub, then start a new session.";
+  "GitHub didn't accept your connection, so the repository couldn't be cloned. Reconnect GitHub in Settings → Connections, then try again.";
 
 export function provisionFailureMessage(
   error: unknown,
@@ -76,4 +76,14 @@ function redact(text: string, secrets: readonly (string | undefined | null)[]): 
 
 function truncate(text: string): string {
   return text.length > MAX_DETAIL_CHARS ? `${text.slice(0, MAX_DETAIL_CHARS - 1)}…` : text;
+}
+
+/**
+ * A stored failure message as the page shows it (NEE-231): a sentence first,
+ * and what the box or git said, if anything, behind Details.
+ */
+export function failureParts(message: string): { summary: string; detail: string | null } {
+  const match = /^Setup failed( while [^:]+)?: ([\s\S]+)$/.exec(message);
+  if (!match) return { summary: message, detail: null };
+  return { summary: `Setup failed${match[1] ?? ""}. Try again to start a fresh session.`, detail: match[2] };
 }
