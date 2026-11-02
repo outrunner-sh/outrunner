@@ -1,7 +1,7 @@
 /**
  * The sidebar by where each session stands (lib/session/standing.ts), the
  * other way to list it than by project: pinned sessions first, then Needs
- * you, Working, In review, Done and Backlog, each most recent first. Built
+ * you, Working, In review and Done, each most recent first. Built
  * from the project groups (lib/nav/sidebar.ts), so search and deletion
  * work the same either way.
  *
@@ -47,15 +47,14 @@ export type StatusSection = {
 
 /**
  * A session the server hasn't placed (one on this Mac, or one made since the
- * last read): working while it is set up, else backlog. Done requires a merged pull
- * request from the server.
+ * last read): working while it is set up, else needs you until its pull request is known.
  */
 export function fallbackStanding(at: string, now: number, settingUp = false): SessionStanding {
   void now;
   return {
     // One being set up — just started here, ahead of the server's read — is
     // at work, as the server will say once it reads it.
-    standing: settingUp ? "working" : "backlog",
+    standing: settingUp ? "working" : "needs_you",
     reason: null,
     moved: false,
     pinned: false,

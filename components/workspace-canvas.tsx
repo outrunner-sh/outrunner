@@ -43,7 +43,9 @@ export function WorkspaceCanvas({
   active,
   onBack,
   backRef,
+  initialPath,
 }: {
+  initialPath?: string | null;
   workspaceId: string;
   active: boolean;
   onBack: () => void;
@@ -51,7 +53,7 @@ export function WorkspaceCanvas({
 }) {
   const [listing, setListing] = useState<Listing | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [openPath, setOpenPath] = useState<string | null>(null);
+  const [openPath, setOpenPath] = useState<string | null>(initialPath ?? null);
   const [raw, setRaw] = useState(false);
   const [wide, setWide] = useState(false);
 

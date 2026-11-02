@@ -262,7 +262,7 @@ function EmptyTab({ tab }: { tab: TriageTab }) {
   const text =
     tab === "triage"
       ? "Nothing waiting. New captures from Slack, the CLI, or ⌘I land here."
-      : tab === "backlog"
+      : tab === "working"
         ? "Nothing accepted yet. Accept an item in Triage to move it here."
         : "Nothing closed yet.";
   return <p className="px-4 py-8 text-center text-xs text-muted-foreground">{text}</p>;

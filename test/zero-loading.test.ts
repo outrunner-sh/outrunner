@@ -128,7 +128,7 @@ test("a change to a session the list didn't have shows until a list arrives afte
 test("a session being set up that the server hasn't placed is working", () => {
   const now = Date.parse("2026-10-29T10:00:00Z");
   assert.equal(fallbackStanding("2026-10-29T09:59:00Z", now, true).standing, "working");
-  assert.equal(fallbackStanding("2026-10-29T09:59:00Z", now).standing, "backlog");
+  assert.equal(fallbackStanding("2026-10-29T09:59:00Z", now).standing, "needs_you");
 });
 
 function message(role: "user" | "assistant", content: unknown[], timestamp = "2026-10-29T10:00:00Z"): AgentEvent {

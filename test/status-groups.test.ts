@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { SidebarGroup, SidebarSession } from "@/lib/nav/sidebar";
 import { buildStatusSections, fallbackStanding, readGrouping, SECTION_SHOWN, shownRows } from "@/lib/nav/status-groups";
-import { BACKLOG_AFTER_MS, type SessionStanding } from "@/lib/session/standing";
+import { ATTENTION_AFTER_MS, type SessionStanding } from "@/lib/session/standing";
 
 const NOW = Date.parse("2026-10-28T12:00:00Z");
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -53,21 +53,21 @@ test("sessions are grouped by where they stand, pinned first, in the groups' ord
   assert.equal(sections[1].rows[0].project, "api");
 });
 
-test("a session without a server standing stays in backlog until a merge is known", () => {
-  const sections = buildStatusSections([group("~/code", [session("m", 1), session("old", BACKLOG_AFTER_MS / 60_000 + 1)], true)], {}, NOW);
+test("a session without a server standing needs you until a pull request is known", () => {
+  const sections = buildStatusSections([group("~/code", [session("m", 1), session("old", ATTENTION_AFTER_MS / 60_000 + 1)], true)], {}, NOW);
   assert.deepEqual(
     sections.map((s) => [s.key, s.rows.map((r) => r.id)]),
     [
-      ["backlog", ["m", "old"]],
+      ["needs_you", ["m", "old"]],
     ],
   );
   assert.equal(sections[0].rows[0].markable, false, "a Mac session has no marks on the server");
-  assert.equal(fallbackStanding("not a date", NOW).standing, "backlog");
+  assert.equal(fallbackStanding("not a date", NOW).standing, "needs_you");
 });
 
 test("a section shows its first few, keeps the one on screen, and shows all while searching", () => {
   const many = Array.from({ length: SECTION_SHOWN + 3 }, (_, i) => session(`s${i}`, i));
-  const standings = Object.fromEntries(many.map((s) => [s.id, placed("done")]));
+  const standings = Object.fromEntries(many.map((s) => [s.id, placed("needs_you")]));
   const [section] = buildStatusSections([group("api", many)], standings, NOW);
   const closed = shownRows(section, { folded: false, expanded: false, searching: false });
   assert.equal(closed.rows.length, SECTION_SHOWN);
@@ -83,4 +83,14 @@ test("the grouping cookie reads status unless it says projects", () => {
   assert.equal(readGrouping(undefined), "status");
   assert.equal(readGrouping("projects"), "projects");
   assert.equal(readGrouping("nonsense"), "status");
+});
+
+
+test("open pull requests have their own In review section before Done", () => {
+  const sections = buildStatusSections(
+    [group("api", [session("review", 1), session("merged", 2)])],
+    { review: placed("in_review"), merged: placed("done") },
+    NOW,
+  );
+  assert.deepEqual(sections.map((section) => [section.key, section.label]), [["in_review", "In review"], ["done", "Done"]]);
 });

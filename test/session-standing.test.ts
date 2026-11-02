@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  BACKLOG_AFTER_MS,
+  ATTENTION_AFTER_MS,
   nextNeedingYou,
   sessionStanding,
   STUCK_AFTER_MS,
@@ -61,7 +61,7 @@ test("a turn going on, or a session setting up or coming back, is working", () =
 
 test("a paused or archived session is never working or waiting, whatever its stream last said", () => {
   const s = standing({ workspace: { status: "archived" }, activity: { ...idle, turn: "working", waiting: "question", waitingSince: ago(MIN) } });
-  assert.equal(s.standing, "backlog");
+  assert.equal(s.standing, "needs_you");
 });
 
 test("an open pull request is in review; a merged one is done", () => {
@@ -74,19 +74,19 @@ test("an open pull request is in review; a merged one is done", () => {
   );
 });
 
-test("idle sessions and closed unmerged pull requests stay in backlog", () => {
-  const quiet = { workspace: { lastActiveAt: ago(BACKLOG_AFTER_MS + MIN), createdAt: ago(BACKLOG_AFTER_MS * 2) }, activity: null };
-  assert.equal(standing(quiet).standing, "backlog");
-  assert.equal(standing({ ...quiet, pullRequest: { state: "closed", stateAt: null } }).standing, "backlog");
-  assert.equal(standing({ workspace: { lastActiveAt: ago(BACKLOG_AFTER_MS - MIN) }, activity: null }).standing, "backlog");
+test("idle sessions and closed unmerged pull requests need you", () => {
+  const quiet = { workspace: { lastActiveAt: ago(ATTENTION_AFTER_MS + MIN), createdAt: ago(ATTENTION_AFTER_MS * 2) }, activity: null };
+  assert.equal(standing(quiet).standing, "needs_you");
+  assert.equal(standing({ ...quiet, pullRequest: { state: "closed", stateAt: null } }).standing, "needs_you");
+  assert.equal(standing({ workspace: { lastActiveAt: ago(ATTENTION_AFTER_MS - MIN) }, activity: null }).standing, "needs_you");
 });
 
 test("a move by hand holds until the session needs you again after it", () => {
-  const moved = { pinnedAt: null, movedTo: "backlog" as const, movedAt: ago(10 * MIN), seenAt: null };
-  const s = standing({ mark: moved, pullRequest: { state: "open", stateAt: null } });
-  assert.deepEqual([s.standing, s.moved], ["backlog", true]);
+  const moved = { pinnedAt: null, movedTo: "in_review" as const, movedAt: ago(10 * MIN), seenAt: null };
+  const s = standing({ mark: moved, pullRequest: { state: "open", stateAt: ago(20 * MIN) } });
+  assert.deepEqual([s.standing, s.moved], ["in_review", true]);
   // A question from before the move doesn't undo it...
-  assert.equal(standing({ mark: moved, activity: { ...idle, waiting: "question", waitingSince: ago(20 * MIN) } }).standing, "backlog");
+  assert.equal(standing({ mark: moved, activity: { ...idle, waiting: "question", waitingSince: ago(20 * MIN) } }).standing, "in_review");
   // ...one since does.
   const asked = standing({ mark: moved, activity: { ...idle, waiting: "question", waitingSince: ago(MIN) } });
   assert.deepEqual([asked.standing, asked.reason, asked.moved], ["needs_you", "question", false]);
@@ -99,15 +99,15 @@ test("a reply is unread until seen, and replies from before the watch never are"
   assert.equal(standing({ activity: { ...replied, createdAt: ago(MIN) } }).unread, false);
 });
 
-test("a finished turn its owner hasn't read needs them, until they open it", () => {
+test("a finished turn needs you until its pull request is raised or merged", () => {
   const replied = { ...idle, repliedAt: ago(2 * MIN), createdAt: ago(60 * MIN) };
   const s = standing({ activity: replied });
   assert.deepEqual([s.standing, s.reason], ["needs_you", "replied"]);
   // A paused session's reply is still unread.
   assert.equal(standing({ activity: replied, workspace: { status: "suspended" } }).reason, "replied");
-  // Seen, it waits in backlog until a pull request is merged.
+  // Seen, it still needs you until a pull request is raised or merged.
   const seen = { pinnedAt: null, movedTo: null, movedAt: null, seenAt: ago(MIN) };
-  assert.equal(standing({ activity: replied, mark: seen }).standing, "backlog");
+  assert.equal(standing({ activity: replied, mark: seen }).standing, "needs_you");
   // With a pull request open it stays in review.
   assert.equal(standing({ activity: replied, pullRequest: { state: "open", stateAt: null } }).standing, "in_review");
   // A reply since its pull request merged or closed needs you; one from
@@ -115,23 +115,23 @@ test("a finished turn its owner hasn't read needs them, until they open it", () 
   assert.equal(standing({ activity: replied, pullRequest: { state: "merged", stateAt: ago(3 * MIN) } }).reason, "replied");
   assert.equal(standing({ activity: replied, pullRequest: { state: "merged", stateAt: ago(MIN) } }).standing, "done");
   assert.equal(standing({ activity: replied, pullRequest: { state: "closed", stateAt: ago(3 * MIN) } }).reason, "replied");
-  assert.equal(standing({ activity: replied, pullRequest: { state: "closed", stateAt: ago(MIN) } }).standing, "backlog");
+  assert.equal(standing({ activity: replied, pullRequest: { state: "closed", stateAt: ago(MIN) } }).standing, "needs_you");
   assert.equal(standing({ activity: replied, pullRequest: { state: "merged", stateAt: null } }).standing, "done");
-  // Unread as long as backlog, it's gone there.
-  const old = ago(BACKLOG_AFTER_MS + MIN);
+  // Old replies still need you until a pull request is raised or merged.
+  const old = ago(ATTENTION_AFTER_MS + MIN);
   const stale = standing({
-    activity: { ...replied, repliedAt: old, eventAt: old, createdAt: ago(BACKLOG_AFTER_MS * 2) },
-    workspace: { lastActiveAt: old, updatedAt: old, createdAt: ago(BACKLOG_AFTER_MS * 2) },
+    activity: { ...replied, repliedAt: old, eventAt: old, createdAt: ago(ATTENTION_AFTER_MS * 2) },
+    workspace: { lastActiveAt: old, updatedAt: old, createdAt: ago(ATTENTION_AFTER_MS * 2) },
   });
-  assert.equal(stale.standing, "backlog");
+  assert.equal(stale.standing, "needs_you");
   // Another member's, or one put away, never needs you.
-  assert.equal(standing({ activity: replied, owner: false }).standing, "backlog");
-  assert.equal(standing({ activity: replied, workspace: { status: "archived" } }).standing, "backlog");
+  assert.equal(standing({ activity: replied, owner: false }).standing, "needs_you");
+  assert.equal(standing({ activity: replied, workspace: { status: "archived" } }).standing, "needs_you");
   // A move by hand since the reply holds.
-  const moved = { pinnedAt: null, movedTo: "backlog" as const, movedAt: ago(MIN), seenAt: null };
-  assert.deepEqual([standing({ activity: replied, mark: moved }).standing, standing({ activity: replied, mark: moved }).moved], ["backlog", true]);
+  const moved = { pinnedAt: null, movedTo: "in_review" as const, movedAt: ago(MIN), seenAt: null };
+  assert.deepEqual([standing({ activity: replied, mark: moved }).standing, standing({ activity: replied, mark: moved }).moved], ["in_review", true]);
   // A reply from before the server read the session is never unread.
-  assert.equal(standing({ activity: { ...replied, createdAt: ago(MIN) } }).standing, "backlog");
+  assert.equal(standing({ activity: { ...replied, createdAt: ago(MIN) } }).standing, "needs_you");
 });
 
 test("the next session that needs you comes after the one on screen, pinned first, wrapping round", () => {
@@ -161,14 +161,14 @@ test("a last turn that ended in an API error needs you, read or not", () => {
   assert.deepEqual([read.standing, read.reason], ["needs_you", "error"]);
   // Once the next turn is under way, it's working again.
   assert.equal(standing({ activity: { ...errored, turn: "working", turnStartedAt: ago(MIN), eventAt: ago(MIN) } }).standing, "working");
-  // Put away, or quiet as long as backlog, it waits no more.
-  assert.equal(standing({ activity: errored, workspace: { status: "archived" } }).standing, "backlog");
-  const long = ago(BACKLOG_AFTER_MS + MIN);
+  // Idle sessions without merged pull requests stay in Needs you.
+  assert.equal(standing({ activity: errored, workspace: { status: "archived" } }).standing, "needs_you");
+  const long = ago(ATTENTION_AFTER_MS + MIN);
   const old = { ...errored, repliedAt: long, eventAt: long };
-  assert.equal(standing({ activity: old, workspace: { createdAt: long, lastActiveAt: long } }).standing, "backlog");
+  assert.equal(standing({ activity: old, workspace: { createdAt: long, lastActiveAt: long } }).standing, "needs_you");
 });
 
-test("Done cannot be assigned by a legacy manual mark without a merged pull request", () => {
+test("Done requires a merged pull request even with a legacy manual mark", () => {
   const mark = { pinnedAt: null, movedTo: "done" as const, movedAt: ago(MIN), seenAt: null };
   for (const pullRequest of [null, { state: "open" as const, stateAt: null }, { state: "closed" as const, stateAt: ago(MIN) }]) {
     const result = standing({ mark, pullRequest });
