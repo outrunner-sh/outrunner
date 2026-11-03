@@ -65,7 +65,9 @@ export async function GET(request: Request) {
   const reconnectAs = requestUrl.searchParams.get("reconnect_as");
   if (reconnectAs && data.user.id !== reconnectAs) {
     console.warn(`Reconnecting GitHub for ${reconnectAs} came back as ${data.user.id}; signing that session out`);
-    await supabase.auth.signOut();
+    // This session alone: a global sign-out would sign the other account out
+    // on every device.
+    await supabase.auth.signOut({ scope: "local" });
     return NextResponse.redirect(signInError(base, "reconnect_other_account"));
   }
 

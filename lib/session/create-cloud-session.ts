@@ -344,8 +344,7 @@ async function createOnce(
       { orgId: project.orgId, fullName },
       "create-session",
       async (t) => ({ repository: await getGitHubRepository(t, fullName), token: t }),
-      as,
-      credential,
+      { as, first: credential },
     );
   const githubToken = await tokenFor(project.fullName);
   if ("refusal" in githubToken) return githubToken.refusal;
@@ -955,7 +954,7 @@ async function provisionWorkspace({
 function gitTokenFor(userId: string, orgId: string, as?: typeof REVIEW_AS_APP) {
   return async (
     fullName: string,
-  ): Promise<{ token: string | undefined; credential?: GitCredential } | { refusal: NextResponse }> => {
+  ): Promise<{ token: string; credential: GitCredential } | { token: undefined; credential: null } | { refusal: NextResponse }> => {
     try {
       const credential = await gitCredentialFor({ userId, orgId, repo: fullName, ...as });
       return { token: credential.token, credential };
@@ -966,7 +965,7 @@ function gitTokenFor(userId: string, orgId: string, as?: typeof REVIEW_AS_APP) {
       if (!(error instanceof MissingGithubTokenError)) {
         console.warn(`No GitHub token for ${fullName}'s session`, error);
       }
-      return { token: undefined };
+      return { token: undefined, credential: null };
     }
   };
 }
@@ -983,10 +982,11 @@ type LookUp = (fullName: string, credential: GitCredential) => Promise<{ reposit
  * the clone.
  */
 async function githubRefusal(
-  credential: GitCredential | undefined,
+  credential: GitCredential | null,
   project: { fullName: string; private: boolean },
   lookUp: LookUp,
 ): Promise<{ refusal: NextResponse } | { token: string | undefined }> {
+  // None to check: the user has no token stored (MissingGithubTokenError).
   if (!credential) return { token: undefined };
   const proceed = { token: credential.token };
   try {

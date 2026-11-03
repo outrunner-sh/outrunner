@@ -76,8 +76,7 @@ export async function GET(request: Request, context: RouteContext) {
         { orgId: project.orgId, fullName: repoFullName },
         "pull-request",
         async (t) => ({ found: await findPullRequest({ token: t, repoFullName, headBranch: workspace.branch }), token: t }),
-        undefined,
-        credential,
+        { first: credential },
       ));
     } catch (error) {
       console.error(`Workspace ${id} pull request lookup failed`, error);

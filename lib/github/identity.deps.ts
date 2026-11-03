@@ -195,16 +195,16 @@ export async function withAppSwitchHint(
  * token is minted afresh and tried once more; "reconnect" (GitHubReconnectError)
  * only for the user's own token GitHub confirms dead, with {@link
  * withAppSwitchHint}'s hint where the App would do instead. `route` names the
- * caller in the log. `first`, a credential already resolved for `project`,
- * is tried first rather than resolving another.
+ * caller in the log. `options.as` says who to act as, as for
+ * {@link requireGitToken}; `options.first`, a credential already resolved for
+ * `project`, is tried first rather than resolving another.
  */
 export async function withGitToken<T>(
   userId: string,
   project: { orgId: string; fullName: string },
   route: string,
   call: (token: string) => Promise<T>,
-  as?: { identity: GitHubIdentity; level: TokenLevel },
-  first?: GitCredential,
+  { as, first }: { as?: { identity: GitHubIdentity; level: TokenLevel }; first?: GitCredential } = {},
 ): Promise<T> {
   try {
     return await callWithCredential({ route, repo: project.fullName, userId }, call, {
