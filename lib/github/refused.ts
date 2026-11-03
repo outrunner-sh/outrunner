@@ -41,6 +41,8 @@ export type RefusalDeps = {
 
 /** What a refusal is logged as: enough to tell the causes apart, no secret. */
 export type RefusalLog = {
+  userId?: string;
+  orgId?: string;
   route: string;
   repo: string;
   kind: "personal" | "installation";
@@ -59,41 +61,35 @@ export function tokenPrefix(token: string): string {
   return token.slice(0, 4);
 }
 
+/** Where a refusal happened, for its log line. */
+export type RefusalSite = { route: string; repo: string; userId?: string; orgId?: string };
+
+/** Every refusal's log line, wherever it's caught: one message to search for. */
+export function logRefusal(entry: RefusalLog): void {
+  console.warn("GitHub refused a token (401)", entry);
+}
+
 /**
- * `call` with a token for `repo`, as {@link RefusalDeps.resolve} gives it.
- * Throws GitHubReconnectError only when the user's own token is confirmed
- * dead; an App token refused twice, or a personal one GitHub still takes, is
- * a GitHubSyncError (retry, not reconnect).
+ * `call` with a token for `repo`, as {@link RefusalDeps.resolve} gives it
+ * (or `first`, already resolved, for its first try). Throws
+ * GitHubReconnectError only when the user's own token is confirmed dead; an
+ * App token refused twice, or a personal one GitHub still takes, is a
+ * GitHubSyncError (retry, not reconnect).
  */
 export async function callWithCredential<T>(
-  where: { route: string; repo: string },
+  where: RefusalSite,
   call: (token: string) => Promise<T>,
   deps: RefusalDeps,
+  first?: GitCredential,
 ): Promise<T> {
-  const first = await deps.resolve();
+  const credential = first ?? (await deps.resolve());
+  if (credential.installationId !== null) return retryInstallationToken(where, call, deps, credential);
   try {
-    return await call(first.token);
+    return await call(credential.token);
   } catch (error) {
     if (!(error instanceof GitHubReconnectError)) throw error;
-
-    if (first.installationId !== null) {
-      deps.log(await entry(where, first, error, 1, deps));
-      deps.forget(first);
-      const fresh = await deps.resolve();
-      try {
-        return await call(fresh.token);
-      } catch (again) {
-        if (!(again instanceof GitHubReconnectError)) throw again;
-        deps.log(await entry(where, fresh, again, 2, deps));
-        throw new GitHubSyncError(
-          `GitHub refused Outrunner's GitHub App for ${where.repo}. Try again, or check the App in Settings → Org → GitHub.`,
-          again.status,
-        );
-      }
-    }
-
-    const verdict = await deps.check(first.token);
-    deps.log({ ...(await entry(where, first, error, 1, deps)), verdict });
+    const verdict = await deps.check(credential.token);
+    deps.log({ ...(await entry(where, credential, error, 1, deps)), verdict });
     if (verdict === "dead") throw error;
     throw new GitHubSyncError(
       verdict === "alive"
@@ -104,18 +100,50 @@ export async function callWithCredential<T>(
   }
 }
 
+/**
+ * `call` with an App installation token: one GitHub refuses (401) is
+ * forgotten and one minted afresh tried once more; refused again, it's a
+ * GitHubSyncError, never "reconnect" (it's the App's, not the member's).
+ */
+export async function retryInstallationToken<T>(
+  where: RefusalSite,
+  call: (token: string) => Promise<T>,
+  deps: Pick<RefusalDeps, "resolve" | "forget" | "log" | "now">,
+  first?: GitCredential,
+): Promise<T> {
+  let credential = first ?? (await deps.resolve());
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await call(credential.token);
+    } catch (error) {
+      if (!(error instanceof GitHubReconnectError)) throw error;
+      deps.log(await entry(where, credential, error, attempt, deps));
+      deps.forget(credential);
+      if (attempt >= 2) {
+        throw new GitHubSyncError(
+          `GitHub refused Outrunner's GitHub App for ${where.repo}. Try again, or check the App in Settings → Org → GitHub.`,
+          error.status,
+        );
+      }
+      credential = await deps.resolve();
+    }
+  }
+}
+
 async function entry(
-  where: { route: string; repo: string },
+  where: RefusalSite,
   credential: GitCredential,
   error: GitHubReconnectError,
   attempt: number,
-  deps: RefusalDeps,
+  deps: Pick<RefusalDeps, "now"> & Partial<Pick<RefusalDeps, "storedAt">>,
 ): Promise<RefusalLog> {
   const installation = credential.installationId !== null;
   const since = installation
     ? credential.expiresAt && new Date(credential.expiresAt.getTime() - INSTALLATION_TOKEN_MS)
-    : await deps.storedAt().catch(() => null);
+    : await (deps.storedAt?.() ?? Promise.resolve(null)).catch(() => null);
   return {
+    ...(where.userId !== undefined && { userId: where.userId }),
+    ...(where.orgId !== undefined && { orgId: where.orgId }),
     route: where.route,
     repo: where.repo,
     kind: installation ? "installation" : "personal",

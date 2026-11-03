@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { GitHubReconnectError, GitHubSyncError } from "@/lib/github/client";
 import type { GitCredential } from "@/lib/github/identity";
-import { callWithCredential, type RefusalDeps, type RefusalLog, type TokenVerdict } from "@/lib/github/refused";
+import { callWithCredential, retryInstallationToken, type RefusalDeps, type RefusalLog, type TokenVerdict } from "@/lib/github/refused";
 
 const NOW = Date.parse("2026-11-03T12:00:00Z");
 const where = { route: "pull-request", repo: "acme/web" };
@@ -80,4 +80,31 @@ test("anything but a 401 passes through untouched", async () => {
   const rateLimited = new GitHubSyncError("rate limited", 403);
   await assert.rejects(callWithCredential(where, async () => { throw rateLimited; }, d), (e) => e === rateLimited);
   assert.deepEqual(logs, []);
+});
+
+test("a credential already resolved is tried first, not resolved again", async () => {
+  const { d, resolved } = deps([personal]);
+  const given: GitCredential = { ...personal, token: "gho_given" };
+  assert.equal(await callWithCredential(where, refusing(), d, given), "ok with gho_given");
+  assert.equal(resolved(), 0);
+});
+
+test("the App retry is one helper: the user is in its log, and the token that answered is the fresh one", async () => {
+  const { d, logs, forgotten } = deps([app("ghs_fresh", 0)]);
+  const used: string[] = [];
+  const result = await retryInstallationToken(
+    { ...where, userId: "u1", orgId: "o1" },
+    async (token) => {
+      used.push(token);
+      return refusing("ghs_stale")(token);
+    },
+    d,
+    app("ghs_stale", 58),
+  );
+  assert.equal(result, "ok with ghs_fresh");
+  assert.deepEqual(used, ["ghs_stale", "ghs_fresh"]);
+  assert.deepEqual(forgotten, ["ghs_stale"]);
+  assert.deepEqual(logs, [
+    { userId: "u1", orgId: "o1", ...where, kind: "installation", prefix: "ghs_", ageMinutes: 58, installationId: 42, status: 401, attempt: 1 },
+  ]);
 });

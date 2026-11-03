@@ -10,7 +10,8 @@ import {
 } from "@/lib/db/repositories";
 import { findPullRequest, getPullRequestStatus } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
-import { requireGitToken, withGitToken } from "@/lib/github/identity.deps";
+import { gitCredentialFor, withGitToken } from "@/lib/github/identity.deps";
+import type { GitCredential } from "@/lib/github/identity";
 import { supersedingPullRequest } from "@/lib/session/pull-request-status";
 import { sessionRepo } from "@/lib/session/session-repos";
 import type { WorkspacePullRequest } from "@/lib/runtime/types";
@@ -53,23 +54,31 @@ export async function GET(request: Request, context: RouteContext) {
   }
   const repoFullName = repo.fullName ?? project.fullName;
   // As the user chose to work on GitHub (lib/github/identity.ts).
-  let token: string;
+  let credential: GitCredential;
   try {
-    token = await requireGitToken(owner.id, { orgId: project.orgId, fullName: repoFullName });
+    credential = await gitCredentialFor({ userId: owner.id, orgId: project.orgId, repo: repoFullName });
   } catch (error) {
     if (recorded) return NextResponse.json({ pullRequest: recorded, status: null });
     return githubErrorResponse(error, "Could not reach GitHub. Please try again.");
   }
 
+  let token = credential.token;
   let pullRequest: WorkspacePullRequest | null = recorded;
   if (!pullRequest) {
     let found;
     try {
       // Through withGitToken: a 401 here is what the Environment pane shows,
       // so it's said as "reconnect" only for a token GitHub confirms dead.
-      found = await withGitToken(owner.id, { orgId: project.orgId, fullName: repoFullName }, "pull-request", (t) =>
-        findPullRequest({ token: t, repoFullName, headBranch: workspace.branch }),
-      );
+      // The token that answered is the one used from here on: an App token
+      // refused was dropped and minted afresh.
+      ({ found, token } = await withGitToken(
+        owner.id,
+        { orgId: project.orgId, fullName: repoFullName },
+        "pull-request",
+        async (t) => ({ found: await findPullRequest({ token: t, repoFullName, headBranch: workspace.branch }), token: t }),
+        undefined,
+        credential,
+      ));
     } catch (error) {
       console.error(`Workspace ${id} pull request lookup failed`, error);
       return githubErrorResponse(error, "Could not look up the pull request. Please try again.");

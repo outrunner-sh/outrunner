@@ -16,6 +16,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   missing_code: "Sign-in did not complete. Please try again.",
   exchange_failed: "Could not verify the sign-in. Please try again.",
   access_denied: "Sign-in was cancelled.",
+  reconnect_other_account:
+    "GitHub came back signed in as a different account than the one linked to your Outrunner account, so nothing was changed. Sign in to GitHub as your linked account, then sign in here and reconnect.",
 };
 
 function errorMessage(code: string | undefined, org: string | undefined): string | null {

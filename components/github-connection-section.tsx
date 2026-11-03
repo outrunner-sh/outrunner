@@ -51,7 +51,7 @@ export async function GitHubConnectionSection({
       />
       <div className="space-y-2">
         <p className="text-sm text-muted-foreground">
-          GitHub stopped accepting your connection? Reconnect it for a fresh one, without signing out.
+          GitHub stopped accepting your connection? Reconnect it for a fresh one, signed in to GitHub as this account.
         </p>
         <div className="max-w-xs">
           <SignInButton provider="github" reconnect next="/settings/connections" />

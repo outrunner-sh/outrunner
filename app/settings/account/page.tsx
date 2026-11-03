@@ -88,7 +88,8 @@ async function AccountSection({ searchParams }: { searchParams: Promise<{ link_e
           <div className="space-y-2">
             <p className="text-muted-foreground text-sm">
               If GitHub stops working (repositories won’t load, or publishing fails),
-              reconnect it for a fresh connection. You stay signed in.
+              reconnect it for a fresh connection. Be signed in to GitHub as the
+              account linked here.
             </p>
             {linkMessage && (
               <p role="alert" className="text-xs text-destructive">

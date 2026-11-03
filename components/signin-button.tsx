@@ -39,8 +39,16 @@ const PROVIDERS: Record<SignInProvider, { name: string; icon: React.ReactNode }>
  * `link` adds the provider to the signed-in account instead of signing in
  * (Supabase's manual identity linking): how someone who signed in with Google
  * connects GitHub. The callback stores the GitHub token either way.
+ *
+ * `reconnectAs`, the signed-in user's id, has the callback refuse a sign-in
+ * that comes back as anyone else (reconnectGithub).
  */
-export async function startOAuth(provider: SignInProvider, next: string, link: boolean): Promise<void> {
+export async function startOAuth(
+  provider: SignInProvider,
+  next: string,
+  link: boolean,
+  reconnectAs?: string,
+): Promise<void> {
   const supabase = createSupabaseBrowserClient();
   const begin = (options: { redirectTo: string; skipBrowserRedirect?: boolean }) => {
     const credentials = { provider, options: { ...options, scopes: SCOPES[provider] } };
@@ -60,7 +68,7 @@ export async function startOAuth(provider: SignInProvider, next: string, link: b
     // allowlist takes an ordinary http entry. The desktop shell listens on
     // this fixed port and hands the code to this webview, so the PKCE
     // verifier and the session cookie both stay here.
-    const redirectTo = `${DESKTOP_OAUTH_REDIRECT}?next=${encodeURIComponent(next)}`;
+    const redirectTo = `${DESKTOP_OAUTH_REDIRECT}?${callbackQuery(next, reconnectAs)}`;
     const { data, error } = await begin({ redirectTo, skipBrowserRedirect: true });
     if (error) throw error;
     // Navigating to the provider URL is intercepted by the shell, which
@@ -70,23 +78,33 @@ export async function startOAuth(provider: SignInProvider, next: string, link: b
     return;
   }
 
-  const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
+  const redirectTo = `${window.location.origin}/auth/callback?${callbackQuery(next, reconnectAs)}`;
   const { error } = await begin({ redirectTo });
   // On success the browser navigates away, so we only reach here on failure.
   if (error) throw error;
 }
 
+/** The callback's query: where to go next, and whom a reconnect is for. The
+ *  desktop shell hands its loopback's query to /auth/callback as it is. */
+function callbackQuery(next: string, reconnectAs: string | undefined): string {
+  const query = new URLSearchParams({ next });
+  if (reconnectAs) query.set("reconnect_as", reconnectAs);
+  return query.toString();
+}
+
 /**
  * Mint a fresh GitHub token without signing out: the OAuth round trip again,
  * back to `next` through /auth/callback, which stores the token it brings
- * (captureGithubToken). With GitHub linked that's signing in with it again —
- * the same account, since the identity is this user's; `linkIdentity` would
- * refuse one already linked. Without it (signed in with Google), connecting it.
+ * (captureGithubToken). With GitHub linked that's signing in with it again
+ * (`linkIdentity` would refuse one already linked), as whichever GitHub
+ * account the browser is signed in to: the callback refuses one that isn't
+ * this user's (`reconnect_as`). Without it (signed in with Google),
+ * connecting it.
  */
 export async function reconnectGithub(next: string): Promise<void> {
   const { data } = await createSupabaseBrowserClient().auth.getUser();
   const linked = data.user ? hasGithubIdentity(data.user) : false;
-  await startOAuth("github", next, !linked);
+  await startOAuth("github", next, !linked, linked ? data.user?.id : undefined);
 }
 
 export function SignInButton({
@@ -110,7 +128,7 @@ export function SignInButton({
     setLoading(true);
     setError(null);
     try {
-      await startOAuth(provider, next, link);
+      await (reconnect ? reconnectGithub(next) : startOAuth(provider, next, link));
     } catch (error) {
       setError(
         error instanceof Error ? error.message : `Could not start ${link || reconnect ? "connecting" : "sign-in"}.`,

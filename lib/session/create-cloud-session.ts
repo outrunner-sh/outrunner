@@ -109,7 +109,8 @@ import { SETTING_UP } from "@/lib/session/provisioning";
 import { getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
 import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
 import { GitIdentityError } from "@/lib/github/identity";
-import { gitTokensFor, markReviewSession, REVIEW_AS_APP, requireGitToken, withGitToken } from "@/lib/github/identity.deps";
+import { gitCredentialFor, gitTokensFor, markReviewSession, REVIEW_AS_APP, withGitToken } from "@/lib/github/identity.deps";
+import type { GitCredential } from "@/lib/github/identity";
 import { githubCoAuthor } from "@/lib/github/co-author";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-links";
@@ -333,11 +334,19 @@ async function createOnce(
   // repository's token now, for the box's mirror; the box asks for its own.
   const as = options.reviewAsApp ? REVIEW_AS_APP : undefined;
   const tokenFor = gitTokenFor(owner.id, project.orgId, as);
-  // GitHub's record of a repository as the session's git will act, a 401
-  // told apart by whose token it was (withGitToken): the App's isn't
-  // "reconnect".
-  const lookUp = (fullName: string) =>
-    withGitToken(owner.id, { orgId: project.orgId, fullName }, "create-session", (t) => getGitHubRepository(t, fullName), as);
+  // GitHub's record of a repository as the session's git will act, with the
+  // credential already resolved for it, a 401 told apart by whose token it
+  // was (withGitToken): the App's isn't "reconnect". With the token that
+  // answered: an App token refused is replaced by a fresh one.
+  const lookUp: LookUp = (fullName, credential) =>
+    withGitToken(
+      owner.id,
+      { orgId: project.orgId, fullName },
+      "create-session",
+      async (t) => ({ repository: await getGitHubRepository(t, fullName), token: t }),
+      as,
+      credential,
+    );
   const githubToken = await tokenFor(project.fullName);
   if ("refusal" in githubToken) return githubToken.refusal;
   // Before the session exists (its pooled box was booted for none): a
@@ -407,8 +416,10 @@ async function createOnce(
   }
 
   // Last of the checks, after the cheap local ones: it asks GitHub.
-  const github = await githubRefusal(githubToken.token, project, lookUp);
-  if (github) return github;
+  const github = await githubRefusal(githubToken.credential, project, lookUp);
+  if ("refusal" in github) return github.refusal;
+  // The token that passed the check is the one the box clones with.
+  githubToken.token = github.token;
 
   // A box is about to start, the new session's own: the plan's hours and box
   // count get their say before anything is created.
@@ -445,8 +456,8 @@ async function createOnce(
       // this token still clones, so only a private one is refused.
       const otherToken = await tokenFor(other.fullName);
       if ("refusal" in otherToken) return otherToken.refusal;
-      const refused = await githubRefusal(otherToken.token, { fullName: other.fullName, private: other.private ?? true }, lookUp);
-      if (refused) return refused;
+      const checked = await githubRefusal(otherToken.credential, { fullName: other.fullName, private: other.private ?? true }, lookUp);
+      if ("refusal" in checked) return checked.refusal;
     }
   }
 
@@ -942,9 +953,12 @@ async function provisionWorkspace({
  * is said now, with where to put it right, rather than on the box later.
  */
 function gitTokenFor(userId: string, orgId: string, as?: typeof REVIEW_AS_APP) {
-  return async (fullName: string): Promise<{ token: string | undefined } | { refusal: NextResponse }> => {
+  return async (
+    fullName: string,
+  ): Promise<{ token: string | undefined; credential?: GitCredential } | { refusal: NextResponse }> => {
     try {
-      return { token: await requireGitToken(userId, { orgId, fullName }, as) };
+      const credential = await gitCredentialFor({ userId, orgId, repo: fullName, ...as });
+      return { token: credential.token, credential };
     } catch (error) {
       if (error instanceof GitIdentityError) {
         return { refusal: NextResponse.json({ error: error.message, settingsHref: error.href }, { status: 409 }) };
@@ -957,25 +971,32 @@ function gitTokenFor(userId: string, orgId: string, as?: typeof REVIEW_AS_APP) {
   };
 }
 
+/** GitHub's record of a repository, with the token that got it. */
+type LookUp = (fullName: string, credential: GitCredential) => Promise<{ repository: unknown; token: string }>;
+
 /**
- * GitHub's word on the stored token before a box is started to clone with
- * it, or null to go on: a token GitHub has since revoked or expired failed
- * the setup minutes later, on the box, with git's own message. Only a refusal
- * stops here; a rate limit or an outage is left to the clone.
+ * GitHub's word on the token before a box is started to clone with it: a
+ * refusal, or the token to go on with (the one that answered, which for an
+ * App token refused is a fresh one). A token GitHub has since revoked or
+ * expired failed the setup minutes later, on the box, with git's own
+ * message. Only a refusal stops here; a rate limit or an outage is left to
+ * the clone.
  */
 async function githubRefusal(
-  githubToken: string | undefined,
+  credential: GitCredential | undefined,
   project: { fullName: string; private: boolean },
-  lookUp: (fullName: string) => Promise<unknown>,
-): Promise<NextResponse | null> {
-  if (!githubToken) return null;
+  lookUp: LookUp,
+): Promise<{ refusal: NextResponse } | { token: string | undefined }> {
+  if (!credential) return { token: undefined };
+  const proceed = { token: credential.token };
   try {
-    if (await lookUp(project.fullName)) return null;
+    const { repository, token } = await lookUp(project.fullName, credential);
+    if (repository) return { token };
     // Lost access, an organization's SSO, or the repository renamed or gone:
     // GitHub says only that it can't be seen. Logged, to tell them apart.
     console.warn(`GitHub can't see ${project.fullName} with its owner's token (private: ${project.private})`);
-    if (!project.private) return null;
-    return NextResponse.json(
+    if (!project.private) return proceed;
+    const refusal = NextResponse.json(
       {
         error: `Your GitHub account can't see ${project.fullName} any more. Check its access on GitHub, or reconnect it in Settings → Account.`,
         reconnect: true,
@@ -983,12 +1004,15 @@ async function githubRefusal(
       },
       { status: 409 },
     );
+    return { refusal };
   } catch (error) {
     // With the link the form shows: where Reconnect GitHub is.
     if (error instanceof GitHubReconnectError) {
-      return NextResponse.json({ error: error.message, reconnect: true, settingsHref: GITHUB_RECONNECT_HREF }, { status: 409 });
+      return {
+        refusal: NextResponse.json({ error: error.message, reconnect: true, settingsHref: GITHUB_RECONNECT_HREF }, { status: 409 }),
+      };
     }
     console.warn(`Could not check the GitHub connection before ${project.fullName}'s session`, error);
-    return null;
+    return proceed;
   }
 }

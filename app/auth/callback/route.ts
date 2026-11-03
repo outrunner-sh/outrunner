@@ -57,6 +57,18 @@ export async function GET(request: Request) {
     return NextResponse.redirect(signInError(base, error?.message ?? "exchange_failed"));
   }
 
+  // Reconnecting GitHub (components/signin-button.tsx reconnectGithub) signs
+  // in with it again, as whichever GitHub account the browser is signed in
+  // to. Another one than the user's linked account is another Outrunner
+  // user (or a new one): that session is ended and its token not stored,
+  // rather than the user quietly finding themselves someone else.
+  const reconnectAs = requestUrl.searchParams.get("reconnect_as");
+  if (reconnectAs && data.user.id !== reconnectAs) {
+    console.warn(`Reconnecting GitHub for ${reconnectAs} came back as ${data.user.id}; signing that session out`);
+    await supabase.auth.signOut();
+    return NextResponse.redirect(signInError(base, "reconnect_other_account"));
+  }
+
   // The session's provider_token is the token of the provider just used: a
   // GitHub token only when this round trip went through GitHub.
   const githubToken =

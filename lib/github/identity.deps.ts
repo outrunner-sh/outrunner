@@ -26,7 +26,7 @@ import {
   type IdentityDeps,
   type TokenLevel,
 } from "@/lib/github/identity";
-import { callWithCredential, type TokenVerdict } from "@/lib/github/refused";
+import { callWithCredential, logRefusal, type TokenVerdict } from "@/lib/github/refused";
 import type { AccessLevel } from "@/lib/orgs/access";
 
 const tokens = new Map<string, InstallationToken>();
@@ -195,7 +195,8 @@ export async function withAppSwitchHint(
  * token is minted afresh and tried once more; "reconnect" (GitHubReconnectError)
  * only for the user's own token GitHub confirms dead, with {@link
  * withAppSwitchHint}'s hint where the App would do instead. `route` names the
- * caller in the log.
+ * caller in the log. `first`, a credential already resolved for `project`,
+ * is tried first rather than resolving another.
  */
 export async function withGitToken<T>(
   userId: string,
@@ -203,9 +204,10 @@ export async function withGitToken<T>(
   route: string,
   call: (token: string) => Promise<T>,
   as?: { identity: GitHubIdentity; level: TokenLevel },
+  first?: GitCredential,
 ): Promise<T> {
   try {
-    return await callWithCredential({ route, repo: project.fullName }, call, {
+    return await callWithCredential({ route, repo: project.fullName, userId }, call, {
       resolve: () => gitCredentialFor({ userId, orgId: project.orgId, repo: project.fullName, ...as }),
       forget: (credential) => {
         for (const [key, kept] of tokens) if (kept.token === credential.token) tokens.delete(key);
@@ -218,9 +220,9 @@ export async function withGitToken<T>(
         const at = (await credentialStatus(userId)).github.updatedAt;
         return at ? new Date(at) : null;
       },
-      log: (entry) => console.warn("GitHub refused a token (401)", { userId, ...entry }),
+      log: logRefusal,
       now: Date.now,
-    });
+    }, first);
   } catch (error) {
     throw await withAppSwitchHint(error, userId, project);
   }
