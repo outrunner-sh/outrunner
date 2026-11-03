@@ -15,7 +15,7 @@
  * are rebuilt.
  */
 
-import { isSealed, open, seal } from "@/lib/crypto/secret-box";
+import { ForeignKeyError, isSealed, open, seal } from "@/lib/crypto/secret-box";
 
 /** A Runtime Computer secret as it is stored: sealed. */
 export function storeAgentSecret(plain: string): string {
@@ -37,7 +37,11 @@ export function openAgentSecretOrNull(
   if (!isSealed(stored)) return stored;
   try {
     return open(stored);
-  } catch {
+  } catch (error) {
+    if (error instanceof ForeignKeyError) {
+      console.error(`Could not open Runtime Computer ${computerId}'s secret: ${error.message}`);
+      return null;
+    }
     console.error(
       `Could not open Runtime Computer ${computerId}'s secret; ` +
         `treating as unset (rotated CREDENTIALS_ENCRYPTION_KEY?)`,

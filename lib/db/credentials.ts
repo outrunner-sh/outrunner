@@ -31,7 +31,8 @@ import {
   refuseUnusable,
 } from "@/lib/billing/model-allowance";
 import type { PlanId } from "@/lib/billing/plans";
-import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
+import { ForeignKeyError, open, sameSecret, seal, sealedStatus } from "@/lib/crypto/secret-box";
+import { githubTokenOverwrite, isProductionDeployment } from "@/lib/db/credential-overwrite";
 import { openOrgKey, orgProviderKey, sealedOrgKeys, usableOrgProviders } from "@/lib/db/org-credentials";
 import {
   orgAllowancePeriods,
@@ -136,16 +137,34 @@ export async function getGithubToken(userId: string): Promise<string | null> {
  * and never refreshes it, so the callback is the one chance to capture it. Skips
  * the write when the token is unchanged, so an ordinary re-login doesn't churn
  * `github_token_updated_at` (which the UI shows as "connected <date>").
+ *
+ * A stored token this server can't open is another server's: replaced only
+ * by the production deployment, never by any other (a local dev server
+ * pointed at production's database), lib/db/credential-overwrite.ts.
  */
 export async function setGithubToken(
   userId: string,
   token: string,
   login: string,
 ): Promise<void> {
-  const existing = await getGithubToken(userId);
-  if (existing && sameSecret(existing, token)) return;
-
   const supabase = createSupabaseAdminClient();
+  const { data: row, error: readError } = await supabase
+    .from("user_credentials")
+    .select("github_token_ciphertext")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (readError) throw readError;
+  const stored = row?.github_token_ciphertext ? sealedStatus(row.github_token_ciphertext) : null;
+  const decision = githubTokenOverwrite(stored, (plaintext) => sameSecret(plaintext, token), isProductionDeployment());
+  if (decision.kind === "unchanged") return;
+  if (decision.kind === "refuse") {
+    console.error(`Not storing ${userId}'s GitHub token: the stored one is ${decision.reason}. Not overwriting it from a server that isn't production.`);
+    return;
+  }
+  if (decision.kind === "replace") {
+    console.error(`Replacing ${userId}'s stored GitHub token, ${decision.reason}.`);
+  }
+
   const { error } = await supabase.from("user_credentials").upsert(
     {
       user_id: userId,
@@ -466,7 +485,11 @@ function openOrNull(
   if (!ciphertext) return null;
   try {
     return open(ciphertext);
-  } catch {
+  } catch (error) {
+    if (error instanceof ForeignKeyError) {
+      console.error(`Could not open ${which} credential for user ${userId}: ${error.message}`);
+      return null;
+    }
     console.error(
       `Could not open ${which} credential for user ${userId}; ` +
         `treating as unset (rotated CREDENTIALS_ENCRYPTION_KEY?)`,

@@ -75,7 +75,7 @@ export async function repositorySource(userId: string, orgId: string | undefined
           return [];
         })
       : await listOrgInstallations(orgId);
-    if (installations.length > 0) return appSource(config, orgId, installations);
+    if (installations.length > 0) return appSource(config, orgId, installations, userId);
     if (!personal) {
       throw new GitIdentityError(
         "no_installation",
@@ -100,7 +100,7 @@ export async function repositorySource(userId: string, orgId: string | undefined
 const readTokens = new Map<string, InstallationToken>();
 const READ_TOKEN_MARGIN_MS = 5 * 60 * 1000;
 
-function appSource(config: GitHubAppConfig, orgId: string, installations: OrgInstallation[]): SourceAccess {
+function appSource(config: GitHubAppConfig, orgId: string, installations: OrgInstallation[], userId: string): SourceAccess {
   const usable = installations.filter((i) => !i.suspended);
   const tokenFor = async (installation: OrgInstallation) => {
     try {
@@ -125,6 +125,8 @@ function appSource(config: GitHubAppConfig, orgId: string, installations: OrgIns
       } catch (error) {
         if (!(error instanceof GitHubReconnectError)) throw error;
         console.warn("GitHub refused a token (401)", {
+          userId,
+          orgId,
           route: "repositories",
           kind: "installation",
           prefix: tokenPrefix(token),
