@@ -7,7 +7,7 @@ import { GitHubIcon } from "@/components/brand-icons";
 import { GitHubConnectLink } from "@/components/github-connect-link";
 import { SectionHeader } from "@/components/settings-details";
 import { InlineMessage } from "@/components/ui/notice";
-import { requestJson } from "@/lib/http/request-json";
+import { reachOutrunner } from "@/lib/http/request-json";
 import { cn } from "@/lib/utils";
 
 /** What the GitHub card shows (components/github-connection-section.tsx):
@@ -75,7 +75,7 @@ function day(iso: string | null): string | null {
 export function GitHubConnectionCard({ view, children }: { view: GitHubCardView; children?: React.ReactNode }) {
   const router = useRouter();
   const [busy, setBusy] = useState<"disconnect" | "legacy" | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; revokeUrl?: string } | null>(null);
   /** Disconnected here, but not revoked on GitHub: where to do that. */
   const [unrevoked, setUnrevoked] = useState<string | null>(null);
   const result = view.result && Object.hasOwn(RESULTS, view.result) ? RESULTS[view.result] : null;
@@ -89,16 +89,23 @@ export function GitHubConnectionCard({ view, children }: { view: GitHubCardView;
     setError(null);
     setUnrevoked(null);
     try {
-      const done = await requestJson<{ revoked?: boolean; revokeUrl?: string }>(
+      const response = await reachOutrunner(
         what === "disconnect" ? "/api/github/user/connection" : "/api/github/user/legacy-token",
         { method: "DELETE" },
       );
-      if (what === "disconnect" && done.revoked === false) setUnrevoked(done.revokeUrl ?? GITHUB_AUTHORIZED_APPS);
-      router.refresh();
+      const done = (await response.json().catch(() => null)) as { error?: string; revoked?: boolean; revokeUrl?: string } | null;
+      if (!response.ok) {
+        // A disconnect GitHub couldn't revoke keeps where to revoke it.
+        setError({ message: done?.error ?? "Couldn't do that. Try again.", revokeUrl: done?.revokeUrl });
+      } else if (what === "disconnect" && done?.revoked === false) {
+        setUnrevoked(done.revokeUrl ?? GITHUB_AUTHORIZED_APPS);
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't do that. Try again.");
+      setError({ message: e instanceof Error ? e.message : "Couldn't do that. Try again." });
     } finally {
       setBusy(null);
+      // Whatever happened, the server's state (a connection kept broken, say).
+      router.refresh();
     }
   }
 
@@ -219,7 +226,14 @@ export function GitHubConnectionCard({ view, children }: { view: GitHubCardView;
           </div>
         )}
       </div>
-      {error && <InlineMessage tone="error">{error}</InlineMessage>}
+      {error && (
+        <InlineMessage
+          tone="error"
+          actions={error.revokeUrl ? [{ label: "Revoke on GitHub", href: error.revokeUrl, external: true }] : undefined}
+        >
+          {error.message}
+        </InlineMessage>
+      )}
       {unrevoked && (
         <InlineMessage tone="warning" actions={[{ label: "Revoke on GitHub", href: unrevoked, external: true }]}>
           Disconnected here, but GitHub couldn&apos;t be asked to revoke Outrunner&apos;s access. Revoke it under your
