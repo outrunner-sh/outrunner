@@ -54,6 +54,9 @@ const RESULTS: Record<string, { tone: "info" | "warning" | "error"; text: string
   failed: { tone: "error", text: "GitHub didn't finish connecting. Try again." },
 };
 
+/** Where a user revokes an App's authorization themselves. */
+const GITHUB_AUTHORIZED_APPS = "https://github.com/settings/apps/authorizations";
+
 const BUTTON =
   "inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground transition-colors hover:bg-input/50 disabled:opacity-60";
 const PRIMARY = "inline-flex h-8 items-center gap-2 rounded-md bg-foreground px-3 text-sm font-medium text-background";
@@ -73,6 +76,8 @@ export function GitHubConnectionCard({ view, children }: { view: GitHubCardView;
   const router = useRouter();
   const [busy, setBusy] = useState<"disconnect" | "legacy" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Disconnected here, but not revoked on GitHub: where to do that. */
+  const [unrevoked, setUnrevoked] = useState<string | null>(null);
   const result = view.result && Object.hasOwn(RESULTS, view.result) ? RESULTS[view.result] : null;
   const connection = view.connection;
   const healthy = connection !== null && !connection.broken;
@@ -82,8 +87,13 @@ export function GitHubConnectionCard({ view, children }: { view: GitHubCardView;
     if (busy) return;
     setBusy(what);
     setError(null);
+    setUnrevoked(null);
     try {
-      await requestJson(what === "disconnect" ? "/api/github/user/connection" : "/api/github/user/legacy-token", { method: "DELETE" });
+      const done = await requestJson<{ revoked?: boolean; revokeUrl?: string }>(
+        what === "disconnect" ? "/api/github/user/connection" : "/api/github/user/legacy-token",
+        { method: "DELETE" },
+      );
+      if (what === "disconnect" && done.revoked === false) setUnrevoked(done.revokeUrl ?? GITHUB_AUTHORIZED_APPS);
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't do that. Try again.");
@@ -210,6 +220,12 @@ export function GitHubConnectionCard({ view, children }: { view: GitHubCardView;
         )}
       </div>
       {error && <InlineMessage tone="error">{error}</InlineMessage>}
+      {unrevoked && (
+        <InlineMessage tone="warning" actions={[{ label: "Revoke on GitHub", href: unrevoked, external: true }]}>
+          Disconnected here, but GitHub couldn&apos;t be asked to revoke Outrunner&apos;s access. Revoke it under your
+          Authorized GitHub Apps to be sure.
+        </InlineMessage>
+      )}
       {children}
     </div>
   );
