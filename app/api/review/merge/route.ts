@@ -44,7 +44,7 @@ export async function POST(request: Request) {
   try {
     token = await requireGithubToken(caller.owner.id);
   } catch {
-    return NextResponse.json({ error: "Connect your GitHub account to merge (sign out and in again)." }, { status: 409 });
+    return NextResponse.json({ error: "Connect your GitHub account to merge: Reconnect GitHub in Settings → Account." }, { status: 409 });
   }
   const pull = { token, repoFullName: repo.fullName, number: body.number };
   try {

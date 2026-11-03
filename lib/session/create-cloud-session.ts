@@ -109,7 +109,7 @@ import { SETTING_UP } from "@/lib/session/provisioning";
 import { getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
 import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
 import { GitIdentityError } from "@/lib/github/identity";
-import { gitTokensFor, markReviewSession, REVIEW_AS_APP, requireGitToken } from "@/lib/github/identity.deps";
+import { gitTokensFor, markReviewSession, REVIEW_AS_APP, requireGitToken, withGitToken } from "@/lib/github/identity.deps";
 import { githubCoAuthor } from "@/lib/github/co-author";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-links";
@@ -333,6 +333,11 @@ async function createOnce(
   // repository's token now, for the box's mirror; the box asks for its own.
   const as = options.reviewAsApp ? REVIEW_AS_APP : undefined;
   const tokenFor = gitTokenFor(owner.id, project.orgId, as);
+  // GitHub's record of a repository as the session's git will act, a 401
+  // told apart by whose token it was (withGitToken): the App's isn't
+  // "reconnect".
+  const lookUp = (fullName: string) =>
+    withGitToken(owner.id, { orgId: project.orgId, fullName }, "create-session", (t) => getGitHubRepository(t, fullName), as);
   const githubToken = await tokenFor(project.fullName);
   if ("refusal" in githubToken) return githubToken.refusal;
   // Before the session exists (its pooled box was booted for none): a
@@ -402,7 +407,7 @@ async function createOnce(
   }
 
   // Last of the checks, after the cheap local ones: it asks GitHub.
-  const github = await githubRefusal(githubToken.token, project);
+  const github = await githubRefusal(githubToken.token, project, lookUp);
   if (github) return github;
 
   // A box is about to start, the new session's own: the plan's hours and box
@@ -440,7 +445,7 @@ async function createOnce(
       // this token still clones, so only a private one is refused.
       const otherToken = await tokenFor(other.fullName);
       if ("refusal" in otherToken) return otherToken.refusal;
-      const refused = await githubRefusal(otherToken.token, { fullName: other.fullName, private: other.private ?? true });
+      const refused = await githubRefusal(otherToken.token, { fullName: other.fullName, private: other.private ?? true }, lookUp);
       if (refused) return refused;
     }
   }
@@ -961,10 +966,11 @@ function gitTokenFor(userId: string, orgId: string, as?: typeof REVIEW_AS_APP) {
 async function githubRefusal(
   githubToken: string | undefined,
   project: { fullName: string; private: boolean },
+  lookUp: (fullName: string) => Promise<unknown>,
 ): Promise<NextResponse | null> {
   if (!githubToken) return null;
   try {
-    if (await getGitHubRepository(githubToken, project.fullName)) return null;
+    if (await lookUp(project.fullName)) return null;
     // Lost access, an organization's SSO, or the repository renamed or gone:
     // GitHub says only that it can't be seen. Logged, to tell them apart.
     console.warn(`GitHub can't see ${project.fullName} with its owner's token (private: ${project.private})`);
@@ -978,7 +984,7 @@ async function githubRefusal(
       { status: 409 },
     );
   } catch (error) {
-    // With the link the form shows: where signing in again happens.
+    // With the link the form shows: where Reconnect GitHub is.
     if (error instanceof GitHubReconnectError) {
       return NextResponse.json({ error: error.message, reconnect: true, settingsHref: GITHUB_RECONNECT_HREF }, { status: 409 });
     }

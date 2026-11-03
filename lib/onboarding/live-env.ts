@@ -15,7 +15,7 @@ import type { Project } from "@/lib/runtime/types";
 /** A failure the page can show, with where to fix it when there's a place. */
 export class OnboardingError extends Error {
   readonly href?: string;
-  /** GitHub refused the stored token: only signing in again fixes it. */
+  /** GitHub refused the stored token: only reconnecting GitHub fixes it. */
   readonly reconnect: boolean;
   constructor(message: string, href?: string, reconnect = false) {
     super(message);

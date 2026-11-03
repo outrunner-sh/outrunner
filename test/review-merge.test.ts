@@ -66,8 +66,8 @@ test("an unreadable merge rule read disables the offer", () => {
 
 test("a missing GitHub token explains that the account must reconnect", () => {
   assert.equal(
-    (mergeOffer(status(), null, "Connect your GitHub account to merge (sign out and in again).").primary as { why: string }).why,
-    "Connect your GitHub account to merge (sign out and in again).",
+    (mergeOffer(status(), null, "Connect your GitHub account to merge: Reconnect GitHub in Settings → Account.").primary as { why: string }).why,
+    "Connect your GitHub account to merge: Reconnect GitHub in Settings → Account.",
   );
 });
 

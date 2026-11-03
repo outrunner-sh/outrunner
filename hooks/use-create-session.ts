@@ -226,7 +226,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       const result = (await response.json().catch(() => ({}))) as CreateResponse;
       if (!response.ok || !result.workspace) {
         // The server names the page that fixes it, when one does (a missing
-        // GitHub grant is fixed by signing in again; a taken branch, by
+        // GitHub grant is fixed by reconnecting GitHub; a taken branch, by
         // opening the session that holds it).
         failed(
           result.error ?? "Could not start the session. Please try again.",

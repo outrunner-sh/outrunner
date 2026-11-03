@@ -12,12 +12,21 @@ export type SignInProvider = "github" | "google";
  * `provider_token` from whichever one they just used, and only GitHub's may be
  * stored as their GitHub token. `identities[]` is server-maintained, unlike
  * anything the redirect URL could say.
+ *
+ * By the later of `last_sign_in_at` and `updated_at`: GoTrue sets an
+ * identity's `last_sign_in_at` once, when it's created, and on each later
+ * OAuth sign-in only rewrites its data, bumping `updated_at`. By the first
+ * alone, a user who added Google after GitHub never had another GitHub
+ * token stored: every GitHub sign-in looked like Google's.
  */
 export function signInProvider(user: User): SignInProvider | "email" | null {
   let latest: { provider: string; at: number } | null = null;
   for (const identity of user.identities ?? []) {
-    const at = Date.parse(identity.last_sign_in_at ?? identity.created_at ?? "");
-    if (Number.isNaN(at)) continue;
+    const times = [identity.last_sign_in_at, identity.updated_at, identity.created_at]
+      .map((value) => Date.parse(value ?? ""))
+      .filter((value) => !Number.isNaN(value));
+    if (times.length === 0) continue;
+    const at = Math.max(...times);
     if (!latest || at > latest.at) latest = { provider: identity.provider, at };
   }
   const provider = latest?.provider;

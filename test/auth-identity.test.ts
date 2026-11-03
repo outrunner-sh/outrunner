@@ -27,6 +27,14 @@ test("the sign-in's provider is the identity signed in most recently", () => {
     { provider: "github", created_at: "2026-10-27T00:05:00Z", identity_data: {} },
   ]);
   assert.equal(signInProvider(linked), "github");
+  // GoTrue leaves last_sign_in_at at the identity's creation and bumps
+  // updated_at on each later sign-in (as seen in production's auth.identities):
+  // GitHub, linked before Google, signed in with again just now.
+  const again = user([
+    { provider: "github", last_sign_in_at: "2026-10-01T00:00:00Z", updated_at: "2026-11-03T04:39:33Z", identity_data: {} },
+    { provider: "google", last_sign_in_at: "2026-10-27T00:00:00Z", updated_at: "2026-10-27T00:00:00Z", identity_data: {} },
+  ]);
+  assert.equal(signInProvider(again), "github");
   assert.equal(signInProvider(user([])), null);
   // A provider Outrunner doesn't sign in with is none of its own.
   assert.equal(signInProvider(user([{ provider: "azure", last_sign_in_at: "2026-10-27T00:00:00Z" }])), null);

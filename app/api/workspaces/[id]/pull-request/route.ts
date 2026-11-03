@@ -10,7 +10,7 @@ import {
 } from "@/lib/db/repositories";
 import { findPullRequest, getPullRequestStatus } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
-import { requireGitToken } from "@/lib/github/identity.deps";
+import { requireGitToken, withGitToken } from "@/lib/github/identity.deps";
 import { supersedingPullRequest } from "@/lib/session/pull-request-status";
 import { sessionRepo } from "@/lib/session/session-repos";
 import type { WorkspacePullRequest } from "@/lib/runtime/types";
@@ -65,7 +65,11 @@ export async function GET(request: Request, context: RouteContext) {
   if (!pullRequest) {
     let found;
     try {
-      found = await findPullRequest({ token, repoFullName, headBranch: workspace.branch });
+      // Through withGitToken: a 401 here is what the Environment pane shows,
+      // so it's said as "reconnect" only for a token GitHub confirms dead.
+      found = await withGitToken(owner.id, { orgId: project.orgId, fullName: repoFullName }, "pull-request", (t) =>
+        findPullRequest({ token: t, repoFullName, headBranch: workspace.branch }),
+      );
     } catch (error) {
       console.error(`Workspace ${id} pull request lookup failed`, error);
       return githubErrorResponse(error, "Could not look up the pull request. Please try again.");

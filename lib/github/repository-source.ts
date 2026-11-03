@@ -34,6 +34,7 @@ import {
   type GitHubRepositoryList,
 } from "@/lib/github/client";
 import type { SourceAccount } from "@/lib/github/listing";
+import { tokenPrefix } from "@/lib/github/refused";
 import { requireGithubToken } from "@/lib/github/token";
 
 export type RepositorySource =
@@ -114,6 +115,33 @@ function appSource(config: GitHubAppConfig, orgId: string, installations: OrgIns
       );
     }
   };
+  // An App token GitHub refuses (401) is the App's, never the member's to
+  // reconnect: dropped, and one minted afresh tried once more.
+  const asInstallation = async <T>(installation: OrgInstallation, call: (token: string) => Promise<T>): Promise<T> => {
+    for (let attempt = 1; ; attempt++) {
+      const token = await tokenFor(installation);
+      try {
+        return await call(token);
+      } catch (error) {
+        if (!(error instanceof GitHubReconnectError)) throw error;
+        console.warn("GitHub refused a token (401)", {
+          route: "repositories",
+          kind: "installation",
+          prefix: tokenPrefix(token),
+          installationId: installation.id,
+          status: error.status,
+          attempt,
+        });
+        dropInstallationToken(installation.id);
+        if (attempt >= 2) {
+          throw new GitHubSyncError(
+            `Outrunner's GitHub App couldn't reach ${installation.accountLogin} on GitHub. Try again, or check Settings → Org → GitHub.`,
+            error.status,
+          );
+        }
+      }
+    }
+  };
   return {
     source: {
       kind: "app",
@@ -129,7 +157,7 @@ function appSource(config: GitHubAppConfig, orgId: string, installations: OrgIns
       // What can be read, when one installation can't be: the list says it
       // may be missing some.
       const settled = await Promise.allSettled(
-        usable.map(async (installation) => listInstallationRepositoryRecords(await tokenFor(installation))),
+        usable.map((installation) => asInstallation(installation, listInstallationRepositoryRecords)),
       );
       const lists = settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
       const failed = settled.flatMap((r) => (r.status === "rejected" ? [r.reason as unknown] : []));
@@ -152,18 +180,10 @@ function appSource(config: GitHubAppConfig, orgId: string, installations: OrgIns
       let failure: unknown;
       for (const installation of candidates) {
         try {
-          const repository = await getGitHubRepository(await tokenFor(installation), ref);
+          const repository = await asInstallation(installation, (token) => getGitHubRepository(token, ref));
           if (repository) return repository;
         } catch (error) {
-          if (error instanceof GitHubReconnectError) {
-            // The App's token refused: one kept for an installation gone
-            // since, nothing the member's own sign-in would fix.
-            dropInstallationToken(installation.id);
-            failure ??= new GitHubSyncError(
-              `Outrunner's GitHub App couldn't reach ${installation.accountLogin} on GitHub. Try again, or check Settings → Org → GitHub.`,
-              error.status,
-            );
-          } else if (error instanceof GitHubSyncError) {
+          if (error instanceof GitHubSyncError) {
             failure ??= error;
           } else {
             throw error;

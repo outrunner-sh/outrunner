@@ -5,7 +5,7 @@
  */
 
 import { githubUserId } from "@/lib/auth/allowlist";
-import { getGithubIdentity, getGithubToken } from "@/lib/db/credentials";
+import { credentialStatus, getGithubIdentity, getGithubToken } from "@/lib/db/credentials";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { listOrgInstallations } from "@/lib/db/github-installations";
 import { listOrgProjects, projectLevel } from "@/lib/db/org-access";
@@ -16,14 +16,17 @@ import {
   type GitHubAppConfig,
   type InstallationToken,
 } from "@/lib/github/app";
-import { MissingGithubTokenError } from "@/lib/github/client";
+import { GitHubReconnectError, MissingGithubTokenError, tokenOwner } from "@/lib/github/client";
 import {
+  APP_SWITCH_HINT,
+  appWouldServe,
   resolveGitCredential,
   type GitCredential,
   type GitHubIdentity,
   type IdentityDeps,
   type TokenLevel,
 } from "@/lib/github/identity";
+import { callWithCredential, type TokenVerdict } from "@/lib/github/refused";
 import type { AccessLevel } from "@/lib/orgs/access";
 
 const tokens = new Map<string, InstallationToken>();
@@ -159,4 +162,66 @@ export function gitTokensFor(
   as?: { identity: GitHubIdentity; level: TokenLevel },
 ): (fullName: string) => Promise<string | undefined> {
   return (fullName) => optionalGitToken(userId, { orgId, fullName }, as);
+}
+
+/**
+ * `error`, with {@link APP_SWITCH_HINT} added when it's GitHub refusing the
+ * user's own token and the org's App would reach the repository instead.
+ * Anything going wrong working that out leaves the error as it was.
+ */
+export async function withAppSwitchHint(
+  error: unknown,
+  userId: string,
+  project: { orgId: string; fullName: string },
+): Promise<unknown> {
+  if (!(error instanceof GitHubReconnectError)) return error;
+  try {
+    const [identity, installations] = await Promise.all([
+      getGithubIdentity(userId),
+      listOrgInstallations(project.orgId),
+    ]);
+    if (!appWouldServe({ identity, appConfigured: githubAppConfig() !== null, installations, repo: project.fullName })) {
+      return error;
+    }
+    return new GitHubReconnectError(`${error.message} ${APP_SWITCH_HINT}`, error.status);
+  } catch {
+    return error;
+  }
+}
+
+/**
+ * `call` with a token for `project`, as the user chose (or `as` says), with a
+ * GitHub 401 told apart by whose token it was (lib/github/refused.ts): an App
+ * token is minted afresh and tried once more; "reconnect" (GitHubReconnectError)
+ * only for the user's own token GitHub confirms dead, with {@link
+ * withAppSwitchHint}'s hint where the App would do instead. `route` names the
+ * caller in the log.
+ */
+export async function withGitToken<T>(
+  userId: string,
+  project: { orgId: string; fullName: string },
+  route: string,
+  call: (token: string) => Promise<T>,
+  as?: { identity: GitHubIdentity; level: TokenLevel },
+): Promise<T> {
+  try {
+    return await callWithCredential({ route, repo: project.fullName }, call, {
+      resolve: () => gitCredentialFor({ userId, orgId: project.orgId, repo: project.fullName, ...as }),
+      forget: (credential) => {
+        for (const [key, kept] of tokens) if (kept.token === credential.token) tokens.delete(key);
+      },
+      check: async (token): Promise<TokenVerdict> => {
+        const owner = await tokenOwner(token);
+        return owner.kind === "user" ? "alive" : owner.kind === "refused" ? "dead" : "unknown";
+      },
+      storedAt: async () => {
+        const at = (await credentialStatus(userId)).github.updatedAt;
+        return at ? new Date(at) : null;
+      },
+      log: (entry) => console.warn("GitHub refused a token (401)", { userId, ...entry }),
+      now: Date.now,
+    });
+  } catch (error) {
+    throw await withAppSwitchHint(error, userId, project);
+  }
 }

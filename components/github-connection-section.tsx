@@ -32,21 +32,31 @@ export async function GitHubConnectionSection({
     ? await listOrgInstallations(org.id).catch(() => [])
     : [];
   return (
-    <GitHubIdentitySettings
-      initial={await getGithubIdentity(userId).catch(() => "personal" as const)}
-      login={login}
-      appConfigured={appConfigured}
-      org={
-        org
-          ? {
-              name: org.name,
-              admin: org.role === "admin",
-              installedOn: installations
-                .filter((i) => !i.suspended)
-                .map((i) => i.accountLogin),
-            }
-          : null
-      }
-    />
+    <div className="space-y-6">
+      <GitHubIdentitySettings
+        initial={await getGithubIdentity(userId).catch(() => "personal" as const)}
+        login={login}
+        appConfigured={appConfigured}
+        org={
+          org
+            ? {
+                name: org.name,
+                admin: org.role === "admin",
+                installedOn: installations
+                  .filter((i) => !i.suspended)
+                  .map((i) => i.accountLogin),
+              }
+            : null
+        }
+      />
+      <div className="space-y-2">
+        <p className="text-sm text-muted-foreground">
+          GitHub stopped accepting your connection? Reconnect it for a fresh one, without signing out.
+        </p>
+        <div className="max-w-xs">
+          <SignInButton provider="github" reconnect next="/settings/connections" />
+        </div>
+      </div>
+    </div>
   );
 }

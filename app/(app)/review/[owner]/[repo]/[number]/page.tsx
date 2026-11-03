@@ -120,7 +120,7 @@ async function Pull({ params }: { params: Params }) {
                 access,
                 token
                   ? undefined
-                  : "Connect your GitHub account to merge (sign out and in again).",
+                  : "Connect your GitHub account to merge: Reconnect GitHub in Settings → Account.",
               )}
             />
           )}

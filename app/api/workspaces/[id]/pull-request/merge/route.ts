@@ -5,7 +5,7 @@ import { projectLevel } from "@/lib/db/org-access";
 import { getProject, getWorkspace, getWorkspacePullRequest } from "@/lib/db/repositories";
 import { getPullRequestStatus, mergePullRequest } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
-import { requireGitToken } from "@/lib/github/identity.deps";
+import { withGitToken } from "@/lib/github/identity.deps";
 import { allows } from "@/lib/orgs/access";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { sessionRepo } from "@/lib/session/session-repos";
@@ -60,8 +60,10 @@ export async function POST(request: Request, context: RouteContext) {
 
   let token: string;
   try {
-    token = await requireGitToken(owner.id, { orgId: project.orgId, fullName: repoFullName });
-    await mergePullRequest({ token, repoFullName, number: pullRequest.number, headSha });
+    token = await withGitToken(owner.id, { orgId: project.orgId, fullName: repoFullName }, "pull-request/merge", async (t) => {
+      await mergePullRequest({ token: t, repoFullName, number: pullRequest.number, headSha });
+      return t;
+    });
   } catch (error) {
     console.error(`Workspace ${id} pull request merge failed`, error);
     return githubErrorResponse(error, "Could not merge the pull request. Please try again.");

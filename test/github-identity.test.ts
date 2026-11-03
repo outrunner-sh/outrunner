@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { OrgInstallation } from "@/lib/db/github-installations";
 import { GitHubAppError, type InstallationToken, type TokenPermissions } from "@/lib/github/app";
 import { MissingGithubTokenError } from "@/lib/github/client";
-import { GitIdentityError, narrowPermissions, resolveGitCredential, type IdentityDeps } from "@/lib/github/identity";
+import { appWouldServe, GitIdentityError, narrowPermissions, resolveGitCredential, type IdentityDeps } from "@/lib/github/identity";
 import {
   gitCredentialEnvironment,
   gitCredentialRequestValid,
@@ -63,7 +63,7 @@ const ask = { userId: "u1", orgId: "o1", repo: "zerotrail/api" };
 
 test("working as themselves, a member gets their own token, whatever the repository", async () => {
   const { d, minted } = deps({ identity: async () => "personal" });
-  assert.deepEqual(await resolveGitCredential(ask, d), { identity: "personal", token: "gho_mine", expiresAt: null });
+  assert.deepEqual(await resolveGitCredential(ask, d), { identity: "personal", token: "gho_mine", expiresAt: null, installationId: null });
   assert.equal(minted.length, 0);
 });
 
@@ -250,4 +250,18 @@ test("a box asks with its sandbox and Outrunner's public address, and only one i
   });
   assert.deepEqual(gitCredentialEnvironment("sb-1", "http://localhost:3000"), {});
   assert.deepEqual(gitCredentialEnvironment("sb-1", undefined), {});
+});
+
+test("the App is suggested after a refused personal token only where it's installed on the repository's account", () => {
+  const installations = [
+    { accountLogin: "Acme", suspended: false },
+    { accountLogin: "paused", suspended: true },
+  ];
+  const ask = (over: Partial<Parameters<typeof appWouldServe>[0]>) =>
+    appWouldServe({ identity: "personal", appConfigured: true, installations, repo: "acme/web", ...over });
+  assert.equal(ask({}), true, "matched case-insensitively");
+  assert.equal(ask({ identity: "app" }), false, "already on the App");
+  assert.equal(ask({ appConfigured: false }), false);
+  assert.equal(ask({ repo: "paused/web" }), false, "suspended");
+  assert.equal(ask({ repo: "other/web" }), false, "not installed there");
 });

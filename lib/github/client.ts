@@ -75,12 +75,13 @@ export class MissingGithubTokenError extends Error {
 
 /**
  * GitHub refused the user's stored token: revoked, superseded, or minted for
- * another account. Only a fresh OAuth sign-in replaces it, so routes flag this
- * one and the UI links the user to Settings → Account to reconnect.
+ * another account. Only a fresh OAuth round trip replaces it, so routes flag
+ * this one and the UI offers Reconnect GitHub (components/github-reconnect-link),
+ * which runs it without signing out.
  */
 export class GitHubReconnectError extends GitHubSyncError {
   constructor(
-    message = "Your GitHub connection has expired. Sign out and back in to reconnect.",
+    message = "Your GitHub connection has expired. Reconnect GitHub in Settings → Account.",
     status?: number,
   ) {
     super(message, status);

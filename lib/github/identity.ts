@@ -46,6 +46,8 @@ export type GitCredential = {
   token: string;
   /** When the token stops working; null for the user's own, which lasts. */
   expiresAt: Date | null;
+  /** The App installation an App token is of; null for the user's own. */
+  installationId: number | null;
 };
 
 /** What resolving takes, apart from the request: tests pass their own. */
@@ -124,7 +126,7 @@ export async function resolveGitCredential(
   const identity = input.identity ?? (await deps.identity(input.userId));
   if (identity === "personal") {
     const token = await deps.personalToken(input.userId);
-    if (token) return { identity, token, expiresAt: null };
+    if (token) return { identity, token, expiresAt: null, installationId: null };
     // No GitHub account at all: the App, where it reaches the repository.
     if (input.identity || (await deps.githubLinked(input.userId))) throw new MissingGithubTokenError();
     try {
@@ -191,7 +193,7 @@ export async function resolveGitCredential(
   const key = `${installation.id}/${name.toLowerCase()}/${level}`;
   const kept = deps.cache.get(key);
   if (kept && kept.expiresAt.getTime() - TOKEN_MARGIN_MS > deps.now()) {
-    return { identity, token: kept.token, expiresAt: kept.expiresAt };
+    return { identity, token: kept.token, expiresAt: kept.expiresAt, installationId: installation.id };
   }
   const mint = async (fresh: boolean) =>
     deps.mint(
@@ -225,5 +227,25 @@ export async function resolveGitCredential(
     throw new GitHubSyncError("Outrunner's GitHub App couldn't get a token from GitHub. Try again.", error.status);
   }
   deps.cache.set(key, minted);
-  return { identity, token: minted.token, expiresAt: minted.expiresAt };
+  return { identity, token: minted.token, expiresAt: minted.expiresAt, installationId: installation.id };
+}
+
+/** Said after a personal token GitHub refused, where the App would do instead. */
+export const APP_SWITCH_HINT =
+  "Or switch Settings → Connections → GitHub identity to Outrunner App, which doesn't rely on your own GitHub connection.";
+
+/**
+ * Whether choosing the Outrunner App would get `repo` (owner/name) past a
+ * personal token GitHub refused: the user works as themselves, and the org
+ * has the App, not suspended, on the repository's account.
+ */
+export function appWouldServe(input: {
+  identity: GitHubIdentity;
+  appConfigured: boolean;
+  installations: readonly Pick<OrgInstallation, "accountLogin" | "suspended">[];
+  repo: string;
+}): boolean {
+  if (input.identity !== "personal" || !input.appConfigured) return false;
+  const owner = input.repo.split("/")[0]?.toLowerCase();
+  return input.installations.some((i) => !i.suspended && i.accountLogin.toLowerCase() === owner);
 }

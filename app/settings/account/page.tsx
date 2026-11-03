@@ -22,8 +22,8 @@ export const unstable_instant = {
 /** Account: the signed-in identity; how the user hears of their sessions
  *  (components/notification-settings.tsx); who sessions work on GitHub as
  *  (lib/github/identity.ts), or connecting GitHub to an account that signed
- *  in with Google or an emailed code; and sign-out — which is also how a
- *  revoked GitHub token is replaced (see components/github-reconnect-link). */
+ *  in with Google or an emailed code, or reconnecting it for a fresh token
+ *  (see components/github-reconnect-link); and sign-out. */
 /** Why connecting GitHub failed, by the error code Supabase sent back
  *  (app/auth/callback). Codes only: the URL's own text is never shown. */
 const LINK_ERRORS: Record<string, string> = {
@@ -88,8 +88,18 @@ async function AccountSection({ searchParams }: { searchParams: Promise<{ link_e
           <div className="space-y-2">
             <p className="text-muted-foreground text-sm">
               If GitHub stops working (repositories won’t load, or publishing fails),
-              sign out and back in with GitHub to reconnect your account.
+              reconnect it for a fresh connection. You stay signed in.
             </p>
+            {linkMessage && (
+              <p role="alert" className="text-xs text-destructive">
+                {linkMessage}
+              </p>
+            )}
+            <div className="max-w-xs">
+              <SignInButton provider="github" reconnect next="/settings/account" />
+            </div>
+          </div>
+          <div>
             <form action={signOut}>
               <SignOutButton />
             </form>

@@ -5,7 +5,7 @@ import { useState } from "react";
 import { GitHubIcon, GoogleIcon } from "@/components/brand-icons";
 import { Spinner } from "@/components/ui/loaders";
 import { InlineMessage } from "@/components/ui/notice";
-import type { SignInProvider } from "@/lib/auth/identity";
+import { hasGithubIdentity, type SignInProvider } from "@/lib/auth/identity";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -40,7 +40,7 @@ const PROVIDERS: Record<SignInProvider, { name: string; icon: React.ReactNode }>
  * (Supabase's manual identity linking): how someone who signed in with Google
  * connects GitHub. The callback stores the GitHub token either way.
  */
-async function startOAuth(provider: SignInProvider, next: string, link: boolean): Promise<void> {
+export async function startOAuth(provider: SignInProvider, next: string, link: boolean): Promise<void> {
   const supabase = createSupabaseBrowserClient();
   const begin = (options: { redirectTo: string; skipBrowserRedirect?: boolean }) => {
     const credentials = { provider, options: { ...options, scopes: SCOPES[provider] } };
@@ -76,15 +76,31 @@ async function startOAuth(provider: SignInProvider, next: string, link: boolean)
   if (error) throw error;
 }
 
+/**
+ * Mint a fresh GitHub token without signing out: the OAuth round trip again,
+ * back to `next` through /auth/callback, which stores the token it brings
+ * (captureGithubToken). With GitHub linked that's signing in with it again —
+ * the same account, since the identity is this user's; `linkIdentity` would
+ * refuse one already linked. Without it (signed in with Google), connecting it.
+ */
+export async function reconnectGithub(next: string): Promise<void> {
+  const { data } = await createSupabaseBrowserClient().auth.getUser();
+  const linked = data.user ? hasGithubIdentity(data.user) : false;
+  await startOAuth("github", next, !linked);
+}
+
 export function SignInButton({
   provider = "github",
   next = "/",
   link = false,
+  reconnect = false,
 }: {
   provider?: SignInProvider;
   next?: string;
   /** Connect the provider to the signed-in account rather than sign in. */
   link?: boolean;
+  /** Sign in with an already linked GitHub again, for a fresh token. */
+  reconnect?: boolean;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,7 +112,9 @@ export function SignInButton({
     try {
       await startOAuth(provider, next, link);
     } catch (error) {
-      setError(error instanceof Error ? error.message : `Could not start ${link ? "connecting" : "sign-in"}.`);
+      setError(
+        error instanceof Error ? error.message : `Could not start ${link || reconnect ? "connecting" : "sign-in"}.`,
+      );
       setLoading(false);
     }
   }
@@ -113,7 +131,13 @@ export function SignInButton({
         className="relative flex h-8 w-full items-center justify-center rounded-md border border-border bg-input/30 px-9 text-sm text-foreground transition-colors hover:bg-input/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
       >
         <span className="absolute left-3 flex items-center">{loading ? <Spinner className="size-4" /> : icon}</span>
-        {loading ? `Opening ${name}` : link ? `Connect ${name}` : `Continue with ${name}`}
+        {loading
+          ? `Opening ${name}`
+          : reconnect
+            ? `Reconnect ${name}`
+            : link
+              ? `Connect ${name}`
+              : `Continue with ${name}`}
       </button>
       {error && <InlineMessage>{error}</InlineMessage>}
     </div>

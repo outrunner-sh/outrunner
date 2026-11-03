@@ -27,3 +27,15 @@ export function safeRelativePath(
 
   return next;
 }
+
+/**
+ * Where reconnecting GitHub returns to: the page it started from, so a user
+ * reconnecting from a session lands back on it. Without a `link_error` an
+ * earlier failed round trip left, which would otherwise outlive this one.
+ */
+export function reconnectReturnPath(pathname: string, search: string): string {
+  const params = new URLSearchParams(search);
+  params.delete("link_error");
+  const query = params.toString();
+  return safeRelativePath(`${pathname}${query ? `?${query}` : ""}`);
+}

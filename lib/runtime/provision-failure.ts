@@ -39,9 +39,9 @@ const CREDENTIAL_SHAPES: readonly RegExp[] = [
  *  which is a clone with no token at all. */
 const GITHUB_REFUSED = /Invalid username or token|Authentication failed for 'https:\/\/github\.com/i;
 
-/** A session's setup that GitHub refused: only signing in again fixes it. */
+/** A session's setup that GitHub refused: only reconnecting GitHub fixes it. */
 export const GITHUB_RECONNECT_MESSAGE =
-  "GitHub didn't accept your connection, so the repository couldn't be cloned. Sign out and back in to reconnect GitHub, then start a new session.";
+  "GitHub didn't accept your connection, so the repository couldn't be cloned. Reconnect GitHub in Settings → Account, then start a new session.";
 
 export function provisionFailureMessage(
   error: unknown,
