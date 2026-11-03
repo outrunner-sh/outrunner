@@ -17,7 +17,7 @@
 
 import type { GitHubConnection } from "@/lib/db/github-connections";
 import { GitHubSyncError, MissingGithubTokenError } from "@/lib/github/client";
-import { needsRenewal, type UserTokens } from "@/lib/github/user-auth";
+import { isMisconfigured, needsRenewal, type UserTokens } from "@/lib/github/user-auth";
 
 /** The connection is there but GitHub won't renew it: connect again. */
 export class GitHubConnectionBrokenError extends MissingGithubTokenError {
@@ -124,6 +124,10 @@ async function renew(userId: string, deps: UserConnectionDeps): Promise<UserToke
     renewed = await deps.refresh(current.refreshToken);
   } catch (error) {
     await deps.release(userId).catch(() => undefined);
+    // The deployment's to fix, for every user: said each time, loudly.
+    if (isMisconfigured(error)) {
+      console.error("GitHub refused the App's client credentials renewing a user token: check GITHUB_APP_CLIENT_SECRET");
+    }
     // GitHub out of reach: the token held, while it lasts.
     if (unexpired(current, deps.now())) return toToken(current);
     console.error(`GitHub: couldn't renew user ${userId}'s token`, error);

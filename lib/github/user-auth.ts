@@ -205,10 +205,6 @@ async function tokenRequest(
   return { tokens };
 }
 
-/** OAuth errors that mean the code or refresh token is no good, rather than
- *  GitHub having trouble. */
-const REFUSALS = new Set(["bad_verification_code", "bad_refresh_token", "incorrect_client_credentials", "unauthorized"]);
-
 /** The tokens a code from the authorize page is traded for; null for a code
  *  GitHub won't take (expired, used, not this verifier's). */
 export async function exchangeUserCode(
@@ -257,7 +253,10 @@ export async function refreshUserTokens(
   throw new UserAuthError(`GitHub refused the refresh (${result.refused}).`, null, result.refused);
 }
 
-export const isRefusal = (code: string | null) => code !== null && REFUSALS.has(code);
+/** GitHub refused the App's own client credentials: GITHUB_APP_CLIENT_SECRET
+ *  is wrong or was rotated, which no retry or reconnect mends. */
+export const isMisconfigured = (error: unknown) =>
+  error instanceof UserAuthError && error.code === "incorrect_client_credentials";
 
 function apiHeaders(token: string): Record<string, string> {
   return {

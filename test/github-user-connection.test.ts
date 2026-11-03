@@ -173,3 +173,34 @@ test("waiting on another server's renewal gives up in time, with the token held 
   const stuck = deps(connection({ accessExpiresAt: new Date(NOW - 1) }), { claim: async () => false });
   await assert.rejects(userAccessToken("u1", stuck.d), GitHubSyncError);
 });
+
+test("the App's client secret refused is logged as the deployment's to fix, and the held token still used", async () => {
+  const { UserAuthError } = await import("@/lib/github/user-auth");
+  const logged: string[] = [];
+  const real = console.error;
+  console.error = (...args: unknown[]) => void logged.push(String(args[0]));
+  try {
+    const { d } = deps(connection({ accessExpiresAt: new Date(NOW + 5 * 60_000) }), {
+      refresh: async () => {
+        throw new UserAuthError("GitHub refused the refresh (incorrect_client_credentials).", null, "incorrect_client_credentials");
+      },
+    });
+    assert.equal((await userAccessToken("u1", d))?.token, "ghu_1");
+    assert.ok(logged.some((line) => line.includes("GITHUB_APP_CLIENT_SECRET")));
+  } finally {
+    console.error = real;
+  }
+});
+
+test("a connection found broken under the claim gives the claim back", async () => {
+  const store = deps(connection({ accessExpiresAt: new Date(NOW - 1) }));
+  const d: UserConnectionDeps = {
+    ...store.d,
+    claim: async () => {
+      store.set(connection({ accessExpiresAt: new Date(NOW - 1), broken: true }));
+      return true;
+    },
+  };
+  await assert.rejects(userAccessToken("u1", d), GitHubConnectionBrokenError);
+  assert.ok(store.log.includes("release"));
+});
