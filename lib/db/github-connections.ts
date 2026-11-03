@@ -183,15 +183,18 @@ export async function releaseGithubRefresh(userId: string): Promise<void> {
 }
 
 /** Save renewed tokens, only over the refresh token that renewed them: false
- *  when the row moved on meanwhile (connected again, disconnected). */
+ *  when the row moved on meanwhile (connected again, disconnected). Saving
+ *  mends a broken connection, unless `keepBroken` (a disconnect's renewal,
+ *  only to revoke with). */
 export async function saveRefreshedGithubTokens(
   userId: string,
   usedRefreshCiphertext: string,
   tokens: UserTokens,
+  { keepBroken = false }: { keepBroken?: boolean } = {},
 ): Promise<boolean> {
   const { data, error } = await createSupabaseAdminClient()
     .from("user_github_connections")
-    .update({ ...tokenColumns(tokens), refresh_claimed_until: null, broken_at: null })
+    .update({ ...tokenColumns(tokens), refresh_claimed_until: null, ...(!keepBroken && { broken_at: null }) })
     .eq("user_id", userId)
     .eq("refresh_token_ciphertext", usedRefreshCiphertext)
     .select("user_id");

@@ -47,33 +47,8 @@ export async function DELETE(request: Request) {
     }
     const client = { clientId: config.clientId, clientSecret };
 
-    // Revoking takes a token that works: renewed first if it's due. One kept
-    // from a failed disconnect (broken) is used as it is while it lasts, or
-    // renewed with its refresh token.
-    let token = (
-      await githubUserToken(owner.id).catch((error: unknown) => {
-        if (!(error instanceof GitHubConnectionBrokenError)) console.warn("Disconnecting GitHub: no token to revoke with", error);
-        return null;
-      })
-    )?.token;
-    if (!token && connection.accessToken) {
-      if (!connection.accessExpiresAt || connection.accessExpiresAt.getTime() > Date.now()) token = connection.accessToken;
-      else if (connection.refreshToken) {
-        const renewed = await refreshUserTokens(config, clientSecret, connection.refreshToken).catch(() => null);
-        if (renewed && renewed !== "revoked") {
-          token = renewed.accessToken;
-          // Kept, so a retry after a failed revoke still has a token to use.
-          if (connection.refreshCiphertext) await saveRefreshedGithubTokens(owner.id, connection.refreshCiphertext, renewed);
-        }
-      }
-    }
-    if (!token) {
-      await deleteGithubConnection(owner.id);
-      return NextResponse.json({ disconnected: true, revoked: false, revokeUrl: AUTHORIZED_APPS_URL });
-    }
-    if (!(await revokeGrant(client, token))) {
-      await markGithubConnectionBroken(owner.id);
-      return NextResponse.json(
+    const unreachable = () =>
+      NextResponse.json(
         {
           error:
             "GitHub couldn't be reached to revoke Outrunner's access. Outrunner has stopped using it; try Disconnect again, or revoke it yourself under GitHub → Settings → Applications → Authorized GitHub Apps.",
@@ -81,7 +56,52 @@ export async function DELETE(request: Request) {
         },
         { status: 502 },
       );
+
+    // Revoking takes a token that works: renewed first if it's due. GitHub
+    // out of reach on the way keeps the connection (broken) to try again
+    // with; only GitHub refusing it leaves nothing to revoke with.
+    let token: string | undefined;
+    try {
+      token = (await githubUserToken(owner.id))?.token;
+    } catch (error) {
+      if (!(error instanceof GitHubConnectionBrokenError)) {
+        console.warn("Disconnecting GitHub: no token to revoke with", error);
+        await markGithubConnectionBroken(owner.id);
+        return unreachable();
+      }
     }
+    // One kept broken (a disconnect that failed before): used as it is while
+    // it lasts, or renewed with its refresh token. That renewal is outside
+    // the renewal claim (user-connection.ts), as nothing else renews a broken
+    // connection; a server mid-renewal of it is accepted as a rare race, at
+    // worst costing a retry.
+    if (!token && connection.accessToken) {
+      if (!connection.accessExpiresAt || connection.accessExpiresAt.getTime() > Date.now()) token = connection.accessToken;
+      else if (connection.refreshToken) {
+        let renewed: Awaited<ReturnType<typeof refreshUserTokens>>;
+        try {
+          renewed = await refreshUserTokens(config, clientSecret, connection.refreshToken);
+        } catch (error) {
+          console.warn("Disconnecting GitHub: couldn't renew a token to revoke with", error);
+          await markGithubConnectionBroken(owner.id);
+          return unreachable();
+        }
+        if (renewed !== "revoked") {
+          token = renewed.accessToken;
+          // Kept, still broken, so a retry after a failed revoke has a token.
+          if (connection.refreshCiphertext) {
+            await saveRefreshedGithubTokens(owner.id, connection.refreshCiphertext, renewed, { keepBroken: true });
+          }
+        }
+      }
+    }
+    if (!token) {
+      await deleteGithubConnection(owner.id);
+      return NextResponse.json({ disconnected: true, revoked: false, revokeUrl: AUTHORIZED_APPS_URL });
+    }
+    // No longer used from here on, whatever becomes of the revoke.
+    await markGithubConnectionBroken(owner.id);
+    if (!(await revokeGrant(client, token))) return unreachable();
     await deleteGithubConnection(owner.id);
     return NextResponse.json({ disconnected: true, revoked: true });
   });
