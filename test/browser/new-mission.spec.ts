@@ -43,8 +43,21 @@ for (const viewport of [
     await page.getByRole("button", { name: "All 158" }).click();
     const search = page.getByRole("combobox", { name: "Search projects" });
     await expect(search).toBeFocused();
-    await expect(page.getByRole("listbox", { name: "Projects" }).getByRole("option")).toHaveCount(158);
+    const list = page.getByRole("listbox", { name: "Projects" });
+    await expect(list.getByRole("option")).toHaveCount(158);
     await expectInView(page);
+    // The keys keep the active option in view: ↑ from the first wraps to the last.
+    await search.press("ArrowUp");
+    await expect(list.getByRole("option").last()).toBeInViewport();
+    // The mouse doesn't scroll the list under the pointer.
+    await search.press("ArrowDown");
+    await expect(list.getByRole("option").first()).toBeInViewport();
+    const top = await list.evaluate((el) => el.scrollTop);
+    const box = (await list.boundingBox())!;
+    await page.mouse.move(box.x + 40, box.y + box.height - 3);
+    await page.mouse.move(box.x + 60, box.y + box.height - 2);
+    await page.waitForTimeout(200);
+    expect(await list.evaluate((el) => el.scrollTop)).toBe(top);
     await search.fill("repo-14");
     await expect(page.getByRole("option")).toHaveCount(10);
     await page.screenshot({ path: `${dir}-search.png` });
@@ -52,6 +65,7 @@ for (const viewport of [
     await search.press("Escape");
     await expect(search).toBeHidden();
     await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByRole("button", { name: "All 158" })).toBeFocused();
 
     await page.getByRole("button", { name: "All 158" }).click();
     await search.fill("repo-142");

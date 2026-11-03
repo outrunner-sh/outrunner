@@ -68,12 +68,13 @@ export function buildNavGroups(
  */
 export function recentProjects<P extends NavProject>(
   projects: P[],
-  workspaces: Pick<Workspace, "projectId" | "lastActiveAt" | "createdAt">[],
+  /** Sessions and Missions, each under the project it was started in. */
+  used: { projectId: string; createdAt: string; lastActiveAt?: string | null }[],
   current?: string | null,
 ): P[] {
   const latest = new Map<string, string>();
-  for (const w of workspaces) {
-    const at = recency(w);
+  for (const w of used) {
+    const at = recency({ lastActiveAt: w.lastActiveAt ?? null, createdAt: w.createdAt });
     const seen = latest.get(w.projectId);
     if (seen === undefined || newestFirst(seen, at) > 0) latest.set(w.projectId, at);
   }

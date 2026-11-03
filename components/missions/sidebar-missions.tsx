@@ -62,14 +62,7 @@ export function SidebarMissions({
   // can have hundreds, and the dialog shows the first few.
   const offered = useMemo(
     () =>
-      recentProjects(
-        projects,
-        [
-          ...workspaces,
-          ...missions.flatMap((m) => (m.environment ? [{ projectId: m.environment.id, lastActiveAt: null, createdAt: m.createdAt }] : [])),
-        ],
-        workspaces.find((w) => w.id === active)?.projectId,
-      ),
+      recentProjects(projects, [...workspaces, ...missions], [...workspaces, ...missions].find((w) => w.id === active)?.projectId),
     [projects, workspaces, missions, active],
   );
 

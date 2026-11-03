@@ -68,6 +68,8 @@ export type MissionView = {
   /** Ships that aren't archived. */
   liveRunners: number;
   environment: { id: string; name: string } | null;
+  /** The project (repository) it was started in: its own session's. */
+  projectId: string;
   /** Its own session's status (archived, asleep, …). */
   sessionStatus: string;
   /** Its own session's provider: whether it can be archived. */

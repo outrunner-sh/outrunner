@@ -81,10 +81,10 @@ export function NewMissionDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="flex max-h-[calc(100dvh-2rem)] max-w-[520px] flex-col gap-0 overflow-hidden rounded-xl border-white/10 p-0"
+        // With the project list open, Escape is the list's (it shuts itself
+        // and gives focus back): Radix hears it first, on the document.
         onEscapeKeyDown={(event) => {
-          if (!searching) return;
-          event.preventDefault();
-          setSearching(false);
+          if (searching) event.preventDefault();
         }}
       >
         {/* Header and footer stay put; only the middle scrolls when the window is short. */}
@@ -219,7 +219,17 @@ function ProjectPicker({
     if (searching) search.current?.focus();
   }, [searching]);
 
+  // Keep the active option in view when the keys (or opening) move it; not
+  // when the mouse does, or the list would jump under the pointer.
+  const follow = useRef(false);
+  useEffect(() => {
+    if (!searching || !follow.current) return;
+    follow.current = false;
+    document.getElementById(`${listId}-${active}`)?.scrollIntoView({ block: "nearest" });
+  }, [active, searching, listId]);
+
   const toggle = (open: boolean) => {
+    follow.current = open;
     onSearchingChange(open);
     setQuery("");
     setActive(Math.max(0, projects.findIndex((p) => p.id === chosen)));
@@ -280,11 +290,15 @@ function ProjectPicker({
                   event.preventDefault();
                   if (matches.length === 0) return;
                   const step = event.key === "ArrowDown" ? 1 : -1;
+                  follow.current = true;
                   setActive((i) => (i + step + matches.length) % matches.length);
                 } else if (event.key === "Enter" && !(event.metaKey || event.ctrlKey)) {
                   event.preventDefault();
                   const project = matches[active];
                   if (project) choose(project.id);
+                } else if (event.key === "Escape") {
+                  onSearchingChange(false);
+                  more.current?.focus();
                 }
               }}
               role="combobox"
@@ -309,7 +323,6 @@ function ProjectPicker({
                 tabIndex={-1}
                 onClick={() => choose(p.id)}
                 onMouseMove={() => setActive(i)}
-                ref={i === active ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
                 className={cn(
                   "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-[#d6d6d6]",
                   i === active && "bg-white/[0.06] text-white",

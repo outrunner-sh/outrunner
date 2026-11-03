@@ -6,6 +6,7 @@ import {
   fallbackProject,
   recentProjects,
 } from "@/lib/nav/workspace-nav-groups";
+import type { MissionView } from "@/lib/missions/view";
 import type { Project, Workspace } from "@/lib/runtime/types";
 
 function project(id: string, name = id): Project {
@@ -157,4 +158,14 @@ test("recentProjects: the open session's project, then by latest session, then t
 test("recentProjects: no sessions keeps the given order", () => {
   const projects = ["a", "b", "c"].map((id) => project(id));
   assert.deepEqual(recentProjects(projects, []).map((p) => p.id), ["a", "b", "c"]);
+});
+
+test("recentProjects: a Mission counts under its project, by when it started", () => {
+  const projects = ["a", "b", "c"].map((id) => project(id));
+  // As the sidebar passes them: MissionViews beside the sessions.
+  const missions: Pick<MissionView, "id" | "projectId" | "createdAt">[] = [
+    { id: "m1", projectId: "c", createdAt: "2026-03-05T00:00:00Z" },
+  ];
+  const ranked = recentProjects(projects, [workspace("w1", "b", "2026-03-01T00:00:00Z"), ...missions]);
+  assert.deepEqual(ranked.map((p) => p.id), ["c", "b", "a"]);
 });
