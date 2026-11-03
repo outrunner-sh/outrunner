@@ -61,7 +61,7 @@ async function ownConnected(userId: string): Promise<boolean> {
     connected.set(userId, { value, at: Date.now() });
     return value;
   } catch (error) {
-    console.error(`Could not read whether user ${userId} connected GitHub; taking it they did`, error);
+    console.error(`Could not read whether user ${userId} connected GitHub; assuming they did`, error);
     return true;
   }
 }

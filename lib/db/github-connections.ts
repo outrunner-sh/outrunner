@@ -240,7 +240,7 @@ export async function githubAccountConnectedElsewhere(githubUserId: number, exce
     .is("broken_at", null)
     .limit(1);
   if (error) {
-    console.error("Could not read whether a GitHub account is connected elsewhere; taking it it is", error);
+    console.error("Could not read whether a GitHub account is connected elsewhere; assuming it is", error);
     return true;
   }
   return (data?.length ?? 0) > 0;
