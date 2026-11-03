@@ -14,7 +14,7 @@ import {
   nonceMatches,
   readConnectCookie,
   readConnectState,
-  revokeToken,
+  revokeGrant,
   USER_CALLBACK_PATH,
   userOfToken,
 } from "@/lib/github/user-auth";
@@ -69,7 +69,9 @@ export async function GET(request: Request) {
     // by the one they sign in with: the same one, where they sign in with
     // GitHub at all.
     if (owner.githubId !== null && owner.githubId !== github.id) {
-      await revokeToken({ clientId: config.clientId, clientSecret }, tokens.accessToken);
+      // Nothing is wanted of that account: its whole authorization goes, so
+      // it isn't left among its Authorized GitHub Apps.
+      await revokeGrant({ clientId: config.clientId, clientSecret }, tokens.accessToken);
       return back("other_account");
     }
     await saveGithubConnection(owner.id, github, tokens);
