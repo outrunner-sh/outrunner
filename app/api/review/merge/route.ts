@@ -9,7 +9,8 @@ import {
   type MergeAccess,
   mergePullRequest,
 } from "@/lib/github/client";
-import { requireGithubToken } from "@/lib/github/token";
+import { githubErrorResponse } from "@/lib/github/http";
+import { MissingGithubTokenError, requireGithubToken } from "@/lib/github/token";
 import { type MergeAction, refuseMerge } from "@/lib/review/merge-plan";
 import { readableRepo } from "@/lib/review/pulls";
 import { triageCaller } from "@/lib/triage/caller";
@@ -44,7 +45,10 @@ export async function POST(request: Request) {
   let token: string;
   try {
     token = await requireGithubToken(caller.owner.id);
-  } catch {
+  } catch (error) {
+    // Only no connection (or a broken one) is "connect"; GitHub out of reach
+    // mid-renewal is a try-again.
+    if (!(error instanceof MissingGithubTokenError)) return githubErrorResponse(error, "Couldn't reach GitHub. Try again.");
     return NextResponse.json(
       { error: "Connect GitHub in Settings → Connections to merge.", reconnect: true, settingsHref: "/settings/connections" },
       { status: 409 },
