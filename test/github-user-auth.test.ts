@@ -196,3 +196,11 @@ test("signing in with GitHub asks for identity alone, but for the old way", () =
   assert.equal(signInScopesFor("off"), "read:user user:email");
   assert.equal(signInScopesFor("store"), "read:user user:email repo");
 });
+
+test("one token is revoked at its own path, leaving the grant", async () => {
+  const { revokeToken } = await import("@/lib/github/user-auth");
+  const urls: string[] = [];
+  const doFetch = (async (input: string | URL) => (urls.push(String(input)), new Response(null, { status: 204 }))) as typeof fetch;
+  assert.equal(await revokeToken({ clientId: "Iv1.app", clientSecret: "s" }, "gho", doFetch), true);
+  assert.deepEqual(urls, ["https://api.github.com/applications/Iv1.app/token"]);
+});

@@ -316,20 +316,18 @@ export function ownInstallation(installations: UserInstallation[], githubUserId:
   return installations.find((i) => i.accountType === "User" && i.accountId === githubUserId) ?? null;
 }
 
+type OAuthClient = { clientId: string; clientSecret: string };
+
 /**
- * Revoke a user's authorization of an OAuth client (`clientId`): every token
- * of it, and the grant itself, so the next authorization asks again. For the
- * App's user authorization on disconnecting, and for the old sign-in OAuth
- * App's `repo` grant. True when GitHub took it (or the token was already
- * gone); false when it couldn't be done.
+ * Revoke, as an OAuth client (`clientId`, with its secret): a user's whole
+ * `grant` (every token of it, so the next authorization asks again), or one
+ * `token`, leaving the grant. True when GitHub took it, or the token was
+ * already gone (404: revoked, or never this client's); false when it
+ * couldn't be done.
  */
-export async function revokeGrant(
-  client: { clientId: string; clientSecret: string },
-  token: string,
-  doFetch: Fetch = fetch,
-): Promise<boolean> {
+async function revokeOAuth(client: OAuthClient, token: string, what: "grant" | "token", doFetch: Fetch): Promise<boolean> {
   try {
-    const response = await doFetch(`https://api.github.com/applications/${encodeURIComponent(client.clientId)}/grant`, {
+    const response = await doFetch(`https://api.github.com/applications/${encodeURIComponent(client.clientId)}/${what}`, {
       method: "DELETE",
       headers: {
         Authorization: `Basic ${Buffer.from(`${client.clientId}:${client.clientSecret}`).toString("base64")}`,
@@ -341,37 +339,23 @@ export async function revokeGrant(
       body: JSON.stringify({ access_token: token }),
       signal: AbortSignal.timeout(15_000),
     });
-    // 404: the token is gone already (revoked, or never this client's).
     return response.status === 204 || response.status === 404;
   } catch {
     return false;
   }
 }
 
+/** Revoke a user's whole authorization of an OAuth client: the App's user
+ *  authorization on disconnecting (or for a GitHub account that isn't
+ *  theirs), and the old sign-in OAuth App's `repo` grant. */
+export function revokeGrant(client: OAuthClient, token: string, doFetch: Fetch = fetch): Promise<boolean> {
+  return revokeOAuth(client, token, "grant", doFetch);
+}
+
 /** Revoke one token of an OAuth client's, leaving its grant: for the token a
  *  GitHub sign-in hands Outrunner, once its emails are read. */
-export async function revokeToken(
-  client: { clientId: string; clientSecret: string },
-  token: string,
-  doFetch: Fetch = fetch,
-): Promise<boolean> {
-  try {
-    const response = await doFetch(`https://api.github.com/applications/${encodeURIComponent(client.clientId)}/token`, {
-      method: "DELETE",
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${client.clientId}:${client.clientSecret}`).toString("base64")}`,
-        Accept: "application/vnd.github+json",
-        "Content-Type": "application/json",
-        "User-Agent": "outrunner",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-      body: JSON.stringify({ access_token: token }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    return response.status === 204 || response.status === 404;
-  } catch {
-    return false;
-  }
+export function revokeToken(client: OAuthClient, token: string, doFetch: Fetch = fetch): Promise<boolean> {
+  return revokeOAuth(client, token, "token", doFetch);
 }
 
 /** A user token is handed out until this long before it expires: a box's
