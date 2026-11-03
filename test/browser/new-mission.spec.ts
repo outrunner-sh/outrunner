@@ -66,6 +66,13 @@ for (const viewport of [
     await expect(search).toBeHidden();
     await expect(page.getByRole("dialog")).toBeVisible();
     await expect(page.getByRole("button", { name: "All 158" })).toBeFocused();
+    // From elsewhere in the dialog too.
+    await page.getByRole("button", { name: "All 158" }).click();
+    await page.getByRole("textbox", { name: "What it owns, and what to start on" }).focus();
+    await page.keyboard.press("Escape");
+    await expect(search).toBeHidden();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "What it owns, and what to start on" })).toBeFocused();
 
     await page.getByRole("button", { name: "All 158" }).click();
     await search.fill("repo-142");

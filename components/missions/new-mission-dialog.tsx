@@ -81,10 +81,12 @@ export function NewMissionDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="flex max-h-[calc(100dvh-2rem)] max-w-[520px] flex-col gap-0 overflow-hidden rounded-xl border-white/10 p-0"
-        // With the project list open, Escape is the list's (it shuts itself
-        // and gives focus back): Radix hears it first, on the document.
+        // With the project list open, Escape shuts the list, not the dialog,
+        // wherever focus is (Radix hears it first, on the document).
         onEscapeKeyDown={(event) => {
-          if (searching) event.preventDefault();
+          if (!searching) return;
+          event.preventDefault();
+          setSearching(false);
         }}
       >
         {/* Header and footer stay put; only the middle scrolls when the window is short. */}
@@ -215,8 +217,11 @@ function ProjectPicker({
     return q ? projects.filter((p) => p.fullName.toLowerCase().includes(q)) : projects;
   }, [projects, query]);
 
+  // Open, the search field takes focus. Shut with focus in it (Escape), the
+  // field is gone and focus with it: "All N" has it back, as on picking.
   useEffect(() => {
     if (searching) search.current?.focus();
+    else if (document.activeElement === document.body) more.current?.focus();
   }, [searching]);
 
   // Keep the active option in view when the keys (or opening) move it; not
@@ -296,9 +301,6 @@ function ProjectPicker({
                   event.preventDefault();
                   const project = matches[active];
                   if (project) choose(project.id);
-                } else if (event.key === "Escape") {
-                  onSearchingChange(false);
-                  more.current?.focus();
                 }
               }}
               role="combobox"
