@@ -102,7 +102,10 @@ async function renew(userId: string, deps: UserConnectionDeps): Promise<UserToke
     await deps.release(userId).catch(() => undefined);
     return null;
   }
-  if (current.broken) throw new GitHubConnectionBrokenError();
+  if (current.broken) {
+    await deps.release(userId).catch(() => undefined);
+    throw new GitHubConnectionBrokenError();
+  }
   if (fresh(current, deps.now())) {
     await deps.release(userId).catch(() => undefined);
     return toToken(current);
