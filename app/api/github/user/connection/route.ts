@@ -4,12 +4,13 @@ import { getOwner } from "@/lib/auth/owner";
 import {
   deleteGithubConnection,
   getGithubConnection,
+  githubAccountConnectedElsewhere,
   markGithubConnectionBroken,
   saveRefreshedGithubTokens,
 } from "@/lib/db/github-connections";
 import { githubAppConfig } from "@/lib/github/app";
 import { appClientSecret } from "@/lib/github/installer";
-import { refreshUserTokens, revokeGrant } from "@/lib/github/user-auth";
+import { refreshUserTokens, revokeGrant, revokeToken } from "@/lib/github/user-auth";
 import { GitHubConnectionBrokenError } from "@/lib/github/user-connection";
 import { githubUserToken } from "@/lib/github/user-connection.deps";
 import { isSameOriginRequest } from "@/lib/http/guards";
@@ -21,10 +22,13 @@ const AUTHORIZED_APPS_URL = "https://github.com/settings/apps/authorizations";
 /**
  * Disconnect the user's GitHub (Settings → Connections → GitHub): the
  * Outrunner GitHub App's authorization to act as them is revoked on GitHub,
- * every token of it, and forgotten here. Their sign-in and the App's
- * installations stay as they are (an installation is uninstalled on GitHub).
+ * every token of it, and forgotten here; only their token, where another
+ * Outrunner user connected the same GitHub account. Their sign-in and the
+ * App's installations stay as they are (an installation is uninstalled on
+ * GitHub).
  *
- * When GitHub can't be asked to revoke it, the connection is kept, no longer
+ * When it can't be revoked just now (GitHub out of reach, or a renewal of it
+ * under way on another server), the connection is kept, no longer
  * used (broken), with its tokens to try again with, and the answer is an
  * error: the user isn't told it's gone while a token of it still works. With
  * no token left to revoke with, it's forgotten, `revoked: false` saying where
@@ -47,11 +51,11 @@ export async function DELETE(request: Request) {
     }
     const client = { clientId: config.clientId, clientSecret };
 
-    const unreachable = () =>
+    const notRevoked = () =>
       NextResponse.json(
         {
           error:
-            "GitHub couldn't be reached to revoke Outrunner's access. Outrunner has stopped using it; try Disconnect again, or revoke it yourself under GitHub → Settings → Applications → Authorized GitHub Apps.",
+            "Outrunner couldn't revoke its access on GitHub just now. It has stopped using it; try Disconnect again in a moment, or revoke it yourself under GitHub → Settings → Applications → Authorized GitHub Apps.",
           revokeUrl: AUTHORIZED_APPS_URL,
         },
         { status: 502 },
@@ -67,7 +71,7 @@ export async function DELETE(request: Request) {
       if (!(error instanceof GitHubConnectionBrokenError)) {
         console.warn("Disconnecting GitHub: no token to revoke with", error);
         await markGithubConnectionBroken(owner.id);
-        return unreachable();
+        return notRevoked();
       }
     }
     // One kept broken (a disconnect that failed before): used as it is while
@@ -84,7 +88,7 @@ export async function DELETE(request: Request) {
         } catch (error) {
           console.warn("Disconnecting GitHub: couldn't renew a token to revoke with", error);
           await markGithubConnectionBroken(owner.id);
-          return unreachable();
+          return notRevoked();
         }
         if (renewed !== "revoked") {
           token = renewed.accessToken;
@@ -101,7 +105,11 @@ export async function DELETE(request: Request) {
     }
     // No longer used from here on, whatever becomes of the revoke.
     await markGithubConnectionBroken(owner.id);
-    if (!(await revokeGrant(client, token))) return unreachable();
+    // Another Outrunner user connected the same GitHub account: the grant is
+    // theirs too (revoking it would break theirs through the webhook), so
+    // only this token goes. Its refresh token goes with the row below.
+    const shared = await githubAccountConnectedElsewhere(connection.githubUserId, owner.id);
+    if (!(await (shared ? revokeToken : revokeGrant)(client, token))) return notRevoked();
     await deleteGithubConnection(owner.id);
     return NextResponse.json({ disconnected: true, revoked: true });
   });
