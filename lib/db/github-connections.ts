@@ -224,6 +224,23 @@ export async function markGithubAccountRevoked(githubUserId: number): Promise<nu
   return data?.length ?? 0;
 }
 
+/** Whether a GitHub account is connected by an Outrunner user other than
+ *  `exceptUserId`: its App authorization is then theirs too, and mustn't be
+ *  revoked whole. True when that can't be read, so it never is by mistake. */
+export async function githubAccountConnectedElsewhere(githubUserId: number, exceptUserId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("user_github_connections")
+    .select("user_id")
+    .eq("github_user_id", githubUserId)
+    .neq("user_id", exceptUserId)
+    .limit(1);
+  if (error) {
+    console.error("Could not read whether a GitHub account is connected elsewhere; taking it it is", error);
+    return true;
+  }
+  return (data?.length ?? 0) > 0;
+}
+
 /** Forget the user's connection (they disconnected). */
 export async function deleteGithubConnection(userId: string): Promise<void> {
   const { error } = await createSupabaseAdminClient().from("user_github_connections").delete().eq("user_id", userId);

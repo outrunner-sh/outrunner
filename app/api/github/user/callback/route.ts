@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { saveGithubConnection } from "@/lib/db/github-connections";
+import { githubAccountConnectedElsewhere, saveGithubConnection } from "@/lib/db/github-connections";
 import { appSlug, githubAppConfig, installUrl, signInstallState } from "@/lib/github/app";
 import { appClientSecret } from "@/lib/github/installer";
 import { removeLegacyToken } from "@/lib/github/legacy-token";
@@ -15,6 +15,7 @@ import {
   readConnectCookie,
   readConnectState,
   revokeGrant,
+  revokeToken,
   USER_CALLBACK_PATH,
   userOfToken,
 } from "@/lib/github/user-auth";
@@ -70,8 +71,12 @@ export async function GET(request: Request) {
     // GitHub at all.
     if (owner.githubId !== null && owner.githubId !== github.id) {
       // Nothing is wanted of that account: its whole authorization goes, so
-      // it isn't left among its Authorized GitHub Apps.
-      await revokeGrant({ clientId: config.clientId, clientSecret }, tokens.accessToken);
+      // it isn't left among its Authorized GitHub Apps. Unless another
+      // Outrunner user connected it: the grant is theirs too, so only this
+      // token goes.
+      const client = { clientId: config.clientId, clientSecret };
+      if (await githubAccountConnectedElsewhere(github.id, owner.id)) await revokeToken(client, tokens.accessToken);
+      else await revokeGrant(client, tokens.accessToken);
       return back("other_account");
     }
     await saveGithubConnection(owner.id, github, tokens);
