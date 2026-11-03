@@ -18,8 +18,9 @@ const ACTIONS: ReadonlySet<MergeAction> = new Set(["merge", "queue", "bypass"]);
 
 /**
  * Merge from the Review tab, as the person clicking: with their own GitHub
- * token, never the App's, so GitHub holds them to their own access and
- * names them as who merged. At the commit they saw: GitHub refuses one that
+ * connection (the App's user token, lib/github/personal.ts), never the App's
+ * installation, so GitHub holds them to their own access and names them as
+ * who merged. At the commit they saw: GitHub refuses one that
  * moved since.
  *
  *   merge   by the branch's rules, only once the PR passes them;
@@ -44,7 +45,10 @@ export async function POST(request: Request) {
   try {
     token = await requireGithubToken(caller.owner.id);
   } catch {
-    return NextResponse.json({ error: "Connect your GitHub account to merge (sign out and in again)." }, { status: 409 });
+    return NextResponse.json(
+      { error: "Connect GitHub in Settings → Connections to merge.", reconnect: true, settingsHref: "/settings/connections" },
+      { status: 409 },
+    );
   }
   const pull = { token, repoFullName: repo.fullName, number: body.number };
   try {

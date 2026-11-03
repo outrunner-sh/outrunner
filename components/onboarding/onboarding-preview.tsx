@@ -136,12 +136,13 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
         personalGithub: scenario.repos !== "github-error",
         appInstallable: true,
         installNeedsGithub: false,
+        personalConnectable: true,
       };
     },
     useOrg: async () => void (await wait(200)),
     async repositories() {
       await wait(700);
-      if (scenario.repos === "github-error") throw new OnboardingError("Your GitHub connection has expired. Sign out and back in to reconnect.");
+      if (scenario.repos === "github-error") throw new OnboardingError("Your GitHub connection has expired. Reconnect GitHub in Settings → Connections.");
       return { repositories: scenario.repos === "none" ? [] : REPOS, connected: [1] };
     },
     async connect(ids) {

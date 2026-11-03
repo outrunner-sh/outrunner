@@ -2,6 +2,7 @@ import type { User } from "@supabase/supabase-js";
 
 import { isOwner } from "@/lib/auth/allowlist";
 import { clearGithubToken } from "@/lib/db/credentials";
+import { deleteGithubConnection } from "@/lib/db/github-connections";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
@@ -15,6 +16,9 @@ export async function endInviteeVisit(user: User | null): Promise<void> {
   if (!user || isOwner(user)) return;
   await clearGithubToken(user.id).catch((error: unknown) =>
     console.error(`Could not forget ${user.id}'s GitHub token`, error),
+  );
+  await deleteGithubConnection(user.id).catch((error: unknown) =>
+    console.error(`Could not forget ${user.id}'s GitHub connection`, error),
   );
   try {
     await (await createSupabaseServerClient()).auth.signOut();

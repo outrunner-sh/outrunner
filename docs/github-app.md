@@ -1,11 +1,89 @@
 # GitHub App: outrunner-connector
 
-The Outrunner GitHub App is how an org's sessions and automations work on GitHub as Outrunner rather than as
-each member: an org's admin installs it from **Settings → Org → GitHub**, on their GitHub account or
-organization and the repositories they pick. A deployment configures it with `GITHUB_APP_CLIENT_ID`,
-`GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` and `GITHUB_APP_WEBHOOK_SECRET` (see `lib/github/app.ts`). Its
-webhook is `POST /api/github/webhook`, and its setup URL (with "Redirect on update") is
+The Outrunner GitHub App is how Outrunner reaches GitHub, two ways:
+
+- **Organizations.** An org's admin installs it from **Settings → Org → GitHub**, on their GitHub account or
+  organization and the repositories they pick. The org's sessions and automations then work on GitHub as
+  Outrunner, with per-repository tokens an hour long, rather than as each member. A team org never falls back
+  to a member's own GitHub.
+- **Each user's own repositories.** A user connects GitHub in **Settings → Connections → GitHub**
+  ([below](#connecting-your-own-github)): the App's user authorization, acting as them, and the App
+  installed on their own account with the repositories they pick.
+
+Signing in to Outrunner with GitHub is identity alone (`read:user user:email`) and gives Outrunner no
+repositories.
+
+A deployment configures it with `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` and
+`GITHUB_APP_WEBHOOK_SECRET` (see `lib/github/app.ts`), and `GITHUB_APP_CLIENT_SECRET` for users' own
+connections. Its webhook is `POST /api/github/webhook`, and its setup URL (with "Redirect on update") is
 `GET /api/github/app/setup`.
+
+## Connecting your own GitHub
+
+**Settings → Connections → GitHub → Connect GitHub** (`lib/github/user-auth.ts`,
+`app/api/github/user/*`) does two things, neither of which signs you out:
+
+1. **Authorize the App to act as you.** GitHub gives Outrunner a user access token (`ghu_`) that lasts 8
+   hours and a refresh token that lasts 6 months. Both are stored sealed in `user_github_connections`
+   (migration `20261105100000`), and the access token is renewed with the refresh token whenever it's due
+   (`lib/github/user-connection.ts`). Only a refresh token that GitHub refuses (revoked on GitHub, or 6
+   months unused) needs **Reconnect**. A user token reaches only what both you and the App's installations
+   reach, with the App's permissions. Pushes, pull requests and merges show as you, with "via
+   outrunner-connector".
+2. **Install the App on your account.** GitHub has you pick **All repositories** or **Only select
+   repositories**. The installation is linked to your personal org, through the same claim as an admin's
+   install. **Manage repositories** opens that installation's page on GitHub; **Add an account** installs
+   it on one of your GitHub organizations as well.
+
+The flow is bound to the browser that started it, with a nonce in a cookie, a PKCE verifier and a signed
+state. The GitHub account must be the one you sign in with, if you sign in with GitHub. In the desktop app,
+GitHub opens in the system browser, and the code comes back through the shell's loopback listener
+(`http://127.0.0.1:47823`) to its own webview. Connecting removes the old sign-in token, if you have one.
+**Disconnect** revokes the App's authorization on GitHub. A user who revokes it on GitHub is marked
+disconnected by the `github_app_authorization` webhook.
+
+### Where each token goes
+
+| Who | Gets |
+| --- | --- |
+| A box, as `app` identity | A token of the org's installation for that one repository, an hour long, at the member's level |
+| A box, as `personal` identity | The user's `ghu_` token, 8 hours at most, asked for as git needs it (`/api/runtime/git-credential`) and as the boot-time `GH_TOKEN` |
+| The browser (Mac clones, `/api/github/clone-token`) | The org's App's read-only token for that repository where it reaches it, else the user's `ghu_` |
+| The server (listing, merging) | The user's `ghu_` |
+
+A `ghu_` token can't be narrowed to one repository. A box working as you can use it for anything you and
+the App reach, for up to 8 hours. The `app` identity's per-repository tokens are narrower.
+
+### Required App settings
+
+On the App (GitHub → Settings → Developer settings → GitHub Apps → outrunner-connector → General):
+
+- **Callback URLs:** `https://<deployment>/api/github/user/callback` (connecting),
+  `https://<deployment>/api/github/app/verify` (installer verification) and `http://127.0.0.1:47823` (the
+  desktop app).
+- **Expire user authorization tokens:** on. When it's off, `ghu_` tokens never expire. Outrunner still
+  works, but logs a warning, and the card says "Access doesn't expire".
+- **Request user authorization (OAuth) during installation:** off. With it on, GitHub skips the setup URL
+  that links installations to orgs.
+- **Permissions → Account permissions → Email addresses: Read** is not needed. Verified emails come from
+  sign-in, which keeps what GitHub verified (`user_credentials.github_verified_emails`).
+
+### The old sign-in tokens
+
+Signing in used to ask for `repo` and keep the token. That token never expires and reaches everything you
+can. `GITHUB_LEGACY_TOKENS` sets how the old tokens are handled (`lib/github/legacy-token.ts`):
+
+| Mode | Sign-in asks | Kept tokens |
+| --- | --- | --- |
+| `store` (default without `GITHUB_APP_CLIENT_SECRET`) | `repo` too, and keeps its token | Used, as before |
+| `fallback` (default with it) | identity alone, keeps nothing | Used until their user connects. A banner in the app and on Connections asks them to |
+| `off` | identity alone, keeps nothing | Never used |
+
+**Remove old token** on Connections, and connecting, both delete a kept token. When
+`GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET` name the OAuth App that Supabase's GitHub provider
+uses, the token's whole grant is also revoked on GitHub, so the next sign-in asks for the narrower scopes.
+With them set, each sign-in's token is revoked too, once its emails are read. GitHub keeps scopes granted
+before, so until a grant is revoked, a sign-in's token still carries `repo`.
 
 ## Sharing a GitHub organization
 
@@ -115,13 +193,16 @@ then, GitHub refuses what needs them, and Outrunner logs that and goes on.
 | Pull request review | Review follow-ups; automation runs' checks (#238) |
 | Check suite, Check run, Workflow run | CI failure follow-ups |
 
-`installation` and `installation_repositories` events come to every App without subscribing.
+`installation`, `installation_repositories` and `github_app_authorization` events come to every App without
+subscribing.
 
 ### As a manifest
 
 To create the App afresh, for example for another deployment, post this
 [manifest](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) with
-`<deployment>` replaced by the deployment's origin. Then set the four environment variables from what GitHub gives back.
+`<deployment>` replaced by the deployment's origin. Then set the four environment variables from what GitHub
+gives back, and generate a client secret for `GITHUB_APP_CLIENT_SECRET`. Check that **Expire user
+authorization tokens** is on; new Apps have it on.
 
 ```json
 {
@@ -130,6 +211,12 @@ To create the App afresh, for example for another deployment, post this
   "hook_attributes": { "url": "https://<deployment>/api/github/webhook", "active": true },
   "setup_url": "https://<deployment>/api/github/app/setup",
   "setup_on_update": true,
+  "callback_urls": [
+    "https://<deployment>/api/github/user/callback",
+    "https://<deployment>/api/github/app/verify",
+    "http://127.0.0.1:47823"
+  ],
+  "request_oauth_on_install": false,
   "public": true,
   "default_permissions": {
     "metadata": "read",

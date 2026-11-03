@@ -3,11 +3,13 @@ import type { User } from "@supabase/supabase-js";
 import { githubUserId } from "@/lib/auth/allowlist";
 import { signInTokenDecision } from "@/lib/auth/identity";
 import { githubLogin, isOwner } from "@/lib/auth/owner";
-import { getGithubToken, setGithubToken } from "@/lib/db/credentials";
+import { sameSecret } from "@/lib/crypto/secret-box";
+import { getGithubToken, getGithubVerifiedEmails, setGithubToken, setGithubVerifiedEmails } from "@/lib/db/credentials";
 import { hasOpenInviteFor, requestToJoin, setAdmitted, teamOrgIds } from "@/lib/db/org-members";
 import { orgsForDomains } from "@/lib/db/orgs";
 import { optionalEnv } from "@/lib/env";
-import { tokenOwner } from "@/lib/github/client";
+import { listVerifiedEmails, tokenOwner } from "@/lib/github/client";
+import { legacyTokenMode, revokeSignInToken } from "@/lib/github/legacy-token";
 import { admitOnSignIn, type Admission, isInvitePath } from "@/lib/orgs/admission";
 import { emailJoinRequest } from "@/lib/orgs/notify";
 import { verifiedEmailsFor } from "@/lib/orgs/verified-emails";
@@ -18,8 +20,9 @@ type ServerSupabase = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 /**
  * What every sign-in does once Supabase has a session for it, whichever way
  * it came (OAuth at /auth/callback, an emailed code at /auth/email): enforce
- * the allowlist, store a GitHub token the sign-in produced, and say where to
- * go next — `next`, or back to /signin with why not.
+ * the allowlist, keep the emails GitHub verified (the GitHub token itself
+ * only in GITHUB_LEGACY_TOKENS `store` mode), and say where to go next —
+ * `next`, or back to /signin with why not.
  *
  * Access may be allowlisted: anyone whose GitHub login isn't in
  * RUNTIME_OWNER_GITHUB_LOGIN is signed straight back out, unless an org lets
@@ -54,7 +57,7 @@ export async function completeSignIn({
     }
   }
 
-  await captureGithubToken(user, githubToken);
+  await captureGithubSignIn(user, githubToken);
   return `${base}${next}`;
 }
 
@@ -64,7 +67,8 @@ async function admit(user: User, githubToken: string | undefined, base: string):
   try {
     return await admitOnSignIn({
       inTeamOrg: async () => (await teamOrgIds(user.id)).length > 0,
-      verifiedEmails: () => verifiedEmailsFor(user, githubToken),
+      verifiedEmails: async () =>
+        verifiedEmailsFor(user, githubToken, githubToken ? [] : await getGithubVerifiedEmails(user.id).catch(() => [])),
       hasOpenInviteFor,
       orgsForDomains,
       requestToJoin: (orgId, email) => requestToJoin(orgId, user.id, email),
@@ -86,29 +90,50 @@ function joinRequested(base: string, admission: Extract<Admission, { kind: "requ
 }
 
 /**
- * Persist the GitHub access token this sign-in (or GitHub connection)
- * produced. A Google sign-in produces none: its provider_token is Google's.
+ * What a GitHub sign-in (or GitHub connection) leaves behind. A Google
+ * sign-in produces no GitHub token: its provider_token is Google's.
  *
- * THIS IS THE ONLY PLACE IT IS AVAILABLE. Supabase surfaces `provider_token`
- * on the session returned by the code exchange and never stores or refreshes
- * it — `getSession()` later in the app returns nothing for it. Miss it here and
- * the user has to re-authenticate to get another one.
+ * Signing in with GitHub is identity alone: its token (`read:user
+ * user:email`) is used here, once, to read the emails GitHub verified, which
+ * are kept for invites, join requests and a team org's domain, and is then
+ * revoked where the OAuth App's credentials are set (lib/github/legacy-token.ts).
+ * Repository access is a separate connection (Settings → Connections).
  *
- * Stored only as GitHub vouches for it ({@link signInTokenDecision}): the
- * callback picks the token by which identity signed in last, and a wrong pick
- * (a Google token, say) must never replace a working GitHub token. When GitHub
- * can't be asked (an outage), it's stored only if none is yet.
+ * Only in GITHUB_LEGACY_TOKENS `store` mode is the token itself kept, as
+ * before: Supabase surfaces `provider_token` on the session returned by the
+ * code exchange and never stores or refreshes it, so this is the one place
+ * it can be kept.
+ *
+ * Either is kept only as GitHub vouches for the token ({@link signInTokenDecision}):
+ * the callback picks the token by which identity signed in last, and a wrong
+ * pick (a Google token, say) must never be taken for the account's. When
+ * GitHub can't be asked (an outage), a token is stored only if none is yet.
  *
  * Best-effort by design: a storage failure must not strand a user who has
- * otherwise signed in successfully. They land in the app with no GitHub
- * connection, which the UI already has to handle anyway (a first sign-in before
- * the `repo` scope was granted looks identical), and the next sign-in retries.
+ * otherwise signed in successfully.
  */
-async function captureGithubToken(user: User, token: string | undefined): Promise<void> {
+async function captureGithubSignIn(user: User, token: string | undefined): Promise<void> {
   const login = githubLogin(user);
   const githubId = githubUserId(user);
   if (!token || !login || githubId === null) return;
+  const store = legacyTokenMode() === "store";
   const owner = await tokenOwner(token);
+
+  if (owner.kind === "user" && owner.id === githubId) {
+    try {
+      await setGithubVerifiedEmails(user.id, await listVerifiedEmails(token));
+    } catch (err) {
+      console.error(`Could not keep the GitHub emails of ${user.id}; sign-in continues.`, err);
+    }
+  }
+  if (!store) {
+    // Nothing keeps it: revoke it, unless it's the old token still kept
+    // (GitHub can hand the same one back), which works until it's removed.
+    const kept = await getGithubToken(user.id).catch(() => null);
+    if (owner.kind === "user" && owner.id === githubId && !(kept && sameSecret(kept, token))) await revokeSignInToken(token);
+    return;
+  }
+
   // Whether one is stored matters only when GitHub couldn't be asked.
   const hasStored = owner.kind === "unreachable" && (await getGithubToken(user.id).catch(() => null)) !== null;
   const decision = signInTokenDecision(owner, githubId, hasStored);

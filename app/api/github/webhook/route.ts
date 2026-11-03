@@ -14,6 +14,7 @@ import {
 } from "@/lib/db/automation-runs";
 import { archiveServerSessions } from "@/lib/session/server-session";
 
+import { markGithubAccountRevoked } from "@/lib/db/github-connections";
 import {
   forgetInstallation,
   installationHolder,
@@ -80,6 +81,10 @@ type Payload = {
  * Comments, and issues and pull requests closing, are the agent loop's
  * (lib/github/loop.ts): a mention of Outrunner steers a session, and a close
  * archives the sessions working on what closed.
+ *
+ * A user revoking the App's authorization on GitHub (`github_app_authorization`,
+ * sent to every App unasked) breaks their GitHub connection
+ * (Settings → Connections), for them to connect again.
  */
 export async function POST(request: Request) {
   const config = githubAppConfig();
@@ -100,6 +105,15 @@ export async function POST(request: Request) {
     payload = JSON.parse(raw) as Payload;
   } catch {
     return NextResponse.json({ error: "Not JSON." }, { status: 400 });
+  }
+  if (event === "github_app_authorization" && payload.action === "revoked" && typeof payload.sender?.id === "number") {
+    try {
+      await markGithubAccountRevoked(payload.sender.id);
+    } catch (error) {
+      console.error("GitHub webhook: couldn't break a revoked user authorization's connections", error);
+      return NextResponse.json({ error: "Try again." }, { status: 500 });
+    }
+    return new NextResponse(null, { status: 204 });
   }
   const installationId = payload.installation?.id;
   if (event === "ping" || typeof installationId !== "number") return new NextResponse(null, { status: 204 });

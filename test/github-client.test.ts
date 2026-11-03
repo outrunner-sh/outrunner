@@ -261,7 +261,7 @@ test("a 401 means the token is dead: the route asks the user to reconnect", asyn
   const response = githubErrorResponse(error, "fallback");
   assert.equal(response.status, 502);
   assert.deepEqual(await response.json(), {
-    error: "Your GitHub connection has expired. Sign out and back in to reconnect.",
+    error: "Your GitHub connection has expired. Reconnect GitHub in Settings → Connections.",
     reconnect: true,
   });
 });

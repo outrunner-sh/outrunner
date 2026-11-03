@@ -41,7 +41,7 @@ const GITHUB_REFUSED = /Invalid username or token|Authentication failed for 'htt
 
 /** A session's setup that GitHub refused: only signing in again fixes it. */
 export const GITHUB_RECONNECT_MESSAGE =
-  "GitHub didn't accept your connection, so the repository couldn't be cloned. Sign out and back in to reconnect GitHub, then start a new session.";
+  "GitHub didn't accept your connection, so the repository couldn't be cloned. Reconnect GitHub in Settings → Connections, then start a new session.";
 
 export function provisionFailureMessage(
   error: unknown,
