@@ -11,7 +11,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Archive, Ellipsis, GitPullRequest, Plus, Rocket } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
 import { MissionGlyph, PullRequestChip, RunnerGlyph, UnreadDot } from "@/components/missions/mission-parts";
@@ -20,9 +20,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { SkeletonRows } from "@/components/ui/skeleton-swap";
 import { refreshMissions, useMissions } from "@/hooks/use-missions";
 import { missionArchiveOffer, unarchivedShipCount } from "@/lib/missions/archive";
-import type { NavProject } from "@/lib/nav/workspace-nav-groups";
+import { recentProjects, type NavProject } from "@/lib/nav/workspace-nav-groups";
 import { MISSION_STATUS_LABEL, type MissionView, type RunnerView } from "@/lib/missions/view";
-import type { WorkspaceStatus } from "@/lib/runtime/types";
+import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /** Ships shown under a Mission before "more". */
@@ -35,7 +35,16 @@ function nestedRunners(mission: MissionView): RunnerView[] {
   return mission.runners.filter((r) => r.group !== "done").sort((a, b) => order[a.group] - order[b.group]);
 }
 
-export function SidebarMissions({ active, projects }: { active?: string; projects: NavProject[] }) {
+export function SidebarMissions({
+  active,
+  projects,
+  workspaces,
+}: {
+  active?: string;
+  projects: NavProject[];
+  /** The sidebar's sessions: which projects were used last. */
+  workspaces: Workspace[];
+}) {
   const { loaded, missions } = useMissions();
   const [creating, setCreating] = useState(false);
   const [archiving, setArchiving] = useState<MissionView | null>(null);
@@ -48,6 +57,21 @@ export function SidebarMissions({ active, projects }: { active?: string; project
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
+
+  // The open session's project first, then the most recently used: an org
+  // can have hundreds, and the dialog shows the first few.
+  const offered = useMemo(
+    () =>
+      recentProjects(
+        projects,
+        [
+          ...workspaces,
+          ...missions.flatMap((m) => (m.environment ? [{ projectId: m.environment.id, lastActiveAt: null, createdAt: m.createdAt }] : [])),
+        ],
+        workspaces.find((w) => w.id === active)?.projectId,
+      ),
+    [projects, workspaces, missions, active],
+  );
 
   const shown = order
     ? [...missions].sort((a, b) => (order.indexOf(a.id) + 1 || 1e9) - (order.indexOf(b.id) + 1 || 1e9))
@@ -248,7 +272,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
           </ul>
         )}
       </div>
-      <NewMissionDialog open={creating} onOpenChange={setCreating} projects={projects} />
+      <NewMissionDialog open={creating} onOpenChange={setCreating} projects={offered} />
       <ArchiveMissionDialog
         mission={archiveTarget && { id: archiveTarget.id, title: archiveTarget.title, ships: unarchivedShipCount(archiveTarget.runners) }}
         onOpenChange={(open) => {

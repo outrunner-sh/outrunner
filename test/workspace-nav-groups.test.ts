@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   buildNavGroups,
   fallbackProject,
+  recentProjects,
 } from "@/lib/nav/workspace-nav-groups";
 import type { Project, Workspace } from "@/lib/runtime/types";
 
@@ -135,4 +136,25 @@ test("falls back to createdAt when lastActiveAt is null", () => {
 
   assert.equal(groups.length, 1);
   assert.equal(groups[0].items[0].id, "w1");
+});
+
+test("recentProjects: the open session's project, then by latest session, then the rest as listed", () => {
+  const projects = ["a", "b", "c", "d", "e"].map((id) => project(id));
+  const ranked = recentProjects(
+    projects,
+    [
+      workspace("w1", "d", "2026-03-01T00:00:00Z"),
+      workspace("w2", "b", "2026-03-02T00:00:00Z"),
+      workspace("w3", "d", "2026-03-03T00:00:00Z"),
+      workspace("w4", "gone", "2026-03-04T00:00:00Z"),
+      workspace("w5", "e", "2026-01-01T00:00:00Z"),
+    ],
+    "e",
+  );
+  assert.deepEqual(ranked.map((p) => p.id), ["e", "d", "b", "a", "c"]);
+});
+
+test("recentProjects: no sessions keeps the given order", () => {
+  const projects = ["a", "b", "c"].map((id) => project(id));
+  assert.deepEqual(recentProjects(projects, []).map((p) => p.id), ["a", "b", "c"]);
 });

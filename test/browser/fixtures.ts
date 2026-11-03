@@ -247,3 +247,21 @@ export const templates = [
     triggers: ["pull_request.opened" as const],
   },
 ];
+
+/** A Personal org after a bulk import: 158 projects, the one with sessions
+ *  (`project`) listed last so the picker must rank it first itself. */
+export const manyProjects: Project[] = [
+  ...Array.from({ length: 157 }, (_, i) => {
+    const name = `imported-repo-${String(i + 1).padStart(3, "0")}`;
+    return {
+      ...project,
+      id: `bulk-${i + 1}`,
+      githubRepoId: 1000 + i,
+      fullName: `immadsahin/${name}`,
+      owner: "immadsahin",
+      name,
+      htmlUrl: `https://github.com/immadsahin/${name}`,
+    };
+  }),
+  project,
+];
