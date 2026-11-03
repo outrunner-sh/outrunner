@@ -986,7 +986,8 @@ async function githubRefusal(
   project: { fullName: string; private: boolean },
   lookUp: LookUp,
 ): Promise<{ refusal: NextResponse } | { token: string | undefined }> {
-  // None to check: the user has no token stored (MissingGithubTokenError).
+  // None to check: no token could be resolved (none stored, or the lookup
+  // failed and gitTokenFor logged why).
   if (!credential) return { token: undefined };
   const proceed = { token: credential.token };
   try {
