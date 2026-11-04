@@ -6,6 +6,8 @@
  * guard collapses anything that could leave the app's own origin down to a
  * safe relative path, defeating open-redirect phishing (`?next=//evil.com`).
  */
+const SELF = "https://outrunner.invalid";
+
 export function safeRelativePath(
   next: string | null | undefined,
   fallback = "/",
@@ -25,5 +27,15 @@ export function safeRelativePath(
     return fallback;
   }
 
-  return next;
+  // A browser reads a Location the way URL does: it drops tabs and newlines
+  // and turns `\` into `/`, so `/<tab>/evil.com` is `//evil.com` to it. Parsed
+  // here the same way, it must still be this origin, and goes on as parsed.
+  let url: URL;
+  try {
+    url = new URL(next, SELF);
+  } catch {
+    return fallback;
+  }
+  if (url.origin !== SELF) return fallback;
+  return `${url.pathname}${url.search}${url.hash}`;
 }
