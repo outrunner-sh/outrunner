@@ -160,6 +160,7 @@ export async function POST(request: Request) {
       boxClaimsReleased,
       orphansDeleted: orphans?.deleted ?? null,
       orphansHeld: orphans?.held ?? null,
+      strayBoxesPaused: orphans?.paused ?? null,
     });
   } catch (error) {
     console.error("Reconcile failed", error);
