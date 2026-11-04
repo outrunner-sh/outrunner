@@ -48,13 +48,22 @@ fn site() -> String {
     }
 }
 
-/// Host of [`site`], for the same-site navigation check. Derived rather than
+/// Whether `url` is on [`site`]'s origin, for the navigation check: its
+/// scheme, host and port, not its host alone, so `http://` or another port of
+/// the same host never loads in the window. Derived from the site rather than
 /// declared as a second constant, so the two cannot disagree.
-fn site_host(site: &str) -> String {
-    site.parse::<tauri::Url>()
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_string))
-        .unwrap_or_default()
+fn same_origin(url: &tauri::Url, site: &tauri::Url) -> bool {
+    url.scheme() == site.scheme()
+        && url.host_str().is_some()
+        && url.host_str() == site.host_str()
+        && url.port_or_known_default() == site.port_or_known_default()
+}
+
+/// Whether an off-site navigation may go to the system's opener: web pages
+/// and mail only. Any other scheme (`file:`, `smb:`, another app's own) would
+/// have macOS open a file or launch an app on a link's say.
+fn opens_externally(url: &tauri::Url) -> bool {
+    matches!(url.scheme(), "https" | "http" | "mailto")
 }
 
 /// What the browser tab is left showing after the redirect. Styled to match the
@@ -217,8 +226,8 @@ pub fn run() {
             // Main window → hosted Runtime UI, flagged as the desktop shell, with
             // off-site navigations (OAuth) bounced to the system browser.
             let site = site();
-            let site_host = site_host(&site);
-            let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(site.parse().unwrap()))
+            let site_url: tauri::Url = site.parse().unwrap();
+            let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(site_url.clone()))
                 .title("outrunner")
                 // Dark, like the app: what shows before the page has painted,
                 // and on a Mac the title bar, take its background, not the
@@ -244,15 +253,16 @@ pub fn run() {
                     }
                 })
                 .on_navigation(move |url| {
-                    let scheme = url.scheme();
-                    let same_site = url.host_str() == Some(site_host.as_str());
                     // Allow the app's own pages and internal webview loads.
-                    if same_site || matches!(scheme, "about" | "data" | "blob") {
+                    if same_origin(url, &site_url) || matches!(url.scheme(), "about" | "data" | "blob") {
                         return true;
                     }
-                    // Everything else (OAuth provider, external links) opens in
-                    // the system browser instead of the embedded webview.
-                    let _ = open::that(url.as_str());
+                    // Web pages elsewhere (OAuth provider, external links) open
+                    // in the system browser instead of the embedded webview;
+                    // anything else goes nowhere.
+                    if opens_externally(url) {
+                        let _ = open::that(url.as_str());
+                    }
                     false
                 })
                 .build()?;
@@ -378,6 +388,30 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_the_sites_own_origin_loads_in_the_window() {
+        let site: tauri::Url = "https://app.outrunner.sh".parse().unwrap();
+        let at = |u: &str| super::same_origin(&u.parse().unwrap(), &site);
+        assert!(at("https://app.outrunner.sh/sessions/1"));
+        assert!(at("https://app.outrunner.sh:443/"));
+        assert!(!at("http://app.outrunner.sh/"));
+        assert!(!at("https://app.outrunner.sh:8443/"));
+        assert!(!at("https://evil.example/"));
+        assert!(!at("file:///Users/x/app.outrunner.sh"));
+    }
+
+    #[test]
+    fn only_web_and_mail_links_go_to_the_systems_opener() {
+        let opens = |u: &str| super::opens_externally(&u.parse().unwrap());
+        assert!(opens("https://github.com/login/oauth/authorize"));
+        assert!(opens("http://example.com/"));
+        assert!(opens("mailto:hi@example.com"));
+        assert!(!opens("file:///Users/x/Downloads/evil.app"));
+        assert!(!opens("smb://attacker/share"));
+        assert!(!opens("vscode://file/etc/passwd"));
+        assert!(!opens("javascript:alert(1)"));
+    }
+
     #[test]
     fn http_clients_build_once_the_crypto_provider_is_installed() {
         super::install_crypto_provider();
