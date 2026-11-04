@@ -62,6 +62,17 @@ export async function releaseBoxIfUnused(deps: ReleaseBoxDeps): Promise<boolean>
   return true;
 }
 
+/**
+ * Whether a session's own box is deleted, not paused, as the session goes:
+ * when it ended (nothing comes back to it), when it was archived with its
+ * Snapshot saved and nobody is expected back (`dropBox`: archived by
+ * Outrunner, as an automation's superseded review), or when its provider
+ * can't pause a box (Restore rebuilds from the Snapshot either way).
+ */
+export function ownBoxDeleted(when: { ended: boolean; dropBox?: boolean; pausesBoxes: boolean }): boolean {
+  return when.ended || when.dropBox === true || !when.pausesBoxes;
+}
+
 export type DeleteBoxDeps = {
   /** The session's own box (lib/runtime/computer-scope.ts), if it has one. */
   computer(): Promise<Pick<RuntimeComputer, "id" | "daytonaSandboxId"> | null>;

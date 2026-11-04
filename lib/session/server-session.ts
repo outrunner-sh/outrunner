@@ -125,7 +125,10 @@ export async function archiveServerSessions(userId: string, workspaceIds: readon
           if (workspace.status !== "ready" && workspace.status !== "idle") continue;
           const resolution = resolveProvider(workspace);
           if (!resolution.ok || !isComputerProvider(resolution.provider)) continue;
-          const result = await archiveCloudSession(workspace, resolution.provider, owner);
+          // Archived by Outrunner, not its user: its box goes once its
+          // Snapshot is saved, rather than holding its disk for a Restore
+          // that is rare (a superseded review).
+          const result = await archiveCloudSession(workspace, resolution.provider, owner, { dropBox: true });
           if (result.ok) archived++;
           else console.warn(`Couldn't archive the session ${id}`, result);
         } catch (error) {

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { DaytonaNotFoundError, type Daytona, type Sandbox } from "@daytonaio/sdk";
 
 import { boxSize, DEFAULT_BOX_SIZE } from "@/lib/runtime/box-sizes";
-import { box, createParams, DaytonaBackend, DESKTOP_RESOLUTION, daytonaSnapshotFor, EXEC_TIMEOUT_SECONDS, relabel, settled, SETTLE_TIMEOUT_SECONDS } from "@/lib/runtime/sandbox/daytona";
+import { AUTO_ARCHIVE_MINUTES, box, createParams, DaytonaBackend, DESKTOP_RESOLUTION, daytonaSnapshotFor, EXEC_TIMEOUT_SECONDS, relabel, settled, SETTLE_TIMEOUT_SECONDS } from "@/lib/runtime/sandbox/daytona";
 
 /** A sandbox whose executeCommand records the timeout it was given. */
 function recording(): { sandbox: Sandbox; timeouts: (number | undefined)[] } {
@@ -101,7 +101,7 @@ test("backend sends the selected Small default to the SDK, preserving labels, de
   const labels = { "runtime.role": "computer", "runtime.deployment": "test" };
   const backend = creating(async (params, options) => {
     assert.deepEqual(params, {
-      snapshot: "daytona-medium", labels, autoStopInterval: 0, autoDeleteInterval: -1,
+      snapshot: "daytona-medium", labels, autoStopInterval: 0, autoDeleteInterval: -1, autoArchiveInterval: AUTO_ARCHIVE_MINUTES,
       envVars: { VNC_RESOLUTION: DESKTOP_RESOLUTION },
     });
     assert.deepEqual(options, { timeout: 180 });
@@ -112,6 +112,13 @@ test("backend sends the selected Small default to the SDK, preserving labels, de
   const sandbox = await backend.create(labels, boxSize(DEFAULT_BOX_SIZE));
   assert.equal(sandbox.id, "sized");
   assert.equal(sandbox.cpu, 2);
+});
+
+test("a stopped box is archived within a day, freeing its disk from the account's storage quota", () => {
+  // Daytona's own default is 7 days, and a stopped box's disk counts against
+  // the shared quota until then.
+  assert.ok(AUTO_ARCHIVE_MINUTES > 0 && AUTO_ARCHIVE_MINUTES <= 24 * 60);
+  assert.equal(createParams({}).autoArchiveInterval, AUTO_ARCHIVE_MINUTES);
 });
 
 test("unsized backend creates keep the account's default snapshot", async () => {

@@ -227,6 +227,17 @@ export function daytonaSnapshotFor(size: BoxResources): string | undefined {
   return DAYTONA_SNAPSHOTS.find((s) => s.cpu <= size.cpu && s.memoryGb <= size.memoryGb)?.name;
 }
 
+/**
+ * Minutes a box stays stopped before Daytona archives it. A stopped
+ * container box holds its full disk against the account's storage quota
+ * until archived (https://www.daytona.io/docs/en/limits), and Daytona's
+ * default is 7 days: a week of paused sessions filled the account's whole
+ * quota and every new box was refused. Archived, the disk is in object
+ * storage and the box starts again from it (restore() takes "archived" as
+ * stopped), only slower; a day keeps an overnight resume quick.
+ */
+export const AUTO_ARCHIVE_MINUTES = 24 * 60;
+
 /** Without a size keep the account's default (including user-owned Daytona).
  * Outrunner's selected default size already arrives via boxSizeOn. */
 export function createParams(labels: Record<string, string>, size?: BoxResources): CreateSandboxFromSnapshotParams {
@@ -235,6 +246,7 @@ export function createParams(labels: Record<string, string>, size?: BoxResources
     // Outrunner owns idle stopping; Daytona must not auto-stop/delete it.
     autoStopInterval: 0,
     autoDeleteInterval: -1,
+    autoArchiveInterval: AUTO_ARCHIVE_MINUTES,
     labels,
     envVars: { VNC_RESOLUTION: DESKTOP_RESOLUTION },
     ...(snapshot && { snapshot }),

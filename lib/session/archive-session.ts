@@ -99,7 +99,14 @@ export async function archiveCloudSession(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
   owner: Owner,
-  options: { requireSnapshot?: boolean } = {},
+  options: {
+    requireSnapshot?: boolean;
+    /** Delete the session's own box once its Snapshot is saved, rather than
+     *  pause it: one archived by Outrunner itself (an automation's superseded
+     *  review), which Restore, if ever, rebuilds from the Snapshot. A paused
+     *  box keeps its whole disk on the sandbox account's storage quota. */
+    dropBox?: boolean;
+  } = {},
 ): Promise<ArchiveResult> {
   if (!ARCHIVABLE.includes(workspace.status)) {
     return { ok: false, reason: "failed", status: 409, error: "Only an active, paused or failed session can be archived." };
@@ -224,7 +231,7 @@ export async function archiveCloudSession(
   if (!completed) return { ok: false, reason: "reconcile" };
   if (save.saved) {
     // The last session off its box frees it: paused now, not when idle.
-    after(() => releaseWorkspaceBox(provider, workspace, false));
+    after(() => releaseWorkspaceBox(provider, workspace, false, { dropBox: options.dropBox }));
     return { ok: true };
   }
   // Out of reach: its own box is paused, its disk kept, unless bringBack had

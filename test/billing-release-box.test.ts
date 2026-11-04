@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { boxNeeded, deleteOwnBox, releaseBoxIfUnused, type ReleaseBoxDeps } from "@/lib/billing/release-box";
+import { boxNeeded, deleteOwnBox, ownBoxDeleted, releaseBoxIfUnused, type ReleaseBoxDeps } from "@/lib/billing/release-box";
 import type { RuntimeComputerStatus, WorkspaceStatus } from "@/lib/runtime/types";
 
 const NOW = new Date("2026-10-22T12:00:00Z");
@@ -100,4 +100,15 @@ test("a box that won't delete stays metered: its interval is left open", async (
     /Daytona said no/,
   );
   assert.deepEqual(log, []);
+});
+
+test("a session's own box is deleted when it ends, is archived by Outrunner, or can't be paused; else paused", () => {
+  assert.equal(ownBoxDeleted({ ended: true, pausesBoxes: true }), true);
+  // An automation's superseded review: its Snapshot is saved, and a paused box
+  // would hold its whole disk on the shared storage quota.
+  assert.equal(ownBoxDeleted({ ended: false, dropBox: true, pausesBoxes: true }), true);
+  assert.equal(ownBoxDeleted({ ended: false, pausesBoxes: false }), true);
+  // Archived by its user: paused, so Restore brings it back on its disk.
+  assert.equal(ownBoxDeleted({ ended: false, pausesBoxes: true }), false);
+  assert.equal(ownBoxDeleted({ ended: false, dropBox: false, pausesBoxes: true }), false);
 });
