@@ -53,6 +53,20 @@ export function safeFilename(name: string): string {
 }
 
 /**
+ * Where an attachment row's bytes are, when its `storage_path` is where
+ * createAttachment (lib/db/attachments.ts) put them,
+ * `uploads/<owner>/<id>/<name>`; null for any other path. The row is its
+ * owner's to update under RLS, the bytes are read and removed with the
+ * service role: a path rewritten to another user's object must not be.
+ */
+export function attachmentObjectPath(row: { id: string; owner_id: string; storage_path: string }): string | null {
+  const prefix = `uploads/${row.owner_id}/${row.id}/`;
+  if (!row.storage_path.startsWith(prefix)) return null;
+  const name = row.storage_path.slice(prefix.length);
+  return name !== "" && name === safeFilename(name) ? row.storage_path : null;
+}
+
+/**
  * Keep names unique within one message, so two files both called
  * `screenshot.png` do not overwrite each other on the box.
  */

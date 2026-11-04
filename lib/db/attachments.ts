@@ -9,7 +9,7 @@
 
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 
-import { safeFilename } from "@/lib/runtime/attachments";
+import { attachmentObjectPath, safeFilename } from "@/lib/runtime/attachments";
 
 export const ATTACHMENT_BUCKET = "attachments";
 
@@ -25,6 +25,7 @@ export type Attachment = {
 
 type Row = {
   id: string;
+  owner_id: string;
   filename: string;
   content_type: string;
   size_bytes: number;
@@ -46,7 +47,7 @@ function toAttachment(row: Row): Attachment {
 }
 
 const COLUMNS =
-  "id, filename, content_type, size_bytes, storage_path, workspace_id, materialized_at";
+  "id, owner_id, filename, content_type, size_bytes, storage_path, workspace_id, materialized_at";
 
 /**
  * Store one uploaded file: bytes to the bucket, then the row.
@@ -89,7 +90,11 @@ export async function createAttachment(
   return toAttachment(data as Row);
 }
 
-/** Fetch attachments by id, restricted to the caller's own rows by RLS. */
+/**
+ * Fetch attachments by id, restricted to the caller's own rows by RLS. A row
+ * whose path isn't its own upload's (attachmentObjectPath) is left out, as
+ * if it weren't there: its bytes are read and removed by that path.
+ */
 export async function getAttachments(ids: string[]): Promise<Attachment[]> {
   if (ids.length === 0) return [];
   const supabase = await createSupabaseServerClient();
@@ -99,7 +104,7 @@ export async function getAttachments(ids: string[]): Promise<Attachment[]> {
     .in("id", ids);
 
   if (error) throw error;
-  return (data as Row[]).map(toAttachment);
+  return (data as Row[]).filter((row) => attachmentObjectPath(row) !== null).map(toAttachment);
 }
 
 /** The bytes of one attachment, for writing onto a box. */
