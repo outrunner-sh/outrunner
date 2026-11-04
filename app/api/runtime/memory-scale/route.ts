@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { sessionPlan } from "@/lib/billing/entitlements";
 import { claimLease } from "@/lib/billing/metering-store";
+import { openAgentSecretOrNull } from "@/lib/db/computer-secret";
 import { ownSandboxKeys } from "@/lib/db/credentials";
 import { memberRole } from "@/lib/db/orgs";
 import { boxSize } from "@/lib/runtime/box-sizes";
@@ -29,7 +30,11 @@ export async function POST(request: Request) {
         // deployment's provider, as it does in the rest of its lifecycle.
         const name = data?.provider ?? getRuntimeProvider().name;
         if (name !== "daytona" && name !== "user-daytona") return null;
-        return data ? { id: data.id, ownerId: data.owner_id, orgId: data.org_id, agentSecret: data.agent_secret } : null;
+        // Sealed at rest (lib/db/computer-secret.ts): the box signs with the
+        // secret itself, as it does every other route's request.
+        return data
+          ? { id: data.id, ownerId: data.owner_id, orgId: data.org_id, agentSecret: openAgentSecretOrNull(data.agent_secret, data.id) }
+          : null;
       },
       isMember: async (computer) => (await memberRole(computer.orgId, computer.ownerId)) !== null,
       claim: (sandboxId) => claimLease(`memory-scale:${sandboxId}`, 90),
