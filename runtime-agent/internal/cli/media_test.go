@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -390,5 +391,51 @@ func TestGIFChecksItsArgumentsBeforeFFmpeg(t *testing.T) {
 	}
 	if code, _, stderr := run(t, "media", "gif", filepath.Join(t.TempDir(), "missing.mp4")); code != 1 || !strings.Contains(stderr, "can't read") || strings.Contains(stderr, "ffmpeg") {
 		t.Fatalf("a missing recording: exit %d, %q", code, stderr)
+	}
+}
+
+func TestAFailedGIFLeavesNoFileBehind(t *testing.T) {
+	in := recording(t)
+	out := GIFPath(in)
+	old := runFFmpeg
+	t.Cleanup(func() { runFFmpeg = old })
+
+	// ffmpeg failing part way, as on a --start past the recording's end.
+	runFFmpeg = func(_ context.Context, args []string) error {
+		_ = os.WriteFile(args[len(args)-1], nil, 0o644)
+		return errors.New("ffmpeg: exit status 234: Error writing trailer: Invalid argument")
+	}
+	_, err := MakeGIF(context.Background(), in, out, GIFOptions{Start: 10}, nil)
+	if err == nil || !strings.Contains(err.Error(), "--start 10s") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Fatalf("left %s behind: %v", out, statErr)
+	}
+
+	// ffmpeg succeeding with no frames.
+	runFFmpeg = func(_ context.Context, args []string) error {
+		return os.WriteFile(args[len(args)-1], nil, 0o644)
+	}
+	if _, err := MakeGIF(context.Background(), in, out, GIFOptions{}, nil); err == nil || !strings.Contains(err.Error(), "empty GIF") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Fatalf("left an empty %s behind: %v", out, statErr)
+	}
+}
+
+func TestUploadingAGIFTooLargeForGitHubWarns(t *testing.T) {
+	newFakeBox(t)
+	big := filepath.Join(t.TempDir(), "flow.gif")
+	_ = os.WriteFile(big, append([]byte("GIF89a"), bytes.Repeat([]byte{0}, MaxGIFBytes)...), 0o644)
+	code, _, stderr := run(t, "media", "upload", big, "--name", "Checkout flow on a phone")
+	if code != 0 || !strings.Contains(stderr, "shows it broken") {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	small := filepath.Join(t.TempDir(), "small.gif")
+	_ = os.WriteFile(small, []byte("GIF89a"), 0o644)
+	if _, _, stderr := run(t, "media", "upload", small, "--name", "Checkout flow on a phone"); strings.Contains(stderr, "shows it broken") {
+		t.Fatalf("warned of a small GIF: %q", stderr)
 	}
 }

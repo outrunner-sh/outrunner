@@ -153,16 +153,28 @@ func MakeGIF(ctx context.Context, input, output string, o GIFOptions, progress i
 	if _, err := os.Stat(input); err != nil {
 		return GIFResult{}, fmt.Errorf("can't read %s: %w", input, err)
 	}
+	// A failed try leaves no GIF behind: ffmpeg's half-written (often empty)
+	// file would only be refused later, at upload, far from the cause.
+	fail := func(err error) (GIFResult, error) {
+		_ = os.Remove(output)
+		if o.Start > 0 {
+			err = fmt.Errorf("%w (is the recording longer than --start %gs?)", err, o.Start)
+		}
+		return GIFResult{}, err
+	}
 	var size int64
 	for i, step := range gifSteps(o.FPS, o.Width) {
 		if err := runFFmpeg(ctx, gifArgs(input, output, o, step)); err != nil {
-			return GIFResult{}, err
+			return fail(err)
 		}
 		info, err := os.Stat(output)
 		if err != nil {
-			return GIFResult{}, fmt.Errorf("ffmpeg made no GIF: %w", err)
+			return fail(fmt.Errorf("ffmpeg made no GIF: %w", err))
 		}
 		size = info.Size()
+		if size == 0 {
+			return fail(errors.New("ffmpeg made an empty GIF: no frames in what --start and --duration pick"))
+		}
 		if size < MaxGIFBytes {
 			return GIFResult{Path: output, Bytes: size, FPS: step.fps, Width: step.width}, nil
 		}
