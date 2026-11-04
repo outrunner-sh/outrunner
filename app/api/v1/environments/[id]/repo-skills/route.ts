@@ -1,6 +1,5 @@
 import { listRepoSkillsApi } from "@/lib/api/environment-skills";
-import { projectOutsideOrg } from "@/lib/api/environment-org.deps";
-import { apiRoute } from "@/lib/api/handler";
+import { projectApiRoute } from "@/lib/api/environment-org.deps";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -11,5 +10,5 @@ export const maxDuration = 60;
  *  (docs/api.md) */
 export async function GET(request: Request, context: RouteContext) {
   const { id } = await context.params;
-  return apiRoute(request, async (api) => (await projectOutsideOrg(api, id)) ?? listRepoSkillsApi(api, id));
+  return projectApiRoute(request, id, (api) => listRepoSkillsApi(api, id));
 }

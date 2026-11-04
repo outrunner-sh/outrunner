@@ -3,14 +3,15 @@
  * org the call is in (lib/api/auth.ts). The project page's own routes, which
  * the API's project endpoints call as the key's maker, check what the maker
  * may do in any of their orgs; a key is for one org, so a project of
- * another is no project of the key's. The lookup is environment-org.deps.ts's.
+ * another is no project of the key's. The lookup, and the apiRoute every
+ * such endpoint answers through, are environment-org.deps.ts's.
  */
 
 import { apiError } from "@/lib/api/errors";
 import type { ApiContext } from "@/lib/api/handler";
 import { isUuid } from "@/lib/ids";
 
-/** The project as its maker may see it (getEnvironment), or null. */
+/** The project's org as its maker may see it, or null. */
 export type FindProject = (userId: string, id: string) => Promise<{ orgId: string } | null>;
 
 /** Null when the project is the call's org's (or `id` isn't an id at all,
