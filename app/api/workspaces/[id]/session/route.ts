@@ -13,6 +13,7 @@ import { readyChatRelaunch, readyRelaunch } from "@/lib/runtime/relaunch.deps";
 import { OutdatedComputerError, signInFailure } from "@/lib/runtime/session-auth";
 import { boxUpgrade } from "@/lib/runtime/session-environment";
 import type { Workspace } from "@/lib/runtime/types";
+import { sessionGoneMessage } from "@/lib/session/attach-refusal";
 import { bringBack } from "@/lib/session/bring-back-box";
 import { bringBackFailure } from "@/lib/session/box-failure";
 import { agentChat, chatMissingOnBox, requestedChat } from "@/lib/session/chat-target";
@@ -62,6 +63,12 @@ export async function POST(request: Request, context: RouteContext) {
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
+
+  // Archived or deleted (in another tab, by an automation's next run, by a
+  // Mission): a tab still showing it must not bring its box back and start
+  // Claude on it, where nothing done would be in the Snapshot Restore uses.
+  const gone = sessionGoneMessage(workspace.status);
+  if (gone) return NextResponse.json({ error: gone, status: workspace.status }, { status: 409 });
 
   // The chat the page shows (?chat=): its main one unless it names another.
   const named = await requestedChat(request, workspace);
