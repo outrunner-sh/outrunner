@@ -1436,12 +1436,11 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 		return writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(seq)})
 	})
 	go coalescer.Run()
-	defer func() {
-		coalescer.Stop()
+	defer coalescer.Close(func(seq func() int) {
 		if output := redactor.Flush(); output != "" {
-			_ = writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(coalescer.NextSeq())})
+			_ = writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(seq())})
 		}
-	}()
+	})
 
 	go pumpOut(sess, coalescer, writeFrame, func() bool {
 		return s.ws.SessionAlive(context.Background(), key)
