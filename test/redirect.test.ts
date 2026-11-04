@@ -46,3 +46,9 @@ test("safeRelativePath never turns a dot segment into another origin", () => {
     assert.equal(kept, next);
   }
 });
+
+test("safeRelativePath refuses control characters even on this origin", () => {
+  assert.equal(safeRelativePath("/a\nb"), "/");
+  assert.equal(safeRelativePath("/a\tb"), "/");
+  assert.equal(safeRelativePath("/a\u0000b"), "/");
+});

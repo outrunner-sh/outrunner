@@ -27,6 +27,10 @@ export function safeRelativePath(
     return fallback;
   }
 
+  // Control characters never belong in a path, and a Location carrying a
+  // newline is one Node refuses to send (a 500 rather than a redirect).
+  if (/[\u0000-\u001f\u007f]/.test(next)) return fallback;
+
   // A browser reads a Location the way URL does: it drops tabs and newlines
   // and turns `\` into `/`, so `/<tab>/evil.com` is `//evil.com` to it. Parsed
   // here the same way, it must still be this origin. It goes on as given, not
