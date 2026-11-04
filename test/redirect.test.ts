@@ -36,3 +36,13 @@ test("safeRelativePath keeps a path's query and hash", () => {
   assert.equal(safeRelativePath("/invite/abc?org=x#top"), "/invite/abc?org=x#top");
   assert.equal(safeRelativePath("/%09/evil.com"), "/%09/evil.com");
 });
+
+test("safeRelativePath never turns a dot segment into another origin", () => {
+  // Each is this origin's path `//evil.com` as given; normalised, it would be
+  // `//evil.com`, another origin.
+  for (const next of ["/.//evil.com", "/a/..//evil.com", "/%2e//evil.com", "/./\\evil.com"]) {
+    const kept = safeRelativePath(next);
+    assert.equal(new URL(kept, "https://app.example").origin, "https://app.example", next);
+    assert.equal(kept, next);
+  }
+});

@@ -29,13 +29,13 @@ export function safeRelativePath(
 
   // A browser reads a Location the way URL does: it drops tabs and newlines
   // and turns `\` into `/`, so `/<tab>/evil.com` is `//evil.com` to it. Parsed
-  // here the same way, it must still be this origin, and goes on as parsed.
-  let url: URL;
+  // here the same way, it must still be this origin. It goes on as given, not
+  // as parsed: parsing also resolves dot segments, and `/.//evil.com`, this
+  // origin's path `//evil.com`, would come out as `//evil.com` itself.
   try {
-    url = new URL(next, SELF);
+    if (new URL(next, SELF).origin !== SELF) return fallback;
   } catch {
     return fallback;
   }
-  if (url.origin !== SELF) return fallback;
-  return `${url.pathname}${url.search}${url.hash}`;
+  return next;
 }
