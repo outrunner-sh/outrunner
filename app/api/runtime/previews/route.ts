@@ -3,9 +3,11 @@ import { NextResponse } from "next/server";
 import { openAgentSecretOrNull } from "@/lib/db/computer-secret";
 import { memberRole } from "@/lib/db/orgs";
 import { workspaceForPreview } from "@/lib/db/previews";
+import { readCappedBody } from "@/lib/http/capped-body";
 import { isUuid } from "@/lib/ids";
 import { previewRequestValid } from "@/lib/previews/box-request";
 import { createSessionPreview } from "@/lib/previews/manage";
+import { boxHostsSession } from "@/lib/runtime/box-session";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** A request's body is a session, a port and a label. */
@@ -21,8 +23,9 @@ const MAX_BODY_BYTES = 4096;
  */
 export async function POST(request: Request) {
   const sandboxId = request.headers.get("x-outrunner-sandbox");
-  const body = await request.text();
-  if (!sandboxId || body.length > MAX_BODY_BYTES) {
+  // Read no further than a box's request goes: anyone can post here.
+  const body = await readCappedBody(request, MAX_BODY_BYTES);
+  if (!sandboxId || body === null) {
     return NextResponse.json({ error: "Not a box's request." }, { status: 400 });
   }
 
@@ -55,7 +58,7 @@ export async function POST(request: Request) {
   }
   const workspace = typeof asked.workspaceId === "string" && isUuid(asked.workspaceId) ? await workspaceForPreview(asked.workspaceId) : null;
   // A session of this box's: its own, or one the box records it hosts.
-  if (!workspace || (computer.workspace_id !== workspace.id && workspace.computerId !== computer.id)) {
+  if (!workspace || !boxHostsSession({ id: computer.id, workspaceId: computer.workspace_id }, workspace)) {
     return NextResponse.json({ error: "That session isn't on this box." }, { status: 404 });
   }
 

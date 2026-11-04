@@ -270,8 +270,21 @@ func TestSessionEnvironmentExcludesAgentControlSecrets(t *testing.T) {
 	if strings.Contains(got, "RUNTIME_AGENT_SECRET") || strings.Contains(got, "RUNTIME_AGENT_ROOT") || strings.Contains(got, "PORT=8080") {
 		t.Fatalf("agent control variables leaked to session environment: %q", got)
 	}
-	if !strings.Contains(got, "CLAUDE_CODE_OAUTH_TOKEN=claude-secret") || len(secrets) != 1 || secrets[0] != "claude-secret" {
+	if !strings.Contains(got, "CLAUDE_CODE_OAUTH_TOKEN=claude-secret") || !slices.Contains(secrets, "claude-secret") {
 		t.Fatalf("Claude credential was not retained safely: env=%q secrets=%q", got, secrets)
+	}
+	// Masked where a session prints it (its recording, its conversation),
+	// as the live terminal masks it.
+	if !slices.Contains(secrets, "control-secret") || len(secrets) != 2 {
+		t.Fatalf("agent secret not among the secrets to mask: %q", secrets)
+	}
+}
+
+func TestRedactionSecretsMaskTheAgentSecret(t *testing.T) {
+	s := NewServiceWithSessions(t.TempDir(), nil)
+	s.env, s.secrets = sessionEnvironment([]string{"PATH=/usr/bin", "RUNTIME_AGENT_SECRET=control-secret"})
+	if !slices.Contains(s.RedactionSecrets(), "control-secret") {
+		t.Fatalf("recordings would show the agent secret: %q", s.RedactionSecrets())
 	}
 }
 
