@@ -116,4 +116,6 @@ test("a failed refetch during a reconnect carries the loop on, on the same budge
   // A box that's gone, or an agent that didn't start: retrying can't help.
   assert.deepEqual(attachFailurePlan(2, "box-gone"), { retry: false });
   assert.deepEqual(attachFailurePlan(2, "session-not-started"), { retry: false });
+  // A session archived from another tab: a stale tab stops at once.
+  assert.deepEqual(attachFailurePlan(2, "session-ended"), { retry: false });
 });
