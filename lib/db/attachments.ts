@@ -104,7 +104,14 @@ export async function getAttachments(ids: string[]): Promise<Attachment[]> {
     .in("id", ids);
 
   if (error) throw error;
-  return (data as Row[]).filter((row) => attachmentObjectPath(row) !== null).map(toAttachment);
+  return (data as Row[])
+    .filter((row) => {
+      if (attachmentObjectPath(row) !== null) return true;
+      // Only a hand-written path gets here: worth seeing, not a plain miss.
+      console.warn(`Ignoring attachment ${row.id}: its storage_path isn't its own upload's`);
+      return false;
+    })
+    .map(toAttachment);
 }
 
 /** The bytes of one attachment, for writing onto a box. */

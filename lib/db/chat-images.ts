@@ -39,8 +39,12 @@ export async function attachmentImageBytes(workspaceId: string, name: string): P
     .limit(5);
   if (error) throw error;
   const row = (data ?? []).find((r) => attachmentShortId(r.id).toLowerCase() === short);
-  const path = row ? attachmentObjectPath(row) : null;
-  if (!path) return null;
+  if (!row) return null;
+  const path = attachmentObjectPath(row);
+  if (!path) {
+    console.warn(`Ignoring attachment ${row.id}: its storage_path isn't its own upload's`);
+    return null;
+  }
   return download(path);
 }
 
