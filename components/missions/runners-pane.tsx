@@ -344,6 +344,7 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
             }}
             disabled={!canMessage}
             rows={2}
+            aria-label={`Message ${runner.name}`}
             placeholder={canMessage ? `Message ${runner.name}…` : "Open its session to wake or restore it"}
             className="block w-full resize-none bg-transparent px-3 pt-2 text-[13px] text-[#ededed] outline-none placeholder:text-[#5f5f5f] disabled:cursor-not-allowed"
           />

@@ -37,7 +37,7 @@ export function HomeUserMenu({
   const label = ownerLogin || "signed in";
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left outline-none transition-colors hover:bg-accent">
+      <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">
         <Avatar url={ownerAvatarUrl} />
         <span className="truncate text-[13px] text-foreground">{label}</span>
       </DropdownMenuTrigger>

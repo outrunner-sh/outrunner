@@ -242,6 +242,7 @@ export function ReviewChat({ repo, number, canChange }: { repo: string; number: 
               void primary();
             }
           }}
+          aria-label={intent === "change" && canChange ? "What should change?" : "Ask about this PR"}
           placeholder={intent === "change" && canChange ? "What should change?" : "Ask about this PR"}
           className="min-h-16 text-[13px]"
           disabled={busy !== null}
