@@ -130,7 +130,7 @@ func label(w Workspace) string {
 }
 
 const listUsage = `Usage: outrunner list [--status <status>] [--source app|slack|automation|github|api]
-                      [--user me|<id>] [--project <id>] [--page <n>] [--per-page <n>] [--org <name>] [--json]
+                      [--user me|<id>] [--project <owner/name | id>] [--page <n>] [--per-page <n>] [--org <name>] [--json]
 
 Lists your sessions in the org, newest first (an org's admins see the org's).
 `
@@ -140,7 +140,7 @@ func listCommand(ctx context.Context, base string, config Config, args []string,
 	status := f.set.String("status", "", "only sessions in this status (ready, preparing, archived, …)")
 	source := f.set.String("source", "", "only sessions started from here")
 	user := f.set.String("user", "", "only this user's sessions (me, or a user id)")
-	project := f.set.String("project", "", "only sessions on this repository (its id)")
+	project := f.set.String("project", "", "only sessions on this repository (owner/name, or its id)")
 	page := f.set.Int("page", 1, "the page")
 	perPage := f.set.Int("per-page", 20, "sessions a page, up to 100")
 	if _, code := f.parse(args); code >= 0 {
@@ -150,8 +150,17 @@ func listCommand(ctx context.Context, base string, config Config, args []string,
 	if code >= 0 {
 		return code
 	}
+	// The API takes a repository's id; `owner/name` is looked up, as
+	// `create --repo` does.
+	projectID := strings.TrimSpace(*project)
+	if projectID != "" {
+		var err error
+		if projectID, err = resolveRepo(ctx, api, projectID); err != nil {
+			return failed(stderr, err)
+		}
+	}
 	query := url.Values{"page": {strconv.Itoa(*page)}, "per_page": {strconv.Itoa(*perPage)}}
-	for key, value := range map[string]string{"status": *status, "source": *source, "user_id": *user, "project_id": *project} {
+	for key, value := range map[string]string{"status": *status, "source": *source, "user_id": *user, "project_id": projectID} {
 		if value != "" {
 			query.Set(key, value)
 		}
