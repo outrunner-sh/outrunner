@@ -10,7 +10,8 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("the repository picker opens inside the screen", async ({ page }) => {
+for (const narrow of [null, 360]) test(`the repository picker opens inside the screen${narrow ? ` at ${narrow}px` : ""}`, async ({ page }) => {
+  if (narrow) await page.setViewportSize({ width: narrow, height: 780 });
   await page.goto("/new");
   await expect(page.getByTestId("fixture-ready")).toHaveAttribute("data-ready", "true", { timeout: 15_000 });
   await page.getByRole("button", { name: /outrunner/ }).first().click();
