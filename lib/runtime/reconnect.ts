@@ -1,3 +1,5 @@
+import { BOX_GONE, SESSION_NOT_STARTED } from "@/lib/session/session-codes";
+
 /**
  * Reconnect backoff policy for the Conversation event WebSocket.
  *
@@ -34,6 +36,19 @@ export function reconnectPlan(attempt: number): ReconnectPlan {
   if (attempt > MAX_RECONNECT_ATTEMPTS) return { retry: false };
   const delayMs = Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 1), RECONNECT_MAX_MS);
   return { retry: true, delayMs };
+}
+
+/**
+ * The next step after a /session refetch that the reconnect loop made has
+ * failed (a 502 from the box's proxy for a few seconds, a box still settling).
+ * The socket's close drives the loop, and with the refetch failed no socket
+ * opens to close, so the failure itself takes the next attempt from the same
+ * budget. `attempt` counts it, as reconnectPlan's does. A box that's gone, or
+ * an agent that didn't start, says so instead: retrying can't help.
+ */
+export function attachFailurePlan(attempt: number, code: string | null): ReconnectPlan {
+  if (code === BOX_GONE || code === SESSION_NOT_STARTED) return { retry: false };
+  return reconnectPlan(attempt);
 }
 
 /**

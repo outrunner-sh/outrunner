@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
-import { dropNarration, reconnectPlan, WS_OPEN, type WsAction, wsReducer, type WsStatus } from "@/lib/runtime/reconnect";
+import { attachFailurePlan, dropNarration, reconnectPlan, WS_OPEN, type WsAction, wsReducer, type WsStatus } from "@/lib/runtime/reconnect";
 import { StreamProtocolError } from "@/lib/runtime/session-client";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
 import { openStream } from "@/lib/session/kept-streams";
@@ -67,6 +67,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     urls,
     status: attachmentStatus,
     error: attachmentError,
+    errorCode: attachmentErrorCode,
     attachId,
     reconnect,
     refresh,
@@ -203,6 +204,24 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     // `urls` follows `attachId`: new URLs always come with a new attachId.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attachId, attachmentStatus, dispatch, reconnect, urls?.eventsUrl, workspaceId]);
+
+  // A refetch of the session's URLs that a reconnect made, failed: the
+  // effect above runs only while attached, so no socket would close again to
+  // carry the loop on, and it would stop after one try (the user left on an
+  // error in a focused tab until they click). Carry it on from here, on the
+  // same budget. A first attach that failed (no drop before it) is the
+  // page's to show, as before.
+  useEffect(() => {
+    if (attachmentStatus !== "error" || reconnectAttemptsRef.current === 0) return;
+    const attempt = (reconnectAttemptsRef.current += 1);
+    const plan = attachFailurePlan(attempt, attachmentErrorCode);
+    if (!plan.retry) {
+      dispatch({ kind: "gave-up" });
+      return;
+    }
+    const timer = setTimeout(reconnect, plan.delayMs);
+    return () => clearTimeout(timer);
+  }, [attachmentStatus, attachmentErrorCode, reconnect, dispatch]);
 
   // Idle recovery. A backgrounded/hidden webview (the desktop app hides to the
   // tray) can have its socket suspended, so every backoff retry fails and we

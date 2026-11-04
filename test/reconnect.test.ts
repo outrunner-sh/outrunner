@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  attachFailurePlan,
   dropNarration,
   MAX_RECONNECT_ATTEMPTS,
   RECONNECT_BASE_MS,
@@ -104,4 +105,15 @@ test("a reconnected socket ends the drop as it opens, before any frame", () => {
     { kind: "opened" },
   );
   assert.deepEqual(recovered, { ...WS_OPEN, live: true, protocolErrorRef: "R1" });
+});
+
+test("a failed refetch during a reconnect carries the loop on, on the same budget", () => {
+  // A 502 or a box still settling: the next attempt comes from the budget.
+  assert.deepEqual(attachFailurePlan(2, null), reconnectPlan(2));
+  assert.deepEqual(attachFailurePlan(3, "box-restore-failed"), reconnectPlan(3));
+  // The budget still ends it.
+  assert.deepEqual(attachFailurePlan(MAX_RECONNECT_ATTEMPTS + 1, null), { retry: false });
+  // A box that's gone, or an agent that didn't start: retrying can't help.
+  assert.deepEqual(attachFailurePlan(2, "box-gone"), { retry: false });
+  assert.deepEqual(attachFailurePlan(2, "session-not-started"), { retry: false });
 });
