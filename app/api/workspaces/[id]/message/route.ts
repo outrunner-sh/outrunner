@@ -97,10 +97,10 @@ export async function POST(request: Request, context: RouteContext) {
   const gate = await gateFirstPrompt(
     chat ? null : firstPromptKey(body?.firstPromptKey),
     {
-      claim: (key) => claimFirstPrompt(workspace.id, key, abandonedBefore(new Date())),
-      renew: (key, claimedAt) => renewFirstPrompt(workspace.id, key, claimedAt),
-      sent: (key, claimedAt) => markFirstPromptSent(workspace.id, key, claimedAt),
-      release: (key, claimedAt) => releaseFirstPrompt(workspace.id, key, claimedAt),
+      claim: (key) => claimFirstPrompt(workspace.id, workspace.ownerId, key, abandonedBefore(new Date())),
+      renew: (key, claimedAt) => renewFirstPrompt(workspace.id, workspace.ownerId, key, claimedAt),
+      sent: (key, claimedAt) => markFirstPromptSent(workspace.id, workspace.ownerId, key, claimedAt),
+      release: (key, claimedAt) => releaseFirstPrompt(workspace.id, workspace.ownerId, key, claimedAt),
     },
     workspace.id,
   );
@@ -234,7 +234,7 @@ export async function POST(request: Request, context: RouteContext) {
   // Working, for every client at once, and watched until its turn ends
   // (lib/session/watch.ts): where it stands in the sidebar follows.
   after(() => watchSent(workspace.id, workspace.ownerId));
-  if (asked && asked !== workspace.mode) await recordWorkspaceMode(workspace.id, asked);
+  if (asked && asked !== workspace.mode) await recordWorkspaceMode(workspace.id, workspace.ownerId, asked);
   // A session started from Slack, in step with its thread: what's typed here
   // goes there too, and the reply with it. Not what came from the thread, or
   // from GitHub, which no one typed here.

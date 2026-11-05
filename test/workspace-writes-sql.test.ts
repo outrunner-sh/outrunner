@@ -1,10 +1,11 @@
 /**
- * The workspace/runtime_computer write split (20261105100000), on a real
+ * The workspace/runtime_computer write split (20261106100000), on a real
  * Postgres: the signed-in owner keeps their reads, their writes are refused
  * (the cross-tenant hole this closed: an owner could repoint
  * daytona_sandbox_id at another user's sandbox and open that box's desktop),
  * the service role keeps writing, and the box claims — still called by the
  * signed-in user — work as SECURITY DEFINER with their own auth.uid() checks.
+ * The wake publisher is the server's alone, and states the row's owner.
  *
  * CI supplies the shared server (MISSIONS_PG, or WORKSPACE_WRITES_PG); locally
  * this is skipped without one.
@@ -124,7 +125,7 @@ before(() => {
       'sandbox-pooled', false
     );
   `);
-  sql(readFileSync("supabase/migrations/20261105100000_workspaces_server_writes.sql", "utf8"));
+  sql(readFileSync("supabase/migrations/20261106100000_workspaces_server_writes.sql", "utf8"));
 });
 
 after(() => {
@@ -206,10 +207,32 @@ test("SQL: the claims still work for the signed-in owner, and only for their own
   );
 });
 
-test("SQL: a wake publishes only its owner's box", { skip }, () => {
+test("SQL: the wake pivot — claim your own row, then 'complete its wake' onto another's box — is shut", { skip }, () => {
   resetWake();
+  // The attack this regression-tests: claim your own session's box (its row
+  // goes to provisioning under your ownership), then "complete its wake"
+  // with a victim's sandbox id. Both steps are the row's owner's to take —
+  // so the RPC is not the owner's to call: no signed-in user may, whatever
+  // row they name.
   assert.equal(
-    as("authenticated", OTHER, `select complete_pooled_warmup('${POOLED_COMPUTER}', 'sandbox-new', 'daytona', 'https://agent.new', null)`),
+    as("authenticated", OWNER, `select should_provision from claim_workspace_computer('${WORKSPACE}', 'secret', null, null)`),
+    "t",
+  );
+  failsAs("authenticated", OWNER, `select complete_pooled_warmup('${POOLED_COMPUTER}', '${OWNER}', 'sandbox-stolen', 'daytona', 'https://stolen.example', null)`,
+    /permission denied for function complete_pooled_warmup/);
+  // Nothing was written: the claimed row still records no box at all.
+  assert.equal(
+    sql(`select coalesce(daytona_sandbox_id, 'none') from runtime_computers where workspace_id = '${WORKSPACE}' and status = 'provisioning'`),
+    "none",
+  );
+  assert.equal(sql(`select daytona_sandbox_id from runtime_computers where id = '${POOLED_COMPUTER}'`), "sandbox-pooled");
+});
+
+test("SQL: the server publishes a wake, naming the row's owner", { skip }, () => {
+  resetWake();
+  // A publish that names the wrong owner is a no-op, even from the server.
+  assert.equal(
+    as("service_role", OWNER, `select complete_pooled_warmup('${POOLED_COMPUTER}', '${OTHER}', 'sandbox-new', 'daytona', 'https://agent.new', null)`),
     "f",
   );
   assert.equal(
@@ -217,11 +240,20 @@ test("SQL: a wake publishes only its owner's box", { skip }, () => {
     "sandbox-pooled:",
   );
   assert.equal(
-    as("authenticated", OWNER, `select complete_pooled_warmup('${POOLED_COMPUTER}', 'sandbox-new', 'daytona', 'https://agent.new', null)`),
+    as("service_role", OWNER, `select complete_pooled_warmup('${POOLED_COMPUTER}', '${OWNER}', 'sandbox-new', 'daytona', 'https://agent.new', null)`),
     "t",
   );
   assert.equal(
     sql(`select status || ':' || agent_base_url from runtime_computers where id = '${POOLED_COMPUTER}'`),
     "ready:https://agent.new",
   );
+});
+
+test("SQL: a warmup claim stays on a project of the caller's org", { skip }, () => {
+  // The definer claim no longer leans on RLS to hide other orgs' projects;
+  // its own lookup must refuse them.
+  failsAs("authenticated", OTHER, `select * from claim_pooled_warmup('${PROJECT}', 'daytona', null, null)`,
+    /project not found/);
+  // The owner's own project is theirs to warm.
+  as("authenticated", OWNER, `select * from claim_pooled_warmup('${PROJECT}', 'daytona', null, null)`);
 });

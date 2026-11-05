@@ -269,12 +269,13 @@ export async function liveWorkspaceOnBranch(
  * so two first prompts racing cannot overwrite each other. True when this call
  * set it.
  */
-export async function setWorkspaceTitleIfUnset(id: string, title: string): Promise<boolean> {
+export async function setWorkspaceTitleIfUnset(id: string, ownerId: string, title: string): Promise<boolean> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("workspaces")
     .update({ title })
     .eq("id", id)
+    .eq("owner_id", ownerId)
     .is("title", null)
     .select("id");
   if (error) throw error;
@@ -289,13 +290,14 @@ export async function setWorkspaceTitleIfUnset(id: string, title: string): Promi
  * going, "other" when another key holds it. Conditional, as the title is, so
  * two sends racing can't both claim it.
  */
-export async function claimFirstPrompt(id: string, key: string, abandonedBefore: string): Promise<FirstPromptClaim> {
+export async function claimFirstPrompt(id: string, ownerId: string, key: string, abandonedBefore: string): Promise<FirstPromptClaim> {
   const supabase = createSupabaseAdminClient();
   const claimedAt = new Date().toISOString();
   const { data, error } = await supabase
     .from("workspaces")
     .update({ first_prompt_key: key, first_prompt_claimed_at: claimedAt, first_prompt_sent_at: null })
     .eq("id", id)
+    .eq("owner_id", ownerId)
     .is("first_prompt_key", null)
     .select("id");
   if (error) throw error;
@@ -304,6 +306,7 @@ export async function claimFirstPrompt(id: string, key: string, abandonedBefore:
     .from("workspaces")
     .update({ first_prompt_claimed_at: claimedAt })
     .eq("id", id)
+    .eq("owner_id", ownerId)
     .eq("first_prompt_key", key)
     .is("first_prompt_sent_at", null)
     .lt("first_prompt_claimed_at", abandonedBefore)
@@ -324,11 +327,13 @@ export async function claimFirstPrompt(id: string, key: string, abandonedBefore:
 function ownClaim<Q extends { eq: (column: string, value: string) => Q; is: (column: string, value: null) => Q }>(
   query: Q,
   id: string,
+  ownerId: string,
   key: string,
   claimedAt: string,
 ): Q {
   return query
     .eq("id", id)
+    .eq("owner_id", ownerId)
     .eq("first_prompt_key", key)
     .eq("first_prompt_claimed_at", claimedAt)
     .is("first_prompt_sent_at", null);
@@ -336,12 +341,13 @@ function ownClaim<Q extends { eq: (column: string, value: string) => Q; is: (col
 
 /** Renew the claim `claimedAt` names, just before its prompt goes: its new
  *  token, or null when another request has taken it over. */
-export async function renewFirstPrompt(id: string, key: string, claimedAt: string): Promise<string | null> {
+export async function renewFirstPrompt(id: string, ownerId: string, key: string, claimedAt: string): Promise<string | null> {
   const supabase = createSupabaseAdminClient();
   const renewedAt = new Date().toISOString();
   const { data, error } = await ownClaim(
     supabase.from("workspaces").update({ first_prompt_claimed_at: renewedAt }),
     id,
+    ownerId,
     key,
     claimedAt,
   ).select("id");
@@ -350,11 +356,12 @@ export async function renewFirstPrompt(id: string, key: string, claimedAt: strin
 }
 
 /** The first prompt claimed under `claimedAt` reached the box: repeats are answered as sent. */
-export async function markFirstPromptSent(id: string, key: string, claimedAt: string): Promise<void> {
+export async function markFirstPromptSent(id: string, ownerId: string, key: string, claimedAt: string): Promise<void> {
   const supabase = createSupabaseAdminClient();
   const { error } = await ownClaim(
     supabase.from("workspaces").update({ first_prompt_sent_at: new Date().toISOString() }),
     id,
+    ownerId,
     key,
     claimedAt,
   );
@@ -362,11 +369,12 @@ export async function markFirstPromptSent(id: string, key: string, claimedAt: st
 }
 
 /** Let the claim go, as a send that failed does, so a retry with `key` sends. */
-export async function releaseFirstPrompt(id: string, key: string, claimedAt: string): Promise<void> {
+export async function releaseFirstPrompt(id: string, ownerId: string, key: string, claimedAt: string): Promise<void> {
   const supabase = createSupabaseAdminClient();
   const { error } = await ownClaim(
     supabase.from("workspaces").update({ first_prompt_key: null, first_prompt_claimed_at: null }),
     id,
+    ownerId,
     key,
     claimedAt,
   );
@@ -409,12 +417,13 @@ function workspaceColumns(patch: WorkspacePatch) {
   };
 }
 
-export async function updateWorkspace(id: string, patch: WorkspacePatch): Promise<void> {
+export async function updateWorkspace(id: string, ownerId: string, patch: WorkspacePatch): Promise<void> {
   const supabase = createSupabaseAdminClient();
   const { error } = await supabase
     .from("workspaces")
     .update(workspaceColumns(patch))
-    .eq("id", id);
+    .eq("id", id)
+    .eq("owner_id", ownerId);
 
   if (error) throw error;
 }
@@ -425,7 +434,7 @@ export async function updateWorkspace(id: string, patch: WorkspacePatch): Promis
  * a database from before the columns can't say so; that session relaunches
  * as one from before them does.
  */
-export async function recordWorkspaceModel(id: string, recorded: RecordedModel): Promise<void> {
+export async function recordWorkspaceModel(id: string, ownerId: string, recorded: RecordedModel): Promise<void> {
   const supabase = createSupabaseAdminClient();
   const { error } = await supabase
     .from("workspaces")
@@ -434,7 +443,8 @@ export async function recordWorkspaceModel(id: string, recorded: RecordedModel):
       model_id: recorded.model.id,
       model_effort: recorded.effort,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("owner_id", ownerId);
   if (error) console.warn(`Workspace ${id}: could not record its model ${recorded.model.provider}/${recorded.model.id}`, error);
 }
 
@@ -443,9 +453,13 @@ export async function recordWorkspaceModel(id: string, recorded: RecordedModel):
  * so it opens in it again. Best effort, as recordWorkspaceModel: the box has
  * it already, and a database from before the column keeps it there alone.
  */
-export async function recordWorkspaceMode(id: string, mode: SessionMode): Promise<void> {
+export async function recordWorkspaceMode(id: string, ownerId: string, mode: SessionMode): Promise<void> {
   const supabase = createSupabaseAdminClient();
-  const { error } = await supabase.from("workspaces").update({ session_mode: mode }).eq("id", id);
+  const { error } = await supabase
+    .from("workspaces")
+    .update({ session_mode: mode })
+    .eq("id", id)
+    .eq("owner_id", ownerId);
   if (error) console.warn(`Workspace ${id}: could not record its ${mode} mode`, error);
 }
 
@@ -456,6 +470,7 @@ export async function recordWorkspaceMode(id: string, mode: SessionMode): Promis
  */
 export async function transitionWorkspace(input: {
   id: string;
+  ownerId: string;
   from: WorkspaceStatus[];
   patch: WorkspacePatch & { status: WorkspaceStatus };
 }): Promise<Workspace | null> {
@@ -464,6 +479,7 @@ export async function transitionWorkspace(input: {
     .from("workspaces")
     .update(workspaceColumns(input.patch))
     .eq("id", input.id)
+    .eq("owner_id", input.ownerId)
     .in("status", input.from)
     .select("*")
     .maybeSingle();
@@ -737,12 +753,13 @@ export async function createPooledComputer(input: {
 
 /** Record the pooled box stopped and ready to take; false when its row is
  *  gone (swept as abandoned), so the box is its refill's to delete. */
-export async function markPooledReady(id: string, sandboxId: string): Promise<boolean> {
+export async function markPooledReady(id: string, ownerId: string, sandboxId: string): Promise<boolean> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("runtime_computers")
     .update({ status: "stopped", daytona_sandbox_id: sandboxId, error_message: null })
     .eq("id", id)
+    .eq("owner_id", ownerId)
     .eq("pooled", true)
     .select("id");
   if (error) throw error;
@@ -751,8 +768,11 @@ export async function markPooledReady(id: string, sandboxId: string): Promise<bo
 
 /** Publish an intent wake while its lease is live or after Send took it. If
  * expiry cleanup owns the row, persist the fresh endpoint without exposing
- * it until that provider pause succeeds or fails. */
+ * it until that provider pause succeeds or fails. The server's alone to
+ * call: the publish writes its arguments (a sandbox id!) into the row, so
+ * the database takes the row's owner as a separate check the caller states. */
 export async function completePooledWarmup(
+  ownerId: string,
   id: string,
   restored: {
     sandboxId: string;
@@ -761,9 +781,10 @@ export async function completePooledWarmup(
     timings: ProvisionTimings;
   },
 ): Promise<boolean> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.rpc("complete_pooled_warmup", {
     requested_computer_id: id,
+    expected_owner: ownerId,
     requested_sandbox_id: restored.sandboxId,
     requested_provider: restored.provider,
     requested_agent_base_url: restored.agentBaseUrl,
@@ -775,34 +796,36 @@ export async function completePooledWarmup(
 
 /** Mark a pooled box's refill failed, for the project's back-off, keeping the
  *  box its delete couldn't remove (`leftover`), so the next refill deletes it. */
-export async function markPooledFailed(id: string, leftover: string | null): Promise<void> {
+export async function markPooledFailed(id: string, ownerId: string, leftover: string | null): Promise<void> {
   const supabase = createSupabaseAdminClient();
   const { error } = await supabase
     .from("runtime_computers")
     .update({ status: "error", daytona_sandbox_id: leftover, agent_base_url: null, error_message: "The warm pool's refill failed." })
     .eq("id", id)
+    .eq("owner_id", ownerId)
     .eq("pooled", true);
   if (error) throw error;
 }
 
 /** Take a box out of the pool: its row deleted only while still pooled.
  *  False when a session claimed it first (its row is no longer pooled). */
-export async function releasePooledComputer(id: string): Promise<boolean> {
+export async function releasePooledComputer(id: string, ownerId: string): Promise<boolean> {
   const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.from("runtime_computers").delete().eq("id", id).eq("pooled", true).select("id");
+  const { data, error } = await supabase.from("runtime_computers").delete().eq("id", id).eq("owner_id", ownerId).eq("pooled", true).select("id");
   if (error) throw error;
   return (data ?? []).length > 0;
 }
 
 /** Forget a pooled box's row whose box couldn't be made. */
-export async function deletePooledComputer(id: string): Promise<void> {
+export async function deletePooledComputer(id: string, ownerId: string): Promise<void> {
   const supabase = createSupabaseAdminClient();
-  const { error } = await supabase.from("runtime_computers").delete().eq("id", id).eq("pooled", true);
+  const { error } = await supabase.from("runtime_computers").delete().eq("id", id).eq("owner_id", ownerId).eq("pooled", true);
   if (error) throw error;
 }
 
 export async function updateRuntimeComputer(
   id: string,
+  ownerId: string,
   patch: {
     status?: RuntimeComputerStatus;
     daytonaSandboxId?: string | null;
@@ -838,7 +861,8 @@ export async function updateRuntimeComputer(
         }),
         ...(patch.touchActive && { last_active_at: new Date().toISOString() }),
       })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("owner_id", ownerId);
 
   let { error } = await update(true);
   // Before 20261013120000_user_sandbox.sql adds the column, the provider isn't
@@ -857,6 +881,7 @@ export async function updateRuntimeComputer(
  */
 export async function markRuntimeComputerStoppedIfReady(
   id: string,
+  ownerId: string,
   daytonaSandboxId: string,
 ): Promise<boolean> {
   const supabase = createSupabaseAdminClient();
@@ -867,6 +892,7 @@ export async function markRuntimeComputerStoppedIfReady(
       error_message: "Runtime Computer is no longer available and will be reprovisioned.",
     })
     .eq("id", id)
+    .eq("owner_id", ownerId)
     .eq("status", "ready")
     .eq("daytona_sandbox_id", daytonaSandboxId)
     .select("id")

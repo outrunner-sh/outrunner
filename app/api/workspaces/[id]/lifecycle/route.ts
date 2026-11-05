@@ -319,6 +319,7 @@ async function restoreDaytonaWorkspace(
     ) {
       await markRuntimeComputerStoppedIfReady(
         currentComputer.id,
+        currentComputer.ownerId,
         currentComputer.daytonaSandboxId,
       );
       endedBox = currentComputer.daytonaSandboxId;
@@ -429,14 +430,14 @@ async function restoreDaytonaWorkspace(
     // rebuilt and verified the worktree. Its path too, which a session
     // imported from a Mac has none of; an older agent doesn't report it, and
     // the one on record (if any) is kept.
-    await updateWorkspace(workspace.id, {
+    await updateWorkspace(workspace.id, workspace.ownerId, {
       computerId: computer.id,
       tmuxSession: `ws-${workspace.id}`,
       agentWorkspaceId: workspace.id,
       ...(restoredWorktree && { worktreePath: restoredWorktree }),
     });
     // One from before models were recorded now has one.
-    if (restoreOn && !workspace.model) await recordWorkspaceModel(workspace.id, restoreOn);
+    if (restoreOn && !workspace.model) await recordWorkspaceModel(workspace.id, workspace.ownerId, restoreOn);
   } catch (error) {
     const failure = signInFailure(error);
     if (!failure) console.error(`Workspace ${workspace.id} restore failed`, error);

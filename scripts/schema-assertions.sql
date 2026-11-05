@@ -786,6 +786,23 @@ end $$;
 
 reset role;
 
+-- The wake publisher writes what its arguments say (a sandbox id, an agent
+-- url) into the row, so by the write split's rule it is the server's alone:
+-- no signed-in user may call it, the server always may, and the caller names
+-- the row's owner (20261106100000). A user "completing the wake" of their
+-- own provisioning row was a pivot onto anyone's box.
+do $$
+begin
+  if has_function_privilege('authenticated', 'complete_pooled_warmup(uuid, uuid, text, text, text, jsonb)', 'execute')
+     or has_function_privilege('anon', 'complete_pooled_warmup(uuid, uuid, text, text, text, jsonb)', 'execute') then
+    raise exception 'FAIL: a signed-in user may publish a wake';
+  end if;
+  if not has_function_privilege('service_role', 'complete_pooled_warmup(uuid, uuid, text, text, text, jsonb)', 'execute') then
+    raise exception 'FAIL: the server cannot publish a wake';
+  end if;
+  raise notice 'ok: the wake publisher is the server''s alone, its owner named';
+end $$;
+
 -- 22. The CLI's sign-in: no user reaches its codes or tokens, even their own
 -- (no grant, and RLS with no policy behind it), and only hashes fit.
 do $$

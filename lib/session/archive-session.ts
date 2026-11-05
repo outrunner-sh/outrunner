@@ -106,6 +106,7 @@ export async function archiveCloudSession(
   }
   const transitioned = await transitionWorkspace({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: [workspace.status],
     patch: { status: "archiving", errorMessage: null },
   });
@@ -210,6 +211,7 @@ export async function archiveCloudSession(
     console.error("archive_failed", { workspaceId: workspace.id, ...archiveFailureLog(error, said.diagnostic) });
     await transitionWorkspace({
       id: workspace.id,
+      ownerId: workspace.ownerId,
       from: ["archiving"],
       patch: { status: workspace.status, errorMessage: said.error },
     }).catch((updateError: unknown) => console.error("Could not persist archive failure", updateError));
@@ -218,6 +220,7 @@ export async function archiveCloudSession(
 
   const completed = await transitionWorkspace({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: ["archiving"],
     patch: { status: "archived", errorMessage: save.saved ? null : ARCHIVED_UNSAVED },
   });

@@ -125,7 +125,7 @@ export async function intentWarmProject(owner: Owner, projectId: string): Promis
       sessionEnv,
       previousSandboxId: sandboxId,
     }),
-    publish: (restored) => completePooledWarmup(computer.id, {
+    publish: (restored) => completePooledWarmup(owner.id, computer.id, {
       sandboxId: restored.sandboxId,
       provider: provider.name,
       agentBaseUrl: restored.agentBaseUrl,
@@ -140,7 +140,7 @@ export async function intentWarmProject(owner: Owner, projectId: string): Promis
     meterFailed: (error) =>
       console.error(`Could not meter intent-warmed box ${computer.id}; reconciliation will retry`, error),
     pause: (restored) => provider.pauseComputer(restored.sandboxId),
-    stopped: () => updateRuntimeComputer(computer.id, {
+    stopped: () => updateRuntimeComputer(computer.id, owner.id, {
       status: "stopped",
       warmExpiresAt: null,
       errorMessage: "The session pre-warm did not finish; Send can try again.",
@@ -236,13 +236,13 @@ export async function refillProjectPool(input: {
           }),
         });
       },
-      recordBox: (computerId, sandboxId) => updateRuntimeComputer(computerId, { daytonaSandboxId: sandboxId }),
+      recordBox: (computerId, sandboxId) => updateRuntimeComputer(computerId, ownerId, { daytonaSandboxId: sandboxId }),
       pause: (sandboxId) => provider.pauseComputer(sandboxId),
-      ready: markPooledReady,
-      failed: markPooledFailed,
+      ready: (id, sandboxId) => markPooledReady(id, ownerId, sandboxId),
+      failed: (id, leftover) => markPooledFailed(id, ownerId, leftover),
       discard: (sandboxId, madeBy) => discardBox(provider, madeBy, ownerId, sandboxId),
-      forget: deletePooledComputer,
-      release: releasePooledComputer,
+      forget: (id) => deletePooledComputer(id, ownerId),
+      release: (id) => releasePooledComputer(id, ownerId),
       leftover: async (box, sandboxId) => {
         // The box's own maker and generation: an outdated one is retried at
         // the next refill rather than backing the project off, and a foreign
@@ -256,7 +256,7 @@ export async function refillProjectPool(input: {
           generation: box.generation,
         });
         if (!row) throw new Error(`slot ${box.poolSlot} is taken`);
-        await markPooledFailed(row.id, sandboxId);
+        await markPooledFailed(row.id, ownerId, sandboxId);
       },
       newSecret: () => randomBytes(32).toString("hex"),
       now: Date.now,

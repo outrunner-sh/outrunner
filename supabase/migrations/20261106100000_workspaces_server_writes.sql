@@ -21,10 +21,19 @@
 -- caller's own boxes toward their plan, and auth.uid() is the caller, which
 -- the service role cannot stand in for (lib/supabase/acting-user.ts). But a
 -- SECURITY INVOKER claim writes with the caller's grants, which these
--- revokes take away, so the five claims become SECURITY DEFINER: their own
--- explicit checks — every one scopes by owner_id = auth.uid(), which
--- complete_pooled_warmup lacked and gains here, having leaned on RLS — are
--- the whole of the authorization now. Do NOT loosen those checks.
+-- revokes take away, so the four claims become SECURITY DEFINER: their own
+-- explicit owner_id = auth.uid() checks are the whole of the authorization
+-- now. Do NOT loosen those checks.
+--
+-- THE RULE this split turns on: an RPC callable by `authenticated` must not
+-- write what its arguments say. A user-callable function that records an
+-- id, url or provider from its parameters lets a user point their own row at
+-- anyone's box — complete_pooled_warmup did exactly that (claim your own
+-- paused session, then "complete its wake" onto a victim's sandbox id). So
+-- complete_pooled_warmup is the server's alone now, like its sibling
+-- retry_pooled_warmup_pause: revoked from authenticated, granted to
+-- service_role, and taking the row's expected owner as an argument so a
+-- wrong-owner call is a no-op even from the server side.
 -- ---------------------------------------------------------------------------
 
 drop policy if exists workspaces_owner_all on workspaces;
@@ -295,7 +304,8 @@ begin
 
   select org_id into for_org
   from projects
-  where id = requested_project_id;
+  where id = requested_project_id
+    and org_id in (select my_org_ids());
 
   if not found then
     raise exception 'project not found';
@@ -354,11 +364,13 @@ begin
 end;
 $$;
 
--- As 20261103210000, with the one check RLS used to supply: only the box's
--- owner may publish its wake, which as a definer this no longer leans on RLS
--- to enforce.
+-- The wake publisher. Its writes come from its arguments (a sandbox id, an
+-- agent url), so by the rule above it is the server's alone: revoked from
+-- authenticated, granted to service_role, and the caller names the row's
+-- owner, so a wrong-owner publish is a no-op rather than a write.
 create or replace function complete_pooled_warmup(
   requested_computer_id uuid,
+  expected_owner uuid,
   requested_sandbox_id text,
   requested_provider text,
   requested_agent_base_url text,
@@ -372,14 +384,10 @@ as $$
 declare
   warm_row runtime_computers%rowtype;
 begin
-  if auth.uid() is null then
-    raise exception 'authentication required';
-  end if;
-
   select * into warm_row
   from runtime_computers
   where id = requested_computer_id
-    and owner_id = auth.uid()
+    and owner_id = expected_owner
     and status = 'provisioning'
   for update;
 
@@ -421,7 +429,7 @@ $$;
 
 revoke all on function claim_pooled_computer(uuid, text, integer) from public, anon;
 revoke all on function claim_pooled_warmup(uuid, text, integer, integer) from public, anon;
-revoke all on function complete_pooled_warmup(uuid, text, text, text, jsonb) from public, anon;
+revoke all on function complete_pooled_warmup(uuid, uuid, text, text, text, jsonb) from public, anon, authenticated;
 grant execute on function claim_pooled_computer(uuid, text, integer) to authenticated;
 grant execute on function claim_pooled_warmup(uuid, text, integer, integer) to authenticated;
-grant execute on function complete_pooled_warmup(uuid, text, text, text, jsonb) to authenticated;
+grant execute on function complete_pooled_warmup(uuid, uuid, text, text, text, jsonb) to service_role;

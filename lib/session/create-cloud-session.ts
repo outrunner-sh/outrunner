@@ -464,7 +464,7 @@ async function createOnce(
     progress.inserted = true;
     if (chosenModel) {
       const intended = { model: chosenModel, effort: compatibleEffort(chosenModel, chosenEffort) };
-      await recordWorkspaceModel(workspace.id, intended);
+      await recordWorkspaceModel(workspace.id, workspace.ownerId, intended);
       workspace = { ...workspace, model: intended };
     }
   } catch (error) {
@@ -506,14 +506,14 @@ async function createOnce(
     } catch (error) {
       console.error(`Workspace ${workspace.id}: its caller couldn't hear it was made`, error);
       const errorMessage = "Outrunner couldn't record what this session is for, so it didn't start.";
-      await transitionWorkspace({ id: workspace.id, from: SETTING_UP, patch: { status: "failed", errorMessage } }).catch(
+      await transitionWorkspace({ id: workspace.id, ownerId: workspace.ownerId, from: SETTING_UP, patch: { status: "failed", errorMessage } }).catch(
         (updateError: unknown) => console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
       );
       return NextResponse.json({ error: errorMessage }, { status: 500 });
     }
   }
   if (options.title) {
-    await setWorkspaceTitleIfUnset(workspace.id, options.title).catch((error: unknown) =>
+    await setWorkspaceTitleIfUnset(workspace.id, workspace.ownerId, options.title).catch((error: unknown) =>
       console.error(`Could not title session ${workspace.id}`, error),
     );
   } else {
@@ -636,7 +636,7 @@ async function provisionWorkspace({
     );
   };
   const settle = async (patch: Parameters<typeof transitionWorkspace>[0]["patch"]) => {
-    const moved = await transitionWorkspace({ id: workspace.id, from: SETTING_UP, patch });
+    const moved = await transitionWorkspace({ id: workspace.id, ownerId: workspace.ownerId, from: SETTING_UP, patch });
     if (!moved) console.warn(`Workspace ${workspace.id} left setup before it finished (${patch.status})`);
     return moved !== null;
   };
@@ -714,9 +714,9 @@ async function provisionWorkspace({
           // box goes, so no one keeps paying for one nothing uses, and the
           // project gets a new computer where they chose.
           await retireComputer(madeBy, keys, sandboxId);
-          await markRuntimeComputerStoppedIfReady(currentComputer.id, sandboxId);
+          await markRuntimeComputerStoppedIfReady(currentComputer.id, currentComputer.ownerId, sandboxId);
         } else if (!(await provider.computerAlive(sandboxId))) {
-          await markRuntimeComputerStoppedIfReady(currentComputer.id, sandboxId);
+          await markRuntimeComputerStoppedIfReady(currentComputer.id, currentComputer.ownerId, sandboxId);
           endedBox = sandboxId;
         }
       }
@@ -829,7 +829,7 @@ async function provisionWorkspace({
         fallback: defaultModel(menu),
       });
       // So its next relaunch goes back on it, its key fetched again.
-      await recordWorkspaceModel(workspace.id, startsOn);
+      await recordWorkspaceModel(workspace.id, workspace.ownerId, startsOn);
       await setPhase("health_check");
       await agent.startWorkspace(identity);
       logPhase("ready");
