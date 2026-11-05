@@ -15,6 +15,7 @@ import type { Owner } from "@/lib/auth/owner";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import { listChatsOf } from "@/lib/db/chats";
 import {
+  clearWorkspaceFirstPrompt,
   createWorkspaceSnapshot,
   getWorkspaceComputer,
   readRuntimeComputerSecret,
@@ -222,6 +223,13 @@ export async function archiveCloudSession(
     patch: { status: "archived", errorMessage: save.saved ? null : ARCHIVED_UNSAVED },
   });
   if (!completed) return { ok: false, reason: "reconcile" };
+  // The session is archived, so a first prompt kept for it has nothing left
+  // to wait for: a restore starts its conversation over rather than run the
+  // prompt. Dropped, so nothing of it stays on the row (best effort — the
+  // archive stands either way).
+  await clearWorkspaceFirstPrompt(workspace.id).catch((error: unknown) =>
+    console.error(`Workspace ${workspace.id}: couldn't drop its kept first prompt as it archived`, error),
+  );
   if (save.saved) {
     // The last session off its box frees it: paused now, not when idle.
     after(() => releaseWorkspaceBox(provider, workspace, false));

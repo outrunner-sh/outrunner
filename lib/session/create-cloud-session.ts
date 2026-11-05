@@ -898,19 +898,21 @@ async function provisionWorkspace({
       await deliverStoredFirstPrompt(
         {
           read: () => workspaceFirstPrompt(workspace.id),
+          // Strict: no unguarded send — a claim that can't be made stands
+          // down, the kept copy left for the page (or a session reopened).
           gate: (key) =>
             gateFirstPrompt(
               key,
               {
                 claim: (k) => claimFirstPrompt(workspace.id, k, abandonedBefore(new Date())),
                 renew: (k, claimedAt) => renewFirstPrompt(workspace.id, k, claimedAt),
-                // Marked sent and its kept copy cleared together: neither
-                // means anything without the other.
-                sent: (k, claimedAt) =>
-                  markFirstPromptSent(workspace.id, k, claimedAt).then(() => clearWorkspaceFirstPrompt(workspace.id)),
+                // Only marked: the delivery clears the kept copy itself once
+                // its own send went, as its one owner of the clear.
+                sent: (k, claimedAt) => markFirstPromptSent(workspace.id, k, claimedAt),
                 release: (k, claimedAt) => releaseFirstPrompt(workspace.id, k, claimedAt),
               },
               workspace.id,
+              { strict: true },
             ),
           attach: (prompt, attachmentIds) =>
             materializeAttachments({

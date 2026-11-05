@@ -174,6 +174,30 @@ test("a row that can't be read stops quietly, claiming and sending nothing", asy
   assert.equal(claim.state.held, null);
 });
 
+test("a claim that can't be made sends nothing unguarded: the kept copy waits for the page", async () => {
+  const { claim, calls, box, deps } = delivery(PROMPT);
+  // Strict, as setup wires the gate: the claim query itself fails, so the
+  // delivery stands down rather than send with nothing recorded — a send the
+  // page's own clean claim would send again, twice over.
+  const down: FirstPromptClaimDeps = {
+    ...claim.deps,
+    claim: () => Promise.reject(new Error("down")),
+  };
+  deps.gate = async (key) => {
+    calls.push("gate");
+    return gateFirstPrompt(key, down, "w1", { strict: true });
+  };
+  await quietly(() => deliverStoredFirstPrompt(deps, "w1"));
+  assert.deepEqual(box, []);
+  assert.deepEqual(calls, ["read", "gate"]);
+  assert.equal(claim.state.held, null, "nothing was claimed, so nothing to release");
+  await quietly(async () => {
+    // Unstrict is the page's own send waiting on its answer: it goes unguarded.
+    const unguarded = await gateFirstPrompt("k1", down, "w1");
+    assert.equal(unguarded.outcome, "send");
+  });
+});
+
 test("only a first prompt with its key is kept, trimmed, with its files: the rest ride as they did", () => {
   assert.deepEqual(
     firstPromptToKeep({ prompt: "  fix the build \n", promptKey: "k1", attachmentIds: ["a1", 7, "a2"] }),

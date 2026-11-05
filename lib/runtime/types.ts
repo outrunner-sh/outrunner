@@ -111,10 +111,11 @@ export type SessionCheckout = {
 export type WorkspaceSource = "app" | "slack" | "automation" | "github" | "api";
 
 /** A session's first prompt as the server keeps it for the session while its
- *  box starts (workspaces.first_prompt, 20261105090000), so a tab closed
- *  during startup doesn't lose it: its text, the uploaded files sent with
- *  it, and the key its every send names, whoever sends it. Delivered by
- *  setup or the session page, whichever first, then dropped. */
+ *  box starts (workspaces.first_prompt, 20261107100000), so a tab closed
+ *  during startup doesn't lose it: its text (empty for a prompt of files
+ *  alone), the uploaded files sent with it, and the key its every send
+ *  names, whoever sends it. Delivered by setup or the session page, whichever
+ *  first, then dropped. */
 export type StoredFirstPrompt = {
   prompt: string;
   attachmentIds: string[];

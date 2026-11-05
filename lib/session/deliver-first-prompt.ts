@@ -8,8 +8,10 @@
  * create-cloud-session.ts). The session page holds its own copy of the same
  * prompt (lib/session/first-prompt.ts) and can deliver that first: both name
  * the key the prompt was made with, so its claim
- * (lib/session/first-prompt-claim.ts) lets only one of them send it, and the
- * box gets it exactly once however they race.
+ * (lib/session/first-prompt-claim.ts, strict here — a claim that can't be
+ * made stands down rather than send unguarded) lets only one of them send
+ * it, and the box gets it exactly once however they race. Whoever sends
+ * clears the kept copy: the delivery below, the message route its own send.
  */
 import type { StoredFirstPrompt } from "@/lib/runtime/types";
 import type { FirstPromptGate } from "@/lib/session/first-prompt-claim";
@@ -67,10 +69,19 @@ export async function deliverStoredFirstPrompt(deps: FirstPromptDeliveryDeps, la
     return;
   }
   if (!stored) return;
-  const gate = await deps.gate(stored.key);
+  let gate: FirstPromptGate;
+  try {
+    // Strict: a claim that can't be made throws rather than send unguarded,
+    // a send nothing would have recorded — the page's own clean claim would
+    // send the prompt again, twice over. Stood down, the kept copy waits
+    // for the page, or a session reopened.
+    gate = await deps.gate(stored.key);
+  } catch (error) {
+    console.error(`First prompt: couldn't claim the one kept for ${label}`, error);
+    return;
+  }
   // The page's own copy went: its marking sent clears the kept one. Cleared
-  // here too, for a send by a server from before this one, or a clear that
-  // failed.
+  // here too, for a clear of it that failed.
   if (gate.outcome === "sent") {
     await deps.clear().catch((error: unknown) =>
       console.error(`First prompt: couldn't clear the one kept for ${label}`, error),
@@ -101,6 +112,8 @@ export async function deliverStoredFirstPrompt(deps: FirstPromptDeliveryDeps, la
     return;
   }
   await gate.sent();
+  // This delivery's own send: the clear is here, and only here — the sent
+  // dep but marks the claim, and the message route clears its own page's send.
   await deps.clear().catch((error: unknown) =>
     console.error(`First prompt: couldn't clear the one kept for ${label}`, error),
   );

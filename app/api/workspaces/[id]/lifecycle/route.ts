@@ -10,6 +10,7 @@ import { listChatsOf } from "@/lib/db/chats";
 import { agentAuthStore, modelKey, modelMenu } from "@/lib/db/credentials";
 import { gitTokensFor, optionalGitToken, sessionGitAs } from "@/lib/github/identity.deps";
 import {
+  clearWorkspaceFirstPrompt,
   deleteWorkspaceSnapshots,
   getProject,
   getWorkspaceComputer,
@@ -619,6 +620,11 @@ async function endWorkspace(workspace: Workspace, teardown?: () => Promise<void>
   await deleteCachedBoxImages(workspace.id).catch((error: unknown) =>
     console.error(`Could not delete kept box images for ${workspace.id}`, error),
   );
+  // And the first prompt kept for it while its box started, which has nothing
+  // left to be delivered to: nothing of the session waits on the row.
+  await clearWorkspaceFirstPrompt(workspace.id).catch((error: unknown) =>
+    console.error(`Could not drop the kept first prompt of ${workspace.id}`, error),
+  );
 
   const completed = await completeTransition({
     id: workspace.id,
@@ -754,6 +760,11 @@ async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider)
   }
   await deleteCachedBoxImages(workspace.id).catch((error: unknown) =>
     console.error(`Could not delete kept box images for ${workspace.id}`, error),
+  );
+  // As endWorkspace: a first prompt kept while its box started has nothing
+  // left to be delivered to once the session is gone.
+  await clearWorkspaceFirstPrompt(workspace.id).catch((error: unknown) =>
+    console.error(`Could not drop the kept first prompt of ${workspace.id}`, error),
   );
 
   try {

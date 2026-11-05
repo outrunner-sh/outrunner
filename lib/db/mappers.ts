@@ -66,8 +66,9 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
     // `?? null`: a deploy can run before the migration that adds the column.
     title: row.title ?? null,
     // The first prompt kept for it while its box starts; absent before the
-    // migration that keeps it, and null once delivered.
-    firstPrompt: row.first_prompt && row.first_prompt_idempotency_key
+    // migration that keeps it, and null once delivered. The key, not the
+    // text, marks one kept: a prompt of files alone has empty text.
+    firstPrompt: row.first_prompt != null && row.first_prompt_idempotency_key
       ? {
           prompt: row.first_prompt,
           attachmentIds: row.first_prompt_attachments ?? [],
