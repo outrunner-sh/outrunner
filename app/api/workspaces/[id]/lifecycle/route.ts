@@ -85,6 +85,7 @@ async function startTransition(
 ): Promise<Workspace | null> {
   return transitionWorkspace({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from,
     // A failed setup is deleted by Try again. Keep its diagnostic on the
     // retained row through teardown, including if the request is cut off.
@@ -99,6 +100,7 @@ async function restoreAfterFailure(
 ): Promise<void> {
   await transitionWorkspace({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: [transitionStatus],
     patch: { status: workspace.status, errorMessage: message },
   });
@@ -106,6 +108,7 @@ async function restoreAfterFailure(
 
 async function completeTransition(input: {
   id: string;
+  ownerId: string;
   from: WorkspaceStatus;
   patch: Parameters<typeof transitionWorkspace>[0]["patch"];
 }): Promise<boolean> {
@@ -454,6 +457,7 @@ async function restoreDaytonaWorkspace(
 
   const completed = await completeTransition({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: "restoring",
     patch: { status: "ready", errorMessage: null, touchActive: true },
   });
@@ -530,6 +534,7 @@ async function resumeDaytonaWorkspace(
   }
   const completed = await completeTransition({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: "resuming",
     patch: { status: "ready", errorMessage: null, touchActive: true },
   });
@@ -563,6 +568,7 @@ async function suspendDaytonaWorkspace(
   }
   const completed = await completeTransition({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: "suspending",
     patch: { status: "suspended", errorMessage: null },
   });
@@ -623,6 +629,7 @@ async function endWorkspace(workspace: Workspace, teardown?: () => Promise<void>
 
   const completed = await completeTransition({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: "destroying",
     patch: {
       status: "destroyed",
@@ -665,6 +672,7 @@ async function resumeWorkspace(workspace: Workspace, provider: RuntimeProvider) 
   try {
     const completed = await completeTransition({
       id: workspace.id,
+      ownerId: workspace.ownerId,
       from: "resuming",
       patch: {
         status: "ready",
@@ -716,6 +724,7 @@ async function suspendWorkspace(workspace: Workspace, provider: RuntimeProvider)
   try {
     const completed = await completeTransition({
       id: workspace.id,
+      ownerId: workspace.ownerId,
       from: "suspending",
       patch: { status: "suspended", sandboxId: null, errorMessage: null },
     });
@@ -760,6 +769,7 @@ async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider)
   try {
     const completed = await completeTransition({
       id: workspace.id,
+      ownerId: workspace.ownerId,
       from: "destroying",
       patch: {
         status: "destroyed",

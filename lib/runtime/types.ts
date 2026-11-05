@@ -212,6 +212,9 @@ export type ProvisionTimings = {
 
 export type RuntimeComputer = {
   id: string;
+  /** Whose plan the box counts toward; the server's writes name it
+   *  (20261106100000). */
+  ownerId: string;
   projectId: string;
   /** The workspace whose own box it is; null for a project's box shared by
    *  its sessions, from before each session had its own. */
