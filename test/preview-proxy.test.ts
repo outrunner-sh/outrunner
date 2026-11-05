@@ -253,6 +253,41 @@ test("a request naming another host in its target is refused", async () => {
   assert.equal((await call(PUBLIC, "http://169.254.169.254/latest")).status, 400);
 });
 
+test("another page's request can't put a signed-in visitor's session to work on a preview", async () => {
+  // Another site's fetch: the visitor's SameSite=Lax cookie rides along, but
+  // isn't let through.
+  const cross = await call(LOGIN, "/api/data", {
+    headers: { cookie: `${COOKIE}=member-session`, "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors" },
+  });
+  assert.equal(cross.status, 403);
+  // Another preview's page: the same site (one preview domain), its own Origin.
+  const neighbor = await call(LOGIN, "/api/data", {
+    headers: { cookie: `${COOKIE}=member-session`, origin: `https://${PUBLIC}.preview.test`, "sec-fetch-site": "same-site", "sec-fetch-mode": "cors" },
+  });
+  assert.equal(neighbor.status, 403);
+  // The preview's own page's fetch reaches the box, as does a plain client's
+  // (a webhook's, a script's), which says nothing of where it's from.
+  const own = await call(LOGIN, "/api/data", {
+    headers: { cookie: `${COOKIE}=member-session`, origin: `https://${LOGIN}.preview.test`, "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" },
+  });
+  assert.equal(own.status, 200);
+  const plain = await call(LOGIN, "/api/data", { headers: { cookie: `${COOKIE}=member-session` } });
+  assert.equal(plain.status, 200);
+});
+
+test("a browser that followed a link to a preview is let in, cross-site as the click may be", async () => {
+  const answer = await call(LOGIN, "/dashboard", {
+    headers: { cookie: `${COOKIE}=member-session`, "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" },
+  });
+  assert.equal(answer.status, 200);
+  // And a signed-out visitor still goes to sign in, not to a 403.
+  const out = await call(LOGIN, "/dashboard", {
+    headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" },
+  });
+  assert.equal(out.status, 302);
+  assert.equal(out.headers.location, `https://app.test/previews/${LOGIN}?r=${encodeURIComponent("/dashboard")}`);
+});
+
 test("a WebSocket reaches the box (hot reload), as the Worker names the host", async () => {
   const ws = new WebSocket(`ws://127.0.0.1:${frontPort}/_hmr?token=1`, {
     headers: { ...fromWorker(`${LOGIN}.preview.test`), cookie: `${COOKIE}=member-session` },
@@ -283,6 +318,33 @@ test("a signed-out visitor's WebSocket is refused", async () => {
     ws.on("error", () => resolve(-1));
   });
   assert.equal(status, 401);
+});
+
+test("another page's WebSocket can't tunnel into a preview; the preview's own connects", async () => {
+  // Browsers always name their page's origin on a WebSocket: another
+  // preview's, signed in as the visitor, is refused before the box is asked.
+  const status = (headers: Record<string, string>) =>
+    new Promise<number>((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${frontPort}/_hmr`, { headers: { ...fromWorker(`${LOGIN}.preview.test`), ...headers } });
+      ws.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
+      ws.on("error", () => resolve(-1));
+      ws.on("open", () => {
+        ws.close();
+        resolve(0);
+      });
+    });
+  assert.equal(
+    await status({ cookie: `${COOKIE}=member-session`, origin: `https://${PUBLIC}.preview.test`, "sec-fetch-site": "same-site", "sec-fetch-mode": "websocket" }),
+    403,
+  );
+  assert.equal(
+    await status({ cookie: `${COOKIE}=member-session`, origin: `https://evil.example`, "sec-fetch-site": "cross-site", "sec-fetch-mode": "websocket" }),
+    403,
+  );
+  // The preview's own page's WebSocket (hot reload), and a plain client's,
+  // connect as before.
+  assert.equal(await status({ cookie: `${COOKIE}=member-session`, origin: `https://${LOGIN}.preview.test`, "sec-fetch-site": "same-origin" }), 0);
+  assert.equal(await status({ cookie: `${COOKIE}=member-session` }), 0);
 });
 
 test("cookies and headers are read and rewritten exactly", () => {

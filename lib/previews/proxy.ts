@@ -186,6 +186,7 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
       return redirect(res, `${decision.signInUrl}?r=${encodeURIComponent(safeReturnPath(path))}`);
     }
     if (decision.kind === "page") return sendPage(res, decision.status, decision.page, { canWake: decision.canWake, path });
+    if (offSite(req, at)) return sendText(res, 403, "Requests to a preview must come from its own page.");
     forward(req, res, at, decision, path);
   }
 
@@ -302,6 +303,7 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
     }
     if (decision.kind === "login") return refuse(socket, 401);
     if (decision.kind === "page") return refuse(socket, decision.status);
+    if (offSite(req, at)) return refuse(socket, 403);
     if (socket.destroyed) return;
 
     const target = new URL(decision.upstream.baseUrl);
@@ -519,6 +521,19 @@ export function stripCookie(header: string | undefined, name: string): string | 
     .map((part) => part.trim())
     .filter((part) => part && part.split("=", 1)[0]!.trim() !== name);
   return kept.length ? kept.join("; ") : null;
+}
+
+/** Another page's work: every preview is one site under the preview domain
+ *  and the session cookie is SameSite=Lax, so another preview's page — or
+ *  any other site's — could put a signed-in visitor's session to work on
+ *  this preview, whose own pages are the only ones that may. A browser that
+ *  followed a link here is let be (a navigation, cross-site as the click that
+ *  opened a preview from the app is), as is any client that says nothing of
+ *  where it's from (a webhook's, a script's: no Origin, no Fetch metadata). */
+function offSite(req: IncomingMessage, at: Preview): boolean {
+  if (req.headers.origin !== undefined && req.headers.origin !== previewOrigin(at.slug, at.domain)) return true;
+  const site = req.headers["sec-fetch-site"];
+  return typeof site === "string" && site !== "same-origin" && site !== "none" && req.headers["sec-fetch-mode"] !== "navigate";
 }
 
 /** Whether a request is a page load, which may be sent to sign in; a
