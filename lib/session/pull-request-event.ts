@@ -15,6 +15,8 @@ export function stateOf(pr: { state?: string; merged?: boolean | null; merged_at
 }
 
 export type PullRequestEvent = {
+  /** GitHub's own id of the repository: what projects match by. */
+  repoId?: number;
   repoFullName: string;
   number: number;
   url: string;
@@ -29,7 +31,7 @@ export type PullRequestEvent = {
  *  short of what's needed. */
 export function pullRequestEventOf(payload: {
   action?: string;
-  repository?: { full_name?: string };
+  repository?: { full_name?: string; id?: number };
   pull_request?: {
     number?: number;
     html_url?: string;
@@ -47,6 +49,7 @@ export function pullRequestEventOf(payload: {
   const repoFullName = payload.repository?.full_name;
   if (!pr || !state || !repoFullName || typeof pr.number !== "number" || !pr.html_url || !pr.head?.ref) return null;
   return {
+    ...(typeof payload.repository?.id === "number" && { repoId: payload.repository.id }),
     repoFullName,
     number: pr.number,
     url: pr.html_url,

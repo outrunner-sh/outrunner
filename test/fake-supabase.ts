@@ -102,6 +102,11 @@ export function fakeDb(tables: Record<string, Row[]>): SupabaseClient<Database> 
       return this;
     }
 
+    is(column: string, value: unknown) {
+      this.predicates.push((row) => row[column] === value);
+      return this;
+    }
+
     insert(rows: Row | Row[]) {
       this.op = "insert";
       this.patch = { rows: Array.isArray(rows) ? rows : [rows] };

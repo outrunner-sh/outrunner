@@ -12,19 +12,24 @@ import { installationProjectsOf } from "@/lib/db/installation-projects";
 import type { PullRequestEvent, PullRequestState } from "@/lib/session/pull-request-event";
 import type { Database } from "@/lib/supabase/database.types";
 
+/** A pull request a session changed state (or was opened), recorded: told of
+ *  below (notifyPullRequests), by session. */
+export type PullRequestChange = { workspaceId: string; ownerId: string; from: PullRequestState | null; to: PullRequestState; number: number };
+
 /** A pull request a session changed state (or was opened): changes recorded,
  *  by session. The sessions it's on are found by repository and branch, as
  *  the Slack agent's announcement finds them — but only among the orgs that
- *  own the installation the event came from (installation-projects.ts): a
- *  project's full name is its org's members' to choose, and another org's
- *  could be renamed to collide with this repository's, which must not
- *  receive its private events. */
+ *  own the installation the event came from (installation-projects.ts), and
+ *  by GitHub's repository id when the event names one: a project's full name
+ *  is its org's members' to choose, and another org's could be renamed to
+ *  collide with this repository's, which must not receive its private
+ *  events. */
 export async function recordPullRequestEventWith(
   event: PullRequestEvent,
   installationId: number,
   db: SupabaseClient<Database>,
-): Promise<Array<{ workspaceId: string; ownerId: string; from: PullRequestState | null; to: PullRequestState; number: number }>> {
-  const projects = await installationProjectsOf(db, installationId, event.repoFullName);
+): Promise<PullRequestChange[]> {
+  const { projects } = await installationProjectsOf(db, installationId, event.repoFullName, event.repoId);
   if (!projects.length) return [];
   const projectIds = projects.map((p) => p.id);
   // The repository's own sessions on the branch, and the sessions of several
@@ -43,7 +48,7 @@ export async function recordPullRequestEventWith(
   if (own.error) throw own.error;
   if (several.error) throw several.error;
   const sessions = [...new Map([...(own.data ?? []), ...(several.data ?? [])].map((s) => [s.id, s])).values()];
-  const changed: Array<{ workspaceId: string; ownerId: string; from: PullRequestState | null; to: PullRequestState; number: number }> = [];
+  const changed: PullRequestChange[] = [];
   const now = new Date().toISOString();
   for (const session of sessions) {
     // The repository it's in: the session's own, or one of a session of several.

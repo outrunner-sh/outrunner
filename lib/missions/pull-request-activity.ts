@@ -21,6 +21,8 @@ export type PullRequestActivity = {
   /** The installation the event came from: only its orgs' Runners match. */
   installationId: number;
   repo: string;
+  /** GitHub's own id of the repository: what projects match by. */
+  repoId?: number;
   /** The branches it's on: a check suite's, or the pull request's head. */
   headRefs: string[];
   /** The pull requests it names (a check run's, a review's). */
@@ -44,9 +46,11 @@ export type GitHubPull = {
 /** A webhook's payload read as activity on pull requests, or null. An event
  *  without an installation can't be scoped to its orgs, so it's no one's. */
 export function activityOf(event: string | null, payload: Record<string, unknown>): PullRequestActivity | null {
-  const repo = (payload.repository as { full_name?: string } | undefined)?.full_name;
+  const repository = payload.repository as { full_name?: string; id?: unknown } | undefined;
+  const repo = repository?.full_name;
   const installationId = (payload.installation as { id?: unknown } | undefined)?.id;
   if (!repo || typeof installationId !== "number") return null;
+  const repoId = typeof repository?.id === "number" ? repository.id : undefined;
   const numbersOf = (list: unknown) =>
     Array.isArray(list) ? list.flatMap((p) => (typeof (p as { number?: unknown }).number === "number" ? [(p as { number: number }).number] : [])) : [];
   if (event === "pull_request" || event === "pull_request_review" || event === "pull_request_review_comment" || event === "pull_request_review_thread") {
@@ -55,6 +59,7 @@ export function activityOf(event: string | null, payload: Record<string, unknown
     return {
       installationId,
       repo,
+      ...(repoId !== undefined && { repoId }),
       headRefs: [pull.head.ref],
       numbers: [pull.number],
       pr: {
@@ -70,15 +75,15 @@ export function activityOf(event: string | null, payload: Record<string, unknown
   }
   if (event === "check_suite") {
     const suite = payload.check_suite as { head_branch?: string | null; pull_requests?: unknown } | undefined;
-    return { installationId, repo, headRefs: suite?.head_branch ? [suite.head_branch] : [], numbers: numbersOf(suite?.pull_requests) };
+    return { installationId, ...(repoId !== undefined && { repoId }), repo, headRefs: suite?.head_branch ? [suite.head_branch] : [], numbers: numbersOf(suite?.pull_requests) };
   }
   if (event === "check_run") {
     const run = payload.check_run as { check_suite?: { head_branch?: string | null }; pull_requests?: unknown } | undefined;
-    return { installationId, repo, headRefs: run?.check_suite?.head_branch ? [run.check_suite.head_branch] : [], numbers: numbersOf(run?.pull_requests) };
+    return { installationId, ...(repoId !== undefined && { repoId }), repo, headRefs: run?.check_suite?.head_branch ? [run.check_suite.head_branch] : [], numbers: numbersOf(run?.pull_requests) };
   }
   if (event === "status") {
     const branches = (payload.branches as { name?: string }[] | undefined) ?? [];
-    return { installationId, repo, headRefs: branches.flatMap((b) => (b.name ? [b.name] : [])), numbers: [] };
+    return { installationId, ...(repoId !== undefined && { repoId }), repo, headRefs: branches.flatMap((b) => (b.name ? [b.name] : [])), numbers: [] };
   }
   return null;
 }
@@ -100,7 +105,7 @@ function checkoutIds(checkouts: unknown): string[] {
  * Runners.
  */
 export async function runnersForWith(db: SupabaseClient<Database>, activity: PullRequestActivity): Promise<Workspace[]> {
-  const projects = await installationProjectsOf(db, activity.installationId, activity.repo);
+  const { projects } = await installationProjectsOf(db, activity.installationId, activity.repo, activity.repoId);
   if (projects.length === 0) return [];
   const projectIds = new Set(projects.map((p) => p.id));
   // What it takes to match, read narrow: whole rows only for the few that do.

@@ -9,6 +9,7 @@
 
 import type { DueFollowUp } from "@/lib/github/followups";
 import type { LinkedSession, LinkTarget } from "@/lib/github/loop";
+import { installationProjectsOf } from "@/lib/db/installation-projects";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 function db() {
@@ -39,22 +40,14 @@ export async function githubMember(githubUserId: number, orgId: string): Promise
 }
 
 /** Every linked organization's project matching this repository, while the
- * installation is live. Unconnected organizations are never in scope. */
+ * installation is live (lib/db/installation-projects.ts). Unconnected
+ * organizations are never in scope. */
 export async function installationProjects(
   installationId: number,
   repoFullName: string,
 ): Promise<{ orgId: string; projectId: string }[]> {
-  const supabase = db();
-  const { data: holders, error } = await supabase
-    .from("org_github_installation_details").select("org_id")
-    .eq("installation_id", installationId).is("suspended_at", null);
-  if (error) throw error;
-  if (!holders?.length) return [];
-  const { data: projects, error: projectError } = await supabase
-    .from("projects").select("id, org_id").in("org_id", holders.map((h) => h.org_id))
-    .ilike("full_name", repoFullName.replace(/[\\%_]/g, "\\$&"));
-  if (projectError) throw projectError;
-  return (projects ?? []).flatMap((p) => p.org_id ? [{ orgId: p.org_id, projectId: p.id }] : []);
+  const { projects } = await installationProjectsOf(db(), installationId, repoFullName);
+  return projects.map((p) => ({ orgId: p.org_id, projectId: p.id }));
 }
 
 /** Resolve a queued follow-up's exact project, or an unambiguous scope. */

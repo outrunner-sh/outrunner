@@ -49,7 +49,7 @@ type Payload = {
   account?: { login?: string };
   repository_selection?: string;
   sender?: { id?: number; login?: string };
-  repository?: { full_name?: string };
+  repository?: { full_name?: string; id?: number };
   pull_request?: {
     number?: number;
     html_url?: string;
@@ -153,6 +153,9 @@ export async function POST(request: Request) {
       const pr = payload.pull_request;
       if (payload.action === "opened" && pr?.head?.ref && pr.html_url && typeof pr.number === "number" && payload.repository?.full_name) {
         const opened = {
+          // GitHub's own id of the repository: projects match by it, not by a
+          // full name a write-level member can set.
+          ...(typeof payload.repository.id === "number" && { repoId: payload.repository.id }),
           repoFullName: payload.repository.full_name,
           headRef: pr.head.ref,
           number: pr.number,

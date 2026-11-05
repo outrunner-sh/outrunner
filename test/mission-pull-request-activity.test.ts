@@ -13,7 +13,7 @@ import { activityOf, runnersForWith } from "@/lib/missions/pull-request-activity
 
 const payload = {
   installation: { id: 42 },
-  repository: { full_name: "acme/private" },
+  repository: { full_name: "acme/private", id: 501 },
   pull_request: {
     number: 7,
     html_url: "https://github.com/acme/private/pull/7",
@@ -24,16 +24,20 @@ const payload = {
   },
 };
 
-test("an event is read with the installation it came from, and none without one", () => {
+test("an event is read with the installation and repository it came from, and none without either", () => {
   const activity = activityOf("pull_request", payload);
   assert.equal(activity?.installationId, 42);
   assert.equal(activity?.repo, "acme/private");
+  assert.equal(activity?.repoId, 501);
   assert.deepEqual(activity?.headRefs, ["fix"]);
   assert.equal(activity?.pr?.number, 7);
-  assert.equal(activityOf("check_suite", { ...payload, check_suite: { head_branch: "fix", pull_requests: [{ number: 7 }] } })?.installationId, 42);
+  assert.equal(activityOf("check_suite", { ...payload, check_suite: { head_branch: "fix", pull_requests: [{ number: 7 }] } })?.repoId, 501);
   // An event that names no installation can't be scoped to its orgs: no one's.
   assert.equal(activityOf("pull_request", { ...payload, installation: undefined }), null);
   assert.equal(activityOf("pull_request", { ...payload, installation: { id: "nope" } }), null);
+  // An event whose payload names no repository id matches by the full name
+  // instead — everything GitHub sends the webhook names one.
+  assert.equal(activityOf("pull_request", { ...payload, repository: { full_name: "acme/private" } })?.repoId, undefined);
 });
 
 /** Org A's installation, its repository's Runner, and org B's Runner on a
@@ -57,10 +61,13 @@ function db(withOrgBLink = false): { tables: Record<string, Row[]>; runnerA: str
     runnerA,
     runnerB,
     tables: {
-      org_github_installations: [{ org_id: "org-a", installation_id: 42 }, ...(withOrgBLink ? [{ org_id: "org-b", installation_id: 42 }] : [])],
+      org_github_installation_details: [
+        { org_id: "org-a", installation_id: 42, suspended_at: null },
+        ...(withOrgBLink ? [{ org_id: "org-b", installation_id: 42, suspended_at: null }] : []),
+      ],
       projects: [
-        { id: "p-a", org_id: "org-a", full_name: "acme/private" },
-        { id: "p-b", org_id: "org-b", full_name: "acme/private" },
+        { id: "p-a", org_id: "org-a", full_name: "acme/private", github_repo_id: 501 },
+        { id: "p-b", org_id: "org-b", full_name: "acme/private", github_repo_id: 502 },
       ],
       workspaces: [runner(runnerA, "org-a", "p-a"), runner(runnerB, "org-b", "p-b")],
       runner_pull_requests: [],
@@ -68,7 +75,7 @@ function db(withOrgBLink = false): { tables: Record<string, Row[]>; runnerA: str
   };
 }
 
-const activity = { installationId: 42, repo: "acme/private", headRefs: ["fix"], numbers: [7] };
+const activity = { installationId: 42, repo: "acme/private", repoId: 501, headRefs: ["fix"], numbers: [7] };
 
 test("an event follows the installation's own org's Runner, never another org's colliding project's", async () => {
   const { tables, runnerA, runnerB } = db();
@@ -78,10 +85,16 @@ test("an event follows the installation's own org's Runner, never another org's 
   assert.ok(!runners.some((r) => r.id === runnerB), "org B's Runner on the colliding project follows nothing of it");
 });
 
-test("an org the installation is shared with is reached; an installation no org owns reaches no one", async () => {
+test("an org the installation is shared with is reached; a suspended or unowned installation reaches no one", async () => {
   const { tables, runnerB } = db(true);
+  // Org B's project of the repository itself — the same GitHub repository —
+  // now that the installation is shared with its org.
+  tables.projects.find((p) => p.id === "p-b")!.github_repo_id = 501;
   const runners = await runnersForWith(fakeDb(tables), activity);
   assert.ok(runners.some((r) => r.id === runnerB));
+  const suspended = db().tables;
+  suspended.org_github_installation_details[0].suspended_at = "2026-11-05T00:00:00Z";
+  assert.deepEqual(await runnersForWith(fakeDb(suspended), activity), []);
   const unclaimed = db().tables;
   assert.deepEqual(await runnersForWith(fakeDb(unclaimed), { ...activity, installationId: 43 }), []);
 });

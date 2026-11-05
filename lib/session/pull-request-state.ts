@@ -10,17 +10,14 @@
  */
 
 import { stateOf, type PullRequestEvent, type PullRequestState } from "@/lib/session/pull-request-event";
-import { recordPullRequestEventWith } from "@/lib/session/pull-request-recording";
+import { recordPullRequestEventWith, type PullRequestChange } from "@/lib/session/pull-request-recording";
 import { githubGet, repoToken } from "@/lib/slack/github";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** A pull request a session changed state (or was opened): recorded
  *  (pull-request-recording.ts), on the real database, scoped to the orgs of
  *  the installation the event's webhook came from. */
-export async function recordPullRequestEvent(
-  event: PullRequestEvent,
-  installationId: number,
-): Promise<Array<{ workspaceId: string; ownerId: string; from: PullRequestState | null; to: PullRequestState; number: number }>> {
+export async function recordPullRequestEvent(event: PullRequestEvent, installationId: number): Promise<PullRequestChange[]> {
   return recordPullRequestEventWith(event, installationId, createSupabaseAdminClient());
 }
 

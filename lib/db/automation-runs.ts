@@ -11,6 +11,7 @@ import { readRunEvent, type RunEvent } from "@/lib/automations/run-event";
 import type { AutomationTrigger, RunStatus, SessionMode, TriggerKind } from "@/lib/automations/rules";
 import { type Schedule, scheduleFromRow } from "@/lib/automations/schedule";
 import { currentRunners, timesRun } from "@/lib/db/automations";
+import { installationProjectsOf } from "@/lib/db/installation-projects";
 import type { Json } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -111,27 +112,15 @@ export async function automationsForPullRequest(installationId: number, repoFull
   return (await Promise.all(scope.orgIds.map((orgId) => candidatesOf(supabase, orgId, repos ?? [])))).flat();
 }
 
-/** The linked orgs and their projects that are `repoFullName`. */
+/** The linked orgs and their projects that are `repoFullName`
+ *  (lib/db/installation-projects.ts). */
 async function installationProjects(
   supabase: ReturnType<typeof createSupabaseAdminClient>,
   installationId: number,
   repoFullName: string,
 ): Promise<{ orgIds: string[]; projectIds: string[] } | null> {
-  const { data: holders, error } = await supabase
-    .from("org_github_installation_details")
-    .select("org_id")
-    .eq("installation_id", installationId)
-    .is("suspended_at", null);
-  if (error) throw error;
-  const orgIds = (holders ?? []).map((h) => h.org_id);
-  if (orgIds.length === 0) return null;
-  const { data: projects, error: projectsError } = await supabase
-    .from("projects")
-    .select("id")
-    .in("org_id", orgIds)
-    .ilike("full_name", repoFullName.replace(/[\\%_]/g, "\\$&"));
-  if (projectsError) throw projectsError;
-  const projectIds = (projects ?? []).map((p) => p.id);
+  const { orgIds, projects } = await installationProjectsOf(supabase, installationId, repoFullName);
+  const projectIds = projects.map((p) => p.id);
   return projectIds.length === 0 ? null : { orgIds, projectIds };
 }
 
