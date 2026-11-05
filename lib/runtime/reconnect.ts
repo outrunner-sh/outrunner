@@ -1,10 +1,3 @@
-import { BOX_GONE, SESSION_NOT_STARTED } from "@/lib/session/session-codes";
-
-/** The session ended (archived or deleted) while this tab had it open: the
- *  attach route's code for it (#378, SESSION_ENDED in session-codes.ts once
- *  that lands; named here until then). */
-const SESSION_ENDED = "session-ended";
-
 /**
  * Reconnect backoff policy for the Conversation event WebSocket.
  *
@@ -48,12 +41,13 @@ export function reconnectPlan(attempt: number): ReconnectPlan {
  * failed (a 502 from the box's proxy for a few seconds, a box still settling).
  * The socket's close drives the loop, and with the refetch failed no socket
  * opens to close, so the failure itself takes the next attempt from the same
- * budget. `attempt` counts it, as reconnectPlan's does. A box that's gone, an
- * agent that didn't start, or a session that ended (archived from another
- * tab) says so instead: retrying can't help.
+ * budget. `attempt` counts it, as reconnectPlan's does. Only a failure on the
+ * way (`retryable`, retryableAttachFailure) is tried again: one that names
+ * what happened (the box is gone, the session ended, …) can't be helped by
+ * it, whatever new code says so.
  */
-export function attachFailurePlan(attempt: number, code: string | null): ReconnectPlan {
-  if (code === BOX_GONE || code === SESSION_NOT_STARTED || code === SESSION_ENDED) return { retry: false };
+export function attachFailurePlan(attempt: number, retryable: boolean): ReconnectPlan {
+  if (!retryable) return { retry: false };
   return reconnectPlan(attempt);
 }
 

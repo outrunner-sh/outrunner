@@ -108,14 +108,10 @@ test("a reconnected socket ends the drop as it opens, before any frame", () => {
 });
 
 test("a failed refetch during a reconnect carries the loop on, on the same budget", () => {
-  // A 502 or a box still settling: the next attempt comes from the budget.
-  assert.deepEqual(attachFailurePlan(2, null), reconnectPlan(2));
-  assert.deepEqual(attachFailurePlan(3, "box-restore-failed"), reconnectPlan(3));
-  // The budget still ends it.
-  assert.deepEqual(attachFailurePlan(MAX_RECONNECT_ATTEMPTS + 1, null), { retry: false });
-  // A box that's gone, or an agent that didn't start: retrying can't help.
-  assert.deepEqual(attachFailurePlan(2, "box-gone"), { retry: false });
-  assert.deepEqual(attachFailurePlan(2, "session-not-started"), { retry: false });
-  // A session archived from another tab: a stale tab stops at once.
-  assert.deepEqual(attachFailurePlan(2, "session-ended"), { retry: false });
+  // A failure on the way (a 502, a box still settling): the next attempt
+  // comes from the budget, and the budget still ends it.
+  assert.deepEqual(attachFailurePlan(2, true), reconnectPlan(2));
+  assert.deepEqual(attachFailurePlan(MAX_RECONNECT_ATTEMPTS + 1, true), { retry: false });
+  // One that names what happened: retrying can't help.
+  assert.deepEqual(attachFailurePlan(2, false), { retry: false });
 });
