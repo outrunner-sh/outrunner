@@ -3,6 +3,7 @@ package snapshot
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -150,7 +151,27 @@ func TestBuildPatchFailsWhenAWorkingRepositorysDiffFails(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	if _, err := buildPatch(context.Background(), dir, filepath.Join(t.TempDir(), "patch")); err == nil {
+	_, err = buildPatch(context.Background(), dir, filepath.Join(t.TempDir(), "patch"))
+	if err == nil {
 		t.Fatal("buildPatch succeeded with an empty patch; want the capture failed")
+	}
+	// git's own words reach the archive's log.
+	if !strings.Contains(err.Error(), "No space left on device") {
+		t.Errorf("error %q lost git's stderr", err)
+	}
+}
+
+// A capture cut off (its deadline passed) fails, rather than taking the
+// repository for broken and saving an empty patch as "no changes".
+func TestBuildPatchFailsWhenTheCaptureIsCutOff(t *testing.T) {
+	dir := t.TempDir()
+	cmd := exec.Command("git", "-C", dir, "init", "-q", "-b", "main")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := buildPatch(ctx, dir, filepath.Join(t.TempDir(), "patch")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("buildPatch on a cut-off capture = %v; want context.Canceled", err)
 	}
 }
