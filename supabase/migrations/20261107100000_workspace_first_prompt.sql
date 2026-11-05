@@ -14,13 +14,32 @@
 -- reads owner-scoped (the SELECT policy on workspaces — workspaces_owner_all
 -- until 20261106100000 splits it into workspaces_owner_read), and writes are
 -- the server's alone, not by anything here but by that same
--- 20261106100000_workspaces_server_writes.sql, which revokes insert, update
--- and delete on the whole table from the client roles. A column-level revoke
--- would be a no-op beside it anyway: on Supabase the client roles hold a
--- table-level grant, and Postgres checks column privileges only in addition
--- to the table's. The server writes and clears a kept prompt through the
--- service-role client (lib/db/repositories.ts).
+-- 20261106100000_workspaces_server_writes.sql (#393), which revokes insert,
+-- update and delete on the whole table from the client roles. A column-level
+-- revoke would be a no-op beside it anyway: on Supabase the client roles
+-- hold a table-level grant, and Postgres checks column privileges only in
+-- addition to the table's.
+--
+-- That makes #393 a hard prerequisite: this migration must merge after it,
+-- and refuses to run otherwise — the guard below fails the migrate loudly
+-- while the client roles can still write workspaces, so the kept-prompt
+-- columns can never exist on a database where a user session could write
+-- them. Repeating the revoke here instead would break every user-scoped
+-- write the app makes today (20261106100000 moves them to the service role
+-- with it), and duplicate what #393 already carries. The server writes and
+-- clears a kept prompt through the service-role client
+-- (lib/db/repositories.ts).
 -- ---------------------------------------------------------------------------
+
+do $$
+begin
+  if has_table_privilege('anon', 'workspaces', 'insert')
+    or has_table_privilege('anon', 'workspaces', 'update')
+    or has_table_privilege('authenticated', 'workspaces', 'insert')
+    or has_table_privilege('authenticated', 'workspaces', 'update') then
+    raise exception 'workspaces is still writable by the client roles: this migration must follow 20261106100000_workspaces_server_writes.sql (#393)';
+  end if;
+end $$;
 
 alter table workspaces
   add column if not exists first_prompt text
