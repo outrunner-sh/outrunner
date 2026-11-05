@@ -31,8 +31,22 @@
 -- (lib/db/repositories.ts).
 -- ---------------------------------------------------------------------------
 
+--
+-- The guard asks for both halves of #393: its policy split (the `for all`
+-- workspaces_owner_all gone, workspaces_owner_read in its place) and its
+-- revokes (no client role left holding insert or update). The policy check
+-- holds wherever the migrations ran, grants or not; the grant check is the
+-- one that matters on Supabase, whose client roles hold every table's
+-- privileges until a migration takes them away — as the verifier's stub
+-- models (scripts/verify-migrations.sh), so it trips there too.
 do $$
 begin
+  if exists (select 1 from pg_policies
+             where schemaname = 'public' and tablename = 'workspaces' and policyname = 'workspaces_owner_all')
+    or not exists (select 1 from pg_policies
+                   where schemaname = 'public' and tablename = 'workspaces' and policyname = 'workspaces_owner_read') then
+    raise exception 'workspaces still has its owner write policy: this migration must follow 20261106100000_workspaces_server_writes.sql (#393)';
+  end if;
   if has_table_privilege('anon', 'workspaces', 'insert')
     or has_table_privilege('anon', 'workspaces', 'update')
     or has_table_privilege('authenticated', 'workspaces', 'insert')

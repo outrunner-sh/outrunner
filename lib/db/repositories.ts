@@ -373,11 +373,10 @@ export async function releaseFirstPrompt(id: string, key: string, claimedAt: str
 /**
  * Keep the session's first prompt on its row while its box starts
  * (workspaces.first_prompt), so the tab whose sessionStorage carried it can
- * close without losing it. Service role on purpose: writes to workspaces are
- * the server's alone once 20261106100000 (#393) revokes them from the client
- * roles — and this code's own migration (20261107100000) refuses to run
- * before that, so the columns it keeps are never client-writable — so a
- * user session can neither write nor clear a kept prompt.
+ * close without losing it. Service role on purpose: once 20261106100000 (#393)
+ * revokes writes to workspaces from the client roles, only the server can write
+ * them, and this code's migration (20261107100000) refuses to run before that.
+ * A user session can neither write nor clear a kept prompt.
  */
 export async function storeWorkspaceFirstPrompt(id: string, first: StoredFirstPrompt): Promise<void> {
   const supabase = createSupabaseAdminClient();
