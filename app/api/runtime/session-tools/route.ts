@@ -75,10 +75,12 @@ export async function POST(request: Request) {
       .eq("id", call.workspace)
       .maybeSingle();
     if (workspaceError && workspaceError.code !== "22P02") throw workspaceError;
-    const onBox =
-      workspace !== null &&
-      boxHostsSession({ id: computer.id, workspaceId: computer.workspace_id }, { id: workspace.id, computerId: workspace.computer_id });
-    if (!workspace || !onBox || workspace.owner_id !== computer.owner_id || workspace.org_id !== computer.org_id) {
+    if (
+      !workspace ||
+      !boxHostsSession({ id: computer.id, workspaceId: computer.workspace_id }, { id: workspace.id, computerId: workspace.computer_id }) ||
+      workspace.owner_id !== computer.owner_id ||
+      workspace.org_id !== computer.org_id
+    ) {
       return NextResponse.json({ error: "That session isn't this computer's." }, { status: 404 });
     }
     const { data: user } = await admin.auth.admin.getUserById(workspace.owner_id);
