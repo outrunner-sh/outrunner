@@ -126,6 +126,8 @@ async function stillAtRest(sandboxId: string): Promise<boolean> {
     .from("runtime_computers")
     .select("status")
     .eq("daytona_sandbox_id", sandboxId);
+  // Said, so a lookup failing every run doesn't read as "no strays".
+  if (error) console.error(`Could not re-read runtime_computers for Daytona box ${sandboxId}`, error);
   if (error || !data?.length) return false;
   return data.every((row) => atRest(row.status));
 }
