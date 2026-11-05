@@ -115,6 +115,7 @@ async function completeTransition(input: {
   return Boolean(
     await transitionWorkspace({
       id: input.id,
+      ownerId: input.ownerId,
       from: [input.from],
       patch: input.patch,
     }),
