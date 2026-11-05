@@ -45,12 +45,26 @@ func NewCoalescer(interval time.Duration, threshold int, send func(seq int, data
 	}
 }
 
-// Run drives the flush ticker until Stop is called. Blocks; callers usually
-// launch this in its own goroutine.
+// Start runs Run on its own goroutine, marked running first, so a Stop or
+// Close that follows at once always waits for its last flush.
+func (c *Coalescer) Start() {
+	c.mu.Lock()
+	c.running = true
+	c.mu.Unlock()
+	go c.run()
+}
+
+// Run drives the flush ticker until Stop is called, on the caller's
+// goroutine. Stop waits for it only once it has begun; Start has no such
+// window.
 func (c *Coalescer) Run() {
 	c.mu.Lock()
 	c.running = true
 	c.mu.Unlock()
+	c.run()
+}
+
+func (c *Coalescer) run() {
 	defer close(c.exited)
 	t := time.NewTicker(c.interval)
 	defer t.Stop()
@@ -95,8 +109,8 @@ func (c *Coalescer) NextSeq() int {
 	return seq
 }
 
-// Stop tells Run to exit after one last flush, and waits for it to have, if
-// it was running.
+// Stop tells Run to exit after one last flush, and waits for it to have if
+// it is running: always after Start, only once begun after a bare `go Run()`.
 func (c *Coalescer) Stop() {
 	c.mu.Lock()
 	running := c.running

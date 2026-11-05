@@ -178,3 +178,23 @@ func TestCoalescerCloseSendsTheRestThenTheFinalFrameLast(t *testing.T) {
 		t.Errorf("final frame's seq %d isn't after %d", seqs[1], seqs[0])
 	}
 }
+
+// Started with Start, a Stop that comes at once still waits for Run's last
+// flush: no window before the goroutine is scheduled.
+func TestCoalescerStopAfterStartAlwaysWaitsForRun(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		s := &sink{}
+		c := NewCoalescer(time.Hour, 4096, s.recv)
+		c.Start()
+		_ = c.Write([]byte("tail"))
+		c.Stop()
+		select {
+		case <-c.exited:
+		default:
+			t.Fatalf("run %d: Stop returned before Run had", i)
+		}
+		if frames, _ := s.snapshot(); len(frames) != 1 || string(frames[0]) != "tail" {
+			t.Fatalf("run %d: frames = %q, want the tail flushed by Stop", i, frames)
+		}
+	}
+}

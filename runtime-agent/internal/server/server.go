@@ -1409,6 +1409,9 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 	writeFrame := func(msg protocol.PtyServerMessage) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
+		// A client that stopped reading can't hold a write, and with it the
+		// coalescer's Close and the handler's teardown, until TCP gives up.
+		_ = conn.SetWriteDeadline(time.Now().Add(eventsWSWriteWait))
 		return conn.WriteJSON(msg)
 	}
 
@@ -1435,7 +1438,7 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 		}
 		return writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(seq)})
 	})
-	go coalescer.Run()
+	coalescer.Start()
 	defer coalescer.Close(func(seq func() int) {
 		if output := redactor.Flush(); output != "" {
 			_ = writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(seq())})
