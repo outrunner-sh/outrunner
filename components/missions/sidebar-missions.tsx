@@ -39,6 +39,8 @@ export function SidebarMissions({ active, projects }: { active?: string; project
   const { loaded, missions } = useMissions();
   const [creating, setCreating] = useState(false);
   const [archiving, setArchiving] = useState<MissionView | null>(null);
+  // Missions whose Ships are all shown, not just the first few.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   // A partial attempt refreshes Missions; use that live row rather than the
   // object captured when the menu opened.
   const archiveTarget = archiving && (missions.find((mission) => mission.id === archiving.id) ?? archiving);
@@ -208,7 +210,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                   </div>
                   {runners.length > 0 && (
                     <ul className="relative mt-px ml-[17px] space-y-px border-l border-white/[0.07] pl-[7px]">
-                      {runners.slice(0, SHOWN_RUNNERS).map((runner) => {
+                      {runners.slice(0, expanded.has(mission.id) ? undefined : SHOWN_RUNNERS).map((runner) => {
                         const pr = runner.pulls.find((p) => p.state === "open") ?? runner.pulls.find((p) => p.state === "merged");
                         return (
                           <li key={runner.id} className="mission-in">
@@ -222,7 +224,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                                 runner.id === active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                               )}
                             >
-                              <RunnerGlyph group={runner.group} state={runner.state} standing={runner.standing} className="size-3" />
+                              <RunnerGlyph group={runner.group} state={runner.state} standing={runner.standing} attention={runner.attention} className="size-3" />
                               <span className="min-w-0 flex-1 truncate">{runner.name}</span>
                               <UnreadDot standing={runner.standing} />
                               {pr && <PullRequestChip pr={pr} link={false} compact />}
@@ -232,12 +234,20 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                       })}
                       {runners.length > SHOWN_RUNNERS && (
                         <li>
-                          <Link
-                            href={`/workspaces/${mission.id}`}
-                            className="block rounded-md py-[3px] pl-6 text-[12px] text-muted-foreground hover:text-foreground"
+                          <button
+                            type="button"
+                            aria-expanded={expanded.has(mission.id)}
+                            onClick={() =>
+                              setExpanded((now) => {
+                                const next = new Set(now);
+                                if (!next.delete(mission.id)) next.add(mission.id);
+                                return next;
+                              })
+                            }
+                            className="block w-full rounded-md py-[3px] pl-6 text-left text-[12px] text-muted-foreground hover:text-foreground"
                           >
-                            {runners.length - SHOWN_RUNNERS} more
-                          </Link>
+                            {expanded.has(mission.id) ? "Show less" : `${runners.length - SHOWN_RUNNERS} more`}
+                          </button>
                         </li>
                       )}
                     </ul>

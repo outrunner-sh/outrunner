@@ -4,8 +4,10 @@ import { RunnerEventCards } from "@/components/missions/runner-event-cards";
 import { parseRunnerEvents } from "@/lib/missions/events";
 import {
   Bot,
+  Check,
   Clock,
   ChevronRight,
+  Copy,
   FilePlus,
   FoldVertical,
   FileText,
@@ -455,6 +457,10 @@ function NodeRow({
   }
 }
 
+/** A prompt longer than this shows its first lines, with Show more. */
+const LONG_PROMPT_CHARS = 800;
+const LONG_PROMPT_LINES = 10;
+
 /** The user's prompt: the files it carried as thumbnails above its words,
  *  not the paths written for the agent, and the comments on the diff
  *  (withComments) as quotes under them, not the blocks. */
@@ -487,6 +493,13 @@ function Prompt({
     </button>
   );
   const workspaceId = useContext(ImageBoxContext);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  const [open, setOpen] = useState(false);
   const { typed, files } = useMemo(() => {
     const { text: typed, files: paths } = promptAttachments(text);
     const pasted: MessageFile[] = (images ?? []).map((image, i) => ({
@@ -497,7 +510,28 @@ function Prompt({
     }));
     return { typed, files: [...pasted, ...promptFiles(paths, workspaceId)] };
   }, [text, images, workspaceId]);
-  const { text: words, quotes } = useMemo(() => parseCommentQuotes(typed), [typed]);
+  const { text: said, quotes } = useMemo(() => parseCommentQuotes(typed), [typed]);
+  const copy = typed.trim() && (
+    <button
+      type="button"
+      className="timeline-prompt-edit"
+      onClick={() => void navigator.clipboard?.writeText(typed.trim()).then(() => setCopied(true), () => {})}
+      title={copied ? "Copied" : "Copy message"}
+      aria-label={copied ? "Copied" : "Copy message"}
+    >
+      {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+    </button>
+  );
+  // A long prompt shows its first lines until it's opened.
+  const long = said.length > LONG_PROMPT_CHARS || said.split("\n").length > LONG_PROMPT_LINES;
+  const words = long ? (
+    <>
+      <div className={cn("timeline-prompt-words", !open && "is-clamped")}>{said}</div>
+      <button type="button" className="timeline-prompt-more" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? "Show less" : "Show more"}
+      </button>
+    </>
+  ) : said;
   const attached = files.length > 0 && <MessageAttachments files={files} />;
   // Sent in plan mode: said, quietly, above its words; and so is what a
   // chat's prompt carried from another chat, which the agent was given.
@@ -531,6 +565,7 @@ function Prompt({
       <div className="timeline-prompt">
         {at && <MessageTime at={at} />}
         {edit}
+        {copy}
         {planned}
         {attached}
         {words}
@@ -540,6 +575,7 @@ function Prompt({
     <div className="timeline-prompt">
       {at && <MessageTime at={at} />}
       {edit}
+      {copy}
       {planned}
       {attached}
       {words}
