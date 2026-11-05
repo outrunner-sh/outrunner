@@ -32,11 +32,14 @@ async function token(installationId: number): Promise<string> {
 
 /** `scope` is the webhook event's, which its follow-ups are queued on; null
  *  for a flush, which queues none (each follow-up keeps its own project,
- *  checked again by projectScope). Said, not left out: a queue without the
- *  event's scope would queue nothing. */
+ *  checked again by projectScope). Queueing without it throws, rather than
+ *  reading as "no project matched". */
 export function followUpDeps(scope: { orgId: string; projectId: string } | null): FollowUpDeps {
   return {
-    scope: async () => scope,
+    scope: async () => {
+      if (!scope) throw new Error("GitHub follow-ups: queueing needs the webhook event's scope");
+      return scope;
+    },
     projectScope: installationProject,
     claim: claimLoopAct,
     linkedSessions,
