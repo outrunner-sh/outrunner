@@ -87,7 +87,7 @@ import { editQueued, moveQueued, type QueuedPrompt, queueDrains, readQueue, writ
 import { runQueuedAction } from "@/lib/session/queue-actions";
 import { patchRowAhead } from "@/lib/session/rows-ahead";
 import { sendIsDeadEnd } from "@/lib/session/send-failure";
-import { BOX_GONE, BOX_RESTORE_FAILED, SESSION_NOT_STARTED } from "@/lib/session/session-codes";
+import { BOX_GONE, BOX_RESTORE_FAILED, SESSION_ENDED, SESSION_NOT_STARTED } from "@/lib/session/session-codes";
 import type { OutrunnerModels } from "@/lib/desktop/local-runtime";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
@@ -1544,6 +1544,19 @@ function ConnectionNotice({
         actions={[
           { label: "Continue in a new session", primary: true, href: projectId ? `/new?project=${projectId}` : "/new" },
         ]}
+      />
+    );
+  }
+  if (code === SESSION_ENDED) {
+    // Archived or deleted in another tab, by an automation or a Mission: the
+    // page reloaded shows it as it is now (an archived one with Restore).
+    // Retrying here would only be refused again.
+    return (
+      <Notice
+        tone="warning"
+        title="This session was archived or deleted elsewhere"
+        detail={message ?? "It ended since this page loaded."}
+        actions={[{ label: "Reload", icon: <RotateCw />, primary: true, onClick: () => window.location.reload() }]}
       />
     );
   }

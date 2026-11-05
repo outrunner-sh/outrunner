@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     // mustn't keep every sweep below from running, setups stuck and
     // orphaned boxes running, until billing recovers. Still a 500, below.
     const report = await runReconcile().catch((error: unknown) => {
-      console.error("Reconcile failed", error);
+      console.error("Metering reconcile failed; running the other sweeps anyway", error);
       return null;
     });
     // Its own step: a failure here doesn't hide what the reconciler did.
