@@ -8,8 +8,8 @@
 -- 20261102230000_prompt_history.sql). Each is closed to the API's roles:
 -- RLS on with no policies, and anon's and authenticated's privileges
 -- revoked. The table owner, and so an app connecting as it, is unaffected
--- (RLS isn't forced), and service_role keeps its access. Tables absent from
--- a database (every one but production's) are skipped.
+-- (RLS isn't forced), and service_role keeps its access. Names that aren't
+-- a table in a database (absent from every one but production's) are skipped.
 
 do $$
 declare
@@ -24,7 +24,13 @@ begin
     'message_reaction', 'model', 'note', 'oauth_session', 'pinned_note', 'prompt',
     'prompt_history', 'shared_chat', 'skill', 'tag', 'tool', 'user'
   ] loop
-    if to_regclass(format('public.%I', t)) is not null then
+    -- Tables only (partitioned ones too): a view, matview or foreign table
+    -- of the same name would make `enable row level security` abort the
+    -- whole migration.
+    if exists (
+      select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relname = t and c.relkind in ('r', 'p')
+    ) then
       execute format('alter table public.%I enable row level security', t);
       execute format('revoke all on table public.%I from anon, authenticated', t);
     end if;
