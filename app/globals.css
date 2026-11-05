@@ -144,7 +144,8 @@
   /* Every inspector tab shares one width, so switching panels never moves
      the chat. The app's navigation sidebar is outside this grid. */
   --studio-inspector-width: 400px;
-  grid-template-columns: minmax(0, 1fr) var(--studio-inspector-width);
+  /* Dragged wider, it still never takes more than 60% of the window. */
+  grid-template-columns: minmax(0, 1fr) min(var(--studio-inspector-width), 60vw);
   grid-template-rows: auto minmax(0, 1fr);
   /* Definite height (not min-height) so the grid tracks are bounded: the chat
      column's conversation scrolls internally and its composer stays pinned at
@@ -857,4 +858,4 @@
 @media (prefers-reduced-motion: reduce) { .mission-pulse, .mission-in { animation: none; } }
 /* A Mission's Ships pane, ruled off from the chat. */
 .studio-runners { display: flex; flex-direction: column; height: 100%; min-height: 0; border-left: 1px solid var(--studio-line); background: var(--studio-bg); }
-@media (min-width: 1101px) { .studio-shell.is-mission:not(.no-inspector) { grid-template-columns: minmax(0, 1fr) var(--studio-mission-inspector-width, 340px); } }
+@media (min-width: 1101px) { .studio-shell.is-mission:not(.no-inspector) { grid-template-columns: minmax(0, 1fr) min(var(--studio-mission-inspector-width, 340px), 60vw); } }

@@ -7,8 +7,15 @@ import { useEffect, useRef, useState } from "react";
 const MIN_WIDTH = 300;
 const MAX_SHARE = 0.6;
 
+/** The stylesheet's own widths (app/globals.css), before any drag. */
+const DEFAULT_WIDTH = { mission: 340, session: 400 } as const;
+
+function maxWidth(): number {
+  return Math.round(Math.max(MIN_WIDTH, window.innerWidth * MAX_SHARE));
+}
+
 function clamp(width: number): number {
-  return Math.round(Math.min(Math.max(width, MIN_WIDTH), Math.max(MIN_WIDTH, window.innerWidth * MAX_SHARE)));
+  return Math.round(Math.min(Math.max(width, MIN_WIDTH), maxWidth()));
 }
 
 /**
@@ -20,7 +27,17 @@ function clamp(width: number): number {
 export function useInspectorWidth(kind: "mission" | "session") {
   const key = `outrunner.inspector-width.${kind}`;
   const [width, setWidth] = useState<number | null>(null);
+  // The widest it may be now; the stylesheet holds the same cap as the
+  // window narrows (globals.css), this only says it to a screen reader.
+  const [max, setMax] = useState<number | null>(null);
   const drag = useRef<{ x: number; width: number } | null>(null);
+
+  useEffect(() => {
+    const measure = () => setMax(maxWidth());
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
 
   useEffect(() => {
     let saved: number | null = null;
@@ -45,11 +62,15 @@ export function useInspectorWidth(kind: "mission" | "session") {
 
   const panelWidth = (handle: HTMLElement) => handle.parentElement?.getBoundingClientRect().width ?? MIN_WIDTH;
 
+  const shown = width ?? DEFAULT_WIDTH[kind];
   const handle = {
     role: "separator",
     "aria-orientation": "vertical",
     "aria-label": "Resize panel",
-    "aria-valuenow": width ?? undefined,
+    "aria-valuemin": MIN_WIDTH,
+    "aria-valuemax": max ?? undefined,
+    "aria-valuenow": max === null ? shown : Math.min(shown, max),
+    "aria-valuetext": `${max === null ? shown : Math.min(shown, max)} pixels wide`,
     tabIndex: 0,
     title: "Drag to resize; double-click to reset",
     onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
@@ -62,7 +83,9 @@ export function useInspectorWidth(kind: "mission" | "session") {
       // The panel is on the right, so moving left widens it.
       if (drag.current) setWidth(clamp(drag.current.width + drag.current.x - event.clientX));
     },
-    onPointerUp: (event: React.PointerEvent<HTMLElement>) => {
+    // Capture goes on pointerup and on pointercancel alike (a gesture taking
+    // over, the window losing focus), so a drag always ends and is kept.
+    onLostPointerCapture: (event: React.PointerEvent<HTMLElement>) => {
       if (!drag.current) return;
       drag.current = null;
       save(clamp(panelWidth(event.currentTarget)));
