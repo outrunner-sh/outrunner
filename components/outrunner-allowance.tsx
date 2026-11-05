@@ -12,13 +12,17 @@ import { providerSettingsHref } from "@/lib/settings-links";
 /**
  * How much of their allowance on Outrunner's models the user has used, as a
  * bar above their account in the sidebar; once it's spent, what
- * to do next. Nothing where the server has no per-user allowance (one shared
+ * to do next (Connect Claude, unless it already is). Nothing where the server has no per-user allowance (one shared
  * key). Re-read on each page and when the window comes back, as sessions
  * spend it.
  */
 export function OutrunnerAllowance() {
   const pathname = usePathname();
   const [view, setView] = useState<AllowanceView | null>(null);
+  // Whether their own Claude is connected, asked only once the allowance is
+  // spent: then sessions on Claude keep working, and Connect Claude is moot.
+  const [claude, setClaude] = useState<boolean | null>(null);
+  const out = view?.state === "out";
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +44,27 @@ export function OutrunnerAllowance() {
     };
   }, [pathname]);
 
+  useEffect(() => {
+    if (!out) return;
+    let cancelled = false;
+    const read = async () => {
+      try {
+        const res = await fetch("/api/settings/claude", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as { connected?: boolean };
+        if (!cancelled) setClaude(Boolean(data.connected));
+      } catch {
+        // Offline: no button until it's known.
+      }
+    };
+    void read();
+    window.addEventListener("focus", read);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", read);
+    };
+  }, [out, pathname]);
+
   if (!view) return null;
   return (
     <div className="space-y-1.5 px-2 pb-3">
@@ -47,10 +72,16 @@ export function OutrunnerAllowance() {
       <Link href="/settings/org/usage" className="block rounded-sm hover:opacity-80">
         <AllowanceBar view={view} />
       </Link>
-      {view.state === "out" ? (
+      {out && claude === true ? (
+        <p className="text-xs text-muted-foreground">
+          Outrunner&apos;s models are paused. Sessions on your Claude account keep working.
+        </p>
+      ) : out ? (
         <>
           <p className="text-xs text-muted-foreground">You&apos;ve used your included usage.</p>
-          <NoticeActions actions={[{ label: "Connect Claude", href: providerSettingsHref("claude"), primary: true }]} />
+          {claude === false && (
+            <NoticeActions actions={[{ label: "Connect Claude", href: providerSettingsHref("claude"), primary: true }]} />
+          )}
         </>
       ) : null}
     </div>
