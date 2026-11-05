@@ -39,7 +39,11 @@ import type {
 
 /**
  * Data access for the three tables. RLS already restricts rows to the owner,
- * so these helpers never filter by owner_id on read.
+ * so these helpers never filter by owner_id on read. Writes are the service
+ * role's alone since 20261105100000_workspaces_server_writes.sql (RLS has no
+ * policy a signed-in user can write through), so they go through the admin
+ * client, which bypasses RLS: only a caller that has checked the session's
+ * owner may hand these a row's id.
  */
 
 // --- projects --------------------------------------------------------------
@@ -206,7 +210,7 @@ export async function createWorkspaceRow(input: {
   kind?: "mission";
   parentMissionId?: string;
 }): Promise<Workspace> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("workspaces")
     .insert({
@@ -266,7 +270,7 @@ export async function liveWorkspaceOnBranch(
  * set it.
  */
 export async function setWorkspaceTitleIfUnset(id: string, title: string): Promise<boolean> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("workspaces")
     .update({ title })
@@ -286,7 +290,7 @@ export async function setWorkspaceTitleIfUnset(id: string, title: string): Promi
  * two sends racing can't both claim it.
  */
 export async function claimFirstPrompt(id: string, key: string, abandonedBefore: string): Promise<FirstPromptClaim> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const claimedAt = new Date().toISOString();
   const { data, error } = await supabase
     .from("workspaces")
@@ -333,7 +337,7 @@ function ownClaim<Q extends { eq: (column: string, value: string) => Q; is: (col
 /** Renew the claim `claimedAt` names, just before its prompt goes: its new
  *  token, or null when another request has taken it over. */
 export async function renewFirstPrompt(id: string, key: string, claimedAt: string): Promise<string | null> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const renewedAt = new Date().toISOString();
   const { data, error } = await ownClaim(
     supabase.from("workspaces").update({ first_prompt_claimed_at: renewedAt }),
@@ -347,7 +351,7 @@ export async function renewFirstPrompt(id: string, key: string, claimedAt: strin
 
 /** The first prompt claimed under `claimedAt` reached the box: repeats are answered as sent. */
 export async function markFirstPromptSent(id: string, key: string, claimedAt: string): Promise<void> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { error } = await ownClaim(
     supabase.from("workspaces").update({ first_prompt_sent_at: new Date().toISOString() }),
     id,
@@ -359,7 +363,7 @@ export async function markFirstPromptSent(id: string, key: string, claimedAt: st
 
 /** Let the claim go, as a send that failed does, so a retry with `key` sends. */
 export async function releaseFirstPrompt(id: string, key: string, claimedAt: string): Promise<void> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { error } = await ownClaim(
     supabase.from("workspaces").update({ first_prompt_key: null, first_prompt_claimed_at: null }),
     id,
@@ -406,7 +410,7 @@ function workspaceColumns(patch: WorkspacePatch) {
 }
 
 export async function updateWorkspace(id: string, patch: WorkspacePatch): Promise<void> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { error } = await supabase
     .from("workspaces")
     .update(workspaceColumns(patch))
@@ -422,7 +426,7 @@ export async function updateWorkspace(id: string, patch: WorkspacePatch): Promis
  * as one from before them does.
  */
 export async function recordWorkspaceModel(id: string, recorded: RecordedModel): Promise<void> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { error } = await supabase
     .from("workspaces")
     .update({
@@ -440,7 +444,7 @@ export async function recordWorkspaceModel(id: string, recorded: RecordedModel):
  * it already, and a database from before the column keeps it there alone.
  */
 export async function recordWorkspaceMode(id: string, mode: SessionMode): Promise<void> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { error } = await supabase.from("workspaces").update({ session_mode: mode }).eq("id", id);
   if (error) console.warn(`Workspace ${id}: could not record its ${mode} mode`, error);
 }
@@ -455,7 +459,7 @@ export async function transitionWorkspace(input: {
   from: WorkspaceStatus[];
   patch: WorkspacePatch & { status: WorkspaceStatus };
 }): Promise<Workspace | null> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("workspaces")
     .update(workspaceColumns(input.patch))
@@ -561,7 +565,7 @@ export async function createRuntimeComputer(input: {
   agentSecret: string;
   imageVersion?: string;
 }): Promise<RuntimeComputer> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("runtime_computers")
     .insert({
@@ -583,7 +587,11 @@ export async function createRuntimeComputer(input: {
  * (claim_workspace_computer), or a project's shared one from before
  * (claim_runtime_computer). Each SQL function takes a transaction-scoped
  * advisory lock before reading/inserting, while a unique index remains the
- * durable backstop.
+ * durable backstop. Deliberately the user's client, not the admin one: the
+ * claims count the caller's own boxes toward their plan, which they scope
+ * by auth.uid() — the signed-in user they run as. They are SECURITY DEFINER
+ * (20261105100000), so they write despite the tables' writes being the
+ * service role's alone.
  */
 export async function claimRuntimeComputer(input: {
   scope: ComputerScope;
@@ -706,7 +714,7 @@ export async function createPooledComputer(input: {
   slot: number;
   generation: number | null;
 }): Promise<RuntimeComputer | null> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("runtime_computers")
     .insert({
@@ -730,7 +738,7 @@ export async function createPooledComputer(input: {
 /** Record the pooled box stopped and ready to take; false when its row is
  *  gone (swept as abandoned), so the box is its refill's to delete. */
 export async function markPooledReady(id: string, sandboxId: string): Promise<boolean> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("runtime_computers")
     .update({ status: "stopped", daytona_sandbox_id: sandboxId, error_message: null })
@@ -768,7 +776,7 @@ export async function completePooledWarmup(
 /** Mark a pooled box's refill failed, for the project's back-off, keeping the
  *  box its delete couldn't remove (`leftover`), so the next refill deletes it. */
 export async function markPooledFailed(id: string, leftover: string | null): Promise<void> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { error } = await supabase
     .from("runtime_computers")
     .update({ status: "error", daytona_sandbox_id: leftover, agent_base_url: null, error_message: "The warm pool's refill failed." })
@@ -780,7 +788,7 @@ export async function markPooledFailed(id: string, leftover: string | null): Pro
 /** Take a box out of the pool: its row deleted only while still pooled.
  *  False when a session claimed it first (its row is no longer pooled). */
 export async function releasePooledComputer(id: string): Promise<boolean> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.from("runtime_computers").delete().eq("id", id).eq("pooled", true).select("id");
   if (error) throw error;
   return (data ?? []).length > 0;
@@ -788,7 +796,7 @@ export async function releasePooledComputer(id: string): Promise<boolean> {
 
 /** Forget a pooled box's row whose box couldn't be made. */
 export async function deletePooledComputer(id: string): Promise<void> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { error } = await supabase.from("runtime_computers").delete().eq("id", id).eq("pooled", true);
   if (error) throw error;
 }
@@ -806,7 +814,7 @@ export async function updateRuntimeComputer(
     touchActive?: boolean;
   },
 ): Promise<void> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const update = (withProvider: boolean) =>
     supabase
       .from("runtime_computers")
@@ -851,7 +859,7 @@ export async function markRuntimeComputerStoppedIfReady(
   id: string,
   daytonaSandboxId: string,
 ): Promise<boolean> {
-  const supabase = await createSupabaseServerClient();
+  const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("runtime_computers")
     .update({

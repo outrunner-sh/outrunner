@@ -87,13 +87,17 @@ export async function insertChat(chat: {
   return toChat(data);
 }
 
-/** Rename a chat: the main one's name is kept on its session's row. */
+/** Rename a chat: the main one's name is kept on its session's row, which
+ *  only the server writes (20261105100000), so through the admin client. */
 export async function renameChat(workspaceId: string, chatId: string, name: string): Promise<void> {
-  const supabase = await createSupabaseServerClient();
   const { error } =
     chatId === MAIN_CHAT
-      ? await supabase.from("workspaces").update({ main_chat_name: name }).eq("id", workspaceId)
-      : await supabase.from("workspace_chats").update({ name }).eq("workspace_id", workspaceId).eq("id", chatId);
+      ? await createSupabaseAdminClient().from("workspaces").update({ main_chat_name: name }).eq("id", workspaceId)
+      : await (await createSupabaseServerClient())
+          .from("workspace_chats")
+          .update({ name })
+          .eq("workspace_id", workspaceId)
+          .eq("id", chatId);
   if (error) throw error;
 }
 

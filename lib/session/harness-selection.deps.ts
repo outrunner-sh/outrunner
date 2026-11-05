@@ -4,16 +4,16 @@ import type { RecordedModel } from "@/lib/runtime/session-models";
 import type { SessionMode } from "@/lib/runtime/agent-protocol";
 import { harnessRecorded } from "@/lib/session/harness-switch";
 import { MAIN_CHAT } from "@/lib/session/chats";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 
 /** Checked persistence: a harness selection determines where credentials go
- * on wake, so a failed write must be reported and retried. */
+ * on wake, so a failed write must be reported and retried. The session's row
+ * is the server's to write (20261105100000), so through the admin client. */
 export async function recordHarnessSelection(workspaceId: string, chatId: string, agent: AgentId, selection: RecordedModel, mode?: SessionMode): Promise<void> {
-  const db = await createSupabaseServerClient();
   const patch = { agent, model_provider: selection.model.provider, model_id: selection.model.id, model_effort: selection.effort };
   const query = chatId === MAIN_CHAT
-    ? db.from("workspaces").update({ ...patch,...(mode && {session_mode:mode}) }).eq("id", workspaceId)
-    : db.from("workspace_chats").update(patch).eq("workspace_id", workspaceId).eq("id", chatId);
+    ? createSupabaseAdminClient().from("workspaces").update({ ...patch,...(mode && {session_mode:mode}) }).eq("id", workspaceId)
+    : (await createSupabaseServerClient()).from("workspace_chats").update(patch).eq("workspace_id", workspaceId).eq("id", chatId);
   const { data, error } = await query.select("id").single();
   if (error || !data) throw new Error("The harness changed, but its selection could not be saved. Retry the switch before archiving.", { cause: error });
 }

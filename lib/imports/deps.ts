@@ -134,7 +134,9 @@ export function commitDeps(ownerId: string): CommitDeps {
     },
     provider: () => importProvider(ownerId),
     async insertWorkspace(row) {
-      const supabase = await createSupabaseServerClient();
+      // The session's row is the server's to write (20261105100000), like
+      // createWorkspaceRow's.
+      const supabase = createSupabaseAdminClient();
       const { error } = await supabase.from("workspaces").insert({
         id: row.id,
         owner_id: ownerId,
@@ -165,8 +167,10 @@ export function commitDeps(ownerId: string): CommitDeps {
       if (error) throw error;
     },
     async deleteWorkspace(id) {
-      const supabase = await createSupabaseServerClient();
-      const { error } = await supabase.from("workspaces").delete().eq("id", id);
+      // The server's write (20261105100000), scoped to this import's owner:
+      // a row it filters out is no delete, said as one.
+      const supabase = createSupabaseAdminClient();
+      const { error } = await supabase.from("workspaces").delete().eq("id", id).eq("owner_id", ownerId);
       if (error) throw error;
     },
     now: () => new Date(),

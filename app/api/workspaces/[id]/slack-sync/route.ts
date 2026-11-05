@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { isUuid } from "@/lib/ids";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -19,7 +19,9 @@ export async function POST(request: Request, context: RouteContext) {
   const { id } = await context.params;
   const body = (await request.json().catch(() => null)) as { sync?: unknown } | null;
   if (!isUuid(id) || typeof body?.sync !== "boolean") return NextResponse.json({ error: "Invalid request." }, { status: 400 });
-  const supabase = await createSupabaseServerClient();
+  // The row is the server's to write (20261105100000); the owner_id filter
+  // below is the check that only this owner's session is said.
+  const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("workspaces")
     .update({ slack_sync: body.sync })
