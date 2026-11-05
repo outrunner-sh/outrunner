@@ -118,7 +118,22 @@ test("a stopped box is archived within a day, freeing its disk from the account'
   // Daytona's own default is 7 days, and a stopped box's disk counts against
   // the shared quota until then.
   assert.ok(AUTO_ARCHIVE_MINUTES > 0 && AUTO_ARCHIVE_MINUTES <= 24 * 60);
-  assert.equal(createParams({}).autoArchiveInterval, AUTO_ARCHIVE_MINUTES);
+  assert.equal(createParams({}, undefined, true).autoArchiveInterval, AUTO_ARCHIVE_MINUTES);
+  // A user's own Daytona key: their quota, their account's default.
+  assert.equal("autoArchiveInterval" in createParams({}), false);
+});
+
+test("a box on a user's own Daytona key keeps their account's archive default", async () => {
+  let sent: unknown;
+  const backend = new DaytonaBackend({ apiKey: async () => "their-key" });
+  (backend as unknown as { client: Promise<Pick<Daytona, "create">> }).client = Promise.resolve({
+    create: (async (params: unknown) => {
+      sent = params;
+      return { id: "theirs", cpu: 1, memory: 1 } as Sandbox;
+    }) as Daytona["create"],
+  });
+  await backend.create({});
+  assert.equal("autoArchiveInterval" in (sent as object), false);
 });
 
 test("unsized backend creates keep the account's default snapshot", async () => {
@@ -156,7 +171,7 @@ test("missing named snapshot retries only once using the account default and kee
       assert.equal((params as { snapshot: string }).snapshot, "daytona-medium");
       throw new DaytonaNotFoundError("Snapshot daytona-medium not found");
     }
-    assert.deepEqual(params, createParams(labels));
+    assert.deepEqual(params, createParams(labels, undefined, true));
     return { id: "fallback", cpu: 1, memory: 1 } as Sandbox;
   });
   await backend.create(labels, { cpu: 2, memoryGb: 4 });

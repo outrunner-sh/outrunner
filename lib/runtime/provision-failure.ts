@@ -63,7 +63,9 @@ export function provisionFailureMessage(
   const step = phase ? ` while ${STEP[phase]}` : "";
   const detail = errorText(error);
   if (GITHUB_REFUSED.test(detail)) return GITHUB_RECONNECT_MESSAGE;
-  if (platformBox && SANDBOX_CAPACITY.test(detail)) return PLATFORM_CAPACITY_MESSAGE;
+  // Only where a box is made or started: a clone or install that runs out of
+  // room inside the box ("Disk quota exceeded" from git) is its own cause.
+  if (platformBox && (phase === null || phase === "allocate") && SANDBOX_CAPACITY.test(detail)) return PLATFORM_CAPACITY_MESSAGE;
   if (!detail) return `Setup failed${step}. Start a new session to try again.`;
   return `Setup failed${step}: ${truncate(redact(detail, secrets))}`;
 }

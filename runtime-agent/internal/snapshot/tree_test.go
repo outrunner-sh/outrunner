@@ -115,3 +115,42 @@ func TestBuildPatchOfABrokenRepositoryIsEmpty(t *testing.T) {
 		t.Fatalf("patch = %q, %v; want an empty file", data, err)
 	}
 }
+
+// A working repository whose diff fails (a full disk as it is written) fails
+// the capture: an empty patch would pass for "no changes", and the archive
+// would go on without the session's uncommitted work.
+func TestBuildPatchFailsWhenAWorkingRepositorysDiffFails(t *testing.T) {
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(realGit, append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "-q", "-m", "base")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("uncommitted work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A git whose diff fails part way, as on a full disk; everything else is git.
+	bin := t.TempDir()
+	fake := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = diff ] && { echo 'fatal: write error: No space left on device' >&2; exit 128; }; done\nexec " + realGit + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if _, err := buildPatch(context.Background(), dir, filepath.Join(t.TempDir(), "patch")); err == nil {
+		t.Fatal("buildPatch succeeded with an empty patch; want the capture failed")
+	}
+}

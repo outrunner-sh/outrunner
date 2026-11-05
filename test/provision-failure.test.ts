@@ -74,6 +74,13 @@ test("Outrunner's sandbox account being full is said as Outrunner's, never as th
   assert.equal(provisionFailureMessage(new Error("Sandbox limit exceeded"), "allocate", [], true), PLATFORM_CAPACITY_MESSAGE);
   // On the user's own Daytona account, it's theirs to fix: Daytona's words stand.
   assert.match(provisionFailureMessage(daytona, "allocate", [], false), /^Setup failed while provisioning the sandbox: Total disk limit exceeded/);
+  assert.equal(provisionFailureMessage(daytona, null, [], true), PLATFORM_CAPACITY_MESSAGE);
+  // Out of room inside the box, in a later step, is that step's own failure.
+  assert.equal(
+    provisionFailureMessage(new Error("fatal: write error: Disk quota exceeded"), "clone", [], true),
+    "Setup failed while cloning the repository: fatal: write error: Disk quota exceeded",
+  );
+  assert.match(provisionFailureMessage(new Error("memory limit exceeded"), "install", [], true), /^Setup failed while installing dependencies: memory limit exceeded/);
   // Anything else on Outrunner's account still says what it was.
   assert.equal(
     provisionFailureMessage(new Error("snapshot not found"), "allocate", [], true),

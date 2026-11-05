@@ -31,7 +31,15 @@ func buildPatch(ctx context.Context, worktree, dst string) (string, error) {
 		return "", fmt.Errorf("write patch: %w", err)
 	}
 	if !writeWorkingPatch(ctx, worktree, file) {
-		err = file.Truncate(0) // what a failed diff wrote is no patch
+		if healthy(ctx, worktree) {
+			// A repository that works whose diff didn't (the disk full as it
+			// was written): an empty patch would pass for "no changes", and an
+			// archive would go on without the session's uncommitted work, its
+			// box then let go. Fail the capture instead, the box kept.
+			_ = file.Close()
+			return "", fmt.Errorf("write patch: git diff failed in a working repository")
+		}
+		err = file.Truncate(0) // a broken repository's failed diff is no patch
 	}
 	if closeErr := file.Close(); err == nil {
 		err = closeErr
@@ -40,6 +48,11 @@ func buildPatch(ctx context.Context, worktree, dst string) (string, error) {
 		return "", fmt.Errorf("write patch: %w", err)
 	}
 	return dst, nil
+}
+
+// healthy reports whether worktree is a repository git can read HEAD of.
+func healthy(ctx context.Context, worktree string) bool {
+	return exec.CommandContext(ctx, "git", "-C", worktree, "rev-parse", "--verify", "-q", "HEAD").Run() == nil
 }
 
 // WorkingPatch is a patch of the working-tree changes relative to HEAD, so

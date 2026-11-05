@@ -165,7 +165,7 @@ test("an event records one run per matching automation, in one write, once per c
 function startDeps(over: Partial<StartDeps> = {}) {
   const settled: unknown[] = [];
   const started: ServerSessionStart[] = [];
-  const archived: { userId: string; ids: readonly string[] }[] = [];
+  const archived: { userId: string; ids: readonly string[]; dropBox?: boolean }[] = [];
   const neighbours: unknown[] = [];
   const checks: string[] = [];
   const deps: StartDeps = {
@@ -180,8 +180,8 @@ function startDeps(over: Partial<StartDeps> = {}) {
       neighbours.push(run);
       return { earlierSessions: ["w-old"], superseded: false };
     },
-    archiveServerSessions: async (userId, ids) => {
-      archived.push({ userId, ids });
+    archiveServerSessions: async (userId, ids, options) => {
+      archived.push({ userId, ids, dropBox: options?.dropBox });
       return ids.length;
     },
     startServerSession: async (start) => {
@@ -232,7 +232,7 @@ test("once a run's session is ready, the earlier review sessions are archived as
   const { deps, archived, neighbours } = startDeps();
   await startRun(pending(), deps);
   assert.deepEqual(neighbours, [{ runId: "r1", automationId: "a1", projectId: "p1", prNumber: 7 }]);
-  assert.deepEqual(archived, [{ userId: "u1", ids: ["w-old"] }]);
+  assert.deepEqual(archived, [{ userId: "u1", ids: ["w-old"], dropBox: true }]);
 });
 
 test("a run ready after a later commit's run began archives its own session, not the newer one", async () => {
@@ -240,7 +240,7 @@ test("a run ready after a later commit's run began archives its own session, not
     runNeighbours: async () => ({ earlierSessions: ["w-older"], superseded: true }),
   });
   await startRun(pending(), deps);
-  assert.deepEqual(archived, [{ userId: "u1", ids: ["w1"] }]);
+  assert.deepEqual(archived, [{ userId: "u1", ids: ["w1"], dropBox: true }]);
 });
 
 test("a run that fails keeps the earlier review sessions, and an archive failure fails nothing", async () => {
@@ -372,7 +372,7 @@ test("a closed or merged pull request is read as such; nothing else is", () => {
 
 test("a pull request closing archives its review sessions, each as its runner", async () => {
   const asked: unknown[] = [];
-  const archived: { userId: string; ids: readonly string[] }[] = [];
+  const archived: { userId: string; ids: readonly string[]; dropBox?: boolean }[] = [];
   const deps = {
     pullRequestSessions: async (installationId: number, repo: string, number: number) => {
       asked.push([installationId, repo, number]);
@@ -381,8 +381,8 @@ test("a pull request closing archives its review sessions, each as its runner", 
         ["u1", ["w3"]],
       ]);
     },
-    archiveServerSessions: async (userId: string, ids: readonly string[]) => {
-      archived.push({ userId, ids });
+    archiveServerSessions: async (userId: string, ids: readonly string[], options?: { dropBox?: boolean }) => {
+      archived.push({ userId, ids, dropBox: options?.dropBox });
       return ids.length;
     },
     openChecksOfPullRequest: async () => ["r1", "r2"],
@@ -399,8 +399,8 @@ test("a pull request closing archives its review sessions, each as its runner", 
   ]);
   assert.deepEqual(asked, [[42, "neevai-labs/outrunner", 7]]);
   assert.deepEqual(archived, [
-    { userId: "connector-1", ids: ["w1", "w2"] },
-    { userId: "u1", ids: ["w3"] },
+    { userId: "connector-1", ids: ["w1", "w2"], dropBox: true },
+    { userId: "u1", ids: ["w3"], dropBox: true },
   ]);
   // Any other event looks nothing up.
   assert.equal(
