@@ -8,34 +8,24 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { installationProjectsOf } from "@/lib/db/installation-projects";
 import type { PullRequestEvent, PullRequestState } from "@/lib/session/pull-request-event";
 import type { Database } from "@/lib/supabase/database.types";
 
 /** A pull request a session changed state (or was opened): changes recorded,
  *  by session. The sessions it's on are found by repository and branch, as
  *  the Slack agent's announcement finds them — but only among the orgs that
- *  own the installation the event came from: a project's full name is its
- *  org's members' to choose, and another org's could be renamed to collide
- *  with this repository's, which must not receive its private events. */
+ *  own the installation the event came from (installation-projects.ts): a
+ *  project's full name is its org's members' to choose, and another org's
+ *  could be renamed to collide with this repository's, which must not
+ *  receive its private events. */
 export async function recordPullRequestEventWith(
   event: PullRequestEvent,
   installationId: number,
   db: SupabaseClient<Database>,
 ): Promise<Array<{ workspaceId: string; ownerId: string; from: PullRequestState | null; to: PullRequestState; number: number }>> {
-  const { data: links, error: linksError } = await db
-    .from("org_github_installations")
-    .select("org_id")
-    .eq("installation_id", installationId);
-  if (linksError) throw linksError;
-  const orgIds = [...new Set((links ?? []).map((l) => l.org_id))];
-  if (!orgIds.length) return [];
-  const { data: projects, error: projectsError } = await db
-    .from("projects")
-    .select("id, org_id")
-    .in("org_id", orgIds)
-    .ilike("full_name", event.repoFullName.replace(/[\\%_]/g, "\\$&"));
-  if (projectsError) throw projectsError;
-  if (!projects?.length) return [];
+  const projects = await installationProjectsOf(db, installationId, event.repoFullName);
+  if (!projects.length) return [];
   const projectIds = projects.map((p) => p.id);
   // The repository's own sessions on the branch, and the sessions of several
   // repositories in its orgs: never every org's sessions on a branch as

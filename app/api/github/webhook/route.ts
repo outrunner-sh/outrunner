@@ -160,7 +160,7 @@ export async function POST(request: Request) {
           title: pr.title ?? "",
         };
         after(() =>
-          announcePullRequest(opened).catch((error: unknown) => console.error("Slack agent: couldn't announce the PR", error)),
+          announcePullRequest(opened, installationId).catch((error: unknown) => console.error("Slack agent: couldn't announce the PR", error)),
         );
       }
       // Its session's pull request opened, closed or merged: recorded, for
