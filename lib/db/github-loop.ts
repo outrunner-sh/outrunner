@@ -54,13 +54,8 @@ export async function installationProjects(
 /** A queued follow-up's project, while it is still one of the live
  * installation's orgs': it was matched by repository id when it was queued
  * (installationProjects), and a follow-up keeps no repository id to match
- * by again. Null without one: a name alone matches no project. */
-export async function installationProject(
-  installationId: number,
-  _repoFullName: string,
-  projectId?: string,
-): Promise<{ orgId: string; projectId: string } | null> {
-  if (!projectId) return null;
+ * by again. */
+export async function installationProject(installationId: number, projectId: string): Promise<{ orgId: string; projectId: string } | null> {
   const supabase = db();
   const orgIds = await installationOrgsOf(supabase, installationId);
   if (orgIds.length === 0) return null;

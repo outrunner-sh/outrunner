@@ -7,7 +7,6 @@ import {
   claimLoopAct,
   resetCiTurns,
   githubMember,
-  installationProject,
   installationProjects,
   linkedSessions,
   linkSession,
@@ -31,19 +30,23 @@ async function token(installationId: number): Promise<string> {
   return installationToken(config, installationId);
 }
 
-export function loopDeps(scope?: { orgId: string; projectId: string }): LoopDeps {
+/** The org member a GitHub account is, if the deployment still lets them
+ *  in: as the Slack agent's, someone it no longer lets in steers nothing. */
+export async function loopMember(githubUserId: number, orgId: string): Promise<string | null> {
+  const userId = await githubMember(githubUserId, orgId);
+  if (!userId) return null;
+  const { data, error } = await createSupabaseAdminClient().auth.admin.getUserById(userId);
+  return !error && data.user && isOwner(data.user) ? userId : null;
+}
+
+/** The loop's I/O for one org's project of the event's repository, as the
+ *  webhook matched it (runGitHubLoop: by GitHub's repository id). */
+export function loopDeps(scope: { orgId: string; projectId: string }): LoopDeps {
   return {
-    scope: scope ? async () => scope : installationProject,
+    scope: async () => scope,
     claim: claimLoopAct,
     release: releaseLoopAct,
-    async member(githubUserId, orgId) {
-      const userId = await githubMember(githubUserId, orgId);
-      if (!userId) return null;
-      // As the Slack agent's: someone the deployment no longer lets in
-      // steers nothing.
-      const { data, error } = await createSupabaseAdminClient().auth.admin.getUserById(userId);
-      return !error && data.user && isOwner(data.user) ? userId : null;
-    },
+    member: loopMember,
     level: projectLevel,
     linkedSessions,
     async pullBranches(installationId, repoFullName, number) {
