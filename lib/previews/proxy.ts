@@ -186,7 +186,11 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
       return redirect(res, `${decision.signInUrl}?r=${encodeURIComponent(safeReturnPath(path))}`);
     }
     if (decision.kind === "page") return sendPage(res, decision.status, decision.page, { canWake: decision.canWake, path });
-    if (offSite(req, at)) return sendText(res, 403, "Requests to a preview must come from its own page.");
+    // Asked of a login preview only: a public one's cookie unlocks nothing
+    // (docs/previews.md: anyone with the link), and other origins must
+    // reach it — another preview's frontend, an OAuth form_post callback,
+    // a webhook.
+    if (decision.mode === "login" && offSite(req, at)) return sendText(res, 403, "Requests to a preview must come from its own page.");
     forward(req, res, at, decision, path);
   }
 
@@ -303,7 +307,9 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
     }
     if (decision.kind === "login") return refuse(socket, 401);
     if (decision.kind === "page") return refuse(socket, decision.status);
-    if (offSite(req, at)) return refuse(socket, 403);
+    // A login preview only, as on the forward path: a public preview's
+    // WebSocket may be another preview's page talking to it.
+    if (decision.mode === "login" && offSite(req, at)) return refuse(socket, 403);
     if (socket.destroyed) return;
 
     const target = new URL(decision.upstream.baseUrl);
@@ -523,13 +529,22 @@ export function stripCookie(header: string | undefined, name: string): string | 
   return kept.length ? kept.join("; ") : null;
 }
 
-/** Another page's work: every preview is one site under the preview domain
- *  and the session cookie is SameSite=Lax, so another preview's page — or
- *  any other site's — could put a signed-in visitor's session to work on
- *  this preview, whose own pages are the only ones that may. A browser that
+/** Another page's work — asked of a login preview only, whose session cookie
+ *  is what let the visitor in: every preview is one site under the preview
+ *  domain and the cookie is SameSite=Lax, so another preview's page — or any
+ *  other site's — could put a signed-in visitor's session to work on this
+ *  preview, whose own pages are the only ones that may. A browser that
  *  followed a link here is let be (a navigation, cross-site as the click that
  *  opened a preview from the app is), as is any client that says nothing of
- *  where it's from (a webhook's, a script's: no Origin, no Fetch metadata). */
+ *  where it's from (a webhook's, a script's: no Origin, no Fetch metadata).
+ *
+ *  A cross-site form POST is refused even as a navigation — the Origin check
+ *  runs before the navigation exemption, on purpose. SameSite=Lax doesn't
+ *  send the cookie on one, so it can never sign the visitor in: such a
+ *  callback (OAuth response_mode=form_post, SAML's POST binding) belongs on
+ *  a public preview, which docs/previews.md sends it to, and the
+ *  fresh-set cookie a browser does send for its first minutes is exactly
+ *  the cross-site POST the session must not be put to work on. */
 function offSite(req: IncomingMessage, at: Preview): boolean {
   if (req.headers.origin !== undefined && req.headers.origin !== previewOrigin(at.slug, at.domain)) return true;
   const site = req.headers["sec-fetch-site"];

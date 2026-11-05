@@ -249,11 +249,25 @@ test("waking takes the preview's own page's form, never another site's", async (
   assert.ok(asked.some((r) => r.op === "wake" && r.slug === ASLEEP && r.session === "owner-session"));
 });
 
+/** The status a WebSocket handshake to `slug`'s preview ends in: 0 when it
+ * connects, the server's answer when it doesn't. */
+function wsStatus(slug: string, headers: Record<string, string>): Promise<number> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${frontPort}/_hmr`, { headers: { ...fromWorker(`${slug}.preview.test`), ...headers } });
+    ws.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
+    ws.on("error", () => resolve(-1));
+    ws.on("open", () => {
+      ws.close();
+      resolve(0);
+    });
+  });
+}
+
 test("a request naming another host in its target is refused", async () => {
   assert.equal((await call(PUBLIC, "http://169.254.169.254/latest")).status, 400);
 });
 
-test("another page's request can't put a signed-in visitor's session to work on a preview", async () => {
+test("another page's request can't put a signed-in visitor's session to work on a login preview", async () => {
   // Another site's fetch: the visitor's SameSite=Lax cookie rides along, but
   // isn't let through.
   const cross = await call(LOGIN, "/api/data", {
@@ -273,6 +287,50 @@ test("another page's request can't put a signed-in visitor's session to work on 
   assert.equal(own.status, 200);
   const plain = await call(LOGIN, "/api/data", { headers: { cookie: `${COOKIE}=member-session` } });
   assert.equal(plain.status, 200);
+});
+
+test("a public preview answers anyone with the link, whatever origin they come from", async () => {
+  // Its cookie unlocks nothing, so nothing is guarded: another preview's
+  // page calling it (its own frontend, say), a form a provider posts to it.
+  const fetched = await call(PUBLIC, "/api/data", {
+    headers: { origin: `https://${LOGIN}.preview.test`, "sec-fetch-site": "same-site", "sec-fetch-mode": "cors" },
+  });
+  assert.equal(fetched.status, 200);
+  const formPost = await call(PUBLIC, "/auth/apple/callback", {
+    method: "POST",
+    headers: { origin: "https://appleid.apple.com", "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" },
+    body: "code=1",
+  });
+  assert.equal(formPost.status, 200, "an OAuth response_mode=form_post callback belongs on a public preview (docs/previews.md)");
+  const seen = JSON.parse(formPost.body) as { method: string; body: string };
+  assert.equal(seen.method, "POST");
+  assert.equal(seen.body, "code=1", "the posted body arrives");
+  assert.equal(
+    await wsStatus(PUBLIC, { origin: `https://${LOGIN}.preview.test`, "sec-fetch-site": "same-site", "sec-fetch-mode": "websocket" }),
+    0,
+    "another preview's page's WebSocket (its frontend talking to it) connects",
+  );
+});
+
+test("a cross-site form POST to a login preview is refused even as a navigation; the preview's own form posts work", async () => {
+  // SameSite=Lax never sends the cookie on one, so it can't sign the
+  // visitor in — such a callback belongs on a public preview — and the
+  // fresh-set cookie a browser does send for its first minutes is the
+  // cross-site POST the session must not be put to work on.
+  const formPost = await call(LOGIN, "/auth/callback", {
+    method: "POST",
+    headers: { cookie: `${COOKIE}=member-session`, origin: "https://appleid.apple.com", "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" },
+    body: "code=1",
+  });
+  assert.equal(formPost.status, 403);
+  const own = await call(LOGIN, "/form", {
+    method: "POST",
+    headers: { cookie: `${COOKIE}=member-session`, origin: `https://${LOGIN}.preview.test`, "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate" },
+    body: "a=1",
+  });
+  assert.equal(own.status, 200);
+  const seen = JSON.parse(own.body) as { body: string };
+  assert.equal(seen.body, "a=1");
 });
 
 test("a browser that followed a link to a preview is let in, cross-site as the click may be", async () => {
@@ -320,31 +378,21 @@ test("a signed-out visitor's WebSocket is refused", async () => {
   assert.equal(status, 401);
 });
 
-test("another page's WebSocket can't tunnel into a preview; the preview's own connects", async () => {
+test("another page's WebSocket can't tunnel into a login preview; the preview's own connects", async () => {
   // Browsers always name their page's origin on a WebSocket: another
   // preview's, signed in as the visitor, is refused before the box is asked.
-  const status = (headers: Record<string, string>) =>
-    new Promise<number>((resolve) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${frontPort}/_hmr`, { headers: { ...fromWorker(`${LOGIN}.preview.test`), ...headers } });
-      ws.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
-      ws.on("error", () => resolve(-1));
-      ws.on("open", () => {
-        ws.close();
-        resolve(0);
-      });
-    });
   assert.equal(
-    await status({ cookie: `${COOKIE}=member-session`, origin: `https://${PUBLIC}.preview.test`, "sec-fetch-site": "same-site", "sec-fetch-mode": "websocket" }),
+    await wsStatus(LOGIN, { cookie: `${COOKIE}=member-session`, origin: `https://${PUBLIC}.preview.test`, "sec-fetch-site": "same-site", "sec-fetch-mode": "websocket" }),
     403,
   );
   assert.equal(
-    await status({ cookie: `${COOKIE}=member-session`, origin: `https://evil.example`, "sec-fetch-site": "cross-site", "sec-fetch-mode": "websocket" }),
+    await wsStatus(LOGIN, { cookie: `${COOKIE}=member-session`, origin: `https://evil.example`, "sec-fetch-site": "cross-site", "sec-fetch-mode": "websocket" }),
     403,
   );
   // The preview's own page's WebSocket (hot reload), and a plain client's,
   // connect as before.
-  assert.equal(await status({ cookie: `${COOKIE}=member-session`, origin: `https://${LOGIN}.preview.test`, "sec-fetch-site": "same-origin" }), 0);
-  assert.equal(await status({ cookie: `${COOKIE}=member-session` }), 0);
+  assert.equal(await wsStatus(LOGIN, { cookie: `${COOKIE}=member-session`, origin: `https://${LOGIN}.preview.test`, "sec-fetch-site": "same-origin" }), 0);
+  assert.equal(await wsStatus(LOGIN, { cookie: `${COOKIE}=member-session` }), 0);
 });
 
 test("cookies and headers are read and rewritten exactly", () => {
