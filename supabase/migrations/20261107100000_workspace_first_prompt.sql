@@ -45,7 +45,7 @@ begin
              where schemaname = 'public' and tablename = 'workspaces' and policyname = 'workspaces_owner_all')
     or not exists (select 1 from pg_policies
                    where schemaname = 'public' and tablename = 'workspaces' and policyname = 'workspaces_owner_read') then
-    raise exception 'workspaces still has its owner write policy: this migration must follow 20261106100000_workspaces_server_writes.sql (#393)';
+    raise exception 'workspaces policies are not split into workspaces_owner_read yet: this migration must follow 20261106100000_workspaces_server_writes.sql (#393)';
   end if;
   if has_table_privilege('anon', 'workspaces', 'insert')
     or has_table_privilege('anon', 'workspaces', 'update')
