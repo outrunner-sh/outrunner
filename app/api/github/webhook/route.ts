@@ -169,7 +169,9 @@ export async function POST(request: Request) {
       const tracked = pullRequestEventOf(payload);
       if (tracked) {
         after(() =>
-          recordPullRequestEvent(tracked)
+          // The installation's own orgs' projects only: another org's renamed
+          // to collide with this repository must not receive its events.
+          recordPullRequestEvent(tracked, installationId)
             .catch((error: unknown) => {
               console.error("Couldn't record a session's pull request", error);
               return [];
