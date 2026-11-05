@@ -1,6 +1,6 @@
 /** A fake of the Supabase client for the query surface the webhook's
  *  installation-scoped lookups use: filters (eq, neq, in, ilike, contains,
- *  not-is/not-in), projection, maybeSingle, insert and update, answered from
+ *  not-is/not-in, or), projection, maybeSingle, insert and update, answered from
  *  the rows the test gives, so the real query code runs against them. */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -94,6 +94,36 @@ export function fakeDb(tables: Record<string, Row[]>): SupabaseClient<Database> 
         const list = String(value).replace(/^\(|\)$/g, "").split(",").map((v) => v.trim());
         this.predicates.push((row) => !list.includes(String(row[column])));
       } else throw new Error(`fakeDb: .not ${operator} isn't supported`);
+      return this;
+    }
+
+    /** PostgREST's or-filter, of the forms the lookups use:
+     *  `col.is.null`, `col.eq.value`, `col.not.in.("a","b")`. */
+    or(filter: string) {
+      const terms: string[] = [];
+      let depth = 0;
+      let term = "";
+      for (const c of filter) {
+        if (c === "(") depth++;
+        if (c === ")") depth--;
+        if (c === "," && depth === 0) {
+          terms.push(term);
+          term = "";
+        } else term += c;
+      }
+      terms.push(term);
+      const tests = terms.map((t): ((row: Row) => boolean) => {
+        const [column, ...rest] = t.split(".");
+        const op = rest.join(".");
+        if (op === "is.null") return (row) => row[column] === null || row[column] === undefined;
+        if (op.startsWith("eq.")) return (row) => String(row[column]) === op.slice(3);
+        if (op.startsWith("not.in.")) {
+          const list = op.slice(7).replace(/^\(|\)$/g, "").split(",").map((v) => v.trim().replace(/^"|"$/g, ""));
+          return (row) => row[column] !== null && row[column] !== undefined && !list.includes(String(row[column]));
+        }
+        throw new Error(`fakeDb: .or term ${t} isn't supported`);
+      });
+      this.predicates.push((row) => tests.some((test) => test(row)));
       return this;
     }
 

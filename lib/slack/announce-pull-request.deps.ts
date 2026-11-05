@@ -10,7 +10,7 @@ export function announceDeps(installationId: number): AnnounceDeps {
   return {
     // The installation's own orgs' sessions on the repository only
     // (announce-pull-request-sessions.ts).
-    sessionsOn: (repoFullName, headRef, repoId) => sessionsOnRepoWith(db, installationId, repoFullName, headRef, repoId),
+    sessionsOn: (repoId, headRef) => sessionsOnRepoWith(db, installationId, repoId, headRef),
     async itemsOf(sessionIds) {
       const { data, error } = await db.from("work_items").select("id, number").in("workspace_id", sessionIds);
       if (error) throw error;

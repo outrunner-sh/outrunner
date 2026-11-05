@@ -18,11 +18,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export async function sessionsOnRepoWith(
   db: SupabaseClient<Database>,
   installationId: number,
-  repoFullName: string,
+  repoId: number,
   headRef: string,
-  repoId?: number,
 ): Promise<string[]> {
-  const { projects } = await installationProjectsOf(db, installationId, repoFullName, repoId);
+  const { projects } = await installationProjectsOf(db, installationId, repoId);
   if (projects.length === 0) return [];
   const ids = projects.map((p) => p.id);
   const orgIds = [...new Set(projects.map((p) => p.org_id))];

@@ -22,9 +22,9 @@ test("opening, reopening and closing are recorded; labels and reviews aren't", (
   assert.equal(pullRequestEventOf(payload("closed", { state: "closed", merged: true }))?.state, "merged");
   assert.equal(pullRequestEventOf(payload("reopened"))?.headRef, "runtime/x");
   // GitHub's own id of the repository — what projects match by, not a name
-  // a member can set — and no id when the payload names none.
+  // a member can set — and no event when the payload names none.
   assert.equal(pullRequestEventOf(payload("opened"))?.repoId, 501);
-  assert.equal(pullRequestEventOf(payload("opened", {}, {}))?.repoId, undefined);
+  assert.equal(pullRequestEventOf(payload("opened", {}, {})), null);
   assert.equal(pullRequestEventOf({ action: "opened", repository: { full_name: "acme/api" } }), null);
   assert.equal(pullRequestEventOf(payload("labeled")), null);
 });

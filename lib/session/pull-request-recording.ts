@@ -20,7 +20,7 @@ export type PullRequestChange = { workspaceId: string; ownerId: string; from: Pu
  *  by session. The sessions it's on are found by repository and branch, as
  *  the Slack agent's announcement finds them — but only among the orgs that
  *  own the installation the event came from (installation-projects.ts), and
- *  by GitHub's repository id when the event names one: a project's full name
+ *  by GitHub's repository id, never the full name: a project's full name
  *  is its org's members' to choose, and another org's could be renamed to
  *  collide with this repository's, which must not receive its private
  *  events. */
@@ -29,7 +29,7 @@ export async function recordPullRequestEventWith(
   installationId: number,
   db: SupabaseClient<Database>,
 ): Promise<PullRequestChange[]> {
-  const { projects } = await installationProjectsOf(db, installationId, event.repoFullName, event.repoId);
+  const { projects } = await installationProjectsOf(db, installationId, event.repoId);
   if (!projects.length) return [];
   const projectIds = projects.map((p) => p.id);
   // The repository's own sessions on the branch, and the sessions of several

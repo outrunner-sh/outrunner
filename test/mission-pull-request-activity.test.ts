@@ -35,9 +35,9 @@ test("an event is read with the installation and repository it came from, and no
   // An event that names no installation can't be scoped to its orgs: no one's.
   assert.equal(activityOf("pull_request", { ...payload, installation: undefined }), null);
   assert.equal(activityOf("pull_request", { ...payload, installation: { id: "nope" } }), null);
-  // An event whose payload names no repository id matches by the full name
-  // instead — everything GitHub sends the webhook names one.
-  assert.equal(activityOf("pull_request", { ...payload, repository: { full_name: "acme/private" } })?.repoId, undefined);
+  // Nor one whose payload names no repository id: projects match by it,
+  // never by the full name (everything GitHub sends the webhook names one).
+  assert.equal(activityOf("pull_request", { ...payload, repository: { full_name: "acme/private" } }), null);
 });
 
 /** Org A's installation, its repository's Runner, and org B's Runner on a

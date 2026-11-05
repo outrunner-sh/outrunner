@@ -80,13 +80,19 @@ test("a project renamed to collide in another org receives nothing of the event,
   assert.ok(shared.pull_requests.every((row) => row.project_id !== "p-b"), "matched GitHub's repository id, not the name");
 });
 
-test("an event that names no repository falls back to the full name, within the installation's own orgs", async () => {
+test("projects match by GitHub's repository id alone, never the full name", async () => {
   const { tables, projectA, projectB, workspaceA } = db();
-  const noId = { ...event, repoId: undefined };
-  const changed = await recordPullRequestEventWith(noId, 42, fakeDb(tables));
+  // Org A's project renamed by one of its members: still the repository, by
+  // its id, so still told.
+  tables.projects.find((p) => p.id === projectA)!.full_name = "acme/renamed";
+  const changed = await recordPullRequestEventWith(event, 42, fakeDb(tables));
   assert.deepEqual(changed.map((c) => c.workspaceId), [workspaceA]);
   assert.ok(tables.pull_requests.every((row) => row.project_id !== projectB));
-  assert.ok(tables.pull_requests.some((row) => row.project_id === projectA));
+  // And an id no project of the installation's orgs has reaches no one, the
+  // full name matching or not.
+  const none = db(true).tables;
+  assert.deepEqual(await recordPullRequestEventWith({ ...event, repoId: 999 }, 42, fakeDb(none)), []);
+  assert.equal(none.pull_requests.length, 0);
 });
 
 test("an org the installation is shared with does receive it; a suspended or unowned installation reaches no one", async () => {

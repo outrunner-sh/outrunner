@@ -13,6 +13,7 @@ import {
   linkSession,
   releaseLoopAct,
 } from "@/lib/db/github-loop";
+import { repositoryIdOf } from "@/lib/db/installation-projects";
 import { projectLevel } from "@/lib/db/org-access";
 import { optionalEnv } from "@/lib/env";
 import { githubAppConfig, installationToken } from "@/lib/github/app";
@@ -90,9 +91,12 @@ export const LOOP_EVENTS: ReadonlySet<string> = new Set([
  *  Never throws: what failed is logged. */
 export async function runGitHubLoop(event: string, payload: unknown, appSlug: string): Promise<void> {
   const p = payload as { installation?: { id?: number }; repository?: { full_name?: string } };
-  if (!p?.installation?.id || !p.repository?.full_name) return;
+  // GitHub's id of the repository, what its projects match by: never the
+  // full name, which a project's write-level members can set.
+  const repoId = repositoryIdOf(payload);
+  if (!p?.installation?.id || !p.repository?.full_name || repoId === null) return;
   try {
-    const scopes = await installationProjects(p.installation.id, p.repository.full_name);
+    const scopes = await installationProjects(p.installation.id, repoId);
     await Promise.all(scopes.map(async (scope) => {
       try {
         await runScopedLoop(event, payload, appSlug, scope, scopes.length > 1);

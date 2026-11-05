@@ -9,7 +9,7 @@
 
 import type { DueFollowUp } from "@/lib/github/followups";
 import type { LinkedSession, LinkTarget } from "@/lib/github/loop";
-import { installationProjectsOf } from "@/lib/db/installation-projects";
+import { installationOrgsOf, installationProjectsOf } from "@/lib/db/installation-projects";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 function db() {
@@ -39,25 +39,34 @@ export async function githubMember(githubUserId: number, orgId: string): Promise
   return (data as string | null) ?? null;
 }
 
-/** Every linked organization's project matching this repository, while the
- * installation is live (lib/db/installation-projects.ts). Unconnected
- * organizations are never in scope. */
+/** Every linked organization's project of the repository `repoId` (GitHub's
+ * id of it, never its full name), while the installation is live
+ * (lib/db/installation-projects.ts). Unconnected organizations are never in
+ * scope. */
 export async function installationProjects(
   installationId: number,
-  repoFullName: string,
+  repoId: number,
 ): Promise<{ orgId: string; projectId: string }[]> {
-  const { projects } = await installationProjectsOf(db(), installationId, repoFullName);
+  const { projects } = await installationProjectsOf(db(), installationId, repoId);
   return projects.map((p) => ({ orgId: p.org_id, projectId: p.id }));
 }
 
-/** Resolve a queued follow-up's exact project, or an unambiguous scope. */
+/** A queued follow-up's project, while it is still one of the live
+ * installation's orgs': it was matched by repository id when it was queued
+ * (installationProjects), and a follow-up keeps no repository id to match
+ * by again. Null without one: a name alone matches no project. */
 export async function installationProject(
   installationId: number,
-  repoFullName: string,
+  _repoFullName: string,
   projectId?: string,
 ): Promise<{ orgId: string; projectId: string } | null> {
-  const projects = await installationProjects(installationId, repoFullName);
-  return projectId ? projects.find((p) => p.projectId === projectId) ?? null : projects.length === 1 ? projects[0] : null;
+  if (!projectId) return null;
+  const supabase = db();
+  const orgIds = await installationOrgsOf(supabase, installationId);
+  if (orgIds.length === 0) return null;
+  const { data, error } = await supabase.from("projects").select("id, org_id").eq("id", projectId).in("org_id", orgIds).maybeSingle();
+  if (error) throw error;
+  return data ? { orgId: data.org_id, projectId: data.id } : null;
 }
 
 /** Statuses a session is still there in: woken or restored, it takes a

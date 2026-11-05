@@ -50,18 +50,23 @@ function db(withOrgBLink = false): { tables: Record<string, Row[]>; workspaceA: 
 
 test("the announcement reaches the installation's own org's sessions, of the repository and of its checkouts", async () => {
   const { tables, workspaceA, workspaceSeveral, workspaceB } = db();
-  const found = await sessionsOnRepoWith(fakeDb(tables), 42, "acme/private", "feature/leak", 501);
+  const found = await sessionsOnRepoWith(fakeDb(tables), 42, 501, "feature/leak");
   assert.ok(found.includes(workspaceA), "the repository's own session");
   assert.ok(found.includes(workspaceSeveral), "a session of several repositories that checked it out");
   assert.ok(!found.includes(workspaceB), "another org's colliding project's session");
   assert.ok(!found.includes("w-elsewhere"), "another org's session on the branch, of no matched project's org");
 });
 
-test("an event that names no repository falls back to the full name, within the installation's own orgs", async () => {
-  const { tables, workspaceA, workspaceSeveral, workspaceB } = db();
-  const found = await sessionsOnRepoWith(fakeDb(tables), 42, "acme/private", "feature/leak");
+test("projects match by GitHub's repository id alone, never the full name", async () => {
+  const { tables, workspaceA, workspaceSeveral, workspaceB } = db(true);
+  // Org A's project renamed: still the repository, by its id.
+  tables.projects.find((p) => p.id === "p-a")!.full_name = "acme/renamed";
+  const found = await sessionsOnRepoWith(fakeDb(tables), 42, 501, "feature/leak");
   assert.ok(found.includes(workspaceA) && found.includes(workspaceSeveral));
+  // Org B's same-named project, another repository, though the installation
+  // is shared with its org: not reached.
   assert.ok(!found.includes(workspaceB));
+  assert.deepEqual(await sessionsOnRepoWith(fakeDb(tables), 42, 999, "feature/leak"), []);
 });
 
 test("an org the installation is shared with is reached; a suspended or unowned installation reaches no one", async () => {
@@ -69,11 +74,11 @@ test("an org the installation is shared with is reached; a suspended or unowned 
   // Org B's project of the repository itself — the same GitHub repository —
   // now that the installation is shared with its org.
   tables.projects.find((p) => p.id === "p-b")!.github_repo_id = 501;
-  const found = await sessionsOnRepoWith(fakeDb(tables), 42, "acme/private", "feature/leak", 501);
+  const found = await sessionsOnRepoWith(fakeDb(tables), 42, 501, "feature/leak");
   assert.ok(found.includes(workspaceB), "the installation is shared with org B");
   const suspended = db().tables;
   suspended.org_github_installation_details[0].suspended_at = "2026-11-05T00:00:00Z";
-  assert.deepEqual(await sessionsOnRepoWith(fakeDb(suspended), 42, "acme/private", "feature/leak", 501), []);
+  assert.deepEqual(await sessionsOnRepoWith(fakeDb(suspended), 42, 501, "feature/leak"), []);
   const unclaimed = db().tables;
-  assert.deepEqual(await sessionsOnRepoWith(fakeDb(unclaimed), 43, "acme/private", "feature/leak", 501), []);
+  assert.deepEqual(await sessionsOnRepoWith(fakeDb(unclaimed), 43, 501, "feature/leak"), []);
 });

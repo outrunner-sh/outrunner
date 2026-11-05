@@ -16,7 +16,7 @@ export function stateOf(pr: { state?: string; merged?: boolean | null; merged_at
 
 export type PullRequestEvent = {
   /** GitHub's own id of the repository: what projects match by. */
-  repoId?: number;
+  repoId: number;
   repoFullName: string;
   number: number;
   url: string;
@@ -28,7 +28,7 @@ export type PullRequestEvent = {
 
 /** The webhook's pull_request payload as a change to record; null for an
  *  action that changes no state (a label, a review request) or a payload
- *  short of what's needed. */
+ *  short of what's needed (a repository id among it: projects match by it). */
 export function pullRequestEventOf(payload: {
   action?: string;
   repository?: { full_name?: string; id?: number };
@@ -47,9 +47,10 @@ export function pullRequestEventOf(payload: {
   const pr = payload.pull_request;
   const state = pr ? stateOf(pr) : null;
   const repoFullName = payload.repository?.full_name;
-  if (!pr || !state || !repoFullName || typeof pr.number !== "number" || !pr.html_url || !pr.head?.ref) return null;
+  const repoId = payload.repository?.id;
+  if (!pr || !state || !repoFullName || typeof repoId !== "number" || typeof pr.number !== "number" || !pr.html_url || !pr.head?.ref) return null;
   return {
-    ...(typeof payload.repository?.id === "number" && { repoId: payload.repository.id }),
+    repoId,
     repoFullName,
     number: pr.number,
     url: pr.html_url,

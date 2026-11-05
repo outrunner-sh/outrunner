@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { SlackConversation } from "@/lib/db/slack-agent";
 import { type AnnounceDeps, announcePullRequestWith } from "@/lib/slack/announce-pull-request";
 
-const opened = { repoFullName: "acme/api", headRef: "outrunner/fix-login", number: 12, url: "https://github.com/acme/api/pull/12", title: "Fix <login>" };
+const opened = { repoId: 501, repoFullName: "acme/api", headRef: "outrunner/fix-login", number: 12, url: "https://github.com/acme/api/pull/12", title: "Fix <login>" };
 
 /** The thread of OR-7, its session on the PR's branch, with the claim as the
  *  database makes it (claimPullRequest): once per PR, and never back to an
@@ -13,7 +13,7 @@ function thread() {
   const followed = new Map<string, { repo: string; number: number }>();
   const posts: string[] = [];
   const deps: AnnounceDeps = {
-    sessionsOn: async (repo, branch) => (repo === "acme/api" && branch === opened.headRef ? ["ws-1"] : []),
+    sessionsOn: async (repoId, branch) => (repoId === 501 && branch === opened.headRef ? ["ws-1"] : []),
     itemsOf: async (ids) => (ids.includes("ws-1") ? [{ id: "item-7", number: 7 }] : []),
     conversationForItem: async (id) => (id === "item-7" ? ({ id: "conv-1" } as SlackConversation) : null),
     claim: async (id, pr) => {
@@ -47,7 +47,7 @@ test("a new PR on the thread, after one closed unmerged, is told too", async () 
 test("a PR from a branch no session of an item is on is told nowhere", async () => {
   const { deps, posts } = thread();
   await announcePullRequestWith({ ...opened, headRef: "someone/else" }, deps);
-  await announcePullRequestWith({ ...opened, repoFullName: "acme/web" }, deps);
+  await announcePullRequestWith({ ...opened, repoId: 502, repoFullName: "acme/web" }, deps);
   assert.deepEqual(posts, []);
 });
 

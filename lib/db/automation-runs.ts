@@ -11,7 +11,7 @@ import { readRunEvent, type RunEvent } from "@/lib/automations/run-event";
 import type { AutomationTrigger, RunStatus, SessionMode, TriggerKind } from "@/lib/automations/rules";
 import { type Schedule, scheduleFromRow } from "@/lib/automations/schedule";
 import { currentRunners, timesRun } from "@/lib/db/automations";
-import { installationProjectsOf } from "@/lib/db/installation-projects";
+import { openChecksOfPullRequestWith, pullRequestAutomationLinksWith, pullRequestSessionsWith } from "@/lib/db/automation-pull-requests";
 import type { Json } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -97,65 +97,23 @@ async function candidatesOf(
 }
 
 /**
- * The enabled automations on `repoFullName` in every org linked to the
- * installation, while it is not suspended.
+ * The enabled automations on the repository `repoId` (GitHub's id of it) in
+ * every org linked to the installation, while it is not suspended.
  */
-export async function automationsForPullRequest(installationId: number, repoFullName: string): Promise<RunCandidate[]> {
+export async function automationsForPullRequest(installationId: number, repoId: number): Promise<RunCandidate[]> {
   const supabase = createSupabaseAdminClient();
-  const scope = await installationProjects(supabase, installationId, repoFullName);
-  if (!scope) return [];
-  const { data: repos, error } = await supabase
-    .from("automation_repos")
-    .select("automation_id, project_id")
-    .in("project_id", scope.projectIds);
-  if (error) throw error;
-  return (await Promise.all(scope.orgIds.map((orgId) => candidatesOf(supabase, orgId, repos ?? [])))).flat();
-}
-
-/** The linked orgs and their projects that are `repoFullName`
- *  (lib/db/installation-projects.ts). */
-async function installationProjects(
-  supabase: ReturnType<typeof createSupabaseAdminClient>,
-  installationId: number,
-  repoFullName: string,
-): Promise<{ orgIds: string[]; projectIds: string[] } | null> {
-  const { orgIds, projects } = await installationProjectsOf(supabase, installationId, repoFullName);
-  const projectIds = projects.map((p) => p.id);
-  return projectIds.length === 0 ? null : { orgIds, projectIds };
+  const { orgIds, links } = await pullRequestAutomationLinksWith(supabase, installationId, repoId);
+  if (links.length === 0) return [];
+  return (await Promise.all(orgIds.map((orgId) => candidatesOf(supabase, orgId, links)))).flat();
 }
 
 /**
  * The open sessions of the automations' runs on a pull request, by their
- * owner (the runner each was started as), for it closing to archive them.
+ * owner (the runner each was started as), for it closing to archive them
+ * (lib/db/automation-pull-requests.ts).
  */
-export async function pullRequestSessions(
-  installationId: number,
-  repoFullName: string,
-  prNumber: number,
-): Promise<Map<string, string[]>> {
-  const supabase = createSupabaseAdminClient();
-  const scope = await installationProjects(supabase, installationId, repoFullName);
-  if (!scope) return new Map();
-  const { data: runs, error } = await supabase
-    .from("automation_runs")
-    .select("workspace_id")
-    .in("project_id", scope.projectIds)
-    .eq("pr_number", prNumber)
-    .not("workspace_id", "is", null)
-    // Not the runs its closing starts, just now: theirs are only beginning.
-    .or(`trigger.is.null,trigger.not.in.("pull_request.closed","pull_request.merged")`);
-  if (error) throw error;
-  const ids = [...new Set((runs ?? []).flatMap((r) => (r.workspace_id ? [r.workspace_id] : [])))];
-  if (ids.length === 0) return new Map();
-  const { data: sessions, error: sessionsError } = await supabase
-    .from("workspaces")
-    .select("id, owner_id")
-    .in("id", ids)
-    .in("status", ["ready", "idle"]);
-  if (sessionsError) throw sessionsError;
-  const byOwner = new Map<string, string[]>();
-  for (const s of sessions ?? []) byOwner.set(s.owner_id, [...(byOwner.get(s.owner_id) ?? []), s.id]);
-  return byOwner;
+export async function pullRequestSessions(installationId: number, repoId: number, prNumber: number): Promise<Map<string, string[]>> {
+  return pullRequestSessionsWith(createSupabaseAdminClient(), installationId, repoId, prNumber);
 }
 
 /** A run to record: which automation, where, what started it, and the key
@@ -368,7 +326,7 @@ export async function advanceSchedule(scheduleId: string, dueAt: string, next: s
  * suspended): a schedule's or a webhook's run works on GitHub as the App, so
  * on a repository it can't reach it would only make a box that fails, every
  * time. A pull request's event comes through a live installation already
- * (installationProjects).
+ * (lib/db/automation-pull-requests.ts).
  */
 export async function automationCandidates(automationIds: readonly string[]): Promise<RunCandidate[]> {
   if (automationIds.length === 0) return [];
@@ -824,24 +782,8 @@ export async function markCheckClosed(runId: string): Promise<void> {
 
 /** The runs on a pull request (it closed) whose check is open, with no
  *  review in. */
-export async function openChecksOfPullRequest(
-  installationId: number,
-  repoFullName: string,
-  prNumber: number,
-): Promise<string[]> {
-  const supabase = createSupabaseAdminClient();
-  const scope = await installationProjects(supabase, installationId, repoFullName);
-  if (!scope) return [];
-  const { data, error } = await supabase
-    .from("automation_runs")
-    .select("id")
-    .in("project_id", scope.projectIds)
-    .eq("pr_number", prNumber)
-    .not("check_run_id", "is", null)
-    .is("check_closed_at", null)
-    .is("check_reviewed_at", null);
-  if (error) throw error;
-  return (data ?? []).map((r) => r.id);
+export async function openChecksOfPullRequest(installationId: number, repoId: number, prNumber: number): Promise<string[]> {
+  return openChecksOfPullRequestWith(createSupabaseAdminClient(), installationId, repoId, prNumber);
 }
 
 /** How long the sweep keeps trying a check GitHub won't take (the App

@@ -151,11 +151,18 @@ export async function POST(request: Request) {
       // A PR from a session working on an item the Slack agent filed: its
       // thread hears of it.
       const pr = payload.pull_request;
-      if (payload.action === "opened" && pr?.head?.ref && pr.html_url && typeof pr.number === "number" && payload.repository?.full_name) {
+      if (
+        payload.action === "opened" &&
+        pr?.head?.ref &&
+        pr.html_url &&
+        typeof pr.number === "number" &&
+        payload.repository?.full_name &&
+        typeof payload.repository.id === "number"
+      ) {
         const opened = {
           // GitHub's own id of the repository: projects match by it, not by a
           // full name a write-level member can set.
-          ...(typeof payload.repository.id === "number" && { repoId: payload.repository.id }),
+          repoId: payload.repository.id,
           repoFullName: payload.repository.full_name,
           headRef: pr.head.ref,
           number: pr.number,
