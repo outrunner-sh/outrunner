@@ -10,6 +10,7 @@ import {
   localSocketUrl,
   LocalRuntimeError,
   localTarget,
+  retryableLocalFailure,
   type LocalTarget,
 } from "@/lib/desktop/local-runtime";
 import { type SessionUrls, WorkspaceSummary } from "@/lib/runtime/agent-protocol";
@@ -44,8 +45,9 @@ export type SessionAttachment = {
   /** What followed the code, for a local session: the reason the Mac app gave
    *  ("agent-did-not-start: <the runner's last log line>"). */
   errorReason: string | null;
-  /** The failure was on the way (network, 502/503/504, a failed restore), so
-   *  trying again can help (retryableAttachFailure). */
+  /** The failure was on the way (network, 502/503/504, a failed restore; a
+   *  local agent briefly unreachable), so trying again can help
+   *  (retryableAttachFailure, retryableLocalFailure). */
   errorRetryable: boolean;
   /** Increments every time `urls` changes (new fetch succeeded). */
   attachId: number;
@@ -182,7 +184,8 @@ export function useSessionAttachment(
           message: err instanceof Error ? err.message : String(err),
           code: err instanceof AttachError || err instanceof LocalRuntimeError ? err.code : null,
           reason: err instanceof LocalRuntimeError ? err.reason : null,
-          retryable: retryableAttachFailure(err),
+          // A local session's own failures say for themselves which pass.
+          retryable: err instanceof LocalRuntimeError ? retryableLocalFailure(err) : retryableAttachFailure(err),
         });
       } finally {
         // An aborted attach may finish after a newer one started; that one's
