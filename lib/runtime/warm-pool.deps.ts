@@ -125,7 +125,7 @@ export async function intentWarmProject(owner: Owner, projectId: string): Promis
       sessionEnv,
       previousSandboxId: sandboxId,
     }),
-    publish: (restored) => completePooledWarmup(owner.id, computer.id, {
+    publish: (restored) => completePooledWarmup(computer.id, owner.id, {
       sandboxId: restored.sandboxId,
       provider: provider.name,
       agentBaseUrl: restored.agentBaseUrl,

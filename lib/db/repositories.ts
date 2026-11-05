@@ -772,8 +772,8 @@ export async function markPooledReady(id: string, ownerId: string, sandboxId: st
  * call: the publish writes its arguments (a sandbox id!) into the row, so
  * the database takes the row's owner as a separate check the caller states. */
 export async function completePooledWarmup(
-  ownerId: string,
   id: string,
+  ownerId: string,
   restored: {
     sandboxId: string;
     provider: ProviderName;
