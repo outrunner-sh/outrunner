@@ -49,14 +49,12 @@ fn site() -> String {
 }
 
 /// Whether `url` is on [`site`]'s origin, for the navigation check: its
-/// scheme, host and port, not its host alone, so `http://` or another port of
-/// the same host never loads in the window. Derived from the site rather than
-/// declared as a second constant, so the two cannot disagree.
+/// scheme, host and port (the spec's tuple origin), not its host alone, so
+/// `http://` or another port of the same host never loads in the window. A
+/// `file:` or `data:` URL's origin is opaque and equals none. Derived from the
+/// site rather than declared as a second constant, so the two cannot disagree.
 fn same_origin(url: &tauri::Url, site: &tauri::Url) -> bool {
-    url.scheme() == site.scheme()
-        && url.host_str().is_some()
-        && url.host_str() == site.host_str()
-        && url.port_or_known_default() == site.port_or_known_default()
+    url.origin() == site.origin()
 }
 
 /// Whether an off-site navigation may go to the system's opener: web pages
@@ -260,8 +258,13 @@ pub fn run() {
                     // Web pages elsewhere (OAuth provider, external links) open
                     // in the system browser instead of the embedded webview;
                     // anything else goes nowhere.
+                    // Only the scheme is logged: a URL's query may hold a token.
                     if opens_externally(url) {
-                        let _ = open::that(url.as_str());
+                        if let Err(error) = open::that(url.as_str()) {
+                            eprintln!("could not open a {}: URL externally: {error}", url.scheme());
+                        }
+                    } else {
+                        eprintln!("blocked navigation to a {}: URL", url.scheme());
                     }
                     false
                 })
