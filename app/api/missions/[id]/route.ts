@@ -33,7 +33,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (title !== null && (!title || title.length > 120)) return NextResponse.json({ error: "A name of 1 to 120 characters." }, { status: 400 });
   if (title !== null) {
     // ownsMission has said the owner may; the row itself is the server's to
-    // write (20261105100000), so through the admin client.
+    // write (20261106100000), so through the admin client.
     const { data, error } = await createSupabaseAdminClient().from("workspaces").update({ title }).eq("id", id).select("id");
     if (error) throw error;
     if (!data?.length) return NextResponse.json({ error: "Mission not found." }, { status: 404 });

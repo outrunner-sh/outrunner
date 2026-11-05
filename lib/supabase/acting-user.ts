@@ -6,7 +6,7 @@
  * That path reads through the user's own Supabase client, cookie bound,
  * under RLS, and its database functions ask auth.uid() (a box's claim counts
  * their plan's boxes): the service role can't stand in for it. (The tables'
- * own writes are the server's alone — 20261105100000 — and go through the
+ * own writes are the server's alone — 20261106100000 — and go through the
  * admin client whatever session is acting.) So this signs in as the user for
  * the length of `work`, with a one-time login token
  * the admin API mints (never emailed), and createSupabaseServerClient()

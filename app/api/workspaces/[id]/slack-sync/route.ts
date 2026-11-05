@@ -19,7 +19,7 @@ export async function POST(request: Request, context: RouteContext) {
   const { id } = await context.params;
   const body = (await request.json().catch(() => null)) as { sync?: unknown } | null;
   if (!isUuid(id) || typeof body?.sync !== "boolean") return NextResponse.json({ error: "Invalid request." }, { status: 400 });
-  // The row is the server's to write (20261105100000); the owner_id filter
+  // The row is the server's to write (20261106100000); the owner_id filter
   // below is the check that only this owner's session is said.
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase

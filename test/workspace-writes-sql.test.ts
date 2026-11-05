@@ -124,6 +124,17 @@ before(() => {
       '${POOLED_COMPUTER}', '${OWNER}', '${ORG}', '${PROJECT}', true, 'stopped', 'daytona',
       'sandbox-pooled', false
     );
+    -- The 5-arg complete_pooled_warmup this migration must retire. On a clean
+    -- chain it arrives an invoker from 20261103210000; on a database that ran
+    -- the first draft of this migration it survived as a SECURITY DEFINER
+    -- twin, granted to authenticated, the pivot still open through it. Seeded
+    -- here at its worst: whatever it is, the migration must drop it.
+    create function complete_pooled_warmup(
+      requested_computer_id uuid, requested_sandbox_id text, requested_provider text,
+      requested_agent_base_url text, requested_timings jsonb)
+    returns boolean language plpgsql security definer set search_path = public, pg_temp as
+    $$ begin return true; end $$;
+    grant execute on function complete_pooled_warmup(uuid, text, text, text, jsonb) to authenticated;
   `);
   sql(readFileSync("supabase/migrations/20261106100000_workspaces_server_writes.sql", "utf8"));
 });
@@ -256,4 +267,31 @@ test("SQL: a warmup claim stays on a project of the caller's org", { skip }, () 
     /project not found/);
   // The owner's own project is theirs to warm.
   as("authenticated", OWNER, `select * from claim_pooled_warmup('${PROJECT}', 'daytona', null, null)`);
+});
+
+test("SQL: no overload of the wake publisher is left the user's to call", { skip }, () => {
+  // The owner argument changed the signature, and create or replace on a
+  // changed signature makes a twin, not a replacement: the 5-arg original —
+  // seeded before the migration as a definer granted to authenticated —
+  // must be dropped, or the pivot walks straight through it.
+  assert.equal(
+    sql(`select to_regprocedure('complete_pooled_warmup(uuid, text, text, text, jsonb)') is null`),
+    "t",
+  );
+  // Whatever overloads exist, none is any signed-in user's to call — checked
+  // over pg_proc, not only over the signature we know about.
+  assert.equal(sql(`
+    select count(*) from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'complete_pooled_warmup'
+      and (has_function_privilege('authenticated', p.oid, 'execute')
+           or has_function_privilege('anon', p.oid, 'execute'))
+  `), "0");
+  // The server's own remains, alone.
+  assert.equal(sql(`
+    select count(*) from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'complete_pooled_warmup'
+      and has_function_privilege('service_role', p.oid, 'execute')
+  `), "1");
 });

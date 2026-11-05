@@ -40,7 +40,7 @@ import type {
 /**
  * Data access for the three tables. RLS already restricts rows to the owner,
  * so these helpers never filter by owner_id on read. Writes are the service
- * role's alone since 20261105100000_workspaces_server_writes.sql (RLS has no
+ * role's alone since 20261106100000_workspaces_server_writes.sql (RLS has no
  * policy a signed-in user can write through), so they go through the admin
  * client, which bypasses RLS: only a caller that has checked the session's
  * owner may hand these a row's id.
@@ -606,7 +606,7 @@ export async function createRuntimeComputer(input: {
  * durable backstop. Deliberately the user's client, not the admin one: the
  * claims count the caller's own boxes toward their plan, which they scope
  * by auth.uid() — the signed-in user they run as. They are SECURITY DEFINER
- * (20261105100000), so they write despite the tables' writes being the
+ * (20261106100000), so they write despite the tables' writes being the
  * service role's alone.
  */
 export async function claimRuntimeComputer(input: {

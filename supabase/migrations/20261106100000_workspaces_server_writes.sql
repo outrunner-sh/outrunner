@@ -368,6 +368,15 @@ $$;
 -- agent url), so by the rule above it is the server's alone: revoked from
 -- authenticated, granted to service_role, and the caller names the row's
 -- owner, so a wrong-owner publish is a no-op rather than a write.
+--
+-- The owner argument changes the signature, and `create or replace` on a
+-- changed signature makes a second overload rather than replacing: without
+-- this drop, the 5-arg complete_pooled_warmup from 20261103210000 would
+-- survive beside it, still granted to authenticated and still exposed over
+-- PostgREST — on a database that already ran the first draft of this
+-- migration, as its definer twin, the pivot still open through it.
+drop function if exists complete_pooled_warmup(uuid, text, text, text, jsonb);
+
 create or replace function complete_pooled_warmup(
   requested_computer_id uuid,
   expected_owner uuid,

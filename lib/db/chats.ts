@@ -88,7 +88,7 @@ export async function insertChat(chat: {
 }
 
 /** Rename a chat: the main one's name is kept on its session's row, which
- *  only the server writes (20261105100000), so through the admin client. */
+ *  only the server writes (20261106100000), so through the admin client. */
 export async function renameChat(workspaceId: string, chatId: string, name: string): Promise<void> {
   const { error } =
     chatId === MAIN_CHAT

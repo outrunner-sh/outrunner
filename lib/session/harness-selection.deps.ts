@@ -8,7 +8,7 @@ import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/sup
 
 /** Checked persistence: a harness selection determines where credentials go
  * on wake, so a failed write must be reported and retried. The session's row
- * is the server's to write (20261105100000), so through the admin client,
+ * is the server's to write (20261106100000), so through the admin client,
  * scoped to its owner. */
 export async function recordHarnessSelection(workspaceId: string, ownerId: string, chatId: string, agent: AgentId, selection: RecordedModel, mode?: SessionMode): Promise<void> {
   const patch = { agent, model_provider: selection.model.provider, model_id: selection.model.id, model_effort: selection.effort };
