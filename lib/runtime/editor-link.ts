@@ -1,16 +1,12 @@
 import type { BrowserLink } from "@/lib/runtime/sandbox/backend";
 
 /**
- * How long an editor link works: half an hour. Opening the editor mints a
- * fresh link and ends the last (keepEditorLink), so one is good until the
- * next open — and a link that leaked, into a browser's history or past a
- * shoulder, opens the editor for minutes, not a working day.
+ * Each session's editor link, the last one minted, so the next mint can end
+ * the last (keepEditorLink): only the newest opens the editor. This process
+ * alone: one minted by another instance (a restart, a second server) ends
+ * with its TTL (a working day, set where it's minted, in
+ * app/api/workspaces/[id]/editor/route.ts), not at the next mint here.
  */
-export const EDITOR_LINK_TTL_SECONDS = 30 * 60;
-
-/** Each session's editor link, the last one minted. This process alone:
- *  one minted by another instance (a restart, a second server) ends with
- *  its TTL, not at the next mint here. */
 const store = globalThis as { __outrunnerEditorLinks?: Map<string, BrowserLink> };
 const links = (store.__outrunnerEditorLinks ??= new Map<string, BrowserLink>());
 

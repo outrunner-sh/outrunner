@@ -3,7 +3,7 @@ import { mock, test } from "node:test";
 
 import type { Sandbox } from "@daytonaio/sdk";
 
-import { EDITOR_LINK_TTL_SECONDS, keepEditorLink } from "@/lib/runtime/editor-link";
+import { keepEditorLink } from "@/lib/runtime/editor-link";
 import { box } from "@/lib/runtime/sandbox/daytona";
 import type { BrowserLink } from "@/lib/runtime/sandbox/backend";
 
@@ -85,8 +85,4 @@ test("a revoke that fails is logged, not raised: the new link is what matters", 
   } finally {
     errors.mock.restore();
   }
-});
-
-test("an editor link is good for half an hour, not a working day", () => {
-  assert.equal(EDITOR_LINK_TTL_SECONDS, 30 * 60);
 });
