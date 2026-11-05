@@ -338,7 +338,7 @@ func mediaUploadCommand(ctx context.Context, args []string, stdout, stderr io.Wr
 	// then shows broken in the pull request.
 	if strings.EqualFold(filepath.Ext(path), ".gif") {
 		if info, err := os.Stat(path); err == nil && info.Size() >= MaxGIFBytes {
-			fmt.Fprintf(stderr, "outrunner: %s is %s, over the %s GitHub shows: a pull request shows it broken. Make a smaller one with `outrunner media gif`.\n",
+			fmt.Fprintf(stderr, "outrunner: %s is %s, over the %s GitHub shows: a pull request shows it broken. Make a smaller one from the recording (not the GIF): `outrunner media gif <recording> --duration <s>`.\n",
 				filepath.Base(path), megabytes(info.Size()), megabytes(MaxGIFBytes))
 		}
 	}

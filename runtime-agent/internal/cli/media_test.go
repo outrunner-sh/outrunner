@@ -112,6 +112,9 @@ func TestAGIFOverFiveMegabytesIsMadeSmallerUntilItFits(t *testing.T) {
 	if len(*runs) != 3 || result.Width != 672 || result.FPS != 12 || result.Bytes != MaxGIFBytes-1 {
 		t.Fatalf("result = %+v after %d runs", result, len(*runs))
 	}
+	if info, err := os.Stat(result.Path); err != nil || info.Mode().Perm()&0o044 == 0 {
+		t.Fatalf("made %s unreadable to others: %v", result.Path, info.Mode())
+	}
 	if result.Path != strings.TrimSuffix(in, ".mp4")+".gif" || !strings.Contains(progress.String(), "trying smaller") {
 		t.Fatalf("path %q, progress %q", result.Path, progress.String())
 	}
@@ -406,7 +409,7 @@ func TestAFailedGIFLeavesNoFileBehind(t *testing.T) {
 		return errors.New("ffmpeg: exit status 234: Error writing trailer: Invalid argument")
 	}
 	_, err := MakeGIF(context.Background(), in, out, GIFOptions{Start: 10}, nil)
-	if err == nil || !strings.Contains(err.Error(), "--start 10s") {
+	if err == nil || !strings.Contains(err.Error(), "if --start 10s is past") {
 		t.Fatalf("err = %v", err)
 	}
 	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
@@ -437,5 +440,71 @@ func TestUploadingAGIFTooLargeForGitHubWarns(t *testing.T) {
 	_ = os.WriteFile(small, []byte("GIF89a"), 0o644)
 	if _, _, stderr := run(t, "media", "upload", small, "--name", "Checkout flow on a phone"); strings.Contains(stderr, "shows it broken") {
 		t.Fatalf("warned of a small GIF: %q", stderr)
+	}
+}
+
+func TestAGIFIsNeverMadeOverItsInputOrOverAnExistingFileOnFailure(t *testing.T) {
+	old := runFFmpeg
+	t.Cleanup(func() { runFFmpeg = old })
+	ran := false
+	runFFmpeg = func(_ context.Context, args []string) error {
+		ran = true
+		return errors.New("ffmpeg: Invalid argument")
+	}
+
+	// `media gif flow.gif`: GIFPath of a GIF is itself.
+	dir := t.TempDir()
+	gif := filepath.Join(dir, "flow.gif")
+	_ = os.WriteFile(gif, []byte("GIF89a keep me"), 0o644)
+	if _, err := MakeGIF(context.Background(), gif, GIFPath(gif), GIFOptions{}, nil); err == nil || !strings.Contains(err.Error(), "from the recording") {
+		t.Fatalf("err = %v", err)
+	}
+	if ran {
+		t.Fatal("ran ffmpeg over its own input")
+	}
+	if data, _ := os.ReadFile(gif); string(data) != "GIF89a keep me" {
+		t.Fatalf("input changed: %q", data)
+	}
+
+	// -o an existing file, ffmpeg failing (a bad --crop, bad input): left as it was.
+	in := recording(t)
+	existing := filepath.Join(dir, "existing.gif")
+	_ = os.WriteFile(existing, []byte("GIF89a earlier"), 0o644)
+	if _, err := MakeGIF(context.Background(), in, existing, GIFOptions{Crop: "10:10:0:0"}, nil); err == nil {
+		t.Fatal("no error")
+	}
+	if data, _ := os.ReadFile(existing); string(data) != "GIF89a earlier" {
+		t.Fatalf("existing output changed: %q", data)
+	}
+	// No try left lying about.
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".outrunner-gif-") {
+			t.Fatalf("left %s behind", e.Name())
+		}
+	}
+}
+
+func TestTheStartHintIsOnlyForFFmpegsOwnFailure(t *testing.T) {
+	old := runFFmpeg
+	t.Cleanup(func() { runFFmpeg = old })
+	runFFmpeg = func(ctx context.Context, args []string) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return os.WriteFile(args[len(args)-1], nil, 0o644)
+	}
+	in := recording(t)
+	// Empty: its own message names --start already, once.
+	_, err := MakeGIF(context.Background(), in, GIFPath(in), GIFOptions{Start: 5}, nil)
+	if err == nil || strings.Contains(err.Error(), "past the recording's end") {
+		t.Fatalf("err = %v", err)
+	}
+	// Cancelled (Ctrl-C): not a --start problem.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = MakeGIF(ctx, in, GIFPath(in), GIFOptions{Start: 5}, nil)
+	if err == nil || strings.Contains(err.Error(), "--start") {
+		t.Fatalf("err = %v", err)
 	}
 }
