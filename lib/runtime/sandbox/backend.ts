@@ -33,6 +33,15 @@ export type PreviewTarget = {
   revoke?: () => Promise<void>;
 };
 
+/** A URL a browser opens a box's port at, and how this server ends it before
+ *  it lapses: the editor's link, ended as soon as a newer one is minted
+ *  (lib/runtime/editor-link.ts), so one that leaked opens the editor for
+ *  minutes, not until its hours are up. */
+export type BrowserLink = {
+  url: string;
+  revoke: () => Promise<void>;
+};
+
 /** One running sandbox. */
 export interface SandboxBox {
   readonly id: string;
@@ -44,9 +53,10 @@ export interface SandboxBox {
   home(): Promise<string>;
   agentEndpoint(port: number): Promise<AgentEndpoint>;
   /** A URL a browser can open the box's `port` at for `ttlSeconds`, its
-   *  credential in it: for the session's editor. Absent where the provider
-   *  can't make one. */
-  browserUrl?(port: number, ttlSeconds: number): Promise<string>;
+   *  credential in it, with a way to end it before then: for the session's
+   *  editor, whose last link is ended when a new one is minted. Absent
+   *  where the provider can't make one. */
+  browserUrl?(port: number, ttlSeconds: number): Promise<BrowserLink>;
   /** Its desktop, where the provider has one (Daytona). Absent elsewhere. */
   readonly desktop?: BoxDesktop;
   /** Where this server reaches the box's `port` for a preview it proxies

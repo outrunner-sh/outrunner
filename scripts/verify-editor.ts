@@ -47,7 +47,7 @@ try {
     const again = performance.now();
     await agent.openEditor(identity);
     console.log(at(), `second open took ${((performance.now() - again) / 1000).toFixed(1)}s`);
-    const url = new URL((await provider.browserUrl(sandboxId, editor.port, 8 * 3600))!);
+    const url = new URL((await provider.browserUrl(sandboxId, editor.port, 8 * 3600))!.url);
     url.searchParams.set("folder", editor.folder);
     const page = await fetch(url);
     const html = await page.text();
@@ -62,7 +62,7 @@ try {
   );
   const listed = await agent.listPorts(identity);
   console.log(at(), "servers on the box:", JSON.stringify(listed));
-  const preview = await provider.browserUrl(sandboxId, 5173, 8 * 3600);
+  const preview = (await provider.browserUrl(sandboxId, 5173, 8 * 3600))!.url;
   const served = await fetch(`${preview}/preview.html`).then(async (r) => `${r.status} ${(await r.text()).trim()}`);
   console.log(at(), "preview of 5173:", served);
   const other = await agent.openEditor({ ...identity, workspaceId: "someone-else" }).then(() => "allowed", (e: { status?: number }) => `refused ${e.status}`);

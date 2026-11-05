@@ -5,6 +5,7 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_EDITOR } from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
+import { EDITOR_LINK_TTL_SECONDS, keepEditorLink } from "@/lib/runtime/editor-link";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { opensInBrowser } from "@/lib/runtime/types";
@@ -12,15 +13,16 @@ import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-/** How long an editor link works: a working day. Opening it again mints a new one. */
-const EDITOR_LINK_TTL_SECONDS = 8 * 60 * 60;
-
 /**
  * Open VS Code in the browser on a cloud session: the agent has code-server
  * running on the session's box, and the owner gets a link to it, on the
  * session's folder. While it is still starting (the first open on a box
- * installs it), the answer is 202 `{ starting: true }`, to ask again. The link carries its own credential (the provider's
- * signed preview URL), so it goes to the owner alone, as the terminal's does.
+ * installs it), the answer is 202 `{ starting: true }`, to ask again. The
+ * link carries its own credential (the provider's signed preview URL), so
+ * it goes to the owner alone, as the terminal's does — and lasts half an
+ * hour, ending the last link minted (lib/runtime/editor-link.ts): the
+ * client asks for a link on every open, so a fresh one is always what it
+ * gets.
  */
 export async function POST(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) {
@@ -65,11 +67,13 @@ export async function POST(request: Request, context: RouteContext) {
     }
     // Still being installed or started: the button asks again.
     if (!editor) return NextResponse.json({ starting: true }, { status: 202 });
-    const base = await provider.browserUrl(sandboxId, editor.port, EDITOR_LINK_TTL_SECONDS);
-    if (!base) {
+    const link = await provider.browserUrl(sandboxId, editor.port, EDITOR_LINK_TTL_SECONDS);
+    if (!link) {
       return NextResponse.json({ error: "This session's sandbox can't open the editor in a browser." }, { status: 409 });
     }
-    const url = new URL(base);
+    // Ends the link before it, so only this one opens the editor.
+    await keepEditorLink(workspace.id, link);
+    const url = new URL(link.url);
     url.searchParams.set("folder", editor.folder);
     return NextResponse.json({ url: url.toString() });
   } catch (error) {

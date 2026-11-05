@@ -333,8 +333,13 @@ export function box(sandbox: Sandbox): SandboxBox {
       };
     },
     // The token is in the host, so every page, asset and socket under it is
-    // let through: what the editor needs.
-    browserUrl: async (port, ttlSeconds) => (await sandbox.getSignedPreviewUrl(port, ttlSeconds)).url,
+    // let through: what the editor needs. Kept, so the link can be ended the
+    // moment the next one is minted (lib/runtime/editor-link.ts), not when
+    // its hours are up.
+    browserUrl: async (port, ttlSeconds) => {
+      const signed = await sandbox.getSignedPreviewUrl(port, ttlSeconds);
+      return { url: signed.url, revoke: () => sandbox.expireSignedPreviewUrl(port, signed.token) };
+    },
     desktop: {
       // Starts what isn't running (the display, its window manager, the VNC
       // server and noVNC) and leaves what is: a second start is a no-op.

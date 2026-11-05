@@ -8,7 +8,9 @@ import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 
 type RouteContext = { params: Promise<{ id: string; port: string }> };
 
-/** How long a preview link works: a working day, as the editor's. */
+/** How long a preview link works: a working day, minted fresh on each open.
+ *  The editor's link, a shell into the box, is shorter and ends the last
+ *  one minted (lib/runtime/editor-link.ts). */
 const PREVIEW_LINK_TTL_SECONDS = 8 * 60 * 60;
 
 /**
@@ -43,11 +45,11 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
-    const url = await provider.browserUrl(sandboxId, port, PREVIEW_LINK_TTL_SECONDS);
-    if (!url) {
+    const link = await provider.browserUrl(sandboxId, port, PREVIEW_LINK_TTL_SECONDS);
+    if (!link) {
       return NextResponse.json({ error: "This session's sandbox can't open a preview in a browser." }, { status: 409 });
     }
-    return NextResponse.json({ url });
+    return NextResponse.json({ url: link.url });
   } catch (error) {
     console.error(`Preview: failed for ${workspace.id} port ${port}`, error);
     return NextResponse.json({ error: "Couldn't open that preview. Please try again." }, { status: 502 });

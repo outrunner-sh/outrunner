@@ -35,7 +35,7 @@ import {
   readFileDiff,
 } from "@/lib/runtime/git";
 import { boxLabels, deploymentName } from "@/lib/runtime/orphan-boxes";
-import type { BoxResources, PreviewTarget, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
+import type { BoxResources, BrowserLink, PreviewTarget, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
 import type {
   ChangedFile,
   CommitWorkspaceResult,
@@ -660,9 +660,11 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     return upgrade;
   }
 
-  /** A URL the owner's browser opens the box's `port` at, for `ttlSeconds`;
-   *  null where the provider can't make one. */
-  async browserUrl(sandboxId: string, port: number, ttlSeconds: number): Promise<string | null> {
+  /** A URL the owner's browser opens the box's `port` at, for `ttlSeconds`,
+   *  with a way to end it before then (the editor's link is ended when the
+   *  next is minted, lib/runtime/editor-link.ts); null where the provider
+   *  can't make one. */
+  async browserUrl(sandboxId: string, port: number, ttlSeconds: number): Promise<BrowserLink | null> {
     const box = await this.backend.get(sandboxId);
     return box.browserUrl ? box.browserUrl(port, ttlSeconds) : null;
   }
