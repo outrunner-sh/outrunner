@@ -1847,6 +1847,36 @@ begin
   raise notice 'ok: a session''s first prompt is claimed once per key';
 end $$;
 
+-- 47. A session's first prompt, kept on its row while its box starts
+-- (20261105090000), is the server's alone to keep: no user session can write
+-- or clear one — the service-role client does — and the key it goes under
+-- stays short, as the claim's does.
+do $$
+declare
+  ws uuid;
+begin
+  select id into ws from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+  if has_column_privilege('anon', 'workspaces', 'first_prompt', 'insert')
+    or has_column_privilege('anon', 'workspaces', 'first_prompt', 'update') then
+    raise exception 'FAIL: an anonymous session can write a kept prompt';
+  end if;
+  if has_column_privilege('authenticated', 'workspaces', 'first_prompt', 'insert')
+    or has_column_privilege('authenticated', 'workspaces', 'first_prompt', 'update')
+    or has_column_privilege('authenticated', 'workspaces', 'first_prompt_attachments', 'update')
+    or has_column_privilege('authenticated', 'workspaces', 'first_prompt_idempotency_key', 'update') then
+    raise exception 'FAIL: a user session can write a kept prompt';
+  end if;
+  begin
+    update workspaces set first_prompt_idempotency_key = repeat('x', 101) where id = ws;
+    raise exception 'FAIL: an overlong kept-prompt key was kept';
+  exception when check_violation then
+    null;
+  end;
+  update workspaces set first_prompt = null, first_prompt_attachments = '{}',
+    first_prompt_idempotency_key = null where id = ws;
+  raise notice 'ok: a kept first prompt is the server''s alone to write';
+end $$;
+
 -- 47. An org's usage controls: a limit between 10% and all of the plan's hours,
 -- alerts at 50, 80 or 100%, and each alert once per period.
 do $$

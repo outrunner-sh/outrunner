@@ -144,6 +144,7 @@ export function WorkspaceSession({
   initialPrompt,
   initialPromptKey,
   initialAttachmentIds,
+  storedFirstPrompt = null,
   onSender,
   onSideChat,
   allowHarnessSwitch = false,
@@ -177,6 +178,12 @@ export function WorkspaceSession({
   initialPromptKey?: string;
   /** Attachment ids from the home composer, delivered with the first prompt. */
   initialAttachmentIds?: string[];
+  /** The first prompt kept on the session's row while its box started
+   *  (workspaces.first_prompt): this tab's last copy of it — a tab that
+   *  closed and reopened sends it when it never kept or carried one, and it
+   *  goes even with no tab at all (setup delivers it). Same prompt, same key,
+   *  so whichever copy sends, the box gets it once. */
+  storedFirstPrompt?: FirstPrompt | null;
   /** Given a sender while the session can send, null when it no longer can:
    *  for prompts from outside the composer (Create PR). Must be stable. */
   onSender?: (sender: SessionSender | null) => void;
@@ -224,7 +231,11 @@ export function WorkspaceSession({
   const recorded = useLocalSelection ? activeSelection.recorded
     : savedSelection ? savedSelection
     : carriedSelection.success ? carriedSelection.data as RecordedModel : initialRecorded;
-  const firstQueued = useQueuedFirstPrompt(workspaceId, { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [], ...(initialPromptKey && { key: initialPromptKey }) });
+  const firstQueued = useQueuedFirstPrompt(
+    workspaceId,
+    { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [], ...(initialPromptKey && { key: initialPromptKey }) },
+    storedFirstPrompt,
+  );
   const [initialDeliveryComplete, setInitialDeliveryComplete] = useState(false);
 
   // The jcode engine has no PTY: prompts go over the /message API and the reply
@@ -1199,11 +1210,14 @@ export function WorkspaceSession({
       attachmentIds: initialAttachmentIds ?? [],
       ...(initialPromptKey && { key: initialPromptKey }),
     };
+    // The server's kept copy is the last resort, and only a cloud session's:
+    // its row is where setup read the prompt it may have delivered already,
+    // in which case this send answers "already" and cleans up after it.
     const first = hasFirstPrompt(fromUrl)
       ? fromUrl
       : local
         ? null
-        : rememberedFirstPrompt(tabStorage(), workspaceId);
+        : (rememberedFirstPrompt(tabStorage(), workspaceId) ?? storedFirstPrompt);
     if (!first) {
       void Promise.resolve().then(() => setInitialDeliveryComplete(true));
       return;
@@ -1265,7 +1279,7 @@ export function WorkspaceSession({
     });
     // send is stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attached, initialPrompt, initialPromptKey, initialAttachmentIds]);
+  }, [attached, initialPrompt, initialPromptKey, initialAttachmentIds, storedFirstPrompt]);
 
   return (
     <div ref={sessionRef} className="studio-live-session min-w-0" data-testid="workspace-session">

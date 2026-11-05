@@ -65,6 +65,15 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
     branch: row.branch,
     // `?? null`: a deploy can run before the migration that adds the column.
     title: row.title ?? null,
+    // The first prompt kept for it while its box starts; absent before the
+    // migration that keeps it, and null once delivered.
+    firstPrompt: row.first_prompt && row.first_prompt_idempotency_key
+      ? {
+          prompt: row.first_prompt,
+          attachmentIds: row.first_prompt_attachments ?? [],
+          key: row.first_prompt_idempotency_key,
+        }
+      : null,
     baseBranch: row.base_branch,
     worktreePath: row.worktree_path ?? "",
     sandboxId: row.sandbox_id,

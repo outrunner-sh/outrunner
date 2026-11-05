@@ -145,6 +145,13 @@ type WorkspaceRow = {
   first_prompt_key: string | null;
   first_prompt_claimed_at: string | null;
   first_prompt_sent_at: string | null;
+  /** The first prompt kept for it while its box starts, with its
+   *  attachments and the key its every send names (20261105090000); null
+   *  once delivered, absent before the migration. The server's alone to
+   *  write or clear. */
+  first_prompt?: string | null;
+  first_prompt_attachments?: string[] | null;
+  first_prompt_idempotency_key?: string | null;
   /** The Slack thread it was started from (20261031200000). */
   slack_thread_url: string | null;
   slack_sync: boolean;

@@ -274,6 +274,10 @@ export function WorkspaceStudio({
             initialPrompt={current.id === MAIN_CHAT ? initialPrompt : undefined}
             initialPromptKey={current.id === MAIN_CHAT ? initialPromptKey : undefined}
             initialAttachmentIds={current.id === MAIN_CHAT ? initialAttachmentIds : undefined}
+            // The session's first prompt is its main chat's; the server's kept
+            // copy of it is what a reopened tab (or another device's) sends
+            // when it never held one of its own.
+            storedFirstPrompt={current.id === MAIN_CHAT ? (workspace.firstPrompt ?? null) : null}
             onSender={setSender}
             onSideChat={chatsOffered ? askAside : undefined}
             allowHarnessSwitch={hasLiveSession && !isLocal}
