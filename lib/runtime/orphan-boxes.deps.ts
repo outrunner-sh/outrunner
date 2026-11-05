@@ -6,6 +6,8 @@
 import { optionalEnv } from "@/lib/env";
 import { boxGone } from "@/lib/runtime/computer-provider";
 import {
+  atRest,
+  boxStatuses,
   COMPUTER_ROLE,
   deploymentName,
   type ListedBox,
@@ -85,6 +87,9 @@ export async function sweepOrphanedBoxes(now = Date.now()): Promise<{ deleted: n
   let paused = 0;
   for (const id of strayRunningBoxes(candidates, statusOf, { now, deployment })) {
     try {
+      // Read again just before: a session reopened since the lookup may be
+      // bringing this very box back (restore() takes a started box as is).
+      if (!(await stillAtRest(id))) continue;
       await backend.pause(id);
       console.warn(`Paused Daytona box ${id}: running while its runtime computer says it is at rest`);
       paused += 1;
@@ -102,18 +107,25 @@ export async function sweepOrphanedBoxes(now = Date.now()): Promise<{ deleted: n
  *  A lookup that fails throws, so nothing is deleted on a guess. */
 async function namedBoxes(ids: string[]): Promise<Map<string, string>> {
   const supabase = createSupabaseAdminClient();
-  const named = new Map<string, string>();
+  const rows: { sandboxId: string | null; status: string }[] = [];
   for (let i = 0; i < ids.length; i += LOOKUP_CHUNK) {
     const { data, error } = await supabase
       .from("runtime_computers")
       .select("daytona_sandbox_id, status")
       .in("daytona_sandbox_id", ids.slice(i, i + LOOKUP_CHUNK));
     if (error) throw error;
-    for (const row of data ?? []) {
-      if (!row.daytona_sandbox_id) continue;
-      const was = named.get(row.daytona_sandbox_id);
-      if (was === undefined || was === "stopped" || was === "error") named.set(row.daytona_sandbox_id, row.status);
-    }
+    rows.push(...(data ?? []).map((row) => ({ sandboxId: row.daytona_sandbox_id, status: row.status })));
   }
-  return named;
+  return boxStatuses(rows);
+}
+
+/** Whether every row naming `sandboxId` still says it's at rest. A lookup
+ *  that fails, or finds none, says no: nothing is paused on a guess. */
+async function stillAtRest(sandboxId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("runtime_computers")
+    .select("status")
+    .eq("daytona_sandbox_id", sandboxId);
+  if (error || !data?.length) return false;
+  return data.every((row) => atRest(row.status));
 }

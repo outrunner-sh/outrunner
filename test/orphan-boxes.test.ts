@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  atRest,
   boxLabels,
+  boxStatuses,
   deploymentName,
   DEPLOYMENT_LABEL,
   type ListedBox,
@@ -138,4 +140,27 @@ test("one run pauses at most ORPHAN_SWEEP_MAX strays", () => {
   const boxes = Array.from({ length: ORPHAN_SWEEP_MAX + 5 }, (_, i) => ours({ id: `sb-${i}` }));
   const statusOf = new Map(boxes.map((b) => [b.id, "stopped"]));
   assert.equal(strayRunningBoxes(boxes, statusOf, options).length, ORPHAN_SWEEP_MAX);
+});
+
+test("a box's status is the one of a row not at rest, over any at rest, in either order", () => {
+  for (const rows of [
+    [{ sandboxId: "sb-1", status: "stopped" }, { sandboxId: "sb-1", status: "provisioning" }],
+    [{ sandboxId: "sb-1", status: "provisioning" }, { sandboxId: "sb-1", status: "error" }],
+  ]) {
+    assert.equal(boxStatuses(rows).get("sb-1"), "provisioning");
+  }
+  const statusOf = boxStatuses([
+    { sandboxId: "sb-2", status: "error" },
+    { sandboxId: "sb-2", status: "stopped" },
+    { sandboxId: null, status: "ready" },
+  ]);
+  assert.ok(atRest(statusOf.get("sb-2")!));
+  assert.equal(statusOf.size, 1);
+  // A box a row is bringing back isn't a stray, whichever row came first.
+  assert.deepEqual(strayRunningBoxes([ours()], boxStatuses([{ sandboxId: "sb-1", status: "stopped" }, { sandboxId: "sb-1", status: "ready" }]), options), []);
+});
+
+test("at rest is stopped or failed, nothing on its way or running", () => {
+  assert.ok(atRest("stopped") && atRest("error"));
+  for (const status of ["ready", "provisioning", "creating"]) assert.equal(atRest(status), false, status);
 });

@@ -132,6 +132,26 @@ export function orphanedBoxes(
  *  reconciler meters ready rows) and paused by nothing. */
 const AT_REST: ReadonlySet<string> = new Set(["stopped", "error"]);
 
+/** Whether a row in `status` says its box isn't running. */
+export function atRest(status: string): boolean {
+  return AT_REST.has(status);
+}
+
+/**
+ * Each box's status from the rows naming it: one not at rest (ready, or on
+ * its way) over any at rest, whatever their order, so a box another row is
+ * using is never taken for a stray.
+ */
+export function boxStatuses(rows: readonly { sandboxId: string | null; status: string }[]): Map<string, string> {
+  const statusOf = new Map<string, string>();
+  for (const { sandboxId, status } of rows) {
+    if (!sandboxId) continue;
+    const was = statusOf.get(sandboxId);
+    if (was === undefined || atRest(was)) statusOf.set(sandboxId, status);
+  }
+  return statusOf;
+}
+
 /**
  * This run's strays: boxes a row names as at rest that are running anyway,
  * old and quiet, to pause (not delete: the row names it, and its disk may
@@ -148,7 +168,7 @@ export function strayRunningBoxes(
   return boxes
     .filter((box) => {
       const status = statusOf.get(box.id);
-      return box.state === "started" && status !== undefined && AT_REST.has(status) &&
+      return box.state === "started" && status !== undefined && atRest(status) &&
         box.labels[DEPLOYMENT_LABEL] === options.deployment &&
         sweepable(box, options.now, options.deployment, options.graceMs);
     })
