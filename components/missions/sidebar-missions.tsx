@@ -10,7 +10,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, Ellipsis, GitPullRequest, Plus, Rocket } from "lucide-react";
+import { Archive, ChevronRight, Ellipsis, GitPullRequest, Plus, Rocket } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
@@ -28,6 +28,18 @@ import { cn } from "@/lib/utils";
 /** Ships shown under a Mission before "more". */
 const SHOWN_RUNNERS = 5;
 
+/** Missions folded shut with their chevron, kept in this browser. */
+const FOLDED_KEY = "outrunner.folded-missions";
+
+function savedFolded(): string[] {
+  try {
+    const saved: unknown = JSON.parse(window.localStorage.getItem(FOLDED_KEY) ?? "[]");
+    return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Ships with open work (an archived one's pull request still open is),
  *  the ones that need someone first. */
 function nestedRunners(mission: MissionView): RunnerView[] {
@@ -41,6 +53,23 @@ export function SidebarMissions({ active, projects }: { active?: string; project
   const [archiving, setArchiving] = useState<MissionView | null>(null);
   // Missions whose Ships are all shown, not just the first few.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  // Missions whose Ships are hidden, as Projects fold; read once mounted, so
+  // the server's page and the first render agree.
+  const [folded, setFolded] = useState<readonly string[]>([]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFolded(savedFolded());
+  }, []);
+  const toggleFolded = (id: string) => {
+    const next = folded.includes(id) ? folded.filter((f) => f !== id) : [...folded, id];
+    setFolded(next);
+    try {
+      if (next.length > 0) window.localStorage.setItem(FOLDED_KEY, JSON.stringify(next));
+      else window.localStorage.removeItem(FOLDED_KEY);
+    } catch {
+      // Blocked storage only costs remembering it.
+    }
+  };
   // A partial attempt refreshes Missions; use that live row rather than the
   // object captured when the menu opened.
   const archiveTarget = archiving && (missions.find((mission) => mission.id === archiving.id) ?? archiving);
@@ -124,6 +153,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
           <ul className="space-y-px">
             {shown.map((mission) => {
               const runners = nestedRunners(mission);
+              const isFolded = runners.length > 0 && folded.includes(mission.id);
               const isActive = mission.id === active;
               const archived = mission.sessionStatus === "archived";
               const archive = missionArchiveOffer({ status: mission.sessionStatus as WorkspaceStatus, provider: mission.provider });
@@ -165,8 +195,13 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                       className={cn(
                         "group/mrow flex items-center gap-2.5 rounded-md px-2 py-1 text-[13px] transition-colors",
                         isActive ? "bg-accent text-foreground" : "text-foreground hover:bg-accent/60",
-                        // Room for its menu as it shows.
-                        archive && "group-hover/mission:pr-8 group-focus-within/mission:pr-8 group-has-[[data-state=open]]/mission:pr-8",
+                        // Room for its chevron and menu as they show; a folded
+                        // one's chevron always shows.
+                        runners.length > 0
+                          ? archive
+                            ? cn("group-hover/mission:pr-14 group-focus-within/mission:pr-14 group-has-[[data-state=open]]/mission:pr-14", isFolded && "pr-14")
+                            : cn("group-hover/mission:pr-8 group-focus-within/mission:pr-8", isFolded && "pr-8")
+                          : archive && "group-hover/mission:pr-8 group-focus-within/mission:pr-8 group-has-[[data-state=open]]/mission:pr-8",
                         dragging === mission.id && "opacity-50",
                       )}
                     >
@@ -186,6 +221,22 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                         <span className="shrink-0 text-[11px] font-medium text-brand">Needs you</span>
                       ) : null}
                     </Link>
+                    {runners.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => toggleFolded(mission.id)}
+                        aria-expanded={!isFolded}
+                        aria-label={isFolded ? `Show ${mission.title}'s Ships` : `Hide ${mission.title}'s Ships`}
+                        title={isFolded ? `Show Ships (${runners.length})` : "Hide Ships"}
+                        className={cn(
+                          "absolute top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground outline-none transition hover:bg-accent hover:text-foreground focus-visible:opacity-100",
+                          archive ? "right-7" : "right-1",
+                          isFolded ? "opacity-100" : "opacity-0 group-hover/mission:opacity-100",
+                        )}
+                      >
+                        <ChevronRight className={cn("size-3.5 transition-transform", !isFolded && "rotate-90")} />
+                      </button>
+                    )}
                     {archive && (
                       <DropdownMenu>
                         <DropdownMenuTrigger
@@ -208,7 +259,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                       </DropdownMenu>
                     )}
                   </div>
-                  {runners.length > 0 && (
+                  {runners.length > 0 && !isFolded && (
                     <ul className="relative mt-px ml-[17px] space-y-px border-l border-white/[0.07] pl-[7px]">
                       {runners.slice(0, expanded.has(mission.id) ? undefined : SHOWN_RUNNERS).map((runner) => {
                         const pr = runner.pulls.find((p) => p.state === "open") ?? runner.pulls.find((p) => p.state === "merged");
