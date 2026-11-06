@@ -166,6 +166,15 @@ export async function askResearch(input: {
   }
 }
 
+/** Where the research session is, for one whose answer couldn't be posted. */
+function researchSessionUrl(workspaceId: string): string {
+  try {
+    return new URL(`/workspaces/${workspaceId}`, base()).toString();
+  } catch {
+    return `/workspaces/${workspaceId}`;
+  }
+}
+
 /** The answer with its session's box secrets masked, or null. */
 async function maskOnBox(workspaceId: string, answer: string): Promise<string | null> {
   const { data } = await createSupabaseAdminClient().from("workspaces").select("*").eq("id", workspaceId).maybeSingle();
@@ -199,9 +208,14 @@ export async function answerResearch(id: string, token: string, answer: string):
     const install = await getInstallation(conversation.team_id);
     if (!install) return true;
     // Posted with curl, so the box's chat masking never saw it: the box
-    // masks it now, and an answer it can't check isn't posted (NEE-268).
+    // masks it now, and an answer it can't check isn't posted (NEE-268). The
+    // thread is pointed at the session instead, whose chat is masked.
     const masked = claimed.workspace_id ? await maskOnBox(claimed.workspace_id, answer) : null;
-    const text = masked ?? "The answer is ready, but it couldn't be checked for secrets, so it isn't posted here.";
+    if (masked === null) {
+      console.warn(`Slack agent: research ${id}'s answer not posted, session ${claimed.workspace_id}'s box couldn't mask it`);
+    }
+    const where = claimed.workspace_id ? ` It's in the research session: ${researchSessionUrl(claimed.workspace_id)}` : "";
+    const text = masked ?? `The answer is ready, but it couldn't be checked for secrets, so it isn't posted here.${where}`;
     for (const chunk of slackChunks(markdownToSlack(text))) {
       await postMessage(install.botToken, { channel: conversation.channel_id, threadTs: conversation.thread_ts, text: chunk });
     }

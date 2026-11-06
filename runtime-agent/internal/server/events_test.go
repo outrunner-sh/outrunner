@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"runtime-agent/internal/protocol"
+	"runtime-agent/internal/redact"
 	"runtime-agent/internal/transcript"
 	"runtime-agent/internal/workspace"
 )
@@ -441,5 +442,24 @@ func TestMaskTextMasksTheBoxsSecrets(t *testing.T) {
 	var got struct{ Text string }
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil || resp.StatusCode != http.StatusOK || got.Text != "The key is ***." {
 		t.Fatalf("mask = %d %+v %v", resp.StatusCode, got, err)
+	}
+}
+
+func TestMaskMessageLeavesImageBytesAlone(t *testing.T) {
+	r := redact.New([]string{"canary-2682b7c55940"})
+	m := &protocol.ConversationMessage{T: "message", Content: []protocol.ContentBlock{
+		{Type: "text", Text: "key canary-2682b7c55940"},
+		{Type: "tool_result", Content: json.RawMessage(`[{"type":"text","text":"canary-2682b7c55940"}]`)},
+		{Type: "image", Source: &protocol.ImageSource{Type: "base64", Data: "canary-2682b7c55940"}},
+	}}
+	got, err := maskMessage(r, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Content[0].Text != "key ***" || string(got.Content[1].Content) != `[{"text":"***","type":"text"}]` {
+		t.Fatalf("masked = %+v", got.Content)
+	}
+	if got.Content[2].Source.Data != "canary-2682b7c55940" || m.Content[0].Text != "key canary-2682b7c55940" {
+		t.Fatalf("an image's bytes were read, or the message itself changed")
 	}
 }

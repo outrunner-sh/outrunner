@@ -1330,7 +1330,31 @@ func (s *Server) sessionTool(w http.ResponseWriter, r *http.Request) {
 
 // redactor masks the box's secrets as they are now, and any provided later.
 func (s *Server) redactor() *redact.Redactor {
-	return redact.New(s.ws.RedactionSecrets()).Follow(s.ws.LiveSecrets())
+	return redact.New(s.ws.CurrentSecrets()).Follow(s.ws.LiveSecrets())
+}
+
+// maskMessage is a conversation message with its secrets masked: its text,
+// and a tool's input and result through their strings. An image's bytes
+// (Source) aren't read: up to MaxImageBlockData of base64 that no command
+// printed. m itself is left as it was.
+func maskMessage(r *redact.Redactor, m *protocol.ConversationMessage) (*protocol.ConversationMessage, error) {
+	out := *m
+	out.Content = make([]protocol.ContentBlock, len(m.Content))
+	for i, block := range m.Content {
+		block.Text = r.Text(block.Text)
+		for _, raw := range []*json.RawMessage{&block.Input, &block.Content} {
+			if len(*raw) == 0 {
+				continue
+			}
+			masked, err := r.JSON(*raw)
+			if err != nil {
+				return nil, err
+			}
+			*raw = masked
+		}
+		out.Content[i] = block
+	}
+	return &out, nil
 }
 
 // maskText answers text with the box's secrets masked: for what a session
@@ -1643,16 +1667,17 @@ func (s *Server) streamEvents(
 	running := s.ws.SessionLog(key) != ""
 	// The box's secrets are masked in every event, as in its terminal: a
 	// command that prints one would otherwise show it in the chat (NEE-268).
-	// They're read again at most once a second, so a session's environment
+	// The redactor is made again at most once a second, from the box's
+	// shared read of them (CurrentSecrets), so a session's environment
 	// written after the stream opened is masked too; values provided
 	// mid-session are followed as they arrive.
 	var redactor *redact.Redactor
 	var redactorAt time.Time
-	masked := func(payload []byte) ([]byte, error) {
+	masked := func(m *protocol.ConversationMessage) (*protocol.ConversationMessage, error) {
 		if now := time.Now(); redactor == nil || now.Sub(redactorAt) >= stateCheckInterval {
 			redactor, redactorAt = s.redactor(), now
 		}
-		return redactor.JSON(payload)
+		return maskMessage(redactor, m)
 	}
 	writeState := func(state string) bool {
 		payload, _ := json.Marshal(protocol.WorkspaceStateChanged{
@@ -1765,8 +1790,13 @@ func (s *Server) streamEvents(
 			var mErr error
 			switch {
 			case ev.Message != nil:
-				if payload, mErr = json.Marshal(ev.Message); mErr == nil {
-					payload, mErr = masked(payload)
+				var message *protocol.ConversationMessage
+				if message, mErr = masked(ev.Message); mErr == nil {
+					payload, mErr = json.Marshal(message)
+				} else {
+					// Dropped rather than sent unmasked: said, so a missing
+					// message can be traced.
+					log.Printf("events: %s: message %s not sent, its secrets couldn't be masked: %v", workspaceID, ev.Message.UUID, mErr)
 				}
 			case ev.Usage != nil:
 				payload, mErr = json.Marshal(ev.Usage)

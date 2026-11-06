@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -124,7 +125,8 @@ const minVariantLen = 8
 // with and without HTML escapes; escaped for a URL; base64 (standard and
 // URL-safe) from each of the three byte alignments it can start on in a
 // longer stream, its full groups only, so what follows it can't change them;
-// and each line of one that spans lines (a PEM key), its armor lines aside.
+// and each line of a PEM key, its armor lines aside (a multi-line value of
+// another kind, a JSON config, keeps its lines: they read as settings).
 func variants(secret string) []string {
 	var out []string
 	add := func(v string) {
@@ -149,7 +151,7 @@ func variants(secret string) []string {
 		add(base64.StdEncoding.EncodeToString([]byte(whole)))
 		add(base64.URLEncoding.EncodeToString([]byte(whole)))
 	}
-	if strings.Contains(secret, "\n") {
+	if strings.Contains(secret, "-----BEGIN") {
 		for _, line := range strings.Split(secret, "\n") {
 			line = strings.TrimSpace(line)
 			if !strings.HasPrefix(line, "-----") {
@@ -218,9 +220,12 @@ func (r *Redactor) replace(text string) string {
 // JSON masks the secrets in every string of one JSON document, keys
 // included, and leaves the rest as it was: a secret is matched as the text it
 // is, not as JSON escapes it, and nothing outside a string can be cut into.
+//
+// A document that holds no secret in any form (its escaped ones are among
+// the variants) is returned as it was, not decoded and re-encoded.
 func (r *Redactor) JSON(data []byte) ([]byte, error) {
 	r.refresh()
-	if len(r.secrets) == 0 {
+	if len(r.secrets) == 0 || r.replace(string(data)) == string(data) {
 		return data, nil
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -244,9 +249,24 @@ func (r *Redactor) maskValue(v any) any {
 	case map[string]any:
 		masked := make(map[string]any, len(t))
 		for k, x := range t {
-			masked[r.replace(k)] = r.maskValue(x)
+			key := r.replace(k)
+			// Two keys masked alike stay two fields: ***, ***2, ...
+			for n := 2; key != k; n++ {
+				if _, taken := masked[key]; !taken {
+					break
+				}
+				key = r.replace(k) + strconv.Itoa(n)
+			}
+			masked[key] = r.maskValue(x)
 		}
 		return masked
 	}
 	return v
+}
+
+// Text masks the secrets in one whole text: no part of it is held back for a
+// later call, as Redact holds back the start of a secret a stream may finish.
+func (r *Redactor) Text(text string) string {
+	r.refresh()
+	return r.replace(text)
 }

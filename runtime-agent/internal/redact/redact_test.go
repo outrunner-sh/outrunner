@@ -146,3 +146,27 @@ func TestRedactorMasksEachLineOfAMultiLineSecret(t *testing.T) {
 		t.Fatalf("multi-line secret = %q", got)
 	}
 }
+
+func TestRedactorSplitsOnlyAPEMKeyIntoLines(t *testing.T) {
+	config := "{\n  \"type\": \"service_account\",\n  \"private_key_id\": \"0a1b2c3d4e5f\"\n}"
+	r := New([]string{config})
+	if got := r.Redact([]byte(`"type": "service_account",`)) + r.Flush(); got != `"type": "service_account",` {
+		t.Fatalf("a multi-line config's line was masked: %q", got)
+	}
+}
+
+func TestRedactorJSONKeepsKeysApartAndUntouchedDocuments(t *testing.T) {
+	r := New([]string{"tok-aaaaaaaaaaaa", "tok-bbbbbbbbbbbb"})
+	got, err := r.JSON([]byte(`{"tok-aaaaaaaaaaaa":1,"tok-bbbbbbbbbbbb":2}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back map[string]int
+	if err := json.Unmarshal(got, &back); err != nil || len(back) != 2 || back["***"]+back["***2"] != 3 {
+		t.Fatalf("masked keys = %s", got)
+	}
+	plain := []byte(`{"z":1,"a":"no secret here"}`)
+	if got, err := r.JSON(plain); err != nil || string(got) != string(plain) {
+		t.Fatalf("a document with no secret was re-encoded: %s", got)
+	}
+}

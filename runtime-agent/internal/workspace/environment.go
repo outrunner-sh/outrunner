@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/dotenv"
@@ -192,6 +191,7 @@ func (s *Service) SetEnvironment(ctx context.Context, workspaceID string, env, f
 	if err := s.putEnvRoot(workspaceID, files); err != nil {
 		return err
 	}
+	s.forgetSecrets()
 	if setup == "" {
 		if err := os.Remove(s.setupPath(workspaceID)); err != nil && !os.IsNotExist(err) {
 			return err
@@ -395,26 +395,22 @@ const minMaskedKeyLike = 8
 
 // secretName is a name (a variable's, a JSON field's, a flag's) that holds a
 // credential.
-var secretName = regexp.MustCompile(`(?i)(key|secret|token|passw|pwd|credential|auth|private|signature|cookie|session)`)
+var secretName = regexp.MustCompile(`(?i)(key|secret|token|pass|pwd|credential|auth|private|signature|cookie|session)`)
 
-// worthMasking says whether a value is masked wherever the box's output goes:
-// a long one, or a shorter one that mixes letters and digits and nothing a
-// setting has (a dot, a space, a colon), as a key or password does: "s3cr3tPw"
-// is masked, "8080", "production" and "v20.11.1" are not.
-func worthMasking(value string) bool {
-	if len(value) >= minMaskedEnv {
-		return true
-	}
-	if len(value) < minMaskedKeyLike || strings.ContainsAny(value, ". :/,") {
-		return false
-	}
-	return strings.ContainsAny(value, "0123456789") && strings.IndexFunc(value, unicode.IsLetter) >= 0
+// worthMasking says whether a variable's value is masked wherever the box's
+// output goes: a long one, or a shorter one whose name says it's a
+// credential (DB_PASS=s3cr3tPw). A short value under another name is a
+// setting (AWS_REGION=us-east-1, NODE_ENV=production), and masking it would
+// blank ordinary output.
+func worthMasking(name, value string) bool {
+	return len(value) >= minMaskedEnv || (len(value) >= minMaskedKeyLike && secretName.MatchString(name))
 }
 
 // fileTokens are the values a project file holds worth masking: a JSON
 // file's credential fields (a service account's private key and its id) and
-// its long random strings; a PEM file whole, which masks each of its lines
-// (redact's variants); else a .env file's variables.
+// its long random strings; else a PEM key whole, which masks each of its
+// lines (redact's variants), and a .env file's variables, a key inline in
+// one beside them included.
 func fileTokens(content string) []string {
 	var values []string
 	var doc any
@@ -443,10 +439,10 @@ func fileTokens(content string) []string {
 		return values
 	}
 	if strings.Contains(content, "-----BEGIN") {
-		return []string{strings.TrimSpace(content)}
+		values = append(values, strings.TrimSpace(content))
 	}
 	for _, entry := range dotenv.Parse(content) {
-		if worthMasking(entry.Value) {
+		if worthMasking(entry.Name, entry.Value) {
 			values = append(values, entry.Value)
 		}
 	}
@@ -457,9 +453,9 @@ func fileTokens(content string) []string {
 // variables', and those their files set.
 func (s *Service) envTokens() []string {
 	var tokens []string
-	for _, value := range s.envFiles().tokens() {
-		if worthMasking(value) {
-			tokens = append(tokens, value)
+	for _, entry := range s.envFiles().entries() {
+		if worthMasking(entry.Name, entry.Value) {
+			tokens = append(tokens, entry.Value)
 		}
 	}
 	_ = filepath.WalkDir(filepath.Join(s.Root, "envroot"), func(path string, d os.DirEntry, err error) error {

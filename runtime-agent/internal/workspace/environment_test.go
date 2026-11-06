@@ -188,16 +188,21 @@ func TestInstructionsFollowTheOrientation(t *testing.T) {
 }
 
 func TestWorthMaskingTellsKeysFromSettings(t *testing.T) {
-	for value, want := range map[string]bool{
-		"s3cr3tPw":            true,
-		"a-long-setting-name": true,
-		"8080":                false,
-		"production":          false,
-		"v20.11.1":            false,
-		"password":            false,
+	for _, c := range []struct {
+		name, value string
+		want        bool
+	}{
+		{"DB_PASS", "s3cr3tPw", true},
+		{"STRIPE_KEY", "sk_9x8y7z", true},
+		{"SOME_NAME", "a-long-setting-name", true},
+		{"AWS_REGION", "us-east-1", false},
+		{"RUNTIME", "postgres16", false},
+		{"NODE_ENV", "production", false},
+		{"PORT", "8080", false},
+		{"API_TOKEN", "short", false},
 	} {
-		if got := worthMasking(value); got != want {
-			t.Errorf("worthMasking(%q) = %v, want %v", value, got, want)
+		if got := worthMasking(c.name, c.value); got != c.want {
+			t.Errorf("worthMasking(%q, %q) = %v, want %v", c.name, c.value, got, c.want)
 		}
 	}
 }
@@ -217,7 +222,12 @@ func TestFileTokensReadsJSONAndPEMFiles(t *testing.T) {
 	if got := fileTokens(pem); len(got) != 1 || got[0] != strings.TrimSpace(pem) {
 		t.Errorf("PEM file tokens = %q", got)
 	}
-	if got := fileTokens("PORT=8080\nDB_PASS=s3cr3tPw\n"); !reflect.DeepEqual(got, []string{"s3cr3tPw"}) {
+	if got := fileTokens("PORT=8080\nAWS_REGION=us-east-1\nDB_PASS=s3cr3tPw\n"); !reflect.DeepEqual(got, []string{"s3cr3tPw"}) {
 		t.Errorf(".env file tokens = %q", got)
+	}
+	// A .env with a key inline keeps its other variables masked.
+	inline := "API_KEY=sk_live_abcdef1234567890\nPRIVATE_KEY=\"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\"\n"
+	if got := fileTokens(inline); !slices.Contains(got, "sk_live_abcdef1234567890") {
+		t.Errorf("inline-key .env tokens = %q", got)
 	}
 }

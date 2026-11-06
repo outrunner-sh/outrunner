@@ -148,6 +148,11 @@ type Service struct {
 	// liveMu makes reading the live secrets' sources and setting them one
 	// step (refreshLiveSecrets).
 	liveMu sync.Mutex
+	// secretsCache is RedactionSecrets as last read, at secretsAt, shared by
+	// every stream and poll that masks (CurrentSecrets).
+	secretsMu    sync.Mutex
+	secretsCache []string
+	secretsAt    time.Time
 	// gitTokens are the GitHub tokens the control plane gives the sessions,
 	// and gitToken the helpers' proof they ask from this box (gitcred.go);
 	// nil and empty when it gives none.
@@ -391,6 +396,29 @@ func (s *Service) RedactionSecrets() []string {
 	secrets = append(append(secrets, s.authSecrets()...), s.envTokens()...)
 	secrets = append(append(secrets, s.providedTokens()...), s.credentialTokens()...)
 	return append(secrets, agentConfigTokens()...)
+}
+
+// secretsTTL is how long the box's secrets are read once for every masker.
+const secretsTTL = time.Second
+
+// CurrentSecrets are RedactionSecrets, read from disk at most once a second
+// for the whole box, however many chat streams and summary polls mask: a
+// session's environment is read afresh once it is set (forgetSecrets), and
+// a value provided mid-session reaches a redactor at once (LiveSecrets).
+func (s *Service) CurrentSecrets() []string {
+	s.secretsMu.Lock()
+	defer s.secretsMu.Unlock()
+	if s.secretsCache == nil || time.Since(s.secretsAt) >= secretsTTL {
+		s.secretsCache, s.secretsAt = s.RedactionSecrets(), time.Now()
+	}
+	return append([]string(nil), s.secretsCache...)
+}
+
+// forgetSecrets has the next CurrentSecrets read them from disk.
+func (s *Service) forgetSecrets() {
+	s.secretsMu.Lock()
+	s.secretsCache = nil
+	s.secretsMu.Unlock()
 }
 
 // refreshLiveSecrets sets the live secrets from their sources: the values
