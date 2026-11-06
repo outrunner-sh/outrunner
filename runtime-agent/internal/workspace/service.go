@@ -1672,6 +1672,7 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 		Uploads:          req.Uploads,
 		ClaudeVersion:    snapshot.ClaudeVersion(ctx),
 		Chats:            chats,
+		Secrets:          s.RedactionSecrets(),
 	})
 }
 
