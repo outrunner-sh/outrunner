@@ -265,9 +265,17 @@ func TestFileTokensReadsJSONAndPEMFiles(t *testing.T) {
 			t.Errorf("open block masked = %q, want %q", masked, want)
 		}
 	}
-	// Every label RFC 7468 allows, not only RSA/EC: an OpenSSH key.
+	// Every label RFC 7468 allows, not only RSA/EC: an OpenSSH key, and one
+	// with a hyphen inside, masked as its block beside a readable setting.
 	ssh := "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----\n"
 	if got := fileTokens(ssh); len(got) != 1 || got[0] != strings.TrimSpace(ssh) {
 		t.Errorf("OpenSSH key tokens = %q", got)
+	}
+	hyphened := "-----BEGIN X-TEST PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END X-TEST PRIVATE KEY-----"
+	if got := fileTokens("NODE_ENV=production\nKEY=\"" + hyphened + "\"\n"); !slices.Contains(got, hyphened) || len(got) != 2 {
+		t.Errorf("hyphenated label tokens = %q", got)
+	}
+	if !pemBlock.MatchString(hyphened) || pemBlock.MatchString("-----BEGIN -LEADING-----\nx\n-----END -LEADING-----") {
+		t.Errorf("pemBlock doesn't keep to RFC 7468's labels")
 	}
 }

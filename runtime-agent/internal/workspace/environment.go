@@ -397,9 +397,13 @@ const minMaskedKeyLike = 8
 // credential.
 var secretName = regexp.MustCompile(`(?i)(key|secret|token|pass|pwd|credential|auth|private|signature|cookie|session)`)
 
-// pemBlock is a PEM key from its armor to its end; a label is any text but
-// a hyphen (RFC 7468: "OPENSSH PRIVATE KEY", "EC PRIVATE KEY").
-var pemBlock = regexp.MustCompile(`(?s)-----BEGIN [^-\r\n]+-----.*?-----END [^-\r\n]+-----`)
+// pemBlock is a PEM key from its armor to its end. Its label is as RFC 7468
+// has it: printable characters joined by single hyphens or spaces, none
+// leading or trailing ("OPENSSH PRIVATE KEY", "EC PRIVATE KEY"). An armor it
+// doesn't match leaves the file masked whole (fileTokens), never a leak.
+var pemBlock = regexp.MustCompile(`(?s)-----BEGIN ` + pemLabel + `-----.*?-----END ` + pemLabel + `-----`)
+
+const pemLabel = `[^\s-]+(?:[- ][^\s-]+)*`
 
 // worthMasking says whether a variable's value is masked wherever the box's
 // output goes: a long one, or a shorter one whose name says it's a
