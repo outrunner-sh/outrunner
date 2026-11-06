@@ -4,6 +4,7 @@ import { getOwner } from "@/lib/auth/owner";
 import { metadata, scopeKey } from "@/lib/codex/account";
 import { codexStore } from "@/lib/codex/store";
 import { getClaudeCredential, getProviderKey, modelMenu, outrunnerModelAllowance } from "@/lib/db/credentials";
+import { usableOrgProviders } from "@/lib/db/org-credentials";
 import { activeOrgId } from "@/lib/orgs/server";
 import { allowanceView } from "@/lib/openrouter/allowance";
 
@@ -12,14 +13,20 @@ import { allowanceView } from "@/lib/openrouter/allowance";
  *  (theirs, or their org's). */
 async function ownAccess(userId: string, orgId: string | undefined): Promise<boolean> {
   const codex = (scope: Parameters<typeof scopeKey>[0]) => codexStore.read(scopeKey(scope)).then((row) => metadata(row).connected);
-  const checks = await Promise.all([
+  const checks = await Promise.allSettled([
     getClaudeCredential(userId).then((credential) => credential !== null),
     modelMenu(userId, orgId).then((menu) => menu.keys.length > 0),
     getProviderKey(userId, "openai").then((key) => key !== null),
+    // The org's OpenAI key, which runs Codex; the menu doesn't list it.
+    usableOrgProviders(userId, orgId).then((providers) => providers.includes("openai")),
     codex({ kind: "personal", id: userId }),
     orgId ? codex({ kind: "org", id: orgId.toLowerCase() }) : false,
   ]);
-  return checks.some(Boolean);
+  // One that answers yes is enough; a check that failed can't undo it.
+  if (checks.some((check) => check.status === "fulfilled" && check.value)) return true;
+  const failed = checks.find((check) => check.status === "rejected");
+  if (failed) throw failed.reason;
+  return false;
 }
 
 /**
