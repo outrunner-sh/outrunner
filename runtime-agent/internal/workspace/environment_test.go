@@ -272,10 +272,20 @@ func TestFileTokensReadsJSONAndPEMFiles(t *testing.T) {
 		t.Errorf("OpenSSH key tokens = %q", got)
 	}
 	hyphened := "-----BEGIN X-TEST PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END X-TEST PRIVATE KEY-----"
-	if got := fileTokens("NODE_ENV=production\nKEY=\"" + hyphened + "\"\n"); !slices.Contains(got, hyphened) || len(got) != 2 {
+	if got := fileTokens("NODE_ENV=production\nKEY=\"" + hyphened + "\"\n"); !slices.Contains(got, hyphened) || slices.Contains(got, "production") {
 		t.Errorf("hyphenated label tokens = %q", got)
 	}
-	if !pemBlock.MatchString(hyphened) || pemBlock.MatchString("-----BEGIN -LEADING-----\nx\n-----END -LEADING-----") {
-		t.Errorf("pemBlock doesn't keep to RFC 7468's labels")
+	for armor, want := range map[string]bool{
+		"X-TEST PRIVATE KEY": true,
+		"":                   true, // RFC 7468 allows an empty label
+		"-LEADING":           false,
+		"DOUBLE--HYPHEN":     false,
+		// A trailing hyphen runs into the armor's dashes and matches: the
+		// block is masked all the same.
+	} {
+		block := "-----BEGIN " + armor + "-----\nx\n-----END " + armor + "-----"
+		if got := pemBlock.MatchString(block); got != want {
+			t.Errorf("pemBlock matches label %q: %v, want %v", armor, got, want)
+		}
 	}
 }

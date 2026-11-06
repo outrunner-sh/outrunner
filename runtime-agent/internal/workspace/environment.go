@@ -399,11 +399,12 @@ var secretName = regexp.MustCompile(`(?i)(key|secret|token|pass|pwd|credential|a
 
 // pemBlock is a PEM key from its armor to its end. Its label is as RFC 7468
 // has it: printable characters joined by single hyphens or spaces, none
-// leading or trailing ("OPENSSH PRIVATE KEY", "EC PRIVATE KEY"). An armor it
-// doesn't match leaves the file masked whole (fileTokens), never a leak.
+// leading or trailing ("OPENSSH PRIVATE KEY", "EC PRIVATE KEY"), or none at
+// all. An armor it doesn't match leaves the file masked whole (fileTokens),
+// never a leak.
 var pemBlock = regexp.MustCompile(`(?s)-----BEGIN ` + pemLabel + `-----.*?-----END ` + pemLabel + `-----`)
 
-const pemLabel = `[^\s-]+(?:[- ][^\s-]+)*`
+const pemLabel = `(?:[^\s-]+(?:[- ][^\s-]+)*)?`
 
 // worthMasking says whether a variable's value is masked wherever the box's
 // output goes: a long one, or a shorter one whose name says it's a
