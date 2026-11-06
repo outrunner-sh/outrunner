@@ -154,11 +154,14 @@ export function SidebarMissions({ active, projects }: { active?: string; project
             {shown.map((mission) => {
               const runners = nestedRunners(mission);
               const isFolded = runners.length > 0 && folded.includes(mission.id);
-              // Folded, it still shows the Ship you're on, as a folded Project
-              // keeps its open session (lib/nav/sidebar.ts shownSessions).
+              // The Ship you're on is always listed: folded, it's the only one,
+              // as a folded Project keeps its open session (lib/nav/sidebar.ts
+              // shownSessions); open, it's added past the first few.
+              const current = runners.find((runner) => runner.id === active);
+              const firstFew = runners.slice(0, expanded.has(mission.id) ? undefined : SHOWN_RUNNERS);
               const shownRunners = isFolded
-                ? runners.filter((runner) => runner.id === active)
-                : runners.slice(0, expanded.has(mission.id) ? undefined : SHOWN_RUNNERS);
+                ? current ? [current] : []
+                : current && !firstFew.includes(current) ? [...firstFew, current] : firstFew;
               const isActive = mission.id === active;
               const archived = mission.sessionStatus === "archived";
               const archive = missionArchiveOffer({ status: mission.sessionStatus as WorkspaceStatus, provider: mission.provider });
@@ -288,7 +291,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                           </li>
                         );
                       })}
-                      {!isFolded && runners.length > SHOWN_RUNNERS && (
+                      {!isFolded && runners.length > SHOWN_RUNNERS && (expanded.has(mission.id) || runners.length > shownRunners.length) && (
                         <li>
                           <button
                             type="button"
@@ -302,7 +305,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                             }
                             className="block w-full rounded-md py-[3px] pl-6 text-left text-[12px] text-muted-foreground hover:text-foreground"
                           >
-                            {expanded.has(mission.id) ? "Show less" : `${runners.length - SHOWN_RUNNERS} more`}
+                            {expanded.has(mission.id) ? "Show less" : `${runners.length - shownRunners.length} more`}
                           </button>
                         </li>
                       )}
