@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"runtime-agent/internal/redact"
 )
 
 // A session's environment reaches its launch before its credential, is
@@ -226,8 +228,14 @@ func TestFileTokensReadsJSONAndPEMFiles(t *testing.T) {
 		t.Errorf(".env file tokens = %q", got)
 	}
 	// A .env with a key inline keeps its other variables masked.
-	inline := "API_KEY=sk_live_abcdef1234567890\nPRIVATE_KEY=\"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\"\n"
-	if got := fileTokens(inline); !slices.Contains(got, "sk_live_abcdef1234567890") {
+	inline := "NODE_ENV=production\nAPP_NAME=myservice\nAPI_KEY=sk_live_abcdef1234567890\nPRIVATE_KEY=\"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\"\n"
+	key := "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----"
+	if got := fileTokens(inline); !reflect.DeepEqual(got, []string{"sk_live_abcdef1234567890", key}) {
 		t.Errorf("inline-key .env tokens = %q", got)
+	}
+	// Its settings stay readable once masked: only the key's lines go.
+	r := redact.New(fileTokens(inline))
+	if got := r.Text("env: NODE_ENV=production and APP_NAME=myservice, MIIEvQIBADANBgkq"); got != "env: NODE_ENV=production and APP_NAME=myservice, ***" {
+		t.Errorf("masked = %q", got)
 	}
 }

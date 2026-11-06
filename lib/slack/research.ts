@@ -166,12 +166,13 @@ export async function askResearch(input: {
   }
 }
 
-/** Where the research session is, for one whose answer couldn't be posted. */
-function researchSessionUrl(workspaceId: string): string {
+/** Where the research session is, for one whose answer couldn't be posted;
+ *  null without the app's address, as a bare path is no link in Slack. */
+function researchSessionUrl(workspaceId: string): string | null {
   try {
     return new URL(`/workspaces/${workspaceId}`, base()).toString();
   } catch {
-    return `/workspaces/${workspaceId}`;
+    return null;
   }
 }
 
@@ -214,7 +215,8 @@ export async function answerResearch(id: string, token: string, answer: string):
     if (masked === null) {
       console.warn(`Slack agent: research ${id}'s answer not posted, session ${claimed.workspace_id}'s box couldn't mask it`);
     }
-    const where = claimed.workspace_id ? ` It's in the research session: ${researchSessionUrl(claimed.workspace_id)}` : "";
+    const link = claimed.workspace_id ? researchSessionUrl(claimed.workspace_id) : null;
+    const where = link ? ` It's in the research session: ${link}` : "";
     const text = masked ?? `The answer is ready, but it couldn't be checked for secrets, so it isn't posted here.${where}`;
     for (const chunk of slackChunks(markdownToSlack(text))) {
       await postMessage(install.botToken, { channel: conversation.channel_id, threadTs: conversation.thread_ts, text: chunk });

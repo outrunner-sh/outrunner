@@ -408,9 +408,9 @@ func worthMasking(name, value string) bool {
 
 // fileTokens are the values a project file holds worth masking: a JSON
 // file's credential fields (a service account's private key and its id) and
-// its long random strings; else a PEM key whole, which masks each of its
-// lines (redact's variants), and a .env file's variables, a key inline in
-// one beside them included.
+// its long random strings; else a bare PEM file whole, which masks each of
+// its lines (redact's variants); else a .env file's variables, a key inline
+// in one included.
 func fileTokens(content string) []string {
 	var values []string
 	var doc any
@@ -438,10 +438,14 @@ func fileTokens(content string) []string {
 		walk("", doc)
 		return values
 	}
-	if strings.Contains(content, "-----BEGIN") {
-		values = append(values, strings.TrimSpace(content))
+	// A bare PEM file is its key; a .env with one inline has it as a
+	// variable's value, masked line by line like any key, and its other
+	// lines as the settings they are.
+	entries := dotenv.Parse(content)
+	if len(entries) == 0 && strings.Contains(content, "-----BEGIN") {
+		return []string{strings.TrimSpace(content)}
 	}
-	for _, entry := range dotenv.Parse(content) {
+	for _, entry := range entries {
 		if worthMasking(entry.Name, entry.Value) {
 			values = append(values, entry.Value)
 		}
