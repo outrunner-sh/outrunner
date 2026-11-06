@@ -1614,6 +1614,19 @@ func (s *Server) streamEvents(
 ) {
 	cursor := fromOffset
 	running := s.ws.SessionLog(key) != ""
+	// The box's secrets are masked in every event, as in its terminal: a
+	// command that prints one would otherwise show it in the chat (NEE-268).
+	// They're read again at most once a second, so a session's environment
+	// written after the stream opened is masked too; values provided
+	// mid-session are followed as they arrive.
+	var redactor *redact.Redactor
+	var redactorAt time.Time
+	masked := func(payload []byte) ([]byte, error) {
+		if now := time.Now(); redactor == nil || now.Sub(redactorAt) >= stateCheckInterval {
+			redactor, redactorAt = redact.New(s.ws.RedactionSecrets()).Follow(s.ws.LiveSecrets()), now
+		}
+		return redactor.JSON(payload)
+	}
 	writeState := func(state string) bool {
 		payload, _ := json.Marshal(protocol.WorkspaceStateChanged{
 			T: "state", WorkspaceID: workspaceID, State: state,
@@ -1725,7 +1738,9 @@ func (s *Server) streamEvents(
 			var mErr error
 			switch {
 			case ev.Message != nil:
-				payload, mErr = json.Marshal(ev.Message)
+				if payload, mErr = json.Marshal(ev.Message); mErr == nil {
+					payload, mErr = masked(payload)
+				}
 			case ev.Usage != nil:
 				payload, mErr = json.Marshal(ev.Usage)
 			default:

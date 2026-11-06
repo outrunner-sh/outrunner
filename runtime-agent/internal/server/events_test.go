@@ -38,6 +38,7 @@ func mintToken(claims protocol.RuntimeTokenClaims, secret string) string {
 // $HOME so SessionLog reads from a scratch dir, and returns everything the
 // test needs to drive /events over HTTP.
 type serverFixture struct {
+	root        string
 	url         string
 	secret      string
 	workspaceID string
@@ -74,6 +75,7 @@ func newServerFixture(t *testing.T) *serverFixture {
 	ts := httptest.NewServer(srv.Handler())
 
 	return &serverFixture{
+		root:        root,
 		url:         ts.URL,
 		secret:      secret,
 		workspaceID: workspaceID,
@@ -372,6 +374,32 @@ func TestEventsFreshConnectStreamsBacklog(t *testing.T) {
 	if frames[1].ID == frames[2].ID {
 		t.Fatalf("message IDs must differ, got %q and %q", frames[1].ID, frames[2].ID)
 	}
+}
+
+func TestEventsMaskTheSessionsSecrets(t *testing.T) {
+	f := newServerFixture(t)
+	defer f.stop()
+
+	// A project variable, as the session's environment writes it.
+	envDir := filepath.Join(f.root, "envroot", f.workspaceID)
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envDir, ".env"), []byte("OUTRUNNER_CANARY=canary-2682b7c55940\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.appendJSONL(t,
+		`{"type":"assistant","uuid":"m1","parentUuid":null,"timestamp":"t1","message":{"role":"assistant","content":[{"type":"text","text":"canary-2682b7c55940"}]}}`)
+
+	resp, cancel := f.dial(t, "")
+	defer cancel()
+	defer resp.Body.Close()
+
+	frames := readSSE(t, bufio.NewReader(resp.Body), 2, 2*time.Second)
+	if len(frames) != 2 {
+		t.Fatalf("want state+1 frame, got %d", len(frames))
+	}
+	assertMessageWithText(t, frames[1], "***")
 }
 
 func assertMessageWithText(t *testing.T, frame sseFrame, want string) {

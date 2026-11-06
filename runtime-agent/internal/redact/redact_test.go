@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -86,5 +87,33 @@ func TestSetTokensTakesOneAway(t *testing.T) {
 	live.Set([]string{"second-secret"})
 	if got := r.Redact([]byte("first-secret second-secret")) + r.Flush(); got != "first-secret ***" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestRedactorJSONMasksStringsAsWrittenAndEscaped(t *testing.T) {
+	r := New([]string{"canary-2682b7c55940", `q"uo<te>&`})
+	got, err := r.JSON([]byte(`{"content":[{"type":"text","text":"canary-2682b7c55940\n"}],"n":12345678901234567890,"k":"q\"uo\u003cte\u003e\u0026!"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back map[string]any
+	if err := json.Unmarshal(got, &back); err != nil {
+		t.Fatalf("masked JSON is not JSON: %s", got)
+	}
+	if s := string(got); strings.Contains(s, "canary") || strings.Contains(s, "uo") {
+		t.Fatalf("secret left in %s", s)
+	}
+	if !strings.Contains(string(got), `"n":12345678901234567890`) || back["k"] != "***!" {
+		t.Fatalf("masked JSON changed more than its secrets: %s", got)
+	}
+}
+
+func TestRedactorJSONFollowsLiveTokens(t *testing.T) {
+	live := &Tokens{}
+	r := New(nil).Follow(live)
+	live.Add("provided-later-value")
+	got, err := r.JSON([]byte(`{"text":"provided-later-value"}`))
+	if err != nil || string(got) != `{"text":"***"}` {
+		t.Fatalf("JSON = %s, %v", got, err)
 	}
 }

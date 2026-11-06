@@ -2281,6 +2281,12 @@ func (s *Service) SummaryOf(ctx context.Context, workspaceID string) protocol.Wo
 		return startingSummary(s.worktreePath(workspaceID))
 	}
 	snap := sum.Snapshot(ctx)
+	// The last reply leaves the box (a Slack thread, a Mission, a Snapshot's
+	// manifest): its secrets are masked, as in the chat (NEE-268).
+	if snap.LastAssistantMessage != nil {
+		masked := s.masker()(*snap.LastAssistantMessage)
+		snap.LastAssistantMessage = &masked
+	}
 	// A Claude that ended on its own (it crashed, or was quit) leaves a
 	// summary that still says running, its last turn perhaps open: its tmux
 	// session gone says otherwise. Only when tmux says so: one that couldn't

@@ -2,6 +2,8 @@
 package redact
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -162,4 +164,40 @@ func (r *Redactor) replace(text string) string {
 		text = strings.ReplaceAll(text, secret, "***")
 	}
 	return text
+}
+
+// JSON masks the secrets in every string of one JSON document, keys
+// included, and leaves the rest as it was: a secret is matched as the text it
+// is, not as JSON escapes it, and nothing outside a string can be cut into.
+func (r *Redactor) JSON(data []byte) ([]byte, error) {
+	r.refresh()
+	if len(r.secrets) == 0 {
+		return data, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	return json.Marshal(r.maskValue(v))
+}
+
+func (r *Redactor) maskValue(v any) any {
+	switch t := v.(type) {
+	case string:
+		return r.replace(t)
+	case []any:
+		for i := range t {
+			t[i] = r.maskValue(t[i])
+		}
+		return t
+	case map[string]any:
+		masked := make(map[string]any, len(t))
+		for k, x := range t {
+			masked[r.replace(k)] = r.maskValue(x)
+		}
+		return masked
+	}
+	return v
 }
