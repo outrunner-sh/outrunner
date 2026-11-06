@@ -248,8 +248,26 @@ func TestFileTokensReadsJSONAndPEMFiles(t *testing.T) {
 			t.Errorf("masked = %q", masked)
 		}
 	}
-	// A block left open masks the whole file.
-	if got := fileTokens("-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n"); len(got) != 1 || got[0] != "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq" {
-		t.Errorf("open block tokens = %q", got)
+	// A block left open masks the whole file: alone, after a closed one, or
+	// before one (where its body would run into the next key's block).
+	closed := "A_KEY=\"-----BEGIN PRIVATE KEY-----\nAAAABBBBCCCCDDDD\n-----END PRIVATE KEY-----\"\n"
+	open := "B_KEY='-----BEGIN EC PRIVATE KEY-----\nEEEEFFFFGGGGHHHH\n'\n"
+	for file, want := range map[string]string{
+		open:          "x AAAABBBBCCCCDDDD ***",
+		closed + open: "x *** ***",
+		open + closed: "x *** ***",
+	} {
+		got := fileTokens(file)
+		if len(got) != 1 || got[0] != strings.TrimSpace(file) {
+			t.Errorf("open block tokens = %q", got)
+		}
+		if masked := redact.New(got).Text("x AAAABBBBCCCCDDDD EEEEFFFFGGGGHHHH"); masked != want {
+			t.Errorf("open block masked = %q, want %q", masked, want)
+		}
+	}
+	// Every label RFC 7468 allows, not only RSA/EC: an OpenSSH key.
+	ssh := "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----\n"
+	if got := fileTokens(ssh); len(got) != 1 || got[0] != strings.TrimSpace(ssh) {
+		t.Errorf("OpenSSH key tokens = %q", got)
 	}
 }

@@ -397,8 +397,9 @@ const minMaskedKeyLike = 8
 // credential.
 var secretName = regexp.MustCompile(`(?i)(key|secret|token|pass|pwd|credential|auth|private|signature|cookie|session)`)
 
-// pemBlock is a PEM key from its armor to its end.
-var pemBlock = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]+-----.*?-----END [A-Z0-9 ]+-----`)
+// pemBlock is a PEM key from its armor to its end; a label is any text but
+// a hyphen (RFC 7468: "OPENSSH PRIVATE KEY", "EC PRIVATE KEY").
+var pemBlock = regexp.MustCompile(`(?s)-----BEGIN [^-\r\n]+-----.*?-----END [^-\r\n]+-----`)
 
 // worthMasking says whether a variable's value is masked wherever the box's
 // output goes: a long one, or a shorter one whose name says it's a
@@ -444,11 +445,12 @@ func fileTokens(content string) []string {
 	// a bare PEM file, or a .env's value however it's quoted (single quotes
 	// over several lines, which the dotenv parser reads one line of). Each
 	// of its lines is then masked (redact's variants), and the file's other
-	// lines stay the settings they are. A block left open can't be told
-	// apart, so the file is masked whole.
-	if strings.Contains(content, "-----BEGIN") {
+	// lines stay the settings they are. Every armor line must open a block
+	// of its own that closes: one left open (its body runs on to who knows
+	// where, or into the next key's block) masks the file whole instead.
+	if armors := strings.Count(content, "-----BEGIN"); armors > 0 {
 		blocks := pemBlock.FindAllString(content, -1)
-		if len(blocks) == 0 {
+		if len(blocks) < armors {
 			return []string{strings.TrimSpace(content)}
 		}
 		values = append(values, blocks...)
