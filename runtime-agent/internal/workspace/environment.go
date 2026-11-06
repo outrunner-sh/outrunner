@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/dotenv"
@@ -387,27 +389,88 @@ func (s *Service) copyEnvFilesOnce(workspaceID, worktree string) {
 // ("1", "production") is a setting, and masking it would blank ordinary output.
 const minMaskedEnv = 12
 
+// minMaskedKeyLike is the shortest value masked when it reads as a key or a
+// password rather than a setting (worthMasking).
+const minMaskedKeyLike = 8
+
+// secretName is a name (a variable's, a JSON field's, a flag's) that holds a
+// credential.
+var secretName = regexp.MustCompile(`(?i)(key|secret|token|passw|pwd|credential|auth|private|signature|cookie|session)`)
+
+// worthMasking says whether a value is masked wherever the box's output goes:
+// a long one, or a shorter one that mixes letters and digits and nothing a
+// setting has (a dot, a space, a colon), as a key or password does: "s3cr3tPw"
+// is masked, "8080", "production" and "v20.11.1" are not.
+func worthMasking(value string) bool {
+	if len(value) >= minMaskedEnv {
+		return true
+	}
+	if len(value) < minMaskedKeyLike || strings.ContainsAny(value, ". :/,") {
+		return false
+	}
+	return strings.ContainsAny(value, "0123456789") && strings.IndexFunc(value, unicode.IsLetter) >= 0
+}
+
+// fileTokens are the values a project file holds worth masking: a JSON
+// file's credential fields (a service account's private key and its id) and
+// its long random strings; a PEM file whole, which masks each of its lines
+// (redact's variants); else a .env file's variables.
+func fileTokens(content string) []string {
+	var values []string
+	var doc any
+	if json.Unmarshal([]byte(content), &doc) == nil {
+		var walk func(name string, v any)
+		walk = func(name string, v any) {
+			switch t := v.(type) {
+			case string:
+				// A credential field's value, not an address (token_uri).
+				named := secretName.MatchString(name) && len(t) >= minMaskedKeyLike && !strings.Contains(t, "://")
+				random := len(t) >= 20 && strings.ContainsAny(t, "0123456789") && !strings.ContainsAny(t, " /")
+				if named || random {
+					values = append(values, t)
+				}
+			case []any:
+				for _, x := range t {
+					walk(name, x)
+				}
+			case map[string]any:
+				for k, x := range t {
+					walk(k, x)
+				}
+			}
+		}
+		walk("", doc)
+		return values
+	}
+	if strings.Contains(content, "-----BEGIN") {
+		return []string{strings.TrimSpace(content)}
+	}
+	for _, entry := range dotenv.Parse(content) {
+		if worthMasking(entry.Value) {
+			values = append(values, entry.Value)
+		}
+	}
+	return values
+}
+
 // envTokens are the session environments' values worth masking: their
 // variables', and those their files set.
 func (s *Service) envTokens() []string {
-	values := s.envFiles().tokens()
+	var tokens []string
+	for _, value := range s.envFiles().tokens() {
+		if worthMasking(value) {
+			tokens = append(tokens, value)
+		}
+	}
 	_ = filepath.WalkDir(filepath.Join(s.Root, "envroot"), func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
 		if data, err := os.ReadFile(path); err == nil {
-			for _, entry := range dotenv.Parse(string(data)) {
-				values = append(values, entry.Value)
-			}
+			tokens = append(tokens, fileTokens(string(data))...)
 		}
 		return nil
 	})
-	var tokens []string
-	for _, value := range values {
-		if len(value) >= minMaskedEnv {
-			tokens = append(tokens, value)
-		}
-	}
 	return tokens
 }
 

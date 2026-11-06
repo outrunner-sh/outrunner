@@ -3,7 +3,9 @@ package redact
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,17 +90,19 @@ func activeSecrets(secrets []string) ([]string, int) {
 	seen := make(map[string]struct{})
 	active := make([]string, 0, len(secrets))
 	maxLen := 0
-	for _, secret := range secrets {
-		if secret == "" {
+	for _, given := range secrets {
+		if given == "" {
 			continue
 		}
-		if _, ok := seen[secret]; ok {
-			continue
-		}
-		seen[secret] = struct{}{}
-		active = append(active, secret)
-		if len(secret) > maxLen {
-			maxLen = len(secret)
+		for _, secret := range append([]string{given}, variants(given)...) {
+			if _, ok := seen[secret]; ok {
+				continue
+			}
+			seen[secret] = struct{}{}
+			active = append(active, secret)
+			if len(secret) > maxLen {
+				maxLen = len(secret)
+			}
 		}
 	}
 	for i := 0; i < len(active); i++ {
@@ -109,6 +113,51 @@ func activeSecrets(secrets []string) ([]string, int) {
 		}
 	}
 	return active, maxLen
+}
+
+// minVariantLen is the shortest encoded form masked: shorter, a fragment of
+// one secret could be ordinary text.
+const minVariantLen = 8
+
+// variants are the forms a secret takes once a command encodes it, masked as
+// the secret is (GitHub Actions' runner masks the same): escaped for JSON,
+// with and without HTML escapes; escaped for a URL; base64 (standard and
+// URL-safe) from each of the three byte alignments it can start on in a
+// longer stream, its full groups only, so what follows it can't change them;
+// and each line of one that spans lines (a PEM key), its armor lines aside.
+func variants(secret string) []string {
+	var out []string
+	add := func(v string) {
+		if v != secret && len(v) >= minVariantLen {
+			out = append(out, v)
+		}
+	}
+	for _, escapeHTML := range []bool{true, false} {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(escapeHTML)
+		if enc.Encode(secret) == nil {
+			quoted := strings.TrimSuffix(buf.String(), "\n")
+			add(quoted[1 : len(quoted)-1])
+		}
+	}
+	add(url.QueryEscape(secret))
+	add(url.PathEscape(secret))
+	for skip := 0; skip < 3 && skip < len(secret); skip++ {
+		rest := secret[skip:]
+		whole := rest[:len(rest)/3*3]
+		add(base64.StdEncoding.EncodeToString([]byte(whole)))
+		add(base64.URLEncoding.EncodeToString([]byte(whole)))
+	}
+	if strings.Contains(secret, "\n") {
+		for _, line := range strings.Split(secret, "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "-----") {
+				add(line)
+			}
+		}
+	}
+	return out
 }
 
 // Redact emits only text that cannot be the beginning of a secret extending

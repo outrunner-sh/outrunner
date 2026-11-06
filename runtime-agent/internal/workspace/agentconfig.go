@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -356,6 +357,8 @@ func agentConfigTokens() []string {
 		MCPServers map[string]struct {
 			Env     map[string]string `json:"env"`
 			Headers map[string]string `json:"headers"`
+			Args    []string          `json:"args"`
+			URL     string            `json:"url"`
 		} `json:"mcpServers"`
 	}
 	if json.Unmarshal(data, &config) != nil {
@@ -363,6 +366,7 @@ func agentConfigTokens() []string {
 	}
 	var tokens []string
 	for _, server := range config.MCPServers {
+		tokens = append(append(tokens, urlTokens(server.URL)...), argTokens(server.Args)...)
 		for _, values := range []map[string]string{server.Env, server.Headers} {
 			for _, value := range values {
 				tokens = append(tokens, value)
@@ -374,11 +378,49 @@ func agentConfigTokens() []string {
 	}
 	var masked []string
 	for _, token := range tokens {
-		if len(token) >= minMaskedEnv {
+		if worthMasking(token) {
 			masked = append(masked, token)
 		}
 	}
 	return masked
+}
+
+// urlTokens are the credentials a server's URL carries: its password, and
+// its query's values (?api_key=..., ?token=...).
+func urlTokens(raw string) []string {
+	u, err := url.Parse(raw)
+	if err != nil || raw == "" {
+		return nil
+	}
+	var tokens []string
+	if password, ok := u.User.Password(); ok {
+		tokens = append(tokens, password)
+	}
+	for _, values := range u.Query() {
+		tokens = append(tokens, values...)
+	}
+	return tokens
+}
+
+// argTokens are the credentials a server's command line passes: the value of
+// a flag named for one, as --api-key=... or --api-key ...
+func argTokens(args []string) []string {
+	var tokens []string
+	for i, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			continue
+		}
+		name, value, inline := strings.Cut(arg, "=")
+		if !secretName.MatchString(name) {
+			continue
+		}
+		if inline {
+			tokens = append(tokens, value)
+		} else if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			tokens = append(tokens, args[i+1])
+		}
+	}
+	return tokens
 }
 
 // copyAgentsMD gives a Codex home of a session's own the user's AGENTS.md.

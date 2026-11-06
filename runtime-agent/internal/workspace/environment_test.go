@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -183,5 +184,40 @@ func TestInstructionsFollowTheOrientation(t *testing.T) {
 	}
 	if err := s.SetInstructions("ws1", tooLarge); !errors.Is(err, ErrInvalidEnvironment) {
 		t.Errorf("too large: %v, want ErrInvalidEnvironment", err)
+	}
+}
+
+func TestWorthMaskingTellsKeysFromSettings(t *testing.T) {
+	for value, want := range map[string]bool{
+		"s3cr3tPw":            true,
+		"a-long-setting-name": true,
+		"8080":                false,
+		"production":          false,
+		"v20.11.1":            false,
+		"password":            false,
+	} {
+		if got := worthMasking(value); got != want {
+			t.Errorf("worthMasking(%q) = %v, want %v", value, got, want)
+		}
+	}
+}
+
+func TestFileTokensReadsJSONAndPEMFiles(t *testing.T) {
+	account := `{"type":"service_account","private_key_id":"0a1b2c3d4e","private_key":"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\n","client_id":"104523988123456789012","token_uri":"https://oauth2.googleapis.com/token"}`
+	got := fileTokens(account)
+	for _, want := range []string{"0a1b2c3d4e", "104523988123456789012", "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\n"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("JSON file tokens %q lack %q", got, want)
+		}
+	}
+	if slices.Contains(got, "service_account") || slices.Contains(got, "https://oauth2.googleapis.com/token") {
+		t.Errorf("JSON file tokens took a setting: %q", got)
+	}
+	pem := "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----\n"
+	if got := fileTokens(pem); len(got) != 1 || got[0] != strings.TrimSpace(pem) {
+		t.Errorf("PEM file tokens = %q", got)
+	}
+	if got := fileTokens("PORT=8080\nDB_PASS=s3cr3tPw\n"); !reflect.DeepEqual(got, []string{"s3cr3tPw"}) {
+		t.Errorf(".env file tokens = %q", got)
 	}
 }

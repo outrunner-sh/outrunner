@@ -1,7 +1,9 @@
 package redact
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -115,5 +117,32 @@ func TestRedactorJSONFollowsLiveTokens(t *testing.T) {
 	got, err := r.JSON([]byte(`{"text":"provided-later-value"}`))
 	if err != nil || string(got) != `{"text":"***"}` {
 		t.Fatalf("JSON = %s, %v", got, err)
+	}
+}
+
+func TestRedactorMasksASecretsEncodedForms(t *testing.T) {
+	secret := "s3cr3t/value+with&chars"
+	r := New([]string{secret})
+	for _, prefix := range []string{"", "a", "ab"} {
+		// base64 of the secret inside longer data, at each alignment.
+		encoded := base64.StdEncoding.EncodeToString([]byte(prefix + secret + "\n"))
+		got := r.Redact([]byte(encoded)) + r.Flush()
+		if !strings.Contains(got, "***") || strings.Contains(got, base64.StdEncoding.EncodeToString([]byte(secret[3:15]))) {
+			t.Fatalf("base64 after %q not masked: %q -> %q", prefix, encoded, got)
+		}
+	}
+	for _, form := range []string{url.QueryEscape(secret), `s3cr3t/value+with\u0026chars`} {
+		if got := r.Redact([]byte("x "+form+" y")) + r.Flush(); got != "x *** y" {
+			t.Fatalf("%q -> %q", form, got)
+		}
+	}
+}
+
+func TestRedactorMasksEachLineOfAMultiLineSecret(t *testing.T) {
+	key := "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\nBKcwggSjAgEAAoIBAQC7\n-----END PRIVATE KEY-----"
+	r := New([]string{key})
+	got := r.Redact([]byte("cat: MIIEvQIBADANBgkqhkiG9w0BAQEFAASC and -----END PRIVATE KEY-----")) + r.Flush()
+	if got != "cat: *** and -----END PRIVATE KEY-----" {
+		t.Fatalf("multi-line secret = %q", got)
 	}
 }
