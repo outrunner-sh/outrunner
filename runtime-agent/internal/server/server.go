@@ -135,6 +135,7 @@ func (s *Server) Handler() http.Handler {
 	// tool, or `outrunner media upload`), with its ask token as ask's.
 	mux.HandleFunc("POST /workspaces/{id}/media", s.uploadMedia)
 	mux.HandleFunc("POST /workspaces/{id}/secrets", s.authed(s.provideSecrets))
+	mux.HandleFunc("POST /workspaces/{id}/mask", s.authed(s.maskText))
 	// git's credential helper and the gh wrapper on this box ask, with the
 	// agent's credential token (package gitcred).
 	mux.HandleFunc("POST /git-credential", s.gitCredential)
@@ -1309,6 +1310,13 @@ func (s *Server) sessionTool(w http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusBadRequest, "malformed request")
 		return
 	}
+	// What a tool keeps (a note to the org's memory, a learning) leaves the
+	// box: its secrets are masked first, as in the chat (NEE-268).
+	if len(call.Args) > 0 {
+		if masked, err := s.redactor().JSON(call.Args); err == nil {
+			call.Args = masked
+		}
+	}
 	status, answer, err := s.ws.SessionTool(r.Context(), call)
 	switch {
 	case errors.Is(err, workspace.ErrUnknownWorkspace):
@@ -1318,6 +1326,25 @@ func (s *Server) sessionTool(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, status, answer)
 	}
+}
+
+// redactor masks the box's secrets as they are now, and any provided later.
+func (s *Server) redactor() *redact.Redactor {
+	return redact.New(s.ws.RedactionSecrets()).Follow(s.ws.LiveSecrets())
+}
+
+// maskText answers text with the box's secrets masked: for what a session
+// sends out by another way than its chat (a Slack research answer, posted
+// with curl), which the server masks here before passing it on (NEE-268).
+func (s *Server) maskText(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text string `json:"text"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	redactor := s.redactor()
+	writeJSON(w, http.StatusOK, map[string]string{"text": redactor.Redact([]byte(req.Text)) + redactor.Flush()})
 }
 
 // setSkills installs a project's skills on this computer. Any session's
@@ -1623,7 +1650,7 @@ func (s *Server) streamEvents(
 	var redactorAt time.Time
 	masked := func(payload []byte) ([]byte, error) {
 		if now := time.Now(); redactor == nil || now.Sub(redactorAt) >= stateCheckInterval {
-			redactor, redactorAt = redact.New(s.ws.RedactionSecrets()).Follow(s.ws.LiveSecrets()), now
+			redactor, redactorAt = s.redactor(), now
 		}
 		return redactor.JSON(payload)
 	}

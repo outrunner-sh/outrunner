@@ -420,3 +420,26 @@ func assertMessageWithText(t *testing.T, frame sseFrame, want string) {
 		t.Fatalf("expected text=%q, got %+v", want, first)
 	}
 }
+
+func TestMaskTextMasksTheBoxsSecrets(t *testing.T) {
+	f := newServerFixture(t)
+	defer f.stop()
+	envDir := filepath.Join(f.root, "envroot", f.workspaceID)
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envDir, ".env"), []byte("OUTRUNNER_CANARY=canary-2682b7c55940\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, f.url+"/workspaces/"+f.workspaceID+"/mask", strings.NewReader(`{"text":"The key is canary-2682b7c55940."}`))
+	req.Header.Set("Authorization", "Bearer "+f.token(t))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var got struct{ Text string }
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil || resp.StatusCode != http.StatusOK || got.Text != "The key is ***." {
+		t.Fatalf("mask = %d %+v %v", resp.StatusCode, got, err)
+	}
+}
