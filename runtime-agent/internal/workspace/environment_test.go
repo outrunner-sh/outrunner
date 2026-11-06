@@ -282,6 +282,7 @@ func TestFileTokensReadsJSONAndPEMFiles(t *testing.T) {
 		"DOUBLE--HYPHEN":     false,
 		// A trailing hyphen runs into the armor's dashes and matches: the
 		// block is masked all the same.
+		"TRAIL-": true,
 	} {
 		block := "-----BEGIN " + armor + "-----\nx\n-----END " + armor + "-----"
 		if got := pemBlock.MatchString(block); got != want {
