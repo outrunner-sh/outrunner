@@ -224,6 +224,11 @@ func TestFileTokensReadsJSONAndPEMFiles(t *testing.T) {
 	if got := fileTokens(pem); len(got) != 1 || got[0] != strings.TrimSpace(pem) {
 		t.Errorf("PEM file tokens = %q", got)
 	}
+	// A last line of base64 padded with = reads as an assignment.
+	padded := "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIIrYSSNQFaA2Hwf1duRSxKtLYX5CHHkqTxBBYXLhZwOo\nAwEHoUQDQgAE=\n-----END EC PRIVATE KEY-----\n"
+	if got := fileTokens(padded); len(got) != 1 || got[0] != strings.TrimSpace(padded) {
+		t.Errorf("padded PEM file tokens = %q", got)
+	}
 	if got := fileTokens("PORT=8080\nAWS_REGION=us-east-1\nDB_PASS=s3cr3tPw\n"); !reflect.DeepEqual(got, []string{"s3cr3tPw"}) {
 		t.Errorf(".env file tokens = %q", got)
 	}

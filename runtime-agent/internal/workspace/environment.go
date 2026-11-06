@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -440,9 +441,12 @@ func fileTokens(content string) []string {
 	}
 	// A bare PEM file is its key; a .env with one inline has it as a
 	// variable's value, masked line by line like any key, and its other
-	// lines as the settings they are.
+	// lines as the settings they are. A PEM file is told by no variable
+	// holding its armor: a base64 line ending in = padding reads as an
+	// assignment, so finding variables in it says nothing.
 	entries := dotenv.Parse(content)
-	if len(entries) == 0 && strings.Contains(content, "-----BEGIN") {
+	inline := slices.ContainsFunc(entries, func(e dotenv.Entry) bool { return strings.Contains(e.Value, "-----BEGIN") })
+	if strings.Contains(content, "-----BEGIN") && !inline {
 		return []string{strings.TrimSpace(content)}
 	}
 	for _, entry := range entries {
