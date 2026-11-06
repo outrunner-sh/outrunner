@@ -12,6 +12,8 @@ import { codexModelsFor } from "@/lib/codex/model-catalog.deps";
 import { creationSelection } from "@/lib/runtime/selection";
 import { optionalEnv } from "@/lib/env";
 import { randomUUID } from "node:crypto";
+import { PLAN_MODE_PREAMBLE } from "@/lib/api/create-request";
+import { sessionBranch } from "@/lib/session/branch-name";
 
 import { after, NextResponse } from "next/server";
 
@@ -121,8 +123,11 @@ async function madeBefore(id: string, ownerId: string, projectId: string): Promi
   return made && made.ownerId === ownerId && made.projectId === projectId ? made : null;
 }
 
-function generatedBranch(): string {
-  return `runtime/${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+/** The branch for a session that asked for none: a few words of its title,
+ *  else of its first prompt (lib/session/branch-name.ts). */
+function generatedBranch(title: string | undefined, firstMessage: string | undefined): string {
+  const prompt = firstMessage?.replace(PLAN_MODE_PREAMBLE, "");
+  return sessionBranch({ title, prompt }, randomUUID().replace(/-/g, "").slice(0, 6));
 }
 
 /** The session can't run without the user's Claude: say so, and where to fix it. */
@@ -453,7 +458,7 @@ async function createOnce(
       projectId: project.id,
       environmentId,
       checkouts,
-      branch: requestedBranch || generatedBranch(),
+      branch: requestedBranch || generatedBranch(options.title, options.firstMessage),
       baseBranch,
       provider: provider.name,
       agent: agentId,

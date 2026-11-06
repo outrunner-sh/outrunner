@@ -1,4 +1,5 @@
 import type { Workspace } from "@/lib/runtime/types";
+import { withoutGeneratedPrefix } from "@/lib/session/branch-name";
 
 /** Room for a sentence in the sidebar; the column allows 200. */
 export const TITLE_MAX = 80;
@@ -30,7 +31,7 @@ export function titleToSet(workspace: { title: string | null }, prompt: string):
 }
 
 /** What to call a cloud session: its title, else its branch without the
- *  generated `runtime/` prefix. */
+ *  generated `outrunner/` or `runtime/` prefix. */
 export function workspaceLabel(workspace: Pick<Workspace, "title" | "branch">): string {
-  return workspace.title || workspace.branch.replace(/^runtime\//, "");
+  return workspace.title || withoutGeneratedPrefix(workspace.branch);
 }

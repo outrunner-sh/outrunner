@@ -17,6 +17,7 @@ import { buildNavGroups, newestFirst, recency, type NavProject } from "@/lib/nav
 import type { Workspace } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { canDestroy, isSettingUp } from "@/lib/session/provisioning";
+import { withoutGeneratedPrefix } from "@/lib/session/branch-name";
 
 /** Whether the sidebar is collapsed: a cookie, so the layout reads it on the
  *  server and the first render already has the sidebar as it was left (kept in
@@ -227,7 +228,7 @@ export function buildSidebarGroups(
  * The sidebar's search: case-insensitive, on session titles and branches and
  * workspace names. A workspace whose name matches keeps all its sessions;
  * otherwise only the matching sessions stay, and a workspace left with none is
- * dropped. A branch is matched without the generated `runtime/` every
+ * dropped. A branch is matched without the generated `outrunner/` or `runtime/` every
  * Outrunner branch starts with, which "run" would otherwise find in them all.
  */
 export function filterSidebarGroups(groups: SidebarGroup[], query: string): SidebarGroup[] {
@@ -240,7 +241,7 @@ export function filterSidebarGroups(groups: SidebarGroup[], query: string): Side
     const sessions = group.sessions.filter(
       (s) =>
         s.title.toLowerCase().includes(q) ||
-        s.branch.replace(/^runtime\//, "").toLowerCase().includes(q),
+        withoutGeneratedPrefix(s.branch).toLowerCase().includes(q),
     );
     return sessions.length > 0 ? [{ ...group, sessions }] : [];
   });
