@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -398,6 +397,9 @@ const minMaskedKeyLike = 8
 // credential.
 var secretName = regexp.MustCompile(`(?i)(key|secret|token|pass|pwd|credential|auth|private|signature|cookie|session)`)
 
+// pemBlock is a PEM key from its armor to its end.
+var pemBlock = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]+-----.*?-----END [A-Z0-9 ]+-----`)
+
 // worthMasking says whether a variable's value is masked wherever the box's
 // output goes: a long one, or a shorter one whose name says it's a
 // credential (DB_PASS=s3cr3tPw). A short value under another name is a
@@ -409,9 +411,8 @@ func worthMasking(name, value string) bool {
 
 // fileTokens are the values a project file holds worth masking: a JSON
 // file's credential fields (a service account's private key and its id) and
-// its long random strings; else a bare PEM file whole, which masks each of
-// its lines (redact's variants); else a .env file's variables, a key inline
-// in one included.
+// its long random strings; else the PEM keys in it, and a .env file's
+// variables.
 func fileTokens(content string) []string {
 	var values []string
 	var doc any
@@ -439,18 +440,24 @@ func fileTokens(content string) []string {
 		walk("", doc)
 		return values
 	}
-	// A bare PEM file is its key; a .env with one inline has it as a
-	// variable's value, masked line by line like any key, and its other
-	// lines as the settings they are. A PEM file is told by no variable
-	// holding its armor: a base64 line ending in = padding reads as an
-	// assignment, so finding variables in it says nothing.
-	entries := dotenv.Parse(content)
-	inline := slices.ContainsFunc(entries, func(e dotenv.Entry) bool { return strings.Contains(e.Value, "-----BEGIN") })
-	if strings.Contains(content, "-----BEGIN") && !inline {
-		return []string{strings.TrimSpace(content)}
+	// A PEM key is masked as the block it is in the file, wherever it sits:
+	// a bare PEM file, or a .env's value however it's quoted (single quotes
+	// over several lines, which the dotenv parser reads one line of). Each
+	// of its lines is then masked (redact's variants), and the file's other
+	// lines stay the settings they are. A block left open can't be told
+	// apart, so the file is masked whole.
+	if strings.Contains(content, "-----BEGIN") {
+		blocks := pemBlock.FindAllString(content, -1)
+		if len(blocks) == 0 {
+			return []string{strings.TrimSpace(content)}
+		}
+		values = append(values, blocks...)
 	}
-	for _, entry := range entries {
-		if worthMasking(entry.Name, entry.Value) {
+	for _, entry := range dotenv.Parse(content) {
+		// A value of an armor line alone is a key cut short: its block
+		// above masks it.
+		partial := strings.Contains(entry.Value, "-----BEGIN") && !strings.Contains(entry.Value, "-----END")
+		if worthMasking(entry.Name, entry.Value) && !partial {
 			values = append(values, entry.Value)
 		}
 	}

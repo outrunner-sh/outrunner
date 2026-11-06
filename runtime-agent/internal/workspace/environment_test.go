@@ -235,12 +235,21 @@ func TestFileTokensReadsJSONAndPEMFiles(t *testing.T) {
 	// A .env with a key inline keeps its other variables masked.
 	inline := "NODE_ENV=production\nAPP_NAME=myservice\nAPI_KEY=sk_live_abcdef1234567890\nPRIVATE_KEY=\"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\"\n"
 	key := "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----"
-	if got := fileTokens(inline); !reflect.DeepEqual(got, []string{"sk_live_abcdef1234567890", key}) {
-		t.Errorf("inline-key .env tokens = %q", got)
+	// Double-quoted, and single-quoted over several lines (the dotenv
+	// parser reads one line of that): the key is masked either way, and
+	// the settings beside it stay readable.
+	for _, file := range []string{inline, strings.ReplaceAll(inline, `"`, `'`)} {
+		got := fileTokens(file)
+		if !slices.Contains(got, "sk_live_abcdef1234567890") || !slices.Contains(got, key) || slices.Contains(got, "-----BEGIN PRIVATE KEY-----") {
+			t.Errorf("inline-key .env tokens = %q", got)
+		}
+		r := redact.New(got)
+		if masked := r.Text("env: NODE_ENV=production and APP_NAME=myservice, MIIEvQIBADANBgkq"); masked != "env: NODE_ENV=production and APP_NAME=myservice, ***" {
+			t.Errorf("masked = %q", masked)
+		}
 	}
-	// Its settings stay readable once masked: only the key's lines go.
-	r := redact.New(fileTokens(inline))
-	if got := r.Text("env: NODE_ENV=production and APP_NAME=myservice, MIIEvQIBADANBgkq"); got != "env: NODE_ENV=production and APP_NAME=myservice, ***" {
-		t.Errorf("masked = %q", got)
+	// A block left open masks the whole file.
+	if got := fileTokens("-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n"); len(got) != 1 || got[0] != "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq" {
+		t.Errorf("open block tokens = %q", got)
 	}
 }
