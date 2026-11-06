@@ -154,6 +154,11 @@ export function SidebarMissions({ active, projects }: { active?: string; project
             {shown.map((mission) => {
               const runners = nestedRunners(mission);
               const isFolded = runners.length > 0 && folded.includes(mission.id);
+              // Folded, it still shows the Ship you're on, as a folded Project
+              // keeps its open session (lib/nav/sidebar.ts shownSessions).
+              const shownRunners = isFolded
+                ? runners.filter((runner) => runner.id === active)
+                : runners.slice(0, expanded.has(mission.id) ? undefined : SHOWN_RUNNERS);
               const isActive = mission.id === active;
               const archived = mission.sessionStatus === "archived";
               const archive = missionArchiveOffer({ status: mission.sessionStatus as WorkspaceStatus, provider: mission.provider });
@@ -231,7 +236,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                         className={cn(
                           "absolute top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground outline-none transition hover:bg-accent hover:text-foreground focus-visible:opacity-100",
                           archive ? "right-7" : "right-1",
-                          isFolded ? "opacity-100" : "opacity-0 group-hover/mission:opacity-100",
+                          isFolded ? "opacity-100" : "opacity-0 group-hover/mission:opacity-100 group-focus-within/mission:opacity-100",
                         )}
                       >
                         <ChevronRight className={cn("size-3.5 transition-transform", !isFolded && "rotate-90")} />
@@ -259,9 +264,9 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                       </DropdownMenu>
                     )}
                   </div>
-                  {runners.length > 0 && !isFolded && (
+                  {shownRunners.length > 0 && (
                     <ul className="relative mt-px ml-[17px] space-y-px border-l border-white/[0.07] pl-[7px]">
-                      {runners.slice(0, expanded.has(mission.id) ? undefined : SHOWN_RUNNERS).map((runner) => {
+                      {shownRunners.map((runner) => {
                         const pr = runner.pulls.find((p) => p.state === "open") ?? runner.pulls.find((p) => p.state === "merged");
                         return (
                           <li key={runner.id} className="mission-in">
@@ -283,7 +288,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                           </li>
                         );
                       })}
-                      {runners.length > SHOWN_RUNNERS && (
+                      {!isFolded && runners.length > SHOWN_RUNNERS && (
                         <li>
                           <button
                             type="button"
