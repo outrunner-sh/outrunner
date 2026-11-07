@@ -457,13 +457,16 @@ async function createOnce(
   try {
     const generation = {
       sessionBranches: (base: string) => projectBranchesLike(project.id, base),
-      async knownOnGitHub(branch: string) {
-        for (const repo of branchRepos) {
-          // Without a token, GitHub isn't asked: nothing gets pushed there either.
-          if (repo.token && (await branchKnownOnGitHub({ token: repo.token, repoFullName: repo.fullName, branch }))) return true;
-        }
-        return false;
-      },
+      // Every repository at once. Without a token, GitHub isn't asked:
+      // nothing gets pushed there either.
+      knownOnGitHub: async (branch: string) =>
+        (
+          await Promise.all(
+            branchRepos.map((repo) =>
+              repo.token ? branchKnownOnGitHub({ token: repo.token, repoFullName: repo.fullName, branch }) : false,
+            ),
+          )
+        ).some(Boolean),
     };
     workspace = await insertOnBranch({
       requested: requestedBranch,

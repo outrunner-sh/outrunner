@@ -104,16 +104,42 @@ function checkoutIds(checkouts: unknown): string[] {
 }
 
 /**
+ * Of `refs`, the ones a session of `repo` has as its own branch: any session
+ * in the orgs that have the repository, of it or with it among its several,
+ * any status, Mission or not. Such a branch is that session's, never a
+ * Runner's stacked work (runnerOwning).
+ */
+async function sessionBranchesAmong(repo: string, refs: readonly string[]): Promise<Set<string>> {
+  if (refs.length === 0) return new Set();
+  const { data: projects, error } = await db().from("projects").select("id, org_id").ilike("full_name", escapeLike(repo));
+  if (error) throw error;
+  if (!projects?.length) return new Set();
+  const projectIds = new Set(projects.map((p) => p.id));
+  const { data, error: sessionsError } = await db()
+    .from("workspaces")
+    .select("project_id, checkouts, branch")
+    .in("org_id", [...new Set(projects.map((p) => p.org_id))])
+    .in("branch", [...new Set(refs)]);
+  if (sessionsError) throw sessionsError;
+  return new Set(
+    (data ?? [])
+      .filter((row) => projectIds.has(row.project_id) || checkoutIds(row.checkouts).some((id) => projectIds.has(id)))
+      .map((row) => row.branch as string),
+  );
+}
+
+/**
  * The Runners an event in `repo` can be about: Runners in its orgs that work
  * in the repository (as their own, or as one of a session of several), and
  * of those, only the ones on a branch it names or with a pull request of
  * its on record. Check runs come many a push: this keeps each to a query or
  * two, whatever the number of Runners.
  */
-async function runnersFor(activity: PullRequestActivity): Promise<Workspace[]> {
+async function runnersFor(activity: PullRequestActivity): Promise<{ runners: Workspace[]; sessionBranches: Set<string> }> {
+  const none = { runners: [], sessionBranches: new Set<string>() };
   const { data: projects, error } = await db().from("projects").select("id, org_id").ilike("full_name", escapeLike(activity.repo));
   if (error) throw error;
-  if (!projects?.length) return [];
+  if (!projects?.length) return none;
   const projectIds = new Set(projects.map((p) => p.id));
   // What it takes to match, read narrow: whole rows only for the few that do.
   const { data, error: runnersError } = await db()
@@ -124,8 +150,9 @@ async function runnersFor(activity: PullRequestActivity): Promise<Workspace[]> {
     .not("status", "in", "(destroyed,destroying)");
   if (runnersError) throw runnersError;
   const inRepo = (data ?? []).filter((row) => projectIds.has(row.project_id) || checkoutIds(row.checkouts).some((id) => projectIds.has(id)));
-  if (inRepo.length === 0) return [];
+  if (inRepo.length === 0) return none;
   const refs = [...activity.headRefs, ...(activity.pr ? [activity.pr.headRef] : [])];
+  const sessionBranches = await sessionBranchesAmong(activity.repo, refs);
   const known = new Set<string>();
   if (activity.numbers.length > 0) {
     const { data: rows, error: rowsError } = await db()
@@ -140,11 +167,13 @@ async function runnersFor(activity: PullRequestActivity): Promise<Workspace[]> {
     if (rowsError) throw rowsError;
     for (const row of rows ?? []) known.add(row.runner_id);
   }
-  const matched = inRepo.filter((row) => known.has(row.id) || refs.some((ref) => runnerOwning(inRepo, ref) === row)).map((row) => row.id);
-  if (matched.length === 0) return [];
+  const matched = inRepo
+    .filter((row) => known.has(row.id) || refs.some((ref) => runnerOwning(inRepo, ref, sessionBranches) === row))
+    .map((row) => row.id);
+  if (matched.length === 0) return none;
   const { data: rows, error: rowsError } = await db().from("workspaces").select("*").in("id", matched);
   if (rowsError) throw rowsError;
-  return (rows ?? []).map(toWorkspace);
+  return { runners: (rows ?? []).map(toWorkspace), sessionBranches };
 }
 
 /** Note what a webhook said: a new pull request of a Runner's recorded (or
@@ -152,11 +181,11 @@ async function runnersFor(activity: PullRequestActivity): Promise<Workspace[]> {
  *  extending) its stretch. The Runners whose pull requests it touched. */
 export async function notePullRequestActivity(activity: PullRequestActivity): Promise<string[]> {
   const touched = new Set<string>();
-  const runners = await runnersFor(activity);
+  const { runners, sessionBranches } = await runnersFor(activity);
   const now = new Date().toISOString();
   for (const runner of runners) {
     const pr = activity.pr;
-    if (pr && runnerOwning(runners, pr.headRef) === runner) {
+    if (pr && runnerOwning(runners, pr.headRef, sessionBranches) === runner) {
       const { error } = await db()
         .from("runner_pull_requests")
         .upsert(
@@ -257,9 +286,10 @@ export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<
       pulls = await githubGet<GitHubPull[]>(token, `/repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`);
       if (pulls) break;
     }
+    const sessionBranches = await sessionBranchesAmong(repo, (pulls ?? []).flatMap((pull) => (pull.head?.ref ? [pull.head.ref] : [])));
     for (const pull of pulls ?? []) {
       if (!pull.number || !pull.head?.ref) continue;
-      for (const runner of here.filter((r) => runnerOwning(here, pull.head!.ref!) === r)) {
+      for (const runner of here.filter((r) => runnerOwning(here, pull.head!.ref!, sessionBranches) === r)) {
         const { data: made, error } = await db()
           .from("runner_pull_requests")
           .upsert(

@@ -112,11 +112,24 @@ test("a branch is the Runner's whose branch is the longest it's named after", ()
   const first = { id: "a", branch: "verify-prs" };
   const second = { id: "b", branch: "verify-prs-2" };
   const runners = [first, second];
-  assert.equal(runnerOwning(runners, "verify-prs"), first);
-  assert.equal(runnerOwning(runners, "verify-prs-2"), second);
-  assert.equal(runnerOwning(runners, "verify-prs-2-2"), second);
-  assert.equal(runnerOwning(runners, "verify-prs-3"), first);
-  assert.equal(runnerOwning(runners, "main"), undefined);
+  const own = new Set(["verify-prs", "verify-prs-2"]);
+  assert.equal(runnerOwning(runners, "verify-prs", own), first);
+  assert.equal(runnerOwning(runners, "verify-prs-2", own), second);
+  assert.equal(runnerOwning(runners, "verify-prs-2-2", own), second);
+  assert.equal(runnerOwning(runners, "verify-prs-3", own), first);
+  assert.equal(runnerOwning(runners, "main", own), undefined);
+});
+
+test("a branch that is another session's own is never a Runner's stacked work", () => {
+  const ship = { id: "ship", branch: "add-dark-mode" };
+  // Plain sessions (not Runners) on add-dark-mode-settings and add-dark-mode-2.
+  const own = new Set(["add-dark-mode", "add-dark-mode-settings", "add-dark-mode-2"]);
+  assert.equal(runnerOwning([ship], "add-dark-mode-settings", own), undefined);
+  assert.equal(runnerOwning([ship], "add-dark-mode-2", own), undefined);
+  // The Ship's own branch, and stacked work no session has: still the Ship's.
+  assert.equal(runnerOwning([ship], "add-dark-mode", own), ship);
+  assert.equal(runnerOwning([ship], "add-dark-mode-2", new Set(["add-dark-mode"])), ship);
+  assert.equal(runnerOwning([ship], "add-dark-mode-part-2", own), ship);
 });
 
 test("a Runner is done only once it has pull requests and all are merged or closed", () => {

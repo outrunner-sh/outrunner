@@ -101,11 +101,21 @@ export function isRunnerBranch(runnerBranch: string, headRef: string): boolean {
   return headRef === runnerBranch || (headRef.startsWith(`${runnerBranch}-`) && headRef.length > runnerBranch.length + 1);
 }
 
-/** The Runner a branch is of, among a Mission's: the one whose branch is
- *  the longest it's named after. `fix-login-2` is the Runner on
- *  `fix-login-2`'s, not stacked work of the one on `fix-login`, now that a
- *  taken branch name gets `-2` (lib/session/branch-name.ts). */
-export function runnerOwning<T extends { branch: string }>(runners: readonly T[], headRef: string): T | undefined {
+/**
+ * The Runner a branch is of, among a Mission's: the one whose branch is the
+ * longest it's named after. A branch that is exactly a session's own
+ * (`sessionBranches`: any session of the repository, any status, Mission or
+ * not) is only ever that session's, never stacked work of a Runner it's
+ * named after: `add-dark-mode-2` is the plain session's on it, not the
+ * Runner's on `add-dark-mode`, now that a taken branch name gets `-2` and
+ * names are a few readable words (lib/session/branch-name.ts).
+ */
+export function runnerOwning<T extends { branch: string }>(
+  runners: readonly T[],
+  headRef: string,
+  sessionBranches: ReadonlySet<string>,
+): T | undefined {
+  if (sessionBranches.has(headRef)) return runners.find((runner) => runner.branch === headRef);
   let owner: T | undefined;
   for (const runner of runners) {
     if (isRunnerBranch(runner.branch, headRef) && (!owner || runner.branch.length > owner.branch.length)) owner = runner;

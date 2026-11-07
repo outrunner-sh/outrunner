@@ -236,16 +236,18 @@ export async function createWorkspaceRow(input: {
 
 /**
  * The branches of `base` and `base-<n>` any session of the project has had,
- * ended ones too: a new session's generated branch takes none of them, so its
- * pull request lookup never finds an old session's.
+ * ended ones too, teammates' as well: a new session's generated branch takes
+ * none of them, so its pull request lookup never finds an old session's. Read
+ * past row-level security, which shows the user only their own, for branch
+ * names alone, of a project the caller has already checked they may use.
+ * `base` is a generated name: letters, digits and hyphens only.
  */
 export async function projectBranchesLike(projectId: string, base: string): Promise<Set<string>> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await createSupabaseAdminClient()
     .from("workspaces")
     .select("branch")
     .eq("project_id", projectId)
-    .or(`branch.eq.${base},branch.like.${base.replace(/[%_\\]/g, "\\$&")}-%`);
+    .or(`branch.eq.${base},branch.like.${base}-%`);
   if (error) throw error;
   return new Set((data ?? []).map((row) => row.branch as string));
 }
