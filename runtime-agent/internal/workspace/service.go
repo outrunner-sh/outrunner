@@ -4,6 +4,7 @@
 package workspace
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -1692,9 +1693,11 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 	f, _ := s.getFacts(workspaceID)
 
 	return snapshot.Produce(ctx, snapshot.Input{
-		WorkspaceID:      workspaceID,
-		Worktree:         s.worktreePath(workspaceID),
-		Branch:           f.Branch,
+		WorkspaceID: workspaceID,
+		Worktree:    s.worktreePath(workspaceID),
+		// The name the bundle has: git's, a rename not yet confirmed included,
+		// for a restore onto Outrunner's name (bundleRef).
+		Branch:           cmp.Or(f.PendingBranch, f.Branch),
 		Checkouts:        s.snapshotCheckouts(f.Checkouts),
 		CastPath:         s.castPath(workspaceID),
 		ConversationPath: s.SessionLog(workspaceID),

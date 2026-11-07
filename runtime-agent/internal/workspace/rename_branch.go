@@ -228,7 +228,9 @@ func (s *Service) mayNameBranch(workspaceID string, f workspaceFacts) bool {
 		return false
 	}
 	if head == f.PendingBranch {
-		return true // its guard is the unconfirmed one, kept as it is
+		// Each launch too, so a worktree made since has the unconfirmed guard.
+		s.markUnconfirmed(dirs, head)
+		return true
 	}
 	// Each launch, so a worktree made since (a restore) has its push guard.
 	s.markStandIns(dirs, f.Branch, true)

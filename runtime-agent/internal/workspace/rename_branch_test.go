@@ -440,3 +440,22 @@ func TestACommitRefusedPutsTheStandInsGuardBack(t *testing.T) {
 		t.Fatal("the stand-in, back after a refusal, wasn't guarded")
 	}
 }
+
+// A worktree made since a rename went unconfirmed (a restore, on git's name)
+// gets the unconfirmed guard back at its next launch.
+func TestAnUnconfirmedRenameIsGuardedAgainAtEachLaunch(t *testing.T) {
+	commitBackoff = time.Millisecond
+	cp := &controlPlane{checked: "fix/google-sign-in", commitDrops: commitAttempts}
+	s, dirs := renameSession(t, cp, "sign-fails-google-users")
+	renameTo(t, s, "ws", "fix/google-sign-in")
+	gitDir := run(t, dirs[0], "rev-parse", "--absolute-git-dir")
+	for _, f := range []string{standInFile, standInFile + ".unconfirmed", standInFile + ".refused"} {
+		_ = os.Remove(filepath.Join(gitDir, f))
+	}
+	s.orientation("ws", dirs[0])
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	run(t, dirs[0], "init", "-q", "--bare", remote)
+	if out, ok := push(t, s, dirs[0], remote, "HEAD"); ok || !strings.Contains(out, "isn't confirmed yet") {
+		t.Fatalf("not guarded after the launch: ok=%v %s", ok, out)
+	}
+}
