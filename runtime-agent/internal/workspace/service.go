@@ -194,10 +194,13 @@ func (s *Service) UseJcode(client *jcode.Client) {
 // carry on. Start degrades gracefully (base omitted from the orientation) when
 // neither copy exists.
 type workspaceFacts struct {
-	Harness        *HarnessState         `json:"harness,omitempty"`
-	Branch         string                `json:"branch"`
-	BaseBranch     string                `json:"baseBranch"`
-	PermissionMode claude.PermissionMode `json:"permissionMode,omitempty"`
+	Harness *HarnessState `json:"harness,omitempty"`
+	Branch  string        `json:"branch"`
+	// BranchRenamable says Branch is the one Outrunner made up, which the
+	// agent may still rename once (rename_branch.go).
+	BranchRenamable bool                  `json:"branchRenamable,omitempty"`
+	BaseBranch      string                `json:"baseBranch"`
+	PermissionMode  claude.PermissionMode `json:"permissionMode,omitempty"`
 	// RepoPath is the folder on the user's Mac a local session works on; empty
 	// on a Runtime Computer, where worktrees come from the bare mirror.
 	RepoPath string `json:"repoPath,omitempty"`
@@ -288,6 +291,9 @@ type GitUser struct {
 type CreateInput struct {
 	WorkspaceID string
 	Branch      string
+	// BranchRenamable says Outrunner made Branch up: the agent may name it
+	// once (rename_branch.go). Never on the Mac.
+	BranchRenamable bool
 	// BaseBranch is the branch to fork from, without a remote prefix ("main").
 	BaseBranch string
 	// RepoPath is a folder on this machine to work on; empty uses the mirror.
@@ -501,13 +507,14 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	}
 	defer s.lockLifecycle(in.WorkspaceID)()
 	facts := workspaceFacts{
-		Branch:         in.Branch,
-		BaseBranch:     in.BaseBranch,
-		PermissionMode: in.PermissionMode,
-		Title:          in.Title,
-		Model:          in.Model,
-		Agent:          in.Agent,
-		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+		Branch:          in.Branch,
+		BranchRenamable: in.BranchRenamable && in.RepoPath == "",
+		BaseBranch:      in.BaseBranch,
+		PermissionMode:  in.PermissionMode,
+		Title:           in.Title,
+		Model:           in.Model,
+		Agent:           in.Agent,
+		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
 	}
 	// A repeated Create (after a restart) keeps the session's original age, and
 	// its conversation.
@@ -1021,9 +1028,20 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 func (s *Service) orientation(workspaceID, worktree string) string {
 	f, _ := s.getFacts(workspaceID)
 	// A session in the user's own folder has no branch of its own.
-	o := claude.Orientation(worktree, f.BaseBranch, !f.InPlace && onPlaceholderBranch(worktree))
+	branch := claude.BranchChosen
+	switch {
+	case f.InPlace:
+	case s.mayNameBranch(workspaceID, f):
+		branch = claude.BranchToName
+	case onPlaceholderBranch(worktree):
+		branch = claude.BranchPlaceholder
+	}
+	o := claude.Orientation(worktree, f.BaseBranch, branch)
 	if len(f.Checkouts) > 0 {
 		o += "\n\n" + checkoutsNote(f.Checkouts, f.Branch)
+	}
+	if branch == claude.BranchToName {
+		o += "\n\n" + branchNameNote(f.Branch)
 	}
 	if s.desktopReady(workspaceID) {
 		o += "\n\n# Desktop\n\n" + desktop.Instructions
@@ -1669,6 +1687,7 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 	return snapshot.Produce(ctx, snapshot.Input{
 		WorkspaceID:      workspaceID,
 		Worktree:         s.worktreePath(workspaceID),
+		Branch:           f.Branch,
 		Checkouts:        s.snapshotCheckouts(f.Checkouts),
 		CastPath:         s.castPath(workspaceID),
 		ConversationPath: s.SessionLog(workspaceID),
@@ -1719,7 +1738,7 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 			return "", err
 		}
 	}
-	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BaseBranch: req.BaseBranch, Agent: req.Agent, Checkouts: checkouts})
+	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BranchRenamable: req.BranchRenamable, BaseBranch: req.BaseBranch, Agent: req.Agent, Checkouts: checkouts})
 	if req.Auth != nil && req.Auth.Kind != AuthNone {
 		if err := s.SetAuth(ctx, workspaceID, req.Auth.Kind, req.Auth.Token); err != nil {
 			return "", err

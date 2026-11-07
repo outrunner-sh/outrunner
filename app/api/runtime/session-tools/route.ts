@@ -6,6 +6,7 @@ import { memoryStore } from "@/lib/db/memories";
 import { optionalEnv } from "@/lib/env";
 import { learningActor, learningDeps } from "@/lib/learnings/actions.deps";
 import { boxRequestValid } from "@/lib/runtime/git-credential";
+import { renameBranchDeps } from "@/lib/session/rename-branch.deps";
 import { callSessionTool } from "@/lib/session-tools/tools";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -79,7 +80,13 @@ export async function POST(request: Request) {
       { userId: workspace.owner_id, orgId: workspace.org_id, workspaceId: workspace.id },
       call.tool,
       args,
-      { actor: learningActor, learnings: learningDeps(actor), memory: memoryStore, base: optionalEnv("RUNTIME_BASE_URL") ?? new URL(request.url).origin },
+      {
+        actor: learningActor,
+        learnings: learningDeps(actor),
+        memory: memoryStore,
+        renameBranch: renameBranchDeps(),
+        base: optionalEnv("RUNTIME_BASE_URL") ?? new URL(request.url).origin,
+      },
     );
     return NextResponse.json(answer.error ? { error: answer.error } : { text: answer.text }, { status: answer.status });
   } catch (cause) {

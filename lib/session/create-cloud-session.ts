@@ -479,6 +479,10 @@ async function createOnce(
           environmentId,
           checkouts,
           branch,
+          // Made up here, for the agent to give it its real name once it
+          // knows the change: not a review's (it pushes nothing of its own),
+          // nor a GitHub follow-up's (it pushes to its pull request's head).
+          branchRenamable: !requestedBranch && !options.reviewAsApp && options.source !== "github",
           baseBranch,
           provider: provider.name,
           agent: agentId,
@@ -817,6 +821,7 @@ async function provisionWorkspace({
           repoFullName: checkouts?.[0].fullName ?? project.fullName,
           baseBranch: checkouts?.[0].baseBranch ?? workspace.baseBranch,
           branch: workspace.branch,
+          ...(workspace.branchRenamable && { branchRenamable: true }),
           ...(checkouts && {
             repos: checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout, baseBranch: c.baseBranch })),
           }),

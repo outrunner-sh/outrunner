@@ -227,16 +227,17 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		gitUser = &workspace.GitUser{Name: req.GitUser.Name, Email: req.GitUser.Email}
 	}
 	worktree, err := s.ws.Create(r.Context(), workspace.CreateInput{
-		WorkspaceID:    req.WorkspaceID,
-		Branch:         req.Branch,
-		BaseBranch:     req.BaseBranch,
-		RepoPath:       req.RepoPath,
-		PermissionMode: mode,
-		Title:          req.Title,
-		Model:          req.Model,
-		Agent:          req.Agent,
-		GitUser:        gitUser,
-		Checkouts:      checkouts(req.Repos),
+		WorkspaceID:     req.WorkspaceID,
+		Branch:          req.Branch,
+		BranchRenamable: req.BranchRenamable,
+		BaseBranch:      req.BaseBranch,
+		RepoPath:        req.RepoPath,
+		PermissionMode:  mode,
+		Title:           req.Title,
+		Model:           req.Model,
+		Agent:           req.Agent,
+		GitUser:         gitUser,
+		Checkouts:       checkouts(req.Repos),
 	})
 	switch {
 	case errors.Is(err, workspace.ErrBypassInFolder), errors.Is(err, workspace.ErrInvalidCheckouts):

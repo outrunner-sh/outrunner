@@ -493,6 +493,10 @@ export const CreateWorkspaceRequest = z.object({
   workspaceId: z.string().min(1),
   repoFullName: z.string().min(1),
   branch: z.string().min(1),
+  /** Outrunner made `branch` up from the first prompt: the agent may give it
+   *  its real name once, before it's pushed (lib/session/rename-branch.ts).
+   *  An agent from before ignores it, and the branch keeps its name. */
+  branchRenamable: z.boolean().optional(),
   baseBranch: z.string().min(1),
   /** Existing checkout on the user's Mac to branch from (local sessions only);
    *  omitted, the worktree comes from the computer's bare mirror. */
@@ -637,6 +641,8 @@ export type RestoreDownload = z.infer<typeof RestoreDownload>;
 export const RestoreWorkspaceRequest = z
   .object({
     branch: z.string().min(1),
+    /** CreateWorkspaceRequest's, as the session has it now. */
+    branchRenamable: z.boolean().optional(),
     baseBranch: z.string().optional(),
     sessionId: z.string().min(1).nullable(),
     downloads: z.array(RestoreDownload),

@@ -155,9 +155,12 @@ func extractTar(src, dir string, want map[string]bool) error {
 }
 
 // materializeCheckouts rebuilds a folder of checkouts from the two tars:
-// each bundle imported into its mirror on branch, checked out in
-// folder/<name>, its patch applied, and verified.
-func materializeCheckouts(ctx context.Context, folder, branch, bundleTar, patchTar string, checkouts []Checkout, staging string) error {
+// each bundle's bundleRef (branch when "") imported into its mirror on
+// branch, checked out in folder/<name>, its patch applied, and verified.
+func materializeCheckouts(ctx context.Context, folder, branch, bundleRef, bundleTar, patchTar string, checkouts []Checkout, staging string) error {
+	if bundleRef == "" {
+		bundleRef = branch
+	}
 	if err := validCheckouts(checkouts); err != nil {
 		return err
 	}
@@ -182,7 +185,7 @@ func materializeCheckouts(ctx context.Context, folder, branch, bundleTar, patchT
 		if _, err := os.Stat(bundle); err != nil {
 			return fmt.Errorf("restore: the snapshot has no bundle for %s", c.Name)
 		}
-		if err := importBundle(ctx, c.MirrorPath, bundle, branch, branch); err != nil {
+		if err := importBundle(ctx, c.MirrorPath, bundle, bundleRef, branch); err != nil {
 			return fmt.Errorf("%s: %w", c.Name, err)
 		}
 		if err := addWorktree(ctx, c.MirrorPath, dir, branch); err != nil {

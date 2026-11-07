@@ -17,7 +17,8 @@ test("the instructions name the branch, its target and what's uncommitted", () =
   assert.match(md, /^There are 3 uncommitted changes\.$/m);
   assert.match(md, /^The current branch is runtime\/abc\.$/m);
   assert.match(md, /^The target branch is origin\/develop\.$/m);
-  assert.match(md, /`git push -u origin runtime\/abc`/);
+  // HEAD, not the name: its agent may have renamed the branch since.
+  assert.match(md, /`git push -u origin HEAD`/);
   assert.match(md, /`git diff origin\/develop\.\.\.`/);
   assert.match(md, /`gh pr create --base develop --title "…" --body-file <file>`/);
 });

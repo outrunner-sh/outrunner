@@ -75,7 +75,7 @@ Follow these steps to create a PR:
 - Commit them. Follow any instructions the user gave you about writing commit messages and the attribution rules below.
 - Run \`git diff origin/${baseBranch}...\` to review the whole PR diff, and decide whether it changes UI or behaviour a person can see.
 - If it does, produce the evidence now, before pushing (below). Backend-only and docs changes skip this.
-- Push to origin (\`git push -u origin ${branch}\`).
+- Push to origin (\`git push -u origin HEAD\`): the branch you're on, whatever it's called now (its agent may have renamed it).
 - If this branch already has a pull request, the push updates it. ${UPDATE_RULE} Then share its link and evidence in your final chat reply.
 - Otherwise write the body from the template below to a file and run \`gh pr create --base ${baseBranch} --title "…" --body-file <file>\` to create a PR onto the target branch, unless the user instructed you otherwise. Describe not just changes made in this session but ALL changes in the workspace diff.
 

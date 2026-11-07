@@ -192,6 +192,8 @@ export async function createWorkspaceRow(input: {
   ownerId: string;
   projectId: string;
   branch: string;
+  /** Made up by Outrunner, for its agent to rename once (lib/session/rename-branch.ts). */
+  branchRenamable?: boolean;
   baseBranch: string;
   provider: ProviderName;
   /** Claude Code when not named. */
@@ -214,6 +216,7 @@ export async function createWorkspaceRow(input: {
       owner_id: input.ownerId,
       project_id: input.projectId,
       branch: input.branch,
+      ...(input.branchRenamable && { branch_renamable: true }),
       base_branch: input.baseBranch,
       provider: input.provider,
       // Named only for Codex, so a database before 20261020130000 still
