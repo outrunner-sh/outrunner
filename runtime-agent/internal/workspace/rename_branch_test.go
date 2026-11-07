@@ -254,7 +254,7 @@ func push(t *testing.T, s *Service, dir string, args ...string) (string, bool) {
 func TestAPushOfAStandInBranchIsRefusedOnceUntilItsNamed(t *testing.T) {
 	cp := &controlPlane{checked: "fix/google-sign-in"}
 	s, dirs := renameSession(t, cp, "sign-fails-google-users")
-	s.markStandIn("sign-fails-google-users", true)
+	s.markStandIns(dirs, "sign-fails-google-users", true)
 	remote := filepath.Join(t.TempDir(), "origin.git")
 	run(t, dirs[0], "init", "-q", "--bare", remote)
 	run(t, dirs[0], "remote", "add", "origin", remote)
@@ -276,7 +276,7 @@ func TestAPushOfAStandInBranchIsRefusedOnceUntilItsNamed(t *testing.T) {
 
 func TestASecondPushOfAStandInGoesThrough(t *testing.T) {
 	s, dirs := renameSession(t, &controlPlane{}, "some-words")
-	s.markStandIn("some-words", true)
+	s.markStandIns(dirs, "some-words", true)
 	remote := filepath.Join(t.TempDir(), "origin.git")
 	run(t, dirs[0], "init", "-q", "--bare", remote)
 	if _, ok := push(t, s, dirs[0], remote, "HEAD"); ok {
@@ -293,5 +293,46 @@ func TestASecondPushOfAStandInGoesThrough(t *testing.T) {
 		return string(out)
 	}()); got != "some-words" {
 		t.Errorf("symbolic-ref through the wrapper = %q", got)
+	}
+}
+
+// Two sessions in one box on the same stand-in name (every prompt with no
+// Latin letters gets "session"): each worktree has its own guard.
+func TestTwoSessionsOnOneStandInNameAreGuardedApart(t *testing.T) {
+	cp := &controlPlane{checked: "fix/login-page"}
+	s, dirs := renameSession(t, cp, "session")
+	other := s.worktreePath("ws2")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(t, other, "init", "-q", "-b", "session")
+	run(t, other, "commit", "-q", "--allow-empty", "-m", "first")
+	s.setFacts("ws2", workspaceFacts{Branch: "session", BranchRenamable: true, BaseBranch: "main"})
+	// Each launch marks its own worktree.
+	s.orientation("ws", dirs[0])
+	s.orientation("ws2", other)
+
+	if status, answer := renameTo(t, s, "ws", "fix/login-page"); status != http.StatusOK {
+		t.Fatalf("rename: %d %+v", status, answer)
+	}
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	run(t, other, "init", "-q", "--bare", remote)
+	// The renamed one pushes; the other is still on its stand-in, and guarded.
+	if out, ok := push(t, s, dirs[0], remote, "HEAD"); !ok {
+		t.Fatalf("the renamed session's push: %s", out)
+	}
+	if out, ok := push(t, s, other, remote, "HEAD"); ok || !strings.Contains(out, "rename-branch") {
+		t.Fatalf("the other session's push wasn't refused: ok=%v %s", ok, out)
+	}
+}
+
+func TestAWorktreeOnAnotherBranchIsntGuarded(t *testing.T) {
+	s, dirs := renameSession(t, &controlPlane{}, "some-words")
+	s.markStandIns(dirs, "some-words", true)
+	run(t, dirs[0], "switch", "-q", "-c", "fix/elsewhere")
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	run(t, dirs[0], "init", "-q", "--bare", remote)
+	if out, ok := push(t, s, dirs[0], remote, "HEAD"); !ok {
+		t.Fatalf("a push from another branch was refused: %s", out)
 	}
 }

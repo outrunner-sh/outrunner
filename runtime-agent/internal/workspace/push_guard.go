@@ -1,9 +1,11 @@
 package workspace
 
 import (
+	"context"
 	"os"
 	"path/filepath"
-	"regexp"
+	"strings"
+	"time"
 
 	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/sessiontools"
@@ -21,26 +23,32 @@ import (
 // would take the place of one Outrunner put in the mirror. The wrapper
 // passes every call to the real git unchanged, and only looks at pushes.
 
-// standInBranch is a name Outrunner made up: words only, no slash.
-var standInBranch = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+// standInFile, in a worktree's own git dir, holds the stand-in name it's
+// on while that's still to be renamed; `<it>.refused` once a push of it was
+// refused. Per worktree, not per name: one box holds many sessions, and two
+// can have the same stand-in (`session`, or `fix-login` in two repositories).
+const standInFile = "outrunner-stand-in"
 
-// standInsDir holds a marker for each branch still on its stand-in name,
-// and `<branch>.refused` once a push of it was refused.
-func (s *Service) standInsDir() string { return filepath.Join(s.Root, "stand-ins") }
-
-// markStandIn notes branch as a stand-in, or no longer one, for the guard.
-func (s *Service) markStandIn(branch string, standIn bool) {
-	if !standInBranch.MatchString(branch) {
-		return
-	}
-	marker := filepath.Join(s.standInsDir(), branch)
-	if !standIn {
-		_ = os.Remove(marker)
+// markStandIns writes each folder's marker for branch, or removes it.
+func (s *Service) markStandIns(dirs []string, branch string, standIn bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, dir := range dirs {
+		gitDir, err := s.git(ctx, dir, "rev-parse", "--absolute-git-dir")
+		if err != nil || gitDir == "" {
+			continue
+		}
+		marker := filepath.Join(gitDir, standInFile)
+		if !standIn {
+			_ = os.Remove(marker)
+			_ = os.Remove(marker + ".refused")
+			continue
+		}
+		if current, err := os.ReadFile(marker); err == nil && strings.TrimSpace(string(current)) == branch {
+			continue // as it was: its refusal, if any, stands
+		}
 		_ = os.Remove(marker + ".refused")
-		return
-	}
-	if err := os.MkdirAll(s.standInsDir(), 0o755); err == nil {
-		_ = os.WriteFile(marker, nil, 0o644)
+		_ = os.WriteFile(marker, []byte(branch+"\n"), 0o644)
 	}
 }
 
@@ -59,7 +67,7 @@ func (s *Service) writeGitWrapper() error {
 		return err
 	}
 	tmp := wrapper + ".tmp"
-	if err := os.WriteFile(tmp, []byte(gitWrapper(realGit, s.standInsDir())), 0o755); err != nil {
+	if err := os.WriteFile(tmp, []byte(gitWrapper(realGit)), 0o755); err != nil {
 		return err
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {
@@ -74,12 +82,11 @@ func (s *Service) writeGitWrapper() error {
 }
 
 // gitWrapper is the guard's script: realGit for everything, but a push from a
-// branch with a marker in standIns, the first time, is refused.
-func gitWrapper(realGit, standIns string) string {
+// worktree whose marker names the branch it's on, the first time, is refused.
+func gitWrapper(realGit string) string {
 	return `#!/bin/sh
 # Outrunner: refuses the first push of a branch still on its stand-in name.
 real=` + gitcred.ShellQuote(realGit) + `
-standins=` + gitcred.ShellQuote(standIns) + `
 sub= dir= skip=
 for a in "$@"; do
   if [ -n "$skip" ]; then
@@ -95,19 +102,20 @@ for a in "$@"; do
 done
 if [ "$sub" = push ]; then
   if [ -n "$dir" ]; then
+    gitdir=$("$real" -C "$dir" rev-parse --absolute-git-dir 2>/dev/null)
     branch=$("$real" -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null)
   else
+    gitdir=$("$real" rev-parse --absolute-git-dir 2>/dev/null)
     branch=$("$real" symbolic-ref --quiet --short HEAD 2>/dev/null)
   fi
-  case "$branch" in */*|'') ;; *)
-    if [ -f "$standins/$branch" ] && [ ! -f "$standins/$branch.refused" ]; then
-      : > "$standins/$branch.refused"
-      echo "Outrunner: $branch is still the stand-in name made from the first message. Name the branch first:" >&2
-      echo "    ` + sessiontools.CommandName + ` rename-branch <type>/<what-it-does>" >&2
-      echo "then push again. (A second push goes through as it is.)" >&2
-      exit 1
-    fi ;;
-  esac
+  marker="$gitdir/` + standInFile + `"
+  if [ -n "$gitdir" ] && [ -n "$branch" ] && [ -f "$marker" ] && [ ! -f "$marker.refused" ] && [ "$(cat "$marker")" = "$branch" ]; then
+    : > "$marker.refused"
+    echo "Outrunner: $branch is still the stand-in name made from the first message. Name the branch first:" >&2
+    echo "    ` + sessiontools.CommandName + ` rename-branch <type>/<what-it-does>" >&2
+    echo "then push again. (A second push goes through as it is.)" >&2
+    exit 1
+  fi
 fi
 exec "$real" "$@"
 `

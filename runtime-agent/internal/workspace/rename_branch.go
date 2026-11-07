@@ -76,7 +76,7 @@ func (s *Service) renameBranch(ctx context.Context, owner string, args json.RawM
 	from := f.Branch
 	f.Branch, f.BranchRenamable = to, false
 	s.setFacts(owner, f)
-	s.markStandIn(from, false)
+	s.markStandIns(dirs, to, false)
 	// Its chats work in the same folder, on the same branch.
 	for _, key := range s.chatKeys(owner) {
 		if chat, ok := s.getFacts(key); ok {
@@ -140,7 +140,12 @@ func (s *Service) mayNameBranch(workspaceID string, f workspaceFacts) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	head, err := s.git(ctx, dirs[0], "symbolic-ref", "--quiet", "--short", "HEAD")
-	return err == nil && head == f.Branch
+	if err != nil || head != f.Branch {
+		return false
+	}
+	// Each launch, so a worktree made since (a restore) has its push guard.
+	s.markStandIns(dirs, f.Branch, true)
+	return true
 }
 
 // branchNameNote tells the agent how to name its branch, in its orientation.
