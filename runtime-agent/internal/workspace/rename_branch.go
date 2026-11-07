@@ -56,7 +56,13 @@ func (s *Service) renameBranch(ctx context.Context, owner string, args json.RawM
 	}
 
 	var to string
-	if len(heads) == 1 && heads[name] && name != f.Branch && branchName.MatchString(name) {
+	finishing := false
+	if p := f.PendingBranch; p != "" && len(heads) == 1 && heads[p] {
+		finishing = true
+		// The rename an earlier run left unconfirmed: that's the one to
+		// finish, whatever this run asks for.
+		to = p
+	} else if len(heads) == 1 && heads[name] && name != f.Branch && branchName.MatchString(name) {
 		// Renamed in git by an earlier run whose commit got no answer: only
 		// Outrunner's record is left to make (commit is safe to send again).
 		to = name
@@ -87,9 +93,11 @@ func (s *Service) renameBranch(ctx context.Context, owner string, args json.RawM
 	case err != nil:
 		// No answer: Outrunner may have recorded it, so git keeps the new name
 		// rather than disagree with it; the same command again finishes it.
-		// Till then the new name is guarded as the stand-in was: a push of it
-		// now would leave it on GitHub under a name Outrunner may refuse.
-		s.markStandIns(dirs, to, true)
+		// Till then the new name is guarded as the stand-in was, saying how
+		// to finish: a push of it now would leave it on GitHub under a name
+		// Outrunner may refuse. Each launch's orientation says so too.
+		s.markUnconfirmed(dirs, to)
+		s.updateFacts(owner, func(f *workspaceFacts) { f.PendingBranch = to })
 		return http.StatusBadGateway, sessiontools.Answer{Error: fmt.Sprintf(
 			"Outrunner didn't answer (%v), so the rename isn't confirmed. git is on %s: run `%s rename-branch %s` again to finish it.",
 			err, to, sessiontools.CommandName, to)}, nil
@@ -103,6 +111,7 @@ func (s *Service) renameBranch(ctx context.Context, owner string, args json.RawM
 		} else {
 			// Back on the stand-in, guarded again.
 			s.markStandIns(dirs, f.Branch, true)
+			s.updateFacts(owner, func(f *workspaceFacts) { f.PendingBranch = "" })
 		}
 		return status, answer, nil
 	}
@@ -110,7 +119,12 @@ func (s *Service) renameBranch(ctx context.Context, owner string, args json.RawM
 	from := f.Branch
 	s.settleBranch(owner, dirs, from, to)
 	text := fmt.Sprintf("Renamed the branch from %s to %s.", from, to)
-	if to != name {
+	switch {
+	case finishing && to != name:
+		text = fmt.Sprintf("Finished the rename from %s to %s, the name git already had (not %s).", from, to, name)
+	case finishing:
+		text = fmt.Sprintf("Finished the rename from %s to %s.", from, to)
+	case to != name:
 		text += fmt.Sprintf(" %s was taken, so it's numbered.", name)
 	}
 	text += " It keeps this name now; push it with `git push -u origin HEAD`."
@@ -149,7 +163,7 @@ var commitBackoff = 500 * time.Millisecond
 // good, renamed from `from` or never to be: no more note, no more guard.
 func (s *Service) settleBranch(owner string, dirs []string, from, branch string) {
 	if f, ok := s.getFacts(owner); ok {
-		f.Branch, f.BranchRenamable = branch, false
+		f.Branch, f.BranchRenamable, f.PendingBranch = branch, false, ""
 		s.setFacts(owner, f)
 	}
 	// Its chats work in the same folder, on the same branch.
@@ -210,12 +224,32 @@ func (s *Service) mayNameBranch(workspaceID string, f workspaceFacts) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	head, err := s.git(ctx, dirs[0], "symbolic-ref", "--quiet", "--short", "HEAD")
-	if err != nil || head != f.Branch {
+	if err != nil || (head != f.Branch && head != f.PendingBranch) {
 		return false
+	}
+	if head == f.PendingBranch {
+		return true // its guard is the unconfirmed one, kept as it is
 	}
 	// Each launch, so a worktree made since (a restore) has its push guard.
 	s.markStandIns(dirs, f.Branch, true)
 	return true
+}
+
+// pendingRename is the unconfirmed name the session's git is on, if any.
+func (s *Service) pendingRename(workspaceID string) string {
+	f, ok := s.getFacts(s.owner(workspaceID))
+	if !ok {
+		return ""
+	}
+	return f.PendingBranch
+}
+
+// finishRenameNote tells the agent to finish an unconfirmed rename.
+func finishRenameNote(pending string) string {
+	return "# Branch name\n\n" +
+		"You renamed this branch to `" + pending + "`, but Outrunner hasn't confirmed it yet. Before you push or open a pull request, finish it with the same name:\n\n" +
+		"    " + sessiontools.CommandName + " rename-branch " + pending + "\n\n" +
+		"Don't pick another name: this one is already git's."
 }
 
 // branchNameNote tells the agent how to name its branch, in its orientation.

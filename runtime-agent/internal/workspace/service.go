@@ -198,9 +198,12 @@ type workspaceFacts struct {
 	Branch  string        `json:"branch"`
 	// BranchRenamable says Branch is the one Outrunner made up, which the
 	// agent may still rename once (rename_branch.go).
-	BranchRenamable bool                  `json:"branchRenamable,omitempty"`
-	BaseBranch      string                `json:"baseBranch"`
-	PermissionMode  claude.PermissionMode `json:"permissionMode,omitempty"`
+	BranchRenamable bool `json:"branchRenamable,omitempty"`
+	// PendingBranch is the name git has from a rename Outrunner hasn't
+	// confirmed (its commit got no answer): the same command finishes it.
+	PendingBranch  string                `json:"pendingBranch,omitempty"`
+	BaseBranch     string                `json:"baseBranch"`
+	PermissionMode claude.PermissionMode `json:"permissionMode,omitempty"`
 	// RepoPath is the folder on the user's Mac a local session works on; empty
 	// on a Runtime Computer, where worktrees come from the bare mirror.
 	RepoPath string `json:"repoPath,omitempty"`
@@ -1041,7 +1044,11 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 		o += "\n\n" + checkoutsNote(f.Checkouts, f.Branch)
 	}
 	if branch == claude.BranchToName {
-		o += "\n\n" + branchNameNote(f.Branch)
+		if pending := s.pendingRename(workspaceID); pending != "" {
+			o += "\n\n" + finishRenameNote(pending)
+		} else {
+			o += "\n\n" + branchNameNote(f.Branch)
+		}
 	}
 	if s.desktopReady(workspaceID) {
 		o += "\n\n# Desktop\n\n" + desktop.Instructions

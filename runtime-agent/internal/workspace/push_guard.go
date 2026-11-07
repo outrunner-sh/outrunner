@@ -42,13 +42,28 @@ func (s *Service) markStandIns(dirs []string, branch string, standIn bool) {
 		if !standIn {
 			_ = os.Remove(marker)
 			_ = os.Remove(marker + ".refused")
+			_ = os.Remove(marker + ".unconfirmed")
 			continue
 		}
 		if current, err := os.ReadFile(marker); err == nil && strings.TrimSpace(string(current)) == branch {
 			continue // as it was: its refusal, if any, stands
 		}
 		_ = os.Remove(marker + ".refused")
+		_ = os.Remove(marker + ".unconfirmed")
 		_ = os.WriteFile(marker, []byte(branch+"\n"), 0o644)
+	}
+}
+
+// markUnconfirmed guards each folder's branch, the name of a rename
+// Outrunner hasn't confirmed, saying how to finish it.
+func (s *Service) markUnconfirmed(dirs []string, branch string) {
+	s.markStandIns(dirs, branch, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, dir := range dirs {
+		if gitDir, err := s.git(ctx, dir, "rev-parse", "--absolute-git-dir"); err == nil && gitDir != "" {
+			_ = os.WriteFile(filepath.Join(gitDir, standInFile+".unconfirmed"), nil, 0o644)
+		}
 	}
 }
 
@@ -111,8 +126,13 @@ if [ "$sub" = push ]; then
   marker="$gitdir/` + standInFile + `"
   if [ -n "$gitdir" ] && [ -n "$branch" ] && [ -f "$marker" ] && [ ! -f "$marker.refused" ] && [ "$(cat "$marker")" = "$branch" ]; then
     : > "$marker.refused"
-    echo "Outrunner: $branch is still the stand-in name made from the first message. Name the branch first:" >&2
-    echo "    ` + sessiontools.CommandName + ` rename-branch <type>/<what-it-does>" >&2
+    if [ -f "$marker.unconfirmed" ]; then
+      echo "Outrunner: the rename to $branch isn't confirmed yet. Finish it first, with this same name:" >&2
+      echo "    ` + sessiontools.CommandName + ` rename-branch $branch" >&2
+    else
+      echo "Outrunner: $branch is still the stand-in name made from the first message. Name the branch first:" >&2
+      echo "    ` + sessiontools.CommandName + ` rename-branch <type>/<what-it-does>" >&2
+    fi
     echo "then push again. (A second push goes through as it is.)" >&2
     exit 1
   fi

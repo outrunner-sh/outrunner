@@ -376,22 +376,31 @@ func TestARenameNeverAnsweredKeepsGitOnTheNewNameUntilRunAgain(t *testing.T) {
 	if f, _ := s.getFacts("ws"); f.Branch != "sign-fails-google-users" || !f.BranchRenamable {
 		t.Errorf("facts = %+v before it's confirmed", f)
 	}
-	// The unconfirmed name is guarded as the stand-in was.
+	// The unconfirmed name is guarded, saying to finish it with the same name.
 	remote := filepath.Join(t.TempDir(), "origin.git")
 	run(t, dirs[0], "init", "-q", "--bare", remote)
-	if out, ok := push(t, s, dirs[0], remote, "HEAD"); ok || !strings.Contains(out, "rename-branch") {
-		t.Fatalf("a push of the unconfirmed name wasn't refused: ok=%v %s", ok, out)
+	if out, ok := push(t, s, dirs[0], remote, "HEAD"); ok || !strings.Contains(out, "isn't confirmed yet") || !strings.Contains(out, "rename-branch fix/google-sign-in") {
+		t.Fatalf("a push of the unconfirmed name wasn't refused as one: ok=%v %s", ok, out)
 	}
-	// Run again: no new check, no git rename, just the commit.
+	// The next launch says so too.
+	if o := s.orientation("ws", dirs[0]); !strings.Contains(o, "hasn't confirmed it yet") || !strings.Contains(o, "rename-branch fix/google-sign-in") {
+		t.Errorf("orientation doesn't say to finish the rename:\n%s", o)
+	}
+	// Run again, even with another name: no new check, no git rename, just
+	// the commit of the name git has.
 	calls := len(cp.calls)
-	if status, answer := renameTo(t, s, "ws", "fix/google-sign-in"); status != http.StatusOK {
+	status, answer = renameTo(t, s, "ws", "fix/another-name")
+	if status != http.StatusOK || !strings.Contains(answer.Text, "Finished the rename") {
 		t.Fatalf("run again: %d %+v", status, answer)
 	}
 	if got := cp.calls[calls:]; len(got) != 1 || got[0]["phase"] != "commit" || got[0]["from"] != "sign-fails-google-users" {
 		t.Errorf("calls on the second run = %+v", got)
 	}
-	if f, _ := s.getFacts("ws"); f.Branch != "fix/google-sign-in" || f.BranchRenamable {
+	if f, _ := s.getFacts("ws"); f.Branch != "fix/google-sign-in" || f.BranchRenamable || f.PendingBranch != "" {
 		t.Errorf("facts = %+v", f)
+	}
+	if o := s.orientation("ws", dirs[0]); strings.Contains(o, "# Branch name") {
+		t.Errorf("still told about the branch once it's named:\n%s", o)
 	}
 }
 
