@@ -121,6 +121,11 @@ for a in "$@"; do
       -d|--delete) del=1 ;;
       -n|--dry-run) dry=1 ;;
       --repo|-o|--push-option|--receive-pack|--exec) skip=1 ;;
+      -o*) ;; # its value attached
+      -[!-]*)
+        # Short flags bundled (-fd, -nu): a d or n among them counts.
+        case "$a" in *d*) del=1 ;; esac
+        case "$a" in *n*) dry=1 ;; esac ;;
       -*) ;;
       *) args="$args $a" ;;
     esac

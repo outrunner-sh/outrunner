@@ -538,6 +538,9 @@ func TestTheGuardLooksAtTheBranchesPushed(t *testing.T) {
 		{"a deletion of the stand-in with -d", "some-words", []string{"-d", "REMOTE", "some-words"}, false},
 		{"a deletion with --delete after the remote", "other", []string{"REMOTE", "--delete", "some-words"}, false},
 		{"a dry run", "some-words", []string{"--dry-run", "REMOTE", "HEAD"}, false},
+		{"a deletion with bundled flags", "some-words", []string{"-fd", "REMOTE", "some-words"}, false},
+		{"a dry run with bundled flags", "some-words", []string{"-nu", "REMOTE", "HEAD"}, false},
+		{"other bundled flags", "some-words", []string{"-fu", "REMOTE", "HEAD"}, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s, dirs := renameSession(t, &controlPlane{}, "some-words")
