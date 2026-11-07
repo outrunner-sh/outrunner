@@ -64,6 +64,11 @@ test("commit records the box's rename, or says why not", async () => {
   const raced = deps({ rename: async () => { throw Object.assign(new Error("dup"), { code: "23505" }); } });
   assert.match((await commitRename("ws", SESSION.branch, "fix/x", raced)).error ?? "", /took fix\/x meanwhile/);
   assert.equal((await commitRename("ws", SESSION.branch, "not a name", deps())).status, 400);
+  // Taken since check, by a session or on GitHub: refused before it's recorded.
+  const takenBySession = deps({ sessionBranches: async () => new Set([SESSION.branch, "fix/x"]), rename: async () => assert.fail("recorded") });
+  assert.match((await commitRename("ws", SESSION.branch, "fix/x", takenBySession)).error ?? "", /taken meanwhile/);
+  const onGitHub = deps({ knownOnGitHub: async (_, b) => b === "fix/x", rename: async () => assert.fail("recorded") });
+  assert.equal((await commitRename("ws", SESSION.branch, "fix/x", onGitHub)).status, 409);
 });
 
 test("the session tool checks, then commits, as the box asks", async () => {

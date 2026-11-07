@@ -209,32 +209,40 @@ export async function createWorkspaceRow(input: {
   parentMissionId?: string;
 }): Promise<Workspace> {
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("workspaces")
-    .insert({
-      ...(input.id && { id: input.id }),
-      owner_id: input.ownerId,
-      project_id: input.projectId,
-      branch: input.branch,
-      ...(input.branchRenamable && { branch_renamable: true }),
-      base_branch: input.baseBranch,
-      provider: input.provider,
-      // Named only for Codex, so a database before 20261020130000 still
-      // makes Claude Code sessions (its default) and refuses only Codex's.
-      ...(input.agent && input.agent !== "claude" && { agent: input.agent }),
-      // Named only when there is one, for the same reason.
-      ...(input.environmentId && { environment_id: input.environmentId }),
-      ...(input.checkouts && { checkouts: input.checkouts }),
-      ...(input.source && input.source !== "app" && { source: input.source }),
-      ...(input.kind && { kind: input.kind }),
-      ...(input.parentMissionId && { parent_mission_id: input.parentMissionId }),
-      status: "creating",
-    })
-    .select("*")
-    .single();
+  const insert = (renamable: boolean) =>
+    supabase
+      .from("workspaces")
+      .insert({
+        ...(input.id && { id: input.id }),
+        owner_id: input.ownerId,
+        project_id: input.projectId,
+        branch: input.branch,
+        ...(renamable && { branch_renamable: true }),
+        base_branch: input.baseBranch,
+        provider: input.provider,
+        // Named only for Codex, so a database before 20261020130000 still
+        // makes Claude Code sessions (its default) and refuses only Codex's.
+        ...(input.agent && input.agent !== "claude" && { agent: input.agent }),
+        // Named only when there is one, for the same reason.
+        ...(input.environmentId && { environment_id: input.environmentId }),
+        ...(input.checkouts && { checkouts: input.checkouts }),
+        ...(input.source && input.source !== "app" && { source: input.source }),
+        ...(input.kind && { kind: input.kind }),
+        ...(input.parentMissionId && { parent_mission_id: input.parentMissionId }),
+        status: "creating",
+      })
+      .select("*")
+      .single();
 
+  let { data, error } = await insert(input.branchRenamable === true);
+  // A database before 20261107120000: the session is made without it, and
+  // its agent keeps the branch's first name.
+  const outdated = error && (error.code === "PGRST204" || error.code === "42703") && /branch_renamable/.test(error.message ?? "");
+  if (outdated && input.branchRenamable) {
+    ({ data, error } = await insert(false));
+  }
   if (error) throw error;
-  return toWorkspace(data);
+  return toWorkspace(data!);
 }
 
 /**

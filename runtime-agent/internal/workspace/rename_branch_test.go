@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -237,5 +238,60 @@ func TestBranchToNameOrientationKeepsTheRuleWithItsException(t *testing.T) {
 	if !strings.Contains(o, "temporary name Outrunner made from the first message") ||
 		!strings.Contains(o, "unless the user explicitly tells you to do so, or to give it its real name once") {
 		t.Errorf("orientation:\n%s", o)
+	}
+}
+
+// push runs the sessions' git (the guard) in dir: its output and whether it
+// pushed.
+func push(t *testing.T, s *Service, dir string, args ...string) (string, bool) {
+	t.Helper()
+	cmd := exec.Command(filepath.Join(s.gitBinDir(), "git"), append([]string{"push", "-q"}, args...)...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	return string(out), err == nil
+}
+
+func TestAPushOfAStandInBranchIsRefusedOnceUntilItsNamed(t *testing.T) {
+	cp := &controlPlane{checked: "fix/google-sign-in"}
+	s, dirs := renameSession(t, cp, "sign-fails-google-users")
+	s.markStandIn("sign-fails-google-users", true)
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	run(t, dirs[0], "init", "-q", "--bare", remote)
+	run(t, dirs[0], "remote", "add", "origin", remote)
+
+	out, ok := push(t, s, dirs[0], "-u", "origin", "HEAD")
+	if ok || !strings.Contains(out, "outrunner-session rename-branch") {
+		t.Fatalf("push on the stand-in: ok=%v\n%s", ok, out)
+	}
+	if status, answer := renameTo(t, s, "ws", "fix/google-sign-in"); status != http.StatusOK {
+		t.Fatalf("rename: %d %+v", status, answer)
+	}
+	if out, ok := push(t, s, dirs[0], "-u", "origin", "HEAD"); !ok {
+		t.Fatalf("push after the rename: %s", out)
+	}
+	if got := run(t, remote, "branch", "--list"); !strings.Contains(got, "fix/google-sign-in") || strings.Contains(got, "sign-fails-google-users") {
+		t.Errorf("origin has %q", got)
+	}
+}
+
+func TestASecondPushOfAStandInGoesThrough(t *testing.T) {
+	s, dirs := renameSession(t, &controlPlane{}, "some-words")
+	s.markStandIn("some-words", true)
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	run(t, dirs[0], "init", "-q", "--bare", remote)
+	if _, ok := push(t, s, dirs[0], remote, "HEAD"); ok {
+		t.Fatal("the first push went through")
+	}
+	// -C and -c before the command are still read as a push of this branch.
+	cmd := exec.Command(filepath.Join(s.gitBinDir(), "git"), "-C", dirs[0], "-c", "push.default=current", "push", "-q", remote, "HEAD")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the second push was refused: %s", out)
+	}
+	// Anything but a push is passed through untouched.
+	if got := strings.TrimSpace(func() string {
+		out, _ := exec.Command(filepath.Join(s.gitBinDir(), "git"), "-C", dirs[0], "symbolic-ref", "--short", "HEAD").Output()
+		return string(out)
+	}()); got != "some-words" {
+		t.Errorf("symbolic-ref through the wrapper = %q", got)
 	}
 }

@@ -76,6 +76,7 @@ func (s *Service) renameBranch(ctx context.Context, owner string, args json.RawM
 	from := f.Branch
 	f.Branch, f.BranchRenamable = to, false
 	s.setFacts(owner, f)
+	s.markStandIn(from, false)
 	// Its chats work in the same folder, on the same branch.
 	for _, key := range s.chatKeys(owner) {
 		if chat, ok := s.getFacts(key); ok {
@@ -148,7 +149,7 @@ func branchNameNote(current string) string {
 		"The branch's name, `" + current + "`, is a stand-in made from the first message. " +
 		"As soon as you know what the change is, before you edit your first file, give it its real name, once:\n\n" +
 		"    " + sessiontools.CommandName + " rename-branch <type>/<what-it-does>\n\n" +
-		"- <type> is the kind of change: fix, feat, refactor, docs, test, chore or perf. When the change is clearly about one area, that area instead (security, deps, ci).\n" +
+		"- <type> is the kind of change: fix, feat, refactor, docs, test, chore or perf. When the change is clearly about one area, that area instead (security, deps, ci). For mixed work, the type of the main change the user asked for.\n" +
 		"- <what-it-does> is 2 to 5 lowercase words joined by hyphens, at most 40 characters, saying what the change does: fix/google-sign-in-redirect, feat/expandable-right-sidebar, perf/faster-ci-build.\n" +
 		"- If the task names a Linear or GitHub issue, put its key first: fix/nee-268-mask-chat-secrets, fix/issue-266-box-oom.\n" +
 		"- No ids, dates or tool names (outrunner/, claude/).\n" +

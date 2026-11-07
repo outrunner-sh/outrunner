@@ -101,9 +101,15 @@ export async function checkRename(sessionId: string, name: string, deps: RenameB
   return { status: 200, text: free };
 }
 
-/** `commit`: record the box's rename of `from` to `to`. */
+/** `commit`: record the box's rename of `from` to `to`, if `to` is still
+ *  free: taken since `check` (or never checked), it's refused. */
 export async function commitRename(sessionId: string, from: string, to: string, deps: RenameBranchDeps): Promise<RenameAnswer> {
   if (nameProblem(to)) return refuse(400, "That isn't a name `check` gave.");
+  const sessions = await deps.sessionBranches(sessionId, to);
+  sessions.delete(from);
+  if (sessions.has(to) || (await deps.knownOnGitHub(sessionId, to))) {
+    return refuse(409, `${to} was taken meanwhile: run the command again.`);
+  }
   try {
     if (!(await deps.rename(sessionId, from, to))) {
       return refuse(409, `The session isn't on ${from} any more, or its branch was named meanwhile.`);

@@ -569,6 +569,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	// Record the facts Start/Resume need, even on the idempotent path below so a
 	// re-Create after a restart repopulates them.
 	s.setFacts(in.WorkspaceID, facts)
+	s.markStandIn(facts.Branch, facts.BranchRenamable)
 
 	worktree := s.worktreePath(in.WorkspaceID)
 	if facts.InPlace {
@@ -1739,6 +1740,7 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 		}
 	}
 	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BranchRenamable: req.BranchRenamable, BaseBranch: req.BaseBranch, Agent: req.Agent, Checkouts: checkouts})
+	s.markStandIn(req.Branch, req.BranchRenamable)
 	if req.Auth != nil && req.Auth.Kind != AuthNone {
 		if err := s.SetAuth(ctx, workspaceID, req.Auth.Kind, req.Auth.Token); err != nil {
 			return "", err
