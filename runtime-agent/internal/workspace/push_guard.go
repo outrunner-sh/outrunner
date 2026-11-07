@@ -96,23 +96,38 @@ func (s *Service) writeGitWrapper() error {
 	return nil
 }
 
-// gitWrapper is the guard's script: realGit for everything, but a push from a
-// worktree whose marker names the branch it's on, the first time, is refused.
+// gitWrapper is the guard's script: realGit for everything, but a push of the
+// branch a worktree's marker names (its stand-in, or an unconfirmed rename),
+// the first time, is refused. The branches pushed are read off the command:
+// its refspecs' sources (HEAD as the branch checked out, refs/heads/ dropped),
+// every branch for --all, --mirror or a pattern, and with no refspec the
+// branch checked out.
 func gitWrapper(realGit string) string {
 	return `#!/bin/sh
 # Outrunner: refuses the first push of a branch still on its stand-in name.
 real=` + gitcred.ShellQuote(realGit) + `
-sub= dir= skip=
+set -f
+sub= dir= skip= args= all= tagsonly=
 for a in "$@"; do
   if [ -n "$skip" ]; then
     [ "$skip" = C ] && dir=$a
     skip=; continue
   fi
+  if [ "$sub" = push ]; then
+    case "$a" in
+      --all|--mirror|--branches) all=1 ;;
+      --tags) tagsonly=1 ;;
+      --repo|-o|--push-option|--receive-pack|--exec) skip=1 ;;
+      -*) ;;
+      *) args="$args $a" ;;
+    esac
+    continue
+  fi
   case "$a" in
     -C) skip=C ;;
     -c|--git-dir|--work-tree|--namespace|--config-env|--exec-path) skip=1 ;;
     -*) ;;
-    *) sub=$a; break ;;
+    *) sub=$a; [ "$sub" = push ] || break ;;
   esac
 done
 if [ "$sub" = push ]; then
@@ -124,18 +139,40 @@ if [ "$sub" = push ]; then
     branch=$("$real" symbolic-ref --quiet --short HEAD 2>/dev/null)
   fi
   marker="$gitdir/` + standInFile + `"
-  if [ -n "$gitdir" ] && [ -n "$branch" ] && [ -f "$marker" ] && [ ! -f "$marker.refused" ] && [ "$(cat "$marker")" = "$branch" ]; then
+  guarded=
+  [ -n "$gitdir" ] && [ -f "$marker" ] && [ ! -f "$marker.refused" ] && guarded=$(cat "$marker")
+  hit=
+  if [ -n "$guarded" ]; then
+    n=0
+    for spec in $args; do
+      n=$((n + 1))
+      [ $n -eq 1 ] && continue # the repository
+      src=${spec#+}
+      src=${src%%:*}
+      [ "$src" = HEAD ] && src=$branch
+      src=${src#refs/heads/}
+      case "$src" in
+        *'*'*) hit=1 ;;
+        "$guarded") hit=1 ;;
+      esac
+    done
+    [ -n "$all" ] && hit=1
+    # No refspec: the branch checked out (but --tags alone pushes tags).
+    [ $n -le 1 ] && [ -z "$all" ] && [ -z "$tagsonly" ] && [ "$branch" = "$guarded" ] && hit=1
+  fi
+  if [ -n "$hit" ]; then
     : > "$marker.refused"
     if [ -f "$marker.unconfirmed" ]; then
-      echo "Outrunner: the rename to $branch isn't confirmed yet. Finish it first, with this same name:" >&2
-      echo "    ` + sessiontools.CommandName + ` rename-branch $branch" >&2
+      echo "Outrunner: the rename to $guarded isn't confirmed yet. Finish it first, with this same name:" >&2
+      echo "    ` + sessiontools.CommandName + ` rename-branch $guarded" >&2
     else
-      echo "Outrunner: $branch is still the stand-in name made from the first message. Name the branch first:" >&2
+      echo "Outrunner: $guarded is still the stand-in name made from the first message. Name the branch first:" >&2
       echo "    ` + sessiontools.CommandName + ` rename-branch <type>/<what-it-does>" >&2
     fi
     echo "then push again. (A second push goes through as it is.)" >&2
     exit 1
   fi
+  set +f
 fi
 exec "$real" "$@"
 `

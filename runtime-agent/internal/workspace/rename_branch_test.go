@@ -511,3 +511,45 @@ func TestAnArchiveWithARenamePendingRestoresUnderOutrunnersName(t *testing.T) {
 		t.Errorf("restored on %q, want Outrunner's name", got)
 	}
 }
+
+// The guard reads which branches a push sends, not only which is checked out.
+func TestTheGuardLooksAtTheBranchesPushed(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		on      string // the branch checked out when pushing
+		args    []string
+		refused bool
+	}{
+		{"another branch, from the stand-in's worktree", "some-words", []string{"REMOTE", "other"}, false},
+		{"the stand-in, from another branch", "other", []string{"REMOTE", "some-words"}, true},
+		{"the stand-in by its full ref", "other", []string{"REMOTE", "+refs/heads/some-words:refs/heads/x"}, true},
+		{"HEAD onto another name", "some-words", []string{"REMOTE", "HEAD:refs/heads/x"}, true},
+		{"HEAD, on another branch", "other", []string{"REMOTE", "HEAD"}, false},
+		{"no refspec, on the stand-in", "some-words", []string{"REMOTE"}, true},
+		{"no refspec, on another branch", "other", []string{"REMOTE"}, false},
+		{"every branch", "other", []string{"--all", "REMOTE"}, true},
+		{"tags only", "some-words", []string{"--tags", "REMOTE"}, false},
+		{"a deletion of another branch", "some-words", []string{"REMOTE", ":gone"}, false},
+		{"a push option before the remote", "other", []string{"-o", "ci.skip", "REMOTE", "some-words"}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, dirs := renameSession(t, &controlPlane{}, "some-words")
+			s.markStandIns(dirs, "some-words", true)
+			run(t, dirs[0], "branch", "other")
+			if c.on != "some-words" {
+				run(t, dirs[0], "switch", "-q", c.on)
+			}
+			remote := filepath.Join(t.TempDir(), "origin.git")
+			run(t, dirs[0], "init", "-q", "--bare", remote)
+			run(t, dirs[0], "push", "-q", remote, "refs/heads/other:refs/heads/gone") // for the deletion
+			args := make([]string, len(c.args))
+			for i, a := range c.args {
+				args[i] = strings.ReplaceAll(a, "REMOTE", remote)
+			}
+			out, ok := push(t, s, dirs[0], args...)
+			if refused := !ok && strings.Contains(out, "rename-branch"); refused != c.refused {
+				t.Errorf("refused = %v, want %v\n%s", refused, c.refused, out)
+			}
+		})
+	}
+}
