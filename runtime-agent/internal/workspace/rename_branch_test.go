@@ -541,6 +541,9 @@ func TestTheGuardLooksAtTheBranchesPushed(t *testing.T) {
 		{"a deletion with bundled flags", "some-words", []string{"-fd", "REMOTE", "some-words"}, false},
 		{"a dry run with bundled flags", "some-words", []string{"-nu", "REMOTE", "HEAD"}, false},
 		{"other bundled flags", "some-words", []string{"-fu", "REMOTE", "HEAD"}, true},
+		{"a bundled -o with its value attached", "some-words", []string{"-uodeploy", "REMOTE"}, true},
+		{"a bundled -o with its value next", "some-words", []string{"-uo", "ci.skip", "REMOTE"}, true},
+		{"a dry run before a bundled -o", "some-words", []string{"-nuo", "ci.skip", "REMOTE"}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s, dirs := renameSession(t, &controlPlane{}, "some-words")

@@ -123,9 +123,12 @@ for a in "$@"; do
       --repo|-o|--push-option|--receive-pack|--exec) skip=1 ;;
       -o*) ;; # its value attached
       -[!-]*)
-        # Short flags bundled (-fd, -nu): a d or n among them counts.
-        case "$a" in *d*) del=1 ;; esac
-        case "$a" in *n*) dry=1 ;; esac ;;
+        # Short flags bundled (-fd, -nu): a d or n among them counts. An o
+        # takes the rest of the bundle as its value, or the next argument.
+        f=${a%%o*}
+        case "$f" in *d*) del=1 ;; esac
+        case "$f" in *n*) dry=1 ;; esac
+        case "$a" in *o*) [ -z "${a#*o}" ] && skip=1 ;; esac ;;
       -*) ;;
       *) args="$args $a" ;;
     esac
