@@ -14,7 +14,9 @@ import (
 
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/gitcred"
+	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/sessiontools"
+	"runtime-agent/internal/snapshot"
 )
 
 // controlPlane fakes the control plane's rename_branch: check answers
@@ -457,5 +459,55 @@ func TestAnUnconfirmedRenameIsGuardedAgainAtEachLaunch(t *testing.T) {
 	run(t, dirs[0], "init", "-q", "--bare", remote)
 	if out, ok := push(t, s, dirs[0], remote, "HEAD"); ok || !strings.Contains(out, "isn't confirmed yet") {
 		t.Fatalf("not guarded after the launch: ok=%v %s", ok, out)
+	}
+}
+
+// Archived with a rename unconfirmed: the Snapshot names the branch git has,
+// and restores under the name Outrunner has, from the bundle's.
+func TestAnArchiveWithARenamePendingRestoresUnderOutrunnersName(t *testing.T) {
+	ctx := context.Background()
+	s, fake := restoringService(t)
+	fake.pane = composerPane
+	sess := "main-sess"
+	seed := snapshotServer(t, map[string][]byte{"/conversation": []byte(mainTranscript)})
+	if _, err := s.Restore(ctx, "ws-r", protocol.RestoreWorkspaceRequest{
+		Branch: "feature", BaseBranch: "main", SessionID: &sess,
+		Downloads: downloads(seed, "bundle", "patch", "conversation"),
+	}, nil); err != nil {
+		t.Fatalf("seeding the session: %v", err)
+	}
+	worktree := s.worktreePath("ws-r")
+	run(t, worktree, "branch", "-m", "feature", "fix/pending-name")
+	s.updateFacts("ws-r", func(f *workspaceFacts) { f.PendingBranch = "fix/pending-name" })
+
+	store, _ := storageServer(t)
+	var uploads []protocol.ArchiveUpload
+	for _, a := range []string{"conversation", "cast", "bundle", "patch", "summary", "manifest"} {
+		uploads = append(uploads, protocol.ArchiveUpload{Artifact: a, URL: store.URL + "/" + a})
+	}
+	manifest, err := s.Archive(ctx, "ws-r", protocol.ArchiveWorkspaceRequest{ArchivedAt: "2026-10-29T13:00:00Z", Uploads: uploads})
+	if err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	if manifest.Tree.Ref != "fix/pending-name" {
+		t.Fatalf("tree ref = %q, want the name git has", manifest.Tree.Ref)
+	}
+
+	// Its tree, rebuilt as a restore does, onto Outrunner's name from the
+	// bundle's (the conversation's part is TestArchivingAndRestoring…'s).
+	mirror := filepath.Join(t.TempDir(), "repo.git")
+	run(t, worktree, "init", "-q", "--bare", mirror)
+	restored := filepath.Join(t.TempDir(), "ws")
+	if err := snapshot.Materialize(ctx, snapshot.MaterializeInput{
+		MirrorPath: mirror, WorktreePath: restored, Branch: "feature", BundleRef: manifest.Tree.Ref,
+		Downloads: []protocol.RestoreDownload{
+			{Artifact: "bundle", URL: store.URL + "/bundle"},
+			{Artifact: "patch", URL: store.URL + "/patch"},
+		},
+	}); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	if got := head(t, restored); got != "feature" {
+		t.Errorf("restored on %q, want Outrunner's name", got)
 	}
 }
