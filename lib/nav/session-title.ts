@@ -31,7 +31,7 @@ export function titleToSet(workspace: { title: string | null }, prompt: string):
 }
 
 /** What to call a cloud session: its title, else its branch without the
- *  generated `outrunner/` or `runtime/` prefix. */
+ *  old generated `runtime/` prefix. */
 export function workspaceLabel(workspace: Pick<Workspace, "title" | "branch">): string {
   return workspace.title || withoutGeneratedPrefix(workspace.branch);
 }

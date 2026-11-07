@@ -70,7 +70,7 @@ export function standingOf(entry: SessionListEntry, now: number): SessionStandin
 
 /**
  * The rows `filter` keeps, newest first. Search is case-insensitive over the
- * title, branch (without the generated `outrunner/` or `runtime/`), repository and owner.
+ * title, branch (without the old generated `runtime/`), repository and owner.
  */
 export function filterSessions(entries: SessionListEntry[], filter: ListFilter, now: number): SessionListEntry[] {
   const q = filter.query.trim().toLowerCase();

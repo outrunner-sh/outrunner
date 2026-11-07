@@ -228,8 +228,8 @@ export function buildSidebarGroups(
  * The sidebar's search: case-insensitive, on session titles and branches and
  * workspace names. A workspace whose name matches keeps all its sessions;
  * otherwise only the matching sessions stay, and a workspace left with none is
- * dropped. A branch is matched without the generated `outrunner/` or `runtime/` every
- * Outrunner branch starts with, which "run" would otherwise find in them all.
+ * dropped. A branch is matched without the `runtime/` older Outrunner
+ * branches start with, which "run" would otherwise find in them all.
  */
 export function filterSidebarGroups(groups: SidebarGroup[], query: string): SidebarGroup[] {
   const q = query.trim().toLowerCase();

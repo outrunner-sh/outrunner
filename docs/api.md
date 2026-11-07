@@ -267,7 +267,7 @@ curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces
 ```
 
 ```json
-{ "data": [{ "project_id": "…", "full_name": "acme/web", "pull_request": { "number": 412, "url": "https://github.com/acme/web/pull/412", "title": "…", "base_branch": "main", "head_branch": "outrunner/fix-login-redirect-3fa9c1" }, "status": { "state": "open", "draft": false, "mergeable_state": "clean", "head_sha": "…", "checks": { "passing": 6, "failing": 0, "pending": 1 } } }] }
+{ "data": [{ "project_id": "…", "full_name": "acme/web", "pull_request": { "number": 412, "url": "https://github.com/acme/web/pull/412", "title": "…", "base_branch": "main", "head_branch": "fix/login-redirect-3fa9c1" }, "status": { "state": "open", "draft": false, "mergeable_state": "clean", "head_sha": "…", "checks": { "passing": 6, "failing": 0, "pending": 1 } } }] }
 ```
 
 `pull_request` is null until the session opens one; `status` is null when
