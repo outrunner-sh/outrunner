@@ -489,6 +489,22 @@ export async function findPullRequest(input: {
   return toPullRequestRef(list[0]);
 }
 
+/**
+ * Whether `branch` is a name GitHub already knows in the repository: a branch
+ * there now, or the head of a pull request, open or not (its branch may be
+ * deleted since). A new session's branch must be neither, or its push would
+ * land on that branch and its pull request lookup find that one.
+ */
+export async function branchKnownOnGitHub(input: { token: string; repoFullName: string; branch: string }): Promise<boolean> {
+  const ref = new URL(`/repos/${input.repoFullName}/git/ref/heads/${encodeURIComponent(input.branch).replace(/%2F/g, "/")}`, GITHUB_API_URL);
+  const response = await fetchGitHub(ref, input.token);
+  if (response.ok) return true;
+  if (response.status !== 404) {
+    throw rejected(response, "branch lookup", "GitHub could not look up the branch. Please try again.");
+  }
+  return (await findPullRequest({ token: input.token, repoFullName: input.repoFullName, headBranch: input.branch })) !== null;
+}
+
 /** Where a pull request stands: its state, what GitHub says of merging it
  *  (`mergeable_state`: clean, unstable, blocked, behind, dirty, draft,
  *  has_hooks, unknown), and its head commit's checks. */

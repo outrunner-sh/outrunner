@@ -8,6 +8,7 @@ import {
   isRunnerBranch,
   type PullRequestFacts,
   reviewState,
+  runnerOwning,
   settle,
   SETTLE_MS,
 } from "@/lib/missions/settle";
@@ -105,6 +106,17 @@ test("a Runner's branches: its own, and ones named after it for stacked work", (
   assert.equal(isRunnerBranch("runtime/abc-1234", "runtime/abc-12345"), false);
   assert.equal(isRunnerBranch("runtime/abc-1234", "runtime/abc-1234-"), false);
   assert.equal(isRunnerBranch("runtime/abc-1234", "main"), false);
+});
+
+test("a branch is the Runner's whose branch is the longest it's named after", () => {
+  const first = { id: "a", branch: "verify-prs" };
+  const second = { id: "b", branch: "verify-prs-2" };
+  const runners = [first, second];
+  assert.equal(runnerOwning(runners, "verify-prs"), first);
+  assert.equal(runnerOwning(runners, "verify-prs-2"), second);
+  assert.equal(runnerOwning(runners, "verify-prs-2-2"), second);
+  assert.equal(runnerOwning(runners, "verify-prs-3"), first);
+  assert.equal(runnerOwning(runners, "main"), undefined);
 });
 
 test("a Runner is done only once it has pull requests and all are merged or closed", () => {

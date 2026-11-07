@@ -11,9 +11,8 @@ import { agentConnection } from "@/lib/agents/resolve";
 import { codexModelsFor } from "@/lib/codex/model-catalog.deps";
 import { creationSelection } from "@/lib/runtime/selection";
 import { optionalEnv } from "@/lib/env";
-import { randomUUID } from "node:crypto";
 import { PLAN_MODE_PREAMBLE } from "@/lib/api/create-request";
-import { sessionBranch } from "@/lib/session/branch-name";
+import { generatedBranch, insertOnBranch } from "@/lib/session/generated-branch";
 
 import { after, NextResponse } from "next/server";
 
@@ -38,6 +37,7 @@ import {
   getRuntimeComputer,
   getWorkspace,
   liveWorkspaceOnBranch,
+  projectBranchesLike,
   markRuntimeComputerStoppedIfReady,
   recordWorkspaceModel,
   setWorkspaceTitleIfUnset,
@@ -108,7 +108,7 @@ import type { Project, ProvisionPhase, RuntimeProvider, Workspace, WorkspaceSour
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
 import { evidenceToolsFor, prGuide } from "@/lib/session/pr-template";
 import { SETTING_UP } from "@/lib/session/provisioning";
-import { getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
+import { branchKnownOnGitHub, getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
 import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
 import { GitIdentityError } from "@/lib/github/identity";
 import { gitTokensFor, markReviewSession, REVIEW_AS_APP, requireGitToken } from "@/lib/github/identity.deps";
@@ -121,13 +121,6 @@ import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-li
 async function madeBefore(id: string, ownerId: string, projectId: string): Promise<Workspace | null> {
   const made = await getWorkspace(id).catch(() => null);
   return made && made.ownerId === ownerId && made.projectId === projectId ? made : null;
-}
-
-/** The branch for a session that asked for none: a few words of its title,
- *  else of its first prompt (lib/session/branch-name.ts). */
-function generatedBranch(title: string | undefined, firstMessage: string | undefined): string {
-  const prompt = firstMessage?.replace(PLAN_MODE_PREAMBLE, "");
-  return sessionBranch({ title, prompt }, randomUUID().replace(/-/g, "").slice(0, 6));
 }
 
 /** The session can't run without the user's Claude: say so, and where to fix it. */
@@ -432,6 +425,9 @@ async function createOnce(
   if (!isValidBranchName(baseBranch)) {
     return NextResponse.json({ error: "The session's base branch isn't a valid Git branch name." }, { status: 400 });
   }
+  // Every repository the session's branch is made in, for a generated one to
+  // be free in each.
+  const branchRepos = [{ fullName: project.fullName, token: githubToken.token }];
   const checkouts = environmentId ? projectCheckouts(await sessionCheckouts(owner.id, environmentId), project.id, baseBranch) : null;
   if (checkouts) {
     if (!isComputerProvider(provider)) {
@@ -445,26 +441,49 @@ async function createOnce(
       // this token still clones, so only a private one is refused.
       const otherToken = await tokenFor(other.fullName);
       if ("refusal" in otherToken) return otherToken.refusal;
+      branchRepos.push({ fullName: other.fullName, token: otherToken.token });
       const refused = await githubRefusal(otherToken.token, { fullName: other.fullName, private: other.private ?? true });
       if (refused) return refused;
     }
   }
 
+  // What a generated branch is named from: the title the caller gave, else
+  // the first prompt, the server's own or the one the screen sent to name it.
+  const about = {
+    title: options.title,
+    prompt: (options.firstMessage ?? (typeof body.prompt === "string" ? body.prompt : "")).replace(PLAN_MODE_PREAMBLE, ""),
+  };
   let workspace;
   try {
-    workspace = await createWorkspaceRow({
-      ...(askedId && { id: askedId }),
-      ownerId: owner.id,
-      projectId: project.id,
-      environmentId,
-      checkouts,
-      branch: requestedBranch || generatedBranch(options.title, options.firstMessage),
-      baseBranch,
-      provider: provider.name,
-      agent: agentId,
-      source: options.source,
-      kind: options.kind,
-      parentMissionId: options.parentMissionId,
+    const generation = {
+      sessionBranches: (base: string) => projectBranchesLike(project.id, base),
+      async knownOnGitHub(branch: string) {
+        for (const repo of branchRepos) {
+          // Without a token, GitHub isn't asked: nothing gets pushed there either.
+          if (repo.token && (await branchKnownOnGitHub({ token: repo.token, repoFullName: repo.fullName, branch }))) return true;
+        }
+        return false;
+      },
+    };
+    workspace = await insertOnBranch({
+      requested: requestedBranch,
+      generate: (lost) => generatedBranch(about, generation, lost),
+      insert: (branch) =>
+        createWorkspaceRow({
+          ...(askedId && { id: askedId }),
+          ownerId: owner.id,
+          projectId: project.id,
+          environmentId,
+          checkouts,
+          branch,
+          baseBranch,
+          provider: provider.name,
+          agent: agentId,
+          source: options.source,
+          kind: options.kind,
+          parentMissionId: options.parentMissionId,
+        }),
+      isBranchTaken: (error) => isUniqueViolation(error) && !isIdTaken(error),
     });
     progress.inserted = true;
     if (chosenModel) {
@@ -483,7 +502,7 @@ async function createOnce(
     }
     // A requested branch can be one a live session already works on: name that
     // session and offer its page, rather than only saying one is there.
-    // (Generated branches can't collide.) Not the user's own, in a team org's
+    // (A generated one that collides is named again, above.) Not the user's own, in a team org's
     // project: another member has it, whose session they can't open. Anywhere
     // else (a session ended between the insert and the lookup), the plain
     // answer. If a lookup itself fails, the row's own failure is still the

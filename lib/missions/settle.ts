@@ -101,6 +101,18 @@ export function isRunnerBranch(runnerBranch: string, headRef: string): boolean {
   return headRef === runnerBranch || (headRef.startsWith(`${runnerBranch}-`) && headRef.length > runnerBranch.length + 1);
 }
 
+/** The Runner a branch is of, among a Mission's: the one whose branch is
+ *  the longest it's named after. `fix-login-2` is the Runner on
+ *  `fix-login-2`'s, not stacked work of the one on `fix-login`, now that a
+ *  taken branch name gets `-2` (lib/session/branch-name.ts). */
+export function runnerOwning<T extends { branch: string }>(runners: readonly T[], headRef: string): T | undefined {
+  let owner: T | undefined;
+  for (const runner of runners) {
+    if (isRunnerBranch(runner.branch, headRef) && (!owner || runner.branch.length > owner.branch.length)) owner = runner;
+  }
+  return owner;
+}
+
 /** Whether every one of a Runner's pull requests is done with, so the Runner
  *  is too: at least one, and none still open. */
 export function allPullRequestsDone(states: readonly ("open" | "merged" | "closed")[]): boolean {

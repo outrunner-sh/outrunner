@@ -235,6 +235,22 @@ export async function createWorkspaceRow(input: {
 }
 
 /**
+ * The branches of `base` and `base-<n>` any session of the project has had,
+ * ended ones too: a new session's generated branch takes none of them, so its
+ * pull request lookup never finds an old session's.
+ */
+export async function projectBranchesLike(projectId: string, base: string): Promise<Set<string>> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("workspaces")
+    .select("branch")
+    .eq("project_id", projectId)
+    .or(`branch.eq.${base},branch.like.${base.replace(/[%_\\]/g, "\\$&")}-%`);
+  if (error) throw error;
+  return new Set((data ?? []).map((row) => row.branch as string));
+}
+
+/**
  * The live session already on `branch`, when one is: the one a new session on
  * the same branch is refused for, named in the refusal. The index allows one
  * session per branch while it isn't destroyed.

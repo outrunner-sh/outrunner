@@ -14,7 +14,7 @@ import { githubGet } from "@/lib/github/rest";
 import { sessionWorking } from "@/lib/missions/box";
 import { eventKey, type PullRequestRef } from "@/lib/missions/events";
 import { isLiveRunner } from "@/lib/missions/rules";
-import { allPullRequestsDone, isNews, isRunnerBranch, reviewState, settle } from "@/lib/missions/settle";
+import { allPullRequestsDone, isNews, reviewState, runnerOwning, settle } from "@/lib/missions/settle";
 import { queuedCounts, sessionById } from "@/lib/missions/store";
 import { readyNotification } from "@/lib/missions/events";
 import { recordMissionEvent } from "@/lib/missions/watch.deps";
@@ -140,7 +140,7 @@ async function runnersFor(activity: PullRequestActivity): Promise<Workspace[]> {
     if (rowsError) throw rowsError;
     for (const row of rows ?? []) known.add(row.runner_id);
   }
-  const matched = inRepo.filter((row) => known.has(row.id) || refs.some((ref) => isRunnerBranch(row.branch, ref))).map((row) => row.id);
+  const matched = inRepo.filter((row) => known.has(row.id) || refs.some((ref) => runnerOwning(inRepo, ref) === row)).map((row) => row.id);
   if (matched.length === 0) return [];
   const { data: rows, error: rowsError } = await db().from("workspaces").select("*").in("id", matched);
   if (rowsError) throw rowsError;
@@ -156,7 +156,7 @@ export async function notePullRequestActivity(activity: PullRequestActivity): Pr
   const now = new Date().toISOString();
   for (const runner of runners) {
     const pr = activity.pr;
-    if (pr && isRunnerBranch(runner.branch, pr.headRef)) {
+    if (pr && runnerOwning(runners, pr.headRef) === runner) {
       const { error } = await db()
         .from("runner_pull_requests")
         .upsert(
@@ -259,7 +259,7 @@ export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<
     }
     for (const pull of pulls ?? []) {
       if (!pull.number || !pull.head?.ref) continue;
-      for (const runner of here.filter((r) => isRunnerBranch(r.branch, pull.head!.ref!))) {
+      for (const runner of here.filter((r) => runnerOwning(here, pull.head!.ref!) === r)) {
         const { data: made, error } = await db()
           .from("runner_pull_requests")
           .upsert(

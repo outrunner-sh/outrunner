@@ -1,24 +1,10 @@
 /**
- * The branch a new session works on when none is asked for, in the usual
- * `<type>/<description>` convention plus a short suffix so two sessions never
- * share one, e.g. `fix/google-sign-in-3fa9c1`. Sessions from before have
- * `runtime/<time>-<id>`. Pure, so the sidebar and the Mac can use it too.
+ * The branch a new session works on when none is asked for: a few words of
+ * what it's for, e.g. `right-sidebar-expandable`, and `-2`, `-3`… only when
+ * that name is taken. No guessed type: a wrong `fix/` misleads more than none.
+ * Sessions from before have `runtime/<time>-<id>`. Pure, so the sidebar and
+ * the Mac can use it too.
  */
-
-/** Conventional types, in the order they're tested: the first that fits. */
-const TYPES: { type: string; words: RegExp }[] = [
-  { type: "fix", words: /^(?:fix|fixes|fixed|fixing|bug|bugs|broken|break|breaks|crash|crashes|crashing|error|errors|fail|fails|failing|failed|failure|wrong|incorrect|glitch|regression|doesnt|isnt|wont|cant)$/ },
-  { type: "docs", words: /^(?:doc|docs|documentation|document|readme|changelog)$/ },
-  { type: "test", words: /^(?:test|tests|testing|spec|specs|coverage)$/ },
-  { type: "refactor", words: /^(?:refactor|refactoring|cleanup|simplify|restructure|reorganize|tidy)$/ },
-  { type: "perf", words: /^(?:perf|performance|faster|slow|slowness|speed|optimize|optimise|latency)$/ },
-  { type: "chore", words: /^(?:review|verify|check|audit|investigate|research|bump|upgrade|deps|dependencies|ci|lint|chore)$/ },
-];
-/** What's left when nothing else fits: building something. */
-const DEFAULT_TYPE = "feat";
-
-/** Every type's own name, kept out of the description (no `fix/fix-…`). */
-const TYPE_NAMES = /^(?:fix|fixes|fixed|fixing|feat|feature|docs|test|tests|refactor|perf|chore)$/;
 
 /** A generated branch from before, whose prefix says nothing. */
 const GENERATED_PREFIX = /^runtime\//;
@@ -26,6 +12,9 @@ const GENERATED_PREFIX = /^runtime\//;
 /** At most this many words, and this many characters, of what it's for. */
 const SLUG_WORDS = 4;
 const SLUG_MAX = 40;
+
+/** How far `-2`, `-3`… go before a name is given up on. */
+export const BRANCH_ATTEMPTS = 20;
 
 /** Words that say nothing about the work: grammar, politeness, chat. */
 const FILLER = new Set(
@@ -57,17 +46,9 @@ function words(text: string): string[] {
   return [...new Set(found)];
 }
 
-/** The conventional type `text` asks for. */
-export function branchType(text: string): string {
-  const all = words(text);
-  return TYPES.find(({ words: match }) => all.some((word) => match.test(word)))?.type ?? DEFAULT_TYPE;
-}
-
 /** A few words of `text`, lowercase and hyphenated, for a branch; "" for none. */
 export function branchSlug(text: string): string {
-  const picked = words(text)
-    .filter((word) => !TYPE_NAMES.test(word))
-    .slice(0, SLUG_WORDS);
+  const picked = words(text).slice(0, SLUG_WORDS);
   let slug = "";
   for (const word of picked) {
     const next = slug ? `${slug}-${word}` : word;
@@ -78,10 +59,28 @@ export function branchSlug(text: string): string {
   return slug || (picked[0] ?? "").slice(0, SLUG_MAX);
 }
 
-/** A new session's branch, from its title, else its first prompt. */
-export function sessionBranch(about: { title?: string; prompt?: string }, suffix: string): string {
-  const from = [about.title ?? "", about.prompt ?? ""].find((text) => branchSlug(text)) ?? "";
-  return `${branchType(from)}/${branchSlug(from) || "session"}-${suffix}`;
+/** A new session's branch, from its title, else its first prompt, before
+ *  any `-2` a taken name needs. */
+export function sessionBranch(about: { title?: string; prompt?: string }): string {
+  return branchSlug(about.title ?? "") || branchSlug(about.prompt ?? "") || "session";
+}
+
+/** The `n`th name to try for `base`: itself, then `base-2`, `base-3`… */
+export function numberedBranch(base: string, n: number): string {
+  return n <= 1 ? base : `${base}-${n}`;
+}
+
+/** The first of `base`, `base-2`, `base-3`… that `taken` says is free, or
+ *  null when all BRANCH_ATTEMPTS are. Asked one at a time, in order. */
+export async function firstFreeBranch(
+  base: string,
+  taken: (branch: string) => boolean | Promise<boolean>,
+): Promise<string | null> {
+  for (let n = 1; n <= BRANCH_ATTEMPTS; n++) {
+    const branch = numberedBranch(base, n);
+    if (!(await taken(branch))) return branch;
+  }
+  return null;
 }
 
 /** A branch without a meaningless generated prefix, for showing and matching. */

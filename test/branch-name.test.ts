@@ -1,43 +1,35 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { branchSlug, branchType, sessionBranch, withoutGeneratedPrefix } from "@/lib/session/branch-name";
+import { BRANCH_ATTEMPTS, branchSlug, firstFreeBranch, numberedBranch, sessionBranch, withoutGeneratedPrefix } from "@/lib/session/branch-name";
 import { isValidBranchName } from "@/lib/runtime/git";
 
-test("a branch is <type>/<description>-<suffix>, from the title first", () => {
-  assert.equal(sessionBranch({ title: "Fix the login redirect" }, "3fa9c1"), "fix/login-redirect-3fa9c1");
-  assert.equal(sessionBranch({ title: "verify-prs-372-380", prompt: "Add dark mode" }, "3fa9c1"), "chore/verify-prs-372-380-3fa9c1");
+test("a branch is a few words of the title, else of the first prompt, and nothing else", () => {
+  assert.equal(sessionBranch({ title: "Fix the login redirect" }), "fix-login-redirect");
+  assert.equal(sessionBranch({ title: "verify-prs-372-380", prompt: "Add dark mode" }), "verify-prs-372-380");
+  assert.equal(sessionBranch({ prompt: "the right sidebar should be expandable" }), "right-sidebar-expandable");
 });
 
-test("without a title, the first prompt names it", () => {
-  assert.equal(sessionBranch({ prompt: "the right sidebar should be expandable" }, "abc123"), "feat/right-sidebar-expandable-abc123");
-  assert.equal(
-    sessionBranch({ prompt: "Can you look into why sign in fails with Google? Users see 'Sign-in failed'" }, "abc123"),
-    "fix/sign-fails-google-users-abc123",
-  );
-});
-
-test("the type is the first convention the prompt fits; building something otherwise", () => {
-  assert.equal(branchType("the checkout page crashes on Safari"), "fix");
-  assert.equal(branchType("Update the README with setup steps"), "docs");
-  assert.equal(branchType("write tests for the billing module"), "test");
-  assert.equal(branchType("refactor the auth middleware"), "refactor");
-  assert.equal(branchType("the dashboard is slow to load"), "perf");
-  assert.equal(branchType("Review PR #394 and resolve the comments"), "chore");
-  assert.equal(branchType("add dark mode to settings"), "feat");
-  // A broken test is a fix.
-  assert.equal(branchType("fix the flaky test in billing"), "fix");
+test("no type is guessed: the prompt's own words say what it is", () => {
+  assert.equal(sessionBranch({ prompt: "add error handling to the upload route" }), "add-error-handling-upload");
+  assert.equal(sessionBranch({ prompt: "add a test mode toggle in settings" }), "add-test-mode-toggle");
+  assert.equal(sessionBranch({ prompt: "Run the tests and tell me what fails" }), "run-tests-tell-fails");
+  assert.equal(sessionBranch({ prompt: "debug why the box OOMs" }), "debug-box-ooms");
 });
 
 test("chat around the task doesn't reach the branch", () => {
   assert.equal(branchSlug("hey, so I was thinking we should probably add dark mode to the settings page"), "add-dark-mode-settings");
   assert.equal(branchSlug("Now it's time to give outrunner to users"), "time-give-outrunner-users");
+  assert.equal(
+    branchSlug("one issue i found, that outrunner is giving bad branch names. fix this issue. This is a major UX Bug."),
+    "outrunner-bad-branch-names",
+  );
 });
 
 test("a link keeps its issue or pull request number, nothing else", () => {
-  assert.equal(sessionBranch({ prompt: "https://github.com/neevai-labs/outrunner/issues/266 fix this" }, "abc123"), "fix/issue-266-abc123");
+  assert.equal(sessionBranch({ prompt: "https://github.com/neevai-labs/outrunner/issues/266 fix this" }), "issue-266-fix");
   assert.equal(branchSlug("review https://github.com/o/r/pull/394/files please"), "review-pr-394");
-  assert.equal(branchSlug("Fix https://example.com/a?b=c crash in café façade!!"), "crash-cafe-facade");
+  assert.equal(branchSlug("Fix https://example.com/a?b=c crash in café façade!!"), "fix-crash-cafe-facade");
 });
 
 test("a long slug stops at a word, within the limit", () => {
@@ -47,25 +39,31 @@ test("a long slug stops at a word, within the limit", () => {
 });
 
 test("nothing to name it by gives a plain session branch", () => {
-  assert.equal(sessionBranch({ title: "", prompt: "!!! ??" }, "abc123"), "feat/session-abc123");
-  assert.equal(sessionBranch({}, "abc123"), "feat/session-abc123");
+  assert.equal(sessionBranch({ title: "", prompt: "!!! ??" }), "session");
+  assert.equal(sessionBranch({ prompt: "ログイン画面を直して" }), "session");
+  assert.equal(sessionBranch({}), "session");
 });
 
-test("every generated branch is a valid git branch name", () => {
+test("every generated branch is a valid git branch name, numbered too", () => {
   for (const about of [{ title: "Ünïcödé — täsk" }, { prompt: "../../etc/passwd" }, { prompt: "a".repeat(500) }, {}]) {
-    const branch = sessionBranch(about, "abc123");
-    assert.ok(isValidBranchName(branch), branch);
+    for (const n of [1, 2, BRANCH_ATTEMPTS]) {
+      const branch = numberedBranch(sessionBranch(about), n);
+      assert.ok(isValidBranchName(branch), branch);
+    }
   }
+});
+
+test("a free name is kept as it is; a taken one gets -2, -3…", async () => {
+  assert.equal(await firstFreeBranch("fix-login", () => false), "fix-login");
+  const taken = new Set(["fix-login", "fix-login-2"]);
+  assert.equal(await firstFreeBranch("fix-login", (b) => taken.has(b)), "fix-login-3");
+  const asked: string[] = [];
+  await firstFreeBranch("fix-login", async (b) => (asked.push(b), b === "fix-login"));
+  assert.deepEqual(asked, ["fix-login", "fix-login-2"]);
+  assert.equal(await firstFreeBranch("fix-login", () => true), null);
 });
 
 test("only the old meaningless prefix is dropped for showing", () => {
   assert.equal(withoutGeneratedPrefix("runtime/mv69bt00-3a01334a"), "mv69bt00-3a01334a");
-  assert.equal(withoutGeneratedPrefix("fix/login-3fa9c1"), "fix/login-3fa9c1");
-});
-
-test("an issue without its number says nothing", () => {
-  assert.equal(
-    sessionBranch({ prompt: "one issue i found, that outrunner is giving bad branch names. fix this issue. This is a major UX Bug." }, "abc123"),
-    "fix/outrunner-bad-branch-names-abc123",
-  );
+  assert.equal(withoutGeneratedPrefix("fix-login"), "fix-login");
 });

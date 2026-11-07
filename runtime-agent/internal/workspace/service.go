@@ -575,14 +575,21 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		// that could not be made must not stay in it. (A Runtime Computer keeps
 		// them for the control plane's retry.)
 		err := os.MkdirAll(filepath.Dir(worktree), 0o755)
+		branch := in.Branch
 		if err == nil {
-			err = s.addCheckoutWorktree(ctx, facts.RepoPath, worktree, in.Branch, in.BaseBranch)
+			branch, err = s.addCheckoutWorktree(ctx, facts.RepoPath, worktree, in.Branch, in.BaseBranch)
 		}
 		if err != nil {
 			if !existed {
 				s.forgetWorkspace(in.WorkspaceID)
 			}
 			return "", err
+		}
+		if branch != facts.Branch {
+			// Numbered, the checkout having the name asked for: the session
+			// list shows the branch it's on.
+			facts.Branch = branch
+			s.setFacts(in.WorkspaceID, facts)
 		}
 		return worktree, nil
 	}
