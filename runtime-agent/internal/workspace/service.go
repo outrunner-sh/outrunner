@@ -1045,10 +1045,10 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 	return o
 }
 
-// placeholderBranch is the name Outrunner gives a new session's branch,
-// runtime/<time>-<id> (generatedBranch in the web app, localBranch on the Mac):
-// a name nobody chose.
-var placeholderBranch = regexp.MustCompile(`^runtime/[0-9a-z]+-[0-9a-f]{8}$`)
+// placeholderBranch is the name Outrunner gives a new session's branch
+// (lib/session/branch-name.ts, in the web app and on the Mac): a name nobody
+// chose. outrunner/<words>-<6 hex> now; runtime/<time>-<id> before.
+var placeholderBranch = regexp.MustCompile(`^(?:runtime/[0-9a-z]+-[0-9a-f]{8}|outrunner/[a-z0-9-]+-[0-9a-f]{6})$`)
 
 // onPlaceholderBranch reports whether a worktree is still on that branch: read
 // from git each launch, so a branch renamed since (at the user's request)

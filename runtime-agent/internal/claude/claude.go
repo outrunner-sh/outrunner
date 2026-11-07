@@ -142,7 +142,8 @@ func withOrientation(argv []string, orientation string) []string {
 // an empty worktree degrades to a generic phrase, and an empty baseBranch omits
 // the target-branch guidance entirely rather than naming a bogus base.
 // placeholderBranch says the worktree is still on the branch Outrunner named
-// for it (runtime/<time>-<id>), which nobody has chosen yet.
+// for it (outrunner/<words>-<id>, or runtime/<time>-<id> before), which
+// nobody has chosen yet.
 func Orientation(worktree, baseBranch string, placeholderBranch bool) string {
 	workingDir := worktree
 	if workingDir == "" {
