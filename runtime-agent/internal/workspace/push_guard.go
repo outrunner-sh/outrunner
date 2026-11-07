@@ -99,15 +99,16 @@ func (s *Service) writeGitWrapper() error {
 // gitWrapper is the guard's script: realGit for everything, but a push of the
 // branch a worktree's marker names (its stand-in, or an unconfirmed rename),
 // the first time, is refused. The branches pushed are read off the command:
-// its refspecs' sources (HEAD as the branch checked out, refs/heads/ dropped),
-// every branch for --all, --mirror or a pattern, and with no refspec the
-// branch checked out.
+// its refspecs' sources and destinations (HEAD or @ as the branch checked
+// out, refs/heads/ dropped), every branch for --all, --mirror or a pattern,
+// and with no refspec the branch checked out. A deletion pushes none, and a
+// dry run is left alone: neither may use up the one refusal.
 func gitWrapper(realGit string) string {
 	return `#!/bin/sh
 # Outrunner: refuses the first push of a branch still on its stand-in name.
 real=` + gitcred.ShellQuote(realGit) + `
 set -f
-sub= dir= skip= args= all= tagsonly=
+sub= dir= skip= args= all= tagsonly= del= dry=
 for a in "$@"; do
   if [ -n "$skip" ]; then
     [ "$skip" = C ] && dir=$a
@@ -117,6 +118,8 @@ for a in "$@"; do
     case "$a" in
       --all|--mirror|--branches) all=1 ;;
       --tags) tagsonly=1 ;;
+      -d|--delete) del=1 ;;
+      -n|--dry-run) dry=1 ;;
       --repo|-o|--push-option|--receive-pack|--exec) skip=1 ;;
       -*) ;;
       *) args="$args $a" ;;
@@ -142,18 +145,24 @@ if [ "$sub" = push ]; then
   guarded=
   [ -n "$gitdir" ] && [ -f "$marker" ] && [ ! -f "$marker.refused" ] && guarded=$(cat "$marker")
   hit=
-  if [ -n "$guarded" ]; then
+  if [ -n "$guarded" ] && [ -z "$del" ] && [ -z "$dry" ]; then
     n=0
     for spec in $args; do
       n=$((n + 1))
       [ $n -eq 1 ] && continue # the repository
-      src=${spec#+}
-      src=${src%%:*}
-      [ "$src" = HEAD ] && src=$branch
+      spec=${spec#+}
+      src=${spec%%:*}
+      [ -z "$src" ] && continue # :name deletes it
+      case "$src" in HEAD|@) src=$branch ;; esac
       src=${src#refs/heads/}
       case "$src" in
         *'*'*) hit=1 ;;
         "$guarded") hit=1 ;;
+      esac
+      # The name it lands under, too: the stand-in mustn't reach GitHub.
+      case "$spec" in *:*)
+        dst=${spec#*:}
+        [ "${dst#refs/heads/}" = "$guarded" ] && hit=1 ;;
       esac
     done
     [ -n "$all" ] && hit=1

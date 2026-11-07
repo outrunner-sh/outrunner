@@ -531,6 +531,13 @@ func TestTheGuardLooksAtTheBranchesPushed(t *testing.T) {
 		{"tags only", "some-words", []string{"--tags", "REMOTE"}, false},
 		{"a deletion of another branch", "some-words", []string{"REMOTE", ":gone"}, false},
 		{"a push option before the remote", "other", []string{"-o", "ci.skip", "REMOTE", "some-words"}, true},
+		{"@ as HEAD", "some-words", []string{"REMOTE", "@"}, true},
+		{"@ onto another name", "some-words", []string{"REMOTE", "@:refs/heads/x"}, true},
+		{"another branch onto the stand-in's name", "other", []string{"REMOTE", "HEAD:some-words"}, true},
+		{"another branch onto the stand-in's full ref", "other", []string{"REMOTE", "other:refs/heads/some-words"}, true},
+		{"a deletion of the stand-in with -d", "some-words", []string{"-d", "REMOTE", "some-words"}, false},
+		{"a deletion with --delete after the remote", "other", []string{"REMOTE", "--delete", "some-words"}, false},
+		{"a dry run", "some-words", []string{"--dry-run", "REMOTE", "HEAD"}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s, dirs := renameSession(t, &controlPlane{}, "some-words")
@@ -541,7 +548,7 @@ func TestTheGuardLooksAtTheBranchesPushed(t *testing.T) {
 			}
 			remote := filepath.Join(t.TempDir(), "origin.git")
 			run(t, dirs[0], "init", "-q", "--bare", remote)
-			run(t, dirs[0], "push", "-q", remote, "refs/heads/other:refs/heads/gone") // for the deletion
+			run(t, dirs[0], "push", "-q", remote, "refs/heads/other:refs/heads/gone", "refs/heads/other:refs/heads/some-words") // for the deletions
 			args := make([]string, len(c.args))
 			for i, a := range c.args {
 				args[i] = strings.ReplaceAll(a, "REMOTE", remote)
@@ -551,5 +558,24 @@ func TestTheGuardLooksAtTheBranchesPushed(t *testing.T) {
 				t.Errorf("refused = %v, want %v\n%s", refused, c.refused, out)
 			}
 		})
+	}
+}
+
+// Neither a deletion nor a dry run uses up the one refusal: the real push
+// after them is still refused.
+func TestADeletionOrDryRunLeavesTheGuardForTheRealPush(t *testing.T) {
+	s, dirs := renameSession(t, &controlPlane{}, "some-words")
+	s.markStandIns(dirs, "some-words", true)
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	run(t, dirs[0], "init", "-q", "--bare", remote)
+	run(t, dirs[0], "push", "-q", remote, "HEAD:refs/heads/some-words")
+	if out, ok := push(t, s, dirs[0], "-d", remote, "some-words"); !ok {
+		t.Fatalf("the deletion: %s", out)
+	}
+	if out, ok := push(t, s, dirs[0], "--dry-run", remote, "HEAD"); !ok {
+		t.Fatalf("the dry run: %s", out)
+	}
+	if out, ok := push(t, s, dirs[0], remote, "HEAD"); ok || !strings.Contains(out, "rename-branch") {
+		t.Fatalf("the real push wasn't refused: ok=%v %s", ok, out)
 	}
 }
