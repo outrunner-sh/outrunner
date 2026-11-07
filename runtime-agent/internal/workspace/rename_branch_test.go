@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/gitcred"
@@ -348,6 +349,7 @@ func TestAWorktreeOnAnotherBranchIsntGuarded(t *testing.T) {
 }
 
 func TestACommitWithNoAnswerIsSentAgain(t *testing.T) {
+	commitBackoff = time.Millisecond
 	cp := &controlPlane{checked: "fix/google-sign-in", commitDrops: 1}
 	s, dirs := renameSession(t, cp, "sign-fails-google-users")
 	if status, answer := renameTo(t, s, "ws", "fix/google-sign-in"); status != http.StatusOK {
@@ -361,6 +363,7 @@ func TestACommitWithNoAnswerIsSentAgain(t *testing.T) {
 // Outrunner may have recorded a commit whose answer never came: git keeps
 // the new name rather than disagree, and the same command finishes it.
 func TestARenameNeverAnsweredKeepsGitOnTheNewNameUntilRunAgain(t *testing.T) {
+	commitBackoff = time.Millisecond
 	cp := &controlPlane{checked: "fix/google-sign-in", commitDrops: commitAttempts}
 	s, dirs := renameSession(t, cp, "sign-fails-google-users")
 	status, answer := renameTo(t, s, "ws", "fix/google-sign-in")
@@ -372,6 +375,12 @@ func TestARenameNeverAnsweredKeepsGitOnTheNewNameUntilRunAgain(t *testing.T) {
 	}
 	if f, _ := s.getFacts("ws"); f.Branch != "sign-fails-google-users" || !f.BranchRenamable {
 		t.Errorf("facts = %+v before it's confirmed", f)
+	}
+	// The unconfirmed name is guarded as the stand-in was.
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	run(t, dirs[0], "init", "-q", "--bare", remote)
+	if out, ok := push(t, s, dirs[0], remote, "HEAD"); ok || !strings.Contains(out, "rename-branch") {
+		t.Fatalf("a push of the unconfirmed name wasn't refused: ok=%v %s", ok, out)
 	}
 	// Run again: no new check, no git rename, just the commit.
 	calls := len(cp.calls)
@@ -406,5 +415,19 @@ func TestARefusalForGoodStopsOfferingTheRename(t *testing.T) {
 	gitDir := run(t, dirs[0], "rev-parse", "--absolute-git-dir")
 	if _, err := os.Stat(filepath.Join(gitDir, standInFile)); !os.IsNotExist(err) {
 		t.Errorf("the push guard's marker is still there: %v", err)
+	}
+}
+
+func TestACommitRefusedPutsTheStandInsGuardBack(t *testing.T) {
+	cp := &controlPlane{checked: "fix/google-sign-in", commitStatus: http.StatusConflict}
+	s, dirs := renameSession(t, cp, "sign-fails-google-users")
+	s.markStandIns(dirs, "sign-fails-google-users", true)
+	if status, _ := renameTo(t, s, "ws", "fix/google-sign-in"); status != http.StatusConflict {
+		t.Fatalf("rename: %d", status)
+	}
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	run(t, dirs[0], "init", "-q", "--bare", remote)
+	if _, ok := push(t, s, dirs[0], remote, "HEAD"); ok {
+		t.Fatal("the stand-in, back after a refusal, wasn't guarded")
 	}
 }

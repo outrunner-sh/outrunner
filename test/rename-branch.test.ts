@@ -71,6 +71,13 @@ test("commit records the box's rename, or says why not", async () => {
   const raced = deps({ rename: async () => { throw Object.assign(new Error("dup"), { code: "23505" }); } });
   assert.match((await commitRename("ws", SESSION.branch, "fix/x", raced)).error ?? "", /took fix\/x meanwhile/);
   assert.equal((await commitRename("ws", SESSION.branch, "not a name", deps())).status, 400);
+  // Without a check first (a box resuming a rename): still refused when the
+  // stand-in is pushed or has a pull request.
+  const pushed = deps({ knownOnGitHub: async (_, b) => b === SESSION.branch, rename: async () => assert.fail("recorded") });
+  assert.equal((await commitRename("ws", SESSION.branch, "fix/x", pushed)).status, 410);
+  assert.deepEqual(pushed.settled, ["ws"]);
+  const withPr = deps({ hasPullRequest: async () => true, rename: async () => assert.fail("recorded") });
+  assert.equal((await commitRename("ws", SESSION.branch, "fix/x", withPr)).status, 410);
   // Sent again after a lost answer: recorded already, so done.
   const recorded = deps({ session: { ...SESSION, branch: "fix/x", branchRenamable: false }, rename: async () => assert.fail("recorded twice") });
   assert.deepEqual(await commitRename("ws", SESSION.branch, "fix/x", recorded), { status: 200, text: "fix/x" });

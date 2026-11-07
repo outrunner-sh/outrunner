@@ -114,6 +114,10 @@ export async function commitRename(sessionId: string, from: string, to: string, 
   if (nameProblem(to)) return refuse(400, "That isn't a name `check` gave.");
   const session = await deps.session(sessionId);
   if (session && session.branch === to && !session.branchRenamable) return { status: 200, text: to };
+  // As check does: a box resuming a rename (git already on the new name)
+  // comes here without one.
+  const refused = await refusal(session, deps);
+  if (refused) return refused;
   const sessions = await deps.sessionBranches(sessionId, to);
   sessions.delete(from);
   if (sessions.has(to) || (await deps.knownOnGitHub(sessionId, to))) {

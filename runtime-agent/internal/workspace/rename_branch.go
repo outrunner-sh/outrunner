@@ -87,6 +87,9 @@ func (s *Service) renameBranch(ctx context.Context, owner string, args json.RawM
 	case err != nil:
 		// No answer: Outrunner may have recorded it, so git keeps the new name
 		// rather than disagree with it; the same command again finishes it.
+		// Till then the new name is guarded as the stand-in was: a push of it
+		// now would leave it on GitHub under a name Outrunner may refuse.
+		s.markStandIns(dirs, to, true)
 		return http.StatusBadGateway, sessiontools.Answer{Error: fmt.Sprintf(
 			"Outrunner didn't answer (%v), so the rename isn't confirmed. git is on %s: run `%s rename-branch %s` again to finish it.",
 			err, to, sessiontools.CommandName, to)}, nil
@@ -97,6 +100,9 @@ func (s *Service) renameBranch(ctx context.Context, owner string, args json.RawM
 		}
 		if status == http.StatusGone {
 			s.settleBranch(owner, dirs, f.Branch, f.Branch)
+		} else {
+			// Back on the stand-in, guarded again.
+			s.markStandIns(dirs, f.Branch, true)
 		}
 		return status, answer, nil
 	}
@@ -121,15 +127,23 @@ func (s *Service) commitRename(ctx context.Context, owner, from, to string) (int
 	)
 	for attempt := 0; attempt < commitAttempts; attempt++ {
 		status, answer, err = s.passOn(ctx, owner, RenameBranchTool, map[string]string{"phase": "commit", "from": from, "to": to})
-		if err == nil || ctx.Err() != nil {
+		if err == nil || ctx.Err() != nil || attempt == commitAttempts-1 {
 			break
+		}
+		// A moment for a relay or control plane that's briefly away.
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Duration(attempt+1) * commitBackoff):
 		}
 	}
 	return status, answer, err
 }
 
-// commitAttempts is how many times commitRename sends commit.
+// commitAttempts is how many times commitRename sends commit, waiting
+// commitBackoff more before each one after the first.
 const commitAttempts = 3
+
+var commitBackoff = 500 * time.Millisecond
 
 // settleBranch records that the session (and its chats) is on branch for
 // good, renamed from `from` or never to be: no more note, no more guard.
