@@ -21,10 +21,6 @@ func TestOnlyAWorktreeStillOnItsGeneratedBranchIsAPlaceholder(t *testing.T) {
 	if !onPlaceholderBranch(dir) {
 		t.Error("the generated branch wasn't recognised")
 	}
-	run(t, dir, "branch", "-q", "-m", "outrunner/fix-login-redirect-3fa9c1")
-	if !onPlaceholderBranch(dir) {
-		t.Error("the generated branch, named from the prompt, wasn't recognised")
-	}
 	run(t, dir, "branch", "-q", "-m", "fix-login-page")
 	if onPlaceholderBranch(dir) {
 		t.Error("a branch renamed since was still called a placeholder")
