@@ -8,6 +8,9 @@
  * in every checkout; `commit` records it, or refuses, and the box renames it
  * back. Only a branch Outrunner chose, never pushed, with no pull request:
  * after that, GitHub, webhooks and pull request lookups know it by its name.
+ * A session that can never be renamed is refused with 410 (FINAL), for the
+ * box to stop asking; `commit` is safe to send again, for a box whose first
+ * answer was lost.
  *
  * Pure but for what's given (deps), for the session tools and the tests.
  */
@@ -16,6 +19,9 @@ import { firstFreeBranch } from "@/lib/session/branch-name";
 
 /** A name's type or area: a word. */
 export const BRANCH_TYPES = ["fix", "feat", "refactor", "docs", "test", "chore", "perf"] as const;
+
+/** A refusal that won't change: the box stops offering the rename. */
+export const FINAL = 410;
 
 /** What a name says after its type, at most: 40 for the words, room for an issue key. */
 const MAX_WHAT = 52;
@@ -32,7 +38,6 @@ export type RenameSession = {
   branch: string;
   /** Still on the name Outrunner chose, and allowed a new one. */
   branchRenamable: boolean;
-  status: string;
 };
 
 export type RenameBranchDeps = {
@@ -74,14 +79,15 @@ export function nameProblem(name: string): string | null {
 async function refusal(session: RenameSession | null, deps: RenameBranchDeps): Promise<RenameAnswer | null> {
   if (!session) return refuse(404, "That session isn't Outrunner's any more.");
   if (!session.branchRenamable) {
-    return refuse(409, `This branch, ${session.branch}, keeps its name: it was named already, or chosen, not made up by Outrunner.`);
+    return refuse(FINAL, `This branch, ${session.branch}, keeps its name: it was named already, or chosen, not made up by Outrunner.`);
   }
   if (await deps.hasPullRequest(session.id)) {
-    return refuse(409, `This branch, ${session.branch}, has a pull request, so it keeps its name.`);
+    await deps.settle(session.id);
+    return refuse(FINAL, `This branch, ${session.branch}, has a pull request, so it keeps its name.`);
   }
   if (await deps.knownOnGitHub(session.id, session.branch)) {
     await deps.settle(session.id);
-    return refuse(409, `This branch, ${session.branch}, is on GitHub already, so it keeps its name.`);
+    return refuse(FINAL, `This branch, ${session.branch}, is on GitHub already, so it keeps its name.`);
   }
   return null;
 }
@@ -102,9 +108,12 @@ export async function checkRename(sessionId: string, name: string, deps: RenameB
 }
 
 /** `commit`: record the box's rename of `from` to `to`, if `to` is still
- *  free: taken since `check` (or never checked), it's refused. */
+ *  free: taken since `check` (or never checked), it's refused. Recorded
+ *  already (the box sending it again, its first answer lost): done. */
 export async function commitRename(sessionId: string, from: string, to: string, deps: RenameBranchDeps): Promise<RenameAnswer> {
   if (nameProblem(to)) return refuse(400, "That isn't a name `check` gave.");
+  const session = await deps.session(sessionId);
+  if (session && session.branch === to && !session.branchRenamable) return { status: 200, text: to };
   const sessions = await deps.sessionBranches(sessionId, to);
   sessions.delete(from);
   if (sessions.has(to) || (await deps.knownOnGitHub(sessionId, to))) {

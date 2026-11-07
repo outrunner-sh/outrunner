@@ -22,7 +22,10 @@ type controlPlane struct {
 	checked      string
 	checkStatus  int
 	commitStatus int
-	calls        []map[string]string
+	// commitDrops is how many commits are dropped unanswered (the connection
+	// cut) before one is answered.
+	commitDrops int
+	calls       []map[string]string
 }
 
 func (c *controlPlane) serve(t *testing.T) *httptest.Server {
@@ -43,6 +46,13 @@ func (c *controlPlane) serve(t *testing.T) *httptest.Server {
 			}
 			_ = json.NewEncoder(w).Encode(sessiontools.Answer{Text: c.checked})
 		case "commit":
+			if c.commitDrops > 0 {
+				c.commitDrops--
+				if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+					_ = conn.Close()
+				}
+				return
+			}
 			if c.commitStatus != 0 {
 				w.WriteHeader(c.commitStatus)
 				_ = json.NewEncoder(w).Encode(sessiontools.Answer{Error: "refused at commit"})
@@ -334,5 +344,67 @@ func TestAWorktreeOnAnotherBranchIsntGuarded(t *testing.T) {
 	run(t, dirs[0], "init", "-q", "--bare", remote)
 	if out, ok := push(t, s, dirs[0], remote, "HEAD"); !ok {
 		t.Fatalf("a push from another branch was refused: %s", out)
+	}
+}
+
+func TestACommitWithNoAnswerIsSentAgain(t *testing.T) {
+	cp := &controlPlane{checked: "fix/google-sign-in", commitDrops: 1}
+	s, dirs := renameSession(t, cp, "sign-fails-google-users")
+	if status, answer := renameTo(t, s, "ws", "fix/google-sign-in"); status != http.StatusOK {
+		t.Fatalf("rename: %d %+v", status, answer)
+	}
+	if got := head(t, dirs[0]); got != "fix/google-sign-in" {
+		t.Errorf("branch = %q", got)
+	}
+}
+
+// Outrunner may have recorded a commit whose answer never came: git keeps
+// the new name rather than disagree, and the same command finishes it.
+func TestARenameNeverAnsweredKeepsGitOnTheNewNameUntilRunAgain(t *testing.T) {
+	cp := &controlPlane{checked: "fix/google-sign-in", commitDrops: commitAttempts}
+	s, dirs := renameSession(t, cp, "sign-fails-google-users")
+	status, answer := renameTo(t, s, "ws", "fix/google-sign-in")
+	if status/100 == 2 || !strings.Contains(answer.Error, "rename-branch fix/google-sign-in") {
+		t.Fatalf("rename with no answer: %d %+v", status, answer)
+	}
+	if got := head(t, dirs[0]); got != "fix/google-sign-in" {
+		t.Errorf("branch = %q, want it left on the new name", got)
+	}
+	if f, _ := s.getFacts("ws"); f.Branch != "sign-fails-google-users" || !f.BranchRenamable {
+		t.Errorf("facts = %+v before it's confirmed", f)
+	}
+	// Run again: no new check, no git rename, just the commit.
+	calls := len(cp.calls)
+	if status, answer := renameTo(t, s, "ws", "fix/google-sign-in"); status != http.StatusOK {
+		t.Fatalf("run again: %d %+v", status, answer)
+	}
+	if got := cp.calls[calls:]; len(got) != 1 || got[0]["phase"] != "commit" || got[0]["from"] != "sign-fails-google-users" {
+		t.Errorf("calls on the second run = %+v", got)
+	}
+	if f, _ := s.getFacts("ws"); f.Branch != "fix/google-sign-in" || f.BranchRenamable {
+		t.Errorf("facts = %+v", f)
+	}
+}
+
+// Pushed already, or with a pull request: refused for good, so the agent
+// isn't told to rename it again, and its pushes aren't guarded.
+func TestARefusalForGoodStopsOfferingTheRename(t *testing.T) {
+	cp := &controlPlane{checkStatus: http.StatusGone}
+	s, dirs := renameSession(t, cp, "sign-fails-google-users")
+	if o := s.orientation("ws", dirs[0]); !strings.Contains(o, "# Branch name") {
+		t.Fatal("not offered to begin with")
+	}
+	if status, _ := renameTo(t, s, "ws", "fix/google-sign-in"); status != http.StatusGone {
+		t.Fatalf("rename: %d", status)
+	}
+	if f, _ := s.getFacts("ws"); f.BranchRenamable || f.Branch != "sign-fails-google-users" {
+		t.Errorf("facts = %+v", f)
+	}
+	if o := s.orientation("ws", dirs[0]); strings.Contains(o, "# Branch name") {
+		t.Errorf("still offered after a refusal for good:\n%s", o)
+	}
+	gitDir := run(t, dirs[0], "rev-parse", "--absolute-git-dir")
+	if _, err := os.Stat(filepath.Join(gitDir, standInFile)); !os.IsNotExist(err) {
+		t.Errorf("the push guard's marker is still there: %v", err)
 	}
 }

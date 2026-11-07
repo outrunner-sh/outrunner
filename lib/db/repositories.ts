@@ -251,7 +251,9 @@ export async function createWorkspaceRow(input: {
  * none of them, so its pull request lookup never finds an old session's. Read
  * past row-level security, which shows the user only their own, for branch
  * names alone, of a project the caller has already checked they may use.
- * `base` is a generated name: letters, digits and hyphens only.
+ * `base` must already be validated as a branch name of lowercase letters,
+ * digits, hyphens and at most one slash (branch-name.ts, rename-branch.ts
+ * nameProblem): it goes into a PostgREST filter string unescaped.
  */
 export async function projectBranchesLike(projectId: string, base: string): Promise<Set<string>> {
   const { data, error } = await createSupabaseAdminClient()

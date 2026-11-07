@@ -44,52 +44,108 @@ func (s *Service) renameBranch(ctx context.Context, owner string, args json.RawM
 	if !f.BranchRenamable || f.RepoPath != "" {
 		return http.StatusConflict, sessiontools.Answer{Error: fmt.Sprintf("This branch, %s, keeps its name: it was named already, or chosen.", f.Branch)}, nil
 	}
+	name := strings.TrimSpace(in.Name)
 	dirs := s.branchCheckouts(owner, f)
+	heads := map[string]bool{}
 	for _, dir := range dirs {
-		if head, err := s.git(ctx, dir, "symbolic-ref", "--quiet", "--short", "HEAD"); err != nil || head != f.Branch {
+		head, err := s.git(ctx, dir, "symbolic-ref", "--quiet", "--short", "HEAD")
+		if err != nil {
+			head = ""
+		}
+		heads[head] = true
+	}
+
+	var to string
+	if len(heads) == 1 && heads[name] && name != f.Branch && branchName.MatchString(name) {
+		// Renamed in git by an earlier run whose commit got no answer: only
+		// Outrunner's record is left to make (commit is safe to send again).
+		to = name
+	} else {
+		if len(heads) != 1 || !heads[f.Branch] {
 			return http.StatusConflict, sessiontools.Answer{Error: fmt.Sprintf("Switch back to the session's branch, %s, to rename it.", f.Branch)}, nil
 		}
+		status, answer, err := s.passOn(ctx, owner, RenameBranchTool, map[string]string{"phase": "check", "name": name})
+		if err == nil && status == http.StatusGone {
+			// It can never be renamed now (pushed, or a pull request): stop
+			// offering it.
+			s.settleBranch(owner, dirs, f.Branch, f.Branch)
+		}
+		if err != nil || status/100 != 2 {
+			return status, answer, err
+		}
+		to = strings.TrimSpace(answer.Text)
+		if !branchName.MatchString(to) {
+			return http.StatusBadGateway, sessiontools.Answer{Error: "Outrunner answered with no name: try again."}, nil
+		}
+		if _, err := s.renameIn(ctx, dirs, f.Branch, to); err != nil {
+			return http.StatusConflict, sessiontools.Answer{Error: fmt.Sprintf("git couldn't rename the branch: %v", err)}, nil
+		}
 	}
 
-	status, answer, err := s.passOn(ctx, owner, RenameBranchTool, map[string]string{"phase": "check", "name": strings.TrimSpace(in.Name)})
-	if err != nil || status/100 != 2 {
-		return status, answer, err
-	}
-	to := strings.TrimSpace(answer.Text)
-	if !branchName.MatchString(to) {
-		return http.StatusBadGateway, sessiontools.Answer{Error: "Outrunner answered with no name: try again."}, nil
-	}
-
-	renamed, err := s.renameIn(ctx, dirs, f.Branch, to)
-	if err != nil {
-		return http.StatusConflict, sessiontools.Answer{Error: fmt.Sprintf("git couldn't rename the branch: %v", err)}, nil
-	}
-	status, answer, err = s.passOn(ctx, owner, RenameBranchTool, map[string]string{"phase": "commit", "from": f.Branch, "to": to})
-	if err != nil || status/100 != 2 {
-		// Outrunner keeps the old name, so git does too.
-		if _, undoErr := s.renameIn(ctx, renamed, to, f.Branch); undoErr != nil {
+	status, answer, err := s.commitRename(ctx, owner, f.Branch, to)
+	switch {
+	case err != nil:
+		// No answer: Outrunner may have recorded it, so git keeps the new name
+		// rather than disagree with it; the same command again finishes it.
+		return http.StatusBadGateway, sessiontools.Answer{Error: fmt.Sprintf(
+			"Outrunner didn't answer (%v), so the rename isn't confirmed. git is on %s: run `%s rename-branch %s` again to finish it.",
+			err, to, sessiontools.CommandName, to)}, nil
+	case status/100 != 2:
+		// Refused: Outrunner keeps the old name, so git does too.
+		if _, undoErr := s.renameIn(ctx, dirs, to, f.Branch); undoErr != nil {
 			return http.StatusInternalServerError, sessiontools.Answer{Error: fmt.Sprintf("Outrunner refused the name and git couldn't put %s back: %v", f.Branch, undoErr)}, nil
 		}
-		return status, answer, err
+		if status == http.StatusGone {
+			s.settleBranch(owner, dirs, f.Branch, f.Branch)
+		}
+		return status, answer, nil
 	}
 
 	from := f.Branch
-	f.Branch, f.BranchRenamable = to, false
-	s.setFacts(owner, f)
-	s.markStandIns(dirs, to, false)
-	// Its chats work in the same folder, on the same branch.
-	for _, key := range s.chatKeys(owner) {
-		if chat, ok := s.getFacts(key); ok {
-			chat.Branch, chat.BranchRenamable = to, false
-			s.setFacts(key, chat)
-		}
-	}
+	s.settleBranch(owner, dirs, from, to)
 	text := fmt.Sprintf("Renamed the branch from %s to %s.", from, to)
-	if to != strings.TrimSpace(in.Name) {
-		text += fmt.Sprintf(" %s was taken, so it's numbered.", strings.TrimSpace(in.Name))
+	if to != name {
+		text += fmt.Sprintf(" %s was taken, so it's numbered.", name)
 	}
 	text += " It keeps this name now; push it with `git push -u origin HEAD`."
 	return http.StatusOK, sessiontools.Answer{Text: text}, nil
+}
+
+// commitRename sends commit, and again when there's no answer (the control
+// plane takes it again as done), a few times before giving up.
+func (s *Service) commitRename(ctx context.Context, owner, from, to string) (int, sessiontools.Answer, error) {
+	var (
+		status int
+		answer sessiontools.Answer
+		err    error
+	)
+	for attempt := 0; attempt < commitAttempts; attempt++ {
+		status, answer, err = s.passOn(ctx, owner, RenameBranchTool, map[string]string{"phase": "commit", "from": from, "to": to})
+		if err == nil || ctx.Err() != nil {
+			break
+		}
+	}
+	return status, answer, err
+}
+
+// commitAttempts is how many times commitRename sends commit.
+const commitAttempts = 3
+
+// settleBranch records that the session (and its chats) is on branch for
+// good, renamed from `from` or never to be: no more note, no more guard.
+func (s *Service) settleBranch(owner string, dirs []string, from, branch string) {
+	if f, ok := s.getFacts(owner); ok {
+		f.Branch, f.BranchRenamable = branch, false
+		s.setFacts(owner, f)
+	}
+	// Its chats work in the same folder, on the same branch.
+	for _, key := range s.chatKeys(owner) {
+		if chat, ok := s.getFacts(key); ok {
+			chat.Branch, chat.BranchRenamable = branch, false
+			s.setFacts(key, chat)
+		}
+	}
+	s.markStandIns(dirs, from, false)
 }
 
 // branchCheckouts are the folders on the session's branch: its worktree, or
