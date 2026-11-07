@@ -16,6 +16,11 @@ test("without a title, the first prompt names it, filler words left out", () => 
   );
 });
 
+test("apostrophes join their word, and no word repeats", () => {
+  assert.equal(branchSlug("Now it's time to give outrunner to users"), "time-give-outrunner-users");
+  assert.equal(branchSlug("Fix the flaky test in test/billing.test.ts"), "fix-flaky-test-billing-ts");
+});
+
 test("links, accents and symbols don't reach the branch", () => {
   assert.equal(branchSlug("Fix https://example.com/a?b=c crash in café façade!!"), "fix-crash-cafe-facade");
 });

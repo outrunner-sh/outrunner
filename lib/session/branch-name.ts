@@ -17,21 +17,25 @@ const SLUG_MAX = 40;
 
 /** Words that say nothing about the work. */
 const FILLER = new Set(
-  "a an the and or but to of for in on at by with from into this that these those it its is are be was were please can could would should will you we i me my our us let lets just so now then also some any here there do does did".split(
+  "a an the and or but to of for in on at by with from into this that these those it its is are be was were please can could would should will you we i me my our us let lets just so now then also some any here there do does did im youre".split(
     " ",
   ),
 );
 
 /** A few words of `text`, lowercase and hyphenated, for a branch; "" for none. */
 export function branchSlug(text: string): string {
-  const words = text
+  const found = text
     .replace(/https?:\/\/\S+/g, " ")
+    // "it's" is one word, not "it" and "s".
+    .replace(/['’]/g, "")
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((word) => word && !FILLER.has(word))
-    .slice(0, SLUG_WORDS);
+    // A lone letter says nothing.
+    .filter((word) => (word.length > 1 || /\d/.test(word)) && !FILLER.has(word));
+  // Each word once.
+  const words = [...new Set(found)].slice(0, SLUG_WORDS);
   let slug = "";
   for (const word of words) {
     const next = slug ? `${slug}-${word}` : word;
