@@ -96,3 +96,11 @@ test("the body is the template, ending in the session's footer", () => {
   assert.match(md, /keep the footer and any Co-Authored-By trailers it already has exactly as they are/);
   assert.doesNotMatch(md, /under five sentences/);
 });
+
+test("a stand-in branch is named for good before the push, and only then", () => {
+  const named = instructions({ branch: "right-sidebar-expandable", baseBranch: "main", uncommitted: 1, nameBranch: true });
+  const rename = named.indexOf("outrunner-session rename-branch");
+  assert.ok(rename > 0 && rename < named.indexOf("git push -u origin HEAD"), named);
+  assert.match(named, /If the branch is still right-sidebar-expandable/);
+  assert.doesNotMatch(instructions({ branch: "fix/x", baseBranch: "main", uncommitted: 1 }), /rename-branch/);
+});

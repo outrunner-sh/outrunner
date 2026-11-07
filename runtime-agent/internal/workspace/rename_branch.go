@@ -146,12 +146,12 @@ func (s *Service) mayNameBranch(workspaceID string, f workspaceFacts) bool {
 func branchNameNote(current string) string {
 	return "# Branch name\n\n" +
 		"The branch's name, `" + current + "`, is a stand-in made from the first message. " +
-		"Once you know what the change is, and before you first push or open a pull request, give it its real name, once:\n\n" +
+		"As soon as you know what the change is, before you edit your first file, give it its real name, once:\n\n" +
 		"    " + sessiontools.CommandName + " rename-branch <type>/<what-it-does>\n\n" +
 		"- <type> is the kind of change: fix, feat, refactor, docs, test, chore or perf. When the change is clearly about one area, that area instead (security, deps, ci).\n" +
 		"- <what-it-does> is 2 to 5 lowercase words joined by hyphens, at most 40 characters, saying what the change does: fix/google-sign-in-redirect, feat/expandable-right-sidebar, perf/faster-ci-build.\n" +
 		"- If the task names a Linear or GitHub issue, put its key first: fix/nee-268-mask-chat-secrets, fix/issue-266-box-oom.\n" +
 		"- No ids, dates or tool names (outrunner/, claude/).\n" +
-		"- If you only answer questions or change no code, leave it as it is. If you're asked to push to another branch or an existing pull request, leave it too.\n" +
+		"- If you only answer questions, investigate or ask what's meant, and edit nothing, leave it as it is. If you're asked to push to another branch or an existing pull request, leave it too.\n" +
 		"- If the name is taken, the command numbers it (-2) and says so: use the name it prints. Once pushed, the branch keeps its name."
 }

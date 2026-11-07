@@ -170,6 +170,7 @@ export function WorkspaceEnvironment({
             pullRequest={pullRequest}
             sender={isReady ? sender : null}
             coAuthor={coAuthor}
+            nameBranch={workspace.branchRenamable}
           />
         )}
         {/* A session of several repositories: a pull request in each, a row
@@ -187,6 +188,7 @@ export function WorkspaceEnvironment({
               pullRequest={pullRequest?.projectId === c.projectId ? pullRequest : null}
               sender={isReady ? sender : null}
               coAuthor={coAuthor}
+              nameBranch={workspace.branchRenamable}
               repo={{ projectId: c.projectId, checkout: c.checkout, fullName: c.fullName }}
             />
           ))}
@@ -423,6 +425,7 @@ function PullRequestRow({
   coAuthor,
   repo,
   provider,
+  nameBranch,
 }: {
   /** Where the session runs: whether Create PR asks for browser evidence. */
   provider: ProviderName | null;
@@ -436,6 +439,8 @@ function PullRequestRow({
   coAuthor?: string | null;
   /** One repository of a session of several: the row is its pull request's. */
   repo?: { projectId: string; checkout: string; fullName: string };
+  /** The branch is still the stand-in its agent names before pushing. */
+  nameBranch?: boolean;
 }) {
   const router = useRouter();
   const [found, setFound] = useState<WorkspacePullRequest | null>(null);
@@ -549,6 +554,7 @@ function PullRequestRow({
         baseBranch,
         uncommitted,
         ...(repo && { repo }),
+        ...(nameBranch && { nameBranch }),
         tools: evidenceToolsFor(provider),
         footer: prInstructionFooter(`${window.location.origin}/workspaces/${workspaceId}`, coAuthor),
       }),
