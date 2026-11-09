@@ -17,10 +17,10 @@ export type Json =
 
 // supabase/migrations/20261030120000_work_items.sql
 export type WorkItemStatusDb = "triage" | "todo" | "in_progress" | "done" | "declined" | "duplicate";
-export type WorkItemSourceDb = "app" | "slack" | "cli" | "api";
+export type WorkItemSourceDb = "app" | "slack" | "cli" | "api" | "linear" | "jira";
 
 // supabase/migrations/20261102120000_api_keys.sql
-export type WorkspaceSourceDb = "app" | "slack" | "automation" | "github" | "api";
+export type WorkspaceSourceDb = "app" | "slack" | "automation" | "github" | "api" | "linear" | "jira";
 
 export type WorkspaceStatusDb =
   | "creating"
@@ -1186,6 +1186,8 @@ type WorkItemRow = {
   source: WorkItemSourceDb;
   source_url: string | null;
   source_ref: string | null;
+  source_author: string | null;
+  tracker_installation_id: string | null;
   duplicate_of: string | null;
   workspace_id: string | null;
   triaged_at: string | null;
@@ -1204,6 +1206,149 @@ type WorkItemNoteRow = {
   source: WorkItemSourceDb;
   source_url: string | null;
   author: string | null;
+  source_ref: string | null;
+  created_at: string;
+};
+
+// supabase/migrations/20261108120000_trackers.sql
+export type TrackerProviderDb = "linear" | "jira";
+
+type TrackerInstallationRow = {
+  id: string;
+  provider: TrackerProviderDb;
+  external_id: string;
+  site_url: string | null;
+  name: string | null;
+  app_user_id: string | null;
+  access_token_ciphertext: string | null;
+  refresh_token_ciphertext: string | null;
+  token_expires_at: string | null;
+  refresh_expires_at: string | null;
+  refreshing_until: string | null;
+  webhook_id: string | null;
+  app_user_name: string | null;
+  webhook_expires_at: string | null;
+  installed_by: string | null;
+  disconnected_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type OrgTrackerInstallationRow = {
+  org_id: string;
+  installation_id: string;
+  connected_by: string | null;
+  created_at: string;
+};
+
+type TrackerScopeRow = {
+  id: string;
+  installation_id: string;
+  org_id: string;
+  external_team_id: string;
+  name: string | null;
+  set_by: string | null;
+  state_map: Json | null;
+  default_project_id: string | null;
+  accept_rule_sessions: boolean;
+  rule_sessions_per_day: number;
+  rule_sessions_on: string | null;
+  rule_sessions_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type TrackerRuleRow = {
+  id: string;
+  org_id: string;
+  scope_id: string;
+  position: number;
+  project_id: string | null;
+  labels: string[];
+  states: string[];
+  priorities: string[];
+  issue_types: string[];
+  assignees: string[];
+  set_by: string | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type TrackerLinkRow = {
+  installation_id: string;
+  external_user_id: string;
+  owner_id: string;
+  external_name: string | null;
+  created_at: string;
+};
+
+// supabase/migrations/20261109100000_linear_delegation.sql
+type LinearAgentSessionRow = {
+  agent_session_id: string;
+  installation_id: string;
+  org_id: string | null;
+  issue_id: string;
+  item_id: string | null;
+  workspace_id: string | null;
+  owner_id: string | null;
+  stage: "awaiting_repo" | "awaiting_link" | "working" | "stopped";
+  prompt: string | null;
+  rule_started: boolean;
+  ask: Json | null;
+  asked_user: string | null;
+  from_mention: boolean;
+  session_created_at: string | null;
+  team_id: string | null;
+  open_when_asked: boolean;
+  slot_taken: boolean;
+  stop_mark: string | null;
+  relayed_hash: string | null;
+  relay_until: string | null;
+  watch: Json | null;
+  last_said_at: string | null;
+  said_hash: string | null;
+  asked_digest: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type TrackerIssueClaimRow = {
+  installation_id: string;
+  issue_id: string;
+  holder: string;
+  until: string;
+};
+
+// supabase/migrations/20261110100000_jira_delegation.sql
+type JiraIssueSessionRow = {
+  installation_id: string;
+  issue_id: string;
+  org_id: string | null;
+  item_id: string | null;
+  workspace_id: string | null;
+  owner_id: string | null;
+  stage: "awaiting_repo" | "awaiting_link" | "working" | "stopped";
+  prompt: string | null;
+  comment_id: string | null;
+  asked_user: string | null;
+  ask_text: string | null;
+  team_id: string | null;
+  open_when_asked: boolean;
+  slot_taken: boolean;
+  stop_mark: string | null;
+  rule_started: boolean;
+  relayed_hash: string | null;
+  relay_until: string | null;
+  watch: Json | null;
+  asked_digest: string | null;
+  claim_until: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type TrackerEventSeenRow = {
+  event_id: string;
   created_at: string;
 };
 
@@ -1632,6 +1777,60 @@ export type Database = {
         Update: Partial<WorkItemNoteRow>;
         Relationships: [];
       };
+      tracker_installations: {
+        Row: TrackerInstallationRow;
+        Insert: Insert<TrackerInstallationRow, "provider" | "external_id">;
+        Update: Partial<TrackerInstallationRow>;
+        Relationships: [];
+      };
+      org_tracker_installations: {
+        Row: OrgTrackerInstallationRow;
+        Insert: Insert<OrgTrackerInstallationRow, "org_id" | "installation_id">;
+        Update: Partial<OrgTrackerInstallationRow>;
+        Relationships: [];
+      };
+      tracker_scopes: {
+        Row: TrackerScopeRow;
+        Insert: Insert<TrackerScopeRow, "installation_id" | "org_id" | "external_team_id">;
+        Update: Partial<TrackerScopeRow>;
+        Relationships: [];
+      };
+      tracker_rules: {
+        Row: TrackerRuleRow;
+        Insert: Insert<TrackerRuleRow, "org_id" | "scope_id">;
+        Update: Partial<TrackerRuleRow>;
+        Relationships: [];
+      };
+      tracker_links: {
+        Row: TrackerLinkRow;
+        Insert: Insert<TrackerLinkRow, "installation_id" | "external_user_id" | "owner_id">;
+        Update: Partial<TrackerLinkRow>;
+        Relationships: [];
+      };
+      linear_agent_sessions: {
+        Row: LinearAgentSessionRow;
+        Insert: Insert<LinearAgentSessionRow, "agent_session_id" | "installation_id" | "issue_id">;
+        Update: Partial<LinearAgentSessionRow>;
+        Relationships: [];
+      };
+      tracker_issue_claims: {
+        Row: TrackerIssueClaimRow;
+        Insert: TrackerIssueClaimRow;
+        Update: Partial<TrackerIssueClaimRow>;
+        Relationships: [];
+      };
+      jira_issue_sessions: {
+        Row: JiraIssueSessionRow;
+        Insert: Insert<JiraIssueSessionRow, "installation_id" | "issue_id">;
+        Update: Partial<JiraIssueSessionRow>;
+        Relationships: [];
+      };
+      tracker_events_seen: {
+        Row: TrackerEventSeenRow;
+        Insert: Insert<TrackerEventSeenRow, "event_id">;
+        Update: Partial<TrackerEventSeenRow>;
+        Relationships: [];
+      };
       slack_installations: {
         Row: SlackInstallationRow;
         Insert: Insert<SlackInstallationRow, "team_id" | "bot_user_id" | "bot_token_ciphertext">;
@@ -2056,6 +2255,8 @@ export type Database = {
         Returns: undefined;
       };
       // supabase/migrations/20261030120000_work_items.sql
+      claim_rule_session: { Args: { target_scope: string }; Returns: boolean };
+      claim_tracker_issue: { Args: { target_installation: string; target_issue: string; claimant: string; hold_seconds: number }; Returns: string | null };
       triage_project_levels: {
         Args: { member: string; target_org: string };
         Returns: { project_id: string; level: AccessLevelDb }[];

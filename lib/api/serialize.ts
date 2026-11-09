@@ -42,7 +42,7 @@ const STATUS: Record<WorkspaceStatus, ApiWorkspaceStatus> = {
 };
 
 export const API_STATUSES = [...new Set(Object.values(STATUS))] as readonly ApiWorkspaceStatus[];
-export const API_SOURCES: readonly WorkspaceSource[] = ["app", "slack", "automation", "github", "api"];
+export const API_SOURCES: readonly WorkspaceSource[] = ["app", "slack", "automation", "github", "api", "linear", "jira"];
 
 export function apiStatus(status: WorkspaceStatus): ApiWorkspaceStatus {
   return STATUS[status];

@@ -1,9 +1,10 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { getWorkItem, listNotes, ownsSession, updateWorkItem, WorkItemChangeError } from "@/lib/db/work-items";
 import { permissionsFor } from "@/lib/triage/access";
 import { triageCaller } from "@/lib/triage/caller";
-import { parseWorkItemPatch } from "@/lib/triage/work-items";
+import { tellTrackersDeclined } from "@/lib/trackers/write-back.deps";
+import { parseWorkItemPatch, trackerOwned } from "@/lib/triage/work-items";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -32,7 +33,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   const { id } = await context.params;
   try {
+    const before = patch.status === "declined" ? await getWorkItem(caller.actor, id) : null;
     const item = await updateWorkItem(caller.actor, id, patch);
+    // Declined just now, on an item following an issue: one comment there.
+    if (item && before && before.status !== "declined" && trackerOwned(item)) after(() => tellTrackersDeclined(item.id));
     if (!item) return NextResponse.json({ error: "Item not found." }, { status: 404 });
     return NextResponse.json({ item: { ...item, can: permissionsFor(caller.actor, item) } });
   } catch (error) {

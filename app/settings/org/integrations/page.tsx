@@ -5,15 +5,18 @@ import { redirect } from "next/navigation";
 import { KeyRound, Vault } from "lucide-react";
 import { Suspense } from "react";
 
-import { GitHubIcon, SlackIcon } from "@/components/brand-icons";
+import { GitHubIcon, JiraIcon, LinearIcon, SlackIcon } from "@/components/brand-icons";
 import { IntegrationCard } from "@/components/integration-card";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { listOrgInstallations } from "@/lib/db/github-installations";
 import { orgSecretIntegrations } from "@/lib/db/secret-sync";
 import { orgSlack } from "@/lib/db/slack-org";
+import { orgTrackers } from "@/lib/db/trackers";
 import { githubAppConfig } from "@/lib/github/app";
 import { getOrgContext } from "@/lib/orgs/server";
+import { jiraConfig } from "@/lib/trackers/jira";
+import { linearConfig } from "@/lib/trackers/linear";
 import { slackInstallUrl } from "@/lib/slack/sign-in";
 
 /** Opens at once, its data streaming in behind: the build checks it. */
@@ -21,7 +24,7 @@ export const unstable_instant = { prefetch: "static" };
 
 /**
  * Settings → Org → Integrations: the services the org connects for its
- * agents and automations (GitHub, Slack, and Doppler and Infisical for
+ * agents and automations (GitHub, Slack, Linear, Jira, and Doppler and Infisical for
  * projects' secrets), whether each is connected, and the
  * way to install or configure it. Each member's own Slack account is under
  * Account → Connections.
@@ -48,11 +51,13 @@ async function IntegrationsSection() {
     );
   }
   const admin = org.role === "admin";
-  const [installations, slack, secrets] = await Promise.all([
+  const [installations, slack, secrets, linear, jira] = await Promise.all([
     // What's recorded counts whether or not this server can install more.
     listOrgInstallations(org.id).catch(() => []),
     orgSlack(org.id).catch(() => null),
     orgSecretIntegrations(org.id).catch(() => ({ doppler: null, infisical: null })),
+    orgTrackers(org.id, "linear").catch(() => []),
+    orgTrackers(org.id, "jira").catch(() => []),
   ]);
   const github = installations.filter((i) => !i.suspended).map((i) => i.accountLogin);
   const slackTeams = (slack?.workspaces ?? []).filter((w) => w.installed).map((w) => w.teamName ?? w.teamId);
@@ -94,6 +99,34 @@ async function IntegrationsSection() {
               ? { kind: "configure", href: "/settings/org/slack" }
               : install
                 ? { kind: "install", href: install, external: true }
+                : null
+          }
+        />
+        <IntegrationCard
+          icon={<LinearIcon />}
+          name="Linear"
+          description="File issues to Triage by rules, and keep them in step."
+          connected={linear.length ? linear.map((l) => l.name ?? l.externalId).join(", ") : null}
+          problem={linear.some((l) => l.disconnected) ? "Disconnected: rules have stopped. Reconnect it." : null}
+          action={
+            linear.length
+              ? { kind: "configure", href: "/settings/org/linear" }
+              : admin && linearConfig()
+                ? { kind: "install", href: "/settings/org/linear" }
+                : null
+          }
+        />
+        <IntegrationCard
+          icon={<JiraIcon />}
+          name="Jira"
+          description="File issues to Triage by rules, and keep them in step."
+          connected={jira.length ? jira.map((j) => j.name ?? j.externalId).join(", ") : null}
+          problem={jira.some((j) => j.disconnected) ? "Disconnected: rules have stopped. Reconnect it." : null}
+          action={
+            jira.length
+              ? { kind: "configure", href: "/settings/org/jira" }
+              : admin && jiraConfig()
+                ? { kind: "install", href: "/settings/org/jira" }
                 : null
           }
         />

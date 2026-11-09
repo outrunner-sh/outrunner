@@ -26,6 +26,7 @@ function item(over: Partial<WorkItem> = {}): WorkItem {
     source: "app",
     sourceUrl: null,
     sourceRef: null,
+    sourceAuthor: null,
     duplicateOf: null,
     workspaceId: null,
     prompt: null,

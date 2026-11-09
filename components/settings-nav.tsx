@@ -102,6 +102,7 @@ export function SettingsNav({
               (href === "/settings/org/integrations" &&
                 (pathname === "/settings/org/github" ||
                   pathname === "/settings/org/slack" ||
+                  pathname === "/settings/org/linear" ||
                   pathname.startsWith("/settings/org/integrations/")));
             return (
               <Link

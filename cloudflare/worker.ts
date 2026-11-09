@@ -89,6 +89,14 @@ interface Env {
   SLACK_SIGNING_SECRET?: string;
   SLACK_CLIENT_ID?: string;
   SLACK_CLIENT_SECRET?: string;
+  /** The Outrunner Linear app (docs/linear-app.md). Without them, Linear
+   *  can't be connected. */
+  LINEAR_CLIENT_ID?: string;
+  LINEAR_CLIENT_SECRET?: string;
+  LINEAR_WEBHOOK_SECRET?: string;
+  /** The Outrunner Jira app (docs/jira-app.md). Without them, Jira can't be connected. */
+  JIRA_CLIENT_ID?: string;
+  JIRA_CLIENT_SECRET?: string;
   NEEV_API_KEY?: string;
   NEEV_ORG_ID?: string;
   NEEV_PROJECT_ID?: string;
@@ -322,6 +330,11 @@ export class OutrunnerControlPlane extends Container<Env> {
       ...(env.SLACK_SIGNING_SECRET ? { SLACK_SIGNING_SECRET: env.SLACK_SIGNING_SECRET } : {}),
       ...(env.SLACK_CLIENT_ID ? { SLACK_CLIENT_ID: env.SLACK_CLIENT_ID } : {}),
       ...(env.SLACK_CLIENT_SECRET ? { SLACK_CLIENT_SECRET: env.SLACK_CLIENT_SECRET } : {}),
+      ...(env.LINEAR_CLIENT_ID ? { LINEAR_CLIENT_ID: env.LINEAR_CLIENT_ID } : {}),
+      ...(env.LINEAR_CLIENT_SECRET ? { LINEAR_CLIENT_SECRET: env.LINEAR_CLIENT_SECRET } : {}),
+      ...(env.LINEAR_WEBHOOK_SECRET ? { LINEAR_WEBHOOK_SECRET: env.LINEAR_WEBHOOK_SECRET } : {}),
+      ...(env.JIRA_CLIENT_ID ? { JIRA_CLIENT_ID: env.JIRA_CLIENT_ID } : {}),
+      ...(env.JIRA_CLIENT_SECRET ? { JIRA_CLIENT_SECRET: env.JIRA_CLIENT_SECRET } : {}),
     };
     // No shared GITHUB_PAT / ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN: the
     // app stopped reading them when it went multi-user. Each user's own
@@ -394,6 +407,7 @@ const worker = {
         call("/api/webhooks/tick", "Webhooks tick"),
         call("/api/automations/tick", "Automations tick"),
         call("/api/sessions/tick", "Sessions tick"),
+        call("/api/integrations/trackers/tick", "Trackers tick"),
       ]),
     );
   },

@@ -5,7 +5,7 @@
  */
 
 export type WorkItemStatus = "triage" | "todo" | "in_progress" | "done" | "declined" | "duplicate";
-export type WorkItemSource = "app" | "slack" | "cli" | "api";
+export type WorkItemSource = "app" | "slack" | "cli" | "api" | "linear" | "jira";
 
 export const WORK_ITEM_STATUSES: readonly WorkItemStatus[] = [
   "triage",
@@ -15,7 +15,7 @@ export const WORK_ITEM_STATUSES: readonly WorkItemStatus[] = [
   "declined",
   "duplicate",
 ];
-export const WORK_ITEM_SOURCES: readonly WorkItemSource[] = ["app", "slack", "cli", "api"];
+export const WORK_ITEM_SOURCES: readonly WorkItemSource[] = ["app", "slack", "cli", "api", "linear", "jira"];
 
 export const STATUS_LABELS: Record<WorkItemStatus, string> = {
   triage: "Triage",
@@ -31,6 +31,8 @@ export const SOURCE_LABELS: Record<WorkItemSource, string> = {
   slack: "Slack",
   cli: "CLI",
   api: "API",
+  linear: "Linear",
+  jira: "Jira",
 };
 
 export type WorkItem = {
@@ -46,6 +48,9 @@ export type WorkItem = {
   source: WorkItemSource;
   sourceUrl: string | null;
   sourceRef: string | null;
+  /** Who wrote it where it came from ("Ana"); null when that's its capturer.
+   *  Only a tracker's items have one. */
+  sourceAuthor: string | null;
   duplicateOf: string | null;
   /** The session started from it. */
   workspaceId: string | null;
@@ -104,13 +109,19 @@ export function captureHref({ item, project }: { item?: string | null; project?:
   return `/triage?${params}`;
 }
 
+/** Whether an item's title and body are its tracker's (Linear, Jira), which
+ *  owns them: Outrunner follows them, rather than editing a copy. */
+export function trackerOwned(item: Pick<WorkItem, "source" | "sourceRef">): boolean {
+  return (item.source === "linear" || item.source === "jira") && item.sourceRef !== null;
+}
+
 /** Statuses still waiting on someone: triage and active work. */
 export function isOpen(status: WorkItemStatus): boolean {
   return status === "triage" || status === "todo" || status === "in_progress";
 }
 
 /** By character, so a cut never splits an emoji's surrogate pair. */
-function cut(text: string, max: number): string {
+export function cutText(text: string, max: number): string {
   const chars = Array.from(text);
   return chars.length <= max ? text : `${chars.slice(0, max - 1).join("").trimEnd()}…`;
 }
@@ -135,7 +146,7 @@ export function titleFromText(text: string, max = 80): string {
     .replace(/(\*\*|__|~~)(.+?)\1/g, "$2")
     .replace(/\s+/g, " ")
     .trim();
-  return cut(plain || line, Math.min(max, MAX_TITLE));
+  return cutText(plain || line, Math.min(max, MAX_TITLE));
 }
 
 /** A new item as asked for, checked; a string is why it's refused. */
@@ -184,7 +195,7 @@ export function parseNewWorkItem(
   if (body.length > MAX_BODY) return "The body is too long.";
   const givenTitle = optionalText(raw.title, 10_000);
   if (givenTitle === undefined) return "The title must be text.";
-  const title = givenTitle ? cut(givenTitle.replace(/\s+/g, " "), MAX_TITLE) : titleFromText(body);
+  const title = givenTitle ? cutText(givenTitle.replace(/\s+/g, " "), MAX_TITLE) : titleFromText(body);
   if (!title) return "A title or a body is required.";
   const project = optionalText(raw.project, 200);
   if (project === undefined) return "The project must be text.";
@@ -221,7 +232,7 @@ export function parseWorkItemPatch(input: unknown): WorkItemPatch | string {
   const patch: WorkItemPatch = {};
   if (raw.title !== undefined) {
     if (typeof raw.title !== "string" || !raw.title.trim()) return "The title can't be empty.";
-    patch.title = cut(raw.title.trim().replace(/\s+/g, " "), MAX_TITLE);
+    patch.title = cutText(raw.title.trim().replace(/\s+/g, " "), MAX_TITLE);
   }
   if (raw.body !== undefined) {
     if (typeof raw.body !== "string") return "The body must be text.";

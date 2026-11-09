@@ -9,6 +9,7 @@
  * write on all projects.
  */
 
+import { type TrackerIssue, trackerIssueOf } from "@/lib/trackers/issue-key";
 import { memberRole } from "@/lib/db/orgs";
 import { isUuid } from "@/lib/ids";
 import type { AccessLevel } from "@/lib/orgs/access";
@@ -18,6 +19,8 @@ import { canReadItem, type StatusReader } from "@/lib/slack/channel-access";
 import { canCapture, canMoveTo, canSee, canTriage, type TriageActor } from "@/lib/triage/access";
 import {
   isOpen,
+  SOURCE_LABELS,
+  trackerOwned,
   type WorkItem,
   type WorkItemNote,
   type WorkItemPatch,
@@ -47,6 +50,8 @@ function toWorkItem(row: ItemRow): WorkItem {
     source: row.source,
     sourceUrl: row.source_url,
     sourceRef: row.source_ref,
+    // Undefined until 20261108120000_trackers.sql is applied.
+    sourceAuthor: row.source_author ?? null,
     duplicateOf: row.duplicate_of,
     workspaceId: row.workspace_id,
     prompt: row.prompt,
@@ -281,7 +286,7 @@ async function itemBySourceRef(orgId: string, sourceRef: string): Promise<WorkIt
 }
 
 /** Put a closed item (done, declined, a duplicate) back in triage. */
-async function reopenWorkItem(orgId: string, id: string): Promise<WorkItem> {
+export async function reopenWorkItem(orgId: string, id: string): Promise<WorkItem> {
   const { data, error } = await db()
     .from("work_items")
     .update({ status: "triage", duplicate_of: null })
@@ -371,6 +376,10 @@ export async function updateWorkItem(actor: TriageActor, id: string, patch: Work
     throw new WorkItemChangeError("You can see this item but not triage it: that needs write on its workspace.", 403);
   }
 
+  if ((patch.title !== undefined || patch.body !== undefined) && trackerOwned(current)) {
+    throw new WorkItemChangeError(`Its title and description are ${SOURCE_LABELS[current.source]}'s: change them there.`);
+  }
+
   const update: Tables["work_items"]["Update"] = {};
   if (patch.title !== undefined) update.title = patch.title;
   if (patch.body !== undefined) update.body = patch.body;
@@ -407,16 +416,16 @@ export async function updateWorkItem(actor: TriageActor, id: string, patch: Work
     .maybeSingle();
   if (error) throw error;
   if (data && update.duplicate_of) {
-    // What duplicated this one now duplicates its target: one canonical item,
-    // never a chain (A → B → C).
-    const { error: repointError } = await db()
-      .from("work_items")
-      .update({ duplicate_of: update.duplicate_of })
-      .eq("org_id", actor.orgId)
-      .eq("duplicate_of", id);
-    if (repointError) throw repointError;
+    await repointDuplicates(actor.orgId, id, update.duplicate_of);
   }
   return data ? toWorkItem(data) : null;
+}
+
+/** What duplicated `from` now duplicates `to`, as `from` has become a duplicate
+ *  of it: one canonical item, never a chain (A → B → C). */
+async function repointDuplicates(orgId: string, from: string, to: string): Promise<void> {
+  const { error } = await db().from("work_items").update({ duplicate_of: to }).eq("org_id", orgId).eq("duplicate_of", from);
+  if (error) throw error;
 }
 
 /**
@@ -428,9 +437,9 @@ export async function linkWorkItemToSession(
   actor: TriageActor,
   itemId: string,
   session: { workspaceId: string; projectId: string },
-): Promise<void> {
+): Promise<boolean> {
   const current = await getWorkItem(actor, itemId);
-  if (!current || !actor.levels.has(session.projectId)) return;
+  if (!current || !actor.levels.has(session.projectId)) return false;
   // A triager's session triages it too: it is reopened, moved, and taken.
   // Anyone else's only marks an accepted item in its own workspace that no
   // session has taken yet: starting one is no way round triage rights.
@@ -441,7 +450,7 @@ export async function linkWorkItemToSession(
       current.projectId !== session.projectId ||
       current.workspaceId !== null)
   ) {
-    return;
+    return false;
   }
   const update = db()
     .from("work_items")
@@ -460,6 +469,232 @@ export async function linkWorkItemToSession(
     .eq("id", itemId);
   // Not taken since it was read: two readers' sessions at once can't both
   // take it.
-  const { error } = await (triager ? update : update.is("workspace_id", null));
+  const { data, error } = await (triager ? update : update.is("workspace_id", null)).select("id");
   if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
+// ---------------------------------------------------------------------------
+// What a tracker (Linear, Jira) does to an item: lib/trackers/linear-events.ts
+// decides who may, as Slack's handlers do; these only store it. Items are found
+// by source as well as ref: a member can give an item any ref through the API,
+// but only the server can give it a tracker's source, so no one can catch
+// another org's issue by naming it.
+// ---------------------------------------------------------------------------
+
+/** The org's item for a tracker's issue, or null. */
+export async function trackerItem(orgId: string, source: WorkItemSource, sourceRef: string): Promise<WorkItem | null> {
+  const { data, error } = await db()
+    .from("work_items")
+    .select("*")
+    .eq("org_id", orgId)
+    .eq("source", source)
+    .eq("source_ref", sourceRef)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toWorkItem(data) : null;
+}
+
+/** These orgs' items for a tracker's issue, and whose each is. More than one can follow it:
+ *  a team disconnected from one org and connected to another leaves the first with its item.
+ *  Which counts is the org the team is connected to now. */
+export async function trackerItemsInOrgs(
+  orgIds: readonly string[],
+  source: WorkItemSource,
+  sourceRef: string,
+): Promise<{ orgId: string; item: WorkItem }[]> {
+  if (orgIds.length === 0) return [];
+  const { data, error } = await db()
+    .from("work_items")
+    .select("*")
+    .in("org_id", [...orgIds])
+    .eq("source", source)
+    .eq("source_ref", sourceRef);
+  if (error) throw error;
+  return (data ?? []).map((row) => ({ orgId: row.org_id, item: toWorkItem(row) }));
+}
+
+/** An item of the org by id, or null: a duplicate's original, for a tracker. */
+export async function workItemInOrg(orgId: string, id: string): Promise<WorkItem | null> {
+  return orgItem(orgId, id);
+}
+
+export type TrackerFiling = {
+  title: string;
+  body: string;
+  projectId: string | null;
+  source: WorkItemSource;
+  sourceUrl: string | null;
+  sourceRef: string;
+  sourceAuthor: string | null;
+};
+
+/**
+ * A new item in triage for a tracker's issue, unless one has it already:
+ * two events for one new issue (made, then labelled) can arrive together, and
+ * the second isn't news, so it's no note either (unlike captureWorkItem's).
+ */
+export async function fileTrackerItem(actor: TriageActor, filing: TrackerFiling, installationId: string): Promise<WorkItem | null> {
+  if (!canCapture(actor, filing.projectId)) throw new WorkItemChangeError("You can't add items to that workspace.", 403);
+  const { data, error } = await db()
+    .from("work_items")
+    .insert({
+      org_id: actor.orgId,
+      created_by: actor.userId,
+      project_id: filing.projectId,
+      title: filing.title,
+      body: filing.body,
+      source: filing.source,
+      source_url: filing.sourceUrl,
+      source_ref: filing.sourceRef,
+      source_author: filing.sourceAuthor,
+      tracker_installation_id: installationId,
+    })
+    .select("*")
+    .single();
+  if (error) {
+    if (error.code === UNIQUE_VIOLATION) return null;
+    throw error;
+  }
+  return toWorkItem(data);
+}
+
+/** The tracker changed the title or description, which are its to change. */
+export async function followTrackerText(orgId: string, id: string, text: { title?: string; body?: string }): Promise<void> {
+  const { error } = await db().from("work_items").update(text).eq("org_id", orgId).eq("id", id);
+  if (error) throw error;
+}
+
+/** The tracker closed the issue: an item still open closes with it. One someone
+ *  decided on here (declined, a duplicate) stays as they left it. */
+export async function closeFromTracker(
+  orgId: string,
+  item: Pick<WorkItem, "id" | "triagedAt">,
+  close: { status: "done" | "declined" } | { status: "duplicate"; duplicateOf: string },
+): Promise<void> {
+  const { error } = await db()
+    .from("work_items")
+    .update({
+      status: close.status,
+      duplicate_of: close.status === "duplicate" ? close.duplicateOf : null,
+      ...(item.triagedAt ? {} : { triaged_at: new Date().toISOString() }),
+    })
+    .eq("org_id", orgId)
+    .eq("id", item.id)
+    .in("status", ["triage", "todo", "in_progress"]);
+  if (error) throw error;
+  if (close.status === "duplicate") await repointDuplicates(orgId, item.id, close.duplicateOf);
+}
+
+/** The issue moved out of the org's reach: the item stays, and no longer
+ *  follows it. Without the ref, nothing finds it from the tracker again. */
+export async function stopFollowingTracker(orgId: string, id: string): Promise<void> {
+  const { error } = await db().from("work_items").update({ source_ref: null }).eq("org_id", orgId).eq("id", id);
+  if (error) throw error;
+}
+
+export type TrackerNote = {
+  /** The member it's from, when there is one; `author` names who wrote it. */
+  authorId: string | null;
+  body: string;
+  source: WorkItemSource;
+  sourceUrl: string | null;
+  author: string | null;
+  sourceRef: string;
+};
+
+/** A note from the tracker, once per ref: a redelivery adds nothing. */
+export async function addTrackerNote(orgId: string, itemId: string, note: TrackerNote): Promise<void> {
+  const { error } = await db().from("work_item_notes").insert({
+    org_id: orgId,
+    item_id: itemId,
+    author_id: note.authorId,
+    body: note.body,
+    source: note.source,
+    source_url: note.sourceUrl,
+    author: note.author,
+    source_ref: note.sourceRef,
+  });
+  if (error) {
+    if (error.code === UNIQUE_VIOLATION) return;
+    throw error;
+  }
+  await db().from("work_items").update({ updated_at: new Date().toISOString() }).eq("org_id", orgId).eq("id", itemId);
+}
+
+/** A comment edited there: its note says the same, so what was edited out (a
+ *  pasted secret) leaves here too. Notes are otherwise append-only. */
+export async function editTrackerNote(sourceRef: string, body: string): Promise<void> {
+  const { error } = await db().from("work_item_notes").update({ body }).eq("source_ref", sourceRef);
+  if (error) throw error;
+}
+
+/** A comment deleted there: what its author withdrew leaves here too. */
+export async function deleteTrackerNote(sourceRef: string): Promise<void> {
+  const { error } = await db().from("work_item_notes").delete().eq("source_ref", sourceRef);
+  if (error) throw error;
+}
+
+/**
+ * A delegated session's item: in progress, on it. Unlike a session started from the
+ * app (linkWorkItemToSession), no triager has to have taken it: the delegation is the
+ * tracker's own say-so, already checked to be someone who may start a session there.
+ */
+export async function linkTrackerItem(orgId: string, itemId: string, session: { workspaceId: string; projectId: string }): Promise<void> {
+  const current = await orgItem(orgId, itemId);
+  if (!current) return;
+  const { error } = await db()
+    .from("work_items")
+    .update({
+      status: "in_progress",
+      workspace_id: session.workspaceId,
+      project_id: current.projectId ?? session.projectId,
+      duplicate_of: null,
+      ...(current.triagedAt ? {} : { triaged_at: new Date().toISOString() }),
+    })
+    .eq("org_id", orgId)
+    .eq("id", itemId);
+  if (error) throw error;
+}
+
+/** What it takes to write back to an item's issue. Null for one that doesn't follow this
+ *  tracker's issue, or from before its install was noted. A Jira ref is
+ *  `jira:<cloudId>/<issueId>`. */
+function followingOf(row: ItemRow, provider: "linear" | "jira"): { orgId: string; item: WorkItem; installationId: string; issueId: string } | null {
+  if (row.source !== provider || !row.source_ref?.startsWith(`${provider}:`) || !row.tracker_installation_id) return null;
+  const ref = row.source_ref.slice(provider.length + 1);
+  const issueId = provider === "jira" ? ref.slice(ref.lastIndexOf("/") + 1) : ref;
+  return { orgId: row.org_id, item: toWorkItem(row), installationId: row.tracker_installation_id, issueId };
+}
+
+export async function trackerFollowing(itemId: string, provider: "linear" | "jira"): Promise<ReturnType<typeof followingOf>> {
+  if (!isUuid(itemId)) return null;
+  const { data, error } = await db().from("work_items").select("*").eq("id", itemId).maybeSingle();
+  if (error) throw error;
+  return data ? followingOf(data, provider) : null;
+}
+
+/** The Linear or Jira issue a session works on, whichever org's: its item says. */
+export async function trackerIssueOfSession(workspaceId: string): Promise<TrackerIssue | null> {
+  const { data, error } = await db().from("work_items").select("source, source_url").eq("workspace_id", workspaceId).in("source", ["linear", "jira"]).limit(1).maybeSingle();
+  if (error) throw error;
+  return data ? trackerIssueOf({ source: data.source, sourceUrl: data.source_url }) : null;
+}
+
+/** An item's issue, with its title, for naming a session's branch. Only the org's own. */
+export async function trackerIssueOfItem(orgId: string, itemId: string): Promise<(TrackerIssue & { title: string }) | null> {
+  if (!isUuid(itemId)) return null;
+  const item = await workItemInOrg(orgId, itemId);
+  const issue = item ? trackerIssueOf(item) : null;
+  return item && issue ? { ...issue, title: item.title } : null;
+}
+
+/** The items a session works on that follow this tracker's issues. */
+export async function trackersOfSession(workspaceId: string, provider: "linear" | "jira"): Promise<NonNullable<ReturnType<typeof followingOf>>[]> {
+  const { data, error } = await db().from("work_items").select("*").eq("workspace_id", workspaceId).eq("source", provider);
+  if (error) throw error;
+  return (data ?? []).flatMap((row) => {
+    const following = followingOf(row, provider);
+    return following ? [following] : [];
+  });
 }
