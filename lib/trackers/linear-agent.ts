@@ -179,14 +179,13 @@ function taggedRepo(source: string | null, readable: readonly Project[]): Projec
 }
 
 /**
- * Which repository a delegation runs on, in order: a tag in the comment or the issue,
+ * Which repository a delegation runs on, in order: a tag in their own words,
  * the item's own project, the team's default, a tag in Linear's guidance. Only
  * projects the runner can read count. Null: Linear's suggestion, then ask.
  * Prose in guidance isn't read for repositories: only a tag says so.
  */
 export function pickRepo(input: {
   comment: string | null;
-  description: string | null;
   itemProjectId: string | null;
   defaultProjectId: string | null;
   guidance: readonly string[];
@@ -195,7 +194,6 @@ export function pickRepo(input: {
   const byId = (id: string | null) => (id ? (input.readable.find((p) => p.id === id) ?? null) : null);
   return (
     taggedRepo(input.comment, input.readable) ??
-    taggedRepo(input.description, input.readable) ??
     byId(input.itemProjectId) ??
     byId(input.defaultProjectId) ??
     input.guidance.map((g) => taggedRepo(g, input.readable)).find(Boolean) ??
@@ -277,20 +275,15 @@ type Runner = {
 
 /**
  * What can name a repository or model, on the runner's account and allowance: their own words,
- * and the description only if it's theirs too. Anyone who can edit an issue can edit that, and
- * someone else's delegation mustn't pick where they run for them. Guidance is an admin's, and
- * is read apart.
+ * and only those. Not the description, even of an issue they made: anyone who can edit it can
+ * edit that, and someone else mustn't pick where they run. Guidance is an admin's, and is read
+ * apart.
  */
-async function tagSources({ installation, payload, deps }: Context, runner: Runner): Promise<{ words: string | null; description: string | null }> {
+function tagWords({ payload }: Context, runner: Runner): string | null {
   const comment = payload.agentSession?.comment;
   const theirComment = runner.externalId && text(comment?.userId) === runner.externalId ? text(comment?.body) : null;
   const theirReply = runner.externalId && text(payload.saidBy) === runner.externalId ? text(payload.said) : null;
-  const words = [theirReply, theirComment].filter(Boolean).join("\n") || null;
-  const description = text(payload.agentSession?.issue?.description);
-  const issueId = issueIdOf(payload);
-  if (!description || !issueId || !/repo=|model=/i.test(description) || !runner.externalId) return { words, description: null };
-  const creator = await deps.creator(installation.id, issueId).catch(() => null);
-  return { words, description: creator?.id === runner.externalId ? description : null };
+  return [theirReply, theirComment].filter(Boolean).join("\n") || null;
 }
 
 /** What's worth keeping of a delegation, capped: a later event needn't repeat it. */
@@ -323,8 +316,9 @@ type Context = {
   deps: AgentDeps;
   /** Someone asked again after a stop: that stop isn't what this one answers to. */
   restart?: boolean;
-  /** A delegation's first event: there may be no row yet for an un-delegate to find. */
-  firstLook?: boolean;
+  /** Just delegated: it may be taken back before there's a row saying so for an un-delegate to
+   *  find, as a first one has no row, and a re-delegation's stays stopped until it's written. */
+  justDelegated?: boolean;
   /** The payload was kept from earlier, so what it says of the issue may have changed. */
   kept?: boolean;
 };
@@ -351,7 +345,7 @@ export async function handleAgentEvent(installation: TrackerInstallation, payloa
     deps.defer(() => guarded(context, DIDNT_START, () => holdingIssue(context, { whenHeld: "silent-if-mine" }, async () => {
       // It may have finished while this waited, or been stopped.
       if (await deps.row(agentSessionId)) return false;
-      return delegate({ ...context, firstLook: true });
+      return delegate({ ...context, justDelegated: true });
     })));
     return { handled: true };
   }
@@ -429,7 +423,7 @@ export async function handleRedelegated(
       sourceMetadata: null,
     },
   };
-  const context: Context = { installation, agentSessionId: row.agentSessionId, payload, deps, restart: true };
+  const context: Context = { installation, agentSessionId: row.agentSessionId, payload, deps, restart: true, justDelegated: true };
   await guarded(context, DIDNT_START, () =>
     holdingIssue(context, { whenHeld: "say" }, async () => {
       const now = await deps.latestRow(installation.id, again.issueId);
@@ -686,11 +680,9 @@ async function delegate(context: Context): Promise<boolean> {
   if (readable.length === 0) {
     return refuse(context, scope.orgId, REPLIES.noRepos, runner.ruleStarted);
   }
-  const tags = await tagSources(context, runner);
   const settled = pickRepo({
       // What they've just said counts before what was first asked.
-      comment: tags.words,
-      description: tags.description,
+      comment: tagWords(context, runner),
       itemProjectId: item?.projectId ?? null,
       defaultProjectId: scope.defaultProjectId,
       guidance: guidanceBodies(payload.guidance),
@@ -793,8 +785,8 @@ async function steerExisting(
  * if after, its event finds the row. An @mention isn't a delegation, and doesn't need one.
  */
 async function stopIfTakenBack(context: Context): Promise<boolean> {
-  const { installation, agentSessionId, payload, deps, firstLook } = context;
-  if (!firstLook || payload.agentSession?.sourceMetadata?.type === "comment") return false;
+  const { installation, agentSessionId, payload, deps, justDelegated } = context;
+  if (!justDelegated || payload.agentSession?.sourceMetadata?.type === "comment") return false;
   const standing = await deps.standing(installation.id, issueIdOf(payload) as string).catch(() => null);
   if (!standing || standing.delegateId === installation.appUserId) return false;
   await deps.stopRow(agentSessionId);
@@ -846,8 +838,7 @@ async function startSession(context: Context, scope: TrackerScope, runner: Runne
   if (seen ? (now?.stopMark ?? null) !== (seen.stopMark ?? null) : now) return false;
   if (runner.ruleStarted && !runner.slotTaken && !(await deps.claimRuleSession(scope.id))) return refuse(context, scope.orgId, capReply(scope.ruleSessionsPerDay), true);
 
-  const tags = await tagSources(context, runner);
-  const { model, unknown } = pickModel(tags.words, tags.description);
+  const { model, unknown } = pickModel(tagWords(context, runner));
   if (unknown) {
     await deps.say(installation.id, agentSessionId, {
       type: "thought",

@@ -345,12 +345,11 @@ test("a rule's delegation with its creator unlinked is asked to link, and nothin
 
 const readable = [WEB, API];
 const pick = (over: Partial<Parameters<typeof pickRepo>[0]>) =>
-  pickRepo({ comment: null, description: null, itemProjectId: null, defaultProjectId: null, guidance: [], readable, ...over });
+  pickRepo({ comment: null, itemProjectId: null, defaultProjectId: null, guidance: [], readable, ...over });
 
 test("the repo order: comment tag, issue tag, item, team default, guidance tag", () => {
-  const everything = { comment: "[repo=acme/web]", description: "[repo=acme/api]", itemProjectId: API.id, defaultProjectId: API.id, guidance: ["[repo=acme/api]"] };
+  const everything = { comment: "[repo=acme/web]", itemProjectId: API.id, defaultProjectId: API.id, guidance: ["[repo=acme/api]"] };
   assert.equal(pick(everything), WEB);
-  assert.equal(pick({ ...everything, comment: null, description: "[repo=acme/web]" }), WEB);
   assert.equal(pick({ itemProjectId: WEB.id, defaultProjectId: API.id, guidance: ["[repo=acme/api]"] }), WEB);
   assert.equal(pick({ defaultProjectId: WEB.id, guidance: ["[repo=acme/api]"] }), WEB);
   assert.equal(pick({ guidance: ["nothing here", "[repo=acme/web]"] }), WEB);
@@ -359,8 +358,8 @@ test("the repo order: comment tag, issue tag, item, team default, guidance tag",
 
 test("a repo the runner can't read doesn't count, and the next one in the order does", () => {
   assert.equal(pick({ comment: "[repo=acme/secret]", defaultProjectId: WEB.id }), WEB);
-  assert.equal(pickRepo({ comment: null, description: null, itemProjectId: API.id, defaultProjectId: WEB.id, guidance: [], readable: [WEB] }), WEB);
-  assert.equal(pickRepo({ comment: null, description: null, itemProjectId: null, defaultProjectId: API.id, guidance: [], readable: [WEB] }), null);
+  assert.equal(pickRepo({ comment: null, itemProjectId: API.id, defaultProjectId: WEB.id, guidance: [], readable: [WEB] }), WEB);
+  assert.equal(pickRepo({ comment: null, itemProjectId: null, defaultProjectId: API.id, guidance: [], readable: [WEB] }), null);
 });
 
 test("prose in guidance isn't read for repositories", () => {
@@ -435,7 +434,7 @@ test("a model tag picks one of Outrunner's; an unknown one is said, and doesn't 
   assert.deepEqual(pickModel("[model=nope]"), { unknown: "nope" });
   assert.deepEqual(pickModel(null, "no tag"), {});
   const h = harness({}, { scope: scope({ defaultProjectId: WEB.id }) });
-  await send(created({ issue: { description: "[model=nope]" } }), h);
+  await send(created({ session: { comment: { userId: "ana", body: "[model=nope]" } } }), h);
   assert.equal(h.log.started.length, 1);
   assert.equal(h.log.started[0].model, undefined);
   assert.ok(said(h.log).some((c) => c.type === "thought" && c.body.includes("nope")));
@@ -999,7 +998,7 @@ test("an event with no agent session, or an action we don't know, does nothing",
 
 test("a tag typed in Linear arrives escaped, and still counts", () => {
   const readable = [WEB, API, { id: "33333333-3333-4333-8333-333333333333", fullName: "acme/web_x.y" }];
-  const asked = (comment: string | null, guidance: string[] = []) => pickRepo({ comment, description: null, itemProjectId: null, defaultProjectId: null, guidance, readable });
+  const asked = (comment: string | null, guidance: string[] = []) => pickRepo({ comment, itemProjectId: null, defaultProjectId: null, guidance, readable });
   assert.equal(asked("please use \\[repo=acme/api\\] thanks")?.id, API.id);
   assert.equal(asked("\\[repo=acme/web\\_x.y\\]")?.fullName, "acme/web_x.y");
   assert.equal(asked(null, ["Team guidance. Default \\[repo=acme/api\\]."])?.id, API.id);
@@ -1071,7 +1070,7 @@ test("code is left as written, and a tag quoted in code isn't one being used", (
   assert.equal(withoutEscapes("before \\_x\n```\nre = /a\\.b\\[c/\n```\nafter \\_y"), "before _x\n```\nre = /a\\.b\\[c/\n```\nafter _y");
   assert.equal(withoutEscapes("```\nnever closed \\."), "```\nnever closed \\.");
   assert.equal(withoutEscapes("an escaped \\` isn't code \\."), "an escaped ` isn't code .");
-  const asked = (comment: string) => pickRepo({ comment, description: null, itemProjectId: null, defaultProjectId: null, guidance: [], readable: [WEB, API] });
+  const asked = (comment: string) => pickRepo({ comment, itemProjectId: null, defaultProjectId: null, guidance: [], readable: [WEB, API] });
   assert.equal(asked("run with `[repo=acme/api]` as the tag"), null);
   assert.equal(asked("```\n[repo=acme/api]\n```"), null);
   assert.equal(asked("`[repo=acme/web]` is how, but \\[repo=acme/api\\]")?.id, API.id);
@@ -1358,7 +1357,7 @@ test("a row knows a session its item doesn't: it's told, rather than a second on
   assert.deepEqual(h.log.started, []);
 });
 
-test("a tag counts from their own words, and the description only if the issue's theirs", async () => {
+test("a tag counts from their own words, and never the description: anyone who can edit it can edit that", async () => {
   const run = async (session: Record<string, unknown>, issue: Record<string, unknown>, creator = { id: "ana", name: "Ana" }) => {
     const h = harness({ creator: async () => creator }, { scope: scope({ defaultProjectId: WEB.id }) });
     await send(created({ session, issue }), h);
@@ -1367,12 +1366,12 @@ test("a tag counts from their own words, and the description only if the issue's
   assert.equal(await run({ comment: { userId: "ana", body: "[repo=acme/api]" } }, {}), API.id, "their comment");
   assert.equal(await run({ comment: { userId: "zed", body: "[repo=acme/api]" } }, {}), WEB.id, "someone else's");
   assert.equal(await run({ comment: { body: "[repo=acme/api]" } }, {}), WEB.id, "no one's");
-  assert.equal(await run({}, { description: "[repo=acme/api]" }), API.id, "they made the issue");
-  assert.equal(await run({}, { description: "[repo=acme/api]" }, { id: "zed", name: "Zed" }), WEB.id, "someone else made it");
+  assert.equal(await run({}, { description: "[repo=acme/api]" }), WEB.id, "even of an issue they made");
+  assert.equal(await run({}, { description: "[repo=acme/api]" }, { id: "zed", name: "Zed" }), WEB.id, "or someone else did");
   const guided = harness({ creator: async () => ({ id: "zed", name: "Zed" }) }, { scope: scope() });
   await send(created({ guidance: [{ body: "[repo=acme/api]" }] }), guided);
   assert.equal(guided.log.started[0]?.projectId, API.id, "guidance is an admin's");
-  const model = harness({ creator: async () => ({ id: "zed", name: "Zed" }) }, { scope: scope({ defaultProjectId: WEB.id }) });
+  const model = harness({}, { scope: scope({ defaultProjectId: WEB.id }) });
   await send(created({ issue: { description: `[model=${OUTRUNNER_MODELS[0].id}]` } }), model);
   assert.equal(model.log.started[0]?.model, undefined, "nor a model on their allowance");
 });
@@ -1763,4 +1762,21 @@ test("a run on Linear's suggestion says so before it starts", async () => {
   await send(created(), h);
   const told = order.findIndex((body) => body.includes("Linear suggested"));
   assert.ok(told >= 0 && told < order.indexOf("started"), "told first");
+});
+
+test("un-delegated again while a re-delegation is under way: it's found once the row's written, and nothing starts", async () => {
+  const row = working({ stage: "stopped", workspaceId: null, ask: askOf(created()) });
+  const gone = { standing: async () => ({ teamId: TEAM, delegateId: null, open: true, stateType: "unstarted" }) };
+  const start = harness(gone, { scope: scope({ defaultProjectId: WEB.id }), row });
+  await handleRedelegated(INSTALL, again, start.deps);
+  assert.deepEqual(start.log.started, []);
+  assert.equal(start.current()?.stage, "stopped");
+  const steer = harness(gone, { scope: scope({ defaultProjectId: WEB.id }), item: item({ workspaceId: "w" }), row });
+  await handleRedelegated(INSTALL, again, steer.deps);
+  assert.deepEqual(steer.log.stopped, ["w"], "told already, so interrupted");
+  assert.deepEqual(steer.log.watches, []);
+  // A reply starting a stopped one again isn't a delegation, and needs none.
+  const reply = harness(gone, { scope: scope({ defaultProjectId: WEB.id }), row });
+  await send(prompted("again"), reply);
+  assert.equal(reply.log.started.length, 1);
 });

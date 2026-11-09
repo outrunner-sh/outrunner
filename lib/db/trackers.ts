@@ -342,11 +342,13 @@ export async function trackerEventSeen(eventId: string): Promise<boolean> {
   return data !== null;
 }
 
-/** Note an event as done. Only once it is: a crash part way leaves it for the
- *  redelivery, and two deliveries at once are safe, as every step can repeat. */
-export async function markTrackerEventSeen(eventId: string): Promise<void> {
-  const { error } = await db().from("tracker_events_seen").upsert({ event_id: eventId }, { onConflict: "event_id", ignoreDuplicates: true });
+/** Note an event as done. Only once it is: a crash part way leaves it for the redelivery, and
+ *  two deliveries at once can both handle it, as every step can repeat. Whether this was the
+ *  first to get here: what can't repeat, starting anything, goes only with that. */
+export async function markTrackerEventSeen(eventId: string): Promise<boolean> {
+  const { data, error } = await db().from("tracker_events_seen").upsert({ event_id: eventId }, { onConflict: "event_id", ignoreDuplicates: true }).select("event_id");
   if (error) throw error;
+  return (data ?? []).length > 0;
 }
 
 export async function pruneTrackerEvents(before: number): Promise<void> {

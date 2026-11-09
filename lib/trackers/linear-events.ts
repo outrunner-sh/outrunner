@@ -42,7 +42,8 @@ export type LinearEventDeps = ArchiveClosedDeps & {
    *  disconnected: a refused refresh does that on the way. */
   appTokenWorks(installationId: string): Promise<boolean>;
   eventSeen(eventId: string): Promise<boolean>;
-  markEventSeen(eventId: string): Promise<void>;
+  /** Whether this was the first to mark it. */
+  markEventSeen(eventId: string): Promise<boolean>;
   scopeForTeam(installationId: string, teamId: string): Promise<TrackerScope | null>;
   rulesForScope(scopeId: string): Promise<TrackerRule[]>;
   orgIds(installationId: string): Promise<string[]>;
@@ -167,9 +168,9 @@ export async function handleLinearEvent(input: LinearEventInput, deps: LinearEve
         : payload.type === "Comment"
         ? await handleComment(installation, payload, deps)
         : ignored("not an issue or comment");
-  // Marked first: if that fails, the redelivery finds nothing started by the first.
-  await deps.markEventSeen(eventId);
-  for (const work of afterSeen) deps.defer(work);
+  // Marked first: if that fails, the redelivery finds nothing started by the first. Of two
+  // copies at once, only whichever marked it first acts.
+  if (await deps.markEventSeen(eventId)) for (const work of afterSeen) deps.defer(work);
   return result;
 }
 

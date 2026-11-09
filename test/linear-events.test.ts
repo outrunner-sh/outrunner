@@ -121,7 +121,11 @@ function harness(over: Partial<LinearEventDeps> = {}, setup: { scopes?: TrackerS
       return false;
     },
     eventSeen: async (id) => seen.has(id),
-    markEventSeen: async (id) => void seen.add(id),
+    markEventSeen: async (id) => {
+      const first = !seen.has(id);
+      seen.add(id);
+      return first;
+    },
     scopeForTeam: async (_i, team) => scopes.find((s) => s.externalTeamId === team) ?? null,
     rulesForScope: async () => setup.rules ?? [rule()],
     orgIds: async () => [ORG, OTHER_ORG],
@@ -788,7 +792,7 @@ test("a comment on an issue now in another org's team adds nothing here", async 
 
 test("a comment on an issue Linear no longer has is answered, not retried", async () => {
   const seen: string[] = [];
-  const { deps, log } = harness({ issueStanding: async () => null, markEventSeen: async (id) => void seen.push(id) }, { items: held() });
+  const { deps, log } = harness({ issueStanding: async () => null, markEventSeen: async (id) => (seen.push(id), true) }, { items: held() });
   const result = await send(commentEvent(), deps);
   assert.equal(result.reason, "issue not found");
   assert.equal(log.notes.length, 0);
@@ -902,7 +906,7 @@ test("a crash before the event is marked seen loses nothing: it's marked only on
       order.push("filed");
       return item();
     },
-    markEventSeen: async () => void order.push("marked"),
+    markEventSeen: async () => (order.push("marked"), true),
   });
   await send(issueEvent(), deps);
   assert.deepEqual(order, ["filed", "marked"]);
@@ -1199,4 +1203,13 @@ test("a comment edited down to nothing with text: what it said still goes", asyn
   const { deps, log } = harness({}, { items: held() });
   await send(commentEvent({ action: "update" }, { body: "" }), deps);
   assert.deepEqual(log.edited.map((e) => e.body), ["Edited in Linear to something with no text."]);
+});
+
+test("two copies of one agent event at once: only the first to mark it asks for later work", async () => {
+  const event = { type: "AgentSessionEvent", action: "created", organizationId: INSTALL.externalId, agentSession: { id: "a" } };
+  const later: unknown[] = [];
+  let marks = 0;
+  const { deps } = harness({ eventSeen: async () => false, markEventSeen: async () => ++marks === 1, defer: (work) => void later.push(work) });
+  await Promise.all([send(event, deps), send(event, deps)]);
+  assert.equal(later.length, 1);
 });

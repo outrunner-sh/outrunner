@@ -52,7 +52,7 @@ function relayDeps(installationId: string, issueId: string): RelayDeps {
       return session ? boxSummaryLook(session) : { reachable: false, working: null, summary: null };
     },
     saveWatch: (_id, sentAt, state) => saveJiraWatch(installationId, issueId, sentAt, state),
-    claimFinal: (_id, digest) => claimJiraReply(installationId, issueId, digest),
+    claimFinal: (_id, digest, sentAt) => claimJiraReply(installationId, issueId, digest, sentAt),
     restoreFinal: (_id, row) => restoreJiraReply(installationId, issueId, row),
     claimQuestion: (_id, digest) => claimJiraQuestion(installationId, issueId, digest),
     releaseQuestion: () => releaseJiraQuestion(installationId, issueId),

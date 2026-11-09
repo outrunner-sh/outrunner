@@ -256,12 +256,13 @@ export async function saveAgentWatch(agentSessionId: string, sentAt: number, sta
 }
 
 /** Take the end of the turn, closing its watch; false when it's been said. */
-export async function claimAgentReply(agentSessionId: string, digest: string): Promise<boolean> {
+export async function claimAgentReply(agentSessionId: string, digest: string, sentAt: number): Promise<boolean> {
   const { data, error } = await db()
     .from("linear_agent_sessions")
     .update({ relayed_hash: digest, relay_until: null, watch: null })
     .eq("agent_session_id", agentSessionId)
     .not("relay_until", "is", null)
+    .filter("watch->>sentAt", "eq", String(sentAt))
     .select("agent_session_id");
   if (error) throw error;
   return (data ?? []).length > 0;
@@ -276,7 +277,9 @@ export async function restoreAgentReply(agentSessionId: string, row: RelayRow): 
       watch: row.watch as unknown as Json,
     })
     .eq("agent_session_id", agentSessionId)
-    .neq("stage", "stopped");
+    .neq("stage", "stopped")
+    // A turn sent since has its own watch, which this mustn't write over.
+    .is("watch", null);
   if (error) throw error;
 }
 

@@ -66,7 +66,8 @@ export type RelayDeps = {
   /** Keep what's known, on the watch it read: a send since has opened a new one. */
   saveWatch(agentSessionId: string, sentAt: number, state: WatchState): Promise<void>;
   /** Take the end of this turn, closing the watch; false when it's been said. */
-  claimFinal(agentSessionId: string, digest: string): Promise<boolean>;
+  /** Only for the turn sent at `sentAt`: a newer one has its own to say. */
+  claimFinal(agentSessionId: string, digest: string, sentAt: number): Promise<boolean>;
   restoreFinal(agentSessionId: string, row: RelayRow): Promise<void>;
   /** Take this wait; false when it's been asked. */
   claimQuestion(agentSessionId: string, digest: string): Promise<boolean>;
@@ -120,8 +121,9 @@ async function lookOnce(agentSessionId: string, deps: RelayDeps): Promise<boolea
   const now = deps.now();
   const capped = (message: string) => (deps.messageMax !== null && message.length > deps.messageMax ? `${message.slice(0, deps.messageMax)}…` : message);
 
+  const { sentAt } = row.watch;
   const finish = async (content: LinearActivity): Promise<void> => {
-    if (!(await deps.claimFinal(agentSessionId, hash(content.body)))) return;
+    if (!(await deps.claimFinal(agentSessionId, hash(content.body), sentAt))) return;
     try {
       await deps.say(row.installationId, agentSessionId, content);
     } catch (error) {

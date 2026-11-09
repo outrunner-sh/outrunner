@@ -76,8 +76,8 @@ A session started from Linear runs on the person's Outrunner allowance, not thei
 already exists runs on whatever that session uses: a rule only ever does that to a session its runner owns, and it counts
 against the day's cap.
 
-**Whose words count:** a tag counts from the delegator's own comment or reply, from Linear's guidance, and from the description
-only when they created the issue, as anyone who can edit it could otherwise pick where they run.
+**Whose words count:** a tag counts from the delegator's own comment or reply, and from Linear's guidance. Not from the description,
+even of an issue they created, as anyone who can edit it could otherwise pick where they run.
 
 **Who sees what:** replies post in the agent session, where anyone who can read the issue sees them, and a question lists
 repositories they can use. Anyone in the workspace can press Stop or un-delegate: those only ever stop work.

@@ -42,7 +42,7 @@ import {
   transitionWorkspace,
 } from "@/lib/db/repositories";
 import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
-import { linkWorkItemToSession, projectOrgId, triageActor, trackerIssueOfItem } from "@/lib/db/work-items";
+import { getWorkItem, linkWorkItemToSession, projectOrgId, triageActor, trackerIssueOfItem } from "@/lib/db/work-items";
 import { freeIssueBranch } from "@/lib/session/issue-branch";
 import { withFreeBranch } from "@/lib/trackers/issue-key";
 import { tellTrackersSessionStarted } from "@/lib/trackers/write-back.deps";
@@ -125,9 +125,12 @@ async function madeBefore(id: string, ownerId: string, projectId: string): Promi
 }
 
 /** The branch a session on this item's issue is on; null when it follows none. */
-async function branchOfItem(projectId: string, workItemId: string): Promise<string | null> {
+async function branchOfItem(userId: string, projectId: string, workItemId: string): Promise<string | null> {
   const orgId = await projectOrgId(projectId);
-  const issue = orgId ? await trackerIssueOfItem(orgId, workItemId) : null;
+  // Its title names the branch, so only an item they can see: linking it comes later.
+  const actor = orgId ? await triageActor(userId, orgId) : null;
+  const visible = actor ? await getWorkItem(actor, workItemId) : null;
+  const issue = orgId && visible ? await trackerIssueOfItem(orgId, workItemId) : null;
   return issue ? freeIssueBranch(projectId, issue, issue.title) : null;
 }
 
@@ -457,7 +460,7 @@ async function createOnce(
 
   let workspace;
   // On a tracker's issue, it's named for that (lib/trackers/issue-key.ts). Not worth failing over.
-  const issueBranchName = !requestedBranch && typeof body.workItemId === "string" && body.workItemId ? await branchOfItem(project.id, body.workItemId).catch(() => null) : null;
+  const issueBranchName = !requestedBranch && typeof body.workItemId === "string" && body.workItemId ? await branchOfItem(owner.id, project.id, body.workItemId).catch(() => null) : null;
 
   try {
     // Two people starting on one item can both find a name free. The one that loses tries once
@@ -479,7 +482,7 @@ async function createOnce(
           kind: options.kind,
           parentMissionId: options.parentMissionId,
         }),
-      () => branchOfItem(project.id, body.workItemId as string).catch(() => null),
+      () => branchOfItem(owner.id, project.id, body.workItemId as string).catch(() => null),
       (error) => isUniqueViolation(error) && !isIdTaken(error),
     );
     progress.inserted = true;

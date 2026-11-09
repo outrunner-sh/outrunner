@@ -231,13 +231,14 @@ export async function saveJiraWatch(installationId: string, issueId: string, sen
 }
 
 /** Take the end of the turn, closing its watch; false when it's been said. */
-export async function claimJiraReply(installationId: string, issueId: string, digest: string): Promise<boolean> {
+export async function claimJiraReply(installationId: string, issueId: string, digest: string, sentAt: number): Promise<boolean> {
   const { data, error } = await db()
     .from("jira_issue_sessions")
     .update({ relayed_hash: digest, relay_until: null, watch: null })
     .eq("installation_id", installationId)
     .eq("issue_id", issueId)
     .not("relay_until", "is", null)
+    .filter("watch->>sentAt", "eq", String(sentAt))
     .select("issue_id");
   if (error) throw error;
   return (data ?? []).length > 0;
@@ -253,7 +254,9 @@ export async function restoreJiraReply(installationId: string, issueId: string, 
     })
     .eq("installation_id", installationId)
     .eq("issue_id", issueId)
-    .neq("stage", "stopped");
+    .neq("stage", "stopped")
+    // A turn sent since has its own watch, which this mustn't write over.
+    .is("watch", null);
   if (error) throw error;
 }
 

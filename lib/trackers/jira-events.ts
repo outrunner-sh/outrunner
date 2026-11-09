@@ -41,7 +41,8 @@ export type JiraEventDeps = ArchiveClosedDeps &
   FilingDeps & {
     installation(hint: JiraSiteHint): Promise<TrackerInstallation | null>;
     eventSeen(eventId: string): Promise<boolean>;
-    markEventSeen(eventId: string): Promise<void>;
+    /** Whether this was the first to mark it. */
+    markEventSeen(eventId: string): Promise<boolean>;
     scopeForTeam(installationId: string, projectId: string): Promise<TrackerScope | null>;
     rulesForScope(scopeId: string): Promise<TrackerRule[]>;
     orgIds(installationId: string): Promise<string[]>;
@@ -177,9 +178,9 @@ export async function handleJiraEvent(input: JiraEventInput, deps: JiraEventDeps
           ? await handleComment(installation, payload, triggers, deps)
           : ignored("not an issue or comment");
   // Marked first: if that fails, the retry finds nothing asked for yet, rather than a session
-  // told twice.
-  await deps.markEventSeen(eventId);
-  for (const trigger of triggers) deps.trigger(installation, trigger);
+  // told twice. Two copies at once are expected, as a webhook's replacement overlaps the old
+  // one: only whichever marked it first acts.
+  if (await deps.markEventSeen(eventId)) for (const trigger of triggers) deps.trigger(installation, trigger);
   return result;
 }
 

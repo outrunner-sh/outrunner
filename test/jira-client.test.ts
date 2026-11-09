@@ -48,6 +48,14 @@ test("a webhook's token is checked: its secret, its algorithm, and its expiry", 
   assert.equal(verifyJiraWebhookToken(`Bearer ${jwt(live, { secret: "other" })}`, SECRET, NOW), false, "another's secret");
   assert.equal(verifyJiraWebhookToken(`Bearer ${jwt(live, { alg: "none" })}`, SECRET, NOW), false, "no token chooses how it's checked");
   assert.equal(verifyJiraWebhookToken(null, SECRET, NOW), false);
+  const b64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  assert.equal(verifyJiraWebhookToken(`Bearer ${b64(null)}.${b64({ exp: NOW / 1000 + 60 })}.x`, SECRET, NOW), false, "a null header isn't a failure to answer");
+  const signed = (claims: unknown) => {
+    const head = `${b64({ alg: "HS256" })}.${b64(claims)}`;
+    return `Bearer ${head}.${createHmac("sha256", SECRET).update(head).digest("base64url")}`;
+  };
+  assert.equal(verifyJiraWebhookToken(signed({ exp: NOW / 1000 + 60 }), SECRET, NOW), true);
+  assert.equal(verifyJiraWebhookToken(signed(null), SECRET, NOW), false, "nor null claims, even signed");
   assert.equal(verifyJiraWebhookToken("Bearer a.b", SECRET, NOW), false);
   assert.equal(verifyJiraWebhookToken(`Bearer ${jwt(live)}`, "", NOW), false, "no secret set");
 });

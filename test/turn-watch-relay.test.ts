@@ -53,8 +53,8 @@ function harness(setup: { row?: Partial<RelayRow>; status?: WorkspaceStatus; err
     saveWatch: async (_a, sentAt, state) => {
       if (row.watch?.sentAt === sentAt) row = { ...row, watch: state };
     },
-    claimFinal: async (_a, digest) => {
-      if (row.relayUntil === null) return false;
+    claimFinal: async (_a, digest, sentAt) => {
+      if (row.relayUntil === null || row.watch?.sentAt !== sentAt) return false;
       row = { ...row, relayUntil: null, watch: null, relayedHash: digest };
       return true;
     },
@@ -310,4 +310,17 @@ test("past the watch, a last word that can't be said isn't tried for ever", asyn
   const h = harness({ now: SENT + 25 * 60 * MINUTE, sayFails: true });
   assert.equal(await h.look(), true);
   assert.equal(h.log.stopped, 1);
+});
+
+test("a turn sent after this read isn't closed by the last one's ending", async () => {
+  const over = { reachable: true, working: false, summary: summary("Done", SENT + 1000) };
+  const newer = SENT + 120 * MINUTE;
+  const h = harness({ now: SENT + 121 * MINUTE, look: over, row: { watch: watch({ sentAt: newer }) } });
+  // Read before a steer opened that watch: this look still sees the old turn, over.
+  const stale = { ...h.row(), watch: watch({ seenWorking: true, quietSince: SENT }) };
+  h.deps.load = async () => stale;
+  await h.look();
+  assert.equal(h.said.length, 0, "nothing said for the old turn");
+  assert.equal(h.row().watch?.sentAt, newer, "the newer turn's watch stays");
+  assert.notEqual(h.row().relayUntil, null);
 });

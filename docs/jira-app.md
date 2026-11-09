@@ -96,8 +96,8 @@ started from Jira runs on the person's Outrunner allowance, not their own keys. 
 runs on whatever that session uses: a rule only ever does that to a session its runner owns, and it counts against the day's
 cap.
 
-**Whose words count:** a tag counts from the person's own comment, and from the description only when they created the issue,
-as anyone who can edit it could otherwise pick where they run.
+**Whose words count:** a tag counts from the person's own comment. Not from the description, even of an issue they created, as
+anyone who can edit it could otherwise pick where they run.
 
 **Who sees what:** comments post on the issue, where anyone who can read it sees them, and a question lists repositories they
 can use. On a service project they're internal, so a portal's customers don't. Anyone who can edit the issue can reassign it:

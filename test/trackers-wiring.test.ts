@@ -96,3 +96,17 @@ test("a tracker owns the title and body of an item that follows it, and only tho
   assert.equal(trackerOwned({ source: "slack", sourceRef: "slack:t/c/1" }), false);
   assert.equal(trackerOwned({ source: "api", sourceRef: "linear:1" }), false);
 });
+
+test("a session's branch is only named for an item its starter can see", () => {
+  const source = read("lib/session/create-cloud-session.ts");
+  const branch = source.slice(source.indexOf("async function branchOfItem"), source.indexOf("function generatedBranch"));
+  assert.ok(branch.indexOf("getWorkItem(actor, workItemId)") >= 0);
+  assert.ok(branch.indexOf("getWorkItem(actor") < branch.indexOf("trackerIssueOfItem("), "seen first");
+});
+
+test("a close only repoints what pointed at it if it really became a duplicate", () => {
+  const source = read("lib/db/work-items.ts");
+  const close = source.slice(source.indexOf("export async function closeFromTracker"), source.indexOf("export async function stopFollowingTracker"));
+  assert.match(close, /\.select\("id"\)/);
+  assert.match(close, /\(data \?\? \[\]\)\.length > 0\) await repointDuplicates/);
+});

@@ -141,3 +141,11 @@ test("a tab's items group by workspace, Unsorted first, the rest by name", () =>
   );
   assert.deepEqual(tabCounts(items), { triage: 4, working: 1, closed: 0 });
 });
+
+test("a tracker's refs are its own: made here first, one would hold its issue's place", () => {
+  for (const source_ref of ["linear:abc", "jira:cloud/1", "LINEAR:abc", "Jira:cloud/1"]) {
+    assert.equal(typeof parseNewWorkItem({ title: "x", source_ref }, ["cli", "api"]), "string", source_ref);
+  }
+  assert.notEqual(typeof parseNewWorkItem({ title: "x", source_ref: "ci:123" }, ["cli", "api"]), "string");
+  assert.notEqual(typeof parseNewWorkItem({ title: "x", source_ref: "linear-ish" }, ["cli", "api"]), "string");
+});

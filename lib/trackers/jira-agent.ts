@@ -231,13 +231,11 @@ type Runner = {
 
 /**
  * What can name a repository or model, on the runner's account and allowance: their own words,
- * and the description only if they made the issue: anyone who can edit it can edit that.
+ * and only those. Not the description, even of an issue they made: anyone who can edit it can
+ * edit that, and someone else mustn't pick where they run.
  */
-function tagSources(trigger: JiraTrigger, standing: JiraIssueStanding, runner: Runner): { words: string | null; description: string | null } {
-  return {
-    words: trigger.actor.kind === "person" && trigger.actor.id === runner.externalId ? trigger.text : null,
-    description: runner.externalId && standing.creatorId === runner.externalId ? standing.description : null,
-  };
+function tagWords(trigger: JiraTrigger, runner: Runner): string | null {
+  return trigger.actor.kind === "person" && trigger.actor.id === runner.externalId ? trigger.text : null;
 }
 
 /** Who it runs as, having said why when it's no one. No slot of the day yet: that goes only
@@ -424,10 +422,8 @@ async function delegate(context: Context): Promise<boolean> {
     await say(JIRA_REPLIES.noRepos);
     return false;
   }
-  const tags = tagSources(trigger, standing, runner);
   const picked = pickRepo({
-    comment: tags.words,
-    description: tags.description,
+    comment: tagWords(trigger, runner),
     itemProjectId: item?.projectId ?? null,
     defaultProjectId: scope.defaultProjectId,
     guidance: [],
@@ -494,8 +490,7 @@ async function startSession(
     return false;
   }
 
-  const tags = tagSources(trigger, standing, runner);
-  const { model, unknown } = pickModel(tags.words, tags.description);
+  const { model, unknown } = pickModel(tagWords(trigger, runner));
   if (unknown) {
     await deps.comment(installation.id, issueId, `There's no model called ${unknown} here, so this runs on the default. Available: ${OUTRUNNER_MODELS.map((m) => m.id).join(", ")}.`);
   }

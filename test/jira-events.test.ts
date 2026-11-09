@@ -86,7 +86,11 @@ function harness(over: Partial<JiraEventDeps> = {}, setup: { rules?: TrackerRule
       return INSTALL;
     },
     eventSeen: async (id) => seen.has(id),
-    markEventSeen: async (id) => void seen.add(id),
+    markEventSeen: async (id) => {
+      const first = !seen.has(id);
+      seen.add(id);
+      return first;
+    },
     scopeForTeam: async (_i, projectId) => scopes.find((s) => s.externalTeamId === projectId) ?? null,
     rulesForScope: async () => setup.rules ?? [],
     orgIds: async () => [ORG],
@@ -207,6 +211,7 @@ test("a session is only asked for once the event's marked seen: a failed mark me
   const h = harness({
     markEventSeen: async () => {
       if (failing) throw new Error("database down");
+      return true;
     },
   });
   const change = updated([{ field: "assignee", to: APP }]);
@@ -556,4 +561,21 @@ test("Won't Do, in the shapes real Jira sends", async () => {
   await later.send(updated([resolutionChange("10000", "Done")], { ...wontDo, ...closed }));
   assert.deepEqual(later.log.closed, []);
   assert.deepEqual(later.log.reopened, []);
+});
+
+test("two copies of one delivery at once, as a webhook's replacement overlaps: only the first to mark it acts", async () => {
+  const seen = new Set<string>();
+  const h = harness({
+    eventSeen: async () => false,
+    markEventSeen: async (id) => {
+      const first = !seen.has(id);
+      seen.add(id);
+      return first;
+    },
+  });
+  // The same change, with each webhook's own identifier.
+  const made = updated([{ field: "assignee", to: APP }]);
+  const change = { ...made, changelog: { ...made.changelog, id: "10001" } };
+  await Promise.all([h.send(change, "a"), h.send(change, "b")]);
+  assert.equal(h.log.triggers.length, 1);
 });

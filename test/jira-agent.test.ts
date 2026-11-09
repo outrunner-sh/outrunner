@@ -212,14 +212,11 @@ test("repo order: a tag in the comment, then the issue's, then the item's, then 
   const tagged = harness();
   await tagged.run(mention("do it [repo=acme/api]"));
   assert.equal(tagged.log.started[0]?.projectId, API.id);
-  const described = harness({}, { standing: { ...STANDING, description: "[repo=acme/api]" } });
-  await described.run(assigned);
-  assert.equal(described.log.started[0]?.projectId, API.id);
   const ofItem = harness({}, { item: item({ projectId: API.id }) });
   await ofItem.run(assigned);
   assert.equal(ofItem.log.started[0]?.projectId, API.id);
-  const unreadable = harness({ projects: async () => [WEB] }, { standing: { ...STANDING, description: "[repo=acme/api]" } });
-  await unreadable.run(assigned);
+  const unreadable = harness({ projects: async () => [WEB] });
+  await unreadable.run(mention("[repo=acme/api]"));
   assert.equal(unreadable.log.started[0]?.projectId, WEB.id, "a repo they can't read is skipped");
 });
 
@@ -563,15 +560,18 @@ test("Jira: someone unlinked doesn't take over the issue's one row", async () =>
   assert.equal(free.current()?.stage, "awaiting_link", "a row nobody's using can carry it on");
 });
 
-test("a tag counts from their own comment, and the description only if the issue's theirs", async () => {
+test("a tag counts from their own comment, and never the description: anyone who can edit it can edit that", async () => {
   const run = async (trigger: JiraTrigger, standing: Partial<JiraIssueStanding>) => {
     const h = harness({}, { scope: scope({ defaultProjectId: WEB.id }), standing: { ...STANDING, ...standing } });
     await h.run(trigger);
     return h.log.started[0]?.projectId;
   };
   assert.equal(await run(mention("[repo=acme/api]"), {}), API.id, "their comment");
-  assert.equal(await run(assigned, { description: "[repo=acme/api]" }), API.id, "they made the issue");
-  assert.equal(await run(assigned, { description: "[repo=acme/api]", creatorId: "zed" }), WEB.id, "someone else made it");
+  assert.equal(await run(assigned, { description: "[repo=acme/api]" }), WEB.id, "even of an issue they made");
+  assert.equal(await run(assigned, { description: "[repo=acme/api]", creatorId: "zed" }), WEB.id, "or someone else did");
+  const model = harness({}, { scope: scope({ defaultProjectId: WEB.id }), standing: { ...STANDING, description: `[model=${OUTRUNNER_MODELS[0].id}]` } });
+  await model.run(assigned);
+  assert.equal(model.log.started[0]?.model, undefined, "nor a model on their allowance");
 });
 
 test("asked to link: only what they said names a repository, the issue's own text doesn't", async () => {

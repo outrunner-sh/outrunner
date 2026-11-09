@@ -100,8 +100,8 @@ export function verifyJiraWebhookToken(authorization: string | null, clientSecre
   const parts = token.split(".");
   if (parts.length !== 3) return false;
   const [head, body, signature] = parts as [string, string, string];
-  let header: { alg?: unknown };
-  let claims: { exp?: unknown };
+  let header: { alg?: unknown } | null;
+  let claims: { exp?: unknown } | null;
   try {
     header = JSON.parse(base64url(head).toString("utf8")) as { alg?: unknown };
     claims = JSON.parse(base64url(body).toString("utf8")) as { exp?: unknown };
@@ -109,11 +109,11 @@ export function verifyJiraWebhookToken(authorization: string | null, clientSecre
     return false;
   }
   // Only HS256: no token can choose how it's checked.
-  if (header.alg !== "HS256") return false;
+  if (header?.alg !== "HS256") return false;
   const wanted = createHmac("sha256", clientSecret).update(`${head}.${body}`).digest();
   const given = base64url(signature);
   if (given.length !== wanted.length || !timingSafeEqual(given, wanted)) return false;
-  return typeof claims.exp === "number" && claims.exp * 1000 > now;
+  return typeof claims?.exp === "number" && claims.exp * 1000 > now;
 }
 
 type Fetcher = typeof fetch;

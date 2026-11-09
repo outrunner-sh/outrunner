@@ -572,7 +572,7 @@ export async function closeFromTracker(
   item: Pick<WorkItem, "id" | "triagedAt">,
   close: { status: "done" | "declined" } | { status: "duplicate"; duplicateOf: string },
 ): Promise<void> {
-  const { error } = await db()
+  const { data, error } = await db()
     .from("work_items")
     .update({
       status: close.status,
@@ -581,9 +581,11 @@ export async function closeFromTracker(
     })
     .eq("org_id", orgId)
     .eq("id", item.id)
-    .in("status", ["triage", "todo", "in_progress"]);
+    .in("status", ["triage", "todo", "in_progress"])
+    .select("id");
   if (error) throw error;
-  if (close.status === "duplicate") await repointDuplicates(orgId, item.id, close.duplicateOf);
+  // Decided on here meanwhile, it isn't a duplicate, and what points at it stays.
+  if (close.status === "duplicate" && (data ?? []).length > 0) await repointDuplicates(orgId, item.id, close.duplicateOf);
 }
 
 /** The issue moved out of the org's reach: the item stays, and no longer

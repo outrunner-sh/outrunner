@@ -207,6 +207,9 @@ export function parseNewWorkItem(
   if (sourceUrl === undefined) return "The source URL must be text.";
   const sourceRef = optionalText(raw.source_ref ?? raw.sourceRef, MAX_SOURCE_REF);
   if (sourceRef === undefined) return `The source ref must be text of at most ${MAX_SOURCE_REF} characters.`;
+  // They're how a tracker finds its issue's item: one made here first would hold its place, and
+  // the issue would never be filed or written back to.
+  if (sourceRef && /^(linear|jira):/i.test(sourceRef)) return "A source ref can't start with linear: or jira:.";
   return {
     title,
     body: body.trim(),
