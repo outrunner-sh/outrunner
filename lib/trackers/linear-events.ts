@@ -376,7 +376,11 @@ async function followIssue(
   const wasClosed = Boolean(from.completedAt) || Boolean(from.canceledAt);
   if (issue.closed) {
     if (!("stateId" in from) || wasClosed || "teamId" in from) return;
-    if (isOpen(item.status)) await deps.close(orgId, item, await closure(installation, issue, orgId, deps));
+    // A redelivery may find it a duplicate already, with the rest of that still to finish.
+    if (isOpen(item.status) || item.status === "duplicate") {
+      const how = await closure(installation, issue, orgId, deps);
+      if (isOpen(item.status) || how.status === "duplicate") await deps.close(orgId, item, how);
+    }
     await sessionOnClose(item, orgId, issue, eventId, deps);
     return;
   }

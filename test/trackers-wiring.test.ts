@@ -103,10 +103,3 @@ test("a session's branch is only named for an item its starter can see", () => {
   assert.ok(branch.indexOf("getWorkItem(actor, workItemId)") >= 0);
   assert.ok(branch.indexOf("getWorkItem(actor") < branch.indexOf("trackerIssueOfItem("), "seen first");
 });
-
-test("a close only repoints what pointed at it if it really became a duplicate", () => {
-  const source = read("lib/db/work-items.ts");
-  const close = source.slice(source.indexOf("export async function closeFromTracker"), source.indexOf("export async function stopFollowingTracker"));
-  assert.match(close, /\.select\("id"\)/);
-  assert.match(close, /\(data \?\? \[\]\)\.length > 0\) await repointDuplicates/);
-});

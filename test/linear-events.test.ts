@@ -1213,3 +1213,18 @@ test("two copies of one agent event at once: only the first to mark it asks for 
   await Promise.all([send(event, deps), send(event, deps)]);
   assert.equal(later.length, 1);
 });
+
+test("a redelivery of a close finds the item already a duplicate, and still finishes it", async () => {
+  const duplicateEvent = issueEvent({ action: "update", updatedFrom: { stateId: "x" } }, { state: { type: "duplicate" } });
+  const original = { [`${ORG}/linear:issue-2`]: item({ id: "item-2", sourceRef: "linear:issue-2" }) };
+  const again = harness({ duplicateOf: async () => "issue-2" }, { items: { ...held("duplicate", { duplicateOf: "item-2" }), ...original } });
+  await send(duplicateEvent, again.deps);
+  assert.deepEqual(again.log.closed[0]?.close, { status: "duplicate", duplicateOf: "item-2" });
+  // Decided on here, with nothing to finish: it stays as it was left.
+  const decided = harness({}, { items: held("duplicate", { duplicateOf: "item-9" }) });
+  await send(issueEvent({ action: "update", updatedFrom: { stateId: "x" } }, { state: { type: "completed" } }), decided.deps);
+  assert.deepEqual(decided.log.closed, []);
+  const declined = harness({ duplicateOf: async () => "issue-2" }, { items: { ...held("declined"), ...original } });
+  await send(duplicateEvent, declined.deps);
+  assert.deepEqual(declined.log.closed, []);
+});

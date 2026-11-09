@@ -308,7 +308,8 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 
 A work item lands in triage, in the repository `project_id` names (an id or
 `owner/name`), or Unsorted. A `source_ref` an item of the org already has
-makes it a note on that one instead (`"created": false`).
+makes it a note on that one instead (`"created": false`). One starting with
+`linear:` or `jira:` is refused: those are how a tracker finds its issue's item.
 
 ### Project skills
 

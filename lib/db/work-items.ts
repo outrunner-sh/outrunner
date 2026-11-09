@@ -9,6 +9,7 @@
  * write on all projects.
  */
 
+import { closeFromTrackerWith, type TrackerClose } from "@/lib/trackers/close";
 import { type TrackerIssue, trackerIssueOf } from "@/lib/trackers/issue-key";
 import { memberRole } from "@/lib/db/orgs";
 import { isUuid } from "@/lib/ids";
@@ -567,25 +568,26 @@ export async function followTrackerText(orgId: string, id: string, text: { title
 
 /** The tracker closed the issue: an item still open closes with it. One someone
  *  decided on here (declined, a duplicate) stays as they left it. */
-export async function closeFromTracker(
-  orgId: string,
-  item: Pick<WorkItem, "id" | "triagedAt">,
-  close: { status: "done" | "declined" } | { status: "duplicate"; duplicateOf: string },
-): Promise<void> {
-  const { data, error } = await db()
-    .from("work_items")
-    .update({
-      status: close.status,
-      duplicate_of: close.status === "duplicate" ? close.duplicateOf : null,
-      ...(item.triagedAt ? {} : { triaged_at: new Date().toISOString() }),
-    })
-    .eq("org_id", orgId)
-    .eq("id", item.id)
-    .in("status", ["triage", "todo", "in_progress"])
-    .select("id");
-  if (error) throw error;
-  // Decided on here meanwhile, it isn't a duplicate, and what points at it stays.
-  if (close.status === "duplicate" && (data ?? []).length > 0) await repointDuplicates(orgId, item.id, close.duplicateOf);
+export async function closeFromTracker(orgId: string, item: Pick<WorkItem, "id" | "triagedAt">, close: TrackerClose): Promise<void> {
+  await closeFromTrackerWith(close, {
+    apply: async (how) => {
+      const { data, error } = await db()
+        .from("work_items")
+        .update({
+          status: how.status,
+          duplicate_of: how.status === "duplicate" ? how.duplicateOf : null,
+          ...(item.triagedAt ? {} : { triaged_at: new Date().toISOString() }),
+        })
+        .eq("org_id", orgId)
+        .eq("id", item.id)
+        .in("status", ["triage", "todo", "in_progress"])
+        .select("id");
+      if (error) throw error;
+      return (data ?? []).length > 0;
+    },
+    current: () => orgItem(orgId, item.id),
+    repoint: (to) => repointDuplicates(orgId, item.id, to),
+  });
 }
 
 /** The issue moved out of the org's reach: the item stays, and no longer

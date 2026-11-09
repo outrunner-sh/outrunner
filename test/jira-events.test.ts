@@ -579,3 +579,17 @@ test("two copies of one delivery at once, as a webhook's replacement overlaps: o
   await Promise.all([h.send(change, "a"), h.send(change, "b")]);
   assert.equal(h.log.triggers.length, 1);
 });
+
+test("a redelivery of a close finds the item already a duplicate, and still finishes it", async () => {
+  const original = item({ id: "item-2" });
+  const h = harness({}, { items: { [REF]: item({ status: "duplicate", duplicateOf: "item-2" }), [`jira:${CLOUD}/8`]: original }, standing: { duplicateOf: "8" } });
+  await h.send(toDone("Duplicate"));
+  assert.deepEqual(h.log.closed, [{ status: "duplicate", duplicateOf: "item-2" }]);
+  // Decided on here, with nothing to finish: it stays as it was left.
+  const decided = harness({}, { items: { [REF]: item({ status: "duplicate", duplicateOf: "item-9" }) } });
+  await decided.send(toDone("Done"));
+  assert.deepEqual(decided.log.closed, []);
+  const declined = harness({}, { items: { [REF]: item({ status: "declined" }), [`jira:${CLOUD}/8`]: original }, standing: { duplicateOf: "8" } });
+  await declined.send(toDone("Duplicate"));
+  assert.deepEqual(declined.log.closed, []);
+});
