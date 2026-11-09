@@ -108,7 +108,7 @@ export type SessionCheckout = {
   private?: boolean;
 };
 
-export type WorkspaceSource = "app" | "slack" | "automation" | "github" | "api";
+export type WorkspaceSource = "app" | "slack" | "automation" | "github" | "api" | "linear" | "jira";
 
 export type Workspace = {
   id: string;

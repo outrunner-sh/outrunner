@@ -19,10 +19,18 @@ import {
   templateSection,
   UPDATE_RULE,
 } from "@/lib/session/pr-template";
+import type { TrackerIssue } from "@/lib/trackers/issue-key";
 
 export const PR_PROMPT = "Create a PR";
 
 export const PR_INSTRUCTIONS_FILENAME = "PR instructions.md";
+
+/** What each tracker's own GitHub integration reads to link a PR to its issue. */
+function issueLine({ source, key }: TrackerIssue): string {
+  return source === "linear"
+    ? `This session works on Linear issue ${key}. Put "Fixes ${key}" in the PR body.`
+    : `This session works on Jira issue ${key}. Put ${key} in the PR title.`;
+}
 
 /** The footer details the Environment panel sends with its explicit Create PR
  *  request. Keep the trusted identity here so those one-off instructions and
@@ -43,12 +51,14 @@ export function prInstructions(input: {
   /** One repository of a session of several: its folder and `owner/name`.
    *  The PR is that repository's alone. */
   repo?: { checkout: string; fullName: string };
+  /** The Linear or Jira issue it works on. */
+  issue?: TrackerIssue | null;
   /** What the box has to show the change (pr-template.ts evidenceToolsFor). */
   tools: EvidenceTools;
   /** Who the footer credits, and the session's page. */
   footer: PrFooterInput;
 }): string {
-  const { branch, baseBranch, uncommitted, repo, tools, footer } = input;
+  const { branch, baseBranch, uncommitted, repo, issue, tools, footer } = input;
   const state = [
     repo
       ? `This PR is for ${repo.fullName} only, the repository in the \`${repo.checkout}/\` folder. Run every step below in that folder (\`cd ${repo.checkout}\`), and leave the other repositories' folders alone.`
@@ -60,6 +70,7 @@ export function prInstructions(input: {
         : `There ${uncommitted === 1 ? "is 1 uncommitted change" : `are ${uncommitted} uncommitted changes`}.`,
     `The current branch is ${branch}.`,
     `The target branch is origin/${baseBranch}.`,
+    issue ? issueLine(issue) : null,
   ].filter((line) => line !== null);
 
   return `The user likes the current state of the code.

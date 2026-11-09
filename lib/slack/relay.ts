@@ -13,8 +13,6 @@
  * turns that outlast the watch.
  */
 
-import { createHash } from "node:crypto";
-
 import { GET as summaryGET } from "@/app/api/workspaces/[id]/summary/route";
 import { POST as interruptPOST } from "@/app/api/workspaces/[id]/interrupt/route";
 import { conversationForWorkspace, getConversationById, getInstallation, type SlackConversation } from "@/lib/db/slack-agent";
@@ -22,7 +20,8 @@ import { optionalEnv } from "@/lib/env";
 import { asBrowser, wakeAndSend } from "@/lib/slack/research";
 import { markdownToSlack, slackChunks } from "@/lib/slack/research-text";
 import { fromThread, replyChunks } from "@/lib/slack/relay-text";
-import { turnOver, watchUntil } from "@/lib/session/turn-watch";
+import { relayTurn } from "@/lib/session/turn-relay";
+import { watchUntil } from "@/lib/session/turn-watch";
 import { addReaction, postMessage } from "@/lib/slack/web";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { actAsUser } from "@/lib/supabase/acting-user";
@@ -103,65 +102,62 @@ async function readSummary(ownerId: string, workspaceId: string): Promise<Summar
   }).catch(() => null);
 }
 
-function hash(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
-}
-
 /**
  * Post the session's reply in the thread, if its turn is over and this reply
  * hasn't been posted. True when it was (or there's nothing left to wait for);
  * false to keep waiting.
  */
 export async function relayReply(conversation: SlackConversation): Promise<boolean> {
-  if (!conversation.workspaceId) return true;
-  const target = await session(conversation.workspaceId);
+  const workspaceId = conversation.workspaceId;
+  if (!workspaceId) return true;
+  const target = await session(workspaceId);
   if (!target || !target.sync) return true;
-  const { data: row, error: rowError } = await db()
-    .from("slack_conversations")
-    .select("relayed_hash, relay_until")
-    .eq("id", conversation.id)
-    .maybeSingle();
-  if (rowError) throw rowError;
-  // When the awaited message was sent: replies from before it aren't its.
-  const since = row?.relay_until ? Date.parse(row.relay_until) - AWAIT_MS : 0;
-  const summary = await readSummary(target.ownerId, conversation.workspaceId);
-  if (!summary || !turnOver(summary, since)) return false;
-  const message = summary.lastAssistantMessage as string;
-  const digest = hash(message);
-  // Claimed: an overlapping watch or tick posts nothing.
-  const { data: claimed, error } = await db()
-    .from("slack_conversations")
-    .update({ relayed_hash: digest, relay_until: null })
-    .eq("id", conversation.id)
-    .or(`relayed_hash.is.null,relayed_hash.neq.${digest}`)
-    .select("id");
-  if (error) throw error;
-  if (!claimed?.length) {
-    // This turn's reply reads the same as the last one posted: nothing new to
-    // say, and nothing left to wait for.
-    await db().from("slack_conversations").update({ relay_until: null }).eq("id", conversation.id);
-    return true;
-  }
-  const install = await getInstallation(conversation.teamId);
-  if (!install) return true;
-  try {
-    for (const text of replyChunks(message, sessionUrl(conversation.workspaceId))) {
-      await postMessage(install.botToken, { channel: conversation.channelId, threadTs: conversation.threadTs, text });
-    }
-  } catch (postError) {
-    // Not posted: the claim is given back, so the next watch or tick tries again.
-    await db()
-      .from("slack_conversations")
-      .update({ relayed_hash: row?.relayed_hash ?? null, relay_until: row?.relay_until ?? null })
-      .eq("id", conversation.id);
-    throw postError;
-  }
-  if (/\/pull\/\d+/.test(message)) {
-    await addReaction(install.botToken, { channel: conversation.channelId, ts: conversation.threadTs, name: "white_check_mark" }).catch(
-      () => undefined,
-    );
-  }
-  return true;
+  return relayTurn(
+    {
+      load: async () => {
+        const { data, error } = await db()
+          .from("slack_conversations")
+          .select("relayed_hash, relay_until")
+          .eq("id", conversation.id)
+          .maybeSingle();
+        if (error) throw error;
+        return { relayedHash: data?.relayed_hash ?? null, relayUntil: data?.relay_until ?? null };
+      },
+      summary: () => readSummary(target.ownerId, workspaceId),
+      claim: async (digest) => {
+        const { data, error } = await db()
+          .from("slack_conversations")
+          .update({ relayed_hash: digest, relay_until: null })
+          .eq("id", conversation.id)
+          .or(`relayed_hash.is.null,relayed_hash.neq.${digest}`)
+          .select("id");
+        if (error) throw error;
+        return (data ?? []).length > 0;
+      },
+      clear: async () => {
+        await db().from("slack_conversations").update({ relay_until: null }).eq("id", conversation.id);
+      },
+      restore: async (previous) => {
+        await db()
+          .from("slack_conversations")
+          .update({ relayed_hash: previous.relayedHash, relay_until: previous.relayUntil })
+          .eq("id", conversation.id);
+      },
+      post: async (message) => {
+        const install = await getInstallation(conversation.teamId);
+        if (!install) return;
+        for (const text of replyChunks(message, sessionUrl(workspaceId))) {
+          await postMessage(install.botToken, { channel: conversation.channelId, threadTs: conversation.threadTs, text });
+        }
+        if (/\/pull\/\d+/.test(message)) {
+          await addReaction(install.botToken, { channel: conversation.channelId, ts: conversation.threadTs, name: "white_check_mark" }).catch(
+            () => undefined,
+          );
+        }
+      },
+    },
+    AWAIT_MS,
+  );
 }
 
 /** Watch for the reply to what was just sent, for a while; the tick carries

@@ -42,7 +42,10 @@ import {
   transitionWorkspace,
 } from "@/lib/db/repositories";
 import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
-import { linkWorkItemToSession, projectOrgId, triageActor } from "@/lib/db/work-items";
+import { linkWorkItemToSession, projectOrgId, triageActor, trackerIssueOfItem } from "@/lib/db/work-items";
+import { freeIssueBranch } from "@/lib/session/issue-branch";
+import { withFreeBranch } from "@/lib/trackers/issue-key";
+import { tellTrackersSessionStarted } from "@/lib/trackers/write-back.deps";
 import { isUuid } from "@/lib/ids";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import {
@@ -119,6 +122,13 @@ import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-li
 async function madeBefore(id: string, ownerId: string, projectId: string): Promise<Workspace | null> {
   const made = await getWorkspace(id).catch(() => null);
   return made && made.ownerId === ownerId && made.projectId === projectId ? made : null;
+}
+
+/** The branch a session on this item's issue is on; null when it follows none. */
+async function branchOfItem(projectId: string, workItemId: string): Promise<string | null> {
+  const orgId = await projectOrgId(projectId);
+  const issue = orgId ? await trackerIssueOfItem(orgId, workItemId) : null;
+  return issue ? freeIssueBranch(projectId, issue, issue.title) : null;
 }
 
 function generatedBranch(): string {
@@ -446,21 +456,32 @@ async function createOnce(
   }
 
   let workspace;
+  // On a tracker's issue, it's named for that (lib/trackers/issue-key.ts). Not worth failing over.
+  const issueBranchName = !requestedBranch && typeof body.workItemId === "string" && body.workItemId ? await branchOfItem(project.id, body.workItemId).catch(() => null) : null;
+
   try {
-    workspace = await createWorkspaceRow({
-      ...(askedId && { id: askedId }),
-      ownerId: owner.id,
-      projectId: project.id,
-      environmentId,
-      checkouts,
-      branch: requestedBranch || generatedBranch(),
-      baseBranch,
-      provider: provider.name,
-      agent: agentId,
-      source: options.source,
-      kind: options.kind,
-      parentMissionId: options.parentMissionId,
-    });
+    // Two people starting on one item can both find a name free. The one that loses tries once
+    // more: it's our name, not one anyone asked for, so it's no reason to refuse.
+    workspace = await withFreeBranch(
+      issueBranchName,
+      (issueBranchToUse) =>
+        createWorkspaceRow({
+          ...(askedId && { id: askedId }),
+          ownerId: owner.id,
+          projectId: project.id,
+          environmentId,
+          checkouts,
+          branch: requestedBranch || issueBranchToUse || generatedBranch(),
+          baseBranch,
+          provider: provider.name,
+          agent: agentId,
+          source: options.source,
+          kind: options.kind,
+          parentMissionId: options.parentMissionId,
+        }),
+      () => branchOfItem(project.id, body.workItemId as string).catch(() => null),
+      (error) => isUniqueViolation(error) && !isIdTaken(error),
+    );
     progress.inserted = true;
     if (chosenModel) {
       const intended = { model: chosenModel, effort: compatibleEffort(chosenModel, chosenEffort) };
@@ -525,10 +546,15 @@ async function createOnce(
     const workItemId = body.workItemId;
     // As a triager in the project's org: an item of another org is no item.
     await projectOrgId(project.id)
-      .then((orgId) => (orgId ? triageActor(owner.id, orgId) : null))
-      .then((actor) =>
-        actor ? linkWorkItemToSession(actor, workItemId, { workspaceId: workspace.id, projectId: project.id }) : undefined,
-      )
+      .then(async (orgId) => {
+        const actor = orgId ? await triageActor(owner.id, orgId) : null;
+        if (!orgId || !actor) return;
+        // Its issue in a tracker, if it has one, hears of it: only once it's really on this
+        // session, and only this org's. Not awaited: nothing here waits on one.
+        if (await linkWorkItemToSession(actor, workItemId, { workspaceId: workspace.id, projectId: project.id })) {
+          void tellTrackersSessionStarted(orgId, workItemId, owner.githubLogin ?? "someone in Outrunner", workspace.id);
+        }
+      })
       .catch((error: unknown) => console.error("Couldn't link the triage item to its session", error));
   }
 

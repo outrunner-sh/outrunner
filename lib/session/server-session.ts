@@ -26,6 +26,8 @@ export type ServerSessionStart = {
   projectId: string;
   /** The branch it starts from; the repository's default when not given. */
   baseBranch?: string;
+  /** Its own branch's name; a generated one when not given. */
+  branch?: string;
   title: string;
   /** The prompt it runs, sent once it's ready. */
   prompt: string;
@@ -37,9 +39,9 @@ export type ServerSessionStart = {
   reviewAsApp?: boolean;
   /** Told the session's id once its row is made, before its setup. */
   onCreated?: (workspaceId: string) => Promise<void>;
-  /** Where it was started: an automation's run, a Slack thread, or an
-   *  @mention on GitHub. */
-  source: Extract<WorkspaceSource, "automation" | "slack" | "github">;
+  /** Where it was started: an automation's run, a Slack thread, an @mention on
+   *  GitHub, or a delegation in Linear. */
+  source: Extract<WorkspaceSource, "automation" | "slack" | "github" | "linear" | "jira">;
 };
 
 /** Made and set up: ready (its prompt sent) or failed, with why. Or not made
@@ -66,7 +68,7 @@ export async function startServerSession(start: ServerSessionStart): Promise<Ser
         start.projectId,
         // Outrunner's models, on Outrunner's key (not `key: "own"`): the
         // user's allowance, not their Claude or their own OpenRouter key.
-        { provider: "outrunner", model: start.model ?? OUTRUNNER_MODELS[0].id, prompt: start.prompt },
+        { provider: "outrunner", model: start.model ?? OUTRUNNER_MODELS[0].id, prompt: start.prompt, ...(start.branch && { branch: start.branch }) },
         {
           baseBranch: start.baseBranch,
           title: start.title,

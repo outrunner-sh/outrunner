@@ -23,6 +23,7 @@ import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceCanvas } from "@/components/workspace-canvas";
 import { WorkspaceChanges } from "@/components/workspace-changes";
 import { WorkspacePreviews } from "@/components/workspace-previews";
+import type { TrackerIssue } from "@/lib/trackers/issue-key";
 import type { SessionSender } from "@/components/workspace-session";
 import { uploadAttachment } from "@/hooks/use-attachments";
 import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-workspace-changes";
@@ -540,6 +541,11 @@ function PullRequestRow({
     if (!sender || phase !== "idle") return;
     setPhase("sending");
     setError(null);
+    // The issue it works on, for the PR to name. A PR is still worth opening without.
+    const issue = await fetch(`/api/workspaces/${workspaceId}/tracker-issue`)
+      .then((response) => (response.ok ? (response.json() as Promise<{ issue: TrackerIssue | null }>) : null))
+      .then((answer) => answer?.issue ?? null)
+      .catch(() => null);
     const result = await askAgent(
       sender,
       PR_PROMPT,
@@ -549,6 +555,7 @@ function PullRequestRow({
         baseBranch,
         uncommitted,
         ...(repo && { repo }),
+        issue,
         tools: evidenceToolsFor(provider),
         footer: prInstructionFooter(`${window.location.origin}/workspaces/${workspaceId}`, coAuthor),
       }),

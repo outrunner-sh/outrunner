@@ -11,6 +11,7 @@
 import { deliverNotifications, type DeliveryReport } from "@/lib/notifications/deliver";
 import { notifyActivity, notifyFailures, notifyPullRequests } from "@/lib/notifications/record";
 import { checkOpenPullRequests } from "@/lib/session/pull-request-state";
+import { tellTrackersPullRequests } from "@/lib/trackers/write-back.deps";
 import { inPool } from "@/lib/session/pool";
 import { readSession, watchedSessions, type ActivityChange } from "@/lib/session/watch";
 
@@ -61,6 +62,7 @@ export async function runSessionsTick(
     return [];
   });
   report.pullRequests = pullRequests.length;
+  await tellTrackersPullRequests(pullRequests);
   await notifyPullRequests(pullRequests).catch((error: unknown) => console.error("Sessions tick: pull request news", error));
   report.failures = await notifyFailures().catch((error: unknown) => {
     console.error("Sessions tick: couldn't look for failed sessions", error);

@@ -5,4 +5,4 @@ export const FROM_HEADER = "x-outrunner-from";
 
 /** Where a message the server sends came from: "github-ci" is CI failing,
  *  not a person (lib/github/followups.ts). */
-export type MessageSource = "slack" | "github" | "github-ci";
+export type MessageSource = "slack" | "github" | "github-ci" | "linear" | "jira";

@@ -207,7 +207,8 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         `/api/projects/${selected.id}/workspaces`,
         JSON.stringify({
           id,
-          branch,
+          // Started from a tracker's item, the server names it for the issue.
+          ...(!workItemId && { branch }),
           prompt,
           ...(model && { provider: model.provider, model: model.id }),
           ...(effort && { effort }),
