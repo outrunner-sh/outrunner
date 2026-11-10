@@ -155,13 +155,11 @@ export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<
       const ids = [...new Set(here.flatMap((r) => [r.projectId, ...(r.checkouts ?? []).map((c) => c.projectId)]))];
       const { data: own, error: ownError } = await db()
         .from("projects")
-        .select("id, org_id, github_repo_id")
+        .select("github_repo_id")
         .in("id", ids)
         .ilike("full_name", escapeLike(repo));
       if (ownError) throw ownError;
-      const repoIds = (own ?? []).flatMap((p) => (typeof p.github_repo_id === "number" ? [p.github_repo_id] : []));
-      // A project from before repository ids: its own sessions at least.
-      const projects = repoIds.length > 0 ? await repositoryProjectsWith(db(), repoIds) : (own ?? []);
+      const projects = await repositoryProjectsWith(db(), (own ?? []).map((p) => p.github_repo_id));
       sessionBranches = await sessionBranchesAmongWith(db(), projects, heads);
     }
     for (const pull of pulls ?? []) {
