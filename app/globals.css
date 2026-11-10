@@ -272,6 +272,11 @@
 .studio-composer-footer .studio-composer-send { color:#0a0a0a; border-color:#ededed; background:#ededed; }
 .studio-composer-footer .studio-composer-send:hover:not(:disabled) { color:#0a0a0a; border-color:#fff; background:#fff; }
 .studio-composer-footer .studio-composer-stop svg:not(.spinner) { width:10px; height:10px; fill:currentColor; }
+/* A screen recording in progress (components/session-composer.tsx): its time and Stop, in red. */
+.studio-composer-footer .studio-composer-recording { color:var(--studio-red); border-color:color-mix(in oklab, var(--studio-red) 45%, transparent); font-variant-numeric:tabular-nums; }
+.studio-composer-recording-dot { width:8px; height:8px; border-radius:50%; background:currentColor; animation: mission-pulse 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .studio-composer-recording-dot { animation:none; } }
+.studio-composer-footer .studio-composer-recording.is-ending { color:var(--studio-amber); border-color:color-mix(in oklab, var(--studio-amber) 45%, transparent); }
 .studio-composer-footer .studio-composer-send:disabled { color:rgba(255,255,255,.45); border-color:rgba(255,255,255,.14); background:transparent; }
 .studio-question { position: relative; margin: 12px auto 18px; max-width: 736px; width: calc(100% - 32px); padding: 12px 12px 8px; border: 1px solid var(--studio-border); border-radius: 4px; color: var(--studio-text); background: var(--studio-bg); font: 14px var(--font-geist-sans); outline: 0; animation: placeholder-in .3s cubic-bezier(.23, 1, .32, 1) both; }
 .studio-question:focus-within, .studio-question:focus { border-color: #3a3a3a; }
