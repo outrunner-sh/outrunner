@@ -29,6 +29,7 @@ import {
   ownSandboxKeys,
   type SandboxSettings,
 } from "@/lib/db/credentials";
+import { isMetered } from "@/lib/billing/metering-store";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import {
   createWorkspaceRow,
@@ -937,7 +938,7 @@ async function provisionWorkspace({
         ? error.message
         : refused
           ? refused.message
-          : provisionFailureMessage(error, phase, secrets);
+          : provisionFailureMessage(error, phase, secrets, isMetered(provider.name));
     const settled = await settle({ status: "failed", errorMessage }).catch((updateError: unknown) => {
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError);
       return true;

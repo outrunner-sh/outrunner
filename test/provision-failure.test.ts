@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { GITHUB_RECONNECT_MESSAGE, MAX_DETAIL_CHARS, provisionFailureMessage } from "@/lib/runtime/provision-failure";
+import { GITHUB_RECONNECT_MESSAGE, MAX_DETAIL_CHARS, PLATFORM_CAPACITY_MESSAGE, provisionFailureMessage } from "@/lib/runtime/provision-failure";
 
 test("a failure names the step it stopped at and its error", () => {
   assert.equal(
@@ -62,4 +62,28 @@ test("git refused by GitHub says to reconnect, not git's message", () => {
   );
   // Any other clone failure still says what happened.
   assert.match(provisionFailureMessage(new Error("fatal: repository not found"), "clone", []), /repository not found/);
+});
+
+test("Outrunner's sandbox account being full is said as Outrunner's, never as the user's Daytona org", () => {
+  const daytona = new Error(
+    "Total disk limit exceeded. Maximum allowed: 2000GiB. Consider archiving your unused Sandboxes to free up available storage. " +
+      "To increase concurrency limits, upgrade your organization's Tier by visiting https://app.daytona.io/dashboard/limits.",
+  );
+  assert.equal(provisionFailureMessage(daytona, "allocate", [], true), PLATFORM_CAPACITY_MESSAGE);
+  assert.doesNotMatch(PLATFORM_CAPACITY_MESSAGE, /daytona/i);
+  assert.equal(provisionFailureMessage(new Error("Sandbox limit exceeded"), "allocate", [], true), PLATFORM_CAPACITY_MESSAGE);
+  // On the user's own Daytona account, it's theirs to fix: Daytona's words stand.
+  assert.match(provisionFailureMessage(daytona, "allocate", [], false), /^Setup failed while provisioning the sandbox: Total disk limit exceeded/);
+  assert.equal(provisionFailureMessage(daytona, null, [], true), PLATFORM_CAPACITY_MESSAGE);
+  // Out of room inside the box, in a later step, is that step's own failure.
+  assert.equal(
+    provisionFailureMessage(new Error("fatal: write error: Disk quota exceeded"), "clone", [], true),
+    "Setup failed while cloning the repository: fatal: write error: Disk quota exceeded",
+  );
+  assert.match(provisionFailureMessage(new Error("memory limit exceeded"), "install", [], true), /^Setup failed while installing dependencies: memory limit exceeded/);
+  // Anything else on Outrunner's account still says what it was.
+  assert.equal(
+    provisionFailureMessage(new Error("snapshot not found"), "allocate", [], true),
+    "Setup failed while provisioning the sandbox: snapshot not found",
+  );
 });

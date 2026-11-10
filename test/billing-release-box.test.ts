@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { boxNeeded, deleteOwnBox, releaseBoxIfUnused, type ReleaseBoxDeps } from "@/lib/billing/release-box";
+import { boxDroppableAfterArchive, boxNeeded, deleteOwnBox, ownBoxDeleted, releaseBoxIfUnused, type ReleaseBoxDeps } from "@/lib/billing/release-box";
+import { AGENT_FEATURE_SNAPSHOT_PATCH_INTEGRITY } from "@/lib/runtime/agent-protocol";
 import type { RuntimeComputerStatus, WorkspaceStatus } from "@/lib/runtime/types";
 
 const NOW = new Date("2026-10-22T12:00:00Z");
@@ -100,4 +101,25 @@ test("a box that won't delete stays metered: its interval is left open", async (
     /Daytona said no/,
   );
   assert.deepEqual(log, []);
+});
+
+test("a session's own box is deleted when it ends, is archived by Outrunner, or can't be paused; else paused", () => {
+  assert.equal(ownBoxDeleted({ ended: true, pausesBoxes: true }), true);
+  // An automation's superseded review: its Snapshot is saved, and a paused box
+  // would hold its whole disk on the shared storage quota.
+  assert.equal(ownBoxDeleted({ ended: false, dropBox: true, pausesBoxes: true }), true);
+  assert.equal(ownBoxDeleted({ ended: false, pausesBoxes: false }), true);
+  // Archived by its user: paused, so Restore brings it back on its disk.
+  assert.equal(ownBoxDeleted({ ended: false, pausesBoxes: true }), false);
+  assert.equal(ownBoxDeleted({ ended: false, dropBox: false, pausesBoxes: true }), false);
+});
+
+test("an archive drops its box only when the agent that captured it fails a broken git diff", () => {
+  assert.equal(boxDroppableAfterArchive(true, ["chats", AGENT_FEATURE_SNAPSHOT_PATCH_INTEGRITY]), true);
+  // An older agent saves an empty patch on a failed diff: its box is paused,
+  // so the session's changes are still on its disk.
+  assert.equal(boxDroppableAfterArchive(true, ["chats"]), false);
+  assert.equal(boxDroppableAfterArchive(true, []), false);
+  assert.equal(boxDroppableAfterArchive(false, [AGENT_FEATURE_SNAPSHOT_PATCH_INTEGRITY]), false);
+  assert.equal(boxDroppableAfterArchive(undefined, [AGENT_FEATURE_SNAPSHOT_PATCH_INTEGRITY]), false);
 });

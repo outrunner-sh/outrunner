@@ -256,7 +256,7 @@ export type StartDeps = {
     prNumber: number;
   }): Promise<{ earlierSessions: string[]; superseded: boolean }>;
   /** Archive them as the runner; how many were. */
-  archiveServerSessions(userId: string, workspaceIds: readonly string[]): Promise<number>;
+  archiveServerSessions(userId: string, workspaceIds: readonly string[], options?: { dropBox?: boolean }): Promise<number>;
   /** The org's connector (lib/automations/connector.ts), made if need be;
    *  null for a personal org, which has none. */
   orgConnector(orgId: string): Promise<string | null>;
@@ -421,7 +421,9 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
         projectId: candidate.projectId,
         prNumber: event.number,
       });
-      await deps.archiveServerSessions(runner, superseded ? [result.workspaceId] : earlierSessions);
+      // Review sessions superseded by this one: nobody comes back to them, so
+      // their boxes go rather than hold the shared storage quota.
+      await deps.archiveServerSessions(runner, superseded ? [result.workspaceId] : earlierSessions, { dropBox: true });
     } catch (error) {
       console.error(`Run ${run.runId}: couldn't archive the earlier review sessions`, error);
     }
@@ -432,7 +434,7 @@ export type CloseDeps = {
   /** The open sessions of the automations' runs on the pull request, by
    *  their owner (pullRequestSessions). */
   pullRequestSessions(installationId: number, repoId: number, prNumber: number): Promise<Map<string, string[]>>;
-  archiveServerSessions(userId: string, workspaceIds: readonly string[]): Promise<number>;
+  archiveServerSessions(userId: string, workspaceIds: readonly string[], options?: { dropBox?: boolean }): Promise<number>;
   /** The runs on it whose check is still open (openChecksOfPullRequest). */
   openChecksOfPullRequest(installationId: number, repoId: number, prNumber: number): Promise<string[]>;
   closeCheck(runId: string, reason: string): Promise<void>;
@@ -457,7 +459,7 @@ export async function closeRuns(payload: unknown, deps: CloseDeps): Promise<numb
   try {
     const byOwner = await deps.pullRequestSessions(closed.installationId, closed.repoId, closed.number);
     let archived = 0;
-    for (const [owner, ids] of byOwner) archived += await deps.archiveServerSessions(owner, ids);
+    for (const [owner, ids] of byOwner) archived += await deps.archiveServerSessions(owner, ids, { dropBox: true });
     return archived;
   } catch (error) {
     console.error(`Couldn't archive the review sessions of ${closed.repoFullName}#${closed.number}`, error);
