@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { MissingGithubTokenError } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
+import { GitIdentityError } from "@/lib/github/identity";
 import { gitCredentialFor } from "@/lib/github/identity.deps";
 import { isGitHubFullName } from "@/lib/github/listing";
-import { requireGithubToken } from "@/lib/github/token";
+import { personalCredential } from "@/lib/github/personal";
 import { activeOrgId } from "@/lib/orgs/server";
 
 /**
@@ -14,11 +16,12 @@ import { activeOrgId } from "@/lib/orgs/server";
  * uses it for that clone only, never writing it down. Returned to their own
  * page, as `outrunnerModelKey` is.
  *
- * As the user chose to work on GitHub (lib/github/identity.ts): their own
- * token, or, for `{ fullName }` in the org they're looking at, a read-only one
- * of the org's Outrunner App for that repository, only for a project they
- * have access to there. A page from before
- * `fullName` gets their own.
+ * The narrowest token that clones `{ fullName }`: a read-only one of the
+ * org's Outrunner App for that repository alone, an hour long, for a project
+ * they have access to in the org they're looking at; else their own GitHub
+ * App user token (8 hours at most). An old sign-in token, which never expires
+ * and reaches everything they can, only while those are still allowed
+ * (GITHUB_LEGACY_TOKENS) and they have nothing narrower.
  */
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {
@@ -30,14 +33,26 @@ export async function POST(request: Request) {
   }
   const body = (await request.json().catch(() => null)) as { fullName?: unknown } | null;
   const fullName = typeof body?.fullName === "string" && isGitHubFullName(body.fullName) ? body.fullName : null;
+  if (!fullName) return NextResponse.json({ error: "Name a GitHub repository as owner/name." }, { status: 400 });
   try {
-    const orgId = fullName ? await activeOrgId() : undefined;
-    const token =
-      fullName && orgId
-        ? (await gitCredentialFor({ userId: owner.id, orgId, repo: fullName, level: "read" })).token
-        : await requireGithubToken(owner.id);
-    return NextResponse.json({ token }, { headers: { "cache-control": "no-store" } });
+    const orgId = await activeOrgId();
+    if (orgId) {
+      try {
+        const app = await gitCredentialFor({ userId: owner.id, orgId, repo: fullName, identity: "app", level: "read" });
+        return reply(app.token);
+      } catch (error) {
+        // Not one of the org's App's: their own, below.
+        if (!(error instanceof GitIdentityError)) throw error;
+      }
+    }
+    const own = await personalCredential(owner.id);
+    if (!own) throw new MissingGithubTokenError();
+    return reply(own.token);
   } catch (error) {
     return githubErrorResponse(error, "Couldn't reach GitHub for that repository.");
   }
+}
+
+function reply(token: string) {
+  return NextResponse.json({ token }, { headers: { "cache-control": "no-store" } });
 }

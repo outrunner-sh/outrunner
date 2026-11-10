@@ -130,6 +130,21 @@ func withOrientation(argv []string, orientation string) []string {
 	return append(argv, "--append-system-prompt", orientation)
 }
 
+// Branch is what a worktree's branch is to its agent, in the orientation.
+type Branch int
+
+const (
+	// BranchChosen is a branch someone chose, or one already named: the
+	// agent leaves it as it is unless the user says otherwise.
+	BranchChosen Branch = iota
+	// BranchPlaceholder is a name from before branches said what they're
+	// for (runtime/<time>-<id>), which nobody chose.
+	BranchPlaceholder
+	// BranchToName is the name Outrunner made from the first message, which
+	// the agent gives its real name once (the workspace's Branch name note).
+	BranchToName
+)
+
 // Orientation renders the Outrunner orientation system prompt injected at
 // session start via --append-system-prompt. It is the floor of the prompt
 // layering (Outrunner orientation → repo CLAUDE.md → owner → task): it tells
@@ -141,9 +156,8 @@ func withOrientation(argv []string, orientation string) []string {
 // "main". Both may be empty after a box restart that lost the recorded facts:
 // an empty worktree degrades to a generic phrase, and an empty baseBranch omits
 // the target-branch guidance entirely rather than naming a bogus base.
-// placeholderBranch says the worktree is still on the branch Outrunner named
-// for it (runtime/<time>-<id>), which nobody has chosen yet.
-func Orientation(worktree, baseBranch string, placeholderBranch bool) string {
+// branch says what the worktree's branch is to the agent (Branch).
+func Orientation(worktree, baseBranch string, branch Branch) string {
 	workingDir := worktree
 	if workingDir == "" {
 		workingDir = "workspace"
@@ -160,10 +174,16 @@ func Orientation(worktree, baseBranch string, placeholderBranch bool) string {
 	if baseBranch != "" {
 		fmt.Fprintf(&b, "The target branch for this workspace is origin/%s. Use this for actions like diffing (`git diff origin/%s...`) or creating PRs (`gh pr create --base %s`).\n", baseBranch, baseBranch, baseBranch)
 	}
-	if placeholderBranch {
+	switch branch {
+	case BranchPlaceholder:
 		b.WriteString("You're on a new branch with a placeholder name.\n")
+		b.WriteString("\nDo not rename the current branch unless the user explicitly tells you to do so.\n")
+	case BranchToName:
+		b.WriteString("You're on a new branch with a temporary name Outrunner made from the first message.\n")
+		b.WriteString("\nDo not rename the current branch unless the user explicitly tells you to do so, or to give it its real name once, as Branch name below says.\n")
+	default:
+		b.WriteString("\nDo not rename the current branch unless the user explicitly tells you to do so.\n")
 	}
-	b.WriteString("\nDo not rename the current branch unless the user explicitly tells you to do so.\n")
 	b.WriteString("\nBy default, the user will only see the last message that you send before stopping. Include all essential information in the last message. The intermediate messages will be collapsed and accessible by the user but not displayed by default.\n")
 	fmt.Fprintf(&b, "\nSave screenshots under `.context/` and embed them inline in the final response using Markdown image syntax, for example `![Screenshot](<%s>)`.\n", screenshotPath)
 	b.WriteString("\nIf the user asks you to work on several unrelated tasks, you can suggest they start new workspaces.\n")

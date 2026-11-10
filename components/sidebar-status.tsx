@@ -3,20 +3,25 @@
 import Link, { useLinkStatus } from "next/link";
 import {
   Archive,
+  Check,
   ChevronRight,
   Circle,
   CircleAlert,
+  Copy,
   CircleCheck,
   Ellipsis,
+  ExternalLink,
   GitMerge,
   GitPullRequest,
+  Pencil,
   Pin,
   PinOff,
   Slack,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { RenameSessionDialog } from "@/components/rename-session-dialog";
 import { Spinner, ThinkingIcon } from "@/components/ui/loaders";
 import {
   DropdownMenu,
@@ -43,7 +48,8 @@ import { cn } from "@/lib/utils";
  * The sidebar's sessions by where they stand (lib/nav/status-groups.ts): a
  * heading for each group, folded with its chevron like a project, and its
  * sessions, each with a mark for its standing, a dot for a reply not seen,
- * and a menu to pin it, move it or delete it.
+ * and a menu to rename, pin, move or delete it, copy its branch or open its
+ * pull request.
  */
 export function StatusSections({
   sections,
@@ -101,7 +107,7 @@ export function StatusSections({
               <StatusRowLink
                 key={row.id}
                 row={row}
-                merged={pullRequests[row.id]?.state === "merged"}
+                pullRequest={pullRequests[row.id]}
                 active={row.id === active}
                 now={now}
                 onDelete={onDelete}
@@ -125,18 +131,19 @@ export function StatusSections({
 
 function StatusRowLink({
   row,
-  merged,
+  pullRequest,
   active,
   now,
   onDelete,
 }: {
   row: StatusRow;
-  merged: boolean;
+  pullRequest: WorkspacePullRequest | undefined;
   active: boolean;
   now: number;
   onDelete: (session: { id: string; title: string; deletion: SessionDeletion }) => void;
 }) {
   const { standing } = row;
+  const merged = pullRequest?.state === "merged";
   // As the project view's rows: a cloud session warms as the pointer rests.
   const warm = !active && !row.local;
   return (
@@ -171,6 +178,7 @@ function StatusRowLink({
         session={row}
         markable={row.markable}
         standing={standing}
+        pullRequestUrl={pullRequest?.url}
         onDelete={onDelete}
         className="absolute right-1 top-1/2 -translate-y-1/2"
       />
@@ -216,32 +224,51 @@ export function StandingMark({
 }
 
 /**
- * A session's menu: Pin, Move to (a group by hand, or back to Automatic),
- * and Delete, each where it applies. Shown on the row's hover, as
- * its buttons were.
+ * A session's menu: Rename, Pin, Move to (a group by hand, or back to
+ * Automatic), Copy branch, Open pull request and Delete, each where it
+ * applies. Shown on the row's hover, as its buttons were. (Archive was
+ * replaced by Delete: 246c9389.)
  */
 export function SessionMenu({
   session,
   markable,
   standing,
+  pullRequestUrl,
   onDelete,
   className,
 }: {
-  session: Pick<SidebarSession, "id" | "title" | "deletion">;
-  /** A cloud session: Pin and Move to are offered. */
+  session: Pick<SidebarSession, "id" | "title" | "deletion" | "branch">;
+  /** A cloud session: Rename, Pin and Move to are offered. */
   markable: boolean;
   standing: SessionStanding | undefined;
+  /** Its pull request on GitHub, when it has one. */
+  pullRequestUrl?: string;
   onDelete: (session: { id: string; title: string; deletion: SessionDeletion }) => void;
   className?: string;
 }) {
-  const { deletion } = session;
-  if (!markable && !deletion) return null;
+  const [renaming, setRenaming] = useState(false);
+  // Copy branch says it copied, the menu kept open for it, as Copy does elsewhere.
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  const { deletion, branch } = session;
+  if (!markable && !deletion && !branch) return null;
   const mark = (change: Parameters<typeof markSession>[1]) => {
     void markSession(session.id, change).catch((error: unknown) => {
       console.error(`Couldn't change ${session.id}'s marks`, error);
     });
   };
+  const copyBranch = () => {
+    navigator.clipboard.writeText(branch).then(
+      () => setCopied(true),
+      (error: unknown) => console.error(`Couldn't copy ${session.id}'s branch`, error),
+    );
+  };
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label={`More for ${session.title}`}
@@ -254,6 +281,12 @@ export function SessionMenu({
         <Ellipsis className="size-3.5" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-52">
+        {markable && (
+          <DropdownMenuItem onSelect={() => setRenaming(true)}>
+            <Pencil />
+            Rename
+          </DropdownMenuItem>
+        )}
         {markable && standing && (
           <>
             <DropdownMenuItem onSelect={() => mark({ pinned: !standing.pinned })}>
@@ -283,7 +316,27 @@ export function SessionMenu({
             </DropdownMenuSub>
           </>
         )}
-        {markable && standing && deletion && <DropdownMenuSeparator />}
+        {(branch || pullRequestUrl) && <DropdownMenuSeparator />}
+        {branch && (
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault();
+              copyBranch();
+            }}
+          >
+            {copied ? <Check /> : <Copy />}
+            {copied ? "Copied" : "Copy branch"}
+          </DropdownMenuItem>
+        )}
+        {pullRequestUrl && (
+          <DropdownMenuItem asChild>
+            <a href={pullRequestUrl} target="_blank" rel="noreferrer">
+              <ExternalLink />
+              Open pull request
+            </a>
+          </DropdownMenuItem>
+        )}
+        {(markable || branch) && deletion && <DropdownMenuSeparator />}
         {deletion && (
           <DropdownMenuItem
             variant="destructive"
@@ -295,6 +348,9 @@ export function SessionMenu({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+    {/* Mounted only while open, so each opening starts from the current title. */}
+    {markable && renaming && <RenameSessionDialog session={session} open onOpenChange={setRenaming} />}
+    </>
   );
 }
 

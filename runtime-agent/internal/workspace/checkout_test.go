@@ -87,6 +87,33 @@ func TestCreateFromCheckoutLeavesTheCheckoutAlone(t *testing.T) {
 	}
 }
 
+func TestCreateFromCheckoutNumbersABranchTheCheckoutHas(t *testing.T) {
+	isolateGit(t)
+	repo := newCheckout(t)
+	// The user's own branch of that name, and another session's numbered one.
+	run(t, repo, "branch", "fix-login")
+	run(t, repo, "branch", "fix-login-2")
+	s := NewService(t.TempDir())
+
+	worktree, err := s.Create(context.Background(), CreateInput{
+		WorkspaceID: "ws-local", Branch: "fix-login", BaseBranch: "main", RepoPath: repo,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := run(t, worktree, "rev-parse", "--abbrev-ref", "HEAD"); got != "fix-login-3" {
+		t.Errorf("worktree branch = %q, want fix-login-3", got)
+	}
+	// The session list shows the branch it's on.
+	if f, _ := s.getFacts("ws-local"); f.Branch != "fix-login-3" {
+		t.Errorf("recorded branch = %q, want fix-login-3", f.Branch)
+	}
+	// The user's branch is left where it was.
+	if got, want := run(t, repo, "rev-parse", "fix-login"), run(t, repo, "rev-parse", "main"); got != want {
+		t.Errorf("fix-login moved to %s", got)
+	}
+}
+
 func TestCreateFromCheckoutForksFromTheRemoteBase(t *testing.T) {
 	isolateGit(t)
 	// origin has moved on since the user last pulled: the session must start
@@ -469,13 +496,13 @@ func TestSessionsSharingAFolderKeepTheirOwnConversations(t *testing.T) {
 func TestAFailedCreateLeavesNoSessionBehind(t *testing.T) {
 	isolateGit(t)
 	repo := newCheckout(t)
-	// The session's branch is already taken, so `git worktree add -b` fails.
-	run(t, repo, "branch", "runtime/taken")
+	// A name git won't take, so `git worktree add -b` fails. (A taken one is
+	// numbered instead: TestCreateFromCheckoutNumbersABranchTheCheckoutHas.)
 	s := NewService(t.TempDir())
 	if _, err := s.Create(context.Background(), CreateInput{
-		WorkspaceID: "ws-taken", Branch: "runtime/taken", RepoPath: repo,
+		WorkspaceID: "ws-taken", Branch: "runtime/bad..name", RepoPath: repo,
 	}); err == nil {
-		t.Fatal("Create succeeded with a taken branch")
+		t.Fatal("Create succeeded with a branch git refuses")
 	}
 	if got := NewService(s.Root).LocalSessions(context.Background()); len(got) != 0 {
 		t.Errorf("a failed create is still listed: %+v", got)

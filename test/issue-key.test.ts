@@ -80,15 +80,20 @@ test("the agent's hint spells the key as its tracker wants", () => {
   assert.match(branchHint("jira", "ENG-1"), /`fix\/ENG-1-what-it-does`/);
 });
 
-test("a branch someone asked for wins; started from an item, the hook leaves it to the server", () => {
+test("a branch someone asked for wins; else the issue's name, else a generated one, all the server's", () => {
   const create = readFileSync("lib/session/create-cloud-session.ts", "utf8");
-  assert.match(create, /branch: requestedBranch \|\| issueBranchToUse \|\| generatedBranch\(\)/);
+  assert.match(create, /requested: requestedBranch,/);
+  // The issue's name is offered first, and the generated one only without it.
+  assert.ok(create.indexOf("issueBranches.add(name)") < create.indexOf("return generatedBranch(about, generation, lost)"));
+  // Named for its issue, the agent doesn't rename it away from the key.
+  assert.match(create, /branchRenamable: !requestedBranch && !issueBranches\.has\(branch\)/);
+  // The hook sends no branch at all: the server names every new one.
   const hook = readFileSync("hooks/use-create-session.ts", "utf8");
-  assert.match(hook, /\.\.\.\(!workItemId && \{ branch \}\)/);
+  assert.doesNotMatch(hook, /\{ branch \}\)/);
 });
 
 test("Create PR names the issue as each tracker's GitHub integration reads it", () => {
-  const base = { branch: "b", baseBranch: "main", uncommitted: 0, tools: { desktop: true }, footer: { sessionUrl: "https://app/w" } };
+  const base = { branch: "b", baseBranch: "main", changedFiles: 0, tools: { desktop: true }, footer: { sessionUrl: "https://app/w" } };
   assert.match(prInstructions({ ...base, issue: { source: "linear", key: "ENG-1" } }), /^This session works on Linear issue ENG-1\. Put "Fixes ENG-1" in the PR body\.$/m);
   assert.match(prInstructions({ ...base, issue: { source: "jira", key: "ENG-1" } }), /^This session works on Jira issue ENG-1\. Put ENG-1 in the PR title\.$/m);
   assert.doesNotMatch(prInstructions(base), /works on (Linear|Jira) issue/);

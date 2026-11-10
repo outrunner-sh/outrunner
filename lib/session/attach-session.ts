@@ -15,6 +15,13 @@ export class AttachError extends Error {
   }
 }
 
+/** Whether an attach failed on the way (a network error, a 502/503/504, a
+ *  restore that failed), so trying again can help; a refusal that names what
+ *  happened (the box is gone, the session ended, …) can't be helped by it. */
+export function retryableAttachFailure(error: unknown): boolean {
+  return error instanceof AttachError ? error.retryable : error instanceof TypeError;
+}
+
 /** A short provider or network outage should recover before showing a failed
  *  box. Retries refresh its endpoint, are bounded, and stop when the page leaves. */
 export async function attachCloudSession(
@@ -45,7 +52,7 @@ export async function attachCloudSession(
       return parsed.data;
     } catch (error) {
       signal.throwIfAborted();
-      const retryable = error instanceof AttachError ? error.retryable : error instanceof TypeError;
+      const retryable = retryableAttachFailure(error);
       const delay = RETRY_DELAYS_MS[attempt];
       if (!retryable || delay === undefined) throw error;
       await (deps.wait ?? wait)(delay, signal);

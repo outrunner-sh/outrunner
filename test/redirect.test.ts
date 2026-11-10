@@ -21,3 +21,34 @@ test("safeRelativePath rejects open-redirect attempts", () => {
   assert.equal(safeRelativePath("https://evil.com"), "/");
   assert.equal(safeRelativePath("evil.com"), "/");
 });
+
+test("safeRelativePath rejects what a browser reads as another origin", () => {
+  // A Location's tabs and newlines are dropped and `\` is `/`, so each of
+  // these is `//evil.com` to the browser following it.
+  assert.equal(safeRelativePath("/\t/evil.com"), "/");
+  assert.equal(safeRelativePath("/\n/evil.com"), "/");
+  assert.equal(safeRelativePath("/\r\n/evil.com"), "/");
+  assert.equal(safeRelativePath("/\t\\evil.com"), "/");
+  assert.equal(safeRelativePath("/\t/evil.com", "/home"), "/home");
+});
+
+test("safeRelativePath keeps a path's query and hash", () => {
+  assert.equal(safeRelativePath("/invite/abc?org=x#top"), "/invite/abc?org=x#top");
+  assert.equal(safeRelativePath("/%09/evil.com"), "/%09/evil.com");
+});
+
+test("safeRelativePath never turns a dot segment into another origin", () => {
+  // Each is this origin's path `//evil.com` as given; normalised, it would be
+  // `//evil.com`, another origin.
+  for (const next of ["/.//evil.com", "/a/..//evil.com", "/%2e//evil.com", "/./\\evil.com"]) {
+    const kept = safeRelativePath(next);
+    assert.equal(new URL(kept, "https://app.example").origin, "https://app.example", next);
+    assert.equal(kept, next);
+  }
+});
+
+test("safeRelativePath refuses control characters even on this origin", () => {
+  assert.equal(safeRelativePath("/a\nb"), "/");
+  assert.equal(safeRelativePath("/a\tb"), "/");
+  assert.equal(safeRelativePath("/a\u0000b"), "/");
+});

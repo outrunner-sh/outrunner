@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { authorize, wantedOrg, type ApiAuthDeps } from "@/lib/api/auth";
+import { authorize, boxSetupRefusal, boxSetupRefused, wantedOrg, type ApiAuthDeps } from "@/lib/api/auth";
 import { hashApiKey } from "@/lib/api/keys";
 import type { StoredApiKey } from "@/lib/db/api-keys";
 import type { OrgRole } from "@/lib/orgs/active";
@@ -104,4 +104,17 @@ test("the org is named by ?org= or the Outrunner-Org header", () => {
   assert.equal(wantedOrg(new Request("https://x.test/api/v1/me?org=acme")), "acme");
   assert.equal(wantedOrg(new Request("https://x.test/api/v1/me", { headers: { "outrunner-org": " acme " } })), "acme");
   assert.equal(wantedOrg(new Request("https://x.test/api/v1/me")), null);
+});
+
+test("only an org key changes what runs on the project's boxes", () => {
+  assert.equal(boxSetupRefusal("org_key"), null);
+  assert.match(boxSetupRefusal("personal_key") ?? "", /org key/);
+  assert.match(boxSetupRefusal("cli_token") ?? "", /org key/);
+});
+
+test("a refusal is the API's 403", async () => {
+  assert.equal(boxSetupRefused({ caller: { kind: "org_key" } }), null);
+  const refused = boxSetupRefused({ caller: { kind: "personal_key" } });
+  assert.equal(refused?.status, 403);
+  assert.match(((await refused?.json()) as { error: { message: string } }).error.message, /MCP servers, skills/);
 });

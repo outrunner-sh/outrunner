@@ -8,6 +8,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { AppDataProvider, ViewerScopeProvider } from "@/components/app-data";
 import { SessionDeletionDialog } from "@/components/delete-session-dialog";
 import { AppSidebar } from "@/components/app-sidebar";
+import { GitHubConnectionNoticeBanner } from "@/components/github-connection-notice";
 import { ArchiveNotice } from "@/components/archive-session-dialog";
 import { MissionToasts } from "@/components/missions/mission-toasts";
 import { useServerAnswer } from "@/components/server-answer";
@@ -15,6 +16,7 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 import { useModalPanel } from "@/hooks/use-modal-panel";
 import { useNotificationsFeed } from "@/hooks/use-notifications";
 import { standingsNow, useStandingsFeed } from "@/hooks/use-standings";
+import type { GitHubConnectionNotice } from "@/lib/github/connection-notice";
 import { activeSessionId, isStudioPath, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import type { Grouping } from "@/lib/nav/status-groups";
 import { cachedListFor, rememberAppData, useCachedAppData } from "@/lib/session/app-data-cache";
@@ -42,6 +44,8 @@ export type FrameData = {
   activeOrgId: string | null;
   /** Work items waiting in triage: the sidebar's count. */
   triageCount: number;
+  /** Whether to ask them to connect GitHub (lib/github/connection-notice.ts). */
+  githubNotice?: GitHubConnectionNotice;
 };
 
 /**
@@ -177,10 +181,15 @@ export function AppFrame({
   // list; the cloud session on screen is marked seen as its replies come.
   const onScreen = pathname.startsWith("/workspaces/") ? activeSessionId(pathname) : undefined;
   const cloudIds = useMemo(() => (appData?.workspaces ?? NO_WORKSPACES).map((w) => w.id), [appData]);
+  const cloudBranches = useMemo(
+    () => Object.fromEntries((appData?.workspaces ?? NO_WORKSPACES).map((w) => [w.id, w.branch])),
+    [appData],
+  );
   useStandingsFeed({
     initial: appData?.standings,
     // Not before the layout's list is in: an empty page isn't a list to compare.
     ids: cloudIds,
+    branches: cloudBranches,
     onScreen,
     onListChanged: () => {
       // The server's own list, not the one kept from last time: the marks and
@@ -354,6 +363,7 @@ export function AppFrame({
       {chromeSlot}
       {slot}
       <ArchiveNotice />
+      <GitHubConnectionNoticeBanner notice={frame?.githubNotice ?? null} />
       <SessionDeletionDialog />
       {/* A Mission's news while the user looks, whatever the sidebar does
           (components/missions/mission-toasts.tsx). */}

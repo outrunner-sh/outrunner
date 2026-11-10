@@ -97,7 +97,7 @@ func Materialize(ctx context.Context, in MaterializeInput) error {
 		if err := os.MkdirAll(in.WorktreePath, 0o755); err != nil {
 			return err
 		}
-		if err := materializeCheckouts(ctx, in.WorktreePath, in.Branch, bundlePath, patchPath, in.Checkouts, staging); err != nil {
+		if err := materializeCheckouts(ctx, in.WorktreePath, in.Branch, in.BundleRef, bundlePath, patchPath, in.Checkouts, staging); err != nil {
 			return err
 		}
 	} else {

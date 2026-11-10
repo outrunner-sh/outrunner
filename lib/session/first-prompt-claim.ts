@@ -72,17 +72,25 @@ const UNGUARDED: FirstPromptGate = { outcome: "send", held: yes, sent: nothing, 
  * (a prompt sent from a copy the browser lost track of) is not one this key
  * can speak for, so it goes as an ordinary message would. No key, or a
  * database without the columns yet, sends as before: unguarded, never refused.
+ *
+ * `strict` (for a sender that isn't waiting on its own send — setup
+ * delivering the kept copy, lib/session/deliver-first-prompt.ts) refuses
+ * that fallback instead: a claim that can't be made throws, and the caller
+ * stands down rather than send unguarded — a send nothing recorded would let
+ * the session page's own clean claim send again, twice over.
  */
 export async function gateFirstPrompt(
   key: string | null,
   deps: FirstPromptClaimDeps,
   label: string,
+  { strict = false }: { strict?: boolean } = {},
 ): Promise<FirstPromptGate> {
   if (!key) return UNGUARDED;
   let claim: FirstPromptClaim;
   try {
     claim = await deps.claim(key);
   } catch (error) {
+    if (strict) throw error;
     console.error(`Message: could not claim the first prompt of ${label}; sending it unguarded`, error);
     return UNGUARDED;
   }

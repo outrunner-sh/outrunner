@@ -39,7 +39,7 @@ async function DefaultsSection() {
         <p className="max-w-prose text-sm text-muted-foreground">
           {!org
             ? "Couldn't load your orgs. Reload the page to try again."
-            : "Your personal org's defaults are your own, under Settings → Default models and Sandbox. A team org can set defaults for its members here."}
+            : "Your personal org's defaults are your own, under Settings → Preferences and Sandbox. A team org can set defaults for its members here."}
         </p>
       </section>
     );

@@ -1,14 +1,18 @@
 /**
  * Where an org's repositories come from, for listing and connecting them.
  *
- * An org with the Outrunner GitHub App installed (Settings → Org → GitHub)
- * lists and connects the repositories its installations reach, as the App:
- * a team's projects don't hang on any one member's GitHub. An org without it
- * (a personal org, most often) uses the member's own GitHub sign-in, as
- * before.
+ * A team org lists and connects the repositories its Outrunner GitHub App
+ * installations reach (Settings → Org → GitHub), as the App: a team's
+ * projects don't hang on any one member's GitHub, and never come from it.
+ *
+ * A user's personal org lists what their own GitHub connection reaches
+ * (Settings → Connections → GitHub): with the App's user token, the
+ * repositories both they and the App's installations reach, all or the ones
+ * picked on GitHub. Without one, its installations, as the App; else, while
+ * those are allowed, an old sign-in token (lib/github/legacy-token.ts).
  *
  * Who clones, pushes and opens pull requests is a separate choice, the
- * member's own (lib/github/identity.ts, to come).
+ * member's own (lib/github/identity.ts).
  */
 
 import { listOrgInstallations, type OrgInstallation } from "@/lib/db/github-installations";
@@ -30,11 +34,14 @@ import {
   listGitHubRepositories,
   listInstallationRepositoryRecords,
   mergeRepositoryLists,
+  MissingGithubTokenError,
   type GitHubRepository,
   type GitHubRepositoryList,
 } from "@/lib/github/client";
 import type { SourceAccount } from "@/lib/github/listing";
+import { personalCredential } from "@/lib/github/personal";
 import { requireGithubToken } from "@/lib/github/token";
+import { listUserInstallations } from "@/lib/github/user-auth";
 
 export type RepositorySource =
   | { kind: "app"; key: string; accounts: SourceAccount[] }
@@ -55,18 +62,19 @@ export type SourceAccess = {
 };
 
 /**
- * The source for `orgId`, as `userId` (from the verified session): the App
- * when the org has kept an installation of it, else, in the user's personal
- * org, their own GitHub token (MissingGithubTokenError without one). A team
- * org reaches only what its App does: a member's own repositories never
- * land in it (GitIdentityError, to install the App, without one). Without
- * the App on this server at all, everyone's own token, as before it.
+ * The source for `orgId`, as `userId` (from the verified session). In the
+ * user's personal org: their own GitHub connection when it's the App's user
+ * token, else the org's installations, else an old sign-in token
+ * (MissingGithubTokenError with none). A team org reaches only what its App
+ * does: a member's own repositories never land in it (GitIdentityError, to
+ * install the App, without one). Without the App on this server at all,
+ * everyone's own token, as before it.
  */
 export async function repositorySource(userId: string, orgId: string | undefined): Promise<SourceAccess> {
   const config = githubAppConfig();
   if (config && orgId) {
-    // Only the user's own org may fall back to their own GitHub; a team's
-    // can't, so its installations unread is an error, not "none".
+    // Only the user's own org may use their own GitHub; a team's can't, so
+    // its installations unread is an error, not "none".
     const personal = await isOwnPersonalOrg(orgId, userId);
     const installations = personal
       ? await listOrgInstallations(orgId).catch((error: unknown) => {
@@ -74,22 +82,77 @@ export async function repositorySource(userId: string, orgId: string | undefined
           return [];
         })
       : await listOrgInstallations(orgId);
-    if (installations.length > 0) return appSource(config, orgId, installations);
     if (!personal) {
+      if (installations.length > 0) return appSource(config, orgId, installations);
       throw new GitIdentityError(
         "no_installation",
         "This org has no GitHub App installed, so it has no repositories yet. An admin can install it in Settings → Org → GitHub.",
         "/settings/org/github",
       );
     }
+    let own: Awaited<ReturnType<typeof personalCredential>> = null;
+    try {
+      own = await personalCredential(userId);
+    } catch (error) {
+      // A connection GitHub won't renew: the org's installations still list.
+      if (installations.length === 0) throw error;
+      console.warn(`Repositories: user ${userId}'s GitHub connection is broken; listing their org's installations`);
+    }
+    if (own?.source === "app_user") return userAppSource(userId, own.token, config, orgId, installations);
+    if (installations.length > 0) return appSource(config, orgId, installations);
+    if (!own) throw new MissingGithubTokenError();
+    return userSource(userId, own.token);
   }
-  const token = await requireGithubToken(userId);
+  return userSource(userId, await requireGithubToken(userId));
+}
+
+/** A user's own token, an old sign-in's: everything they can reach. */
+function userSource(userId: string, token: string): SourceAccess {
   return {
     source: { kind: "user", key: `user:${userId}` },
     list: () => listGitHubRepositories(token),
     lookup: (ref) => getGitHubRepository(token, ref),
     // The member's token reads all they can: never handed to a box.
     readToken: async () => null,
+  };
+}
+
+/**
+ * A user's GitHub App user token: what both they and the App's installations
+ * reach, their own account's and their GitHub organizations'. Named as the
+ * App's accounts it reaches, so the picker says where to add repositories. A
+ * box's read token is still one of the personal org's installations', for
+ * one repository; the user's own token is never handed to one for this.
+ */
+async function userAppSource(
+  userId: string,
+  token: string,
+  config: GitHubAppConfig,
+  orgId: string,
+  installations: OrgInstallation[],
+): Promise<SourceAccess> {
+  const reachable = await listUserInstallations(token).catch((error: unknown) => {
+    console.warn(`Repositories: couldn't list user ${userId}'s GitHub App installations`, error instanceof Error ? error.message : error);
+    return [];
+  });
+  const app = installations.length > 0 ? appSource(config, orgId, installations) : null;
+  return {
+    source:
+      reachable.length > 0
+        ? {
+            kind: "app",
+            key: `user-app:${userId}`,
+            accounts: reachable.map((i) => ({
+              installationId: i.id,
+              login: i.accountLogin,
+              type: i.accountType,
+              suspended: i.suspendedAt !== null,
+            })),
+          }
+        : { kind: "user", key: `user-app:${userId}` },
+    list: () => listGitHubRepositories(token),
+    lookup: (ref) => getGitHubRepository(token, ref),
+    readToken: async (fullName) => (app ? app.readToken(fullName) : null),
   };
 }
 

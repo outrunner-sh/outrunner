@@ -7,12 +7,12 @@ import {
   claimLoopAct,
   resetCiTurns,
   githubMember,
-  installationProject,
   installationProjects,
   linkedSessions,
   linkSession,
   releaseLoopAct,
 } from "@/lib/db/github-loop";
+import { repositoryIdOf } from "@/lib/db/installation-projects";
 import { projectLevel } from "@/lib/db/org-access";
 import { optionalEnv } from "@/lib/env";
 import { githubAppConfig, installationToken } from "@/lib/github/app";
@@ -30,19 +30,23 @@ async function token(installationId: number): Promise<string> {
   return installationToken(config, installationId);
 }
 
-export function loopDeps(scope?: { orgId: string; projectId: string }): LoopDeps {
+/** The org member a GitHub account is, if the deployment still lets them
+ *  in: as the Slack agent's, someone it no longer lets in steers nothing. */
+export async function loopMember(githubUserId: number, orgId: string): Promise<string | null> {
+  const userId = await githubMember(githubUserId, orgId);
+  if (!userId) return null;
+  const { data, error } = await createSupabaseAdminClient().auth.admin.getUserById(userId);
+  return !error && data.user && isOwner(data.user) ? userId : null;
+}
+
+/** The loop's I/O for one org's project of the event's repository, as the
+ *  webhook matched it (runGitHubLoop: by GitHub's repository id). */
+export function loopDeps(scope: { orgId: string; projectId: string }): LoopDeps {
   return {
-    scope: scope ? async () => scope : installationProject,
+    scope: async () => scope,
     claim: claimLoopAct,
     release: releaseLoopAct,
-    async member(githubUserId, orgId) {
-      const userId = await githubMember(githubUserId, orgId);
-      if (!userId) return null;
-      // As the Slack agent's: someone the deployment no longer lets in
-      // steers nothing.
-      const { data, error } = await createSupabaseAdminClient().auth.admin.getUserById(userId);
-      return !error && data.user && isOwner(data.user) ? userId : null;
-    },
+    member: loopMember,
     level: projectLevel,
     linkedSessions,
     async pullBranches(installationId, repoFullName, number) {
@@ -90,9 +94,12 @@ export const LOOP_EVENTS: ReadonlySet<string> = new Set([
  *  Never throws: what failed is logged. */
 export async function runGitHubLoop(event: string, payload: unknown, appSlug: string): Promise<void> {
   const p = payload as { installation?: { id?: number }; repository?: { full_name?: string } };
-  if (!p?.installation?.id || !p.repository?.full_name) return;
+  // GitHub's id of the repository, what its projects match by: never the
+  // full name, which a project's write-level members can set.
+  const repoId = repositoryIdOf(payload);
+  if (!p?.installation?.id || !p.repository?.full_name || repoId === null) return;
   try {
-    const scopes = await installationProjects(p.installation.id, p.repository.full_name);
+    const scopes = await installationProjects(p.installation.id, repoId);
     await Promise.all(scopes.map(async (scope) => {
       try {
         await runScopedLoop(event, payload, appSlug, scope, scopes.length > 1);

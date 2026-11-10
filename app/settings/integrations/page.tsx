@@ -48,12 +48,13 @@ const LINEAR_RESULTS: Record<string, string> = {
   unavailable: "Linear isn't set up on this deployment yet: see docs/linear-app.md.",
 };
 
-/** Connections: your own accounts, connected to an org (your Slack user, your
- *  Linear user, and the CLI). The org's own are under Org → Integrations. */
+/** Connections: your own accounts (GitHub for your repositories, your Slack
+ *  user, your Linear and Jira users, and the CLI). The org's own are under
+ *  Org → Integrations. */
 export default function IntegrationsSettings({
   searchParams,
 }: {
-  searchParams: Promise<{ slack?: string; linear?: string; jira?: string; link_error?: string }>;
+  searchParams: Promise<{ slack?: string; linear?: string; jira?: string; link_error?: string; github?: string }>;
 }) {
   return (
     <Suspense fallback={<SettingsLoading title="Connections" />}>
@@ -62,10 +63,14 @@ export default function IntegrationsSettings({
   );
 }
 
-async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ slack?: string; linear?: string; jira?: string; link_error?: string }> }) {
+async function IntegrationsSection({
+  searchParams,
+}: {
+  searchParams: Promise<{ slack?: string; linear?: string; jira?: string; link_error?: string; github?: string }>;
+}) {
   const owner = await getOwnerSafe();
   if (!owner) redirect("/signin");
-  const { slack, linear, jira, link_error: linkError } = await searchParams;
+  const { slack, linear, jira, link_error: linkError, github } = await searchParams;
   const enabled = Boolean(optionalEnv("SLACK_SIGNING_SECRET"));
   const [links, trackerLinks] = await Promise.all([
     listSlackLinks(owner.id).catch((error: unknown): SlackLink[] => {
@@ -86,7 +91,7 @@ async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ s
         </Link>
       </div>
 
-      <GitHubConnectionSection userId={owner.id} login={owner.githubLogin} />
+      <GitHubConnectionSection userId={owner.id} login={owner.githubLogin} result={github ?? null} />
       {linkError && <p role="alert" className="text-sm text-destructive">{linkError === "identity_already_exists" ? "That GitHub account is already linked to another Outrunner account. Connect a different account, or sign in with GitHub to use it." : "GitHub could not be connected. Please try again."}</p>}
 
       <div className="space-y-3">

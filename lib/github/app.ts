@@ -77,9 +77,11 @@ export type InstallState = {
   installationId?: number;
 };
 
-/** Where an install may come back to, besides the org's GitHub settings. */
-export type InstallReturn = "/onboarding";
-export const isInstallReturn = (value: unknown): value is InstallReturn => value === "/onboarding";
+/** Where an install may come back to, besides the org's GitHub settings:
+ *  onboarding, or the user's own GitHub connection (Settings → Connections). */
+export type InstallReturn = "/onboarding" | "/settings/connections";
+export const isInstallReturn = (value: unknown): value is InstallReturn =>
+  value === "/onboarding" || value === "/settings/connections";
 
 /** The `state` an install link carries, signed so the setup route knows the
  *  org and the admin are the ones it sent. */

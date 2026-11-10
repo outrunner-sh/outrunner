@@ -5,6 +5,7 @@
  */
 
 import type { LocalSession } from "@/lib/desktop/local-runtime";
+import { withoutGeneratedPrefix } from "@/lib/session/branch-name";
 
 export type LocalFolderGroup = {
   /** The folder's path: the group's identity and its tooltip. */
@@ -17,7 +18,7 @@ export type LocalFolderGroup = {
 
 /** A session under its folder: what was asked, else its branch. */
 export function localSessionLabel(session: LocalSession): string {
-  return session.title || session.branch.replace(/^runtime\//, "") || session.name;
+  return session.title || withoutGeneratedPrefix(session.branch) || session.name;
 }
 
 /**

@@ -59,7 +59,7 @@ export async function POST(request: Request, context: Context) {
       const result = await agent.switchHarness(identity, { id: body.id, agent: current.agent, retry: true }, chatId);
       if (!result.harness) throw new Error("The runtime did not report its harness selection.");
       const recorded = harnessRecorded(result.harness);
-      await recordHarnessSelection(id,chatId,result.harness.agent,recorded,result.harness.mode);
+      await recordHarnessSelection(id, workspace.ownerId,chatId,result.harness.agent,recorded,result.harness.mode);
       await agent.switchHarness(identity,{ id:result.harness.id,ack:true },chatId);
       return NextResponse.json({ agent:result.harness.agent,recorded,operationId:result.harness.id });
     }
@@ -80,7 +80,7 @@ export async function POST(request: Request, context: Context) {
       auth: auth.credential ?? { kind: "none" }, content: prompt, resume: body.resume === true, mode:body.mode,
     }, chatId);
     if (!result.harness) throw new Error("The runtime did not report its harness selection.");
-    await recordHarnessSelection(id, chatId, result.harness.agent, harnessRecorded(result.harness),result.harness.mode);
+    await recordHarnessSelection(id, workspace.ownerId, chatId, result.harness.agent, harnessRecorded(result.harness),result.harness.mode);
     await agent.switchHarness(identity,{ id:result.harness.id,ack:true },chatId);
     return NextResponse.json({ agent: result.harness.agent, recorded: harnessRecorded(result.harness), operationId: result.harness.id });
   } catch (error) {

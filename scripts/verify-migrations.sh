@@ -73,7 +73,17 @@ run_psql -d "$DB" -c "
         execute format('create role %I nologin', r);
       end if;
     end loop;
-  end \$\$;"
+  end \$\$;
+  -- And their grants, as Supabase has them: every table, sequence and
+  -- function public gets is granted in full to all three roles, so RLS and a
+  -- migration's own revokes are what stand between them and the data. Without
+  -- these the roles could do nothing, and an assertion or a migration guard
+  -- that a client role can't write a table would hold whatever the
+  -- migrations said.
+  grant usage on schema public to anon, authenticated, service_role;
+  alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+  alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
+  alter default privileges in schema public grant all on functions to anon, authenticated, service_role;"
 
 echo "==> applying migrations"
 for f in "$REPO_ROOT"/supabase/migrations/*.sql; do

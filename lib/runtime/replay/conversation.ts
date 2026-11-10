@@ -50,6 +50,8 @@ function cleanBlock(raw: Record<string, unknown>): ContentBlock {
   for (const key of RAW_KEYS) {
     if (key in raw) out[key] = raw[key];
   }
+  // A failed result, by either name (`omitempty`: only when true).
+  if (raw.isError === true || raw.is_error === true) out.isError = true;
   // An image's picture, as the Go rawBlock keeps it: its source's string
   // fields, the data only up to the cap.
   if (raw.type === "image" && isObject(raw.source)) {
