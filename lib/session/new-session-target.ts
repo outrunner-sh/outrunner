@@ -26,7 +26,7 @@ export function newSessionDetails(target: NewSessionTarget): TargetDetails {
       branch,
       worktree: {
         label: "New worktree",
-        title: `A worktree off ${branch} on the Runtime Computer, on a branch of its own`,
+        title: `A worktree off ${branch} on the cloud computer, on a branch of its own`,
       },
     };
   }
