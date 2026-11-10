@@ -572,6 +572,13 @@ export type ArchiveUpload = z.infer<typeof ArchiveUpload>;
  *  restore brings each back (RestoreWorkspaceRequest.chats). */
 export const AGENT_FEATURE_CHAT_SNAPSHOTS = "chat-snapshots";
 
+/** The agent's archive fails, rather than saving an empty patch, when
+ *  `git diff` fails in a working repository (runtime-agent snapshot/tree.go).
+ *  An archive only deletes the box after it (dropBox) when the agent that
+ *  captured the Snapshot says so: an older agent's Snapshot may be missing
+ *  the session's changes, so its box is paused instead. */
+export const AGENT_FEATURE_SNAPSHOT_PATCH_INTEGRITY = "snapshot-patch-integrity";
+
 /** One chat an archive captures beside the main conversation: the control
  *  plane's record of it (echoed into the manifest) and the signed upload URLs
  *  its conversation, and a Codex chat's rollout, go to. */
