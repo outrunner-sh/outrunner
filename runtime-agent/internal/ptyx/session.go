@@ -21,7 +21,7 @@ type Session struct {
 // Attach opens a PTY running `tmux attach -t <name>`. Detaching (Close) leaves
 // the tmux session — and Claude — running.
 func Attach(name string) (*Session, error) {
-	cmd := exec.Command(tmux.Program(), tmux.Args("attach", "-t", name)...)
+	cmd := exec.Command(tmux.Program(), tmux.Args("attach", "-t", tmux.Session(name))...)
 	f, err := pty.Start(cmd)
 	if err != nil {
 		return nil, err

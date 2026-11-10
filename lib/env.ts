@@ -65,9 +65,20 @@ type EnvKey =
   | "GITHUB_APP_SLUG"
   | "GITHUB_APP_PRIVATE_KEY"
   | "GITHUB_APP_WEBHOOK_SECRET"
-  // Optional: the App's client secret, to ask GitHub who installed it for an
-  // admin with no GitHub account linked (lib/github/installer.ts).
+  // The App's client secret: users connect their own GitHub through the App's
+  // user authorization with it (lib/github/user-auth.ts, Settings →
+  // Connections), and GitHub is asked who installed it for an admin with no
+  // GitHub account linked (lib/github/installer.ts).
   | "GITHUB_APP_CLIENT_SECRET"
+  // The old sign-in tokens' cutover (lib/github/legacy-token.ts): `store`
+  // (sign-in asks for `repo` and keeps its token, as before), `fallback`
+  // (kept ones still work until their users connect; the default with
+  // GITHUB_APP_CLIENT_SECRET set) or `off` (never used).
+  | "GITHUB_LEGACY_TOKENS"
+  // Optional: the OAuth App Supabase's GitHub sign-in uses, to revoke the
+  // old `repo` grants and sign-ins' tokens on GitHub (lib/github/legacy-token.ts).
+  | "GITHUB_OAUTH_CLIENT_ID"
+  | "GITHUB_OAUTH_CLIENT_SECRET"
   // Dollars a month on Outrunner's models for each org's outrunner-connector,
   // which its automations run as (lib/billing/plans.ts connectorPlan).
   | "AUTOMATION_MODEL_ALLOWANCE_USD"

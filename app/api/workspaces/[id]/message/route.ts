@@ -104,14 +104,14 @@ export async function POST(request: Request, context: RouteContext) {
   const gate = await gateFirstPrompt(
     chat ? null : firstPromptKey(body?.firstPromptKey),
     {
-      claim: (key) => claimFirstPrompt(workspace.id, key, abandonedBefore(new Date())),
-      renew: (key, claimedAt) => renewFirstPrompt(workspace.id, key, claimedAt),
+      claim: (key) => claimFirstPrompt(workspace.id, workspace.ownerId, key, abandonedBefore(new Date())),
+      renew: (key, claimedAt) => renewFirstPrompt(workspace.id, workspace.ownerId, key, claimedAt),
       sent: (key, claimedAt) =>
         // The kept copy is spent with this send: the box has the prompt, and
         // nothing of it stays on the row (clearWorkspaceFirstPrompt, service
         // role — a user session can't clear one itself).
-        markFirstPromptSent(workspace.id, key, claimedAt).then(() => clearWorkspaceFirstPrompt(workspace.id)),
-      release: (key, claimedAt) => releaseFirstPrompt(workspace.id, key, claimedAt),
+        markFirstPromptSent(workspace.id, workspace.ownerId, key, claimedAt).then(() => clearWorkspaceFirstPrompt(workspace.id)),
+      release: (key, claimedAt) => releaseFirstPrompt(workspace.id, workspace.ownerId, key, claimedAt),
     },
     workspace.id,
   );
@@ -245,7 +245,7 @@ export async function POST(request: Request, context: RouteContext) {
   // Working, for every client at once, and watched until its turn ends
   // (lib/session/watch.ts): where it stands in the sidebar follows.
   after(() => watchSent(workspace.id, workspace.ownerId));
-  if (asked && asked !== workspace.mode) await recordWorkspaceMode(workspace.id, asked);
+  if (asked && asked !== workspace.mode) await recordWorkspaceMode(workspace.id, workspace.ownerId, asked);
   // A session started from Slack, in step with its thread: what's typed here
   // goes there too, and the reply with it. Not what came from the thread, or
   // from GitHub, which no one typed here.

@@ -23,6 +23,7 @@ import {
 } from "@/lib/db/repositories";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_CHAT_SNAPSHOTS, AGENT_FEATURE_MULTI_REPO_SNAPSHOTS } from "@/lib/runtime/agent-protocol";
+import { boxDroppableAfterArchive } from "@/lib/billing/release-box";
 import { withRuntimeAgentRecovery } from "@/lib/runtime/agent-recovery";
 import { requireFeature } from "@/lib/runtime/box-features";
 import type { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
@@ -100,13 +101,21 @@ export async function archiveCloudSession(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
   owner: Owner,
-  options: { requireSnapshot?: boolean } = {},
+  options: {
+    requireSnapshot?: boolean;
+    /** Delete the session's own box once its Snapshot is saved, rather than
+     *  pause it: one archived by Outrunner itself (an automation's superseded
+     *  review), which Restore, if ever, rebuilds from the Snapshot. A paused
+     *  box keeps its whole disk on the sandbox account's storage quota. */
+    dropBox?: boolean;
+  } = {},
 ): Promise<ArchiveResult> {
   if (!ARCHIVABLE.includes(workspace.status)) {
     return { ok: false, reason: "failed", status: 409, error: "Only an active, paused or failed session can be archived." };
   }
   const transitioned = await transitionWorkspace({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: [workspace.status],
     patch: { status: "archiving", errorMessage: null },
   });
@@ -117,6 +126,9 @@ export async function archiveCloudSession(
   let boxBefore: string | null = null;
   let save: ArchiveSave;
   let stage: ArchiveStage = "prepare";
+  // Whether the agent that captured the Snapshot fails a broken `git diff`
+  // rather than saving an empty patch: only then may dropBox delete the box.
+  let captureFeatures: readonly string[] = [];
   try {
     // A failed read must fail the archive: an unknown original id must
     // never make cleanup mistake the original disk for an empty replacement.
@@ -179,6 +191,8 @@ export async function archiveCloudSession(
                 }
               }
               stage = "capture";
+              // Only decides delete vs pause: an unanswered lookup pauses the box.
+              if (options.dropBox) captureFeatures = await features.features().catch(() => []);
               const uploads = upload.urls.map((u) => ({ artifact: u.artifact, url: u.signedUrl }));
               return current.archiveWorkspace(identity, {
                 archivedAt,
@@ -211,6 +225,7 @@ export async function archiveCloudSession(
     console.error("archive_failed", { workspaceId: workspace.id, ...archiveFailureLog(error, said.diagnostic) });
     await transitionWorkspace({
       id: workspace.id,
+      ownerId: workspace.ownerId,
       from: ["archiving"],
       patch: { status: workspace.status, errorMessage: said.error },
     }).catch((updateError: unknown) => console.error("Could not persist archive failure", updateError));
@@ -219,6 +234,7 @@ export async function archiveCloudSession(
 
   const completed = await transitionWorkspace({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: ["archiving"],
     patch: { status: "archived", errorMessage: save.saved ? null : ARCHIVED_UNSAVED },
   });
@@ -232,7 +248,9 @@ export async function archiveCloudSession(
   );
   if (save.saved) {
     // The last session off its box frees it: paused now, not when idle.
-    after(() => releaseWorkspaceBox(provider, workspace, false));
+    // dropBox deletes it only when its agent's Snapshot is known complete.
+    const dropBox = boxDroppableAfterArchive(options.dropBox, captureFeatures);
+    after(() => releaseWorkspaceBox(provider, workspace, false, { dropBox }));
     return { ok: true };
   }
   // Out of reach: its own box is paused, its disk kept, unless bringBack had

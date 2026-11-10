@@ -340,7 +340,17 @@ export function AutomationEditor({
                   on nothing else. */}
               {reviewable.length === 0 ? (
                 <p className="text-[13px] text-muted-foreground">
-                  {filter.trim() ? "No repositories the GitHub App can post on match." : "The GitHub App can't post on any of this org's repositories yet. Install it in Settings → Org → GitHub."}
+                  {filter.trim() ? (
+                    "No repositories the GitHub App can post on match."
+                  ) : (
+                    <>
+                      The GitHub App can&apos;t post on any of this org&apos;s repositories yet. Install it from{" "}
+                      <Link href="/settings/org/integrations" className="underline underline-offset-2">
+                        Settings → Organization → Integrations
+                      </Link>
+                      .
+                    </>
+                  )}
                 </p>
               ) : (
                 <div className="max-h-80 space-y-1.5 overflow-y-auto">

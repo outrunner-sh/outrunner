@@ -163,6 +163,7 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
         readyCount,
         liveRunners: own.filter((r) => !["archived", "archiving", "failed"].includes(r.status)).length,
         environment: mission.environmentId ? { id: mission.environmentId, name: envName.get(mission.environmentId) ?? "Project" } : null,
+        projectId: mission.projectId,
         sessionStatus: mission.status,
         provider: mission.provider,
         standing: standings[mission.id] ?? null,

@@ -210,7 +210,7 @@ func (e *Editor) start(ctx context.Context) error {
 	if e.Stop != nil {
 		e.Stop(ctx)
 	} else {
-		_ = tmux.Command(ctx, "kill-session", "-t", session).Run()
+		_ = tmux.Command(ctx, "kill-session", "-t", tmux.Session(session)).Run()
 	}
 	return fmt.Errorf("code-server started but didn't answer: %s", tail(e.readLog(), 400))
 }
@@ -220,7 +220,7 @@ func (e *Editor) running(ctx context.Context) bool {
 	if e.Running != nil {
 		return e.Running(ctx)
 	}
-	return tmux.Command(ctx, "has-session", "-t", session).Run() == nil
+	return tmux.Command(ctx, "has-session", "-t", tmux.Session(session)).Run() == nil
 }
 
 // up is whether code-server answers on its port.
@@ -351,7 +351,7 @@ func (e *Editor) readLog() string {
 // startInTmux runs code-server in its own tmux session (start only calls it
 // when that session is gone), its output kept in its log.
 func (e *Editor) startInTmux(ctx context.Context, binary string, port int) error {
-	_ = tmux.Command(ctx, "kill-session", "-t", session).Run()
+	_ = tmux.Command(ctx, "kill-session", "-t", tmux.Session(session)).Run()
 	_ = os.Remove(e.logPath())
 	command := strings.Join([]string{
 		// No PORT: code-server takes it over --bind-addr's port, and its

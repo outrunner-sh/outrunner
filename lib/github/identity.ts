@@ -1,10 +1,12 @@
 /**
  * Who a session's git acts as on GitHub: clone, fetch, push, and pull
- * requests. Each user chooses (Settings → Account → GitHub identity):
+ * requests. Each user chooses (Settings → Connections → GitHub identity):
  *
- * - **My GitHub account** (`personal`, everyone's at first): their own token
- *   from signing in, as every session had before the App. Pushes and pull
- *   requests show as them.
+ * - **My GitHub account** (`personal`, everyone's at first): their own GitHub
+ *   connection (lib/github/personal.ts), the Outrunner App's user token from
+ *   Settings → Connections, 8 hours long and renewed as it's asked for; or,
+ *   while they're still allowed, the token an older sign-in kept. Pushes and
+ *   pull requests show as them.
  * - **Outrunner App** (`app`): a token of the Outrunner GitHub App's
  *   installation on the repository's account in the session's org, for that
  *   one repository, an hour long. Pushes and pull requests show as the App;
@@ -14,13 +16,13 @@
  * Neither falls back to the other: a member who chose the App and whose org
  * hasn't installed it on the repository's account is told so, with where to
  * fix it, rather than quietly pushing as themselves. The one exception is a
- * member with no GitHub account linked at all (signed in with Google), who
- * can't have chosen their own: there's none to act as, so it's the App where
- * it reaches the repository, and nothing (a public clone) where it doesn't.
- * One with GitHub linked whose token is gone is still told to reconnect.
+ * member who never connected their own GitHub (signing in with GitHub is
+ * identity alone): there's no own account to act as, so it's the App where it
+ * reaches the repository, and nothing (a public clone) where it doesn't. One
+ * whose connection stopped working is told to reconnect.
  *
  * A box asks for its tokens as git needs them (app/api/runtime/git-credential),
- * since the App's expire within the hour; the server's own git calls (the
+ * since both kinds expire within hours; the server's own git calls (the
  * box's mirror, pull request status, merging) ask here too, through
  * identity.deps.ts, which wires this to the database and GitHub.
  */
@@ -44,16 +46,18 @@ export { GitIdentityError, type GitIdentityRefusal } from "@/lib/github/identity
 export type GitCredential = {
   identity: GitHubIdentity;
   token: string;
-  /** When the token stops working; null for the user's own, which lasts. */
+  /** When the token stops working; null for an old sign-in token, which
+   *  lasts. */
   expiresAt: Date | null;
 };
 
 /** What resolving takes, apart from the request: tests pass their own. */
 export type IdentityDeps = {
   identity(userId: string): Promise<GitHubIdentity>;
-  personalToken(userId: string): Promise<string | null>;
-  /** Whether the user has a GitHub account linked at all (signed in with it). */
-  githubLinked(userId: string): Promise<boolean>;
+  /** The user's own credential (lib/github/personal.ts), or null. */
+  personalToken(userId: string): Promise<{ token: string; expiresAt: Date | null } | null>;
+  /** Whether the user ever connected their own GitHub (personalConnected). */
+  personalConnected(userId: string): Promise<boolean>;
   config(): GitHubAppConfig | null;
   installations(orgId: string): Promise<OrgInstallation[]>;
   /** The member's level on `repo` as a project of the org; null when it isn't
@@ -108,7 +112,7 @@ export function narrowPermissions(wanted: TokenPermissions, granted: Record<stri
   return narrowed;
 }
 
-const SWITCH = "or choose your own GitHub account in Settings → Account";
+const SWITCH = "or choose your own GitHub account in Settings → Connections";
 
 /**
  * A credential for `repo` (owner/name) as `userId` chose, in `orgId`. Their
@@ -123,10 +127,10 @@ export async function resolveGitCredential(
 ): Promise<GitCredential> {
   const identity = input.identity ?? (await deps.identity(input.userId));
   if (identity === "personal") {
-    const token = await deps.personalToken(input.userId);
-    if (token) return { identity, token, expiresAt: null };
-    // No GitHub account at all: the App, where it reaches the repository.
-    if (input.identity || (await deps.githubLinked(input.userId))) throw new MissingGithubTokenError();
+    const own = await deps.personalToken(input.userId);
+    if (own) return { identity, token: own.token, expiresAt: own.expiresAt };
+    // Never connected their own: the App, where it reaches the repository.
+    if (input.identity || (await deps.personalConnected(input.userId))) throw new MissingGithubTokenError();
     try {
       return await resolveGitCredential({ ...input, identity: "app" }, deps);
     } catch (error) {
@@ -149,8 +153,8 @@ export async function resolveGitCredential(
   if (!config) {
     throw new GitIdentityError(
       "app_unconfigured",
-      `Outrunner's GitHub App isn't set up here. Choose your own GitHub account in Settings → Account.`,
-      "/settings/account",
+      `Outrunner's GitHub App isn't set up here. Choose your own GitHub account in Settings → Connections.`,
+      "/settings/connections",
     );
   }
   const [owner, name] = input.repo.split("/");

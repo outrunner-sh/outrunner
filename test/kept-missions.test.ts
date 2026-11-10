@@ -82,6 +82,7 @@ function mission(id: string, overrides: Partial<MissionView> = {}): MissionView 
     readyCount: 1,
     liveRunners: 1,
     environment: { id: "e1", name: "Project" },
+    projectId: "p1",
     sessionStatus: "ready",
     provider: "daytona",
     standing,

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { firstPrompt, parseCreate, PLAN_MODE_PREAMBLE } from "@/lib/api/create-request";
+import { firstPrompt, parseAttachmentIds, parseCreate, PLAN_MODE_PREAMBLE } from "@/lib/api/create-request";
+import { MAX_ATTACHMENTS_PER_MESSAGE } from "@/lib/runtime/attachments";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 
@@ -27,4 +28,17 @@ test("what it may ask for is checked", () => {
 test("plan mode asks for a plan before the task", () => {
   assert.equal(firstPrompt({ prompt: "do it", planMode: false }), "do it");
   assert.equal(firstPrompt({ prompt: "do it", planMode: true }), `${PLAN_MODE_PREAMBLE}\n\ndo it`);
+});
+
+test("files go with the prompt by their upload ids, as many as one message takes", () => {
+  const file = "11111111-1111-4111-8111-111111111111";
+  const input = parseCreate({ project_id: PROJECT, prompt: "look", attachment_ids: [file, file] });
+  assert.ok(typeof input !== "string");
+  assert.deepEqual(input.attachmentIds, [file]);
+  assert.deepEqual((parseCreate({ project_id: PROJECT, prompt: "x" }) as { attachmentIds: string[] }).attachmentIds, []);
+  assert.equal(typeof parseCreate({ project_id: PROJECT, prompt: "x", attachment_ids: "abc" }), "string");
+  assert.equal(typeof parseAttachmentIds(["not-an-id"]), "string");
+  const many = Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE + 1 }, (_, i) => `11111111-1111-4111-8111-${String(i).padStart(12, "0")}`);
+  assert.match(parseAttachmentIds(many) as string, /Up to/);
+  assert.deepEqual(parseAttachmentIds(null), []);
 });

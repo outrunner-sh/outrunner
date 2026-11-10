@@ -16,6 +16,7 @@ import { randomBytes } from "node:crypto";
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
 import { POST as messagePOST } from "@/app/api/workspaces/[id]/message/route";
 import { POST as sessionPOST } from "@/app/api/workspaces/[id]/session/route";
+import { toWorkspace } from "@/lib/db/mappers";
 import { getWorkspace, getWorkspaceComputer } from "@/lib/db/repositories";
 import {
   getInstallation,
@@ -25,6 +26,7 @@ import {
   updateConversation,
 } from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";
+import { boxMask } from "@/lib/missions/box";
 import { startServerSession } from "@/lib/session/server-session";
 import { wakeSteps } from "@/lib/session/wake-session";
 import { FROM_HEADER, type MessageSource } from "@/lib/slack/from";
@@ -164,6 +166,22 @@ export async function askResearch(input: {
   }
 }
 
+/** Where the research session is, for one whose answer couldn't be posted;
+ *  null without the app's address, as a bare path is no link in Slack. */
+function researchSessionUrl(workspaceId: string): string | null {
+  try {
+    return new URL(`/workspaces/${workspaceId}`, base()).toString();
+  } catch {
+    return null;
+  }
+}
+
+/** The answer with its session's box secrets masked, or null. */
+async function maskOnBox(workspaceId: string, answer: string): Promise<string | null> {
+  const { data } = await createSupabaseAdminClient().from("workspaces").select("*").eq("id", workspaceId).maybeSingle();
+  return data ? boxMask(toWorkspace(data), answer) : null;
+}
+
 /**
  * The research session's answer, through its link: posted in the thread,
  * once. False for a link that isn't one, or was used.
@@ -177,7 +195,7 @@ export async function answerResearch(id: string, token: string, answer: string):
     .eq("id", id)
     .eq("token_hash", hashToken(token))
     .eq("status", "asked")
-    .select("conversation_id")
+    .select("conversation_id, workspace_id")
     .maybeSingle();
   if (error) throw error;
   if (!claimed) return false;
@@ -190,7 +208,17 @@ export async function answerResearch(id: string, token: string, answer: string):
   try {
     const install = await getInstallation(conversation.team_id);
     if (!install) return true;
-    for (const chunk of slackChunks(markdownToSlack(answer))) {
+    // Posted with curl, so the box's chat masking never saw it: the box
+    // masks it now, and an answer it can't check isn't posted (NEE-268). The
+    // thread is pointed at the session instead, whose chat is masked.
+    const masked = claimed.workspace_id ? await maskOnBox(claimed.workspace_id, answer) : null;
+    if (masked === null) {
+      console.warn(`Slack agent: research ${id}'s answer not posted, session ${claimed.workspace_id}'s box couldn't mask it`);
+    }
+    const link = claimed.workspace_id ? researchSessionUrl(claimed.workspace_id) : null;
+    const where = link ? ` It's in the research session: ${link}` : "";
+    const text = masked ?? `The answer is ready, but it couldn't be checked for secrets, so it isn't posted here.${where}`;
+    for (const chunk of slackChunks(markdownToSlack(text))) {
       await postMessage(install.botToken, { channel: conversation.channel_id, threadTs: conversation.thread_ts, text: chunk });
     }
   } catch (error) {

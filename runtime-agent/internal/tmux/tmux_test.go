@@ -159,3 +159,54 @@ func TestLaunchScriptIsPrivateAndRejectsNUL(t *testing.T) {
 		t.Fatalf("invalid launch left files: %v, %v", files, err)
 	}
 }
+
+// With the main chat's session gone (Claude exited, the box restarted), its
+// name must not reach a side chat's session, which it prefixes.
+func TestAMainChatsNameNeverReachesASideChat(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	prevSocket, prevConfig := socketName, configFile
+	t.Cleanup(func() { socketName, configFile = prevSocket, prevConfig })
+	socket := "exact-" + strconv.Itoa(os.Getpid())
+	socketName, configFile = socket, os.DevNull
+	t.Cleanup(func() { _ = exec.Command("tmux", "-L", socket, "kill-server").Run() })
+	m, ctx := New(), context.Background()
+
+	if err := Command(ctx, "new-session", "-d", "-s", "ws-1_side", "sleep 30").Run(); err != nil {
+		t.Fatalf("new-session: %v", err)
+	}
+	if m.HasSession(ctx, "ws-1") {
+		t.Error("HasSession(ws-1) found the side chat ws-1_side")
+	}
+	if ok, err := m.SessionExists(ctx, "ws-1"); ok || err != nil {
+		t.Errorf("SessionExists(ws-1) = %v, %v; want false, nil", ok, err)
+	}
+	if err := m.SubmitEnter(ctx, "ws-1"); err == nil {
+		t.Error("SubmitEnter(ws-1) pressed Enter in the side chat")
+	}
+	if _, err := m.CapturePane(ctx, "ws-1"); err == nil {
+		t.Error("CapturePane(ws-1) read the side chat")
+	}
+	if err := m.KillSession(ctx, "ws-1"); err != nil {
+		t.Errorf("KillSession(ws-1): %v", err)
+	}
+	if !m.HasSession(ctx, "ws-1_side") {
+		t.Fatal("KillSession(ws-1) killed the side chat")
+	}
+
+	// The main chat's own session is still found and reached.
+	if err := Command(ctx, "new-session", "-d", "-s", "ws-1", "sleep 30").Run(); err != nil {
+		t.Fatalf("new-session: %v", err)
+	}
+	m.HideStatus(ctx, "ws-1")
+	if out, err := Command(ctx, "show-options", "-v", "-t", Pane("ws-1"), "status").Output(); err != nil || strings.TrimSpace(string(out)) != "off" {
+		t.Errorf("HideStatus(ws-1): status = %q, %v; want off", out, err)
+	}
+	if _, err := m.CapturePane(ctx, "ws-1"); err != nil {
+		t.Errorf("CapturePane(ws-1): %v", err)
+	}
+	if err := m.KillSession(ctx, "ws-1"); err != nil || m.HasSession(ctx, "ws-1") || !m.HasSession(ctx, "ws-1_side") {
+		t.Errorf("KillSession(ws-1) = %v; want ws-1 gone and ws-1_side kept", err)
+	}
+}

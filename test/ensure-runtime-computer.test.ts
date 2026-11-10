@@ -13,6 +13,7 @@ import { abandonedBoxClaim } from "@/lib/session/provisioning";
 function computer(overrides: Partial<RuntimeComputer> = {}): RuntimeComputer {
   return {
     id: "computer-1",
+    ownerId: "owner-1",
     projectId: "project-1",
     workspaceId: "workspace-1",
     pooled: false,
@@ -65,7 +66,7 @@ function concurrencyHarness() {
     },
     get: async () => row,
     readSecret: async () => secret,
-    update: async (_id, patch) => {
+    update: async (_id, _ownerId, patch) => {
       assert.ok(row);
       row = {
         ...row,
@@ -302,7 +303,7 @@ test("the claim and the wait are for the box of the scope asked for", async () =
 test("a box that ended is named on its row while it's brought back", async () => {
   const harness = concurrencyHarness();
   await harness.deps.claim({ scope: input.scope, agentSecret: "s", maxLiveComputers: null });
-  await harness.deps.update("computer-1", { status: "stopped", daytonaSandboxId: "sb-ended" });
+  await harness.deps.update("computer-1", "owner-1", { status: "stopped", daytonaSandboxId: "sb-ended" });
   let named: string | null | undefined;
   const provider: RuntimeComputerProvisioner = {
     name: "daytona",
@@ -339,10 +340,10 @@ test("a box provisioned but never recorded as ready is deleted, not left running
   let writes = 0;
   const deps: EnsureRuntimeComputerDependencies = {
     ...harness.deps,
-    update: async (id, patch) => {
+    update: async (id, ownerId, patch) => {
       // The write recording it ready fails; the failure's own goes through.
       if (patch.status === "ready" && ++writes === 1) throw new Error("database down");
-      return harness.deps.update(id, patch);
+      return harness.deps.update(id, ownerId, patch);
     },
   };
 
@@ -372,9 +373,9 @@ test("an ended box brought back in place but not recorded is paused again, never
   const deps: EnsureRuntimeComputerDependencies = {
     ...harness.deps,
     // The write recording it ready fails; the rest go through.
-    update: async (id, patch) => {
+    update: async (id, ownerId, patch) => {
       if (patch.status === "ready") throw new Error("database down");
-      return harness.deps.update(id, patch);
+      return harness.deps.update(id, ownerId, patch);
     },
   };
 
@@ -425,7 +426,7 @@ test("a box claim a restart cut off holds every later open until the sweep lets 
   void ensureRuntimeComputer(cutOff, { ...input, previousSandboxId: "box-paused" }, harness.deps);
   await new Promise((resolve) => setTimeout(resolve, 5));
   // Made by Daytona when it first ran: the claim leaves that as it was.
-  await harness.deps.update("computer-1", { provider: "daytona" });
+  await harness.deps.update("computer-1", "owner-1", { provider: "daytona" });
   assert.equal(harness.row()?.status, "provisioning");
   assert.equal(harness.row()?.daytonaSandboxId, "box-paused");
 
@@ -445,7 +446,7 @@ test("a box claim a restart cut off holds every later open until the sweep lets 
   // The sweep leaves it as its provision's own failure would: stopped, still
   // naming the box, which the next open brings back with its sessions.
   const swept = abandonedBoxClaim(harness.row()?.daytonaSandboxId ?? null);
-  await harness.deps.update("computer-1", { status: swept.status, errorMessage: swept.errorMessage });
+  await harness.deps.update("computer-1", "owner-1", { status: swept.status, errorMessage: swept.errorMessage });
   const row = harness.row();
   const ended = endedBoxOf(row, "daytona");
   assert.equal(ended, "box-paused");

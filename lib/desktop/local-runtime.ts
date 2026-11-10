@@ -163,6 +163,14 @@ export class LocalRuntimeError extends Error {
   }
 }
 
+/** Whether a local session's attach failed on the way, so trying again can
+ *  help: the app couldn't reach this Mac's agent for a moment
+ *  (`agent-unreachable`). Anything else it names (no agent, a runner that
+ *  didn't start, a folder gone) stays failed however often it's tried. */
+export function retryableLocalFailure(error: unknown): boolean {
+  return error instanceof LocalRuntimeError && error.code === "agent-unreachable";
+}
+
 /** What the composer says for a local send that didn't reach the agent: this
  *  module's own errors are already sentences (messageForLocalError); what the
  *  agent itself said goes through the same filter as a hosted send's. */

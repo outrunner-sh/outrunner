@@ -1,6 +1,9 @@
 package redact
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -86,5 +89,84 @@ func TestSetTokensTakesOneAway(t *testing.T) {
 	live.Set([]string{"second-secret"})
 	if got := r.Redact([]byte("first-secret second-secret")) + r.Flush(); got != "first-secret ***" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestRedactorJSONMasksStringsAsWrittenAndEscaped(t *testing.T) {
+	r := New([]string{"canary-2682b7c55940", `q"uo<te>&`})
+	got, err := r.JSON([]byte(`{"content":[{"type":"text","text":"canary-2682b7c55940\n"}],"n":12345678901234567890,"k":"q\"uo\u003cte\u003e\u0026!"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back map[string]any
+	if err := json.Unmarshal(got, &back); err != nil {
+		t.Fatalf("masked JSON is not JSON: %s", got)
+	}
+	if s := string(got); strings.Contains(s, "canary") || strings.Contains(s, "uo") {
+		t.Fatalf("secret left in %s", s)
+	}
+	if !strings.Contains(string(got), `"n":12345678901234567890`) || back["k"] != "***!" {
+		t.Fatalf("masked JSON changed more than its secrets: %s", got)
+	}
+}
+
+func TestRedactorJSONFollowsLiveTokens(t *testing.T) {
+	live := &Tokens{}
+	r := New(nil).Follow(live)
+	live.Add("provided-later-value")
+	got, err := r.JSON([]byte(`{"text":"provided-later-value"}`))
+	if err != nil || string(got) != `{"text":"***"}` {
+		t.Fatalf("JSON = %s, %v", got, err)
+	}
+}
+
+func TestRedactorMasksASecretsEncodedForms(t *testing.T) {
+	secret := "s3cr3t/value+with&chars"
+	r := New([]string{secret})
+	for _, prefix := range []string{"", "a", "ab"} {
+		// base64 of the secret inside longer data, at each alignment.
+		encoded := base64.StdEncoding.EncodeToString([]byte(prefix + secret + "\n"))
+		got := r.Redact([]byte(encoded)) + r.Flush()
+		if !strings.Contains(got, "***") || strings.Contains(got, base64.StdEncoding.EncodeToString([]byte(secret[3:15]))) {
+			t.Fatalf("base64 after %q not masked: %q -> %q", prefix, encoded, got)
+		}
+	}
+	for _, form := range []string{url.QueryEscape(secret), `s3cr3t/value+with\u0026chars`} {
+		if got := r.Redact([]byte("x "+form+" y")) + r.Flush(); got != "x *** y" {
+			t.Fatalf("%q -> %q", form, got)
+		}
+	}
+}
+
+func TestRedactorMasksEachLineOfAMultiLineSecret(t *testing.T) {
+	key := "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\nBKcwggSjAgEAAoIBAQC7\n-----END PRIVATE KEY-----"
+	r := New([]string{key})
+	got := r.Redact([]byte("cat: MIIEvQIBADANBgkqhkiG9w0BAQEFAASC and -----END PRIVATE KEY-----")) + r.Flush()
+	if got != "cat: *** and -----END PRIVATE KEY-----" {
+		t.Fatalf("multi-line secret = %q", got)
+	}
+}
+
+func TestRedactorSplitsOnlyAPEMKeyIntoLines(t *testing.T) {
+	config := "{\n  \"type\": \"service_account\",\n  \"private_key_id\": \"0a1b2c3d4e5f\"\n}"
+	r := New([]string{config})
+	if got := r.Redact([]byte(`"type": "service_account",`)) + r.Flush(); got != `"type": "service_account",` {
+		t.Fatalf("a multi-line config's line was masked: %q", got)
+	}
+}
+
+func TestRedactorJSONKeepsKeysApartAndUntouchedDocuments(t *testing.T) {
+	r := New([]string{"tok-aaaaaaaaaaaa", "tok-bbbbbbbbbbbb"})
+	got, err := r.JSON([]byte(`{"tok-aaaaaaaaaaaa":1,"tok-bbbbbbbbbbbb":2}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back map[string]int
+	if err := json.Unmarshal(got, &back); err != nil || len(back) != 2 || back["***"]+back["***2"] != 3 {
+		t.Fatalf("masked keys = %s", got)
+	}
+	plain := []byte(`{"z":1,"a":"no secret here"}`)
+	if got, err := r.JSON(plain); err != nil || string(got) != string(plain) {
+		t.Fatalf("a document with no secret was re-encoded: %s", got)
 	}
 }

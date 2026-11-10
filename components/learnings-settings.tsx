@@ -229,8 +229,9 @@ function LearningForm({
         });
       }}
     >
-      <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title, e.g. Conventional Commits" maxLength={MAX_TITLE_CHARS} />
+      <Input aria-label="Title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title, e.g. Conventional Commits" maxLength={MAX_TITLE_CHARS} />
       <Textarea
+        aria-label="Instruction"
         value={body}
         onChange={(e) => setBody(e.target.value)}
         placeholder="The instruction, as you'd say it: Use Conventional Commits for every commit message and PR title."

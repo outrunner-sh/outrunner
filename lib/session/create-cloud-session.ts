@@ -29,6 +29,7 @@ import {
   ownSandboxKeys,
   type SandboxSettings,
 } from "@/lib/db/credentials";
+import { isMetered } from "@/lib/billing/metering-store";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import {
   claimFirstPrompt,
@@ -69,6 +70,7 @@ import { newBoxSize } from "@/lib/orgs/defaults";
 import { appUrl } from "@/lib/orgs/notify";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_CODEX_GATEWAY, AGENT_FEATURE_MULTI_REPO } from "@/lib/runtime/agent-protocol";
+import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { requireFeature } from "@/lib/runtime/box-features";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
@@ -110,7 +112,6 @@ import { projectCheckouts } from "@/lib/runtime/warm-pool";
 import { refillProjectPool, takePooledBox } from "@/lib/runtime/warm-pool.deps";
 import type { BoxSizeId } from "@/lib/runtime/box-sizes";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace, WorkspaceSource } from "@/lib/runtime/types";
-import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
 import { deliverStoredFirstPrompt, firstPromptToKeep } from "@/lib/session/deliver-first-prompt";
 import { abandonedBefore, gateFirstPrompt } from "@/lib/session/first-prompt-claim";
@@ -184,6 +185,9 @@ export type ServerSessionOptions = {
   title?: string;
   /** Sent to the agent once it's ready, as the user's first message would be. */
   firstMessage?: string;
+  /** Files uploaded for the first message (POST /api/attachments), put on
+   *  the box and named in it as the composer's are. */
+  firstAttachmentIds?: string[];
   /** Set it up before answering, not after: for a caller with no page waiting. */
   inline?: boolean;
   /** Only on Outrunner's models metered to the user (their allowance): a
@@ -374,7 +378,7 @@ async function createOnce(
     return NextResponse.json(
       {
         error:
-          "Connect your GitHub account in Settings → Account to clone a private repository.",
+          "Connect GitHub in Settings → Connections to clone a private repository.",
       },
       { status: 409 },
     );
@@ -483,7 +487,7 @@ async function createOnce(
     progress.inserted = true;
     if (chosenModel) {
       const intended = { model: chosenModel, effort: compatibleEffort(chosenModel, chosenEffort) };
-      await recordWorkspaceModel(workspace.id, intended);
+      await recordWorkspaceModel(workspace.id, workspace.ownerId, intended);
       workspace = { ...workspace, model: intended };
     }
   } catch (error) {
@@ -525,14 +529,14 @@ async function createOnce(
     } catch (error) {
       console.error(`Workspace ${workspace.id}: its caller couldn't hear it was made`, error);
       const errorMessage = "Outrunner couldn't record what this session is for, so it didn't start.";
-      await transitionWorkspace({ id: workspace.id, from: SETTING_UP, patch: { status: "failed", errorMessage } }).catch(
+      await transitionWorkspace({ id: workspace.id, ownerId: workspace.ownerId, from: SETTING_UP, patch: { status: "failed", errorMessage } }).catch(
         (updateError: unknown) => console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
       );
       return NextResponse.json({ error: errorMessage }, { status: 500 });
     }
   }
   if (options.title) {
-    await setWorkspaceTitleIfUnset(workspace.id, options.title).catch((error: unknown) =>
+    await setWorkspaceTitleIfUnset(workspace.id, workspace.ownerId, options.title).catch((error: unknown) =>
       console.error(`Could not title session ${workspace.id}`, error),
     );
   } else {
@@ -586,6 +590,7 @@ async function createOnce(
       agentId,
       auth,
       firstMessage: options.firstMessage,
+      firstAttachmentIds: options.firstAttachmentIds,
       onSettled: options.onSettled,
       inline: options.inline ?? false,
       as,
@@ -629,6 +634,7 @@ async function provisionWorkspace({
   agentId,
   auth,
   firstMessage,
+  firstAttachmentIds,
   onSettled,
   inline,
   as,
@@ -654,6 +660,7 @@ async function provisionWorkspace({
   agentId: AgentId;
   auth: ResolvedAuth;
   firstMessage?: string;
+  firstAttachmentIds?: string[];
   onSettled?: (outcome: SessionOutcome) => Promise<void>;
   /** Set up before the create answered (ServerSessionOptions.inline). */
   inline: boolean;
@@ -668,7 +675,7 @@ async function provisionWorkspace({
     );
   };
   const settle = async (patch: Parameters<typeof transitionWorkspace>[0]["patch"]) => {
-    const moved = await transitionWorkspace({ id: workspace.id, from: SETTING_UP, patch });
+    const moved = await transitionWorkspace({ id: workspace.id, ownerId: workspace.ownerId, from: SETTING_UP, patch });
     if (!moved) console.warn(`Workspace ${workspace.id} left setup before it finished (${patch.status})`);
     return moved !== null;
   };
@@ -746,9 +753,9 @@ async function provisionWorkspace({
           // box goes, so no one keeps paying for one nothing uses, and the
           // project gets a new computer where they chose.
           await retireComputer(madeBy, keys, sandboxId);
-          await markRuntimeComputerStoppedIfReady(currentComputer.id, sandboxId);
+          await markRuntimeComputerStoppedIfReady(currentComputer.id, currentComputer.ownerId, sandboxId);
         } else if (!(await provider.computerAlive(sandboxId))) {
-          await markRuntimeComputerStoppedIfReady(currentComputer.id, sandboxId);
+          await markRuntimeComputerStoppedIfReady(currentComputer.id, currentComputer.ownerId, sandboxId);
           endedBox = sandboxId;
         }
       }
@@ -863,7 +870,7 @@ async function provisionWorkspace({
         fallback: defaultModel(menu),
       });
       // So its next relaunch goes back on it, its key fetched again.
-      await recordWorkspaceModel(workspace.id, startsOn);
+      await recordWorkspaceModel(workspace.id, workspace.ownerId, startsOn);
       await setPhase("health_check");
       await agent.startWorkspace(identity);
       logPhase("ready");
@@ -904,12 +911,12 @@ async function provisionWorkspace({
             gateFirstPrompt(
               key,
               {
-                claim: (k) => claimFirstPrompt(workspace.id, k, abandonedBefore(new Date())),
-                renew: (k, claimedAt) => renewFirstPrompt(workspace.id, k, claimedAt),
+                claim: (k) => claimFirstPrompt(workspace.id, workspace.ownerId, k, abandonedBefore(new Date())),
+                renew: (k, claimedAt) => renewFirstPrompt(workspace.id, workspace.ownerId, k, claimedAt),
                 // Only marked: the delivery clears the kept copy itself once
                 // its own send went, as its one owner of the clear.
-                sent: (k, claimedAt) => markFirstPromptSent(workspace.id, k, claimedAt),
-                release: (k, claimedAt) => releaseFirstPrompt(workspace.id, k, claimedAt),
+                sent: (k, claimedAt) => markFirstPromptSent(workspace.id, workspace.ownerId, k, claimedAt),
+                release: (k, claimedAt) => releaseFirstPrompt(workspace.id, workspace.ownerId, k, claimedAt),
               },
               workspace.id,
               { strict: true },
@@ -935,7 +942,17 @@ async function provisionWorkspace({
       // user's would be from the session page.
       if (firstMessage) {
         try {
-          await agent.sendMessage(identity, firstMessage);
+          const prompt = firstAttachmentIds?.length
+            ? await materializeAttachments({
+                provider,
+                sandboxId: computer.daytonaSandboxId,
+                worktreePath: created.worktree,
+                workspaceId: workspace.id,
+                attachmentIds: firstAttachmentIds,
+                prompt: firstMessage,
+              })
+            : firstMessage;
+          await agent.sendMessage(identity, prompt);
         } catch (error) {
           console.error(`Workspace ${workspace.id}: first message failed`, error);
           await tell({ status: "failed", errorMessage: "The session started, but its prompt couldn't be sent." });
@@ -996,7 +1013,7 @@ async function provisionWorkspace({
         ? error.message
         : refused
           ? refused.message
-          : provisionFailureMessage(error, phase, secrets);
+          : provisionFailureMessage(error, phase, secrets, isMetered(provider.name));
     const settled = await settle({ status: "failed", errorMessage }).catch((updateError: unknown) => {
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError);
       return true;
@@ -1047,14 +1064,14 @@ async function githubRefusal(
     if (!project.private) return null;
     return NextResponse.json(
       {
-        error: `Your GitHub account can't see ${project.fullName} any more. Check its access on GitHub, or reconnect it in Settings → Account.`,
+        error: `Your GitHub account can't see ${project.fullName} any more. Check its access on GitHub, and that it's among the repositories you gave Outrunner (Settings → Connections → GitHub).`,
         reconnect: true,
         settingsHref: GITHUB_RECONNECT_HREF,
       },
       { status: 409 },
     );
   } catch (error) {
-    // With the link the form shows: where signing in again happens.
+    // With the link the form shows: where GitHub is connected again.
     if (error instanceof GitHubReconnectError) {
       return NextResponse.json({ error: error.message, reconnect: true, settingsHref: GITHUB_RECONNECT_HREF }, { status: 409 });
     }

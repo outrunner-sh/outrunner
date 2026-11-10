@@ -6,12 +6,15 @@
 import { optionalEnv } from "@/lib/env";
 import { boxGone } from "@/lib/runtime/computer-provider";
 import {
+  atRest,
+  boxStatuses,
   COMPUTER_ROLE,
   deploymentName,
   type ListedBox,
   ORPHAN_GRACE_MS,
   orphanedBoxes,
   ROLE_LABEL,
+  strayRunningBoxes,
   sweepable,
 } from "@/lib/runtime/orphan-boxes";
 import { DaytonaBackend } from "@/lib/runtime/sandbox/daytona";
@@ -36,10 +39,10 @@ const LOOKUP_CHUNK = 100;
  * → Sandbox) is theirs, and never listed. For the reconciler's cron. How
  * many went, each one's id logged, and how many were held (orphanedBoxes).
  */
-export async function sweepOrphanedBoxes(now = Date.now()): Promise<{ deleted: number; held: number }> {
+export async function sweepOrphanedBoxes(now = Date.now()): Promise<{ deleted: number; held: number; paused: number }> {
   // Without a name, this deployment's boxes can't be told from another's.
   const deployment = deploymentName(optionalEnv("RUNTIME_BASE_URL"));
-  if (!optionalEnv("DAYTONA_API_KEY") || !deployment) return { deleted: 0, held: 0 };
+  if (!optionalEnv("DAYTONA_API_KEY") || !deployment) return { deleted: 0, held: 0, paused: 0 };
   const backend = new DaytonaBackend();
 
   // Daytona lists only the quiet ones; each is checked again here, and only
@@ -54,10 +57,11 @@ export async function sweepOrphanedBoxes(now = Date.now()): Promise<{ deleted: n
   if (candidates.length === 0) {
     // None held now: the same ones coming back are logged again.
     lastHeld = "";
-    return { deleted: 0, held: 0 };
+    return { deleted: 0, held: 0, paused: 0 };
   }
 
-  const named = await namedBoxes(candidates.map((box) => box.id));
+  const statusOf = await namedBoxes(candidates.map((box) => box.id));
+  const named = new Set(statusOf.keys());
   const unlabelled = optionalEnv("ORPHAN_SWEEP_UNLABELLED") === "1";
   const { remove, held } = orphanedBoxes(candidates, named, { now, deployment, unlabelled });
   // Every one, but only when they change: the cron runs every 2 minutes.
@@ -79,21 +83,51 @@ export async function sweepOrphanedBoxes(now = Date.now()): Promise<{ deleted: n
       console.error(`Could not delete orphaned Daytona box ${id}`, error);
     }
   }
-  return { deleted: swept, held: held.length };
+  // Running under a row that says it isn't: paused, as the row says.
+  let paused = 0;
+  for (const id of strayRunningBoxes(candidates, statusOf, { now, deployment })) {
+    try {
+      // Read again just before: a session reopened since the lookup may be
+      // bringing this very box back (restore() takes a started box as is).
+      if (!(await stillAtRest(id))) continue;
+      await backend.pause(id);
+      console.warn(`Paused Daytona box ${id}: running while its runtime computer says it is at rest`);
+      paused += 1;
+    } catch (error) {
+      if (boxGone(error)) continue;
+      console.error(`Could not pause stray running Daytona box ${id}`, error);
+    }
+  }
+  return { deleted: swept, held: held.length, paused };
 }
 
 /** Which of `ids` a runtime_computers row names, in any state, pooled or
- *  not. A lookup that fails throws, so nothing is deleted on a guess. */
-async function namedBoxes(ids: string[]): Promise<Set<string>> {
+ *  not, with the status of the row that does (one not at rest, ready or on
+ *  its way, over one at rest).
+ *  A lookup that fails throws, so nothing is deleted on a guess. */
+async function namedBoxes(ids: string[]): Promise<Map<string, string>> {
   const supabase = createSupabaseAdminClient();
-  const named = new Set<string>();
+  const rows: { sandboxId: string | null; status: string }[] = [];
   for (let i = 0; i < ids.length; i += LOOKUP_CHUNK) {
     const { data, error } = await supabase
       .from("runtime_computers")
-      .select("daytona_sandbox_id")
+      .select("daytona_sandbox_id, status")
       .in("daytona_sandbox_id", ids.slice(i, i + LOOKUP_CHUNK));
     if (error) throw error;
-    for (const row of data ?? []) if (row.daytona_sandbox_id) named.add(row.daytona_sandbox_id);
+    rows.push(...(data ?? []).map((row) => ({ sandboxId: row.daytona_sandbox_id, status: row.status })));
   }
-  return named;
+  return boxStatuses(rows);
+}
+
+/** Whether every row naming `sandboxId` still says it's at rest. A lookup
+ *  that fails, or finds none, says no: nothing is paused on a guess. */
+async function stillAtRest(sandboxId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("runtime_computers")
+    .select("status")
+    .eq("daytona_sandbox_id", sandboxId);
+  // Said, so a lookup failing every run doesn't read as "no strays".
+  if (error) console.error(`Could not re-read runtime_computers for Daytona box ${sandboxId}`, error);
+  if (error || !data?.length) return false;
+  return data.every((row) => atRest(row.status));
 }
