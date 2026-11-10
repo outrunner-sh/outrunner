@@ -18,6 +18,9 @@ import type { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type ServerSupabase = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
+/** The alert for a sign-in token GitHub doesn't vouch for as the user's. */
+const disownedAlert = (userId: string) => `Not storing a sign-in token for ${userId}: GitHub doesn't vouch for it as their account's.`;
+
 /**
  * What every sign-in does once Supabase has a session for it, whichever way
  * it came (OAuth at /auth/callback, an emailed code at /auth/email): enforce
@@ -101,9 +104,10 @@ function joinRequested(base: string, admission: Extract<Admission, { kind: "requ
  * Repository access is a separate connection (Settings → Connections).
  *
  * Only in GITHUB_LEGACY_TOKENS `store` mode is the token itself kept, as
- * before, and there not for a user connected through the App (it's revoked): Supabase surfaces `provider_token` on the session returned by the
+ * before: Supabase surfaces `provider_token` on the session returned by the
  * code exchange and never stores or refreshes it, so this is the one place
- * it can be kept.
+ * it can be kept. Even then, a user connected through the App keeps none
+ * (the token is revoked instead).
  *
  * Either is kept only as GitHub vouches for the token ({@link signInTokenDecision}):
  * the callback picks the token by which identity signed in last, and a wrong
@@ -151,7 +155,7 @@ async function captureGithubSignIn(user: User, token: string | undefined): Promi
     if (owner.kind === "unreachable") {
       console.error(`GitHub couldn't be asked whose ${user.id}'s sign-in token is; not keeping it, as they're connected through the App.`);
     } else if (owner.kind !== "user" || owner.id !== githubId) {
-      console.error(`Not storing a sign-in token for ${user.id}: GitHub doesn't vouch for it as their account's.`);
+      console.error(disownedAlert(user.id));
     } else {
       await revokeUnkept(true);
     }
@@ -163,7 +167,7 @@ async function captureGithubSignIn(user: User, token: string | undefined): Promi
   const decision = signInTokenDecision(owner, githubId, hasStored);
   // Each of these is worth an alert: a wrong pick, or GitHub out of reach.
   if (decision === "disowned") {
-    console.error(`Not storing a sign-in token for ${user.id}: GitHub doesn't vouch for it as their account's.`);
+    console.error(disownedAlert(user.id));
     return;
   }
   if (decision === "keep_stored") {
