@@ -341,8 +341,11 @@ func NewServiceWithSessions(root string, manager Sessions) *Service {
 
 // sessionEnvironment keeps only the credentials Claude Code itself supports
 // and excludes the Runtime agent's control-plane secret and launch variables.
-// This prevents an interactive shell from reading RUNTIME_AGENT_SECRET via
-// `env`, while keeping non-sensitive OS settings such as PATH and HOME.
+// This keeps RUNTIME_AGENT_SECRET out of a session's `env`, while keeping
+// non-sensitive OS settings such as PATH and HOME. It is not a boundary: a
+// session runs as the agent's user, so it can read the agent's
+// /proc/<pid>/environ. The secret is returned among the secrets, so terminal
+// recordings and conversations mask it as the live terminal does.
 //
 // The user's GitHub token (GH_TOKEN) stays, for `gh`, and git is pointed at it
 // for github.com only (githubCredentialEnv), so the agent can push its branch.
@@ -358,7 +361,14 @@ func sessionEnvironment(base []string) ([]string, []string) {
 			continue
 		}
 		switch key {
-		case "RUNTIME_AGENT_SECRET", "RUNTIME_AGENT_ROOT", "PORT", "RUNTIME_SANDBOX_ID", "OUTRUNNER_APP_URL", "RUNTIME_MEMORY_AUTOSCALING":
+		case "RUNTIME_AGENT_SECRET":
+			// Kept from the sessions, but masked wherever they print: a
+			// session runs as the agent's user, who can read it from /proc.
+			if value != "" {
+				secrets = append(secrets, value)
+			}
+			continue
+		case "RUNTIME_AGENT_ROOT", "PORT", "RUNTIME_SANDBOX_ID", "OUTRUNNER_APP_URL", "RUNTIME_MEMORY_AUTOSCALING":
 			continue
 		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OUTRUNNER_CODEX_GRANT", "GH_TOKEN":
 			if value != "" {
