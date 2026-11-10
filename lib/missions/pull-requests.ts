@@ -146,10 +146,12 @@ export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<
       if (pulls) break;
     }
     // A branch some session of the repository has as its own is that
-    // session's, not a Runner's stacked work: as the webhook path reads it
-    // (runnerActivityWith), the repository found by GitHub's id through
-    // these Runners' own projects, and only in their own org (each group is
-    // one org's; there's no installation here to scope by).
+    // session's, not a Runner's stacked work: the repository found by
+    // GitHub's id through these Runners' own projects, and only in their own
+    // org (each group is one org's). Discovery has no installation to scope
+    // by, so where one installation links several orgs it reads narrower than
+    // the webhook path (runnerActivityWith, the installation's orgs): another
+    // linked org's session on the branch doesn't stop it recording the PR.
     const heads = (pulls ?? []).flatMap((pull) => (pull.head?.ref ? [pull.head.ref] : []));
     let sessionBranches = new Set<string>();
     if (namedAfterARunner(here, heads)) {
