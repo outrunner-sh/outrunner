@@ -243,3 +243,28 @@ func TestSummaryDoesNotEndTurnsOnCommentaryOrThinking(t *testing.T) {
 		t.Fatal("finished turn still open")
 	}
 }
+
+func TestSummaryOfMasksTheBoxsSecrets(t *testing.T) {
+	root := t.TempDir()
+	svc := NewService(root)
+	envDir := filepath.Join(root, "envroot", "ws-1")
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envDir, ".env"), []byte("OUTRUNNER_CANARY=canary-2682b7c55940\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := newSummary("ws-1", t.TempDir())
+	sum.applyEvent(conversation.Event{
+		Message: &protocol.ConversationMessage{
+			Role:    "assistant",
+			Content: []protocol.ContentBlock{{Type: "text", Text: "It's canary-2682b7c55940."}},
+		},
+	})
+	svc.summaries["ws-1"] = sum
+
+	snap := svc.SummaryOf(context.Background(), "ws-1")
+	if snap.LastAssistantMessage == nil || *snap.LastAssistantMessage != "It's ***." {
+		t.Fatalf("lastAssistantMessage = %v", snap.LastAssistantMessage)
+	}
+}

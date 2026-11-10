@@ -11,11 +11,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"runtime-agent/internal/dotenv"
 )
 
 // The user's own agent setup, imported from their Mac: CLAUDE.md, skills,
@@ -356,29 +359,73 @@ func agentConfigTokens() []string {
 		MCPServers map[string]struct {
 			Env     map[string]string `json:"env"`
 			Headers map[string]string `json:"headers"`
+			Args    []string          `json:"args"`
+			URL     string            `json:"url"`
 		} `json:"mcpServers"`
 	}
 	if json.Unmarshal(data, &config) != nil {
 		return nil
 	}
-	var tokens []string
+	var masked []string
+	keep := func(name, value string) {
+		if worthMasking(name, value) {
+			masked = append(masked, value)
+		}
+	}
 	for _, server := range config.MCPServers {
+		for _, entry := range append(urlTokens(server.URL), argTokens(server.Args)...) {
+			keep(entry.Name, entry.Value)
+		}
 		for _, values := range []map[string]string{server.Env, server.Headers} {
-			for _, value := range values {
-				tokens = append(tokens, value)
+			for name, value := range values {
+				keep(name, value)
 				if _, token, ok := strings.Cut(value, " "); ok {
-					tokens = append(tokens, token)
+					keep(name, token)
 				}
 			}
 		}
 	}
-	var masked []string
-	for _, token := range tokens {
-		if len(token) >= minMaskedEnv {
-			masked = append(masked, token)
+	return masked
+}
+
+// urlTokens are the credentials a server's URL carries, by name: its
+// password, and its query's values (?api_key=..., ?token=...).
+func urlTokens(raw string) []dotenv.Entry {
+	u, err := url.Parse(raw)
+	if err != nil || raw == "" {
+		return nil
+	}
+	var tokens []dotenv.Entry
+	if password, ok := u.User.Password(); ok {
+		tokens = append(tokens, dotenv.Entry{Name: "password", Value: password})
+	}
+	for name, values := range u.Query() {
+		for _, value := range values {
+			tokens = append(tokens, dotenv.Entry{Name: name, Value: value})
 		}
 	}
-	return masked
+	return tokens
+}
+
+// argTokens are the credentials a server's command line passes, by flag: the
+// value of one named for a credential, as --api-key=... or --api-key ...
+func argTokens(args []string) []dotenv.Entry {
+	var tokens []dotenv.Entry
+	for i, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			continue
+		}
+		name, value, inline := strings.Cut(arg, "=")
+		if !secretName.MatchString(name) {
+			continue
+		}
+		if inline {
+			tokens = append(tokens, dotenv.Entry{Name: name, Value: value})
+		} else if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			tokens = append(tokens, dotenv.Entry{Name: name, Value: args[i+1]})
+		}
+	}
+	return tokens
 }
 
 // copyAgentsMD gives a Codex home of a session's own the user's AGENTS.md.
