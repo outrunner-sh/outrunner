@@ -75,8 +75,8 @@ can. `GITHUB_LEGACY_TOKENS` sets how the old tokens are handled (`lib/github/leg
 
 | Mode | Sign-in asks | Kept tokens |
 | --- | --- | --- |
-| `store` (default without `GITHUB_APP_CLIENT_SECRET`) | `repo` too, and keeps its token | Used, as before |
-| `fallback` (default with it) | identity alone, keeps nothing | Used until their user connects. A banner in the app and on Connections asks them to |
+| `store` (default, when unset) | `repo` too, and keeps its token | Used, as before |
+| `fallback` | identity alone, keeps nothing | Used until their user connects. A banner in the app and on Connections asks them to |
 | `off` | identity alone, keeps nothing | Never used |
 
 **Remove old token** on Connections, and connecting, both delete a kept token. When

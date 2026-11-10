@@ -183,12 +183,15 @@ test("a token is renewed once it has less than ten minutes left; one that doesn'
   assert.equal(needsRenewal(null, now), false);
 });
 
-test("the old sign-in tokens' mode: as set, else kept working only where users can connect instead", () => {
-  assert.equal(legacyModeFrom(undefined, true), "fallback");
-  assert.equal(legacyModeFrom(undefined, false), "store");
-  assert.equal(legacyModeFrom(" OFF ", true), "off");
-  assert.equal(legacyModeFrom("store", true), "store");
-  assert.equal(legacyModeFrom("nonsense", true), "fallback");
+test("the old sign-in tokens' mode: as set, else store", () => {
+  // Unset is `store`, as before, even where the App's client secret is set:
+  // a deploy changes nothing until GITHUB_LEGACY_TOKENS opts in.
+  assert.equal(legacyModeFrom(undefined), "store");
+  assert.equal(legacyModeFrom(""), "store");
+  assert.equal(legacyModeFrom(" OFF "), "off");
+  assert.equal(legacyModeFrom("fallback"), "fallback");
+  assert.equal(legacyModeFrom("store"), "store");
+  assert.equal(legacyModeFrom("nonsense"), "store");
 });
 
 test("signing in with GitHub asks for identity alone, but for the old way", () => {

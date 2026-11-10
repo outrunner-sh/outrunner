@@ -4,11 +4,10 @@
  * never expires and reaches every repository the user can, so it's on its way
  * out (Settings → Connections → GitHub replaces it), by GITHUB_LEGACY_TOKENS:
  *
- * - `store`: as before. Sign-in asks for `repo` and keeps its token, which
- *   repository work runs as. The default only where users can't connect
- *   through the App (no GITHUB_APP_CLIENT_SECRET), so a deployment without it
- *   doesn't lose repository access.
- * - `fallback` (the default otherwise): sign-in is identity alone and keeps
+ * - `store` (the default, when it's unset): as before. Sign-in asks for
+ *   `repo` and keeps its token, which repository work runs as, so deploying
+ *   this changes nothing for users until a deployment opts in.
+ * - `fallback`: sign-in is identity alone and keeps
  *   nothing. A token kept from before still works for a user who hasn't
  *   connected through the App, with a banner asking them to; connecting
  *   removes it.
@@ -21,8 +20,6 @@
 
 import { clearGithubToken, getGithubToken } from "@/lib/db/credentials";
 import { optionalEnv } from "@/lib/env";
-import { appClientSecret } from "@/lib/github/installer";
-import { githubAppConfig } from "@/lib/github/app";
 import { legacyModeFrom, type LegacyTokenMode, signInScopesFor } from "@/lib/github/legacy-mode";
 import { revokeGrant, revokeToken } from "@/lib/github/user-auth";
 
@@ -30,7 +27,7 @@ export { legacyModeFrom, type LegacyTokenMode, signInScopesFor };
 
 /** The mode this deployment runs in. */
 export function legacyTokenMode(): LegacyTokenMode {
-  return legacyModeFrom(optionalEnv("GITHUB_LEGACY_TOKENS"), githubAppConfig() !== null && appClientSecret() !== null);
+  return legacyModeFrom(optionalEnv("GITHUB_LEGACY_TOKENS"));
 }
 
 /** What signing in with GitHub asks for here (components/signin-button.tsx). */

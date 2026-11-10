@@ -5,12 +5,13 @@
 
 export type LegacyTokenMode = "store" | "fallback" | "off";
 
-/** The mode `value` (GITHUB_LEGACY_TOKENS) says, or the default for whether
- *  users can connect through the App. */
-export function legacyModeFrom(value: string | undefined, userAuthConfigured: boolean): LegacyTokenMode {
+/** The mode `value` (GITHUB_LEGACY_TOKENS) says; `store` when it's unset or
+ *  unknown, so deploying this changes nothing until a deployment opts in to
+ *  `fallback` (whether or not the App's client secret is already set). */
+export function legacyModeFrom(value: string | undefined): LegacyTokenMode {
   const chosen = value?.trim().toLowerCase();
   if (chosen === "store" || chosen === "fallback" || chosen === "off") return chosen;
-  return userAuthConfigured ? "fallback" : "store";
+  return "store";
 }
 
 /** What signing in with GitHub asks for: who the user is and their verified
