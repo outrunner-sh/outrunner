@@ -49,7 +49,7 @@ export function MemorySettings({ org, initial }: { org: { id: string; name: stri
   return (
     <div className="space-y-8">
       {error && <InlineMessage>{error}</InlineMessage>}
-      {memories.length > 10 && <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter notes" />}
+      {memories.length > 10 && <Input aria-label="Filter notes" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter notes" />}
       <NoteList title="Your memory" intro="Only your sessions see these, and every new one loads the newest." notes={own} busy={busy} onDelete={remove} />
       {(!org.personal || memories.some((m) => m.scope === "org")) && (
         <NoteList

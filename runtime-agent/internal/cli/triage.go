@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 )
 
@@ -52,9 +53,10 @@ func CaptureTriage(ctx context.Context, client *http.Client, base, token, org st
 
 const triageUsage = `Usage: outrunner triage [--org <name>] [--repo owner/name] [--title <title>] <text…>
 
-Adds a work item to an org's Outrunner triage: your personal org's, or the
-one --org names. The text is its Markdown; with no --title, its first line
-is the title. With no text, it's read from stdin:
+Adds a work item to an org's Outrunner triage: your personal org's (with
+OUTRUNNER_API_KEY set, the key's org, as the key is used over the sign-in),
+or the one --org names. The text is its Markdown; with no --title, its first
+line is the title. With no text, it's read from stdin:
 
   git log -1 --format=%B | outrunner triage --repo acme/web
 `
@@ -65,7 +67,7 @@ func triage(ctx context.Context, base string, config Config, args []string, in t
 	flags := flag.NewFlagSet("outrunner triage", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() { fmt.Fprint(stderr, triageUsage) }
-	org := flags.String("org", "", "the org (its name) whose triage it goes to; none is your personal org")
+	org := flags.String("org", "", "the org (its name) whose triage it goes to; none is your personal org, or OUTRUNNER_API_KEY's")
 	repo := flags.String("repo", "", "the workspace (owner/name) it belongs to; none is Unsorted")
 	title := flags.String("title", "", "its title; none is the text's first line")
 	if err := flags.Parse(args); err != nil {
@@ -86,8 +88,13 @@ func triage(ctx context.Context, base string, config Config, args []string, in t
 		fmt.Fprint(stderr, triageUsage)
 		return 2
 	}
+	// A script's or CI's key (OUTRUNNER_API_KEY) files it through the API,
+	// as the session commands do; else the terminal's sign-in.
+	if key := strings.TrimSpace(os.Getenv("OUTRUNNER_API_KEY")); key != "" {
+		return triageWithKey(ctx, API{Base: base, Token: key, Org: strings.TrimSpace(*org)}, strings.TrimSpace(*title), text, strings.TrimSpace(*repo), stdout, stderr)
+	}
 	if config.Token == "" {
-		fmt.Fprintln(stderr, "Not signed in. Run `outrunner login`.")
+		fmt.Fprintln(stderr, "Not signed in. Run `outrunner login`, or set OUTRUNNER_API_KEY.")
 		return 1
 	}
 
@@ -106,5 +113,26 @@ func triage(ctx context.Context, base string, config Config, args []string, in t
 		return 1
 	}
 	fmt.Fprintf(stdout, "✓ Added %s %s to triage\n  %s\n", item.Key, item.Item.Title, item.URL)
+	return 0
+}
+
+// triageWithKey files the item with POST /api/v1/triage/items (docs/api.md).
+func triageWithKey(ctx context.Context, api API, title, body, repo string, stdout, stderr io.Writer) int {
+	request := map[string]any{"body": body}
+	if title != "" {
+		request["title"] = title
+	}
+	if repo != "" {
+		request["project_id"] = repo
+	}
+	var item struct {
+		Key   string `json:"key"`
+		Title string `json:"title"`
+		URL   string `json:"url"`
+	}
+	if _, err := api.Call(ctx, "POST", "/triage/items", nil, request, &item); err != nil {
+		return failed(stderr, err)
+	}
+	fmt.Fprintf(stdout, "✓ Added %s %s to triage\n  %s\n", item.Key, item.Title, item.URL)
 	return 0
 }

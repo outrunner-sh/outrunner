@@ -65,8 +65,8 @@ export function OrgDefaultsSettings({
         <h2 className="text-sm font-medium text-foreground">Session defaults</h2>
         <p className="max-w-prose text-sm text-muted-foreground">
           {`For ${org.name}'s members who haven't chosen their own under `}
-          <Link href="/settings/models" className="text-foreground underline underline-offset-2">
-            Default models
+          <Link href="/settings/preferences" className="text-foreground underline underline-offset-2">
+            Preferences
           </Link>
           . A member&apos;s own choice always wins.
         </p>

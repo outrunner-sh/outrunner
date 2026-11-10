@@ -148,6 +148,11 @@ type Service struct {
 	// liveMu makes reading the live secrets' sources and setting them one
 	// step (refreshLiveSecrets).
 	liveMu sync.Mutex
+	// secretsCache is RedactionSecrets as last read, at secretsAt, shared by
+	// every stream and poll that masks (CurrentSecrets).
+	secretsMu    sync.Mutex
+	secretsCache []string
+	secretsAt    time.Time
 	// gitTokens are the GitHub tokens the control plane gives the sessions,
 	// and gitToken the helpers' proof they ask from this box (gitcred.go);
 	// nil and empty when it gives none.
@@ -341,8 +346,11 @@ func NewServiceWithSessions(root string, manager Sessions) *Service {
 
 // sessionEnvironment keeps only the credentials Claude Code itself supports
 // and excludes the Runtime agent's control-plane secret and launch variables.
-// This prevents an interactive shell from reading RUNTIME_AGENT_SECRET via
-// `env`, while keeping non-sensitive OS settings such as PATH and HOME.
+// This keeps RUNTIME_AGENT_SECRET out of a session's `env`, while keeping
+// non-sensitive OS settings such as PATH and HOME. It is not a boundary: a
+// session runs as the agent's user, so it can read the agent's
+// /proc/<pid>/environ. The secret is returned among the secrets, so terminal
+// recordings and conversations mask it as the live terminal does.
 //
 // The user's GitHub token (GH_TOKEN) stays, for `gh`, and git is pointed at it
 // for github.com only (githubCredentialEnv), so the agent can push its branch.
@@ -358,7 +366,14 @@ func sessionEnvironment(base []string) ([]string, []string) {
 			continue
 		}
 		switch key {
-		case "RUNTIME_AGENT_SECRET", "RUNTIME_AGENT_ROOT", "PORT", "RUNTIME_SANDBOX_ID", "OUTRUNNER_APP_URL", "RUNTIME_MEMORY_AUTOSCALING":
+		case "RUNTIME_AGENT_SECRET":
+			// Kept from the sessions, but masked wherever they print: a
+			// session runs as the agent's user, who can read it from /proc.
+			if value != "" {
+				secrets = append(secrets, value)
+			}
+			continue
+		case "RUNTIME_AGENT_ROOT", "PORT", "RUNTIME_SANDBOX_ID", "OUTRUNNER_APP_URL", "RUNTIME_MEMORY_AUTOSCALING":
 			continue
 		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OUTRUNNER_CODEX_GRANT", "GH_TOKEN":
 			if value != "" {
@@ -391,6 +406,29 @@ func (s *Service) RedactionSecrets() []string {
 	secrets = append(append(secrets, s.authSecrets()...), s.envTokens()...)
 	secrets = append(append(secrets, s.providedTokens()...), s.credentialTokens()...)
 	return append(secrets, agentConfigTokens()...)
+}
+
+// secretsTTL is how long the box's secrets are read once for every masker.
+const secretsTTL = time.Second
+
+// CurrentSecrets are RedactionSecrets, read from disk at most once a second
+// for the whole box, however many chat streams and summary polls mask: a
+// session's environment is read afresh once it is set (forgetSecrets), and
+// a value provided mid-session reaches a redactor at once (LiveSecrets).
+func (s *Service) CurrentSecrets() []string {
+	s.secretsMu.Lock()
+	defer s.secretsMu.Unlock()
+	if s.secretsCache == nil || time.Since(s.secretsAt) >= secretsTTL {
+		s.secretsCache, s.secretsAt = s.RedactionSecrets(), time.Now()
+	}
+	return append([]string(nil), s.secretsCache...)
+}
+
+// forgetSecrets has the next CurrentSecrets read them from disk.
+func (s *Service) forgetSecrets() {
+	s.secretsMu.Lock()
+	s.secretsCache = nil
+	s.secretsMu.Unlock()
 }
 
 // refreshLiveSecrets sets the live secrets from their sources: the values
@@ -1672,6 +1710,7 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 		Uploads:          req.Uploads,
 		ClaudeVersion:    snapshot.ClaudeVersion(ctx),
 		Chats:            chats,
+		Secrets:          s.RedactionSecrets(),
 	})
 }
 
@@ -2281,6 +2320,12 @@ func (s *Service) SummaryOf(ctx context.Context, workspaceID string) protocol.Wo
 		return startingSummary(s.worktreePath(workspaceID))
 	}
 	snap := sum.Snapshot(ctx)
+	// The last reply leaves the box (a Slack thread, a Mission, a Snapshot's
+	// manifest): its secrets are masked, as in the chat (NEE-268).
+	if snap.LastAssistantMessage != nil {
+		masked := s.masker()(*snap.LastAssistantMessage)
+		snap.LastAssistantMessage = &masked
+	}
 	// A Claude that ended on its own (it crashed, or was quit) leaves a
 	// summary that still says running, its last turn perhaps open: its tmux
 	// session gone says otherwise. Only when tmux says so: one that couldn't

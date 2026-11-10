@@ -145,7 +145,9 @@ var runFFmpeg = func(ctx context.Context, args []string) error {
 
 // MakeGIF makes a GIF of input at output, smaller a step at a time until it
 // is under MaxGIFBytes. Still too large at the last step: an error saying to
-// show less, the last (smallest) try left at output.
+// show less, the last (smallest) try left at output. Each try is written
+// beside output and moved there only once it's made, so a failure leaves
+// whatever was at output as it was, and no empty GIF.
 func MakeGIF(ctx context.Context, input, output string, o GIFOptions, progress io.Writer) (GIFResult, error) {
 	if err := o.Validate(); err != nil {
 		return GIFResult{}, err
@@ -153,17 +155,45 @@ func MakeGIF(ctx context.Context, input, output string, o GIFOptions, progress i
 	if _, err := os.Stat(input); err != nil {
 		return GIFResult{}, fmt.Errorf("can't read %s: %w", input, err)
 	}
+	// `media gif flow.gif` would write over its own input (GIFPath of a .gif
+	// is itself): make it from the recording instead.
+	if in, err := filepath.Abs(input); err == nil {
+		if out, err := filepath.Abs(output); err == nil && in == out {
+			return GIFResult{}, fmt.Errorf("the GIF would replace %s itself: make it from the recording, or name another with -o", filepath.Base(input))
+		}
+	}
+	temp, err := os.CreateTemp(filepath.Dir(output), ".outrunner-gif-*.gif")
+	if err != nil {
+		return GIFResult{}, fmt.Errorf("can't write beside %s: %w", output, err)
+	}
+	try := temp.Name()
+	_ = temp.Close()
+	// CreateTemp's 0600 would carry over to the GIF: as ffmpeg makes one.
+	_ = os.Chmod(try, 0o644)
+	defer os.Remove(try)
+
 	var size int64
 	for i, step := range gifSteps(o.FPS, o.Width) {
-		if err := runFFmpeg(ctx, gifArgs(input, output, o, step)); err != nil {
+		if err := runFFmpeg(ctx, gifArgs(input, try, o, step)); err != nil {
+			// ffmpeg's own failure may be a --start past the recording's
+			// end, which it words as a failure to write; a cancel isn't.
+			if o.Start > 0 && ctx.Err() == nil {
+				err = fmt.Errorf("%w (if --start %gs is past the recording's end, start earlier)", err, o.Start)
+			}
 			return GIFResult{}, err
 		}
-		info, err := os.Stat(output)
+		info, err := os.Stat(try)
 		if err != nil {
 			return GIFResult{}, fmt.Errorf("ffmpeg made no GIF: %w", err)
 		}
 		size = info.Size()
+		if size == 0 {
+			return GIFResult{}, errors.New("ffmpeg made an empty GIF: no frames in what --start and --duration pick")
+		}
 		if size < MaxGIFBytes {
+			if err := os.Rename(try, output); err != nil {
+				return GIFResult{}, err
+			}
 			return GIFResult{Path: output, Bytes: size, FPS: step.fps, Width: step.width}, nil
 		}
 		if progress != nil {
@@ -171,6 +201,7 @@ func MakeGIF(ctx context.Context, input, output string, o GIFOptions, progress i
 				filepath.Base(output), step.fps, step.width, megabytes(size), megabytes(MaxGIFBytes), i+2)
 		}
 	}
+	_ = os.Rename(try, output)
 	return GIFResult{}, fmt.Errorf("the GIF is still %s, over GitHub's %s: show less, with a shorter --duration or a tighter --crop", megabytes(size), megabytes(MaxGIFBytes))
 }
 

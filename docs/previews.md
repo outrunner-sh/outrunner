@@ -14,8 +14,9 @@ mode:
 They're made from the session's Environment panel, the API
 (`/api/v1/workspaces/{id}/previews`, [api.md](api.md#previews)), its MCP
 tools (`create_preview` and the rest on `/api/mcp`), or by the session's
-agent on its box (`runtime-agent preview <port>`), which makes login
-previews only.
+agent on its box (`runtime-agent preview --root <root> --workspace <id>
+[--label <label>] <port>`, the command its orientation spells out), which
+makes login previews only.
 
 ## How a request gets through
 

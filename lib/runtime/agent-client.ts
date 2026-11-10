@@ -231,6 +231,15 @@ export class AgentClient {
     return EditorResponse.parse(raw);
   }
 
+  /** Text with the box's secrets masked, as its chat masks them (NEE-268):
+   *  for what the session sends out by another way. Null when the answer
+   *  isn't text. An agent from before this answers 404 with no error envelope. */
+  async maskText(identity: WorkspaceIdentity, text: string): Promise<string | null> {
+    const raw = await this.post(`/workspaces/${identity.workspaceId}/mask`, identity, { text });
+    const masked = (raw as { text?: unknown } | null)?.text;
+    return typeof masked === "string" ? masked : null;
+  }
+
   /** The servers running on the session's box, for its owner to open. */
   async listPorts(identity: WorkspaceIdentity): Promise<PortsResponse["ports"]> {
     return PortsResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/ports`, identity)).ports;

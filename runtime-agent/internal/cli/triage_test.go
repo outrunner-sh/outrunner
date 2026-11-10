@@ -16,6 +16,8 @@ func triageApp(t *testing.T, got *map[string]any) *httptest.Server {
 
 func triageAppOrg(t *testing.T, got *map[string]any, org *string) *httptest.Server {
 	t.Helper()
+	// The terminal's sign-in is what's sent, whatever this shell has set.
+	t.Setenv("OUTRUNNER_API_KEY", "")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/triage/items" || r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusNotFound)
@@ -98,5 +100,48 @@ func TestTriageNamesTheOrg(t *testing.T) {
 		[]string{"--org", "Acme Inc", "Fix it"}, terminal{interactive: true}, &out, &errs)
 	if code != 0 || org != "Acme Inc" {
 		t.Fatalf("exit %d, org %q: %s", code, org, errs.String())
+	}
+}
+
+func TestTriageWithAnAPIKeyFilesThroughTheAPI(t *testing.T) {
+	var got map[string]any
+	var asked string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = r.Method + " " + r.URL.Path + "?" + r.URL.RawQuery
+		if r.Header.Get("Authorization") != "Bearer or_key_ci" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"code":"unauthorized","message":"That API key was revoked.","status":401}}`))
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"i1","key":"OR-8","title":"Fix the flaky test","url":"https://app/triage?item=i1","created":true}`))
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("OUTRUNNER_API_KEY", "or_key_ci")
+	var out, errs bytes.Buffer
+	// No sign-in on this computer: a CI job's.
+	code := triage(context.Background(), server.URL, Config{},
+		[]string{"--repo", "acme/web", "--org", "acme", "Fix the flaky test"}, terminal{interactive: true}, &out, &errs)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errs.String())
+	}
+	if asked != "POST /api/v1/triage/items?org=acme" {
+		t.Fatalf("asked %s", asked)
+	}
+	if got["body"] != "Fix the flaky test" || got["project_id"] != "acme/web" || got["source"] != nil {
+		t.Fatalf("sent %v", got)
+	}
+	if !strings.Contains(out.String(), "OR-8 Fix the flaky test") || !strings.Contains(out.String(), "https://app/triage?item=i1") {
+		t.Fatalf("printed %q", out.String())
+	}
+
+	t.Setenv("OUTRUNNER_API_KEY", "or_key_old")
+	errs.Reset()
+	if code := triage(context.Background(), server.URL, Config{}, []string{"x"}, terminal{interactive: true}, &out, &errs); code != 1 {
+		t.Fatalf("revoked key: exit %d", code)
+	}
+	if !strings.Contains(errs.String(), "revoked") || !strings.Contains(errs.String(), "OUTRUNNER_API_KEY") {
+		t.Fatalf("said %q", errs.String())
 	}
 }

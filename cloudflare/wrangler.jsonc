@@ -25,7 +25,7 @@
       "image_vars": {
         "NEXT_PUBLIC_CODEX_CLI_VERSION": "0.1.4",
         "NEXT_PUBLIC_SUPABASE_URL": "https://butbnitdpiehgwqggowr.supabase.co",
-        "NEXT_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_PzZINFybWQAKwQlBqs2qsg_4SNlVTMj"
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_yRdLrz-ZYvbA4TzwuZMbAQ_WSBGgsmn"
       },
       "instance_type": "standard-1",
       "max_instances": 3

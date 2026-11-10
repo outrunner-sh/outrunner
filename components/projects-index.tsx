@@ -21,7 +21,7 @@ export function ProjectsIndex({ projects, canSync }: { projects: Project[]; canS
 
         {projects.length === 0 ? (
           <p className="text-[13px] text-muted-foreground">
-            {canSync ? "No repositories connected yet. Sync repositories to add them here." : "No projects are available in this workspace yet."}
+            {canSync ? "No repositories connected yet. Sync repositories to add them here." : "No projects are available in this org yet."}
           </p>
         ) : (
           <section className="space-y-2" aria-labelledby="connected-repositories">

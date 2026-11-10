@@ -264,7 +264,7 @@ export function ConversationTimeline({
           {placeholder === "ready" && (
             <div className="conversation-placeholder is-ready">
               <span>Ready when you are</span>
-              <span className="text-muted-foreground/60">{agentLabel} is connected. Send a prompt to start.</span>
+              <span className="text-muted-foreground">{agentLabel} is connected. Send a prompt to start.</span>
             </div>
           )}
           {/* Under a placeholder there is only the session's state to show,

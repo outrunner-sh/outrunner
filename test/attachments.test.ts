@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   ATTACHMENT_DIR,
   attachmentFilenames,
+  attachmentObjectPath,
   attachNotice,
   restoreDraft,
   MAX_ATTACHMENTS_PER_MESSAGE,
@@ -201,4 +202,19 @@ test("a failed send keeps what was typed since, after its own prompt", () => {
 
 test("a failed send of files only leaves the new draft as it is", () => {
   assert.equal(restoreDraft("", "and add a test"), "and add a test");
+});
+
+test("attachmentObjectPath keeps only the path an upload is stored at", () => {
+  const owner = "11111111-1111-4111-8111-111111111111";
+  const id = "22222222-2222-4222-8222-222222222222";
+  const row = (storage_path: string) => ({ id, owner_id: owner, storage_path });
+  assert.equal(attachmentObjectPath(row(`uploads/${owner}/${id}/shot.png`)), `uploads/${owner}/${id}/shot.png`);
+  // A path the row's owner rewrote (PostgREST, under RLS) to another's object.
+  const victim = "33333333-3333-4333-8333-333333333333";
+  assert.equal(attachmentObjectPath(row(`uploads/${victim}/${id}/shot.png`)), null);
+  assert.equal(attachmentObjectPath(row(`uploads/${owner}/${victim}/shot.png`)), null);
+  assert.equal(attachmentObjectPath(row(`box-images/${victim}/abc`)), null);
+  assert.equal(attachmentObjectPath(row(`uploads/${owner}/${id}/../../${victim}/x/shot.png`)), null);
+  assert.equal(attachmentObjectPath(row(`uploads/${owner}/${id}/a/b.png`)), null);
+  assert.equal(attachmentObjectPath(row(`uploads/${owner}/${id}/`)), null);
 });
