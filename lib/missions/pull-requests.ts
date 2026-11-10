@@ -12,7 +12,7 @@ import { getPullRequestStatusWithDetails } from "@/lib/github/client";
 import { optionalGitToken } from "@/lib/github/identity.deps";
 import { githubGet } from "@/lib/github/rest";
 import { sessionWorking } from "@/lib/missions/box";
-import { runnerActivityWith, sessionBranchesAmongWith, type GitHubPull, type PullRequestActivity } from "@/lib/missions/pull-request-activity";
+import { namedAfterARunner, repositoryProjectsWith, runnerActivityWith, sessionBranchesAmongWith, type GitHubPull, type PullRequestActivity } from "@/lib/missions/pull-request-activity";
 import { eventKey, type PullRequestRef } from "@/lib/missions/events";
 import { isLiveRunner } from "@/lib/missions/rules";
 import { allPullRequestsDone, isNews, reviewState, runnersOwning, settle } from "@/lib/missions/settle";
@@ -145,20 +145,25 @@ export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<
       pulls = await githubGet<GitHubPull[]>(token, `/repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`);
       if (pulls) break;
     }
-    // The repository's projects in these Runners' org: a branch one of its
-    // sessions has as its own is that session's, not a Runner's stacked work.
-    const orgId = key.slice(0, key.indexOf("\u0000"));
-    const { data: projects, error: projectsError } = await db()
-      .from("projects")
-      .select("id, org_id")
-      .ilike("full_name", escapeLike(repo))
-      .eq("org_id", orgId);
-    if (projectsError) throw projectsError;
-    const sessionBranches = await sessionBranchesAmongWith(
-      db(),
-      projects ?? [],
-      (pulls ?? []).flatMap((pull) => (pull.head?.ref ? [pull.head.ref] : [])),
-    );
+    // A branch some session of the repository has as its own, in any org,
+    // is that session's, not a Runner's stacked work: as the webhook path
+    // reads it (runnerActivityWith), the repository found by GitHub's id
+    // through these Runners' own projects.
+    const heads = (pulls ?? []).flatMap((pull) => (pull.head?.ref ? [pull.head.ref] : []));
+    let sessionBranches = new Set<string>();
+    if (namedAfterARunner(here, heads)) {
+      const ids = [...new Set(here.flatMap((r) => [r.projectId, ...(r.checkouts ?? []).map((c) => c.projectId)]))];
+      const { data: own, error: ownError } = await db()
+        .from("projects")
+        .select("id, org_id, github_repo_id")
+        .in("id", ids)
+        .ilike("full_name", escapeLike(repo));
+      if (ownError) throw ownError;
+      const repoIds = (own ?? []).flatMap((p) => (typeof p.github_repo_id === "number" ? [p.github_repo_id] : []));
+      // A project from before repository ids: its own sessions at least.
+      const projects = repoIds.length > 0 ? await repositoryProjectsWith(db(), repoIds) : (own ?? []);
+      sessionBranches = await sessionBranchesAmongWith(db(), projects, heads);
+    }
     for (const pull of pulls ?? []) {
       if (!pull.number || !pull.head?.ref) continue;
       for (const runner of here.filter((r) => runnersOwning(here, pull.head!.ref!, sessionBranches).includes(r))) {

@@ -109,3 +109,16 @@ test("a branch that is another session's own isn't a Runner's stacked work, thou
   const stacked = { ...activity, headRefs: ["fix-3"], numbers: [] };
   assert.deepEqual((await runnersForWith(fakeDb(tables), stacked)).map((r) => r.id), [runnerA]);
 });
+
+test("a session's own branch counts in any org's project of the same repository, as discovery reads it", async () => {
+  const { tables } = db();
+  // Org B's project of the same GitHub repository (by id), outside the
+  // installation; its plain session holds fix-2.
+  tables.projects.find((p) => p.id === "p-b")!.github_repo_id = 501;
+  tables.workspaces.push({ ...tables.workspaces[1], id: "plain-b", parent_mission_id: null, branch: "fix-2" });
+  const onPlain = { ...activity, headRefs: ["fix-2"], numbers: [] };
+  assert.deepEqual(await runnersForWith(fakeDb(tables), onPlain), []);
+  // A colliding name with another repository id is no help to it.
+  tables.projects.find((p) => p.id === "p-b")!.github_repo_id = 502;
+  assert.deepEqual((await runnersForWith(fakeDb(tables), onPlain)).map((r) => r.id), ["r-a"]);
+});

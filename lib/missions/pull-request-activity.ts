@@ -11,7 +11,7 @@
 
 import { toWorkspace } from "@/lib/db/mappers";
 import { installationProjectsOf, repositoryIdOf } from "@/lib/db/installation-projects";
-import { runnersOwning } from "@/lib/missions/settle";
+import { isRunnerBranch, runnersOwning } from "@/lib/missions/settle";
 import type { Database } from "@/lib/supabase/database.types";
 import type { Workspace } from "@/lib/runtime/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -123,6 +123,29 @@ export async function sessionBranchesAmongWith(
   );
 }
 
+/**
+ * Every project of the GitHub repositories `repoIds`, in any org: a
+ * repository has one branch namespace, whichever org's session holds a
+ * branch in it. Matched by GitHub's own id, which no member can set. Only
+ * their sessions' branch names are read from them (sessionBranchesAmongWith),
+ * and only to keep a Runner off another session's branch.
+ */
+export async function repositoryProjectsWith(
+  db: SupabaseClient<Database>,
+  repoIds: readonly number[],
+): Promise<{ id: string; org_id: string }[]> {
+  if (repoIds.length === 0) return [];
+  const { data, error } = await db.from("projects").select("id, org_id").in("github_repo_id", [...new Set(repoIds)]);
+  if (error) throw error;
+  return data ?? [];
+}
+
+/** Whether telling a Runner's stacked work apart needs the session branches:
+ *  only when some ref is named after a Runner's branch without being it. */
+export function namedAfterARunner(runners: readonly { branch: string }[], refs: readonly string[]): boolean {
+  return runners.some((runner) => refs.some((ref) => ref !== runner.branch && isRunnerBranch(runner.branch, ref)));
+}
+
 /** The Runners an event can be about (runnerActivityWith). */
 export async function runnersForWith(db: SupabaseClient<Database>, activity: PullRequestActivity): Promise<Workspace[]> {
   return (await runnerActivityWith(db, activity)).runners;
@@ -156,7 +179,10 @@ export async function runnerActivityWith(
   const inRepo = (data ?? []).filter((row) => projectIds.has(row.project_id) || checkoutIds(row.checkouts).some((id) => projectIds.has(id)));
   if (inRepo.length === 0) return none;
   const refs = [...activity.headRefs, ...(activity.pr ? [activity.pr.headRef] : [])];
-  const sessionBranches = await sessionBranchesAmongWith(db, projects, refs);
+  // Across the repository's projects in every org, as discovery reads them.
+  const sessionBranches = namedAfterARunner(inRepo, refs)
+    ? await sessionBranchesAmongWith(db, await repositoryProjectsWith(db, [activity.repoId]), refs)
+    : new Set<string>();
   const known = new Set<string>();
   if (activity.numbers.length > 0) {
     const { data: rows, error: rowsError } = await db
@@ -171,9 +197,8 @@ export async function runnerActivityWith(
     if (rowsError) throw rowsError;
     for (const row of rows ?? []) known.add(row.runner_id);
   }
-  const matched = inRepo
-    .filter((row) => known.has(row.id) || refs.some((ref) => runnersOwning(inRepo, ref, sessionBranches).includes(row)))
-    .map((row) => row.id);
+  const owned = new Set(refs.flatMap((ref) => runnersOwning(inRepo, ref, sessionBranches)).map((row) => row.id));
+  const matched = inRepo.filter((row) => known.has(row.id) || owned.has(row.id)).map((row) => row.id);
   if (matched.length === 0) return none;
   const { data: rows, error: rowsError } = await db.from("workspaces").select("*").in("id", matched);
   if (rowsError) throw rowsError;
