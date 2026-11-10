@@ -59,3 +59,33 @@ export function buildNavGroups(
     }))
     .sort((a, b) => newestFirst(recency(a.items[0]), recency(b.items[0])));
 }
+
+/**
+ * Projects to offer when picking one, the likeliest first: `current` (the
+ * open session's), then by their most recent session, then the rest in the
+ * order given. Every project once; a session under an unlisted project adds
+ * nothing.
+ */
+export function recentProjects<P extends NavProject>(
+  projects: P[],
+  /** Sessions and Missions, each under the project it was started in. */
+  used: { projectId: string; createdAt: string; lastActiveAt?: string | null }[],
+  current?: string | null,
+): P[] {
+  const latest = new Map<string, string>();
+  for (const w of used) {
+    const at = recency({ lastActiveAt: w.lastActiveAt ?? null, createdAt: w.createdAt });
+    const seen = latest.get(w.projectId);
+    if (seen === undefined || newestFirst(seen, at) > 0) latest.set(w.projectId, at);
+  }
+  const rank = (p: P) => (p.id === current ? 0 : latest.has(p.id) ? 1 : 2);
+  return projects
+    .map((p, i) => ({ p, i }))
+    .sort(
+      (a, b) =>
+        rank(a.p) - rank(b.p) ||
+        (rank(a.p) === 1 ? newestFirst(latest.get(a.p.id), latest.get(b.p.id)) : 0) ||
+        a.i - b.i,
+    )
+    .map(({ p }) => p);
+}
