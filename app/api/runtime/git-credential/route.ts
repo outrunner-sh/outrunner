@@ -7,6 +7,7 @@ import { MissingGithubTokenError } from "@/lib/github/client";
 import { GitIdentityError } from "@/lib/github/identity";
 import { gitCredentialFor, isReviewSession, REVIEW_AS_APP } from "@/lib/github/identity.deps";
 import { isGitHubFullName } from "@/lib/github/listing";
+import { readCappedBody } from "@/lib/http/capped-body";
 import { gitCredentialRequestValid } from "@/lib/runtime/git-credential";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -33,8 +34,9 @@ const MAX_BODY_BYTES = 4096;
  */
 export async function POST(request: Request) {
   const sandboxId = request.headers.get("x-outrunner-sandbox");
-  const body = await request.text();
-  if (!sandboxId || body.length > MAX_BODY_BYTES) {
+  // Read no further than a box's request goes: anyone can post here.
+  const body = await readCappedBody(request, MAX_BODY_BYTES);
+  if (!sandboxId || body === null) {
     return NextResponse.json({ error: "Not a box's request." }, { status: 400 });
   }
 

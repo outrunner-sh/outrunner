@@ -308,6 +308,7 @@ function SessionRow({
         {picked && !progress && (
           <Input
             className="h-7 max-w-xs text-xs"
+            aria-label="Branch in the cloud"
             placeholder={`Branch in the cloud: ${s.branch} (renamed if taken)`}
             value={branchAs}
             onChange={(e) => onBranchAs(e.target.value)}

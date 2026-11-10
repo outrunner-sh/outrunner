@@ -120,3 +120,11 @@ test("the browser's selected team organization survives the independent desktop 
   });
   assert.deepEqual(result, { next, orgId });
 });
+
+test("a desktop destination's dot segments can't resolve to another origin", () => {
+  for (const next of ["/.//evil.com", "/a/..//evil.com", "/%2e//evil.com", "/./\\evil.com", "/\t/evil.com"]) {
+    const kept = desktopDestination(next);
+    // window.location.assign(kept) on the app's origin stays on it.
+    assert.equal(new URL(kept, "https://app.example").origin, "https://app.example", next);
+  }
+});

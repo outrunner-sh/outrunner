@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"runtime-agent/internal/dotenv"
 )
 
 // keyFiles is a folder of per-session files of keys, each a shell file of
@@ -115,6 +117,24 @@ func (k keyFiles) tokens() []string {
 		}
 	}
 	return tokens
+}
+
+// entries are the folder's variables by name, for masking that weighs a
+// value by what it's called (worthMasking).
+func (k keyFiles) entries() []dotenv.Entry {
+	files, _ := filepath.Glob(filepath.Join(k.dir, "*"))
+	var entries []dotenv.Entry
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		for _, line := range k.keyLines(string(data)) {
+			name, value, _ := strings.Cut(strings.TrimPrefix(line, "export "), "=")
+			entries = append(entries, dotenv.Entry{Name: name, Value: strings.Trim(value, "'")})
+		}
+	}
+	return entries
 }
 
 // keyLines are a file's exports of a non-empty key, in whichever of the

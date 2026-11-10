@@ -126,3 +126,53 @@ export function orphanedBoxes(
     held: orphans.filter((box) => !ours(box)).map((box) => box.id),
   };
 }
+
+/** Row statuses that say a box is not running: paused (stopped) or given up
+ *  on (error). A box that runs on under one is metered by nothing (the
+ *  reconciler meters ready rows) and paused by nothing. */
+const AT_REST: ReadonlySet<string> = new Set(["stopped", "error"]);
+
+/** Whether a row in `status` says its box isn't running. */
+export function atRest(status: string): boolean {
+  return AT_REST.has(status);
+}
+
+/**
+ * Each box's status from the rows naming it: one not at rest (ready, or on
+ * its way) over any at rest, whatever their order, so a box another row is
+ * using is never taken for a stray.
+ */
+export function boxStatuses(rows: readonly { sandboxId: string | null; status: string }[]): Map<string, string> {
+  const statusOf = new Map<string, string>();
+  for (const { sandboxId, status } of rows) {
+    if (!sandboxId) continue;
+    const was = statusOf.get(sandboxId);
+    if (was === undefined || atRest(was)) statusOf.set(sandboxId, status);
+  }
+  return statusOf;
+}
+
+/**
+ * This run's strays: boxes a row names as at rest that are running anyway,
+ * old and quiet, to pause (not delete: the row names it, and its disk may
+ * hold a session). A restore whose start timed out and whose stop then failed
+ * left one running a day on production, unmetered. Longest quiet first, at
+ * most `max`.
+ */
+export function strayRunningBoxes(
+  boxes: readonly ListedBox[],
+  statusOf: ReadonlyMap<string, string>,
+  options: { now: number; deployment: string | null; graceMs?: number; max?: number },
+): string[] {
+  const max = Math.max(0, options.max ?? ORPHAN_SWEEP_MAX);
+  return boxes
+    .filter((box) => {
+      const status = statusOf.get(box.id);
+      return box.state === "started" && status !== undefined && atRest(status) &&
+        box.labels[DEPLOYMENT_LABEL] === options.deployment &&
+        sweepable(box, options.now, options.deployment, options.graceMs);
+    })
+    .sort((a, b) => Date.parse(a.lastActivityAt!) - Date.parse(b.lastActivityAt!))
+    .slice(0, max)
+    .map((box) => box.id);
+}

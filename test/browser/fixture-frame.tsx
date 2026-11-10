@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { AppFrame } from "@/components/app-frame";
 import { ServerAnswer } from "@/components/server-answer";
-import { frame } from "./fixtures";
+import { frame, manyProjects } from "./fixtures";
 
 const chrome = {
   collapsed: false,
@@ -56,6 +56,9 @@ export function FixtureFrame({ children }: { children: React.ReactNode }) {
           },
         },
       };
+    }
+    if (state === "many-projects") {
+      return { ...frame, activeOrgId: "org-1", appData: { ...frame.appData, projects: manyProjects } };
     }
     if (state === "recent-selection") {
       return { ...frame, activeOrgId: "org-1", appData: { ...frame.appData, workspaces: frame.appData.workspaces.map((workspace, i) =>
