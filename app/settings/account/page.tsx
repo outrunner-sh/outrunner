@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/page-layout";
 
 import Image from "next/image";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
@@ -22,8 +23,8 @@ export const unstable_instant = {
 /** Account: the signed-in identity; how the user hears of their sessions
  *  (components/notification-settings.tsx); who sessions work on GitHub as
  *  (lib/github/identity.ts), or connecting GitHub to an account that signed
- *  in with Google or an emailed code; and sign-out — which is also how a
- *  revoked GitHub token is replaced (see components/github-reconnect-link). */
+ *  in with Google or an emailed code; and sign-out. A revoked GitHub token is
+ *  replaced under Connections (components/github-connection-section.tsx). */
 /** Why connecting GitHub failed, by the error code Supabase sent back
  *  (app/auth/callback). Codes only: the URL's own text is never shown. */
 const LINK_ERRORS: Record<string, string> = {
@@ -87,8 +88,11 @@ async function AccountSection({ searchParams }: { searchParams: Promise<{ link_e
         <>
           <div className="space-y-2">
             <p className="text-muted-foreground text-sm">
-              If GitHub stops working (repositories won’t load, or publishing fails),
-              sign out and back in with GitHub to reconnect your account.
+              If GitHub stops working (repositories won’t load, or publishing fails),{" "}
+              <Link href="/settings/connections" className="text-foreground underline underline-offset-2">
+                reconnect it in Connections
+              </Link>
+              .
             </p>
             <form action={signOut}>
               <SignOutButton />

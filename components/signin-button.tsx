@@ -80,11 +80,14 @@ export function SignInButton({
   provider = "github",
   next = "/",
   link = false,
+  label,
 }: {
   provider?: SignInProvider;
   next?: string;
   /** Connect the provider to the signed-in account rather than sign in. */
   link?: boolean;
+  /** Overrides the idle label, e.g. "Reconnect GitHub". */
+  label?: string;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -113,7 +116,7 @@ export function SignInButton({
         className="relative flex h-8 w-full items-center justify-center rounded-md border border-border bg-input/30 px-9 text-sm text-foreground transition-colors hover:bg-input/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
       >
         <span className="absolute left-3 flex items-center">{loading ? <Spinner className="size-4" /> : icon}</span>
-        {loading ? `Opening ${name}` : link ? `Connect ${name}` : `Continue with ${name}`}
+        {loading ? `Opening ${name}` : (label ?? (link ? `Connect ${name}` : `Continue with ${name}`))}
       </button>
       {error && <InlineMessage>{error}</InlineMessage>}
     </div>

@@ -641,15 +641,25 @@ const TOOL_ICONS: Record<ToolKind, LucideIcon> = {
 
 /** One tool call: a bordered row (what it did, and the lines it changed),
  *  opening onto its input and, once it has arrived, its output. */
-function ToolRow({ name, input, result }: { name: string; input: unknown; result: { content: unknown } | null }) {
+function ToolRow({
+  name,
+  input,
+  result,
+}: {
+  name: string;
+  input: unknown;
+  result: { content: unknown; isError?: boolean } | null;
+}) {
   const row = toolRow(name, input);
   const Icon = TOOL_ICONS[row.kind];
   const command = name === "Bash" ? describeToolUse(name, input) : null;
+  const failed = result?.isError === true;
   return (
-    <details className="timeline-tool">
+    <details className={cn("timeline-tool", failed && "is-failed")}>
       <summary title={row.title ?? undefined}>
         <Icon aria-hidden />
         <span className={cn("min-w-0 truncate", row.mono && "font-mono text-[12px]")}>{row.label}</span>
+        {failed && <span className="shrink-0 text-destructive">Failed</span>}
         {row.stats && (
           <span className="shrink-0 tabular-nums">
             {row.stats.added > 0 && <span className="text-positive">+{row.stats.added}</span>}
@@ -660,19 +670,19 @@ function ToolRow({ name, input, result }: { name: string; input: unknown; result
       </summary>
       <div className="timeline-tool-body">
         <pre>{command ?? JSON.stringify(input, null, 2)}</pre>
-        {result && <ToolOutput content={result.content} />}
+        {result && <ToolOutput content={result.content} failed={failed} />}
       </div>
     </details>
   );
 }
 
 /** A tool's output under its input, its size beside the heading. */
-function ToolOutput({ content }: { content: unknown }) {
+function ToolOutput({ content, failed }: { content: unknown; failed: boolean }) {
   const { text, lineCount } = summarizeToolResult(content);
   return (
     <>
-      <div className="timeline-tool-heading">
-        Output
+      <div className={cn("timeline-tool-heading", failed && "text-destructive")}>
+        {failed ? "Error" : "Output"}
         {lineCount > 1 && <span className="tabular-nums">{lineCount} lines</span>}
       </div>
       <pre className="max-h-96 overflow-auto whitespace-pre-wrap">{lineCount === 0 ? "(empty result)" : text}</pre>

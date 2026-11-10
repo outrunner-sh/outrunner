@@ -306,6 +306,7 @@ export function AppSidebar({
                   active={active}
                   now={now}
                   standings={standings}
+                  pullRequests={pullRequests}
                   onDelete={requestSessionDeletion}
                   folded={folded.includes(group.key)}
                   searching={query.trim() !== ""}
@@ -354,6 +355,7 @@ function WorkspaceGroup({
   active,
   now,
   standings,
+  pullRequests,
   onDelete,
   folded,
   searching,
@@ -364,6 +366,8 @@ function WorkspaceGroup({
   now: number;
   /** Where each cloud session stands: its unread mark and its menu's marks. */
   standings: Record<string, SessionStanding>;
+  /** The pull request each cloud session shows, for its menu's Open. */
+  pullRequests: Record<string, WorkspacePullRequest>;
   /** Opens the delete confirmation for one of its sessions. */
   onDelete: (session: DeletingSession) => void;
   folded: boolean;
@@ -446,7 +450,7 @@ function WorkspaceGroup({
           const isActive = session.id === active;
           const { deletion } = session;
           const standing = group.local ? undefined : standings[session.id];
-          const hasMenu = !group.local || deletion !== null;
+          const hasMenu = !group.local || deletion !== null || session.branch !== "";
           // A cloud session warms up as the pointer rests on it, so its click
           // shows the conversation at once. A Mac one is near already, and
           // attaching would start it.
@@ -491,6 +495,7 @@ function WorkspaceGroup({
                 session={session}
                 markable={!group.local}
                 standing={standing}
+                pullRequestUrl={group.local ? undefined : pullRequests[session.id]?.url}
                 onDelete={onDelete}
                 className="absolute right-1 top-1/2 -translate-y-1/2"
               />

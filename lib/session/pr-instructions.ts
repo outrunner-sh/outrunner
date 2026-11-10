@@ -34,12 +34,13 @@ export function prInstructionFooter(sessionUrl: string, coAuthor?: string | null
   };
 }
 
-/** The steps, from the session's branch, its target and how many files are
- *  uncommitted: null when the count can't be read yet, and then left out. */
+/** The steps, from the session's branch, its target and how many files differ
+ *  from the target (committed or not: the Changes panel's list): null when
+ *  the count can't be read yet, and then left out. */
 export function prInstructions(input: {
   branch: string;
   baseBranch: string;
-  uncommitted: number | null;
+  changedFiles: number | null;
   /** One repository of a session of several: its folder and `owner/name`.
    *  The PR is that repository's alone. */
   repo?: { checkout: string; fullName: string };
@@ -48,16 +49,16 @@ export function prInstructions(input: {
   /** Who the footer credits, and the session's page. */
   footer: PrFooterInput;
 }): string {
-  const { branch, baseBranch, uncommitted, repo, tools, footer } = input;
+  const { branch, baseBranch, changedFiles, repo, tools, footer } = input;
   const state = [
     repo
       ? `This PR is for ${repo.fullName} only, the repository in the \`${repo.checkout}/\` folder. Run every step below in that folder (\`cd ${repo.checkout}\`), and leave the other repositories' folders alone.`
       : null,
-    uncommitted === null
+    changedFiles === null
       ? null
-      : uncommitted === 0
-        ? "There are no uncommitted changes."
-        : `There ${uncommitted === 1 ? "is 1 uncommitted change" : `are ${uncommitted} uncommitted changes`}.`,
+      : changedFiles === 0
+        ? `No files differ from origin/${baseBranch}.`
+        : `${changedFiles === 1 ? "1 file differs" : `${changedFiles} files differ`} from origin/${baseBranch}.`,
     `The current branch is ${branch}.`,
     `The target branch is origin/${baseBranch}.`,
   ].filter((line) => line !== null);

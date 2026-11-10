@@ -243,6 +243,11 @@ conversation is read from the session's box while it's up; an archived
 session's comes from its last snapshot (`"from": "archive"`, ids counting
 from 1), and a session with neither has none.
 
+A tool's result is a `tool_result` block with its call's `tool_use_id`, and
+`"is_error": true` when the tool failed (a command that exited non-zero, an
+edit that didn't apply); it's left out otherwise, and on boxes whose agent
+predates it.
+
 ### Files
 
 Upload each file first, then name it by id when you start a session or

@@ -714,6 +714,10 @@
 .route-state-message, .is-arriving { animation:skeleton-in .15s ease-out both; }
 @media (prefers-reduced-motion: reduce) { .route-state-message, .is-arriving { animation:none; } }
 .route-state-actions .notice-action { height:32px; padding:0 12px; border-radius:8px; font-size:13px; }
+.route-state-details { max-width: 384px; color: var(--muted-foreground); font-size: 12px; text-align: center; }
+.route-state-details summary { cursor: pointer; }
+.route-state-details summary:hover { color: var(--foreground); }
+.route-state-details p { margin: 8px 0 0; font-family: var(--font-geist-mono); text-align: left; overflow-wrap: anywhere; }
 .dot-matrix.is-still .dot-matrix-cell { animation: none; }
 @media (prefers-reduced-motion: reduce) { .route-state { animation: none; } }
 /* Hold to Confirm (interior.dev): a fill crosses the button while it is held;
@@ -781,6 +785,8 @@
 .timeline-tool > summary::-webkit-details-marker { display: none; }
 .timeline-tool > summary:hover, .timeline-tool[open] > summary { color: var(--studio-text); }
 .timeline-tool > summary:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
+.timeline-tool.is-failed { border-color: color-mix(in oklab, var(--destructive) 35%, var(--studio-border)); }
+.timeline-tool.is-failed > summary > svg { color: var(--destructive); }
 .timeline-tool > summary > svg { width: 15px; height: 15px; flex-shrink: 0; color: #8a8a8a; }
 .timeline-tool-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 9px 10px; border-top: 1px solid var(--studio-border); }
 .timeline-tool-body pre { margin: 0; padding: 8px 10px; overflow-x: auto; border-radius: 3px; color: #b4b4b4; background: #0d0d0d; font: 11.5px/1.6 var(--font-geist-mono); }

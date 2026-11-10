@@ -848,7 +848,9 @@ export const ContentBlock = z.discriminatedUnion("type", [
     name: z.string(),
     input: z.unknown(),
   }),
-  z.object({ type: z.literal("tool_result"), toolUseId: z.string(), content: z.unknown() }),
+  // `isError`: the tool failed (Claude's `is_error`); absent from an agent
+  // from before it, and when it didn't.
+  z.object({ type: z.literal("tool_result"), toolUseId: z.string(), content: z.unknown(), isError: z.boolean().optional() }),
   // An image pasted into Claude's prompt (in its terminal), in Claude's own
   // shape. `data` is base64, left out by the agent past its cap
   // (MaxImageBlockData), and absent from an agent from before it.
