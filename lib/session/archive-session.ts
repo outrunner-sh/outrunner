@@ -189,7 +189,8 @@ export async function archiveCloudSession(
                 }
               }
               stage = "capture";
-              if (options.dropBox) captureFeatures = await features.features();
+              // Only decides delete vs pause: an unanswered lookup pauses the box.
+              if (options.dropBox) captureFeatures = await features.features().catch(() => []);
               const uploads = upload.urls.map((u) => ({ artifact: u.artifact, url: u.signedUrl }));
               return current.archiveWorkspace(identity, {
                 archivedAt,
