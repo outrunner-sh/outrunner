@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto";
 
 import { ATTACHMENT_BUCKET } from "@/lib/db/attachments";
-import { attachmentShortId, shortIdOfName } from "@/lib/runtime/attachments";
+import { attachmentObjectPath, attachmentShortId, shortIdOfName } from "@/lib/runtime/attachments";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** Where the copy of a box image is kept: by workspace, then a hash of its
@@ -32,7 +32,7 @@ export async function attachmentImageBytes(workspaceId: string, name: string): P
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("attachments")
-    .select("id, storage_path")
+    .select("id, owner_id, storage_path")
     .eq("workspace_id", workspaceId)
     .gte("id", `${short}-0000-0000-0000-000000000000`)
     .lte("id", `${short}-ffff-ffff-ffff-ffffffffffff`)
@@ -40,7 +40,12 @@ export async function attachmentImageBytes(workspaceId: string, name: string): P
   if (error) throw error;
   const row = (data ?? []).find((r) => attachmentShortId(r.id).toLowerCase() === short);
   if (!row) return null;
-  return download(row.storage_path);
+  const path = attachmentObjectPath(row);
+  if (!path) {
+    console.warn(`Ignoring attachment ${row.id}: its storage_path isn't its own upload's`);
+    return null;
+  }
+  return download(path);
 }
 
 /** The copy kept of a box image, or null where there is none. */
