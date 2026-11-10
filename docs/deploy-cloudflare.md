@@ -106,7 +106,7 @@ resumes it. It needs a shared secret, any long random string:
 ```bash
 secret=$(openssl rand -base64 32)
 printf %s "$secret" | pnpm dlx wrangler secret put BILLING_CRON_SECRET
-printf %s "$secret" | gh secret set HEALTH_CHECK_SECRET -R neevai-labs/outrunner
+printf %s "$secret" | gh secret set HEALTH_CHECK_SECRET
 ```
 
 The deploy workflow's last step reads the full `/api/health` report with it,

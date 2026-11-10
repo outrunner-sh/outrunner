@@ -147,21 +147,27 @@ jobs:
           body=""
           for i in $(seq 1 30); do
             # No -f: a 503 (ok=false) still carries the report worth printing.
-            if body=$(curl -sS --max-time 20 -H "Authorization: Bearer $HEALTH_CHECK_SECRET" https://app.outrunner.sh/api/health) && [ -n "$body" ]; then break; fi
+            # But only stop on the health JSON itself; a Cloudflare 502/520
+            # page or a container still starting gets retried.
+            if body=$(curl -sS --max-time 20 -H "Authorization: Bearer $HEALTH_CHECK_SECRET" https://app.outrunner.sh/api/health) \
+              && python3 -c "import json,sys; h=json.load(sys.stdin); sys.exit(0 if isinstance(h, dict) and 'ok' in h else 1)" <<< "$body" 2>/dev/null; then
+              break
+            fi
+            echo "Attempt $i: no health JSON yet: ${body:0:200}"
             body=""
             sleep 10
           done
-          : "${body:?/api/health never responded}"
+          : "${body:?/api/health never returned its JSON report}"
           echo "$body"
           build=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('build') or '')" <<< "$body" || true)
           if [ "$build" != "$GITHUB_SHA" ]; then
             # Same rule as the wait step: a later deploy containing this commit counts.
             status=""
             if [[ "$build" =~ ^[0-9a-f]{40}$ ]]; then
-              status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...$build" --jq .status 2>/dev/null || true)
+              status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...$build" --jq .status 2>&1 || true)
             fi
             if [ "$status" != "ahead" ]; then
-              echo "::error::health reports build '${build}', not $GITHUB_SHA or a later commit containing it"
+              echo "::error::health reports build '${build}', not $GITHUB_SHA or a later commit containing it${status:+ (compare: $status)}"
               exit 1
             fi
           fi
