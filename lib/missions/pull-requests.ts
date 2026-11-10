@@ -145,10 +145,11 @@ export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<
       pulls = await githubGet<GitHubPull[]>(token, `/repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`);
       if (pulls) break;
     }
-    // A branch some session of the repository has as its own, in any org,
-    // is that session's, not a Runner's stacked work: as the webhook path
-    // reads it (runnerActivityWith), the repository found by GitHub's id
-    // through these Runners' own projects.
+    // A branch some session of the repository has as its own is that
+    // session's, not a Runner's stacked work: as the webhook path reads it
+    // (runnerActivityWith), the repository found by GitHub's id through
+    // these Runners' own projects, and only in their own org (each group is
+    // one org's; there's no installation here to scope by).
     const heads = (pulls ?? []).flatMap((pull) => (pull.head?.ref ? [pull.head.ref] : []));
     let sessionBranches = new Set<string>();
     if (namedAfterARunner(here, heads)) {
@@ -159,7 +160,8 @@ export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<
         .in("id", ids)
         .ilike("full_name", escapeLike(repo));
       if (ownError) throw ownError;
-      const projects = await repositoryProjectsWith(db(), (own ?? []).map((p) => p.github_repo_id));
+      const orgIds = [...new Set(here.flatMap((r) => (r.orgId ? [r.orgId] : [])))];
+      const projects = await repositoryProjectsWith(db(), (own ?? []).map((p) => p.github_repo_id), orgIds);
       sessionBranches = await sessionBranchesAmongWith(db(), projects, heads);
     }
     for (const pull of pulls ?? []) {

@@ -124,18 +124,25 @@ export async function sessionBranchesAmongWith(
 }
 
 /**
- * Every project of the GitHub repositories `repoIds`, in any org: a
- * repository has one branch namespace, whichever org's session holds a
- * branch in it. Matched by GitHub's own id, which no member can set. Only
- * their sessions' branch names are read from them (sessionBranchesAmongWith),
- * and only to keep a Runner off another session's branch.
+ * The projects of the GitHub repositories `repoIds` in the orgs `orgIds`:
+ * matched by GitHub's own id, which no member can set, and never past the
+ * orgs the caller is acting for (as lib/db/installation-projects.ts scopes a
+ * webhook to its installation's), so another org's sessions never shape this
+ * one's. Only their sessions' branch names are read from them
+ * (sessionBranchesAmongWith), and only to keep a Runner off another
+ * session's branch.
  */
 export async function repositoryProjectsWith(
   db: SupabaseClient<Database>,
   repoIds: readonly number[],
+  orgIds: readonly string[],
 ): Promise<{ id: string; org_id: string }[]> {
-  if (repoIds.length === 0) return [];
-  const { data, error } = await db.from("projects").select("id, org_id").in("github_repo_id", [...new Set(repoIds)]);
+  if (repoIds.length === 0 || orgIds.length === 0) return [];
+  const { data, error } = await db
+    .from("projects")
+    .select("id, org_id")
+    .in("org_id", [...new Set(orgIds)])
+    .in("github_repo_id", [...new Set(repoIds)]);
   if (error) throw error;
   return data ?? [];
 }
@@ -179,9 +186,10 @@ export async function runnerActivityWith(
   const inRepo = (data ?? []).filter((row) => projectIds.has(row.project_id) || checkoutIds(row.checkouts).some((id) => projectIds.has(id)));
   if (inRepo.length === 0) return none;
   const refs = [...activity.headRefs, ...(activity.pr ? [activity.pr.headRef] : [])];
-  // Across the repository's projects in every org, as discovery reads them.
+  // Across the repository's projects in the installation's orgs: the same
+  // projects, matched by GitHub's id, that found these Runners.
   const sessionBranches = namedAfterARunner(inRepo, refs)
-    ? await sessionBranchesAmongWith(db, await repositoryProjectsWith(db, [activity.repoId]), refs)
+    ? await sessionBranchesAmongWith(db, projects, refs)
     : new Set<string>();
   const known = new Set<string>();
   if (activity.numbers.length > 0) {
