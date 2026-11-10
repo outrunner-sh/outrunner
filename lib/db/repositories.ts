@@ -31,6 +31,7 @@ import type {
   RuntimeComputer,
   RuntimeComputerStatus,
   SessionCheckout,
+  StoredFirstPrompt,
   Workspace,
   WorkspacePullRequest,
   WorkspaceSource,
@@ -424,6 +425,71 @@ export async function releaseFirstPrompt(id: string, ownerId: string, key: strin
     key,
     claimedAt,
   );
+  if (error) throw error;
+}
+
+/**
+ * Keep the session's first prompt on its row while its box starts
+ * (workspaces.first_prompt), so the tab whose sessionStorage carried it can
+ * close without losing it. Service role on purpose: once 20261106100000 (#393)
+ * revokes writes to workspaces from the client roles, only the server can write
+ * them, and this code's migration (20261107100000) refuses to run before that.
+ * A user session can neither write nor clear a kept prompt.
+ */
+export async function storeWorkspaceFirstPrompt(id: string, ownerId: string, first: StoredFirstPrompt): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("workspaces")
+    .update({
+      first_prompt: first.prompt,
+      first_prompt_attachments: first.attachmentIds,
+      first_prompt_idempotency_key: first.key,
+    })
+    .eq("id", id)
+    .eq("owner_id", ownerId);
+  if (error) throw error;
+}
+
+/** The first prompt kept on the session's row, if one is still waiting to go:
+ *  its text, attachments and the key its every send names — a prompt of files
+ *  alone has empty text, so the key, not the text, is what marks one kept.
+ *  Null without the key, which only the new-session screen's own ask keeps
+ *  one under. */
+export async function workspaceFirstPrompt(id: string, ownerId: string): Promise<StoredFirstPrompt | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("workspaces")
+    .select("first_prompt, first_prompt_attachments, first_prompt_idempotency_key")
+    .eq("id", id)
+    .eq("owner_id", ownerId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const prompt = data.first_prompt;
+  const key = data.first_prompt_idempotency_key;
+  if (prompt == null || !key) return null;
+  const attachmentIds = (data.first_prompt_attachments ?? []).filter(
+    (id): id is string => typeof id === "string",
+  );
+  return { prompt, attachmentIds, key };
+}
+
+/**
+ * The first prompt kept on the session's row has gone: drop it, so nothing
+ * of it stays once the box has it (and nothing re-sends it). Service role,
+ * like the store. Asked by whoever's send delivered it — the message route,
+ * for the page's own, or the kept copy's delivery
+ * (lib/session/deliver-first-prompt.ts) — and by a session's ending, an
+ * archive or a destroy, so a prompt that never went doesn't stay on its row.
+ */
+export async function clearWorkspaceFirstPrompt(id: string, ownerId: string): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("workspaces")
+    .update({ first_prompt: null, first_prompt_attachments: [], first_prompt_idempotency_key: null })
+    .eq("id", id)
+    .eq("owner_id", ownerId)
+    .not("first_prompt", "is", null);
   if (error) throw error;
 }
 

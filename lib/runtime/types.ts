@@ -110,6 +110,18 @@ export type SessionCheckout = {
 
 export type WorkspaceSource = "app" | "slack" | "automation" | "github" | "api";
 
+/** A session's first prompt as the server keeps it for the session while its
+ *  box starts (workspaces.first_prompt, 20261107100000), so a tab closed
+ *  during startup doesn't lose it: its text (empty for a prompt of files
+ *  alone), the uploaded files sent with it, and the key its every send
+ *  names, whoever sends it. Delivered by setup or the session page, whichever
+ *  first, then dropped. */
+export type StoredFirstPrompt = {
+  prompt: string;
+  attachmentIds: string[];
+  key: string;
+};
+
 export type Workspace = {
   id: string;
   projectId: string;
@@ -142,6 +154,11 @@ export type Workspace = {
   /** What the user first asked for (see sessionTitle); null until the first
    *  prompt, and for sessions from before titles existed. */
   title: string | null;
+  /** The first prompt kept on its row while its box starts
+   *  (StoredFirstPrompt), or is about to: null once delivered, and absent
+   *  on a session made in code rather than read, or before the migration
+   *  that keeps it. */
+  firstPrompt?: StoredFirstPrompt | null;
   baseBranch: string;
   /** Absolute path of the worktree inside the sandbox. */
   worktreePath: string;
