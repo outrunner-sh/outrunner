@@ -30,8 +30,22 @@ func buildPatch(ctx context.Context, worktree, dst string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("write patch: %w", err)
 	}
-	if !writeWorkingPatch(ctx, worktree, file) {
-		err = file.Truncate(0) // what a failed diff wrote is no patch
+	if diffErr := writeWorkingPatch(ctx, worktree, file); diffErr != nil {
+		// Cut off (the capture's deadline): nothing about the repository is
+		// known, and an empty patch would pass for "no changes".
+		if ctx.Err() != nil {
+			_ = file.Close()
+			return "", fmt.Errorf("write patch: %w", ctx.Err())
+		}
+		if healthy(ctx, worktree) {
+			// A repository that works whose diff didn't (the disk full as it
+			// was written): an empty patch would pass for "no changes", and an
+			// archive would go on without the session's uncommitted work, its
+			// box then let go. Fail the capture instead, the box kept.
+			_ = file.Close()
+			return "", fmt.Errorf("write patch: git diff failed in a working repository: %w", diffErr)
+		}
+		err = file.Truncate(0) // a broken repository's failed diff is no patch
 	}
 	if closeErr := file.Close(); err == nil {
 		err = closeErr
@@ -40,6 +54,11 @@ func buildPatch(ctx context.Context, worktree, dst string) (string, error) {
 		return "", fmt.Errorf("write patch: %w", err)
 	}
 	return dst, nil
+}
+
+// healthy reports whether worktree is a repository git can read HEAD of.
+func healthy(ctx context.Context, worktree string) bool {
+	return exec.CommandContext(ctx, "git", "-C", worktree, "rev-parse", "--verify", "-q", "HEAD").Run() == nil
 }
 
 // WorkingPatch is a patch of the working-tree changes relative to HEAD, so
@@ -54,16 +73,17 @@ func buildPatch(ctx context.Context, worktree, dst string) (string, error) {
 // `.gitignore`d files are excluded by design.
 func WorkingPatch(ctx context.Context, worktree string) []byte {
 	var out bytes.Buffer
-	if !writeWorkingPatch(ctx, worktree, &out) {
+	if writeWorkingPatch(ctx, worktree, &out) != nil {
 		return nil
 	}
 	return out.Bytes()
 }
 
-// writeWorkingPatch writes WorkingPatch to w, false when the diff failed part
-// way: a broken repo is the only real failure here, and the caller degrades to
-// an empty patch rather than aborting the whole capture over WIP.
-func writeWorkingPatch(ctx context.Context, worktree string, w io.Writer) bool {
+// writeWorkingPatch writes WorkingPatch to w, an error (with git's stderr)
+// when the diff failed part way. buildPatch tells a broken repository (an
+// empty patch, the capture going on) from a working one's failed diff or a
+// capture cut off (the capture failed); WorkingPatch has nil either way.
+func writeWorkingPatch(ctx context.Context, worktree string, w io.Writer) error {
 	env := os.Environ()
 	if others := untrackedFiles(ctx, worktree); len(others) > 0 {
 		index, cleanup, err := indexCopy(ctx, worktree)
@@ -84,7 +104,20 @@ func writeWorkingPatch(ctx context.Context, worktree string, w io.Writer) bool {
 	diff := exec.CommandContext(ctx, "git", "-C", worktree, "diff", "HEAD", "--binary")
 	diff.Env = env
 	diff.Stdout = w
-	return diff.Run() == nil
+	var stderr bytes.Buffer
+	diff.Stderr = &stderr
+	if err := diff.Run(); err != nil {
+		// git's own words (No space left on device, …), for the archive's log.
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			const max = 500
+			if len(msg) > max {
+				msg = msg[:max] + "…"
+			}
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+		return err
+	}
+	return nil
 }
 
 // indexCopy copies the worktree's index to a temporary file. Git replaces an

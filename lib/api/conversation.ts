@@ -192,7 +192,9 @@ export function conversationPage(
 
 /** A content block as the API shows it: snake_case, as the rest is. */
 function blockJson(block: ContentBlock): Record<string, unknown> {
-  if (block.type === "tool_result") return { type: "tool_result", tool_use_id: block.toolUseId, content: block.content };
+  if (block.type === "tool_result") {
+    return { type: "tool_result", tool_use_id: block.toolUseId, content: block.content, ...(block.isError && { is_error: true }) };
+  }
   return block;
 }
 

@@ -576,6 +576,13 @@ export type ArchiveUpload = z.infer<typeof ArchiveUpload>;
  *  restore brings each back (RestoreWorkspaceRequest.chats). */
 export const AGENT_FEATURE_CHAT_SNAPSHOTS = "chat-snapshots";
 
+/** The agent's archive fails, rather than saving an empty patch, when
+ *  `git diff` fails in a working repository (runtime-agent snapshot/tree.go).
+ *  An archive only deletes the box after it (dropBox) when the agent that
+ *  captured the Snapshot says so: an older agent's Snapshot may be missing
+ *  the session's changes, so its box is paused instead. */
+export const AGENT_FEATURE_SNAPSHOT_PATCH_INTEGRITY = "snapshot-patch-integrity";
+
 /** One chat an archive captures beside the main conversation: the control
  *  plane's record of it (echoed into the manifest) and the signed upload URLs
  *  its conversation, and a Codex chat's rollout, go to. */
@@ -847,7 +854,9 @@ export const ContentBlock = z.discriminatedUnion("type", [
     name: z.string(),
     input: z.unknown(),
   }),
-  z.object({ type: z.literal("tool_result"), toolUseId: z.string(), content: z.unknown() }),
+  // `isError`: the tool failed (Claude's `is_error`); absent from an agent
+  // from before it, and when it didn't.
+  z.object({ type: z.literal("tool_result"), toolUseId: z.string(), content: z.unknown(), isError: z.boolean().optional() }),
   // An image pasted into Claude's prompt (in its terminal), in Claude's own
   // shape. `data` is base64, left out by the agent past its cap
   // (MaxImageBlockData), and absent from an agent from before it.

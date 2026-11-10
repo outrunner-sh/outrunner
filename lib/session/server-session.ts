@@ -110,7 +110,16 @@ function refused(errorMessage: string): ServerSessionResult {
  * not ready or idle (stopped, deleted, already archived) is left as it is.
  * How many were archived; never throws.
  */
-export async function archiveServerSessions(userId: string, workspaceIds: readonly string[]): Promise<number> {
+export async function archiveServerSessions(
+  userId: string,
+  workspaceIds: readonly string[],
+  /** Delete each one's own box once its Snapshot is saved, rather than pause
+   *  it (lib/session/archive-session.ts): only for sessions nobody comes back
+   *  to, an automation's review sessions once superseded or their pull
+   *  request closed. The Slack, GitHub-loop and run-route archives keep the
+   *  box paused, as Restore there is expected. */
+  options: { dropBox?: boolean } = {},
+): Promise<number> {
   if (workspaceIds.length === 0) return 0;
   try {
     return await actAsUser(userId, async () => {
@@ -125,7 +134,7 @@ export async function archiveServerSessions(userId: string, workspaceIds: readon
           if (workspace.status !== "ready" && workspace.status !== "idle") continue;
           const resolution = resolveProvider(workspace);
           if (!resolution.ok || !isComputerProvider(resolution.provider)) continue;
-          const result = await archiveCloudSession(workspace, resolution.provider, owner);
+          const result = await archiveCloudSession(workspace, resolution.provider, owner, { dropBox: options.dropBox });
           if (result.ok) archived++;
           else console.warn(`Couldn't archive the session ${id}`, result);
         } catch (error) {

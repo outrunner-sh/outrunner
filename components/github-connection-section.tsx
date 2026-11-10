@@ -32,6 +32,7 @@ export async function GitHubConnectionSection({
     ? await listOrgInstallations(org.id).catch(() => [])
     : [];
   return (
+    <div className="space-y-6">
     <GitHubIdentitySettings
       initial={await getGithubIdentity(userId).catch(() => "personal" as const)}
       login={login}
@@ -48,5 +49,16 @@ export async function GitHubConnectionSection({
           : null
       }
     />
+      {/* Signing in with GitHub again, as the same account, mints a fresh
+       *  token (app/auth/callback): no sign-out needed. */}
+      <div className="space-y-2">
+        <p className="text-sm text-muted-foreground">
+          If repositories won&apos;t load or publishing fails, reconnect to refresh GitHub&apos;s access.
+        </p>
+        <div className="max-w-xs">
+          <SignInButton provider="github" next="/settings/connections" label="Reconnect GitHub" />
+        </div>
+      </div>
+    </div>
   );
 }

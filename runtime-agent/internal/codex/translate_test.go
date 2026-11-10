@@ -419,3 +419,17 @@ func TestTranslationPreservesWhetherAssistantWorkContinues(t *testing.T) {
 		}
 	}
 }
+
+func TestToolFailedReadsCodexsSuccessFlag(t *testing.T) {
+	for output, want := range map[string]bool{
+		`{"content":"boom","success":false}`: true,
+		`{"content":"ok","success":true}`:    false,
+		`{"content":"ok"}`:                   false,
+		`"Exit code: 1"`:                     false,
+		``:                                   false,
+	} {
+		if got := toolFailed(json.RawMessage(output)); got != want {
+			t.Errorf("toolFailed(%s) = %v, want %v", output, got, want)
+		}
+	}
+}

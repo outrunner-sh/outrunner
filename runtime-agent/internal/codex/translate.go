@@ -282,7 +282,7 @@ func (t *Translator) responseItem(offset int64, at string, p responseItem) []Rec
 	case "custom_tool_call":
 		blocks = []protocol.ContentBlock{{Type: "tool_use", ID: p.CallID, Name: p.Name, Input: toolInput(p.Input)}}
 	case "function_call_output", "custom_tool_call_output":
-		result := []protocol.ContentBlock{{Type: "tool_result", ToolUseID: p.CallID, Content: toolOutput(p.Output)}}
+		result := []protocol.ContentBlock{{Type: "tool_result", ToolUseID: p.CallID, Content: toolOutput(p.Output), IsError: toolFailed(p.Output)}}
 		rec := t.newRecord(offset, at, "user", mustJSON(result))
 		if len(t.held) == 0 {
 			return t.release(offset, rec)
@@ -446,6 +446,19 @@ func toolOutput(output json.RawMessage) json.RawMessage {
 		}
 	}
 	return json.RawMessage(trimmed)
+}
+
+// toolFailed reports an output Codex marked unsuccessful (`"success": false`
+// beside its content). A plain-text output says nothing either way.
+func toolFailed(output json.RawMessage) bool {
+	var structured struct {
+		Success *bool `json:"success"`
+	}
+	trimmed := bytes.TrimSpace(output)
+	if len(trimmed) == 0 || trimmed[0] != '{' || json.Unmarshal(trimmed, &structured) != nil {
+		return false
+	}
+	return structured.Success != nil && !*structured.Success
 }
 
 func jsonString(s string) json.RawMessage { return mustJSON(s) }
