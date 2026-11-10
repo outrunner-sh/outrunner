@@ -6,6 +6,7 @@
 
 import { runMarker } from "@/lib/automations/checks";
 import type { PullRequestTrigger } from "@/lib/automations/rules";
+import { repositoryIdOf } from "@/lib/db/installation-projects";
 /** An installation id as GitHub sends it: a positive integer. */
 function installationId(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
@@ -154,21 +155,23 @@ export function readPullRequestEvent(payload: unknown, appSlug?: string): PullRe
   };
 }
 
-/** A pull request closed or merged: its review sessions are done with. */
-export type ClosedPullRequest = { installationId: number; repoFullName: string; number: number };
+/** A pull request closed or merged: its review sessions are done with.
+ *  `repoId` is GitHub's id of the repository, what its projects match by. */
+export type ClosedPullRequest = { installationId: number; repoId: number; repoFullName: string; number: number };
 
 /** The pull request a `closed` event is for; null for any other event, or
- *  one that can't be read. */
+ *  one that can't be read (a repository id among it). */
 export function readClosedPullRequest(payload: unknown): ClosedPullRequest | null {
   const p = (payload ?? {}) as Payload;
   if (p.action !== "closed") return null;
   const id = installationId(p.installation?.id);
   const repoFullName = text(p.repository?.full_name) ?? text(p.pull_request?.base?.repo?.full_name);
   const number = p.pull_request?.number;
-  if (id === null || !repoFullName || typeof number !== "number" || !Number.isSafeInteger(number) || number <= 0) {
+  const repoId = repositoryIdOf(payload);
+  if (id === null || repoId === null || !repoFullName || typeof number !== "number" || !Number.isSafeInteger(number) || number <= 0) {
     return null;
   }
-  return { installationId: id, repoFullName, number };
+  return { installationId: id, repoId, repoFullName, number };
 }
 
 /** A run's session title: the pull request it's for. */

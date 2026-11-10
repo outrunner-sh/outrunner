@@ -17,11 +17,11 @@ import type { ServerSessionStart } from "@/lib/session/server-session";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 
-function payload(over: { action?: string; pr?: Record<string, unknown>; installation?: unknown } = {}) {
+function payload(over: { action?: string; pr?: Record<string, unknown>; installation?: unknown; repository?: unknown } = {}) {
   return {
     action: over.action ?? "opened",
     installation: over.installation ?? { id: 42 },
-    repository: { full_name: "neevai-labs/outrunner" },
+    repository: over.repository ?? { full_name: "neevai-labs/outrunner", id: 101 },
     pull_request: {
       number: 7,
       title: "Add automations",
@@ -114,9 +114,10 @@ test("an event records one run per matching automation, in one write, once per c
   const recorded = new Set<string>();
   const writes: number[] = [];
   const deps = {
-    automationsForPullRequest: async (installationId: number, repo: string) => {
+    automationsForPullRequest: async (installationId: number, repoId: number) => {
       assert.equal(installationId, 42);
-      assert.equal(repo, "neevai-labs/outrunner");
+      // GitHub's id of the repository, never its full name: projects match by it.
+      assert.equal(repoId, 101);
       return [
         candidate,
         { ...candidate, automationId: "a2", triggers: ["pull_request.synchronize" as const] },
@@ -146,6 +147,15 @@ test("an event records one run per matching automation, in one write, once per c
   // Nor does one that triggers nothing look anything up.
   assert.deepEqual(
     await planRuns(payload({ pr: { draft: true } }), {
+      ...deps,
+      automationsForPullRequest: async () => assert.fail("looked up"),
+    }),
+    [],
+  );
+  // Nor does one that names no repository id: its projects match by it,
+  // never by a full name a project's members can set.
+  assert.deepEqual(
+    await planRuns(payload({ repository: { full_name: "neevai-labs/outrunner" } }), {
       ...deps,
       automationsForPullRequest: async () => assert.fail("looked up"),
     }),
@@ -358,6 +368,7 @@ test("a run's session is told only the App's bot's comments are its own earlier 
 test("a closed or merged pull request is read as such; nothing else is", () => {
   assert.deepEqual(readClosedPullRequest(payload({ action: "closed", pr: { merged: true } })), {
     installationId: 42,
+    repoId: 101,
     repoFullName: "neevai-labs/outrunner",
     number: 7,
   });
@@ -368,14 +379,16 @@ test("a closed or merged pull request is read as such; nothing else is", () => {
   assert.equal(readClosedPullRequest(payload({ action: "synchronize" })), null);
   assert.equal(readClosedPullRequest(payload({ action: "closed", installation: { id: "nope" } })), null);
   assert.equal(readClosedPullRequest(payload({ action: "closed", pr: { number: 0 } })), null);
+  // No repository id, nothing to match its projects by: it's no one's.
+  assert.equal(readClosedPullRequest(payload({ action: "closed", repository: { full_name: "neevai-labs/outrunner" } })), null);
 });
 
 test("a pull request closing archives its review sessions, each as its runner", async () => {
   const asked: unknown[] = [];
   const archived: { userId: string; ids: readonly string[] }[] = [];
   const deps = {
-    pullRequestSessions: async (installationId: number, repo: string, number: number) => {
-      asked.push([installationId, repo, number]);
+    pullRequestSessions: async (installationId: number, repoId: number, number: number) => {
+      asked.push([installationId, repoId, number]);
       return new Map([
         ["connector-1", ["w1", "w2"]],
         ["u1", ["w3"]],
@@ -397,7 +410,7 @@ test("a pull request closing archives its review sessions, each as its runner", 
     "r1: The pull request closed before its review was posted.",
     "r2: The pull request closed before its review was posted.",
   ]);
-  assert.deepEqual(asked, [[42, "neevai-labs/outrunner", 7]]);
+  assert.deepEqual(asked, [[42, 101, 7]]);
   assert.deepEqual(archived, [
     { userId: "connector-1", ids: ["w1", "w2"] },
     { userId: "u1", ids: ["w3"] },
