@@ -12,10 +12,10 @@ import { getPullRequestStatusWithDetails } from "@/lib/github/client";
 import { optionalGitToken } from "@/lib/github/identity.deps";
 import { githubGet } from "@/lib/github/rest";
 import { sessionWorking } from "@/lib/missions/box";
-import { runnersForWith, type GitHubPull, type PullRequestActivity } from "@/lib/missions/pull-request-activity";
+import { namedAfterARunner, repositoryProjectsWith, runnerActivityWith, sessionBranchesAmongWith, type GitHubPull, type PullRequestActivity } from "@/lib/missions/pull-request-activity";
 import { eventKey, type PullRequestRef } from "@/lib/missions/events";
 import { isLiveRunner } from "@/lib/missions/rules";
-import { allPullRequestsDone, isNews, isRunnerBranch, reviewState, settle } from "@/lib/missions/settle";
+import { allPullRequestsDone, isNews, reviewState, runnersOwning, settle } from "@/lib/missions/settle";
 import { queuedCounts, sessionById } from "@/lib/missions/store";
 import { readyNotification } from "@/lib/missions/events";
 import { recordMissionEvent } from "@/lib/missions/watch.deps";
@@ -40,11 +40,11 @@ function escapeLike(value: string): string {
  *  extending) its stretch. The Runners whose pull requests it touched. */
 export async function notePullRequestActivity(activity: PullRequestActivity): Promise<string[]> {
   const touched = new Set<string>();
-  const runners = await runnersForWith(db(), activity);
+  const { runners, sessionBranches } = await runnerActivityWith(db(), activity);
   const now = new Date().toISOString();
   for (const runner of runners) {
     const pr = activity.pr;
-    if (pr && isRunnerBranch(runner.branch, pr.headRef)) {
+    if (pr && runnersOwning(runners, pr.headRef, sessionBranches).includes(runner)) {
       const { error } = await db()
         .from("runner_pull_requests")
         .upsert(
@@ -145,9 +145,30 @@ export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<
       pulls = await githubGet<GitHubPull[]>(token, `/repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`);
       if (pulls) break;
     }
+    // A branch some session of the repository has as its own is that
+    // session's, not a Runner's stacked work: the repository found by
+    // GitHub's id through these Runners' own projects, and only in their own
+    // org (each group is one org's). Discovery has no installation to scope
+    // by, so where one installation links several orgs it reads narrower than
+    // the webhook path (runnerActivityWith, the installation's orgs): another
+    // linked org's session on the branch doesn't stop it recording the PR.
+    const heads = (pulls ?? []).flatMap((pull) => (pull.head?.ref ? [pull.head.ref] : []));
+    let sessionBranches = new Set<string>();
+    if (namedAfterARunner(here, heads)) {
+      const ids = [...new Set(here.flatMap((r) => [r.projectId, ...(r.checkouts ?? []).map((c) => c.projectId)]))];
+      const { data: own, error: ownError } = await db()
+        .from("projects")
+        .select("github_repo_id")
+        .in("id", ids)
+        .ilike("full_name", escapeLike(repo));
+      if (ownError) throw ownError;
+      const orgIds = [...new Set(here.flatMap((r) => (r.orgId ? [r.orgId] : [])))];
+      const projects = await repositoryProjectsWith(db(), (own ?? []).map((p) => p.github_repo_id), orgIds);
+      sessionBranches = await sessionBranchesAmongWith(db(), projects, heads);
+    }
     for (const pull of pulls ?? []) {
       if (!pull.number || !pull.head?.ref) continue;
-      for (const runner of here.filter((r) => isRunnerBranch(r.branch, pull.head!.ref!))) {
+      for (const runner of here.filter((r) => runnersOwning(here, pull.head!.ref!, sessionBranches).includes(r))) {
         const { data: made, error } = await db()
           .from("runner_pull_requests")
           .upsert(

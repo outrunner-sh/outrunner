@@ -11,7 +11,7 @@
 
 import { toWorkspace } from "@/lib/db/mappers";
 import { installationProjectsOf, repositoryIdOf } from "@/lib/db/installation-projects";
-import { isRunnerBranch } from "@/lib/missions/settle";
+import { isRunnerBranch, runnersOwning } from "@/lib/missions/settle";
 import type { Database } from "@/lib/supabase/database.types";
 import type { Workspace } from "@/lib/runtime/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -98,16 +98,82 @@ function checkoutIds(checkouts: unknown): string[] {
 }
 
 /**
+ * Of `refs`, the ones a session of `projects` has as its own branch: any
+ * session in their orgs, of one of them or with one among its several, any
+ * status, Mission or not. Such a branch is that session's, never a Runner's
+ * stacked work (runnersOwning).
+ */
+export async function sessionBranchesAmongWith(
+  db: SupabaseClient<Database>,
+  projects: readonly { id: string; org_id: string }[],
+  refs: readonly string[],
+): Promise<Set<string>> {
+  if (refs.length === 0 || projects.length === 0) return new Set();
+  const projectIds = new Set(projects.map((p) => p.id));
+  const { data, error } = await db
+    .from("workspaces")
+    .select("project_id, checkouts, branch")
+    .in("org_id", [...new Set(projects.map((p) => p.org_id))])
+    .in("branch", [...new Set(refs)]);
+  if (error) throw error;
+  return new Set(
+    (data ?? [])
+      .filter((row) => projectIds.has(row.project_id) || checkoutIds(row.checkouts).some((id) => projectIds.has(id)))
+      .map((row) => row.branch as string),
+  );
+}
+
+/**
+ * The projects of the GitHub repositories `repoIds` in the orgs `orgIds`:
+ * matched by GitHub's own id, which no member can set, and never past the
+ * orgs the caller is acting for (as lib/db/installation-projects.ts scopes a
+ * webhook to its installation's), so another org's sessions never shape this
+ * one's. Only their sessions' branch names are read from them
+ * (sessionBranchesAmongWith), and only to keep a Runner off another
+ * session's branch.
+ */
+export async function repositoryProjectsWith(
+  db: SupabaseClient<Database>,
+  repoIds: readonly number[],
+  orgIds: readonly string[],
+): Promise<{ id: string; org_id: string }[]> {
+  if (repoIds.length === 0 || orgIds.length === 0) return [];
+  const { data, error } = await db
+    .from("projects")
+    .select("id, org_id")
+    .in("org_id", [...new Set(orgIds)])
+    .in("github_repo_id", [...new Set(repoIds)]);
+  if (error) throw error;
+  return data ?? [];
+}
+
+/** Whether telling a Runner's stacked work apart needs the session branches:
+ *  only when some ref is named after a Runner's branch without being it. */
+export function namedAfterARunner(runners: readonly { branch: string }[], refs: readonly string[]): boolean {
+  return runners.some((runner) => refs.some((ref) => ref !== runner.branch && isRunnerBranch(runner.branch, ref)));
+}
+
+/** The Runners an event can be about (runnerActivityWith). */
+export async function runnersForWith(db: SupabaseClient<Database>, activity: PullRequestActivity): Promise<Workspace[]> {
+  return (await runnerActivityWith(db, activity)).runners;
+}
+
+/**
  * The Runners an event in `activity.repo` can be about: Runners in its
  * orgs — the installation's own — that work in the repository (as their own,
  * or as one of a session of several), and of those, only the ones on a
  * branch it names or with a pull request of its on record. Check runs come
  * many a push: this keeps each to a query or two, whatever the number of
- * Runners.
+ * Runners. With them, the branches it names that are some session's own
+ * (sessionBranchesAmongWith), for telling a Runner's stacked work apart.
  */
-export async function runnersForWith(db: SupabaseClient<Database>, activity: PullRequestActivity): Promise<Workspace[]> {
+export async function runnerActivityWith(
+  db: SupabaseClient<Database>,
+  activity: PullRequestActivity,
+): Promise<{ runners: Workspace[]; sessionBranches: Set<string> }> {
+  const none = { runners: [], sessionBranches: new Set<string>() };
   const { projects } = await installationProjectsOf(db, activity.installationId, activity.repoId);
-  if (projects.length === 0) return [];
+  if (projects.length === 0) return none;
   const projectIds = new Set(projects.map((p) => p.id));
   // What it takes to match, read narrow: whole rows only for the few that do.
   const { data, error: runnersError } = await db
@@ -118,8 +184,13 @@ export async function runnersForWith(db: SupabaseClient<Database>, activity: Pul
     .not("status", "in", "(destroyed,destroying)");
   if (runnersError) throw runnersError;
   const inRepo = (data ?? []).filter((row) => projectIds.has(row.project_id) || checkoutIds(row.checkouts).some((id) => projectIds.has(id)));
-  if (inRepo.length === 0) return [];
+  if (inRepo.length === 0) return none;
   const refs = [...activity.headRefs, ...(activity.pr ? [activity.pr.headRef] : [])];
+  // Across the repository's projects in the installation's orgs: the same
+  // projects, matched by GitHub's id, that found these Runners.
+  const sessionBranches = namedAfterARunner(inRepo, refs)
+    ? await sessionBranchesAmongWith(db, projects, refs)
+    : new Set<string>();
   const known = new Set<string>();
   if (activity.numbers.length > 0) {
     const { data: rows, error: rowsError } = await db
@@ -134,9 +205,10 @@ export async function runnersForWith(db: SupabaseClient<Database>, activity: Pul
     if (rowsError) throw rowsError;
     for (const row of rows ?? []) known.add(row.runner_id);
   }
-  const matched = inRepo.filter((row) => known.has(row.id) || refs.some((ref) => isRunnerBranch(row.branch, ref))).map((row) => row.id);
-  if (matched.length === 0) return [];
+  const owned = new Set(refs.flatMap((ref) => runnersOwning(inRepo, ref, sessionBranches)).map((row) => row.id));
+  const matched = inRepo.filter((row) => known.has(row.id) || owned.has(row.id)).map((row) => row.id);
+  if (matched.length === 0) return none;
   const { data: rows, error: rowsError } = await db.from("workspaces").select("*").in("id", matched);
   if (rowsError) throw rowsError;
-  return (rows ?? []).map(toWorkspace);
+  return { runners: (rows ?? []).map(toWorkspace), sessionBranches };
 }

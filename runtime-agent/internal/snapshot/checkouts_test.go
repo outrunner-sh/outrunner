@@ -136,3 +136,61 @@ func TestCheckoutTarsTakeOnlyTheirOwnFiles(t *testing.T) {
 		t.Error("a checkout name with .. was accepted")
 	}
 }
+
+// A Snapshot taken before the session's branch was renamed restores under
+// the new name: the tree records the bundle's, and restore brings it back
+// onto the branch the session has now.
+func TestASnapshotFromBeforeARenameRestoresOntoTheNewName(t *testing.T) {
+	ctx := context.Background()
+	folder := t.TempDir()
+	checkoutRepo(t, folder, "web", "W")
+	checkoutRepo(t, folder, "api", "A")
+
+	up := newUploadServer()
+	defer up.Close()
+	manifest, err := Produce(ctx, Input{
+		WorkspaceID: "ws",
+		Worktree:    folder,
+		Branch:      "work",
+		Checkouts:   []Checkout{{Name: "web", FullName: "acme/web", BaseBranch: "main"}, {Name: "api", FullName: "acme/api", BaseBranch: "main"}},
+		Summary:     protocol.WorkspaceSummary{StartedAt: "2026-10-27T00:00:00Z"},
+		ArchivedAt:  "2026-10-27T01:00:00Z",
+		Uploads:     allArtifactUploads(up.URL),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Tree.Ref != "work" {
+		t.Fatalf("tree ref = %q, want the branch at the Snapshot", manifest.Tree.Ref)
+	}
+
+	srv := artifactServer(t, map[string]string{
+		"/bundle":       string(up.received["bundle"]),
+		"/patch":        string(up.received["patch"]),
+		"/conversation": "{}\n",
+	})
+	restored := filepath.Join(t.TempDir(), "ws")
+	err = Materialize(ctx, MaterializeInput{
+		WorktreePath: restored,
+		Branch:       "feat/renamed",
+		BundleRef:    manifest.Tree.Ref,
+		Downloads: []protocol.RestoreDownload{
+			{Artifact: "bundle", URL: srv.URL + "/bundle"},
+			{Artifact: "patch", URL: srv.URL + "/patch"},
+		},
+		Checkouts: []Checkout{{Name: "web", MirrorPath: bareMirror(t)}, {Name: "api", MirrorPath: bareMirror(t)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, marker := range map[string]string{"web": "W", "api": "A"} {
+		dir := filepath.Join(restored, name)
+		if got := readFile(t, filepath.Join(dir, "README")); got != name+" wip "+marker+"\n" {
+			t.Errorf("%s README = %q", name, got)
+		}
+		out, _ := exec.Command("git", "-C", dir, "symbolic-ref", "--short", "HEAD").Output()
+		if strings.TrimSpace(string(out)) != "feat/renamed" {
+			t.Errorf("%s branch = %q", name, out)
+		}
+	}
+}

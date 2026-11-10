@@ -98,3 +98,29 @@ test("an org the installation is shared with is reached; a suspended or unowned 
   const unclaimed = db().tables;
   assert.deepEqual(await runnersForWith(fakeDb(unclaimed), { ...activity, installationId: 43 }), []);
 });
+
+test("a branch that is another session's own isn't a Runner's stacked work, though named after it", async () => {
+  const { tables, runnerA } = db();
+  // A plain session of the same repository on fix-2: a taken name numbered.
+  tables.workspaces.push({ ...tables.workspaces[0], id: "plain", parent_mission_id: null, branch: "fix-2" });
+  const onPlain = { ...activity, headRefs: ["fix-2"], numbers: [] };
+  assert.deepEqual(await runnersForWith(fakeDb(tables), onPlain), []);
+  // Stacked work no session has is still the Runner's.
+  const stacked = { ...activity, headRefs: ["fix-3"], numbers: [] };
+  assert.deepEqual((await runnersForWith(fakeDb(tables), stacked)).map((r) => r.id), [runnerA]);
+});
+
+test("a session's own branch counts only in the installation's orgs' projects of the repository", async () => {
+  const { tables } = db();
+  // Org B's project of the same GitHub repository (by id), outside the
+  // installation; its plain session holds fix-2. Another org's sessions
+  // never shape this one's: fix-2 is still read as r-a's stacked work.
+  tables.projects.find((p) => p.id === "p-b")!.github_repo_id = 501;
+  tables.workspaces.push({ ...tables.workspaces[1], id: "plain-b", parent_mission_id: null, branch: "fix-2" });
+  const onPlain = { ...activity, headRefs: ["fix-2"], numbers: [] };
+  assert.deepEqual((await runnersForWith(fakeDb(tables), onPlain)).map((r) => r.id), ["r-a"]);
+  // A plain session of the repository in the installation's own org holds
+  // fix-2 as its own branch, so it isn't r-a's.
+  tables.workspaces.push({ ...tables.workspaces[0], id: "plain-a", parent_mission_id: null, branch: "fix-2" });
+  assert.deepEqual(await runnersForWith(fakeDb(tables), onPlain), []);
+});

@@ -181,10 +181,15 @@ export function AppFrame({
   // list; the cloud session on screen is marked seen as its replies come.
   const onScreen = pathname.startsWith("/workspaces/") ? activeSessionId(pathname) : undefined;
   const cloudIds = useMemo(() => (appData?.workspaces ?? NO_WORKSPACES).map((w) => w.id), [appData]);
+  const cloudBranches = useMemo(
+    () => Object.fromEntries((appData?.workspaces ?? NO_WORKSPACES).map((w) => [w.id, w.branch])),
+    [appData],
+  );
   useStandingsFeed({
     initial: appData?.standings,
     // Not before the layout's list is in: an empty page isn't a list to compare.
     ids: cloudIds,
+    branches: cloudBranches,
     onScreen,
     onListChanged: () => {
       // The server's own list, not the one kept from last time: the marks and

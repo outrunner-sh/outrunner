@@ -147,6 +147,10 @@ export type Workspace = {
   phase: ProvisionPhase | null;
   /** Branch checked out in the git worktree. */
   branch: string;
+  /** Its branch is the one Outrunner made up from the first prompt, which
+   *  its agent may rename once, before anything is pushed
+   *  (lib/session/rename-branch.ts). */
+  branchRenamable?: boolean;
   /** What the user first asked for (see sessionTitle); null until the first
    *  prompt, and for sessions from before titles existed. */
   title: string | null;

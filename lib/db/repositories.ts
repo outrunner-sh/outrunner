@@ -197,6 +197,8 @@ export async function createWorkspaceRow(input: {
   ownerId: string;
   projectId: string;
   branch: string;
+  /** Made up by Outrunner, for its agent to rename once (lib/session/rename-branch.ts). */
+  branchRenamable?: boolean;
   baseBranch: string;
   provider: ProviderName;
   /** Claude Code when not named. */
@@ -212,31 +214,60 @@ export async function createWorkspaceRow(input: {
   parentMissionId?: string;
 }): Promise<Workspace> {
   const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("workspaces")
-    .insert({
-      ...(input.id && { id: input.id }),
-      owner_id: input.ownerId,
-      project_id: input.projectId,
-      branch: input.branch,
-      base_branch: input.baseBranch,
-      provider: input.provider,
-      // Named only for Codex, so a database before 20261020130000 still
-      // makes Claude Code sessions (its default) and refuses only Codex's.
-      ...(input.agent && input.agent !== "claude" && { agent: input.agent }),
-      // Named only when there is one, for the same reason.
-      ...(input.environmentId && { environment_id: input.environmentId }),
-      ...(input.checkouts && { checkouts: input.checkouts }),
-      ...(input.source && input.source !== "app" && { source: input.source }),
-      ...(input.kind && { kind: input.kind }),
-      ...(input.parentMissionId && { parent_mission_id: input.parentMissionId }),
-      status: "creating",
-    })
-    .select("*")
-    .single();
+  const insert = (renamable: boolean) =>
+    supabase
+      .from("workspaces")
+      .insert({
+        ...(input.id && { id: input.id }),
+        owner_id: input.ownerId,
+        project_id: input.projectId,
+        branch: input.branch,
+        ...(renamable && { branch_renamable: true }),
+        base_branch: input.baseBranch,
+        provider: input.provider,
+        // Named only for Codex, so a database before 20261020130000 still
+        // makes Claude Code sessions (its default) and refuses only Codex's.
+        ...(input.agent && input.agent !== "claude" && { agent: input.agent }),
+        // Named only when there is one, for the same reason.
+        ...(input.environmentId && { environment_id: input.environmentId }),
+        ...(input.checkouts && { checkouts: input.checkouts }),
+        ...(input.source && input.source !== "app" && { source: input.source }),
+        ...(input.kind && { kind: input.kind }),
+        ...(input.parentMissionId && { parent_mission_id: input.parentMissionId }),
+        status: "creating",
+      })
+      .select("*")
+      .single();
 
+  let { data, error } = await insert(input.branchRenamable === true);
+  // A database before 20261107120000: the session is made without it, and
+  // its agent keeps the branch's first name.
+  const outdated = error && (error.code === "PGRST204" || error.code === "42703") && /branch_renamable/.test(error.message ?? "");
+  if (outdated && input.branchRenamable) {
+    ({ data, error } = await insert(false));
+  }
   if (error) throw error;
-  return toWorkspace(data);
+  return toWorkspace(data!);
+}
+
+/**
+ * The branches of `base` and `base-<n>` any session of the project has had,
+ * ended ones too, teammates' as well: a new session's generated branch takes
+ * none of them, so its pull request lookup never finds an old session's. Read
+ * past row-level security, which shows the user only their own, for branch
+ * names alone, of a project the caller has already checked they may use.
+ * `base` must already be validated as a branch name of lowercase letters,
+ * digits, hyphens and at most one slash (branch-name.ts, rename-branch.ts
+ * nameProblem): it goes into a PostgREST filter string unescaped.
+ */
+export async function projectBranchesLike(projectId: string, base: string): Promise<Set<string>> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("workspaces")
+    .select("branch")
+    .eq("project_id", projectId)
+    .or(`branch.eq.${base},branch.like.${base}-%`);
+  if (error) throw error;
+  return new Set((data ?? []).map((row) => row.branch as string));
 }
 
 /**

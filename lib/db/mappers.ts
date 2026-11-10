@@ -63,6 +63,8 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
     status: row.status,
     phase: row.phase,
     branch: row.branch,
+    // Absent before the migration that adds it.
+    branchRenamable: row.branch_renamable === true,
     // `?? null`: a deploy can run before the migration that adds the column.
     title: row.title ?? null,
     // The first prompt kept for it while its box starts; absent before the

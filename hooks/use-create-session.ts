@@ -48,6 +48,7 @@ import { rememberEffort } from "@/lib/session/picked-effort";
 import { rememberPickedProvider } from "@/lib/session/picked-provider";
 import { sendCreate } from "@/lib/session/send-create";
 import { RECENT_SELECTION } from "@/lib/session/kept-selection";
+import { sessionBranch } from "@/lib/session/branch-name";
 
 type CreateResponse = {
   /** The new session's row, whole, so its page opens on it at once. */
@@ -63,10 +64,11 @@ function startingEffort(model: SessionModel | undefined, effort: Effort | null):
   return model && effort && takesEffort(model) ? effort : null;
 }
 
-/** Same shape as the server's generated branches (runtime/<time>-<id>): a
- *  local session's, and a cloud session's named on Send. */
-function localBranch(workspaceId: string): string {
-  return `runtime/${Date.now().toString(36)}-${workspaceId.slice(0, 8)}`;
+/** The branch a session's prompt names (lib/session/branch-name.ts): a Mac
+ *  session's, whose agent adds `-2`… when the checkout has that one, and the
+ *  name a cloud session's page shows until the server answers with its own. */
+function promptBranch(prompt: string): string {
+  return sessionBranch({ prompt });
 }
 
 /**
@@ -163,9 +165,10 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
 
     const id = again?.id ?? nextId ?? crypto.randomUUID();
     if (!again) setNextId(crypto.randomUUID());
-    // Named here, in the server's own shape, so the page shows the branch it
-    // will work on from the start rather than none until the server answers.
-    const branch = again?.branch ?? localBranch(id);
+    // Named here, as the server will, so the page shows a branch from the
+    // start rather than none until the server answers; the server's own name
+    // (numbered, when this one is taken) replaces it then.
+    const branch = again?.branch ?? promptBranch(prompt);
     const first = newFirstPrompt(prompt, attachmentIds);
     // Before the push: its page and the sidebar open on this row.
     const held = optimisticSession({
@@ -200,14 +203,14 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       if (window.location.pathname === href) router.replace("/new");
     };
     return (async () => {
-      // The prompt goes along only to name the session at once. The model
+      // The prompt goes along only to name the session, and its branch, at
+      // once; no branch is sent, so the server picks a free one. The model
       // picked on this screen, who serves it, and its effort; none, the
       // server starts it on the menu's default.
       const response = await sendCreate(
         `/api/projects/${selected.id}/workspaces`,
         JSON.stringify({
           id,
-          branch,
           prompt,
           // The server keeps its own copy of the prompt under this key
           // (workspaces.first_prompt), with its attachments, so it still goes
@@ -298,7 +301,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         await localAgentRequest(target, "POST", "/workspaces", {
           workspaceId,
           repoFullName: folder.name,
-          branch: localBranch(workspaceId),
+          branch: promptBranch(prompt),
           repoPath: folder.path,
           // By character, so the cut never splits an emoji's surrogate pair.
           title: Array.from(prompt.trim()).slice(0, 120).join(""),

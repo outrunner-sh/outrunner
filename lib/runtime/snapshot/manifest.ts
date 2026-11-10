@@ -68,8 +68,9 @@ export const SnapshotTree = z.discriminatedUnion("kind", [
       kind: z.literal("git-bundle+patch"),
       bundle: z.literal(SNAPSHOT_ARTIFACTS.bundle),
       patch: z.literal(SNAPSHOT_ARTIFACTS.patch),
-      /** The branch as the bundle names it, when the workspace's is another
-       *  (an import whose branch was taken in the cloud). */
+      /** The branch as the bundle names it: the box's at the Snapshot, or an
+       *  import's on its Mac. Restored onto the workspace's when another (an
+       *  import whose branch was taken in the cloud, a branch renamed since). */
       ref: z.string().min(1).optional(),
     })
     .strict(),
@@ -94,6 +95,8 @@ export const SnapshotTree = z.discriminatedUnion("kind", [
         )
         .min(2)
         .max(5),
+      /** The session's branch as the bundles name it (as the other kind's). */
+      ref: z.string().min(1).optional(),
     })
     .strict(),
 ]);

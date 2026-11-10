@@ -11,7 +11,8 @@ import { sessionPullRequests } from "@/lib/session/session-view";
  * (lib/session/standing.ts), for the sidebar to keep its groups live
  * (hooks/use-standings.ts) without re-reading everything the layout does.
  * `ids` is every session listed, so a page can tell one was made or deleted
- * elsewhere and refresh.
+ * elsewhere and refresh; `branches` each one's branch, so it can tell one
+ * was renamed by its agent (lib/session/rename-branch.ts).
  */
 export async function GET() {
   const owner = await getOwner();
@@ -21,7 +22,7 @@ export async function GET() {
   const pullRequests = sessionPullRequests(workspaces, await listWorkspacePullRequests(workspaces.map((w) => w.id)));
   const standings = await readStandings(owner.id, workspaces, pullRequests);
   return NextResponse.json(
-    { standings, ids: workspaces.map((w) => w.id) },
+    { standings, ids: workspaces.map((w) => w.id), branches: Object.fromEntries(workspaces.map((w) => [w.id, w.branch])) },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

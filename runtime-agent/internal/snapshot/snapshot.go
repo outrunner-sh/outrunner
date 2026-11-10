@@ -80,6 +80,9 @@ type Tree struct {
 	Patch  string `json:"patch"`
 	// Checkouts are a session of several repositories' (TreeKindCheckouts).
 	Checkouts []TreeCheckout `json:"checkouts,omitempty"`
+	// Ref is the session's branch as the bundle names it: a restore after
+	// the branch was renamed brings it back under the new name (bundleRef).
+	Ref string `json:"ref,omitempty"`
 }
 
 // Manifest is the Go MIRROR of the zod SnapshotManifest
@@ -153,6 +156,9 @@ type Input struct {
 	// Worktree is the workspace's git worktree (source of the tree + last commit),
 	// or the folder of a session of several repositories' checkouts.
 	Worktree string
+	// Branch is the session's branch as the box has it, recorded as the
+	// tree's ref; "" records none.
+	Branch string
 	// Checkouts, when set, are the repositories in Worktree's folders: each
 	// captured (checkouts.go).
 	Checkouts []Checkout
@@ -209,7 +215,7 @@ func Produce(ctx context.Context, in Input) (manifest *Manifest, err error) {
 	if err != nil {
 		return nil, err
 	}
-	tree := Tree{Kind: TreeKindGitBundlePatch, Bundle: BundleName, Patch: PatchName}
+	tree := Tree{Kind: TreeKindGitBundlePatch, Bundle: BundleName, Patch: PatchName, Ref: in.Branch}
 	var last *string
 	if len(in.Checkouts) > 0 {
 		artifact = "tree"

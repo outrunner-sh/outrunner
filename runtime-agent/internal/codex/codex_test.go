@@ -59,7 +59,7 @@ func TestTOMLStringEscapesWhatABasicStringCannotHold(t *testing.T) {
 // Every escape TOMLString writes means the same in JSON, so decoding its output
 // as JSON must give the input back: the whole orientation survives as one value.
 func TestTOMLStringRoundTrips(t *testing.T) {
-	orientation := claude.Orientation("/work/repo \"x\"", "main", true) + "\x01\t\\"
+	orientation := claude.Orientation("/work/repo \"x\"", "main", claude.BranchPlaceholder) + "\x01\t\\"
 	var back string
 	if err := json.Unmarshal([]byte(TOMLString(orientation)), &back); err != nil {
 		t.Fatalf("decode: %v", err)
