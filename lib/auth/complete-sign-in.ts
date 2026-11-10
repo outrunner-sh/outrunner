@@ -5,6 +5,7 @@ import { signInTokenDecision } from "@/lib/auth/identity";
 import { githubLogin, isOwner } from "@/lib/auth/owner";
 import { sameSecret } from "@/lib/crypto/secret-box";
 import { getGithubToken, getGithubVerifiedEmails, setGithubToken, setGithubVerifiedEmails } from "@/lib/db/credentials";
+import { githubConnectionStatus } from "@/lib/db/github-connections";
 import { hasOpenInviteFor, requestToJoin, setAdmitted, teamOrgIds } from "@/lib/db/org-members";
 import { orgsForDomains } from "@/lib/db/orgs";
 import { optionalEnv } from "@/lib/env";
@@ -133,6 +134,13 @@ async function captureGithubSignIn(user: User, token: string | undefined): Promi
     if (owner.kind === "user" && owner.id === githubId && !(kept && sameSecret(kept, token))) await revokeSignInToken(token);
     return;
   }
+
+  // A user connected through the App works on repositories as that
+  // connection, and connecting removed their old token: keeping a fresh one
+  // would bring it back. Only a working connection counts; an unreadable one
+  // keeps the token, as before.
+  const connection = await githubConnectionStatus(user.id).catch(() => null);
+  if (connection && !connection.broken) return;
 
   // Whether one is stored matters only when GitHub couldn't be asked.
   const hasStored = owner.kind === "unreachable" && (await getGithubToken(user.id).catch(() => null)) !== null;
