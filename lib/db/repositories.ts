@@ -277,11 +277,17 @@ export async function setWorkspaceTitleIfUnset(id: string, title: string): Promi
   return (data ?? []).length > 0;
 }
 
-/** Rename a session, as its owner (workspaces_owner_all): true when it was
- *  theirs to rename. */
-export async function renameWorkspace(id: string, title: string): Promise<boolean> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.from("workspaces").update({ title }).eq("id", id).select("id");
+/** Rename a session for its owner: true when it was theirs to rename. Written
+ *  with the admin client and filtered by owner explicitly, so it doesn't rely
+ *  on client writes to `workspaces`. */
+export async function renameWorkspace(id: string, ownerId: string, title: string): Promise<boolean> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("workspaces")
+    .update({ title })
+    .eq("id", id)
+    .eq("owner_id", ownerId)
+    .select("id");
   if (error) throw error;
   return (data ?? []).length > 0;
 }

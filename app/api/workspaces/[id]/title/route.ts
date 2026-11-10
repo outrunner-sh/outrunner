@@ -61,7 +61,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
   try {
-    if (!(await renameWorkspace(workspace.id, title))) {
+    if (!(await renameWorkspace(workspace.id, owner.id, title))) {
       return NextResponse.json({ error: "Only the session's owner can rename it." }, { status: 403 });
     }
   } catch (error) {
