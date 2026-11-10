@@ -71,7 +71,7 @@ export function NewWorkItemForm({
     <Dialog open onOpenChange={(open) => !open && !saving && onCancel()}>
       <DialogContent
         showClose={false}
-        className="top-[12vh] max-w-[calc(100%-2rem)] translate-y-0 gap-0 overflow-hidden rounded-xl p-0 sm:max-w-2xl"
+        className="top-[12vh] max-h-[calc(100dvh-12vh-1rem)] max-w-[calc(100%-2rem)] translate-y-0 gap-0 overflow-y-auto rounded-xl p-0 sm:max-w-2xl"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           titleRef.current?.focus();
