@@ -1402,15 +1402,7 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 	}
 	defer sess.Close()
 
-	// Serialize all WriteJSON calls on this connection — the coalescer flushes
-	// from its own goroutine, role updates from the broker's, and pongs from
-	// pumpIn. gorilla/websocket requires exclusive writer access.
-	var writeMu sync.Mutex
-	writeFrame := func(msg protocol.PtyServerMessage) error {
-		writeMu.Lock()
-		defer writeMu.Unlock()
-		return conn.WriteJSON(msg)
-	}
+	writeFrame := ptyFrameWriter(conn, eventsWSWriteWait)
 
 	// Broker role: attaches this connection, tells us if we're the writer, and
 	// re-notifies us later if a reader is promoted after the writer detaches.
@@ -1435,13 +1427,12 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 		}
 		return writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(seq)})
 	})
-	go coalescer.Run()
-	defer func() {
-		coalescer.Stop()
+	coalescer.Start()
+	defer coalescer.Close(func(seq func() int) {
 		if output := redactor.Flush(); output != "" {
-			_ = writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(coalescer.NextSeq())})
+			_ = writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(seq())})
 		}
-	}()
+	})
 
 	go pumpOut(sess, coalescer, writeFrame, func() bool {
 		return s.ws.SessionAlive(context.Background(), key)
@@ -1929,4 +1920,27 @@ func rewindForClient(n, known int, at, cursor int64, uuid string) (protocol.Conv
 		cursor = at
 	}
 	return protocol.ConversationRewound{T: "rewind", At: at, UUID: uuid, Rewinds: n, Reset: reset}, cursor
+}
+
+// ptyFrameWriter writes a /pty socket's frames, one at a time: the coalescer
+// flushes from its own goroutine, role updates from the broker's, and pongs
+// from pumpIn, and gorilla/websocket requires exclusive writer access. Each
+// write has `wait` to finish, so a client that stopped reading can't hold it,
+// and with it the coalescer's Close and the handler's teardown, until TCP
+// gives up. A failed (timed-out) write leaves the socket unusable, so it is
+// closed: pumpIn's read returns, the handler unwinds and the client
+// reconnects, rather than typing into a socket that never again carries
+// output.
+func ptyFrameWriter(conn *websocket.Conn, wait time.Duration) func(protocol.PtyServerMessage) error {
+	var mu sync.Mutex
+	return func(msg protocol.PtyServerMessage) error {
+		mu.Lock()
+		defer mu.Unlock()
+		_ = conn.SetWriteDeadline(time.Now().Add(wait))
+		if err := conn.WriteJSON(msg); err != nil {
+			_ = conn.Close()
+			return err
+		}
+		return nil
+	}
 }
