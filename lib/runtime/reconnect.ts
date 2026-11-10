@@ -37,6 +37,21 @@ export function reconnectPlan(attempt: number): ReconnectPlan {
 }
 
 /**
+ * The next step after a /session refetch that the reconnect loop made has
+ * failed (a 502 from the box's proxy for a few seconds, a box still settling).
+ * The socket's close drives the loop, and with the refetch failed no socket
+ * opens to close, so the failure itself takes the next attempt from the same
+ * budget. `attempt` counts it, as reconnectPlan's does. Only a failure on the
+ * way (`retryable`, retryableAttachFailure) is tried again: one that names
+ * what happened (the box is gone, the session ended, …) can't be helped by
+ * it, whatever new code says so.
+ */
+export function attachFailurePlan(attempt: number, retryable: boolean): ReconnectPlan {
+  if (!retryable) return { retry: false };
+  return reconnectPlan(attempt);
+}
+
+/**
  * The `since` a re-armed retry run starts from. A re-arm after a give-up
  * begins a fresh clock, so the elapsed time counts from this retry and not
  * from the drop it recovered from — a give-up, then a focus an hour later,

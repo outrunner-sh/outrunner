@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
-import { dropNarration, reconnectPlan, WS_OPEN, type WsAction, wsReducer, type WsStatus } from "@/lib/runtime/reconnect";
+import { attachFailurePlan, dropNarration, reconnectPlan, WS_OPEN, type WsAction, wsReducer, type WsStatus } from "@/lib/runtime/reconnect";
 import { StreamProtocolError } from "@/lib/runtime/session-client";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
 import { openStream } from "@/lib/session/kept-streams";
@@ -67,6 +67,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     urls,
     status: attachmentStatus,
     error: attachmentError,
+    errorRetryable: attachmentErrorRetryable,
     attachId,
     reconnect,
     refresh,
@@ -118,6 +119,11 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
   // Consecutive failed reconnects (reset by any received frame). A ref, not
   // reducer state, so the onClose closure reads the live count, not a stale one.
   const reconnectAttemptsRef = useRef(0);
+  // An automatic reconnect run is under way: from a drop (or a re-arm) until
+  // a socket opens again or it gives up. A /session refetch that fails while
+  // it is carries the run on (below); one that fails outside it (the first
+  // attach, a refresh on return, a manual retry) is the page's to show.
+  const reconnectRunRef = useRef(false);
   // A reconnect this user asked for. It keeps the "lost connection" notice on
   // screen — its button spinning — until it lands; the automatic retry stays
   // quiet rather than blinking "Reconnecting…" over the button just pressed.
@@ -162,6 +168,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
       // a frame: a socket that opens and closes again keeps backing off.
       onOpen: () => {
         if (!active) return;
+        reconnectRunRef.current = false;
         setManualRetry(false);
         dispatch({ kind: "opened" });
       },
@@ -171,6 +178,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
         const attempt = (reconnectAttemptsRef.current += 1);
         dispatch({ kind: "closed", attempt, at: Date.now() });
         const plan = reconnectPlan(attempt);
+        reconnectRunRef.current = plan.retry;
         if (!plan.retry) {
           // Automatic retry is exhausted (e.g. endpoint permanently down). Not
           // a dead end: the visibility/focus/online effect re-arms this when
@@ -204,6 +212,25 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attachId, attachmentStatus, dispatch, reconnect, urls?.eventsUrl, workspaceId]);
 
+  // A refetch of the session's URLs that a reconnect made, failed: the
+  // effect above runs only while attached, so no socket would close again to
+  // carry the loop on, and it would stop after one try (the user left on an
+  // error in a focused tab until they click). Carry it on from here, on the
+  // same budget, for as long as the run lasts (reconnectRunRef): a re-arm's
+  // refetch that fails too keeps going.
+  useEffect(() => {
+    if (attachmentStatus !== "error" || !reconnectRunRef.current) return;
+    const attempt = (reconnectAttemptsRef.current += 1);
+    const plan = attachFailurePlan(attempt, attachmentErrorRetryable);
+    if (!plan.retry) {
+      reconnectRunRef.current = false;
+      dispatch({ kind: "gave-up" });
+      return;
+    }
+    const timer = setTimeout(reconnect, plan.delayMs);
+    return () => clearTimeout(timer);
+  }, [attachmentStatus, attachmentErrorRetryable, reconnect, dispatch]);
+
   // Idle recovery. A backgrounded/hidden webview (the desktop app hides to the
   // tray) can have its socket suspended, so every backoff retry fails and we
   // land in the closed/give-up state until the user does something — the "error
@@ -226,6 +253,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     const rearm = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       reconnectAttemptsRef.current = 0;
+      reconnectRunRef.current = true;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       dispatch({ kind: "rearm", at: Date.now() });
       reconnect();
@@ -266,6 +294,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
   const refreshStream = useCallback(() => {
     setManualRetry(true);
     reconnectAttemptsRef.current = 0;
+    reconnectRunRef.current = false;
     if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     dispatch({ kind: "rearm", at: Date.now() });
     refresh();
