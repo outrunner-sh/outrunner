@@ -127,11 +127,16 @@ async function captureGithubSignIn(user: User, token: string | undefined): Promi
       console.error(`Could not keep the GitHub emails of ${user.id}; sign-in continues.`, err);
     }
   }
-  if (!store) {
-    // Nothing keeps it: revoke it, unless it's the old token still kept
-    // (GitHub can hand the same one back), which works until it's removed.
+  // Nothing keeps it: revoke it, unless it's the old token still kept
+  // (GitHub can hand the same one back), which works until it's removed.
+  const revokeUnkept = async (connected: boolean) => {
     const kept = await getGithubToken(user.id).catch(() => null);
-    if (owner.kind === "user" && owner.id === githubId && !(kept && sameSecret(kept, token))) await revokeSignInToken(token);
+    if (owner.kind === "user" && owner.id === githubId && !(kept && sameSecret(kept, token))) {
+      await revokeSignInToken(token, { connected });
+    }
+  };
+  if (!store) {
+    await revokeUnkept(false);
     return;
   }
 
@@ -139,8 +144,12 @@ async function captureGithubSignIn(user: User, token: string | undefined): Promi
   // connection, and connecting removed their old token: keeping a fresh one
   // would bring it back. Only a working connection counts; an unreadable one
   // keeps the token, as before.
+  // Sign-in asked for `repo` here, so the token is revoked, not left live.
   const connection = await githubConnectionStatus(user.id).catch(() => null);
-  if (connection && !connection.broken) return;
+  if (connection && !connection.broken) {
+    await revokeUnkept(true);
+    return;
+  }
 
   // Whether one is stored matters only when GitHub couldn't be asked.
   const hasStored = owner.kind === "unreachable" && (await getGithubToken(user.id).catch(() => null)) !== null;

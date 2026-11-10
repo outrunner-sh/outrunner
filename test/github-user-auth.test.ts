@@ -3,7 +3,7 @@ import { createHmac } from "node:crypto";
 import test from "node:test";
 
 import type { GitHubAppConfig } from "@/lib/github/app";
-import { legacyModeFrom, signInScopesFor } from "@/lib/github/legacy-mode";
+import { legacyModeFrom, signInScopesFor, signInTokenRevoked } from "@/lib/github/legacy-mode";
 import {
   codeChallenge,
   exchangeUserCode,
@@ -206,4 +206,11 @@ test("one token is revoked at its own path, leaving the grant", async () => {
   const doFetch = (async (input: string | URL) => (urls.push(String(input)), new Response(null, { status: 204 }))) as typeof fetch;
   assert.equal(await revokeToken({ clientId: "Iv1.app", clientSecret: "s" }, "gho", doFetch), true);
   assert.deepEqual(urls, ["https://api.github.com/applications/Iv1.app/token"]);
+});
+
+test("a sign-in's token is revoked unless store mode keeps it, and in store too once the user is connected", () => {
+  assert.equal(signInTokenRevoked("store", false), false);
+  assert.equal(signInTokenRevoked("store", true), true);
+  assert.equal(signInTokenRevoked("fallback", false), true);
+  assert.equal(signInTokenRevoked("off", false), true);
 });

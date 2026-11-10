@@ -20,7 +20,7 @@
 
 import { clearGithubToken, getGithubToken } from "@/lib/db/credentials";
 import { optionalEnv } from "@/lib/env";
-import { legacyModeFrom, type LegacyTokenMode, signInScopesFor } from "@/lib/github/legacy-mode";
+import { legacyModeFrom, type LegacyTokenMode, signInScopesFor, signInTokenRevoked } from "@/lib/github/legacy-mode";
 import { revokeGrant, revokeToken } from "@/lib/github/user-auth";
 
 export { legacyModeFrom, type LegacyTokenMode, signInScopesFor };
@@ -71,10 +71,11 @@ export async function removeLegacyToken(userId: string): Promise<{ removed: bool
  * Revoke the token a GitHub sign-in just handed over, once it's been used to
  * read the user's emails: nothing keeps it, and Supabase's session carries a
  * copy. Only where the OAuth App's credentials are set, and never in `store`
- * mode, which keeps it. Never throws.
+ * mode, which keeps it, unless the user is `connected` through the App (whose
+ * sign-in token nothing keeps, even in `store`). Never throws.
  */
-export async function revokeSignInToken(token: string): Promise<void> {
+export async function revokeSignInToken(token: string, options: { connected?: boolean } = {}): Promise<void> {
   const app = oauthApp();
-  if (!app || legacyTokenMode() === "store") return;
+  if (!app || !signInTokenRevoked(legacyTokenMode(), options.connected === true)) return;
   if (!(await revokeToken(app, token))) console.warn("Couldn't revoke a GitHub sign-in's token after reading its emails");
 }

@@ -14,6 +14,13 @@ export function legacyModeFrom(value: string | undefined): LegacyTokenMode {
   return "store";
 }
 
+/** Whether a GitHub sign-in's token is revoked once its emails are read:
+ *  always, except in `store` mode, which keeps it, and there too for a user
+ *  connected through the App, for whom nothing keeps it. */
+export function signInTokenRevoked(mode: LegacyTokenMode, connected: boolean): boolean {
+  return mode !== "store" || connected;
+}
+
 /** What signing in with GitHub asks for: who the user is and their verified
  *  emails (admission, invites, a team org's domain); `repo` only in `store`. */
 export function signInScopesFor(mode: LegacyTokenMode): string {
