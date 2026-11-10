@@ -551,7 +551,7 @@ async function createOnce(
   // starts (an automation's, the API's) sends its first message its own way.
   const kept = firstPromptToKeep(body);
   if (kept) {
-    await storeWorkspaceFirstPrompt(workspace.id, kept).catch((error: unknown) =>
+    await storeWorkspaceFirstPrompt(workspace.id, workspace.ownerId, kept).catch((error: unknown) =>
       console.error(`Workspace ${workspace.id}: couldn't keep its first prompt`, error),
     );
   }
@@ -904,7 +904,7 @@ async function provisionWorkspace({
       // which started fine: a prompt that doesn't go stays kept for the page.
       await deliverStoredFirstPrompt(
         {
-          read: () => workspaceFirstPrompt(workspace.id),
+          read: () => workspaceFirstPrompt(workspace.id, workspace.ownerId),
           // Strict: no unguarded send — a claim that can't be made stands
           // down, the kept copy left for the page (or a session reopened).
           gate: (key) =>
@@ -931,7 +931,7 @@ async function provisionWorkspace({
               prompt,
             }),
           send: (prompt) => agent.sendMessage(identity, prompt),
-          clear: () => clearWorkspaceFirstPrompt(workspace.id),
+          clear: () => clearWorkspaceFirstPrompt(workspace.id, workspace.ownerId),
           // Watched as the page's own send would be (lib/session/watch.ts),
           // so the sidebar shows the session working even with no page open.
           watch: () => watchSent(workspace.id, workspace.ownerId),

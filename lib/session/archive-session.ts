@@ -243,7 +243,7 @@ export async function archiveCloudSession(
   // to wait for: a restore starts its conversation over rather than run the
   // prompt. Dropped, so nothing of it stays on the row (best effort — the
   // archive stands either way).
-  await clearWorkspaceFirstPrompt(workspace.id).catch((error: unknown) =>
+  await clearWorkspaceFirstPrompt(workspace.id, workspace.ownerId).catch((error: unknown) =>
     console.error(`Workspace ${workspace.id}: couldn't drop its kept first prompt as it archived`, error),
   );
   if (save.saved) {

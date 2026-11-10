@@ -632,7 +632,7 @@ async function endWorkspace(workspace: Workspace, teardown?: () => Promise<void>
   );
   // And the first prompt kept for it while its box started, which has nothing
   // left to be delivered to: nothing of the session waits on the row.
-  await clearWorkspaceFirstPrompt(workspace.id).catch((error: unknown) =>
+  await clearWorkspaceFirstPrompt(workspace.id, workspace.ownerId).catch((error: unknown) =>
     console.error(`Could not drop the kept first prompt of ${workspace.id}`, error),
   );
 
@@ -776,7 +776,7 @@ async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider)
   );
   // As endWorkspace: a first prompt kept while its box started has nothing
   // left to be delivered to once the session is gone.
-  await clearWorkspaceFirstPrompt(workspace.id).catch((error: unknown) =>
+  await clearWorkspaceFirstPrompt(workspace.id, workspace.ownerId).catch((error: unknown) =>
     console.error(`Could not drop the kept first prompt of ${workspace.id}`, error),
   );
 

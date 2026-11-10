@@ -405,7 +405,7 @@ export async function releaseFirstPrompt(id: string, ownerId: string, key: strin
  * them, and this code's migration (20261107100000) refuses to run before that.
  * A user session can neither write nor clear a kept prompt.
  */
-export async function storeWorkspaceFirstPrompt(id: string, first: StoredFirstPrompt): Promise<void> {
+export async function storeWorkspaceFirstPrompt(id: string, ownerId: string, first: StoredFirstPrompt): Promise<void> {
   const supabase = createSupabaseAdminClient();
   const { error } = await supabase
     .from("workspaces")
@@ -414,7 +414,8 @@ export async function storeWorkspaceFirstPrompt(id: string, first: StoredFirstPr
       first_prompt_attachments: first.attachmentIds,
       first_prompt_idempotency_key: first.key,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("owner_id", ownerId);
   if (error) throw error;
 }
 
@@ -423,12 +424,13 @@ export async function storeWorkspaceFirstPrompt(id: string, first: StoredFirstPr
  *  alone has empty text, so the key, not the text, is what marks one kept.
  *  Null without the key, which only the new-session screen's own ask keeps
  *  one under. */
-export async function workspaceFirstPrompt(id: string): Promise<StoredFirstPrompt | null> {
+export async function workspaceFirstPrompt(id: string, ownerId: string): Promise<StoredFirstPrompt | null> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("workspaces")
     .select("first_prompt, first_prompt_attachments, first_prompt_idempotency_key")
     .eq("id", id)
+    .eq("owner_id", ownerId)
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
@@ -449,12 +451,13 @@ export async function workspaceFirstPrompt(id: string): Promise<StoredFirstPromp
  * (lib/session/deliver-first-prompt.ts) — and by a session's ending, an
  * archive or a destroy, so a prompt that never went doesn't stay on its row.
  */
-export async function clearWorkspaceFirstPrompt(id: string): Promise<void> {
+export async function clearWorkspaceFirstPrompt(id: string, ownerId: string): Promise<void> {
   const supabase = createSupabaseAdminClient();
   const { error } = await supabase
     .from("workspaces")
     .update({ first_prompt: null, first_prompt_attachments: [], first_prompt_idempotency_key: null })
     .eq("id", id)
+    .eq("owner_id", ownerId)
     .not("first_prompt", "is", null);
   if (error) throw error;
 }
