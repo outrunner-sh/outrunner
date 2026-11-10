@@ -3,7 +3,14 @@ import { after, NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { resetCiTurnsOfSession } from "@/lib/db/github-loop";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { claimFirstPrompt, markFirstPromptSent, recordWorkspaceMode, releaseFirstPrompt, renewFirstPrompt } from "@/lib/db/repositories";
+import {
+  claimFirstPrompt,
+  clearWorkspaceFirstPrompt,
+  markFirstPromptSent,
+  recordWorkspaceMode,
+  releaseFirstPrompt,
+  renewFirstPrompt,
+} from "@/lib/db/repositories";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_MESSAGE_KEYS, AGENT_FEATURE_PLAN_MODE, SessionMode } from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
@@ -99,7 +106,11 @@ export async function POST(request: Request, context: RouteContext) {
     {
       claim: (key) => claimFirstPrompt(workspace.id, workspace.ownerId, key, abandonedBefore(new Date())),
       renew: (key, claimedAt) => renewFirstPrompt(workspace.id, workspace.ownerId, key, claimedAt),
-      sent: (key, claimedAt) => markFirstPromptSent(workspace.id, workspace.ownerId, key, claimedAt),
+      sent: (key, claimedAt) =>
+        // The kept copy is spent with this send: the box has the prompt, and
+        // nothing of it stays on the row (clearWorkspaceFirstPrompt, service
+        // role — a user session can't clear one itself).
+        markFirstPromptSent(workspace.id, workspace.ownerId, key, claimedAt).then(() => clearWorkspaceFirstPrompt(workspace.id, workspace.ownerId)),
       release: (key, claimedAt) => releaseFirstPrompt(workspace.id, workspace.ownerId, key, claimedAt),
     },
     workspace.id,

@@ -32,15 +32,22 @@ import {
 import { isMetered } from "@/lib/billing/metering-store";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import {
+  claimFirstPrompt,
+  clearWorkspaceFirstPrompt,
   createWorkspaceRow,
   getProject,
   getRuntimeComputer,
   getWorkspace,
   liveWorkspaceOnBranch,
+  markFirstPromptSent,
   markRuntimeComputerStoppedIfReady,
   recordWorkspaceModel,
+  releaseFirstPrompt,
+  renewFirstPrompt,
   setWorkspaceTitleIfUnset,
+  storeWorkspaceFirstPrompt,
   transitionWorkspace,
+  workspaceFirstPrompt,
 } from "@/lib/db/repositories";
 import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
 import { linkWorkItemToSession, projectOrgId, triageActor } from "@/lib/db/work-items";
@@ -106,8 +113,11 @@ import { refillProjectPool, takePooledBox } from "@/lib/runtime/warm-pool.deps";
 import type { BoxSizeId } from "@/lib/runtime/box-sizes";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace, WorkspaceSource } from "@/lib/runtime/types";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
+import { deliverStoredFirstPrompt, firstPromptToKeep } from "@/lib/session/deliver-first-prompt";
+import { abandonedBefore, gateFirstPrompt } from "@/lib/session/first-prompt-claim";
 import { evidenceToolsFor, prGuide } from "@/lib/session/pr-template";
 import { SETTING_UP } from "@/lib/session/provisioning";
+import { watchSent } from "@/lib/session/watch";
 import { getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
 import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
 import { GitIdentityError } from "@/lib/github/identity";
@@ -145,8 +155,16 @@ export type SessionRequest = {
   effort?: unknown;
   /** The agent the session is asked to run (requestedAgent). */
   agent?: unknown;
-  /** The first prompt, only to name the session by. */
+  /** The first prompt: it names the session by, and — with `promptKey` — is
+   *  kept server-side too while its box starts (firstPromptToKeep). */
   prompt?: unknown;
+  /** The first prompt's idempotency key: the server keeps its own copy of
+   *  the prompt under it, so the tab that made the session can close during
+   *  startup without losing it. Absent on a client from before, whose copy
+   *  waits in its tab as it always did. */
+  promptKey?: unknown;
+  /** The first prompt's uploaded files, kept with it to go with it. */
+  attachmentIds?: unknown;
   /** The triage item the session was started from (Start session). */
   workItemId?: unknown;
   /** The id the screen made for it (a UUID), so its page opens at once, on
@@ -524,6 +542,19 @@ async function createOnce(
   } else {
     await nameSessionFromPrompt(workspace, typeof body.prompt === "string" ? body.prompt : "");
   }
+  // The prompt also waits on the server (workspaces.first_prompt), under the
+  // key its every send names: the tab that made this session can close while
+  // its box starts without losing it — setup delivers the kept copy once the
+  // box is ready, racing the page's own copy under the same claim, so the
+  // box gets it once from whichever arrives (lib/session/deliver-first-prompt.ts).
+  // Only the new-session screen's own ask is kept: a session the server
+  // starts (an automation's, the API's) sends its first message its own way.
+  const kept = firstPromptToKeep(body);
+  if (kept) {
+    await storeWorkspaceFirstPrompt(workspace.id, workspace.ownerId, kept).catch((error: unknown) =>
+      console.error(`Workspace ${workspace.id}: couldn't keep its first prompt`, error),
+    );
+  }
   // Started from a triage item: the item is in progress, on this session. The
   // session starts either way; the item is only bookkeeping.
   if (typeof body.workItemId === "string" && body.workItemId) {
@@ -748,6 +779,8 @@ async function provisionWorkspace({
       if (!computer.daytonaSandboxId) {
         throw new Error("Ready Runtime Computer has no sandbox id.");
       }
+      // The check can't narrow the id for the closures below; held here for them.
+      const sandboxId = computer.daytonaSandboxId;
 
       // Provisioning clones the mirror. A box set up before (a setup started
       // again) has it refreshed before the agent branches from the project's
@@ -863,6 +896,48 @@ async function provisionWorkspace({
         await tell({ status: "failed", errorMessage: "The session was deleted while it was set up." });
         return;
       }
+      // The first prompt kept for this session as its box started: the tab
+      // that made it may be closed by now. Sent under the same key the
+      // session page's own copy of it names, so whichever of the two gets
+      // there first delivers it and the other stands down
+      // (lib/session/deliver-first-prompt.ts). It never fails the session,
+      // which started fine: a prompt that doesn't go stays kept for the page.
+      await deliverStoredFirstPrompt(
+        {
+          read: () => workspaceFirstPrompt(workspace.id, workspace.ownerId),
+          // Strict: no unguarded send — a claim that can't be made stands
+          // down, the kept copy left for the page (or a session reopened).
+          gate: (key) =>
+            gateFirstPrompt(
+              key,
+              {
+                claim: (k) => claimFirstPrompt(workspace.id, workspace.ownerId, k, abandonedBefore(new Date())),
+                renew: (k, claimedAt) => renewFirstPrompt(workspace.id, workspace.ownerId, k, claimedAt),
+                // Only marked: the delivery clears the kept copy itself once
+                // its own send went, as its one owner of the clear.
+                sent: (k, claimedAt) => markFirstPromptSent(workspace.id, workspace.ownerId, k, claimedAt),
+                release: (k, claimedAt) => releaseFirstPrompt(workspace.id, workspace.ownerId, k, claimedAt),
+              },
+              workspace.id,
+              { strict: true },
+            ),
+          attach: (prompt, attachmentIds) =>
+            materializeAttachments({
+              provider,
+              sandboxId: sandboxId,
+              worktreePath: created.worktree,
+              workspaceId: workspace.id,
+              attachmentIds,
+              prompt,
+            }),
+          send: (prompt) => agent.sendMessage(identity, prompt),
+          clear: () => clearWorkspaceFirstPrompt(workspace.id, workspace.ownerId),
+          // Watched as the page's own send would be (lib/session/watch.ts),
+          // so the sidebar shows the session working even with no page open.
+          watch: () => watchSent(workspace.id, workspace.ownerId),
+        },
+        workspace.id,
+      );
       // The server's own first message (an automation's prompt), sent as the
       // user's would be from the session page.
       if (firstMessage) {

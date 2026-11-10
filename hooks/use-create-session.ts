@@ -209,6 +209,13 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           id,
           branch,
           prompt,
+          // The server keeps its own copy of the prompt under this key
+          // (workspaces.first_prompt), with its attachments, so it still goes
+          // if this tab closes while the box starts: setup delivers it once
+          // the box is ready, under the same key as this tab's copy, so the
+          // box gets it once from whichever arrives first.
+          promptKey: first.key,
+          attachmentIds,
           ...(model && { provider: model.provider, model: model.id }),
           ...(effort && { effort }),
           ...(workItemId && { workItemId }),
