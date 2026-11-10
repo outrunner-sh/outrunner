@@ -27,6 +27,7 @@ import type { SessionSender } from "@/components/workspace-session";
 import { uploadAttachment } from "@/hooks/use-attachments";
 import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-workspace-changes";
 import { openPendingTab, TAB_BLOCKED } from "@/lib/client/pending-tab";
+import { store, useStore } from "@/lib/client/store";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { PullRequestStatus } from "@/lib/github/client";
 import { previewsSupported } from "@/lib/previews/rules";
@@ -166,7 +167,7 @@ export function WorkspaceEnvironment({
             provider={workspace.provider}
             branch={summary.branch}
             baseBranch={summary.baseBranch ?? workspace.baseBranch}
-            uncommitted={isReady && changes.files ? changes.files.length : null}
+            changedFiles={isReady && changes.files ? changes.files.length : null}
             pullRequest={pullRequest}
             sender={isReady ? sender : null}
             coAuthor={coAuthor}
@@ -183,7 +184,7 @@ export function WorkspaceEnvironment({
               provider={workspace.provider}
               branch={summary.branch!}
               baseBranch={c.baseBranch}
-              uncommitted={isReady && changes.files ? changes.files.filter((f) => f.path.startsWith(`${c.checkout}/`)).length : null}
+              changedFiles={isReady && changes.files ? changes.files.filter((f) => f.path.startsWith(`${c.checkout}/`)).length : null}
               pullRequest={pullRequest?.projectId === c.projectId ? pullRequest : null}
               sender={isReady ? sender : null}
               coAuthor={coAuthor}
@@ -309,6 +310,27 @@ function PortRows({ workspaceId, active }: { workspaceId: string; active: boolea
  *  a description; the page looking again on its next load covers the rest. */
 const PR_POLL_MS = 15_000;
 const PR_WAIT_MS = 10 * 60_000;
+
+/** Each row's Create PR (`workspace:project`) while it's being sent or its
+ *  pull request is awaited, for this tab: the panel unmounts as it closes,
+ *  and the request must not go with it (NEE-219). A row mounted mid-send sees
+ *  the send finish. */
+type PrAsk = { phase: "sending" | "waiting"; since: number };
+const PR_ASKS = store<Partial<Record<string, PrAsk>>>({});
+const NO_ASKS: Partial<Record<string, PrAsk>> = {};
+
+function setPrAsk(key: string, ask: PrAsk | null): void {
+  const next = { ...PR_ASKS.get() };
+  if (ask) next[key] = ask;
+  else delete next[key];
+  PR_ASKS.set(next);
+}
+
+/** How long row `key` still waits for its pull request; 0 when it doesn't. */
+function prWaitLeft(key: string): number {
+  const ask = PR_ASKS.get()[key];
+  return ask?.phase === "waiting" ? Math.max(0, PR_WAIT_MS - (Date.now() - ask.since)) : 0;
+}
 /** How often an open pull request's status (checks, mergeability) is re-read. */
 const PR_STATUS_POLL_MS = 30_000;
 /** How often a PR closed unmerged is looked at again, for one that takes its
@@ -417,7 +439,7 @@ function PullRequestRow({
   workspaceId,
   branch,
   baseBranch,
-  uncommitted,
+  changedFiles,
   pullRequest,
   sender,
   coAuthor,
@@ -429,8 +451,8 @@ function PullRequestRow({
   workspaceId: string;
   branch: string;
   baseBranch: string;
-  /** Files changed and not committed, null while unknown. */
-  uncommitted: number | null;
+  /** Files that differ from the base branch, committed or not; null while unknown. */
+  changedFiles: number | null;
   pullRequest: WorkspacePullRequest | null;
   sender: SessionSender | null;
   coAuthor?: string | null;
@@ -440,7 +462,13 @@ function PullRequestRow({
   const router = useRouter();
   const [found, setFound] = useState<WorkspacePullRequest | null>(null);
   const [status, setStatus] = useState<PullRequestStatus | null>(null);
-  const [phase, setPhase] = useState<"idle" | "sending" | "waiting">("idle");
+  const waitKey = `${workspaceId}:${repo?.projectId ?? ""}`;
+  // Still sending or waiting if Create PR was pressed before the panel last closed.
+  const phase = useStore(PR_ASKS, NO_ASKS)[waitKey]?.phase ?? "idle";
+  // A wait that ran out while no row was on screen to end it.
+  useEffect(() => {
+    if (phase === "waiting" && prWaitLeft(waitKey) === 0) setPrAsk(waitKey, null);
+  }, [phase, waitKey]);
   const [error, setError] = useState<RowError | null>(null);
   // A repository's row of a session of several starts without its pull
   // request (the page loads the session's own one's): until the first look
@@ -486,7 +514,7 @@ function PullRequestRow({
         // Its first, or one that took over from a PR closed unmerged.
         if (result.pullRequest.number !== openedNumber) {
           setFound(result.pullRequest);
-          setPhase("idle");
+          setPrAsk(waitKey, null);
           router.refresh();
         }
         if (result.status) {
@@ -503,13 +531,13 @@ function PullRequestRow({
     if (Date.now() - lastLook.current > PR_POLL_MS / 2) void look();
     if (pollMs === null) return () => void (live = false);
     const poll = setInterval(() => void look(), pollMs);
-    const giveUp = hasPullRequest ? undefined : setTimeout(() => setPhase("idle"), PR_WAIT_MS);
+    const giveUp = hasPullRequest ? undefined : setTimeout(() => setPrAsk(waitKey, null), prWaitLeft(waitKey) || PR_WAIT_MS);
     return () => {
       live = false;
       clearInterval(poll);
       clearTimeout(giveUp);
     };
-  }, [hasPullRequest, openedNumber, pollMs, workspaceId, router, repo?.projectId]);
+  }, [hasPullRequest, openedNumber, pollMs, workspaceId, router, repo?.projectId, waitKey]);
 
   const errorLine = error && (
     <p aria-live="polite" className="studio-env-unfold text-destructive pt-0 text-xs">
@@ -538,7 +566,7 @@ function PullRequestRow({
 
   async function createPr() {
     if (!sender || phase !== "idle") return;
-    setPhase("sending");
+    setPrAsk(waitKey, { phase: "sending", since: Date.now() });
     setError(null);
     const result = await askAgent(
       sender,
@@ -547,14 +575,14 @@ function PullRequestRow({
       prInstructions({
         branch,
         baseBranch,
-        uncommitted,
+        changedFiles,
         ...(repo && { repo }),
         tools: evidenceToolsFor(provider),
         footer: prInstructionFooter(`${window.location.origin}/workspaces/${workspaceId}`, coAuthor),
       }),
     );
     if (result.error) setError({ message: result.error, reconnect: false });
-    setPhase(result.sent ? "waiting" : "idle");
+    setPrAsk(waitKey, result.sent ? { phase: "waiting", since: Date.now() } : null);
   }
 
   const busy = phase !== "idle";

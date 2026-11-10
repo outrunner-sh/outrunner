@@ -73,14 +73,28 @@ counted apart. The budget refills continuously: every answer carries
 
 | Method | Path | What it does |
 | --- | --- | --- |
+| GET | `/api/v1/openapi.json` | This API as an OpenAPI 3.1 document (no key needed) |
 | GET | `/api/v1/me` | Who the key acts as, in which org, with what role |
+| GET | `/api/v1/members` | The org's members and their roles (emails for its admins) |
+| GET | `/api/v1/usage` | The org's cloud hours and their controls |
 | GET | `/api/v1/environments` | The org's projects (one or several repositories each) |
+| GET | `/api/v1/environments/{id}` | A project in full: instructions, scripts, hooks, variables' names, files' paths |
+| PATCH | `/api/v1/environments/{id}` | Change its `name`, `description`, `instructions`, `scripts` or `hooks` |
+| PATCH | `/api/v1/environments/{id}/secrets` | Set and remove its variables and files: `set_env`, `remove_env`, `set_files`, `remove_files` |
+| POST | `/api/v1/environments/{id}/repos` | Add one of the org's repositories: `project_id` |
+| DELETE | `/api/v1/environments/{id}/repos/{project_id}` | Take one out |
 | GET | `/api/v1/projects` | The org's repositories the key's maker may start sessions on |
+| POST | `/api/v1/attachments` | Upload a file (multipart, `file`) to send with a prompt or a message |
 | GET | `/api/v1/workspaces` | Sessions, newest first: `status`, `source` (`app`, `slack`, `automation`, `github`, `api`), `user_id`, `project_id` |
 | POST | `/api/v1/workspaces` | Start a session: `preparing` at once |
 | GET | `/api/v1/workspaces/{id}` | A session, and where its turn is |
 | DELETE | `/api/v1/workspaces/{id}` | Delete a session for good |
-| POST | `/api/v1/workspaces/{id}/messages` | Send it a message (waking it first if it was paused or archived) |
+| POST | `/api/v1/workspaces/{id}/messages` | Send it a message (waking it first if it was paused or archived): `content`, `attachment_ids`, `mode` |
+| POST | `/api/v1/workspaces/{id}/answer` | Answer the question its agent is waiting on: `answers`, or `dismissed` |
+| POST | `/api/v1/workspaces/{id}/secrets` | Give its agent the secrets it asked for: `values`, or `skipped` |
+| POST | `/api/v1/workspaces/{id}/plan/approve` | Approve the plan its agent is waiting on |
+| POST | `/api/v1/workspaces/{id}/model` | Switch its `model` (and `provider`) or `effort` |
+| GET | `/api/v1/workspaces/{id}/changes` | The files it changed from its base branch; one file's diff with `path` |
 | POST | `/api/v1/workspaces/{id}/interrupt` | Stop the turn it's running |
 | GET | `/api/v1/workspaces/{id}/conversation` | Its conversation, a page at a time going back: `before_event` |
 | GET | `/api/v1/workspaces/{id}/wait` | Hold the call until its turn is over or it needs input, up to 10 minutes: `after_event`, `timeout` |
@@ -104,6 +118,12 @@ counted apart. The budget refills continuously: every answer carries
 | GET | `/api/v1/triage/items` | The org's work items: `status`, `project_id` (`none` for Unsorted) |
 | POST | `/api/v1/triage/items` | File a work item |
 | GET | `/api/v1/triage/items/{id}` | One work item |
+| GET | `/api/v1/automations` | The org's automations |
+| POST | `/api/v1/automations` | Make one (admins) |
+| GET | `/api/v1/automations/{id}` | One automation |
+| PATCH | `/api/v1/automations/{id}` | Change one (admins) |
+| DELETE | `/api/v1/automations/{id}` | Delete one (admins) |
+| GET | `/api/v1/automations/runs` | The 50 most recent runs, newest first: `automation_id` |
 
 ### Projects and repositories
 
@@ -139,6 +159,7 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 | `plan_mode` | `true` asks the agent to reply with a plan and wait before it changes anything; send a message to go ahead |
 | `size` | The box: `x-small`, `small`, `medium`, `large` (never beyond the plan) |
 | `branch`, `base_branch` | The branch to work on (made for it when left out) and the one it starts from |
+| `attachment_ids` | Files uploaded with `POST /attachments`, put on the box with the prompt (up to 10) |
 | `webhook_url` | An https URL told of this session's events (see Webhooks) |
 
 It answers `202` straight away with the session, `"status": "preparing"`;
@@ -221,6 +242,92 @@ only grow. A message the agent streams is one event, as it is now. The
 conversation is read from the session's box while it's up; an archived
 session's comes from its last snapshot (`"from": "archive"`, ids counting
 from 1), and a session with neither has none.
+
+A tool's result is a `tool_result` block with its call's `tool_use_id`, and
+`"is_error": true` when the tool failed (a command that exited non-zero, an
+edit that didn't apply); it's left out otherwise, and on boxes whose agent
+predates it.
+
+### Files
+
+Upload each file first, then name it by id when you start a session or
+send a message, as the composer does:
+
+```sh
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/attachments" -F "file=@screenshot.png"
+
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
+  "$OUTRUNNER/api/v1/workspaces/$ID/messages" -d '{ "content": "This is the bug", "attachment_ids": ["'"$FILE"'"] }'
+```
+
+```json
+{ "id": "…", "filename": "screenshot.png", "content_type": "image/png", "size_bytes": 48211 }
+```
+
+A file is up to 25 MB (send a `Content-Length`: a body without one, or
+over the limit, is refused before it's read), and a message takes up to
+10. About 100 files (500 MB) a day may wait unsent; past that, uploads are
+`429` until some are sent. It limits the rate, not the total: unsent files
+are kept until they're sent or deleted. The files land in the
+session's worktree under `.attachments/`, named in the message; images are
+named so the agent sees them. Files alone, without `content`, are a message
+too. A file is its uploader's: anyone else's id is `404`.
+
+### Questions, secrets and plans
+
+While the agent waits on you, its turn is `needs_input` and
+`turn.pending_input` says for what. Answer it:
+
+```sh
+# A question: one answer per question, options by label, or your own words.
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
+  "$OUTRUNNER/api/v1/workspaces/$ID/answer" -d '{ "answers": [{ "selected": ["Postgres"] }] }'
+
+# Secrets: the ones it asked for, by name. Never answered back.
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
+  "$OUTRUNNER/api/v1/workspaces/$ID/secrets" -d '{ "values": { "STRIPE_SECRET_KEY": "sk_test_…" } }'
+```
+
+`answers` has one item per question, in order: `{ "selected": [labels],
+"other": "text" }`, with labels from that question's `options` (one, unless
+it's `multiSelect`). `{ "dismissed": true }` declines the question, and
+`{ "skipped": true }` (without `values`) goes on without the secrets. A
+secrets request's `keys` are `{ "name", "optional" }`. Pass back
+`pending_input.tool_use_id` as `tool_use_id` and an answer meant for a
+request that's since been answered (by another client) is `409` rather than
+answering the next one. It's checked against what the session shows just
+before the answer goes: an identical request asked again in that moment
+could still take it. With an org key, secrets are also kept in
+the session's project for its next sessions, as the app's form keeps them;
+with a personal key or the CLI's token they're the session's alone
+(`"saved": false`), since a project's variables reach every member's box. Each answers
+`409` when the agent isn't waiting on that, and takes a `chat_id`.
+
+A message sent with `"mode": "plan"` asks for a plan first: the agent
+replies with it and waits. Approve it to build, or send a message to change
+it:
+
+```sh
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/plan/approve"
+```
+
+### Models and changes
+
+```sh
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
+  "$OUTRUNNER/api/v1/workspaces/$ID/model" -d '{ "model": "opus", "effort": "high" }'
+
+curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/changes"
+curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/changes?path=src/app.ts"
+```
+
+`model` takes the menu's ids (as `POST /workspaces` does); the agent
+relaunches on it with the conversation carried on. `effort` alone keeps
+the model it's on (with `chat_id`, that chat's; a chat with none on record
+needs `model` too). `changes` lists the
+files changed from the session's base branch (committed, pushed or not),
+and with `path` answers `{ "path", "diff" }`, a text diff of that file,
+size-capped.
 
 ### Chats
 
@@ -363,7 +470,7 @@ and remakes its ready boxes.
 ### Learnings
 
 ```sh
-curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \\
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
   "$OUTRUNNER/api/v1/learnings" -d '{ "scope": "org", "title": "Conventional Commits", "body": "Use Conventional Commits for every commit message and PR title." }'
 ```
 
@@ -380,6 +487,48 @@ every org; the default). A member's learning for the org, or any sent with
 most 120 characters, a body 2,000; a scope holds at most 100 active
 learnings, and one person 10 suggestions waiting in it.
 
+### Changing a project
+
+```sh
+curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/environments/$PROJECT"
+
+curl -X PATCH -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
+  "$OUTRUNNER/api/v1/environments/$PROJECT" -d '{ "instructions": "Use pnpm. Run the tests before a PR.", "scripts": { "setup": "pnpm install" } }'
+
+curl -X PATCH -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
+  "$OUTRUNNER/api/v1/environments/$PROJECT/secrets" -d '{ "set_env": { "DATABASE_URL": "postgres://…" }, "remove_files": [".env.old"] }'
+```
+
+A project is what sessions start with: its repositories, `instructions`,
+`scripts` (`setup`, `run`, `archive`), `hooks` (`warm`, `start`), and its
+variables and files. A field left out of a `PATCH` is left as it is; `null`
+clears `description` or `instructions`, or one script or hook
+(`"scripts": { "setup": null }`). Variables and files are write-only: answers name them, never a
+value. Changing them makes the project's ready boxes again. Each change
+needs write access to the project (Roles & access).
+
+What runs on the project's boxes runs in every member's session, beside
+their GitHub token: `scripts`, `hooks`, variables, files, repositories, MCP
+servers and skills, and the `instructions` every member's agent is given. So
+only an **org key** may change them: a personal key or the CLI's token is
+`403` (a project's `name` and `description` any key with write access may
+change). Keys have no finer scopes yet.
+
+### Automations
+
+```sh
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
+  "$OUTRUNNER/api/v1/automations" \
+  -d '{ "name": "Nightly deps", "prompt": "Update dependencies and open a PR", "triggers": ["schedule"], "schedules": [{ "kind": "weekly", "timezone": "Europe/London", "days": [1,2,3,4,5], "time": "02:00" }], "project_ids": ["6f0c…"] }'
+```
+
+The fields are the Automations page's: `name`, `prompt`, `template`,
+`triggers`, `schedules`, `project_ids`, `enabled`, `reviewers`, `labels`,
+`max_runs`, `archive_when_done`, `debounce_seconds`, `session_mode`,
+`archived`. Any member lists them and their runs; making, changing and
+deleting one is the org's admins' (an org key's maker is one). An
+automation runs as whoever last set what it does.
+
 ## CLI
 
 The `outrunner` CLI drives sessions through this API, signed in with
@@ -395,6 +544,7 @@ outrunner send <id> "Also add a test for it." --wait
 outrunner read <id> --limit 20
 outrunner wait <id> --after 48213 --timeout 30m
 outrunner delete <id> --yes
+git log -1 --format=%B | outrunner triage --repo acme/web
 ```
 
 `create` takes `--repo` (`owner/name` or an id), `--model`, `--agent`,
@@ -406,6 +556,8 @@ exits 0 when it's over, 3 when the session needs input, 4 on timeout, 1
 when the session failed or stopped, and 5 when Outrunner couldn't be reached
 for a while (a dropped call, a deploy or a 5xx is tried again a few times
 first); it prints the command, fence and org included, that carries on.
+`list --project` takes `owner/name` too. `triage` files a work item, with
+`OUTRUNNER_API_KEY` through `POST /triage/items`.
 
 ## Webhooks
 
@@ -473,14 +625,21 @@ claude mcp add --transport http outrunner https://app.outrunner.sh/api/mcp --hea
 | `list_chats` | `GET /workspaces/{id}/chats` |
 | `list_workspaces` | `GET /workspaces` |
 | `get_workspace` | `GET /workspaces/{id}` |
+| `answer_question` | `POST /workspaces/{id}/answer` |
+| `provide_secrets` | `POST /workspaces/{id}/secrets` |
+| `approve_plan` | `POST /workspaces/{id}/plan/approve` |
+| `switch_model` | `POST /workspaces/{id}/model` |
+| `get_changes` | `GET /workspaces/{id}/changes` |
 | `archive_workspace` | `POST /workspaces/{id}/archive` |
 | `list_previews` | `GET /workspaces/{id}/previews` |
 | `create_preview` | `POST /workspaces/{id}/previews` |
 | `update_preview` | `PATCH /workspaces/{id}/previews/{preview_id}` |
 | `delete_preview` | `DELETE /workspaces/{id}/previews/{preview_id}` |
 
-`send_message`, `read_conversation` and `wait_for_workspace` take a
-`chat_id`, as their REST calls do.
+`send_message`, `read_conversation`, `wait_for_workspace`, `answer_question`,
+`provide_secrets`, `approve_plan` and `switch_model` take a `chat_id`, as
+their REST calls do; `send_message` takes `mode`. Files are uploaded over
+REST (`POST /attachments`): MCP has no upload.
 
 Each tool answers with the REST call's JSON (as text, and as structured
 content), or its error, flagged `isError`. The same rights, rate limits and

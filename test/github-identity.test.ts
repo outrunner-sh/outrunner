@@ -34,8 +34,8 @@ function deps(over: Partial<IdentityDeps> = {}) {
   const minted: Array<{ installationId: number; repo: string; permissions?: TokenPermissions }> = [];
   const d: IdentityDeps = {
     identity: async () => "app",
-    personalToken: async () => "gho_mine",
-    githubLinked: async () => true,
+    personalToken: async () => ({ token: "gho_mine", expiresAt: null }),
+    personalConnected: async () => true,
     config: () => config,
     installations: async () => [installation(7, "ZeroTrail")],
     repoLevel: async () => "write",
@@ -67,16 +67,22 @@ test("working as themselves, a member gets their own token, whatever the reposit
   assert.equal(minted.length, 0);
 });
 
-test("with no GitHub account linked, a member's own is the org's App where it reaches the repository, else none", async () => {
-  const { d } = deps({ identity: async () => "personal", personalToken: async () => null, githubLinked: async () => false });
+test("their own GitHub App user token goes with when it stops working, for the box to ask again", async () => {
+  const until = new Date(NOW + 8 * 60 * 60 * 1000);
+  const { d } = deps({ identity: async () => "personal", personalToken: async () => ({ token: "ghu_mine", expiresAt: until }) });
+  assert.deepEqual(await resolveGitCredential(ask, d), { identity: "personal", token: "ghu_mine", expiresAt: until });
+});
+
+test("never having connected their own GitHub, a member's own is the org's App where it reaches the repository, else none", async () => {
+  const { d } = deps({ identity: async () => "personal", personalToken: async () => null, personalConnected: async () => false });
   assert.equal((await resolveGitCredential(ask, d)).identity, "app");
   // No installation on its account, or not a project of theirs: no token, as before (a public clone).
   await assert.rejects(resolveGitCredential(ask, { ...d, installations: async () => [] }), MissingGithubTokenError);
   await assert.rejects(resolveGitCredential(ask, { ...d, repoLevel: async () => null }), MissingGithubTokenError);
   // Asked for their own by name: never the App.
   await assert.rejects(resolveGitCredential({ ...ask, identity: "personal" }, d), MissingGithubTokenError);
-  // GitHub linked, its token gone: reconnect, never the App unasked.
-  await assert.rejects(resolveGitCredential(ask, { ...d, githubLinked: async () => true }), MissingGithubTokenError);
+  // Connected once, its token gone: reconnect, never the App unasked.
+  await assert.rejects(resolveGitCredential(ask, { ...d, personalConnected: async () => true }), MissingGithubTokenError);
 });
 
 test("working as the App, a member gets its installation's token for that one repository, kept until near its end", async () => {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"runtime-agent/internal/protocol"
+	"runtime-agent/internal/redact"
 	"runtime-agent/internal/transcript"
 	"runtime-agent/internal/workspace"
 )
@@ -38,6 +39,7 @@ func mintToken(claims protocol.RuntimeTokenClaims, secret string) string {
 // $HOME so SessionLog reads from a scratch dir, and returns everything the
 // test needs to drive /events over HTTP.
 type serverFixture struct {
+	root        string
 	url         string
 	secret      string
 	workspaceID string
@@ -74,6 +76,7 @@ func newServerFixture(t *testing.T) *serverFixture {
 	ts := httptest.NewServer(srv.Handler())
 
 	return &serverFixture{
+		root:        root,
 		url:         ts.URL,
 		secret:      secret,
 		workspaceID: workspaceID,
@@ -374,6 +377,32 @@ func TestEventsFreshConnectStreamsBacklog(t *testing.T) {
 	}
 }
 
+func TestEventsMaskTheSessionsSecrets(t *testing.T) {
+	f := newServerFixture(t)
+	defer f.stop()
+
+	// A project variable, as the session's environment writes it.
+	envDir := filepath.Join(f.root, "envroot", f.workspaceID)
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envDir, ".env"), []byte("OUTRUNNER_CANARY=canary-2682b7c55940\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.appendJSONL(t,
+		`{"type":"assistant","uuid":"m1","parentUuid":null,"timestamp":"t1","message":{"role":"assistant","content":[{"type":"text","text":"canary-2682b7c55940"}]}}`)
+
+	resp, cancel := f.dial(t, "")
+	defer cancel()
+	defer resp.Body.Close()
+
+	frames := readSSE(t, bufio.NewReader(resp.Body), 2, 2*time.Second)
+	if len(frames) != 2 {
+		t.Fatalf("want state+1 frame, got %d", len(frames))
+	}
+	assertMessageWithText(t, frames[1], "***")
+}
+
 func assertMessageWithText(t *testing.T, frame sseFrame, want string) {
 	t.Helper()
 	var raw map[string]any
@@ -390,5 +419,47 @@ func assertMessageWithText(t *testing.T, frame sseFrame, want string) {
 	first, ok := content[0].(map[string]any)
 	if !ok || first["type"] != "text" || first["text"] != want {
 		t.Fatalf("expected text=%q, got %+v", want, first)
+	}
+}
+
+func TestMaskTextMasksTheBoxsSecrets(t *testing.T) {
+	f := newServerFixture(t)
+	defer f.stop()
+	envDir := filepath.Join(f.root, "envroot", f.workspaceID)
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envDir, ".env"), []byte("OUTRUNNER_CANARY=canary-2682b7c55940\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, f.url+"/workspaces/"+f.workspaceID+"/mask", strings.NewReader(`{"text":"The key is canary-2682b7c55940."}`))
+	req.Header.Set("Authorization", "Bearer "+f.token(t))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var got struct{ Text string }
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil || resp.StatusCode != http.StatusOK || got.Text != "The key is ***." {
+		t.Fatalf("mask = %d %+v %v", resp.StatusCode, got, err)
+	}
+}
+
+func TestMaskMessageLeavesImageBytesAlone(t *testing.T) {
+	r := redact.New([]string{"canary-2682b7c55940"})
+	m := &protocol.ConversationMessage{T: "message", Content: []protocol.ContentBlock{
+		{Type: "text", Text: "key canary-2682b7c55940"},
+		{Type: "tool_result", Content: json.RawMessage(`[{"type":"text","text":"canary-2682b7c55940"}]`)},
+		{Type: "image", Source: &protocol.ImageSource{Type: "base64", Data: "canary-2682b7c55940"}},
+	}}
+	got, err := maskMessage(r, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Content[0].Text != "key ***" || string(got.Content[1].Content) != `[{"text":"***","type":"text"}]` {
+		t.Fatalf("masked = %+v", got.Content)
+	}
+	if got.Content[2].Source.Data != "canary-2682b7c55940" || m.Content[0].Text != "key canary-2682b7c55940" {
+		t.Fatalf("an image's bytes were read, or the message itself changed")
 	}
 }

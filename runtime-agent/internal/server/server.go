@@ -135,6 +135,7 @@ func (s *Server) Handler() http.Handler {
 	// tool, or `outrunner media upload`), with its ask token as ask's.
 	mux.HandleFunc("POST /workspaces/{id}/media", s.uploadMedia)
 	mux.HandleFunc("POST /workspaces/{id}/secrets", s.authed(s.provideSecrets))
+	mux.HandleFunc("POST /workspaces/{id}/mask", s.authed(s.maskText))
 	// git's credential helper and the gh wrapper on this box ask, with the
 	// agent's credential token (package gitcred).
 	mux.HandleFunc("POST /git-credential", s.gitCredential)
@@ -175,7 +176,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{featureHarnessSwitch, protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureCodexSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots, protocol.FeatureRewind, protocol.FeatureCodexAccessToken, protocol.FeatureCodexAccount},
+		Features: []string{featureHarnessSwitch, protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureCodexSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots, protocol.FeatureRewind, protocol.FeatureCodexAccessToken, protocol.FeatureCodexAccount, protocol.FeatureSnapshotPatchIntegrity},
 	})
 }
 
@@ -1309,6 +1310,13 @@ func (s *Server) sessionTool(w http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusBadRequest, "malformed request")
 		return
 	}
+	// What a tool keeps (a note to the org's memory, a learning) leaves the
+	// box: its secrets are masked first, as in the chat (NEE-268).
+	if len(call.Args) > 0 {
+		if masked, err := s.redactor().JSON(call.Args); err == nil {
+			call.Args = masked
+		}
+	}
 	status, answer, err := s.ws.SessionTool(r.Context(), call)
 	switch {
 	case errors.Is(err, workspace.ErrUnknownWorkspace):
@@ -1318,6 +1326,49 @@ func (s *Server) sessionTool(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, status, answer)
 	}
+}
+
+// redactor masks the box's secrets as they are now, and any provided later.
+func (s *Server) redactor() *redact.Redactor {
+	return redact.New(s.ws.CurrentSecrets()).Follow(s.ws.LiveSecrets())
+}
+
+// maskMessage is a conversation message with its secrets masked: its text,
+// and a tool's input and result through their strings. An image's bytes
+// (Source) aren't read: up to MaxImageBlockData of base64 that no command
+// printed. m itself is left as it was.
+func maskMessage(r *redact.Redactor, m *protocol.ConversationMessage) (*protocol.ConversationMessage, error) {
+	out := *m
+	out.Content = make([]protocol.ContentBlock, len(m.Content))
+	for i, block := range m.Content {
+		block.Text = r.Text(block.Text)
+		for _, raw := range []*json.RawMessage{&block.Input, &block.Content} {
+			if len(*raw) == 0 {
+				continue
+			}
+			masked, err := r.JSON(*raw)
+			if err != nil {
+				return nil, err
+			}
+			*raw = masked
+		}
+		out.Content[i] = block
+	}
+	return &out, nil
+}
+
+// maskText answers text with the box's secrets masked: for what a session
+// sends out by another way than its chat (a Slack research answer, posted
+// with curl), which the server masks here before passing it on (NEE-268).
+func (s *Server) maskText(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text string `json:"text"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	redactor := s.redactor()
+	writeJSON(w, http.StatusOK, map[string]string{"text": redactor.Redact([]byte(req.Text)) + redactor.Flush()})
 }
 
 // setSkills installs a project's skills on this computer. Any session's
@@ -1402,15 +1453,7 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 	}
 	defer sess.Close()
 
-	// Serialize all WriteJSON calls on this connection — the coalescer flushes
-	// from its own goroutine, role updates from the broker's, and pongs from
-	// pumpIn. gorilla/websocket requires exclusive writer access.
-	var writeMu sync.Mutex
-	writeFrame := func(msg protocol.PtyServerMessage) error {
-		writeMu.Lock()
-		defer writeMu.Unlock()
-		return conn.WriteJSON(msg)
-	}
+	writeFrame := ptyFrameWriter(conn, eventsWSWriteWait)
 
 	// Broker role: attaches this connection, tells us if we're the writer, and
 	// re-notifies us later if a reader is promoted after the writer detaches.
@@ -1435,13 +1478,12 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 		}
 		return writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(seq)})
 	})
-	go coalescer.Run()
-	defer func() {
-		coalescer.Stop()
+	coalescer.Start()
+	defer coalescer.Close(func(seq func() int) {
 		if output := redactor.Flush(); output != "" {
-			_ = writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(coalescer.NextSeq())})
+			_ = writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(seq())})
 		}
-	}()
+	})
 
 	go pumpOut(sess, coalescer, writeFrame, func() bool {
 		return s.ws.SessionAlive(context.Background(), key)
@@ -1614,6 +1656,20 @@ func (s *Server) streamEvents(
 ) {
 	cursor := fromOffset
 	running := s.ws.SessionLog(key) != ""
+	// The box's secrets are masked in every event, as in its terminal: a
+	// command that prints one would otherwise show it in the chat (NEE-268).
+	// The redactor is made again at most once a second, from the box's
+	// shared read of them (CurrentSecrets), so a session's environment
+	// written after the stream opened is masked too; values provided
+	// mid-session are followed as they arrive.
+	var redactor *redact.Redactor
+	var redactorAt time.Time
+	masked := func(m *protocol.ConversationMessage) (*protocol.ConversationMessage, error) {
+		if now := time.Now(); redactor == nil || now.Sub(redactorAt) >= stateCheckInterval {
+			redactor, redactorAt = s.redactor(), now
+		}
+		return maskMessage(redactor, m)
+	}
 	writeState := func(state string) bool {
 		payload, _ := json.Marshal(protocol.WorkspaceStateChanged{
 			T: "state", WorkspaceID: workspaceID, State: state,
@@ -1725,7 +1781,14 @@ func (s *Server) streamEvents(
 			var mErr error
 			switch {
 			case ev.Message != nil:
-				payload, mErr = json.Marshal(ev.Message)
+				var message *protocol.ConversationMessage
+				if message, mErr = masked(ev.Message); mErr == nil {
+					payload, mErr = json.Marshal(message)
+				} else {
+					// Dropped rather than sent unmasked: said, so a missing
+					// message can be traced.
+					log.Printf("events: %s: message %s not sent, its secrets couldn't be masked: %v", workspaceID, ev.Message.UUID, mErr)
+				}
 			case ev.Usage != nil:
 				payload, mErr = json.Marshal(ev.Usage)
 			default:
@@ -1929,4 +1992,27 @@ func rewindForClient(n, known int, at, cursor int64, uuid string) (protocol.Conv
 		cursor = at
 	}
 	return protocol.ConversationRewound{T: "rewind", At: at, UUID: uuid, Rewinds: n, Reset: reset}, cursor
+}
+
+// ptyFrameWriter writes a /pty socket's frames, one at a time: the coalescer
+// flushes from its own goroutine, role updates from the broker's, and pongs
+// from pumpIn, and gorilla/websocket requires exclusive writer access. Each
+// write has `wait` to finish, so a client that stopped reading can't hold it,
+// and with it the coalescer's Close and the handler's teardown, until TCP
+// gives up. A failed (timed-out) write leaves the socket unusable, so it is
+// closed: pumpIn's read returns, the handler unwinds and the client
+// reconnects, rather than typing into a socket that never again carries
+// output.
+func ptyFrameWriter(conn *websocket.Conn, wait time.Duration) func(protocol.PtyServerMessage) error {
+	var mu sync.Mutex
+	return func(msg protocol.PtyServerMessage) error {
+		mu.Lock()
+		defer mu.Unlock()
+		_ = conn.SetWriteDeadline(time.Now().Add(wait))
+		if err := conn.WriteJSON(msg); err != nil {
+			_ = conn.Close()
+			return err
+		}
+		return nil
+	}
 }

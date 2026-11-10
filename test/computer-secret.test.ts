@@ -48,7 +48,12 @@ test("a secret sealed under a rotated key opens to null, not a throw", () => {
 
 test("a tampered sealed value opens to null", () => {
   const stored = storeAgentSecret(randomBytes(32).toString("hex"));
-  const tampered = stored.slice(0, -2) + (stored.endsWith("aa") ? "bb" : "aa");
+  // A byte of the ciphertext flipped: editing its last base64url characters
+  // could change only their unused padding bits, decoding to the same bytes.
+  const [version, iv, tag, ciphertext] = stored.split(".");
+  const bytes = Buffer.from(ciphertext, "base64url");
+  bytes[0] ^= 0xff;
+  const tampered = [version, iv, tag, bytes.toString("base64url")].join(".");
   assert.equal(openAgentSecretOrNull(tampered, "c1"), null);
 });
 

@@ -23,12 +23,12 @@ const SLACK_RESULTS: Record<string, string> = {
   unavailable: "Sign in with Slack isn't set up on this deployment.",
 };
 
-/** Connections: your own accounts, connected to an org (your Slack user, and
- *  the CLI). The org's own are under Org → Integrations. */
+/** Connections: your own accounts (GitHub for your repositories, your Slack
+ *  user, and the CLI). The org's own are under Org → Integrations. */
 export default function IntegrationsSettings({
   searchParams,
 }: {
-  searchParams: Promise<{ slack?: string; link_error?: string }>;
+  searchParams: Promise<{ slack?: string; link_error?: string; github?: string }>;
 }) {
   return (
     <Suspense fallback={<SettingsLoading title="Connections" />}>
@@ -37,10 +37,14 @@ export default function IntegrationsSettings({
   );
 }
 
-async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ slack?: string; link_error?: string }> }) {
+async function IntegrationsSection({
+  searchParams,
+}: {
+  searchParams: Promise<{ slack?: string; link_error?: string; github?: string }>;
+}) {
   const owner = await getOwnerSafe();
   if (!owner) redirect("/signin");
-  const { slack, link_error: linkError } = await searchParams;
+  const { slack, link_error: linkError, github } = await searchParams;
   const enabled = Boolean(optionalEnv("SLACK_SIGNING_SECRET"));
   const links = await listSlackLinks(owner.id).catch((error: unknown): SlackLink[] => {
     console.error("Settings: could not load Slack links", error);
@@ -56,7 +60,7 @@ async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ s
         </Link>
       </div>
 
-      <GitHubConnectionSection userId={owner.id} login={owner.githubLogin} />
+      <GitHubConnectionSection userId={owner.id} login={owner.githubLogin} result={github ?? null} />
       {linkError && <p role="alert" className="text-sm text-destructive">{linkError === "identity_already_exists" ? "That GitHub account is already linked to another Outrunner account. Connect a different account, or sign in with GitHub to use it." : "GitHub could not be connected. Please try again."}</p>}
 
       <div className="space-y-3">

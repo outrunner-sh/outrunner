@@ -28,6 +28,7 @@ Commands:
   whoami   Show who this terminal is signed in as
   sandbox  Connect your Google Cloud project: outrunner sandbox connect gcp
   triage   Add a work item to your triage: outrunner triage "fix the flaky test"
+           (OUTRUNNER_API_KEY instead of a sign-in, as below)
 
 Sessions (the API, docs/api.md; OUTRUNNER_API_KEY instead of a sign-in):
   list     List your sessions

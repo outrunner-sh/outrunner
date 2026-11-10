@@ -9,12 +9,14 @@ const NO_DESKTOP = { desktop: false };
 const FOOTER = { sessionUrl: "https://app.outrunner.sh/workspaces/ws-1", userName: "Ada Lovelace" };
 
 function instructions(over: Partial<Parameters<typeof prInstructions>[0]> = {}) {
-  return prInstructions({ branch: "b", baseBranch: "main", uncommitted: 0, tools: DESKTOP, footer: FOOTER, ...over });
+  return prInstructions({ branch: "b", baseBranch: "main", changedFiles: 0, tools: DESKTOP, footer: FOOTER, ...over });
 }
 
-test("the instructions name the branch, its target and what's uncommitted", () => {
-  const md = instructions({ branch: "runtime/abc", baseBranch: "develop", uncommitted: 3 });
-  assert.match(md, /^There are 3 uncommitted changes\.$/m);
+test("the instructions name the branch, its target and how many files differ from it", () => {
+  const md = instructions({ branch: "runtime/abc", baseBranch: "develop", changedFiles: 3 });
+  assert.match(md, /^3 files differ from origin\/develop\.$/m);
+  // Not "uncommitted": the count is the whole branch's, commits included (NEE-232).
+  assert.doesNotMatch(md, /^There (is|are) .*uncommitted/m);
   assert.match(md, /^The current branch is runtime\/abc\.$/m);
   assert.match(md, /^The target branch is origin\/develop\.$/m);
   assert.match(md, /`git push -u origin runtime\/abc`/);
@@ -36,14 +38,14 @@ test("the Environment panel's Create PR footer carries the trusted co-author", (
   assert.match(md, /`Co-Authored-By: Ada <1\+ada@users\.noreply\.github\.com>`/);
 });
 
-test("one uncommitted change is singular, none says so", () => {
-  assert.match(instructions({ uncommitted: 1 }), /^There is 1 uncommitted change\.$/m);
-  assert.match(instructions({ uncommitted: 0 }), /^There are no uncommitted changes\.$/m);
+test("one changed file is singular, none says so", () => {
+  assert.match(instructions({ changedFiles: 1 }), /^1 file differs from origin\/main\.$/m);
+  assert.match(instructions({ changedFiles: 0 }), /^No files differ from origin\/main\.$/m);
 });
 
 test("an unknown count is left out rather than guessed", () => {
-  const md = instructions({ uncommitted: null });
-  assert.doesNotMatch(md, /^There (is|are) .*uncommitted/m);
+  const md = instructions({ changedFiles: null });
+  assert.doesNotMatch(md, /differ from/);
   assert.match(md, /^The current branch is b\.$/m);
 });
 

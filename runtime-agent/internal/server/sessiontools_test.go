@@ -45,6 +45,13 @@ func TestSessionToolsReachTheControlPlane(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFacts(t, root, "ws-1")
+	envDir := filepath.Join(root, "envroot", "ws-1")
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envDir, ".env"), []byte("OUTRUNNER_CANARY=canary-2682b7c55940\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	ts := httptest.NewServer(New("s", svc).Handler())
 	defer ts.Close()
 	if err := svc.Announce(ts.Listener.Addr()); err != nil {
@@ -86,6 +93,14 @@ func TestSessionToolsReachTheControlPlane(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Fatalf("refused calls reached the control plane: %+v", got)
+	}
+
+	// A secret on the box is masked in what a tool sends out (NEE-268).
+	if code, _, errOut := run("ws-1", "suggest-learning", "--org", "--title", "Key", "It's", "canary-2682b7c55940"); code != 0 {
+		t.Fatalf("suggest-learning with a secret = %d, %q", code, errOut)
+	}
+	if len(got) != 2 || string(got[1].Args) != `{"body":"It's ***","scope":"org","title":"Key"}` {
+		t.Fatalf("control plane got %+v", got)
 	}
 }
 

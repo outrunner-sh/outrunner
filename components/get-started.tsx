@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { Check, ChevronDown } from "lucide-react";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 
+import { useClaudeConnected } from "@/hooks/use-claude-connected";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { getStartedSteps, rememberGetStartedSkipped, showGetStarted } from "@/lib/nav/get-started";
 import { cn } from "@/lib/utils";
@@ -56,31 +57,10 @@ export function GetStarted({
 }) {
   const [skippedHere, setSkippedHere] = useState(false);
   const [folded, setFolded] = useStoredFlag(FOLDED_KEY, false);
-  const [claudeConnected, setClaudeConnected] = useState<boolean | null>(null);
   // Not known yet counts as away: nothing shows until the cookie says it should.
   const away = skipped !== false || skippedHere;
 
-  useEffect(() => {
-    if (away) return;
-    let cancelled = false;
-    const read = async () => {
-      try {
-        const res = await fetch("/api/settings/claude", { cache: "no-store" });
-        if (!res.ok) return;
-        const data = (await res.json()) as { connected?: boolean };
-        if (!cancelled) setClaudeConnected(Boolean(data.connected));
-      } catch {
-        // Offline: the step stays as it was, and the next look may work.
-      }
-    };
-    void read();
-    // Connected in Settings, or in another window: seen on the way back.
-    window.addEventListener("focus", read);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("focus", read);
-    };
-  }, [away]);
+  const { connected: claudeConnected } = useClaudeConnected(!away);
 
   const models = useOutrunnerModels();
   const steps = getStartedSteps({ projects, sessions, claudeConnected, startsWithoutClaude: models?.available ?? null });

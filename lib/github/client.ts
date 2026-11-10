@@ -57,30 +57,30 @@ export class GitHubSyncError extends Error {
 
 /**
  * The user has no usable GitHub token. Recoverable, and always by the same
- * action: (re)connecting GitHub from Settings → Account, so an OAuth round trip
- * mints a fresh one.
+ * action: (re)connecting GitHub from Settings → Connections (the Outrunner
+ * GitHub App's user authorization, lib/github/user-auth.ts).
  *
- * Reached when the user signed in with Google and never connected GitHub, last
- * signed in before the `repo` scope was requested,
- * or when a stored token could not be decrypted (see lib/db/credentials.ts).
+ * Reached when the user never connected GitHub for their repositories
+ * (signing in with GitHub is identity alone), when GitHub stopped renewing
+ * their connection, or when a stored token could not be decrypted.
  * Lives here, beside the other GitHub errors, so code that maps errors to
  * responses need not pull in the credential store; lib/github/token re-exports it.
  */
 export class MissingGithubTokenError extends Error {
   constructor() {
-    super("Connect your GitHub account in Settings → Account to grant repository access.");
+    super("Connect GitHub in Settings → Connections to give Outrunner access to your repositories.");
     this.name = "MissingGithubTokenError";
   }
 }
 
 /**
- * GitHub refused the user's stored token: revoked, superseded, or minted for
- * another account. Only a fresh OAuth sign-in replaces it, so routes flag this
- * one and the UI links the user to Settings → Account to reconnect.
+ * GitHub refused the user's token: revoked, superseded, or minted for another
+ * account. Only connecting again replaces it, so routes flag this one and the
+ * UI links the user to Settings → Connections to reconnect.
  */
 export class GitHubReconnectError extends GitHubSyncError {
   constructor(
-    message = "Your GitHub connection has expired. Sign out and back in to reconnect.",
+    message = "Your GitHub connection has expired. Reconnect GitHub in Settings → Connections.",
     status?: number,
   ) {
     super(message, status);
