@@ -41,7 +41,7 @@ export function StartupStatus({ startup }: { startup: SessionStartup }) {
       {startup.stalled ? <Clock className="size-3.5 shrink-0" /> : <Spinner className="size-3.5 shrink-0" />}
       <span className="min-w-0 flex-1">
         {startup.stalled ? "Startup is taking longer than expected" : "Starting your session"}
-        <span className="ml-2 tabular-nums" suppressHydrationWarning>{elapsed(startup.startedAt, now)}</span>
+        <span aria-hidden className="ml-2 tabular-nums" suppressHydrationWarning>{elapsed(startup.startedAt, now)}</span>
       </span>
       <button type="button" onClick={startup.onDetails} className="shrink-0 underline underline-offset-2">Session info</button>
     </div>
