@@ -144,7 +144,8 @@
   /* Every inspector tab shares one width, so switching panels never moves
      the chat. The app's navigation sidebar is outside this grid. */
   --studio-inspector-width: 400px;
-  grid-template-columns: minmax(0, 1fr) var(--studio-inspector-width);
+  /* Dragged wider, it still never takes more than 60% of the window. */
+  grid-template-columns: minmax(0, 1fr) min(var(--studio-inspector-width), 60vw);
   grid-template-rows: auto minmax(0, 1fr);
   /* Definite height (not min-height) so the grid tracks are bounded: the chat
      column's conversation scrolls internally and its composer stays pinned at
@@ -367,7 +368,10 @@
 .studio-env-merge[aria-busy="true"] { cursor: progress; }
 /* A fixed toolbar above the independently scrolling panel. Only the active
    tab shows its label; every icon keeps its accessible name and tooltip. */
-.studio-inspector { min-width: 0; border-left: 1px solid var(--studio-line); }
+.studio-inspector { position: relative; min-width: 0; border-left: 1px solid var(--studio-line); }
+/* The panel's left edge, dragged to resize it (hooks/use-inspector-width.ts). */
+.studio-inspector-resize { position: absolute; top: 0; bottom: 0; left: -3px; z-index: 5; width: 6px; cursor: col-resize; touch-action: none; }
+.studio-inspector-resize:hover, .studio-inspector-resize:focus-visible { outline: none; background: linear-gradient(to right, transparent 2px, rgba(255,255,255,.25) 2px, rgba(255,255,255,.25) 4px, transparent 4px); }
 .studio-inspector-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 8px; min-height: 52px; padding: 8px 12px; }
 .studio-tabs { display: flex; min-width: 0; align-items: center; gap: 4px; }
 .studio-tab { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 8px; height: 36px; min-width: 36px; padding: 0 10px; border-radius: 7px; color: rgba(255,255,255,.5); background: transparent; font-size: 13px; cursor: pointer; transition: background-color .15s, color .15s; }
@@ -723,9 +727,10 @@
 .studio-icon-button:focus-visible,
 .studio-composer-footer button:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
 /* The conversation scrolls, but without a visible scrollbar on the right: it's
-   driven by wheel, trackpad and keys, and the turn rail is the way around. */
-.timeline-scroll { scrollbar-width: none; -ms-overflow-style: none; }
-.timeline-scroll::-webkit-scrollbar { width: 0; height: 0; }
+   driven by wheel, trackpad and keys, and the turn rail is the way around.
+   The sidebar's list too: an overlay scrollbar would sit on its rows' chips. */
+.timeline-scroll, .sidebar-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+.timeline-scroll::-webkit-scrollbar, .sidebar-scroll::-webkit-scrollbar { width: 0; height: 0; }
 /* Conversation rows off screen skip layout and paint; each remembers its last
    rendered height, so the scrollbar and auto-follow stay true. */
 .timeline-row { min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 60px; }
@@ -818,6 +823,10 @@
 @media (hover: none) { .timeline-prompt-edit { opacity: 1; } }
 .timeline-prompt-edit:hover { color: var(--studio-text); background: var(--studio-hover); }
 .timeline-prompt-edit svg { width: 13px; }
+/* A long prompt, its first lines fading out until Show more opens it. */
+.timeline-prompt-words.is-clamped { max-height: calc(1.55em * 8); overflow: hidden; mask-image: linear-gradient(to bottom, #000 60%, transparent); }
+.timeline-prompt-more { display: block; margin-top: 4px; padding: 0; color: var(--studio-muted); background: none; font-size: 12px; cursor: pointer; }
+.timeline-prompt-more:hover { color: var(--studio-text); }
 .timeline-worked { display: flex; align-items: center; gap: 6px; padding: 2px 8px; color: #8a8a8a; font-size: 12.5px; }
 .timeline-worked svg { width: 13px; height: 13px; }
 .timeline-worked .timeline-time::before { content: "·"; margin-right: 6px; }
@@ -852,7 +861,7 @@
 @media (prefers-reduced-motion: reduce) { .mission-pulse, .mission-in { animation: none; } }
 /* A Mission's Ships pane, ruled off from the chat. */
 .studio-runners { display: flex; flex-direction: column; height: 100%; min-height: 0; border-left: 1px solid var(--studio-line); background: var(--studio-bg); }
-@media (min-width: 1101px) { .studio-shell.is-mission:not(.no-inspector) { grid-template-columns: minmax(0, 1fr) 340px; } }
+@media (min-width: 1101px) { .studio-shell.is-mission:not(.no-inspector) { grid-template-columns: minmax(0, 1fr) min(var(--studio-mission-inspector-width, 340px), 60vw); } }
 
 /* iOS zooms the page into any field under 16px when it's focused. */
 @media (max-width: 639px) { .studio-composer textarea, .studio-queue-edit, .studio-diff-comment-form textarea { font-size:16px; } }
