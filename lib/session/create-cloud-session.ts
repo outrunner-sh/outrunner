@@ -360,7 +360,7 @@ async function createOnce(
     return NextResponse.json(
       {
         error:
-          "Connect your GitHub account in Settings → Account to clone a private repository.",
+          "Connect GitHub in Settings → Connections to clone a private repository.",
       },
       { status: 409 },
     );
@@ -989,14 +989,14 @@ async function githubRefusal(
     if (!project.private) return null;
     return NextResponse.json(
       {
-        error: `Your GitHub account can't see ${project.fullName} any more. Check its access on GitHub, or reconnect it in Settings → Account.`,
+        error: `Your GitHub account can't see ${project.fullName} any more. Check its access on GitHub, and that it's among the repositories you gave Outrunner (Settings → Connections → GitHub).`,
         reconnect: true,
         settingsHref: GITHUB_RECONNECT_HREF,
       },
       { status: 409 },
     );
   } catch (error) {
-    // With the link the form shows: where signing in again happens.
+    // With the link the form shows: where GitHub is connected again.
     if (error instanceof GitHubReconnectError) {
       return NextResponse.json({ error: error.message, reconnect: true, settingsHref: GITHUB_RECONNECT_HREF }, { status: 409 });
     }

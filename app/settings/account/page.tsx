@@ -12,6 +12,7 @@ import { SignInButton } from "@/components/signin-button";
 import { SignOutButton } from "@/components/sign-out-button";
 import { hasGithubIdentity } from "@/lib/auth/identity";
 import { getAuthUser, getOwnerSafe } from "@/lib/auth/owner";
+import { githubSignInScopes } from "@/lib/github/legacy-token";
 
 /** Opens at once, its data streaming in behind: the build checks it. */
 export const unstable_instant = {
@@ -20,11 +21,10 @@ export const unstable_instant = {
   samples: [{ searchParams: { link_error: null } }],
 };
 
-/** Account: the signed-in identity; how the user hears of their sessions
- *  (components/notification-settings.tsx); who sessions work on GitHub as
- *  (lib/github/identity.ts), or connecting GitHub to an account that signed
- *  in with Google or an emailed code; and sign-out. A revoked GitHub token is
- *  replaced under Connections (components/github-connection-section.tsx). */
+/** Account: the signed-in identity, linking GitHub to sign in with it too
+ *  (an account that signed in with Google or an emailed code), and sign-out.
+ *  GitHub for repositories, and reconnecting it, is Settings → Connections
+ *  (components/github-connection-section.tsx): never a sign-out. */
 /** Why connecting GitHub failed, by the error code Supabase sent back
  *  (app/auth/callback). Codes only: the URL's own text is never shown. */
 const LINK_ERRORS: Record<string, string> = {
@@ -88,9 +88,9 @@ async function AccountSection({ searchParams }: { searchParams: Promise<{ link_e
         <>
           <div className="space-y-2">
             <p className="text-muted-foreground text-sm">
-              If GitHub stops working (repositories won’t load, or publishing fails),{" "}
+              Your repositories on GitHub, and reconnecting them if they stop working, are in{" "}
               <Link href="/settings/connections" className="text-foreground underline underline-offset-2">
-                reconnect it in Connections
+                Connections
               </Link>
               .
             </p>
@@ -103,8 +103,11 @@ async function AccountSection({ searchParams }: { searchParams: Promise<{ link_e
         <>
           <div className="space-y-2">
             <p className="text-muted-foreground text-sm">
-              Connect GitHub to work on your repositories: sessions clone, push
-              and open pull requests as your GitHub account.
+              Link GitHub to sign in with it too. Your repositories are connected in{" "}
+              <Link href="/settings/connections" className="text-foreground underline underline-offset-2">
+                Connections
+              </Link>
+              .
             </p>
             {linkMessage && (
               <p role="alert" className="text-xs text-destructive">
@@ -112,7 +115,7 @@ async function AccountSection({ searchParams }: { searchParams: Promise<{ link_e
               </p>
             )}
             <div className="max-w-xs">
-              <SignInButton provider="github" link next="/settings/account" />
+              <SignInButton provider="github" link next="/settings/account" githubScopes={githubSignInScopes()} />
             </div>
           </div>
           <form action={signOut}>
