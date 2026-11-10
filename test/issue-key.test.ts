@@ -4,7 +4,8 @@ import { test } from "node:test";
 
 import { isValidBranchName } from "@/lib/runtime/git";
 import { prInstructions } from "@/lib/session/pr-instructions";
-import { branchHint, issueBranch, issueKeyOfUrl, nextFreeBranch, trackerIssueOf, withFreeBranch } from "@/lib/trackers/issue-key";
+import { insertOnBranch } from "@/lib/session/generated-branch";
+import { branchHint, issueBranch, issueFirstBranch, issueKeyOfUrl, nextFreeBranch, trackerIssueOf } from "@/lib/trackers/issue-key";
 
 test("the key is read from either tracker's link", () => {
   assert.equal(issueKeyOfUrl("https://linear.app/acme/issue/ENG-123/checkout-breaks"), "ENG-123");
@@ -44,30 +45,46 @@ test("a number only on a real clash, in any case", () => {
   assert.equal(nextFreeBranch("eng-1-x", ["ENG-1-X", "eng-1-x-2"]), "eng-1-x-3");
 });
 
-test("two starting on one item: the loser takes the next free name, once", async () => {
+test("two starting on one item: the loser takes the issue's next free name, then a generated one", async () => {
   const taken = new Error("taken");
-  const isTaken = (error: unknown) => error === taken;
-  const tried: (string | null)[] = [];
-  const insert = (fails: number) => async (branch: string | null) => {
-    tried.push(branch);
-    if (tried.length <= fails) throw taken;
-    return `made on ${branch}`;
+  const isBranchTaken = (error: unknown) => error === taken;
+  // Inserting fails `fails` times as taken, then makes the row.
+  const start = (first: string | null, fails: number, next: string | null, requested = "") => {
+    const tried: string[] = [];
+    const issueNamed = new Set<string>();
+    const made = insertOnBranch({
+      requested,
+      generate: (lost) => issueFirstBranch({ first, lost, next: async () => next, generated: async () => `gen-${lost.size}`, issueNamed }),
+      insert: async (branch) => {
+        tried.push(branch);
+        if (tried.length <= fails) throw taken;
+        return branch;
+      },
+      isBranchTaken,
+    });
+    return { made, tried, issueNamed };
   };
-  assert.equal(await withFreeBranch("eng-1-x", insert(0), async () => "unused", isTaken), "made on eng-1-x");
-  tried.length = 0;
-  assert.equal(await withFreeBranch("eng-1-x", insert(1), async () => "eng-1-x-2", isTaken), "made on eng-1-x-2");
-  assert.deepEqual(tried, ["eng-1-x", "eng-1-x-2"]);
-  tried.length = 0;
-  assert.equal(await withFreeBranch("eng-1-x", insert(1), async () => null, isTaken), "made on null", "a generated one then");
-  tried.length = 0;
-  await assert.rejects(withFreeBranch("eng-1-x", insert(2), async () => "eng-1-x-2", isTaken), /taken/);
-  assert.equal(tried.length, 2, "only once more");
-  // A branch someone asked for has no second try: that's its own answer, naming who has it.
-  tried.length = 0;
-  await assert.rejects(withFreeBranch(null, insert(1), async () => assert.fail("not asked"), isTaken), /taken/);
-  // Nor anything else that goes wrong, such as the session's own id being taken.
-  tried.length = 0;
-  await assert.rejects(withFreeBranch("eng-1-x", async () => assert.fail("other"), async () => assert.fail("not asked"), isTaken));
+  let run = start("eng-1-x", 0, "unused");
+  assert.equal(await run.made, "eng-1-x");
+  assert.deepEqual([...run.issueNamed], ["eng-1-x"]);
+  run = start("eng-1-x", 1, "eng-1-x-2");
+  assert.equal(await run.made, "eng-1-x-2");
+  assert.deepEqual(run.tried, ["eng-1-x", "eng-1-x-2"]);
+  // The next free one lost too (or none found): a generated name, not the key's.
+  run = start("eng-1-x", 2, "eng-1-x-2");
+  assert.equal(await run.made, "gen-2");
+  assert.deepEqual(run.tried, ["eng-1-x", "eng-1-x-2", "gen-2"]);
+  assert.ok(!run.issueNamed.has("gen-2"), "a generated branch may be renamed");
+  run = start("eng-1-x", 1, null);
+  assert.equal(await run.made, "gen-1");
+  // Not on an issue: generated from the start.
+  run = start(null, 0, "unused");
+  assert.equal(await run.made, "gen-0");
+  assert.equal(run.issueNamed.size, 0);
+  // A branch someone asked for has no second try: that's its own answer.
+  run = start("eng-1-x", 1, "eng-1-x-2", "their-branch");
+  await assert.rejects(run.made, /taken/);
+  assert.deepEqual(run.tried, ["their-branch"]);
 });
 
 test("the create route treats its id being taken as that, not as the name", () => {
@@ -80,14 +97,12 @@ test("the agent's hint spells the key as its tracker wants", () => {
   assert.match(branchHint("jira", "ENG-1"), /`fix\/ENG-1-what-it-does`/);
 });
 
-test("a branch someone asked for wins; else the issue's name, else a generated one, all the server's", () => {
+test("the server names a new session's branch through issueFirstBranch, and the hook sends none", () => {
   const create = readFileSync("lib/session/create-cloud-session.ts", "utf8");
   assert.match(create, /requested: requestedBranch,/);
-  // The issue's name is offered first, and the generated one only without it.
-  assert.ok(create.indexOf("issueBranches.add(name)") < create.indexOf("return generatedBranch(about, generation, lost)"));
+  assert.match(create, /issueFirstBranch\(\{/);
   // Named for its issue, the agent doesn't rename it away from the key.
   assert.match(create, /branchRenamable: !requestedBranch && !issueBranches\.has\(branch\)/);
-  // The hook sends no branch at all: the server names every new one.
   const hook = readFileSync("hooks/use-create-session.ts", "utf8");
   assert.doesNotMatch(hook, /\{ branch \}\)/);
 });
@@ -97,6 +112,10 @@ test("Create PR names the issue as each tracker's GitHub integration reads it", 
   assert.match(prInstructions({ ...base, issue: { source: "linear", key: "ENG-1" } }), /^This session works on Linear issue ENG-1\. Put "Fixes ENG-1" in the PR body\.$/m);
   assert.match(prInstructions({ ...base, issue: { source: "jira", key: "ENG-1" } }), /^This session works on Jira issue ENG-1\. Put ENG-1 in the PR title\.$/m);
   assert.doesNotMatch(prInstructions(base), /works on (Linear|Jira) issue/);
+  // A stand-in branch on an issue is renamed with its key kept.
+  const renamed = prInstructions({ ...base, nameBranch: true, issue: { source: "linear", key: "ENG-1" } });
+  assert.match(renamed, /rename-branch <type>\/<what-it-does>`\)\. Keep ENG-1 in any branch you name/);
+  assert.doesNotMatch(prInstructions({ ...base, nameBranch: true }), /Keep .* in any branch you name/);
 });
 
 test("the route's answer is only for someone who can see the session, and Create PR doesn't depend on it", () => {

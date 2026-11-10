@@ -19,7 +19,7 @@ import {
   templateSection,
   UPDATE_RULE,
 } from "@/lib/session/pr-template";
-import type { TrackerIssue } from "@/lib/trackers/issue-key";
+import { branchHint, type TrackerIssue } from "@/lib/trackers/issue-key";
 
 export const PR_PROMPT = "Create a PR";
 
@@ -90,7 +90,7 @@ Follow these steps to create a PR:
 - Commit them. Follow any instructions the user gave you about writing commit messages and the attribution rules below.
 - Run \`git diff origin/${baseBranch}...\` to review the whole PR diff, and decide whether it changes UI or behaviour a person can see.
 - If it does, produce the evidence now, before pushing (below). Backend-only and docs changes skip this.
-${nameBranch ? `- If the branch is still ${branch}, the stand-in from the first message, give it its real name now, as your instructions' Branch name says (\`outrunner-session rename-branch <type>/<what-it-does>\`).\n` : ""}- Push to origin (\`git push -u origin HEAD\`): the branch you're on, whatever it's called now (its agent may have renamed it).
+${nameBranch ? `- If the branch is still ${branch}, the stand-in from the first message, give it its real name now, as your instructions' Branch name says (\`outrunner-session rename-branch <type>/<what-it-does>\`).${issue ? ` ${branchHint(issue.source, issue.key)}` : ""}\n` : ""}- Push to origin (\`git push -u origin HEAD\`): the branch you're on, whatever it's called now (its agent may have renamed it).
 - If this branch already has a pull request, the push updates it. ${UPDATE_RULE} Then share its link and evidence in your final chat reply.
 - Otherwise write the body from the template below to a file and run \`gh pr create --base ${baseBranch} --title "…" --body-file <file>\` to create a PR onto the target branch, unless the user instructed you otherwise. Describe not just changes made in this session but ALL changes in the workspace diff.
 

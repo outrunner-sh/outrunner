@@ -52,21 +52,27 @@ export function nextFreeBranch(base: string, taken: readonly string[]): string {
 }
 
 /**
- * Insert on a server-chosen name, and if another took it meanwhile, once more on the next free
- * one, or none (a generated one). Anything else that fails, or a second clash, is the caller's.
+ * The branch a new session on a tracker's issue tries next (lib/session/
+ * generated-branch.ts insertOnBranch's `generate`): the issue's name first,
+ * after a lost race the issue's next free one, and a generated one when
+ * there's none or that's lost too. Each issue name it hands out goes into
+ * `issueNamed`, so the caller knows which branch keeps the key.
  */
-export async function withFreeBranch<T>(
-  name: string | null,
-  insert: (branch: string | null) => Promise<T>,
-  next: () => Promise<string | null>,
-  isTaken: (error: unknown) => boolean,
-): Promise<T> {
-  try {
-    return await insert(name);
-  } catch (error) {
-    if (!name || !isTaken(error)) throw error;
-    return insert(await next());
+export async function issueFirstBranch(input: {
+  first: string | null;
+  lost: ReadonlySet<string>;
+  next(): Promise<string | null>;
+  generated(): Promise<string>;
+  issueNamed: Set<string>;
+}): Promise<string> {
+  if (input.first) {
+    const name = input.lost.size === 0 ? input.first : await input.next();
+    if (name && !input.lost.has(name)) {
+      input.issueNamed.add(name);
+      return name;
+    }
   }
+  return input.generated();
 }
 
 /** How the agent is told to keep the key, should it ever name a branch itself. */

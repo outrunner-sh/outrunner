@@ -54,6 +54,7 @@ import {
 import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
 import { getWorkItem, linkWorkItemToSession, projectOrgId, triageActor, trackerIssueOfItem } from "@/lib/db/work-items";
 import { freeIssueBranch } from "@/lib/session/issue-branch";
+import { issueFirstBranch } from "@/lib/trackers/issue-key";
 import { tellTrackersSessionStarted } from "@/lib/trackers/write-back.deps";
 import { isUuid } from "@/lib/ids";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
@@ -513,17 +514,14 @@ async function createOnce(
     const issueBranches = new Set<string>();
     workspace = await insertOnBranch({
       requested: requestedBranch,
-      generate: async (lost) => {
-        if (issueBranchName) {
-          const name =
-            lost.size === 0 ? issueBranchName : await branchOfItem(owner.id, project.id, body.workItemId as string).catch(() => null);
-          if (name && !lost.has(name)) {
-            issueBranches.add(name);
-            return name;
-          }
-        }
-        return generatedBranch(about, generation, lost);
-      },
+      generate: (lost) =>
+        issueFirstBranch({
+          first: issueBranchName,
+          lost,
+          next: () => branchOfItem(owner.id, project.id, body.workItemId as string).catch(() => null),
+          generated: () => generatedBranch(about, generation, lost),
+          issueNamed: issueBranches,
+        }),
       insert: (branch) =>
         createWorkspaceRow({
           ...(askedId && { id: askedId }),
