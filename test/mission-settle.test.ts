@@ -8,7 +8,7 @@ import {
   isRunnerBranch,
   type PullRequestFacts,
   reviewState,
-  runnerOwning,
+  runnersOwning,
   settle,
   SETTLE_MS,
 } from "@/lib/missions/settle";
@@ -113,23 +113,30 @@ test("a branch is the Runner's whose branch is the longest it's named after", ()
   const second = { id: "b", branch: "verify-prs-2" };
   const runners = [first, second];
   const own = new Set(["verify-prs", "verify-prs-2"]);
-  assert.equal(runnerOwning(runners, "verify-prs", own), first);
-  assert.equal(runnerOwning(runners, "verify-prs-2", own), second);
-  assert.equal(runnerOwning(runners, "verify-prs-2-2", own), second);
-  assert.equal(runnerOwning(runners, "verify-prs-3", own), first);
-  assert.equal(runnerOwning(runners, "main", own), undefined);
+  assert.deepEqual(runnersOwning(runners, "verify-prs", own), [first]);
+  assert.deepEqual(runnersOwning(runners, "verify-prs-2", own), [second]);
+  assert.deepEqual(runnersOwning(runners, "verify-prs-2-2", own), [second]);
+  assert.deepEqual(runnersOwning(runners, "verify-prs-3", own), [first]);
+  assert.deepEqual(runnersOwning(runners, "main", own), []);
+});
+
+test("Runners on the same branch (different orgs' sessions of one repository) all own it", () => {
+  const a = { id: "a", branch: "fix" };
+  const b = { id: "b", branch: "fix" };
+  assert.deepEqual(runnersOwning([a, b], "fix", new Set(["fix"])), [a, b]);
+  assert.deepEqual(runnersOwning([a, b], "fix-2", new Set()), [a, b]);
 });
 
 test("a branch that is another session's own is never a Runner's stacked work", () => {
   const ship = { id: "ship", branch: "add-dark-mode" };
   // Plain sessions (not Runners) on add-dark-mode-settings and add-dark-mode-2.
   const own = new Set(["add-dark-mode", "add-dark-mode-settings", "add-dark-mode-2"]);
-  assert.equal(runnerOwning([ship], "add-dark-mode-settings", own), undefined);
-  assert.equal(runnerOwning([ship], "add-dark-mode-2", own), undefined);
+  assert.deepEqual(runnersOwning([ship], "add-dark-mode-settings", own), []);
+  assert.deepEqual(runnersOwning([ship], "add-dark-mode-2", own), []);
   // The Ship's own branch, and stacked work no session has: still the Ship's.
-  assert.equal(runnerOwning([ship], "add-dark-mode", own), ship);
-  assert.equal(runnerOwning([ship], "add-dark-mode-2", new Set(["add-dark-mode"])), ship);
-  assert.equal(runnerOwning([ship], "add-dark-mode-part-2", own), ship);
+  assert.deepEqual(runnersOwning([ship], "add-dark-mode", own), [ship]);
+  assert.deepEqual(runnersOwning([ship], "add-dark-mode-2", new Set(["add-dark-mode"])), [ship]);
+  assert.deepEqual(runnersOwning([ship], "add-dark-mode-part-2", own), [ship]);
 });
 
 test("a Runner is done only once it has pull requests and all are merged or closed", () => {

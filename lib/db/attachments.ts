@@ -114,6 +114,20 @@ export async function getAttachments(ids: string[]): Promise<Attachment[]> {
     .map(toAttachment);
 }
 
+/** The caller's uploads not yet put on a box, made since `since`: how many,
+ *  and their bytes. For the API's cap on files uploaded and never sent. */
+export async function unsentAttachments(since: Date): Promise<{ count: number; bytes: number }> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("attachments")
+    .select("size_bytes")
+    .is("materialized_at", null)
+    .gte("created_at", since.toISOString());
+  if (error) throw error;
+  const rows = (data ?? []) as { size_bytes: number }[];
+  return { count: rows.length, bytes: rows.reduce((sum, row) => sum + Number(row.size_bytes), 0) };
+}
+
 /** The bytes of one attachment, for writing onto a box. */
 export async function readAttachmentBytes(storagePath: string): Promise<Buffer> {
   const { data, error } = await createSupabaseAdminClient()

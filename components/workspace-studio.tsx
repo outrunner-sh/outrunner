@@ -26,6 +26,7 @@ import { WorkspaceEnvironment } from "@/components/workspace-environment";
 import { type SessionSender, WorkspaceSession } from "@/components/workspace-session";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useMission } from "@/hooks/use-missions";
+import { useInspectorWidth } from "@/hooks/use-inspector-width";
 import { useModalPanel } from "@/hooks/use-modal-panel";
 import { useSessionChats } from "@/hooks/use-session-chats";
 import { useRestoreOnOpen } from "@/hooks/use-restore-on-open";
@@ -99,6 +100,8 @@ export function WorkspaceStudio({
   // A Mission's page: its header, and its Ships where a session's
   // Environment is (components/missions).
   const isMission = workspace.kind === "mission";
+  // Dragged wider or narrower by its left edge, where it sits beside the chat.
+  const inspectorWidth = useInspectorWidth(isMission ? "mission" : "session");
   const { mission } = useMission(isMission ? workspace.id : undefined);
   // Missions archive their Ships together. Individual cloud sessions are deleted.
   const archive = !isLocal && isMission ? missionArchiveOffer(workspace) : null;
@@ -169,6 +172,7 @@ export function WorkspaceStudio({
         !rightOpen && "no-inspector",
         isMission && "is-mission",
       )}
+      style={inspectorWidth.width ? ({ [isMission ? "--studio-mission-inspector-width" : "--studio-inspector-width"]: `${inspectorWidth.width}px` } as React.CSSProperties) : undefined}
     >
       <header className="studio-header">
         <div className="studio-title">
@@ -346,6 +350,7 @@ export function WorkspaceStudio({
         aria-modal={overlay || undefined}
         aria-label={isMission ? "Ships" : (tabs.find((t) => t.id === tab)?.label ?? "Environment")}
       >
+        {rightOpen && !narrow && <div className="studio-inspector-resize" {...inspectorWidth.handle} />}
         {rightOpen && isMission && <RunnersPane missionId={workspace.id} onClose={() => setRightOpen(false)} />}
         {rightOpen && !isMission && (
           <div className="studio-inspector-toolbar">

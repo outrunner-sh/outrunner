@@ -10,8 +10,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, Ellipsis, GitPullRequest, Plus, Rocket } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Archive, ChevronRight, Ellipsis, GitPullRequest, Plus, Rocket } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
 import { MissionGlyph, PullRequestChip, RunnerGlyph, UnreadDot } from "@/components/missions/mission-parts";
@@ -20,13 +20,25 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { SkeletonRows } from "@/components/ui/skeleton-swap";
 import { refreshMissions, useMissions } from "@/hooks/use-missions";
 import { missionArchiveOffer, unarchivedShipCount } from "@/lib/missions/archive";
-import type { NavProject } from "@/lib/nav/workspace-nav-groups";
+import { recentProjects, type NavProject } from "@/lib/nav/workspace-nav-groups";
 import { MISSION_STATUS_LABEL, type MissionView, type RunnerView } from "@/lib/missions/view";
-import type { WorkspaceStatus } from "@/lib/runtime/types";
+import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /** Ships shown under a Mission before "more". */
 const SHOWN_RUNNERS = 5;
+
+/** Missions folded shut with their chevron, kept in this browser. */
+const FOLDED_KEY = "outrunner.folded-missions";
+
+function savedFolded(): string[] {
+  try {
+    const saved: unknown = JSON.parse(window.localStorage.getItem(FOLDED_KEY) ?? "[]");
+    return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 /** Ships with open work (an archived one's pull request still open is),
  *  the ones that need someone first. */
@@ -35,10 +47,38 @@ function nestedRunners(mission: MissionView): RunnerView[] {
   return mission.runners.filter((r) => r.group !== "done").sort((a, b) => order[a.group] - order[b.group]);
 }
 
-export function SidebarMissions({ active, projects }: { active?: string; projects: NavProject[] }) {
+export function SidebarMissions({
+  active,
+  projects,
+  workspaces,
+}: {
+  active?: string;
+  projects: NavProject[];
+  /** The sidebar's sessions: which projects were used last. */
+  workspaces: Workspace[];
+}) {
   const { loaded, missions } = useMissions();
   const [creating, setCreating] = useState(false);
   const [archiving, setArchiving] = useState<MissionView | null>(null);
+  // Missions whose Ships are all shown, not just the first few.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  // Missions whose Ships are hidden, as Projects fold; read once mounted, so
+  // the server's page and the first render agree.
+  const [folded, setFolded] = useState<readonly string[]>([]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFolded(savedFolded());
+  }, []);
+  const toggleFolded = (id: string) => {
+    const next = folded.includes(id) ? folded.filter((f) => f !== id) : [...folded, id];
+    setFolded(next);
+    try {
+      if (next.length > 0) window.localStorage.setItem(FOLDED_KEY, JSON.stringify(next));
+      else window.localStorage.removeItem(FOLDED_KEY);
+    } catch {
+      // Blocked storage only costs remembering it.
+    }
+  };
   // A partial attempt refreshes Missions; use that live row rather than the
   // object captured when the menu opened.
   const archiveTarget = archiving && (missions.find((mission) => mission.id === archiving.id) ?? archiving);
@@ -48,6 +88,14 @@ export function SidebarMissions({ active, projects }: { active?: string; project
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
+
+  // The open session's project first, then the most recently used: an org
+  // can have hundreds, and the dialog shows the first few.
+  const offered = useMemo(
+    () =>
+      recentProjects(projects, [...workspaces, ...missions], [...workspaces, ...missions].find((w) => w.id === active)?.projectId),
+    [projects, workspaces, missions, active],
+  );
 
   const shown = order
     ? [...missions].sort((a, b) => (order.indexOf(a.id) + 1 || 1e9) - (order.indexOf(b.id) + 1 || 1e9))
@@ -122,6 +170,15 @@ export function SidebarMissions({ active, projects }: { active?: string; project
           <ul className="space-y-px">
             {shown.map((mission) => {
               const runners = nestedRunners(mission);
+              const isFolded = runners.length > 0 && folded.includes(mission.id);
+              // The Ship you're on is always listed: folded, it's the only one,
+              // as a folded Project keeps its open session (lib/nav/sidebar.ts
+              // shownSessions); open, it's added past the first few.
+              const current = runners.find((runner) => runner.id === active);
+              const firstFew = runners.slice(0, expanded.has(mission.id) ? undefined : SHOWN_RUNNERS);
+              const shownRunners = isFolded
+                ? current ? [current] : []
+                : current && !firstFew.includes(current) ? [...firstFew, current] : firstFew;
               const isActive = mission.id === active;
               const archived = mission.sessionStatus === "archived";
               const archive = missionArchiveOffer({ status: mission.sessionStatus as WorkspaceStatus, provider: mission.provider });
@@ -163,8 +220,13 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                       className={cn(
                         "group/mrow flex items-center gap-2.5 rounded-md px-2 py-1 text-[13px] transition-colors",
                         isActive ? "bg-accent text-foreground" : "text-foreground hover:bg-accent/60",
-                        // Room for its menu as it shows.
-                        archive && "group-hover/mission:pr-8 group-focus-within/mission:pr-8 group-has-[[data-state=open]]/mission:pr-8",
+                        // Room for its chevron and menu as they show; a folded
+                        // one's chevron always shows.
+                        runners.length > 0
+                          ? archive
+                            ? cn("group-hover/mission:pr-14 group-focus-within/mission:pr-14 group-has-[[data-state=open]]/mission:pr-14", isFolded && "pr-14")
+                            : cn("group-hover/mission:pr-8 group-focus-within/mission:pr-8", isFolded && "pr-8")
+                          : archive && "group-hover/mission:pr-8 group-focus-within/mission:pr-8 group-has-[[data-state=open]]/mission:pr-8",
                         dragging === mission.id && "opacity-50",
                       )}
                     >
@@ -184,6 +246,22 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                         <span className="shrink-0 text-[11px] font-medium text-brand">Needs you</span>
                       ) : null}
                     </Link>
+                    {runners.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => toggleFolded(mission.id)}
+                        aria-expanded={!isFolded}
+                        aria-label={isFolded ? `Show ${mission.title}'s Ships` : `Hide ${mission.title}'s Ships`}
+                        title={isFolded ? `Show Ships (${runners.length})` : "Hide Ships"}
+                        className={cn(
+                          "absolute top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground outline-none transition hover:bg-accent hover:text-foreground focus-visible:opacity-100",
+                          archive ? "right-7" : "right-1",
+                          isFolded ? "opacity-100" : "opacity-0 group-hover/mission:opacity-100 group-focus-within/mission:opacity-100",
+                        )}
+                      >
+                        <ChevronRight className={cn("size-3.5 transition-transform", !isFolded && "rotate-90")} />
+                      </button>
+                    )}
                     {archive && (
                       <DropdownMenu>
                         <DropdownMenuTrigger
@@ -206,9 +284,9 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                       </DropdownMenu>
                     )}
                   </div>
-                  {runners.length > 0 && (
+                  {shownRunners.length > 0 && (
                     <ul className="relative mt-px ml-[17px] space-y-px border-l border-white/[0.07] pl-[7px]">
-                      {runners.slice(0, SHOWN_RUNNERS).map((runner) => {
+                      {shownRunners.map((runner) => {
                         const pr = runner.pulls.find((p) => p.state === "open") ?? runner.pulls.find((p) => p.state === "merged");
                         return (
                           <li key={runner.id} className="mission-in">
@@ -222,7 +300,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                                 runner.id === active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                               )}
                             >
-                              <RunnerGlyph group={runner.group} state={runner.state} standing={runner.standing} className="size-3" />
+                              <RunnerGlyph group={runner.group} state={runner.state} standing={runner.standing} attention={runner.attention} className="size-3" />
                               <span className="min-w-0 flex-1 truncate">{runner.name}</span>
                               <UnreadDot standing={runner.standing} />
                               {pr && <PullRequestChip pr={pr} link={false} compact />}
@@ -230,14 +308,22 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                           </li>
                         );
                       })}
-                      {runners.length > SHOWN_RUNNERS && (
+                      {!isFolded && runners.length > SHOWN_RUNNERS && (expanded.has(mission.id) || runners.length > shownRunners.length) && (
                         <li>
-                          <Link
-                            href={`/workspaces/${mission.id}`}
-                            className="block rounded-md py-[3px] pl-6 text-[12px] text-muted-foreground hover:text-foreground"
+                          <button
+                            type="button"
+                            aria-expanded={expanded.has(mission.id)}
+                            onClick={() =>
+                              setExpanded((now) => {
+                                const next = new Set(now);
+                                if (!next.delete(mission.id)) next.add(mission.id);
+                                return next;
+                              })
+                            }
+                            className="block w-full rounded-md py-[3px] pl-6 text-left text-[12px] text-muted-foreground hover:text-foreground"
                           >
-                            {runners.length - SHOWN_RUNNERS} more
-                          </Link>
+                            {expanded.has(mission.id) ? "Show less" : `${runners.length - shownRunners.length} more`}
+                          </button>
                         </li>
                       )}
                     </ul>
@@ -248,7 +334,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
           </ul>
         )}
       </div>
-      <NewMissionDialog open={creating} onOpenChange={setCreating} projects={projects} />
+      <NewMissionDialog open={creating} onOpenChange={setCreating} projects={offered} />
       <ArchiveMissionDialog
         mission={archiveTarget && { id: archiveTarget.id, title: archiveTarget.title, ships: unarchivedShipCount(archiveTarget.runners) }}
         onOpenChange={(open) => {

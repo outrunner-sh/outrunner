@@ -2,6 +2,8 @@ import type { SlackConversation } from "@/lib/db/slack-agent";
 
 /** A pull request GitHub says was opened. */
 export type OpenedPullRequest = {
+  /** GitHub's own id of the repository: what projects match by. */
+  repoId: number;
   repoFullName: string;
   headRef: string;
   number: number;
@@ -12,8 +14,9 @@ export type OpenedPullRequest = {
 /** What announcing a pull request reads and writes (announce-pull-request.deps.ts). */
 export type AnnounceDeps = {
   /** The sessions on `headRef` that work in the repository: as their own,
-   *  or as another of a session of several's. */
-  sessionsOn: (repoFullName: string, headRef: string) => Promise<string[]>;
+   *  or as another of a session of several's — the installation's own orgs'
+   *  projects of it only. */
+  sessionsOn: (repoId: number, headRef: string) => Promise<string[]>;
   /** The work items those sessions work on. */
   itemsOf: (sessionIds: string[]) => Promise<{ id: string; number: number }[]>;
   conversationForItem: (itemId: string) => Promise<SlackConversation | null>;
@@ -34,7 +37,7 @@ export type AnnounceDeps = {
  * unmerged) starts over.
  */
 export async function announcePullRequestWith(pr: OpenedPullRequest, deps: AnnounceDeps): Promise<void> {
-  const sessions = await deps.sessionsOn(pr.repoFullName, pr.headRef);
+  const sessions = await deps.sessionsOn(pr.repoId, pr.headRef);
   if (sessions.length === 0) return;
   for (const item of await deps.itemsOf(sessions)) {
     const conversation = await deps.conversationForItem(item.id);

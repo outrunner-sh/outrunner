@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { branchesDiffer } from "@/hooks/use-standings";
-import { runnerOwning } from "@/lib/missions/settle";
+import { runnersOwning } from "@/lib/missions/settle";
 import { checkRename, commitRename, nameProblem, type RenameBranchDeps, type RenameSession } from "@/lib/session/rename-branch";
 import { callSessionTool, type SessionToolDeps } from "@/lib/session-tools/tools";
 
@@ -115,6 +115,6 @@ test("a Ship renamed before it pushed is matched by its new branch", () => {
   // Read from the database at match time, as runnersFor does.
   const ship = { id: "ship", branch: "fix/google-sign-in" };
   const own = new Set(["fix/google-sign-in"]);
-  assert.equal(runnerOwning([ship], "fix/google-sign-in", own), ship);
-  assert.equal(runnerOwning([ship], "sign-fails-google-users", own), undefined);
+  assert.deepEqual(runnersOwning([ship], "fix/google-sign-in", own), [ship]);
+  assert.deepEqual(runnersOwning([ship], "sign-fails-google-users", own), []);
 });

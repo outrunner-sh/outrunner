@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AttachError, attachCloudSession } from "@/lib/session/attach-session";
-import { SESSION_ENDED } from "@/lib/session/session-codes";
+import { AttachError, attachCloudSession, retryableAttachFailure } from "@/lib/session/attach-session";
+import { BOX_GONE, BOX_RESTORE_FAILED, SESSION_ENDED, SESSION_NOT_STARTED } from "@/lib/session/session-codes";
 
 const urls = { ptyUrl: "wss://box/pty", eventsUrl: "wss://box/events" };
 const reply = (status: number, code?: string) => Response.json({ error: "Box is waking", ...(code && { code }) }, { status });
@@ -82,4 +82,22 @@ test("a session archived or deleted elsewhere is said with its code, once, never
     (error: unknown) => error instanceof AttachError && error.code === SESSION_ENDED && !error.retryable,
   );
   assert.equal(calls, 1);
+});
+
+test("what the reconnect loop may try again: a failure on the way, never one that names what happened", async () => {
+  const failure = (status: number, code?: string) =>
+    attachCloudSession("w", "main", false, new AbortController().signal, {
+      fetch: async () => reply(status, code),
+      wait: async () => {},
+    }).then(() => assert.fail("attached"), (error: unknown) => error);
+  assert.equal(retryableAttachFailure(await failure(503, BOX_RESTORE_FAILED)), true);
+  assert.equal(retryableAttachFailure(await failure(502)), true);
+  assert.equal(retryableAttachFailure(new TypeError("Failed to fetch")), true);
+  // Any code the route names that isn't a failed restore ends it, a new one
+  // (a session archived from another tab) as much as the known ones.
+  for (const [status, code] of [[410, BOX_GONE], [502, SESSION_NOT_STARTED], [409, SESSION_ENDED], [401, undefined], [404, undefined]] as const) {
+    assert.equal(retryableAttachFailure(await failure(status, code)), false, `${status} ${code}`);
+  }
+  assert.equal(retryableAttachFailure(new AttachError("x", null)), false);
+  assert.equal(retryableAttachFailure(new Error("Malformed session response from server")), false);
 });
