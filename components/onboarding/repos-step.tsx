@@ -4,6 +4,7 @@ import { Check, Lock, Search } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { GitHubConnectLink } from "@/components/github-connect-link";
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { DashedPanel, DashedRule } from "@/components/onboarding/dashed";
 import { Input } from "@/components/ui/input";
@@ -167,6 +168,7 @@ export function ReposStep({
 
       {unreachable && active ? (
         <ConnectGitHub
+          ownHref={access.personalConnectable ? OWN_CONNECT_HREF : "/settings/account"}
           admin={active.admin}
           installable={access.appInstallable && (access.personalGithub || !access.installNeedsGithub)}
           linkFirst={access.appInstallable && !access.personalGithub && access.installNeedsGithub}
@@ -315,17 +317,39 @@ function OrgSource({
   );
 }
 
-/** An org with no way to GitHub, for a user with no GitHub account linked:
+/** Connecting the user's own GitHub for their repositories (Settings →
+ *  Connections → GitHub), coming back here. */
+const OWN_CONNECT_HREF = "/api/github/user/connect?next=/onboarding";
+
+/** The way to their own GitHub: the connect flow (which works in the
+ *  desktop shell too), or, where sign-in still keeps a token, Settings →
+ *  Account's Connect GitHub. */
+function OwnGitHubLink({ href, className, children }: { href: string; className: string; children: React.ReactNode }) {
+  return href === OWN_CONNECT_HREF ? (
+    <GitHubConnectLink next="/onboarding" className={className}>
+      {children}
+    </GitHubConnectLink>
+  ) : (
+    <Link href={href} className={className}>
+      {children}
+    </Link>
+  );
+}
+
+/** An org with no way to GitHub, for a user who hasn't connected their own:
  *  install the App (its admins; GitHub is asked who installed it on the way
- *  back), or link a GitHub account for their own repositories. Where GitHub
- *  can't be asked (`linkFirst`), installing takes the account linked first. */
+ *  back), or connect their own GitHub for their own repositories (`ownHref`).
+ *  Where GitHub can't be asked (`linkFirst`), installing takes the account
+ *  linked first. */
 function ConnectGitHub({
+  ownHref,
   admin,
   installable,
   linkFirst,
   ownRepositories,
   orgName,
 }: {
+  ownHref: string;
   admin: boolean;
   installable: boolean;
   linkFirst: boolean;
@@ -351,9 +375,9 @@ function ConnectGitHub({
               Install GitHub App
             </a>
             {ownRepositories && (
-              <Link href="/settings/account" className="text-muted-foreground hover:text-foreground underline-offset-4 hover:underline">
-                Or use your own GitHub account
-              </Link>
+              <OwnGitHubLink href={ownHref} className="text-muted-foreground hover:text-foreground underline-offset-4 hover:underline">
+                Or connect your own GitHub account
+              </OwnGitHubLink>
             )}
           </>
         ) : admin && linkFirst ? (
@@ -370,9 +394,9 @@ function ConnectGitHub({
         ) : (
           <>
             {ownRepositories && (
-              <Link href="/settings/account" className="bg-foreground text-background rounded-md px-3 py-1.5 text-sm font-medium">
-                Link your GitHub account
-              </Link>
+              <OwnGitHubLink href={ownHref} className="bg-foreground text-background rounded-md px-3 py-1.5 text-sm font-medium">
+                Connect your GitHub account
+              </OwnGitHubLink>
             )}
             <span className="text-muted-foreground">
               {ownRepositories ? "Or ask" : "Ask"} an admin of {orgName} to install the GitHub App.

@@ -36,6 +36,8 @@ export type EnsureRuntimeComputerDependencies = {
   readSecret: (computerId: string) => Promise<string | null>;
   update: (
     id: string,
+    /** The row's owner, which the server's write names (20261106100000). */
+    ownerId: string,
     patch: {
       status?: RuntimeComputerStatus;
       daytonaSandboxId?: string | null;
@@ -118,7 +120,7 @@ export async function ensureRuntimeComputer(
   let recorded = false;
   try {
     if (input.previousSandboxId) {
-      await deps.update(claim.computer.id, { daytonaSandboxId: input.previousSandboxId });
+      await deps.update(claim.computer.id, claim.computer.ownerId, { daytonaSandboxId: input.previousSandboxId });
     }
     provisioned = await provider.provisionComputer({
       secret: agentSecret,
@@ -128,7 +130,7 @@ export async function ensureRuntimeComputer(
       size: input.size,
       previousSandboxId: input.previousSandboxId,
     });
-    await deps.update(claim.computer.id, {
+    await deps.update(claim.computer.id, claim.computer.ownerId, {
       status: "ready",
       daytonaSandboxId: provisioned.sandboxId,
       provider: provider.name,
@@ -158,6 +160,7 @@ export async function ensureRuntimeComputer(
     const errorMessage = "Runtime Computer provisioning failed. Check Runtime setup and try again.";
     await deps.update(
       claim.computer.id,
+      claim.computer.ownerId,
       input.previousSandboxId
         ? // Still the box that ended, so the next try restores from it again
           // rather than starting over without its sessions.

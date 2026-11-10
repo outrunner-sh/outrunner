@@ -124,6 +124,7 @@ export function toRuntimeComputer(
 ): RuntimeComputer {
   return {
     id: row.id,
+    ownerId: row.owner_id,
     projectId: row.project_id,
     // `?? null`: a deploy can run before the migration that adds the column.
     workspaceId: row.workspace_id ?? null,

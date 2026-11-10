@@ -650,6 +650,10 @@ type UserCredentialsRow = {
   box_size_chosen: boolean;
   // Settings → Account (supabase/migrations/20261030100000_github_identity.sql).
   github_identity: "personal" | "app";
+  // GitHub's verified emails at the last GitHub sign-in
+  // (supabase/migrations/20261105100000_github_user_connections.sql).
+  github_verified_emails: Array<{ email: string; primary: boolean }> | null;
+  github_verified_emails_at: string | null;
   // Settings → Providers (supabase/migrations/20261016140000_user_openrouter_key.sql).
   // Replaced by user_provider_keys; dropped in a later release.
   openrouter_key_ciphertext: string | null;
@@ -754,6 +758,23 @@ type OrgProviderKeyRow = {
   key_ciphertext: string;
   key_hint: string | null;
   updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// Settings → Connections → GitHub: the Outrunner GitHub App's user
+// authorization. Service-role-only (RLS on, no policies); see
+// supabase/migrations/20261105100000_github_user_connections.sql.
+type UserGithubConnectionRow = {
+  user_id: string;
+  github_user_id: number;
+  github_login: string;
+  access_token_ciphertext: string;
+  access_token_expires_at: string | null;
+  refresh_token_ciphertext: string | null;
+  refresh_token_expires_at: string | null;
+  refresh_claimed_until: string | null;
+  broken_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1855,6 +1876,12 @@ export type Database = {
         Update: Partial<OrgProviderKeyRow>;
         Relationships: [];
       };
+      user_github_connections: {
+        Row: UserGithubConnectionRow;
+        Insert: Insert<UserGithubConnectionRow, "user_id" | "github_user_id" | "github_login" | "access_token_ciphertext">;
+        Update: Partial<UserGithubConnectionRow>;
+        Relationships: [];
+      };
       user_provider_keys: {
         Row: UserProviderKeyRow;
         Insert: Insert<UserProviderKeyRow, "user_id" | "provider" | "key_ciphertext">;
@@ -2171,6 +2198,7 @@ export type Database = {
       complete_pooled_warmup: {
         Args: {
           requested_computer_id: string;
+          expected_owner: string;
           requested_sandbox_id: string;
           requested_provider: string;
           requested_agent_base_url: string;

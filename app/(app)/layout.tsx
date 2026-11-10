@@ -7,6 +7,7 @@ import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProjects, listWorkspacePullRequests } from "@/lib/db/repositories";
 import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
 import { githubCoAuthor } from "@/lib/github/co-author";
+import { githubConnectionNotice } from "@/lib/github/connection-notice";
 import { countTriage, triageActor } from "@/lib/db/work-items";
 import { GET_STARTED_COOKIE } from "@/lib/nav/get-started";
 import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
@@ -93,6 +94,7 @@ async function SidebarData() {
   // (lib/orgs/active.ts), and what waits in its triage that the user may see
   // — a member of their own org, as getOrgContext read it.
   const orgId = orgs?.active.id;
+  const githubNotice = githubConnectionNotice(owner.id);
   const triageCount = (orgId ? triageActor(owner.id, orgId, true).then((actor) => (actor ? countTriage(actor) : 0)) : Promise.resolve(0)).catch(
     (error: unknown): number => {
       console.error("Sidebar: could not count triage", error);
@@ -145,6 +147,7 @@ async function SidebarData() {
         orgs: orgs?.orgs ?? [],
         activeOrgId: orgId ?? null,
         triageCount: await triageCount,
+        githubNotice: await githubNotice,
       }}
     />
   );

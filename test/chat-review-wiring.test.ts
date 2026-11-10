@@ -7,7 +7,7 @@ import { test } from "node:test";
 // Pin their wiring beside the pure chat lifecycle/list tests.
 test("a side-chat plan approval cannot rewrite the main chat's recorded mode", () => {
   const source = readFileSync(path.join(process.cwd(), "app/api/workspaces/[id]/plan/route.ts"), "utf8");
-  assert.match(source, /if \(!chat && workspace\.mode !== mode\) await recordWorkspaceMode\(workspace\.id, mode\)/);
+  assert.match(source, /if \(!chat && workspace\.mode !== mode\) await recordWorkspaceMode\(workspace\.id, workspace\.ownerId, mode\)/);
 });
 
 test("chat-list and side-question errors have a visible switcher alert", () => {
