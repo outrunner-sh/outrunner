@@ -129,13 +129,55 @@ jobs:
         # A deploy that returns 200 can still be broken: without
         # CREDENTIALS_ENCRYPTION_KEY the site loads, sign-in works, and every
         # credential write fails. Fail the job rather than report success.
+        #
+        # Anonymous /api/health only says {ok, build}; the configuration
+        # report needs the BILLING_CRON_SECRET bearer (app/api/health/route.ts).
+        # HEALTH_CHECK_SECRET is a repo secret holding the same value as the
+        # Worker's BILLING_CRON_SECRET.
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEALTH_CHECK_SECRET: ${{ secrets.HEALTH_CHECK_SECRET }}
         run: |
           set -euo pipefail
+          if [ -z "${HEALTH_CHECK_SECRET:-}" ]; then
+            echo "::error::HEALTH_CHECK_SECRET is not set: add a repo Actions secret with the Worker's BILLING_CRON_SECRET value, or /api/health won't report configuration"
+            exit 1
+          fi
+          body=""
           for i in $(seq 1 30); do
-            if body=$(curl -fsS https://app.outrunner.sh/api/health); then break; fi
+            # No -f: a 503 (ok=false) still carries the report worth printing.
+            if body=$(curl -sS --max-time 20 -H "Authorization: Bearer $HEALTH_CHECK_SECRET" https://app.outrunner.sh/api/health) && [ -n "$body" ]; then break; fi
+            body=""
             sleep 10
           done
           : "${body:?/api/health never responded}"
           echo "$body"
-          python3 -c "import json,sys; h=json.load(sys.stdin); c=h.get('configured',{}); bad=[k for k in ('supabase','supabaseServiceRole','credentialEncryption','daytona') if not c.get(k)]; sys.exit('::error::deployed but not usable; false: '+', '.join(bad)) if bad else None; sys.exit('::error::health reports ok=false') if not h.get('ok') else None; sys.exit('::error::Codex rollout incomplete: apply 20261103190000_codex_connections.sql and configure the verified CLI build version; '+str(h.get('codex'))) if not h.get('codex',{}).get('ready') else print('health OK:',c,h['codex'])" <<< "$body"
+          build=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('build') or '')" <<< "$body" || true)
+          if [ "$build" != "$GITHUB_SHA" ]; then
+            # Same rule as the wait step: a later deploy containing this commit counts.
+            status=""
+            if [[ "$build" =~ ^[0-9a-f]{40}$ ]]; then
+              status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...$build" --jq .status 2>/dev/null || true)
+            fi
+            if [ "$status" != "ahead" ]; then
+              echo "::error::health reports build '${build}', not $GITHUB_SHA or a later commit containing it"
+              exit 1
+            fi
+          fi
+          python3 - "$body" <<'PY'
+          import json, sys
+          h = json.loads(sys.argv[1])
+          if "configured" not in h:
+              sys.exit("::error::/api/health returned no configuration report: HEALTH_CHECK_SECRET doesn't match the Worker's BILLING_CRON_SECRET")
+          c = h["configured"]
+          bad = [k for k in ("supabase", "supabaseServiceRole", "credentialEncryption", "daytona") if not c.get(k)]
+          if bad:
+              sys.exit("::error::deployed but not usable; false: " + ", ".join(bad))
+          if not h.get("ok"):
+              sys.exit("::error::health reports ok=false")
+          codex = h.get("codex") or {}
+          if not codex.get("ready"):
+              sys.exit("::error::Codex rollout incomplete: apply 20261103190000_codex_connections.sql and configure the verified CLI build version; " + str(codex))
+          print("health OK:", c, codex)
+          PY
