@@ -3,6 +3,7 @@
 import { Archive, Files, GitBranch, MessageSquarePlus, Monitor, PanelsTopLeft, PanelRight, PanelRightClose, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { OpenCanvasContext } from "@/components/markdown";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons, MobileNavButton } from "@/components/app-frame";
@@ -25,6 +26,7 @@ import { WorkspaceEnvironment } from "@/components/workspace-environment";
 import { type SessionSender, WorkspaceSession } from "@/components/workspace-session";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useMission } from "@/hooks/use-missions";
+import { useInspectorWidth } from "@/hooks/use-inspector-width";
 import { useModalPanel } from "@/hooks/use-modal-panel";
 import { useSessionChats } from "@/hooks/use-session-chats";
 import { useRestoreOnOpen } from "@/hooks/use-restore-on-open";
@@ -98,6 +100,8 @@ export function WorkspaceStudio({
   // A Mission's page: its header, and its Ships where a session's
   // Environment is (components/missions).
   const isMission = workspace.kind === "mission";
+  // Dragged wider or narrower by its left edge, where it sits beside the chat.
+  const inspectorWidth = useInspectorWidth(isMission ? "mission" : "session");
   const { mission } = useMission(isMission ? workspace.id : undefined);
   // Missions archive their Ships together. Individual cloud sessions are deleted.
   const archive = !isLocal && isMission ? missionArchiveOffer(workspace) : null;
@@ -114,6 +118,8 @@ export function WorkspaceStudio({
   const tabs = inspectorTabs(workspace, isLocal);
   const [chosenTab, setChosenTab] = useState<InspectorTabId>("environment");
   const tab = shownTab(tabs, chosenTab);
+  // A new request id reselects the file even when the same link is clicked again.
+  const [canvasRequest, setCanvasRequest] = useState<{ path: string; id: number } | null>(null);
   // The chat shown (?chat=): the session's main one unless another is
   // picked. A local session, and a Mission, have the main one alone.
   const chatsOffered = hasLiveSession && !isLocal && !isMission;
@@ -159,12 +165,14 @@ export function WorkspaceStudio({
   };
 
   return (
+    <OpenCanvasContext value={(path) => { setCanvasRequest((previous) => ({ path, id: (previous?.id ?? 0) + 1 })); setChosenTab("canvas"); setRightOpen(true); }}>
     <div
       className={cn(
         "studio-shell",
         !rightOpen && "no-inspector",
         isMission && "is-mission",
       )}
+      style={inspectorWidth.width ? ({ [isMission ? "--studio-mission-inspector-width" : "--studio-inspector-width"]: `${inspectorWidth.width}px` } as React.CSSProperties) : undefined}
     >
       <header className="studio-header">
         <div className="studio-title">
@@ -342,6 +350,7 @@ export function WorkspaceStudio({
         aria-modal={overlay || undefined}
         aria-label={isMission ? "Ships" : (tabs.find((t) => t.id === tab)?.label ?? "Environment")}
       >
+        {rightOpen && !narrow && <div className="studio-inspector-resize" {...inspectorWidth.handle} />}
         {rightOpen && isMission && <RunnersPane missionId={workspace.id} onClose={() => setRightOpen(false)} />}
         {rightOpen && !isMission && (
           <div className="studio-inspector-toolbar">
@@ -401,6 +410,7 @@ export function WorkspaceStudio({
                 sender={sender}
                 coAuthor={coAuthor}
                 onClose={() => setRightOpen(false)}
+                canvasRequest={canvasRequest}
                 view={tab === "changes" || tab === "canvas" ? tab : "overview"}
                 onViewChange={(view) => {
                   const selected = view === "overview" ? "environment" : view;
@@ -413,6 +423,7 @@ export function WorkspaceStudio({
         )}
       </aside>
     </div>
+    </OpenCanvasContext>
   );
 }
 

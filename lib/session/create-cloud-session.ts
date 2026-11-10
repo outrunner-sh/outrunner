@@ -29,6 +29,7 @@ import {
   ownSandboxKeys,
   type SandboxSettings,
 } from "@/lib/db/credentials";
+import { isMetered } from "@/lib/billing/metering-store";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import {
   createWorkspaceRow,
@@ -62,6 +63,7 @@ import { newBoxSize } from "@/lib/orgs/defaults";
 import { appUrl } from "@/lib/orgs/notify";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_CODEX_GATEWAY, AGENT_FEATURE_MULTI_REPO } from "@/lib/runtime/agent-protocol";
+import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { requireFeature } from "@/lib/runtime/box-features";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
@@ -165,6 +167,9 @@ export type ServerSessionOptions = {
   title?: string;
   /** Sent to the agent once it's ready, as the user's first message would be. */
   firstMessage?: string;
+  /** Files uploaded for the first message (POST /api/attachments), put on
+   *  the box and named in it as the composer's are. */
+  firstAttachmentIds?: string[];
   /** Set it up before answering, not after: for a caller with no page waiting. */
   inline?: boolean;
   /** Only on Outrunner's models metered to the user (their allowance): a
@@ -554,6 +559,7 @@ async function createOnce(
       agentId,
       auth,
       firstMessage: options.firstMessage,
+      firstAttachmentIds: options.firstAttachmentIds,
       onSettled: options.onSettled,
       inline: options.inline ?? false,
       as,
@@ -597,6 +603,7 @@ async function provisionWorkspace({
   agentId,
   auth,
   firstMessage,
+  firstAttachmentIds,
   onSettled,
   inline,
   as,
@@ -622,6 +629,7 @@ async function provisionWorkspace({
   agentId: AgentId;
   auth: ResolvedAuth;
   firstMessage?: string;
+  firstAttachmentIds?: string[];
   onSettled?: (outcome: SessionOutcome) => Promise<void>;
   /** Set up before the create answered (ServerSessionOptions.inline). */
   inline: boolean;
@@ -859,7 +867,17 @@ async function provisionWorkspace({
       // user's would be from the session page.
       if (firstMessage) {
         try {
-          await agent.sendMessage(identity, firstMessage);
+          const prompt = firstAttachmentIds?.length
+            ? await materializeAttachments({
+                provider,
+                sandboxId: computer.daytonaSandboxId,
+                worktreePath: created.worktree,
+                workspaceId: workspace.id,
+                attachmentIds: firstAttachmentIds,
+                prompt: firstMessage,
+              })
+            : firstMessage;
+          await agent.sendMessage(identity, prompt);
         } catch (error) {
           console.error(`Workspace ${workspace.id}: first message failed`, error);
           await tell({ status: "failed", errorMessage: "The session started, but its prompt couldn't be sent." });
@@ -920,7 +938,7 @@ async function provisionWorkspace({
         ? error.message
         : refused
           ? refused.message
-          : provisionFailureMessage(error, phase, secrets);
+          : provisionFailureMessage(error, phase, secrets, isMetered(provider.name));
     const settled = await settle({ status: "failed", errorMessage }).catch((updateError: unknown) => {
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError);
       return true;

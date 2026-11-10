@@ -16,6 +16,7 @@ import {
   turnState,
 } from "@/lib/api/conversation";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
+import { promptWithAttachments } from "@/lib/runtime/attachments";
 
 function message(uuid: string, role: "user" | "assistant", content: unknown[], extra: Record<string, unknown> = {}) {
   return { t: "message", uuid, parentUuid: null, role, timestamp: "2026-11-01T00:00:00Z", content, ...extra };
@@ -163,6 +164,16 @@ test("a send's fence is where the log stood before its message", () => {
   assert.equal(fenceBefore([{ id: 9, event: message("u0", "user", [text("go")], at(-1_000)) as AgentEvent }], "go", sentAt), 0);
   // Not in the log yet: no fence to give.
   assert.equal(fenceBefore(entries, "something else", sentAt), null);
+});
+
+test("a message sent with files is found by its words", () => {
+  const sentAt = Date.parse("2026-11-01T00:00:00Z");
+  const logged = promptWithAttachments("look at this", ["shot.png", "log.txt"]);
+  const entries = [
+    { id: 100, event: message("a0", "assistant", [text("hi")]) as AgentEvent },
+    { id: 200, event: message("u1", "user", [text(logged)]) as AgentEvent },
+  ];
+  assert.equal(fenceBefore(entries, "look at this", sentAt), 100);
 });
 
 test("the same words sent again aren't taken for the last send's", () => {

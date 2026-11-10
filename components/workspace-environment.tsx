@@ -61,6 +61,7 @@ export function WorkspaceEnvironment({
   onClose,
   view,
   onViewChange,
+  canvasRequest,
 }: {
   workspace: Workspace;
   local?: LocalSession;
@@ -72,6 +73,7 @@ export function WorkspaceEnvironment({
   coAuthor?: string | null;
   /** Closes the panel; shown where the panel covers the chat (narrow windows). */
   onClose: () => void;
+  canvasRequest?: { path: string; id: number } | null;
   view: "overview" | "changes" | "canvas";
   onViewChange: (view: "overview" | "changes" | "canvas") => void;
 }) {
@@ -98,7 +100,7 @@ export function WorkspaceEnvironment({
       )}
       {view === "canvas" && (
         <div className="studio-env-body">
-          <WorkspaceCanvas workspaceId={workspace.id} active={isReady} onBack={backToOverview} />
+          <WorkspaceCanvas key={canvasRequest?.id ?? "listing"} initialPath={canvasRequest?.path} workspaceId={workspace.id} active={isReady} onBack={backToOverview} />
         </div>
       )}
       <div hidden={view !== "overview"} className="studio-env-body">

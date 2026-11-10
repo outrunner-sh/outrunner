@@ -2,17 +2,17 @@ import type { WorkItem, WorkItemStatus } from "@/lib/triage/work-items";
 
 /** The triage page's tabs: what waits to be sorted, what was accepted, and
  *  what is finished with. */
-export type TriageTab = "triage" | "backlog" | "closed";
+export type TriageTab = "triage" | "working" | "closed";
 
 export const TRIAGE_TABS: { id: TriageTab; label: string }[] = [
   { id: "triage", label: "Triage" },
-  { id: "backlog", label: "Backlog" },
+  { id: "working", label: "Working" },
   { id: "closed", label: "Closed" },
 ];
 
 const TAB_STATUSES: Record<TriageTab, readonly WorkItemStatus[]> = {
   triage: ["triage"],
-  backlog: ["todo", "in_progress"],
+  working: ["todo", "in_progress"],
   closed: ["done", "declined", "duplicate"],
 };
 
@@ -59,7 +59,7 @@ export function groupWorkItems(
 
 /** How many items each tab holds. */
 export function tabCounts(items: WorkItem[]): Record<TriageTab, number> {
-  const counts: Record<TriageTab, number> = { triage: 0, backlog: 0, closed: 0 };
+  const counts: Record<TriageTab, number> = { triage: 0, working: 0, closed: 0 };
   for (const item of items) counts[tabOf(item.status)] += 1;
   return counts;
 }

@@ -12,6 +12,7 @@ import { getPullRequestStatusWithDetails } from "@/lib/github/client";
 import { optionalGitToken } from "@/lib/github/identity.deps";
 import { githubGet } from "@/lib/github/rest";
 import { sessionWorking } from "@/lib/missions/box";
+import { runnersForWith, type GitHubPull, type PullRequestActivity } from "@/lib/missions/pull-request-activity";
 import { eventKey, type PullRequestRef } from "@/lib/missions/events";
 import { isLiveRunner } from "@/lib/missions/rules";
 import { allPullRequestsDone, isNews, isRunnerBranch, reviewState, settle } from "@/lib/missions/settle";
@@ -30,121 +31,8 @@ function db() {
   return createSupabaseAdminClient();
 }
 
-/** What a webhook says of one pull request, or of the head it's on. */
-export type PullRequestActivity = {
-  repo: string;
-  /** The branches it's on: a check suite's, or the pull request's head. */
-  headRefs: string[];
-  /** The pull requests it names (a check run's, a review's). */
-  numbers: number[];
-  /** For a pull_request event: the pull request itself. */
-  pr?: { number: number; url: string; title: string; headRef: string; baseRef: string; headSha: string; state: "open" | "merged" | "closed" };
-};
-
-type GitHubPull = {
-  number?: number;
-  additions?: number;
-  deletions?: number;
-  html_url?: string;
-  title?: string;
-  state?: string;
-  merged_at?: string | null;
-  head?: { ref?: string; sha?: string };
-  base?: { ref?: string };
-};
-
-/** A webhook's payload read as activity on pull requests, or null. */
-export function activityOf(event: string | null, payload: Record<string, unknown>): PullRequestActivity | null {
-  const repo = (payload.repository as { full_name?: string } | undefined)?.full_name;
-  if (!repo) return null;
-  const numbersOf = (list: unknown) =>
-    Array.isArray(list) ? list.flatMap((p) => (typeof (p as { number?: unknown }).number === "number" ? [(p as { number: number }).number] : [])) : [];
-  if (event === "pull_request" || event === "pull_request_review" || event === "pull_request_review_comment" || event === "pull_request_review_thread") {
-    const pull = payload.pull_request as GitHubPull | undefined;
-    if (!pull?.number || !pull.head?.ref) return null;
-    return {
-      repo,
-      headRefs: [pull.head.ref],
-      numbers: [pull.number],
-      pr: {
-        number: pull.number,
-        url: pull.html_url ?? `https://github.com/${repo}/pull/${pull.number}`,
-        title: pull.title ?? "",
-        headRef: pull.head.ref,
-        baseRef: pull.base?.ref ?? "",
-        headSha: pull.head.sha ?? "",
-        state: pull.state === "closed" ? (pull.merged_at ? "merged" : "closed") : "open",
-      },
-    };
-  }
-  if (event === "check_suite") {
-    const suite = payload.check_suite as { head_branch?: string | null; pull_requests?: unknown } | undefined;
-    return { repo, headRefs: suite?.head_branch ? [suite.head_branch] : [], numbers: numbersOf(suite?.pull_requests) };
-  }
-  if (event === "check_run") {
-    const run = payload.check_run as { check_suite?: { head_branch?: string | null }; pull_requests?: unknown } | undefined;
-    return { repo, headRefs: run?.check_suite?.head_branch ? [run.check_suite.head_branch] : [], numbers: numbersOf(run?.pull_requests) };
-  }
-  if (event === "status") {
-    const branches = (payload.branches as { name?: string }[] | undefined) ?? [];
-    return { repo, headRefs: branches.flatMap((b) => (b.name ? [b.name] : [])), numbers: [] };
-  }
-  return null;
-}
-
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");
-}
-
-function checkoutIds(checkouts: unknown): string[] {
-  if (!Array.isArray(checkouts)) return [];
-  return checkouts.flatMap((c) =>
-    c && typeof c === "object" && typeof (c as { projectId?: unknown }).projectId === "string" ? [(c as { projectId: string }).projectId] : [],
-  );
-}
-
-/**
- * The Runners an event in `repo` can be about: Runners in its orgs that work
- * in the repository (as their own, or as one of a session of several), and
- * of those, only the ones on a branch it names or with a pull request of
- * its on record. Check runs come many a push: this keeps each to a query or
- * two, whatever the number of Runners.
- */
-async function runnersFor(activity: PullRequestActivity): Promise<Workspace[]> {
-  const { data: projects, error } = await db().from("projects").select("id, org_id").ilike("full_name", escapeLike(activity.repo));
-  if (error) throw error;
-  if (!projects?.length) return [];
-  const projectIds = new Set(projects.map((p) => p.id));
-  // What it takes to match, read narrow: whole rows only for the few that do.
-  const { data, error: runnersError } = await db()
-    .from("workspaces")
-    .select("id, project_id, checkouts, branch")
-    .not("parent_mission_id", "is", null)
-    .in("org_id", [...new Set(projects.map((p) => p.org_id))])
-    .not("status", "in", "(destroyed,destroying)");
-  if (runnersError) throw runnersError;
-  const inRepo = (data ?? []).filter((row) => projectIds.has(row.project_id) || checkoutIds(row.checkouts).some((id) => projectIds.has(id)));
-  if (inRepo.length === 0) return [];
-  const refs = [...activity.headRefs, ...(activity.pr ? [activity.pr.headRef] : [])];
-  const known = new Set<string>();
-  if (activity.numbers.length > 0) {
-    const { data: rows, error: rowsError } = await db()
-      .from("runner_pull_requests")
-      .select("runner_id")
-      .in(
-        "runner_id",
-        inRepo.map((r) => r.id),
-      )
-      .ilike("repo", escapeLike(activity.repo))
-      .in("number", activity.numbers);
-    if (rowsError) throw rowsError;
-    for (const row of rows ?? []) known.add(row.runner_id);
-  }
-  const matched = inRepo.filter((row) => known.has(row.id) || refs.some((ref) => isRunnerBranch(row.branch, ref))).map((row) => row.id);
-  if (matched.length === 0) return [];
-  const { data: rows, error: rowsError } = await db().from("workspaces").select("*").in("id", matched);
-  if (rowsError) throw rowsError;
-  return (rows ?? []).map(toWorkspace);
 }
 
 /** Note what a webhook said: a new pull request of a Runner's recorded (or
@@ -152,7 +40,7 @@ async function runnersFor(activity: PullRequestActivity): Promise<Workspace[]> {
  *  extending) its stretch. The Runners whose pull requests it touched. */
 export async function notePullRequestActivity(activity: PullRequestActivity): Promise<string[]> {
   const touched = new Set<string>();
-  const runners = await runnersFor(activity);
+  const runners = await runnersForWith(db(), activity);
   const now = new Date().toISOString();
   for (const runner of runners) {
     const pr = activity.pr;

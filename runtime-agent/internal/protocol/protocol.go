@@ -757,8 +757,12 @@ type TokenUsage struct {
 	ServiceTier              string `json:"service_tier,omitempty"`
 }
 
-// WorkspaceStateChanged reports a workspace lifecycle transition.
-// state ∈ {starting, running, exited, archived, degraded}.
+// FeatureSnapshotPatchIntegrity marks an agent whose archive fails, rather
+// than saving an empty patch, when git diff fails in a working repository
+// (snapshot/tree.go). The control plane only deletes a box after an archive
+// (dropBox) when the agent that captured it advertises this.
+const FeatureSnapshotPatchIntegrity = "snapshot-patch-integrity"
+
 // FeatureRewind marks an agent that edits a sent message: POST
 // /workspaces/{id}/rewind cuts a chat's conversation back to just before one
 // of its prompts, and its stream says so (ConversationRewound).
@@ -790,6 +794,8 @@ type ConversationRewound struct {
 	Reset   bool   `json:"reset,omitempty"`
 }
 
+// WorkspaceStateChanged reports a workspace lifecycle transition.
+// state ∈ {starting, running, exited, archived, degraded}.
 type WorkspaceStateChanged struct {
 	T           string `json:"t"` // "state"
 	WorkspaceID string `json:"workspaceId"`

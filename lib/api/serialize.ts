@@ -136,6 +136,18 @@ export function environmentJson(environment: Environment): Record<string, unknow
   };
 }
 
+/** One project in full (GET /environments/{id}): its list fields, and its
+ *  instructions, scripts, hooks and files' paths. Never a value. */
+export function environmentDetailJson(environment: Environment): Record<string, unknown> {
+  return {
+    ...environmentJson(environment),
+    instructions: environment.instructions,
+    file_paths: environment.filePaths,
+    scripts: environment.scripts,
+    hooks: environment.hooks,
+  };
+}
+
 export function triageItemJson(item: TriageItem, base: string): Record<string, unknown> {
   return {
     id: item.id,
@@ -172,6 +184,13 @@ export function learningJson(learning: Learning, actor: LearningActor): Record<s
     created_at: learning.createdAt,
     updated_at: learning.updatedAt,
   };
+}
+
+/** A request body's own fields, as the API names them (`max_runs`), as the
+ *  app's routes take them (`maxRuns`). Top level only: nested values (an
+ *  automation's schedules) pass as they are. */
+export function topLevelCamel(body: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(body).map(([key, value]) => [key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase()), value]));
 }
 
 /** Any of a route's own answers in snake_case, keys only, at every depth:

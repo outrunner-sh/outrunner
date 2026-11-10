@@ -104,7 +104,7 @@ export function captureHref({ item, project }: { item?: string | null; project?:
   return `/triage?${params}`;
 }
 
-/** Statuses still waiting on someone: the inbox and the backlog. */
+/** Statuses still waiting on someone: triage and active work. */
 export function isOpen(status: WorkItemStatus): boolean {
   return status === "triage" || status === "todo" || status === "in_progress";
 }

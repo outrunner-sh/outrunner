@@ -87,11 +87,14 @@ export function RunnerGlyph({
   group,
   state,
   standing,
+  attention,
   className,
 }: {
   group: RunnerGroup;
   state: RunnerState;
   standing?: SessionStanding | null;
+  /** Why it needs someone, said on hover with its group's name. */
+  attention?: string | null;
   className?: string;
 }) {
   if (standing && (group === "working" || (group === "needs_you" && standing.standing === "needs_you"))) {
@@ -104,10 +107,11 @@ export function RunnerGlyph({
       </span>
     );
   }
-  const { Icon, className: tone, label } = GROUP_GLYPH[group];
+  const { Icon, className: tone, label: name } = GROUP_GLYPH[group];
   const turning = group === "working";
+  const label = turning && state === "setting_up" ? "Setting up" : attention ? `${name}: ${attention}` : name;
   return (
-    <span role="img" aria-label={turning && state === "setting_up" ? "Setting up" : label} title={turning && state === "setting_up" ? "Setting up" : label}>
+    <span role="img" aria-label={label} title={label}>
       <Icon className={cn("size-3.5 shrink-0", tone, turning && "animate-[spin_2.4s_linear_infinite]", className)} />
     </span>
   );
@@ -179,7 +183,8 @@ export function PullRequestChip({
         {showTitle && pr.title && <span className="min-w-0 truncate text-[#9a9a9a]">{pr.title}</span>}
         {!merged && !closed && <CheckIcon tone={tone} />}
       </Chip>
-      {pr.checks.length > 0 && (
+      {/* Not in a row that's a link (the sidebar): its scroll box would clip it. */}
+      {link && pr.checks.length > 0 && (
         <span
           role="tooltip"
           className="pointer-events-none invisible absolute top-[calc(100%+6px)] left-0 z-50 w-64 translate-y-1 rounded-md border border-border bg-popover p-2 opacity-0 shadow-xl shadow-black/40 transition-all duration-150 group-focus-within/pr:visible group-focus-within/pr:translate-y-0 group-focus-within/pr:opacity-100 group-hover/pr:visible group-hover/pr:translate-y-0 group-hover/pr:opacity-100"

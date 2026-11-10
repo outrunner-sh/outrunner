@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { API_STATUSES, apiStatus, statusesFor, workspaceJson } from "@/lib/api/serialize";
+import { API_STATUSES, apiStatus, environmentDetailJson, statusesFor, topLevelCamel, workspaceJson } from "@/lib/api/serialize";
 import type { Workspace } from "@/lib/runtime/types";
 
 test("a session's status in the API's words", () => {
@@ -50,4 +50,39 @@ test("a session as the API shows it", () => {
   assert.equal(json.user_id, "u1");
   assert.equal(json.url, "https://app.example/workspaces/w1");
   assert.equal(workspaceJson({ ...workspace, status: "ready" }, "https://app.example").setup_phase, null);
+});
+
+test("a body's fields go to the app's routes in their names, nested values as sent", () => {
+  const schedules = [{ kind: "weekly", timezone: "UTC", days: [1], time: "09:00" }];
+  assert.deepEqual(topLevelCamel({ max_runs: 3, archive_when_done: true, project_ids: ["p"], name: "Nightly", schedules }), {
+    maxRuns: 3,
+    archiveWhenDone: true,
+    projectIds: ["p"],
+    name: "Nightly",
+    schedules,
+  });
+});
+
+test("a project in full names its secrets, never their values", () => {
+  const json = environmentDetailJson({
+    id: "e1",
+    orgId: "o1",
+    name: "Web",
+    description: null,
+    instructions: "Use pnpm.",
+    repos: [{ projectId: "p1", fullName: "acme/web", checkoutName: "web", branch: null, defaultBranch: "main" }],
+    envNames: ["API_KEY"],
+    filePaths: [".env"],
+    scripts: { setup: "pnpm i", run: null, archive: null },
+    hooks: { warm: null, start: null },
+    defaultForProjectId: "p1",
+    setupGeneration: 1,
+    warm: null,
+    updatedAt: "2026-10-31T00:00:00Z",
+    access: "write",
+  } as unknown as Parameters<typeof environmentDetailJson>[0]);
+  assert.deepEqual(json.variable_names, ["API_KEY"]);
+  assert.deepEqual(json.file_paths, [".env"]);
+  assert.equal(json.instructions, "Use pnpm.");
+  assert.equal(JSON.stringify(json).includes("secret"), false);
 });

@@ -50,8 +50,8 @@ test("filters by owner, source and where it stands; a Mac session's standing is 
   assert.deepEqual(ids(filterSessions(entries, { ...NO_FILTER, owner: "me" }, NOW)), ["b", "a", "d"]);
   assert.deepEqual(ids(filterSessions(entries, { ...NO_FILTER, owner: "u2" }, NOW)), ["c"]);
   assert.deepEqual(ids(filterSessions(entries, { ...NO_FILTER, source: "slack" }, NOW)), ["b"]);
-  assert.deepEqual(ids(filterSessions(entries, { ...NO_FILTER, status: "needs_you" }, NOW)), ["b"]);
-  assert.deepEqual(ids(filterSessions(entries, { ...NO_FILTER, status: "backlog" }, NOW)), ["d"]);
+  assert.deepEqual(ids(filterSessions(entries, { ...NO_FILTER, status: "needs_you" }, NOW)), ["b", "d"]);
+  assert.deepEqual(ids(filterSessions(entries, { ...NO_FILTER, status: "done" }, NOW)), ["c", "a"]);
 });
 
 test("search matches title, branch without runtime/, repository and owner", () => {
