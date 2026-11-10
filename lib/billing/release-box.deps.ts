@@ -50,7 +50,7 @@ export async function releaseWorkspaceBox(
         delete: (sandboxId) => maker.destroyComputerOrThrow(sandboxId),
         closeInterval: closeIntervalOf,
         markDeleted: (computerId) =>
-          updateRuntimeComputer(computerId, {
+          updateRuntimeComputer(computerId, workspace.ownerId, {
             status: "stopped",
             daytonaSandboxId: null,
             agentBaseUrl: null,

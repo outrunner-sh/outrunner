@@ -2197,6 +2197,7 @@ export type Database = {
       complete_pooled_warmup: {
         Args: {
           requested_computer_id: string;
+          expected_owner: string;
           requested_sandbox_id: string;
           requested_provider: string;
           requested_agent_base_url: string;

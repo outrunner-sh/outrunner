@@ -85,6 +85,7 @@ async function startTransition(
 ): Promise<Workspace | null> {
   return transitionWorkspace({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from,
     // A failed setup is deleted by Try again. Keep its diagnostic on the
     // retained row through teardown, including if the request is cut off.
@@ -99,6 +100,7 @@ async function restoreAfterFailure(
 ): Promise<void> {
   await transitionWorkspace({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: [transitionStatus],
     patch: { status: workspace.status, errorMessage: message },
   });
@@ -106,12 +108,14 @@ async function restoreAfterFailure(
 
 async function completeTransition(input: {
   id: string;
+  ownerId: string;
   from: WorkspaceStatus;
   patch: Parameters<typeof transitionWorkspace>[0]["patch"];
 }): Promise<boolean> {
   return Boolean(
     await transitionWorkspace({
       id: input.id,
+      ownerId: input.ownerId,
       from: [input.from],
       patch: input.patch,
     }),
@@ -319,6 +323,7 @@ async function restoreDaytonaWorkspace(
     ) {
       await markRuntimeComputerStoppedIfReady(
         currentComputer.id,
+        currentComputer.ownerId,
         currentComputer.daytonaSandboxId,
       );
       endedBox = currentComputer.daytonaSandboxId;
@@ -431,14 +436,14 @@ async function restoreDaytonaWorkspace(
     // rebuilt and verified the worktree. Its path too, which a session
     // imported from a Mac has none of; an older agent doesn't report it, and
     // the one on record (if any) is kept.
-    await updateWorkspace(workspace.id, {
+    await updateWorkspace(workspace.id, workspace.ownerId, {
       computerId: computer.id,
       tmuxSession: `ws-${workspace.id}`,
       agentWorkspaceId: workspace.id,
       ...(restoredWorktree && { worktreePath: restoredWorktree }),
     });
     // One from before models were recorded now has one.
-    if (restoreOn && !workspace.model) await recordWorkspaceModel(workspace.id, restoreOn);
+    if (restoreOn && !workspace.model) await recordWorkspaceModel(workspace.id, workspace.ownerId, restoreOn);
   } catch (error) {
     const failure = signInFailure(error);
     if (!failure) console.error(`Workspace ${workspace.id} restore failed`, error);
@@ -455,6 +460,7 @@ async function restoreDaytonaWorkspace(
 
   const completed = await completeTransition({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: "restoring",
     patch: { status: "ready", errorMessage: null, touchActive: true },
   });
@@ -531,6 +537,7 @@ async function resumeDaytonaWorkspace(
   }
   const completed = await completeTransition({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: "resuming",
     patch: { status: "ready", errorMessage: null, touchActive: true },
   });
@@ -564,6 +571,7 @@ async function suspendDaytonaWorkspace(
   }
   const completed = await completeTransition({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: "suspending",
     patch: { status: "suspended", errorMessage: null },
   });
@@ -624,6 +632,7 @@ async function endWorkspace(workspace: Workspace, teardown?: () => Promise<void>
 
   const completed = await completeTransition({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: "destroying",
     patch: {
       status: "destroyed",
@@ -666,6 +675,7 @@ async function resumeWorkspace(workspace: Workspace, provider: RuntimeProvider) 
   try {
     const completed = await completeTransition({
       id: workspace.id,
+      ownerId: workspace.ownerId,
       from: "resuming",
       patch: {
         status: "ready",
@@ -717,6 +727,7 @@ async function suspendWorkspace(workspace: Workspace, provider: RuntimeProvider)
   try {
     const completed = await completeTransition({
       id: workspace.id,
+      ownerId: workspace.ownerId,
       from: "suspending",
       patch: { status: "suspended", sandboxId: null, errorMessage: null },
     });
@@ -761,6 +772,7 @@ async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider)
   try {
     const completed = await completeTransition({
       id: workspace.id,
+      ownerId: workspace.ownerId,
       from: "destroying",
       patch: {
         status: "destroyed",

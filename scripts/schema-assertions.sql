@@ -515,8 +515,12 @@ begin
     end if;
   end;
 
-  -- The owner's own Daytona doesn't count toward the cap.
+  -- The owner's own Daytona doesn't count toward the cap. Marking it is the
+  -- server's write (20261106100000), so it runs as the verifier's own
+  -- superuser — the part the app's admin client plays.
+  perform set_config('role', 'none', true);
   update runtime_computers set provider = 'user-daytona' where daytona_sandbox_id = 'box-cap-b';
+  perform set_config('role', 'authed', true);
   perform claim_runtime_computer(fresh_project, 'agent-secret-3', 'v1', 2);
   if not exists (select 1 from runtime_computers where project_id = fresh_project and status = 'provisioning') then
     raise exception 'FAIL: the claim did not start a box within the cap';
@@ -530,7 +534,9 @@ begin
 
   -- Keep the SQL count aligned with the TypeScript cases in
   -- test/billing-limits.test.ts: ready and fresh provisioning count, stale
-  -- provisioning and the user's own Daytona/Modal do not.
+  -- provisioning and the user's own Daytona/Modal do not. Every state change
+  -- below is the server's write (20261106100000), made as the superuser.
+  perform set_config('role', 'none', true);
   update runtime_computers
   set status = 'stopped'
   where owner_id = '11111111-1111-1111-1111-111111111111';
@@ -564,6 +570,7 @@ begin
   if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
     raise exception 'FAIL: a user-owned Modal box was counted';
   end if;
+  perform set_config('role', 'authed', true);
 
   raise notice 'ok: the plan''s box cap holds in the claim, where a box would start';
 end $$;
@@ -638,16 +645,22 @@ begin
     raise exception 'FAIL: a session''s box does not record its workspace';
   end if;
 
-  -- A box stopped (paused while idle) is claimed back on the same row.
+  -- A box stopped (paused while idle) is claimed back on the same row. The
+  -- pause is the server's write (20261106100000).
+  perform set_config('role', 'none', true);
   update runtime_computers set status = 'stopped' where id = first_claim.runtime_computer_id;
+  perform set_config('role', 'authed', true);
   select * into again from claim_workspace_computer('33333333-3333-3333-3333-333333333331', 's-5', 'v1', null);
   if not again.should_provision or again.runtime_computer_id <> first_claim.runtime_computer_id then
     raise exception 'FAIL: a stopped box was not claimed back on its own row';
   end if;
 
-  -- Starting a session's box past the plan's cap is refused.
+  -- Starting a session's box past the plan's cap is refused. The state that
+  -- stages it is the server's to set (20261106100000).
+  perform set_config('role', 'none', true);
   update runtime_computers set status = 'ready' where owner_id = '11111111-1111-1111-1111-111111111111';
   update runtime_computers set status = 'stopped' where id = second_claim.runtime_computer_id;
+  perform set_config('role', 'authed', true);
   begin
     perform claim_workspace_computer('33333333-3333-3333-3333-333333333332', 's-6', 'v1', 1);
     raise exception 'FAIL: a session''s box started past the plan''s cap';
@@ -665,8 +678,11 @@ begin
       raise;
     end if;
   end;
-  -- An ended session gets no box back (20261023140000).
+  -- An ended session gets no box back (20261023140000). Its end is the
+  -- server's mark (20261106100000).
+  perform set_config('role', 'none', true);
   update workspaces set status = 'destroyed' where id = '33333333-3333-3333-3333-333333333332';
+  perform set_config('role', 'authed', true);
   begin
     perform claim_workspace_computer('33333333-3333-3333-3333-333333333332', 's-8', 'v1', null);
     raise exception 'FAIL: a box was claimed for an ended session';
@@ -728,10 +744,13 @@ declare
   before_count bigint;
   taken text;
 begin
-  -- Pooled and stopped: not live, so the plan's count is as it was.
+  -- Pooled and stopped: not live, so the plan's count is as it was. The
+  -- states are the server's to set (20261106100000).
+  perform set_config('role', 'none', true);
   update runtime_computers set status = 'provisioning' where daytona_sandbox_id = 'box-pooled';
   before_count := live_metered_computers('11111111-1111-1111-1111-111111111111');
   update runtime_computers set status = 'stopped' where daytona_sandbox_id = 'box-pooled';
+  perform set_config('role', 'authed', true);
   if before_count <> live_metered_computers('11111111-1111-1111-1111-111111111111') then
     raise exception 'FAIL: a pooled box counted toward the plan''s cap';
   end if;
@@ -766,6 +785,40 @@ begin
 end $$;
 
 reset role;
+
+-- The wake publisher writes what its arguments say (a sandbox id, an agent
+-- url) into the row, so by the write split's rule it is the server's alone:
+-- no signed-in user may call it, the server always may, and the caller names
+-- the row's owner (20261106100000). A user "completing the wake" of their
+-- own provisioning row was a pivot onto anyone's box.
+do $$
+declare
+  leaked record;
+begin
+  -- The owner argument changed the signature, so `create or replace` alone
+  -- would have left the 5-arg original from 20261103210000 in place, granted
+  -- to authenticated, the pivot still open through it. It must be dropped.
+  if to_regprocedure('complete_pooled_warmup(uuid, text, text, text, jsonb)') is not null then
+    raise exception 'FAIL: the 5-arg complete_pooled_warmup survived beside its replacement';
+  end if;
+  -- And not just that one: no overload of the wake publisher, whatever its
+  -- signature, may be a signed-in user's to call.
+  for leaked in
+    select p.oid::regprocedure::text as signature
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'complete_pooled_warmup'
+  loop
+    if has_function_privilege('authenticated', leaked.signature, 'execute')
+       or has_function_privilege('anon', leaked.signature, 'execute') then
+      raise exception 'FAIL: a signed-in user may publish a wake (%)', leaked.signature;
+    end if;
+  end loop;
+  if not has_function_privilege('service_role', 'complete_pooled_warmup(uuid, uuid, text, text, text, jsonb)', 'execute') then
+    raise exception 'FAIL: the server cannot publish a wake';
+  end if;
+  raise notice 'ok: the wake publisher is the server''s alone, its owner named, without a twin';
+end $$;
 
 -- 22. The CLI's sign-in: no user reaches its codes or tokens, even their own
 -- (no grant, and RLS with no policy behind it), and only hashes fit.
@@ -927,9 +980,12 @@ begin
   if n <> 0 then
     raise exception 'FAIL: a member sees % of another member''s sessions', n;
   end if;
-  -- Their own session on it is theirs.
+  -- Their own session on it is theirs: the server creates the row (its
+  -- write alone, 20261106100000) and the member still sees it.
+  perform set_config('role', 'none', true);
   insert into workspaces (owner_id, project_id, branch)
   values ('22222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'member-session');
+  perform set_config('role', 'authed', true);
   if not exists (select 1 from workspaces where branch = 'member-session') then
     raise exception 'FAIL: a member can''t see their own session in the org';
   end if;
@@ -1422,10 +1478,13 @@ begin
     raise exception 'FAIL: a member with no grant sees the org''s projects';
   end if;
   begin
+    -- No member starts a session with their own hand any more
+    -- (20261106100000): the row is the server's alone to write, on a project
+    -- they can read or otherwise.
     insert into workspaces (owner_id, project_id, branch)
     values ('22222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'no-access');
     raise exception 'FAIL: a member started a session on a project they can''t read';
-  exception when foreign_key_violation then
+  exception when insufficient_privilege or foreign_key_violation then
     null;
   end;
   if not exists (select 1 from workspaces where branch = 'member-session') then
