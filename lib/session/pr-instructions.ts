@@ -19,10 +19,18 @@ import {
   templateSection,
   UPDATE_RULE,
 } from "@/lib/session/pr-template";
+import { branchHint, type TrackerIssue } from "@/lib/trackers/issue-key";
 
 export const PR_PROMPT = "Create a PR";
 
 export const PR_INSTRUCTIONS_FILENAME = "PR instructions.md";
+
+/** What each tracker's own GitHub integration reads to link a PR to its issue. */
+function issueLine({ source, key }: TrackerIssue): string {
+  return source === "linear"
+    ? `This session works on Linear issue ${key}. Put "Fixes ${key}" in the PR body.`
+    : `This session works on Jira issue ${key}. Put ${key} in the PR title.`;
+}
 
 /** The footer details the Environment panel sends with its explicit Create PR
  *  request. Keep the trusted identity here so those one-off instructions and
@@ -44,6 +52,8 @@ export function prInstructions(input: {
   /** One repository of a session of several: its folder and `owner/name`.
    *  The PR is that repository's alone. */
   repo?: { checkout: string; fullName: string };
+  /** The Linear or Jira issue it works on. */
+  issue?: TrackerIssue | null;
   /** The branch is still the stand-in Outrunner made from the first message:
    *  named for good before it's pushed (lib/session/rename-branch.ts). */
   nameBranch?: boolean;
@@ -52,7 +62,7 @@ export function prInstructions(input: {
   /** Who the footer credits, and the session's page. */
   footer: PrFooterInput;
 }): string {
-  const { branch, baseBranch, changedFiles, repo, nameBranch, tools, footer } = input;
+  const { branch, baseBranch, changedFiles, repo, issue, nameBranch, tools, footer } = input;
   const state = [
     repo
       ? `This PR is for ${repo.fullName} only, the repository in the \`${repo.checkout}/\` folder. Run every step below in that folder (\`cd ${repo.checkout}\`), and leave the other repositories' folders alone.`
@@ -64,6 +74,7 @@ export function prInstructions(input: {
         : `${changedFiles === 1 ? "1 file differs" : `${changedFiles} files differ`} from origin/${baseBranch}.`,
     `The current branch is ${branch}.`,
     `The target branch is origin/${baseBranch}.`,
+    issue ? issueLine(issue) : null,
   ].filter((line) => line !== null);
 
   return `The user likes the current state of the code.
@@ -79,7 +90,7 @@ Follow these steps to create a PR:
 - Commit them. Follow any instructions the user gave you about writing commit messages and the attribution rules below.
 - Run \`git diff origin/${baseBranch}...\` to review the whole PR diff, and decide whether it changes UI or behaviour a person can see.
 - If it does, produce the evidence now, before pushing (below). Backend-only and docs changes skip this.
-${nameBranch ? `- If the branch is still ${branch}, the stand-in from the first message, give it its real name now, as your instructions' Branch name says (\`outrunner-session rename-branch <type>/<what-it-does>\`).\n` : ""}- Push to origin (\`git push -u origin HEAD\`): the branch you're on, whatever it's called now (its agent may have renamed it).
+${nameBranch ? `- If the branch is still ${branch}, the stand-in from the first message, give it its real name now, as your instructions' Branch name says (\`outrunner-session rename-branch <type>/<what-it-does>\`).${issue ? ` ${branchHint(issue.source, issue.key)}` : ""}\n` : ""}- Push to origin (\`git push -u origin HEAD\`): the branch you're on, whatever it's called now (its agent may have renamed it).
 - If this branch already has a pull request, the push updates it. ${UPDATE_RULE} Then share its link and evidence in your final chat reply.
 - Otherwise write the body from the template below to a file and run \`gh pr create --base ${baseBranch} --title "…" --body-file <file>\` to create a PR onto the target branch, unless the user instructed you otherwise. Describe not just changes made in this session but ALL changes in the workspace diff.
 

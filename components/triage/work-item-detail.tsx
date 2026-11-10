@@ -29,6 +29,7 @@ import {
   itemHref,
   itemKey,
   SOURCE_LABELS,
+  trackerOwned,
   STATUS_LABELS,
   type TriageItem,
   type WorkItem,
@@ -178,14 +179,14 @@ export function WorkItemDetail({
           <TitleField
             key={item.title}
             title={item.title}
-            disabled={busy || !item.can.triage}
+            disabled={busy || !item.can.triage || trackerOwned(item)}
             onSave={(title) => update({ title })}
           />
           <BodyField
             key={item.body}
             body={item.body}
             disabled={busy}
-            editable={item.can.triage}
+            editable={item.can.triage && !trackerOwned(item)}
             onSave={(body) => update({ body })}
           />
         </div>
@@ -611,6 +612,8 @@ function Activity({
   const [value, setValue] = useDraftText(`triage:note/${item.id}`);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A tracker's comments arrive here, so it's easy to think a note goes back.
+  const placeholder = item.source === "linear" || item.source === "jira" ? `Leave a note, not sent to ${SOURCE_LABELS[item.source]}…` : "Leave a note…";
 
   async function add() {
     if (!value.trim() || saving) return;
@@ -650,6 +653,7 @@ function Activity({
             ) : (
               <span className="text-foreground/90">{SOURCE_LABELS[item.source]}</span>
             )}{" "}
+            {item.sourceAuthor && <>by {item.sourceAuthor} </>}
             · {ago(item.createdAt, now)}
           </span>
         </li>
@@ -666,13 +670,14 @@ function Activity({
                     href={note.sourceUrl}
                     target="_blank"
                     rel="noreferrer"
+                    aria-label={`Open in ${SOURCE_LABELS[note.source]}`}
                     className="inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground"
                   >
-                    via {SOURCE_LABELS[note.source]}
+                    {note.author !== SOURCE_LABELS[note.source] && <>via {SOURCE_LABELS[note.source]}</>}
                     <ArrowUpRight className="size-3" />
                   </a>
                 ) : (
-                  <span className="text-muted-foreground">via {SOURCE_LABELS[note.source]}</span>
+                  note.author !== SOURCE_LABELS[note.source] && <span className="text-muted-foreground">via {SOURCE_LABELS[note.source]}</span>
                 ))}
               <span className="text-muted-foreground">· {ago(note.createdAt, now)}</span>
             </div>
@@ -685,7 +690,7 @@ function Activity({
       <div className="relative rounded-lg border border-border/70 bg-card transition-shadow focus-within:border-ring/60 focus-within:ring-[3px] focus-within:ring-ring/20">
         <textarea
           aria-label="Add a note"
-          placeholder="Leave a note…"
+          placeholder={placeholder}
           value={value}
           disabled={saving}
           onChange={(event) => setValue(event.target.value)}

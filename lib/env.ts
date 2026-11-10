@@ -93,6 +93,15 @@ type EnvKey =
   // Slack user signs in with Slack. Unset, no one can link.
   | "SLACK_CLIENT_ID"
   | "SLACK_CLIENT_SECRET"
+  // The Linear app (docs/linear-app.md): its OAuth client and its webhook's
+  // signing secret. Any unset, Linear can't be connected.
+  | "LINEAR_CLIENT_ID"
+  | "LINEAR_CLIENT_SECRET"
+  | "LINEAR_WEBHOOK_SECRET"
+  // The Jira app (docs/jira-app.md): its OAuth client, whose secret also signs its
+  // webhooks. Any unset, Jira can't be connected.
+  | "JIRA_CLIENT_ID"
+  | "JIRA_CLIENT_SECRET"
   // The Slack agent: the OpenRouter model it thinks with (default
   // anthropic/claude-sonnet-5.5). It runs on the org's key for Outrunner's
   // models, within the org's plan allowance.

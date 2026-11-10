@@ -33,6 +33,7 @@ import { LOOP_EVENTS, runGitHubLoop } from "@/lib/github/loop.deps";
 import { pullRequestEventOf } from "@/lib/session/pull-request-event";
 import { notifyPullRequests } from "@/lib/notifications/record";
 import { recordPullRequestEvent } from "@/lib/session/pull-request-state";
+import { tellTrackersPullRequests } from "@/lib/trackers/write-back.deps";
 import { announcePullRequest } from "@/lib/slack/agent-run";
 import { followPullRequestActivity } from "@/lib/missions/webhook";
 
@@ -201,9 +202,12 @@ export async function POST(request: Request) {
               return [];
             })
             .then((changes) =>
-              notifyPullRequests(changes).catch((error: unknown) =>
-                console.error("Couldn't tell a session's owner of its pull request", error),
-              ),
+              Promise.all([
+                notifyPullRequests(changes).catch((error: unknown) =>
+                  console.error("Couldn't tell a session's owner of its pull request", error),
+                ),
+                tellTrackersPullRequests(changes),
+              ]),
             ),
         );
       }

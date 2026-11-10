@@ -52,7 +52,10 @@ import {
   workspaceFirstPrompt,
 } from "@/lib/db/repositories";
 import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
-import { linkWorkItemToSession, projectOrgId, triageActor } from "@/lib/db/work-items";
+import { getWorkItem, linkWorkItemToSession, projectOrgId, triageActor, trackerIssueOfItem } from "@/lib/db/work-items";
+import { freeIssueBranch } from "@/lib/session/issue-branch";
+import { issueFirstBranch } from "@/lib/trackers/issue-key";
+import { tellTrackersSessionStarted } from "@/lib/trackers/write-back.deps";
 import { isUuid } from "@/lib/ids";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import {
@@ -133,6 +136,16 @@ import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-li
 async function madeBefore(id: string, ownerId: string, projectId: string): Promise<Workspace | null> {
   const made = await getWorkspace(id).catch(() => null);
   return made && made.ownerId === ownerId && made.projectId === projectId ? made : null;
+}
+
+/** The branch a session on this item's issue is on; null when it follows none. */
+async function branchOfItem(userId: string, projectId: string, workItemId: string): Promise<string | null> {
+  const orgId = await projectOrgId(projectId);
+  // Its title names the branch, so only an item they can see: linking it comes later.
+  const actor = orgId ? await triageActor(userId, orgId) : null;
+  const visible = actor ? await getWorkItem(actor, workItemId) : null;
+  const issue = orgId && visible ? await trackerIssueOfItem(orgId, workItemId) : null;
+  return issue ? freeIssueBranch(projectId, issue, issue.title) : null;
 }
 
 /** The session can't run without the user's Claude: say so, and where to fix it. */
@@ -477,6 +490,9 @@ async function createOnce(
     prompt: (options.firstMessage ?? (typeof body.prompt === "string" ? body.prompt : "")).replace(PLAN_MODE_PREAMBLE, ""),
   };
   let workspace;
+  // On a tracker's issue, it's named for that (lib/trackers/issue-key.ts). Not worth failing over.
+  const issueBranchName = !requestedBranch && typeof body.workItemId === "string" && body.workItemId ? await branchOfItem(owner.id, project.id, body.workItemId).catch(() => null) : null;
+
   try {
     const generation = {
       sessionBranches: (base: string) => projectBranchesLike(project.id, base),
@@ -491,9 +507,21 @@ async function createOnce(
           )
         ).some(Boolean),
     };
+    // On a tracker's issue, named for that first (lib/trackers/issue-key.ts).
+    // Two people starting on one item can both find a name free: the one that
+    // loses takes the issue's next free name, else a generated one, since it's
+    // our name, not one anyone asked for.
+    const issueBranches = new Set<string>();
     workspace = await insertOnBranch({
       requested: requestedBranch,
-      generate: (lost) => generatedBranch(about, generation, lost),
+      generate: (lost) =>
+        issueFirstBranch({
+          first: issueBranchName,
+          lost,
+          next: () => branchOfItem(owner.id, project.id, body.workItemId as string).catch(() => null),
+          generated: () => generatedBranch(about, generation, lost),
+          issueNamed: issueBranches,
+        }),
       insert: (branch) =>
         createWorkspaceRow({
           ...(askedId && { id: askedId }),
@@ -504,8 +532,9 @@ async function createOnce(
           branch,
           // Made up here, for the agent to give it its real name once it
           // knows the change: not a review's (it pushes nothing of its own),
-          // nor a GitHub follow-up's (it pushes to its pull request's head).
-          branchRenamable: !requestedBranch && !options.reviewAsApp && options.source !== "github",
+          // nor a GitHub follow-up's (it pushes to its pull request's head),
+          // nor one named for a tracker's issue (its key stays in it).
+          branchRenamable: !requestedBranch && !issueBranches.has(branch) && !options.reviewAsApp && options.source !== "github",
           baseBranch,
           provider: provider.name,
           agent: agentId,
@@ -592,10 +621,15 @@ async function createOnce(
     const workItemId = body.workItemId;
     // As a triager in the project's org: an item of another org is no item.
     await projectOrgId(project.id)
-      .then((orgId) => (orgId ? triageActor(owner.id, orgId) : null))
-      .then((actor) =>
-        actor ? linkWorkItemToSession(actor, workItemId, { workspaceId: workspace.id, projectId: project.id }) : undefined,
-      )
+      .then(async (orgId) => {
+        const actor = orgId ? await triageActor(owner.id, orgId) : null;
+        if (!orgId || !actor) return;
+        // Its issue in a tracker, if it has one, hears of it: only once it's really on this
+        // session, and only this org's. Not awaited: nothing here waits on one.
+        if (await linkWorkItemToSession(actor, workItemId, { workspaceId: workspace.id, projectId: project.id })) {
+          void tellTrackersSessionStarted(orgId, workItemId, owner.githubLogin ?? "someone in Outrunner", workspace.id);
+        }
+      })
       .catch((error: unknown) => console.error("Couldn't link the triage item to its session", error));
   }
 

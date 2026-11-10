@@ -108,7 +108,7 @@ export type SessionCheckout = {
   private?: boolean;
 };
 
-export type WorkspaceSource = "app" | "slack" | "automation" | "github" | "api";
+export type WorkspaceSource = "app" | "slack" | "automation" | "github" | "api" | "linear" | "jira";
 
 /** A session's first prompt as the server keeps it for the session while its
  *  box starts (workspaces.first_prompt, 20261107100000), so a tab closed

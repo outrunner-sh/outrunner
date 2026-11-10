@@ -14,7 +14,7 @@ import type { Database } from "@/lib/supabase/database.types";
 
 /** A pull request a session changed state (or was opened), recorded: told of
  *  below (notifyPullRequests), by session. */
-export type PullRequestChange = { workspaceId: string; ownerId: string; from: PullRequestState | null; to: PullRequestState; number: number };
+export type PullRequestChange = { workspaceId: string; projectId: string; ownerId: string; from: PullRequestState | null; to: PullRequestState; number: number };
 
 /** A pull request a session changed state (or was opened): changes recorded,
  *  by session. The sessions it's on are found by repository and branch, as
@@ -77,7 +77,7 @@ export async function recordPullRequestEventWith(
       });
       // Recorded meanwhile by the session's page: its state is the next check's.
       if (error && error.code !== "23505") throw error;
-      if (!error) changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: null, to: event.state, number: event.number });
+      if (!error) changed.push({ workspaceId: session.id, projectId, ownerId: session.owner_id, from: null, to: event.state, number: event.number });
       continue;
     }
     if (existing.github_number !== event.number) {
@@ -104,7 +104,7 @@ export async function recordPullRequestEventWith(
       // here. A new pull request, not the closed one again: told as its first
       // opening (from nothing), not as a reopen.
       if (replaced?.length) {
-        changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: null, to: event.state, number: event.number });
+        changed.push({ workspaceId: session.id, projectId, ownerId: session.owner_id, from: null, to: event.state, number: event.number });
       }
       continue;
     }
@@ -114,7 +114,7 @@ export async function recordPullRequestEventWith(
       .update({ state: event.state, state_at: now, checked_at: now, title: event.title })
       .eq("id", existing.id);
     if (error) throw error;
-    changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: existing.state, to: event.state, number: event.number });
+    changed.push({ workspaceId: session.id, projectId, ownerId: session.owner_id, from: existing.state, to: event.state, number: event.number });
   }
   return changed;
 }

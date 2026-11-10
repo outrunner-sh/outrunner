@@ -34,6 +34,12 @@ export type AuditAction =
   | "secret_sync.disconnected"
   | "secret_sync.linked"
   | "secret_sync.unlinked"
+  | "tracker.connected"
+  | "tracker.disconnected"
+  | "tracker.team_connected"
+  | "tracker.team_disconnected"
+  | "tracker.team_changed"
+  | "tracker.rule_changed"
   | "webhook.changed"
   | "webhook.secret_rotated"
   | "defaults.changed"
@@ -153,6 +159,18 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `linked the project ${what} to ${text(d.provider) ?? "?"}${text(d.target) ? ` (${text(d.target)})` : ""}`;
     case "secret_sync.unlinked":
       return `unlinked the project ${what} from ${text(d.provider) ?? "?"}`;
+    case "tracker.connected":
+      return `connected ${what}${text(d.label) ? ` (${text(d.label)})` : ""}`;
+    case "tracker.disconnected":
+      return `disconnected ${what}${text(d.label) ? ` (${text(d.label)})` : ""}`;
+    case "tracker.team_connected":
+      return `connected the team ${what}`;
+    case "tracker.team_disconnected":
+      return `disconnected the team ${what}`;
+    case "tracker.team_changed":
+      return `changed the settings of the team ${what}`;
+    case "tracker.rule_changed":
+      return `changed a triage rule of the team ${what}`;
     case "webhook.changed":
       return text(d.url) ? `set the API's webhook endpoint to ${text(d.url)}` : "removed the API's webhook endpoint";
     case "webhook.secret_rotated":

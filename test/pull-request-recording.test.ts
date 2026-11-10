@@ -59,7 +59,7 @@ test("an event is recorded on the installation's own org's session, never on ano
   const { tables, projectA, workspaceA, ownerA } = db();
   const changed = await recordPullRequestEventWith(event, 42, fakeDb(tables));
   // Org A's session: told, and the pull request recorded on it.
-  assert.deepEqual(changed, [{ workspaceId: workspaceA, ownerId: ownerA, from: null, to: "open", number: 7 }]);
+  assert.deepEqual(changed, [{ workspaceId: workspaceA, projectId: projectA, ownerId: ownerA, from: null, to: "open", number: 7 }]);
   assert.deepEqual(
     tables.pull_requests.map((row) => ({ workspace_id: row.workspace_id, project_id: row.project_id, github_number: row.github_number, title: row.title })),
     [{ workspace_id: workspaceA, project_id: projectA, github_number: 7, title: event.title }],

@@ -9,10 +9,13 @@
  * which until now was only found when its page asked.
  */
 
+import { after } from "next/server";
+
 import { stateOf, type PullRequestEvent, type PullRequestState } from "@/lib/session/pull-request-event";
 import { recordPullRequestEventWith, type PullRequestChange } from "@/lib/session/pull-request-recording";
 import { githubGet, repoToken } from "@/lib/slack/github";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import { tellTrackersPullRequests } from "@/lib/trackers/write-back.deps";
 
 /** A pull request a session changed state (or was opened): recorded
  *  (pull-request-recording.ts), on the real database, scoped to the orgs of
@@ -28,7 +31,7 @@ export async function recordPullRequestEvent(event: PullRequestEvent, installati
  */
 export async function checkOpenPullRequests(
   limit = 25,
-): Promise<Array<{ workspaceId: string; ownerId: string; from: PullRequestState; to: PullRequestState; number: number }>> {
+): Promise<Array<{ workspaceId: string; projectId: string; ownerId: string; from: PullRequestState; to: PullRequestState; number: number }>> {
   const db = createSupabaseAdminClient();
   const { data: open, error } = await db
     .from("pull_requests")
@@ -44,7 +47,7 @@ export async function checkOpenPullRequests(
     .in("id", [...new Set(open.map((p) => p.project_id))]);
   if (projectsError) throw projectsError;
   const projectById = new Map((projects ?? []).map((p) => [p.id, p]));
-  const changed: Array<{ workspaceId: string; ownerId: string; from: PullRequestState; to: PullRequestState; number: number }> = [];
+  const changed: Array<{ workspaceId: string; projectId: string; ownerId: string; from: PullRequestState; to: PullRequestState; number: number }> = [];
   const now = new Date().toISOString();
   await Promise.all(
     open.map(async (pr) => {
@@ -62,7 +65,7 @@ export async function checkOpenPullRequests(
       if (updateError) throw updateError;
       // Recorded meanwhile (a webhook's delivery): it's that one's change.
       if (state && state !== pr.state && updated?.length) {
-        changed.push({ workspaceId: pr.workspace_id, ownerId: pr.owner_id, from: pr.state, to: state, number: pr.github_number });
+        changed.push({ workspaceId: pr.workspace_id, projectId: pr.project_id, ownerId: pr.owner_id, from: pr.state, to: state, number: pr.github_number });
       }
     }),
   );
@@ -74,9 +77,17 @@ export async function checkOpenPullRequests(
 export async function notePullRequestState(pullRequest: { id: string; state?: PullRequestState }, state: PullRequestState): Promise<void> {
   if ((pullRequest.state ?? "open") === state) return;
   const now = new Date().toISOString();
-  const { error } = await createSupabaseAdminClient()
+  const { data, error } = await createSupabaseAdminClient()
     .from("pull_requests")
     .update({ state, state_at: now, checked_at: now })
-    .eq("id", pullRequest.id);
+    .eq("id", pullRequest.id)
+    .select("workspace_id, project_id, github_number")
+    .maybeSingle();
   if (error) console.error(`Pull request ${pullRequest.id}: couldn't record it ${state}`, error);
+  // Recorded here, no webhook or tick will see it change: its tracker hears of it, after
+  // the answer: a page's visit doesn't wait on Linear.
+  if (data) {
+    const change = { workspaceId: data.workspace_id, projectId: data.project_id, from: pullRequest.state ?? "open", to: state, number: data.github_number };
+    after(() => tellTrackersPullRequests([change]));
+  }
 }

@@ -14,6 +14,7 @@ export function IntegrationCard({
   name,
   description,
   connected,
+  problem,
   action,
 }: {
   icon: React.ReactNode;
@@ -21,6 +22,8 @@ export function IntegrationCard({
   description: string;
   /** What it's connected to (an account, a Slack workspace); null when it isn't. */
   connected: string | null;
+  /** What's wrong with that connection, when something is: shown in its place. */
+  problem?: string | null;
   /** Configure (connected), or Install or Connect; none for someone who can't. */
   action: { kind: "configure" | "install" | "connect"; href: string; external?: boolean } | null;
 }) {
@@ -36,7 +39,7 @@ export function IntegrationCard({
         <span className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/30 [&_svg]:size-6">
           {icon}
         </span>
-        {connected && (
+        {connected && !problem && (
           <span className="flex shrink-0 items-center gap-1 text-xs text-amber-500">
             <Check aria-hidden className="size-3" strokeWidth={3} /> Connected
           </span>
@@ -46,6 +49,7 @@ export function IntegrationCard({
         <span className="block text-base font-medium text-foreground">{name}</span>
         <span className="block text-xs leading-relaxed text-muted-foreground">{description}</span>
         {connected && <span className="block break-words text-xs text-muted-foreground">{connected}</span>}
+        {problem && <span className="block break-words text-xs text-destructive">{problem}</span>}
       </span>
       {action && (
         <span className="mt-auto flex items-center gap-1.5 pt-4 text-xs text-muted-foreground group-hover:text-foreground">
