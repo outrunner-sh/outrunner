@@ -586,9 +586,10 @@ async function pickRepo(install: SlackInstallation, conversation: SlackConversat
 }
 
 /** A pull request opened from an agent-filed item's session, told in the
- *  item's thread (lib/slack/announce-pull-request.ts). */
-export async function announcePullRequest(pr: OpenedPullRequest): Promise<void> {
-  await announcePullRequestWith(pr, announceDeps());
+ *  item's thread (lib/slack/announce-pull-request.ts) — only to the
+ *  installation's own orgs' sessions of its repository. */
+export async function announcePullRequest(pr: OpenedPullRequest, installationId: number): Promise<void> {
+  await announcePullRequestWith(pr, announceDeps(installationId));
 }
 
 /**

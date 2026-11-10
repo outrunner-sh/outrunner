@@ -13,9 +13,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"runtime-agent/internal/dotenv"
 )
 
 type tarEntry struct {
@@ -160,5 +163,22 @@ func writeTestFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMCPCredentialsInURLsAndArgsAreMasked(t *testing.T) {
+	values := func(entries []dotenv.Entry) []string {
+		var out []string
+		for _, e := range entries {
+			out = append(out, e.Value)
+		}
+		return out
+	}
+	if got := values(urlTokens("https://user:p4ssw0rdValue@mcp.example.com/sse?api_key=k3yValue123&format=json")); !slices.Contains(got, "p4ssw0rdValue") || !slices.Contains(got, "k3yValue123") {
+		t.Errorf("urlTokens = %q", got)
+	}
+	got := values(argTokens([]string{"-y", "@acme/mcp", "--api-key", "abc123def456", "--token=t0kenValue9", "--port", "3000"}))
+	if !reflect.DeepEqual(got, []string{"abc123def456", "t0kenValue9"}) {
+		t.Errorf("argTokens = %q", got)
 	}
 }

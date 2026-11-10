@@ -12,6 +12,7 @@
  */
 
 import { AgentEvent, type ContentBlock } from "@/lib/runtime/agent-protocol";
+import { promptWithoutAttachments } from "@/lib/runtime/attachments";
 import { claudeIsWorking, isInterruption, messageText } from "@/lib/runtime/conversation-events";
 import { pendingQuestion } from "@/lib/runtime/pending-question";
 import { pendingSecretRequest } from "@/lib/runtime/pending-secrets";
@@ -279,7 +280,8 @@ export function fenceBefore(entries: readonly ConversationEntry[], content: stri
   for (let i = entries.length - 1; i >= 0; i--) {
     const { event } = entries[i];
     if (event.t !== "message" || event.role !== "user" || isInterruption(event)) continue;
-    if (messageText(event) !== wanted) continue;
+    // A message sent with files names them after its words (promptWithAttachments).
+    if (promptWithoutAttachments(messageText(event)) !== wanted) continue;
     const at = Date.parse(event.timestamp);
     // The newest that reads the same is from before this send: this one
     // isn't in the log yet.

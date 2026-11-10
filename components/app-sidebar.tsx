@@ -257,8 +257,8 @@ export function AppSidebar({
         ) : null}
       </nav>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <SidebarMissions active={active} projects={projects} />
+      <div className="sidebar-scroll min-h-0 flex-1 overflow-y-auto">
+        <SidebarMissions active={active} projects={projects} workspaces={workspaces} />
         <div className="flex items-center justify-between px-2">
           <GroupingSwitch value={grouping} onChange={chooseGrouping} />
           {/* Opens the new-session screen with its GitHub repository picker

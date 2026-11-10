@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { useViewerScope } from "@/components/app-data";
@@ -49,8 +50,11 @@ function ReviewPulls({ data: { orgName, pulls, unreachable, error } }: { data: R
         {error ? <InlineMessage actions={[{ label: "Retry", onClick: () => router.refresh() }]}>{error}</InlineMessage> : <PullTable pulls={pulls} />}
         {unreachable.length > 0 && (
           <p className="text-[12px] text-muted-foreground">
-            Not shown: {unreachable.join(", ")}. The Outrunner GitHub App isn&apos;t installed there (Settings → Org →
-            Integrations).
+            Not shown: {unreachable.join(", ")}. The Outrunner GitHub App isn&apos;t installed there (
+            <Link href="/settings/org/integrations" className="underline underline-offset-2">
+              Settings → Organization → Integrations
+            </Link>
+            ).
           </p>
         )}
     </PageLayout>

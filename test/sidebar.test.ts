@@ -450,7 +450,7 @@ test("an archived cloud session remains identifiable and deletable", () => {
 });
 
 test("the delete confirmation says what goes and what stays", () => {
-  assert.match(deletionConsequence({ kind: "cloud" }), /Runtime Computer.*GitHub stays/);
+  assert.match(deletionConsequence({ kind: "cloud" }), /cloud computer.*GitHub stays/);
   assert.match(deletionConsequence({ kind: "local-worktree" }), /branch stays/);
   assert.match(deletionConsequence({ kind: "local-in-place" }), /untouched/);
 });

@@ -18,3 +18,8 @@ export const BOX_RESTORE_FAILED = "box-restore-failed";
  *  relaunch failed), so nothing would answer it: the page says why, with
  *  Try again. app/api/workspaces/[id]/session/route.ts */
 export const SESSION_NOT_STARTED = "session-not-started";
+
+/** The session was archived or deleted since the page loaded (another tab,
+ *  an automation, a Mission): it isn't attached again, and retrying can't
+ *  help. app/api/workspaces/[id]/session/route.ts */
+export const SESSION_ENDED = "session-ended";

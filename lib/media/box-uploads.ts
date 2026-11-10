@@ -85,7 +85,7 @@ export type BoxRequest = { sandboxId: string | null; timestamp: string | null; s
 export type Answer = { status: number; body: Record<string, unknown> };
 
 /** A request's body is a small JSON object. */
-const MAX_BODY_BYTES = 4096;
+export const MAX_BODY_BYTES = 4096;
 
 const refuse = (status: number, error: string): Answer => ({ status, body: { error } });
 

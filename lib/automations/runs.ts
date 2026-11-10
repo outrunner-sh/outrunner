@@ -24,6 +24,7 @@ import {
   type ScheduleEvent,
 } from "@/lib/automations/run-event";
 import { describeSchedule, nextRun } from "@/lib/automations/schedule";
+import { repositoryIdOf } from "@/lib/db/installation-projects";
 import type {
   ClaimedRun,
   DueSchedule,
@@ -49,9 +50,10 @@ export type PendingRun = {
 };
 
 export type PlanDeps = {
-  /** The enabled automations on a repository, through the installation an
-   *  event came by: a pull request's, or an issue's. */
-  automationsForPullRequest(installationId: number, repoFullName: string): Promise<RunCandidate[]>;
+  /** The enabled automations on a repository (`repoId`, GitHub's id of it),
+   *  through the installation an event came by: a pull request's, or an
+   *  issue's. */
+  automationsForPullRequest(installationId: number, repoId: number): Promise<RunCandidate[]>;
   /** Record the runs, all or none: each by its automation and repository
    *  (`${automationId}:${projectId}`), new or a waiting run it was combined
    *  into; one whose key is recorded already, or past its automation's
@@ -122,11 +124,12 @@ function pendingOf(
  *  its reviewers, one of its labels). */
 async function planEventRuns(
   event: PullRequestEvent | IssueEvent,
+  repoId: number,
   deps: PlanDeps,
   appSlug: string | undefined,
   delivery: string | null,
 ): Promise<PendingRun[]> {
-  const matched = (await deps.automationsForPullRequest(event.installationId, event.repoFullName)).filter(
+  const matched = (await deps.automationsForPullRequest(event.installationId, repoId)).filter(
     (c) => c.triggers.includes(event.trigger) && filtersTake(c, event),
   );
   if (matched.length === 0) return [];
@@ -143,15 +146,19 @@ async function planEventRuns(
  *  for an event that starts none, or one already run. */
 export async function planRuns(payload: unknown, deps: PlanDeps, appSlug?: string, delivery: string | null = null): Promise<PendingRun[]> {
   const event = readPullRequestEvent(payload, appSlug);
-  if (typeof event === "string") return [];
-  return planEventRuns(event, deps, appSlug, delivery);
+  // The repository by GitHub's id of it, which projects match by: never its
+  // full name, which a project's write-level members can set.
+  const repoId = repositoryIdOf(payload);
+  if (typeof event === "string" || repoId === null) return [];
+  return planEventRuns(event, repoId, deps, appSlug, delivery);
 }
 
 /** The same for an `issues` event: opened, or labeled. */
 export async function planIssueRuns(payload: unknown, deps: PlanDeps, appSlug?: string, delivery: string | null = null): Promise<PendingRun[]> {
   const event = readIssueEvent(payload, appSlug);
-  if (typeof event === "string") return [];
-  return planEventRuns(event, deps, appSlug, delivery);
+  const repoId = repositoryIdOf(payload);
+  if (typeof event === "string" || repoId === null) return [];
+  return planEventRuns(event, repoId, deps, appSlug, delivery);
 }
 
 export type ScheduleDeps = {
@@ -426,10 +433,10 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
 export type CloseDeps = {
   /** The open sessions of the automations' runs on the pull request, by
    *  their owner (pullRequestSessions). */
-  pullRequestSessions(installationId: number, repoFullName: string, prNumber: number): Promise<Map<string, string[]>>;
+  pullRequestSessions(installationId: number, repoId: number, prNumber: number): Promise<Map<string, string[]>>;
   archiveServerSessions(userId: string, workspaceIds: readonly string[], options?: { dropBox?: boolean }): Promise<number>;
   /** The runs on it whose check is still open (openChecksOfPullRequest). */
-  openChecksOfPullRequest(installationId: number, repoFullName: string, prNumber: number): Promise<string[]>;
+  openChecksOfPullRequest(installationId: number, repoId: number, prNumber: number): Promise<string[]>;
   closeCheck(runId: string, reason: string): Promise<void>;
 };
 
@@ -444,13 +451,13 @@ export async function closeRuns(payload: unknown, deps: CloseDeps): Promise<numb
   if (!closed) return 0;
   try {
     // A review that never came won't now: its check says so.
-    const open = await deps.openChecksOfPullRequest(closed.installationId, closed.repoFullName, closed.number);
+    const open = await deps.openChecksOfPullRequest(closed.installationId, closed.repoId, closed.number);
     await Promise.all(open.map((runId) => deps.closeCheck(runId, "The pull request closed before its review was posted.")));
   } catch (error) {
     console.error(`Couldn't close the checks of ${closed.repoFullName}#${closed.number}`, error);
   }
   try {
-    const byOwner = await deps.pullRequestSessions(closed.installationId, closed.repoFullName, closed.number);
+    const byOwner = await deps.pullRequestSessions(closed.installationId, closed.repoId, closed.number);
     let archived = 0;
     for (const [owner, ids] of byOwner) archived += await deps.archiveServerSessions(owner, ids, { dropBox: true });
     return archived;
