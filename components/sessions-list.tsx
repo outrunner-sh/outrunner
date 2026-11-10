@@ -313,7 +313,7 @@ export function SessionsList() {
                             {e.title}
                           </span>
                         )}
-                        {standing.unread && <span aria-label="New reply" className="size-1.5 shrink-0 rounded-full bg-sky-400" />}
+                        {standing.unread && <span role="img" aria-label="New reply" className="size-1.5 shrink-0 rounded-full bg-sky-400" />}
                         {e.pullRequest && (
                           <a
                             href={e.pullRequest.url}
@@ -399,7 +399,7 @@ function FilterMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         className={cn(
-          "inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-[13px] outline-none transition-colors hover:bg-accent/60",
+          "inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-[13px] outline-none transition-colors hover:bg-accent/60 focus-visible:ring-[3px] focus-visible:ring-ring/50",
           filtering ? "border-border text-foreground" : "border-border/60 text-muted-foreground",
         )}
       >

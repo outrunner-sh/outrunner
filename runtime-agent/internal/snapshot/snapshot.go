@@ -12,6 +12,7 @@
 package snapshot
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -24,6 +25,7 @@ import (
 	"strings"
 
 	"runtime-agent/internal/protocol"
+	"runtime-agent/internal/redact"
 )
 
 // RuntimeVersion is the agent build stamped into every manifest. Overridden at
@@ -182,6 +184,9 @@ type Input struct {
 	ClaudeVersion string
 	// Chats are the session's other chats, each uploaded to its own URLs.
 	Chats []ChatInput
+	// Secrets are the box's, masked in every conversation and rollout the
+	// Snapshot keeps, as in the chat (NEE-268).
+	Secrets []string
 }
 
 // Produce captures the Snapshot artifacts, assembles the manifest, and uploads
@@ -201,7 +206,7 @@ func Produce(ctx context.Context, in Input) (manifest *Manifest, err error) {
 	paths := map[string]string{}
 
 	artifact = "conversation"
-	paths["conversation"], err = stageConversation(staging, in.ConversationPath)
+	paths["conversation"], err = stageConversation(staging, in.ConversationPath, in.Secrets)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +247,10 @@ func Produce(ctx context.Context, in Input) (manifest *Manifest, err error) {
 	artifacts := append([]string(nil), payloadArtifacts...)
 	if in.RolloutPath != "" && uploadFor(in.Uploads, "rollout") != "" {
 		if _, err := os.Stat(in.RolloutPath); err == nil {
-			paths["rollout"] = in.RolloutPath
+			artifact = "rollout"
+			if paths["rollout"], err = stageMasked(in.RolloutPath, filepath.Join(staging, RolloutName), in.Secrets); err != nil {
+				return nil, err
+			}
 			artifacts = append(artifacts, "rollout")
 		}
 	}
@@ -290,7 +298,7 @@ func Produce(ctx context.Context, in Input) (manifest *Manifest, err error) {
 	var chatUploads []chatUpload
 	for _, chat := range in.Chats {
 		artifact = "chat"
-		entry, uploads, err := stageChat(staging, chat, checksums, sizes)
+		entry, uploads, err := stageChat(staging, chat, in.Secrets, checksums, sizes)
 		if err != nil {
 			return nil, err
 		}
@@ -320,7 +328,7 @@ type chatUpload struct {
 // when it has none yet, so every chat listed has one) and a Codex chat's
 // rollout, when it has one and was given somewhere to put it. Their
 // checksums and sizes join the manifest's.
-func stageChat(staging string, chat ChatInput, checksums map[string]string, sizes map[string]int64) (ManifestChat, []chatUpload, error) {
+func stageChat(staging string, chat ChatInput, secrets []string, checksums map[string]string, sizes map[string]int64) (ManifestChat, []chatUpload, error) {
 	entry := ManifestChat{
 		ID: chat.ChatID, Name: chat.Name, Kind: chat.Kind, ForkedFrom: chat.ForkedFrom,
 		Agent: chat.Agent, Model: chat.Model, SessionID: chat.SessionID,
@@ -333,15 +341,19 @@ func stageChat(staging string, chat ChatInput, checksums map[string]string, size
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return entry, nil, err
 	}
-	conversation, err := stageConversation(dir, chat.ConversationPath)
+	conversation, err := stageConversation(dir, chat.ConversationPath, secrets)
 	if err != nil {
 		return entry, nil, err
 	}
 	uploads := []chatUpload{{entry.Conversation, chat.Conversation, conversation}}
 	if chat.RolloutPath != "" && chat.Rollout != "" {
 		if _, err := os.Stat(chat.RolloutPath); err == nil {
+			rollout, err := stageMasked(chat.RolloutPath, filepath.Join(dir, RolloutName), secrets)
+			if err != nil {
+				return entry, nil, err
+			}
 			entry.Rollout = ChatRolloutName(chat.ChatID)
-			uploads = append(uploads, chatUpload{entry.Rollout, chat.Rollout, chat.RolloutPath})
+			uploads = append(uploads, chatUpload{entry.Rollout, chat.Rollout, rollout})
 		}
 	}
 	for _, up := range uploads {
@@ -354,17 +366,69 @@ func stageChat(staging string, chat ChatInput, checksums map[string]string, size
 	return entry, uploads, nil
 }
 
-// stageConversation returns the JSONL path to upload — the live session log when
-// it exists, otherwise a freshly staged empty file so the artifact is always
-// present.
-func stageConversation(staging, sessionLog string) (string, error) {
+// stageConversation returns the JSONL path to upload — the live session log,
+// its secrets masked, when it exists, otherwise a freshly staged empty file so
+// the artifact is always present.
+func stageConversation(staging, sessionLog string, secrets []string) (string, error) {
+	staged := filepath.Join(staging, ConversationName)
 	if sessionLog != "" {
 		if _, err := os.Stat(sessionLog); err == nil {
-			return sessionLog, nil
+			return stageMasked(sessionLog, staged, secrets)
 		}
 	}
-	empty := filepath.Join(staging, ConversationName)
-	return empty, os.WriteFile(empty, nil, 0o644)
+	return staged, os.WriteFile(staged, nil, 0o644)
+}
+
+// stageMasked copies a JSONL log to dst with its secrets masked line by line:
+// a line holding one in its strings, so it stays the record a restore
+// resumes from (or as text, one that isn't JSON: cut off mid-write); every
+// other line as it was. With no secrets, src itself.
+func stageMasked(src, dst string, secrets []string) (string, error) {
+	if len(secrets) == 0 {
+		return src, nil
+	}
+	r := redact.New(secrets)
+	in, err := os.Open(src)
+	if err != nil {
+		return "", err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
+	reader, writer := bufio.NewReader(in), bufio.NewWriter(out)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			body, newline := strings.CutSuffix(string(line), "\n")
+			masked := []byte(r.Redact([]byte(body)) + r.Flush())
+			if string(masked) != body {
+				if structured, err := r.JSON([]byte(body)); err == nil {
+					masked = structured
+				}
+			}
+			if _, err := writer.Write(masked); err != nil {
+				return "", err
+			}
+			if newline {
+				if err := writer.WriteByte('\n'); err != nil {
+					return "", err
+				}
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return "", readErr
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		return "", err
+	}
+	return dst, out.Close()
 }
 
 // stageCast returns the finalized cast path, or a staged empty file when the

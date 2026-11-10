@@ -411,7 +411,7 @@ func (s *Service) sideContext(source string) string {
 
 // masker masks the box's secrets in text, as its terminal does.
 func (s *Service) masker() func(string) string {
-	secrets := s.RedactionSecrets()
+	secrets := s.CurrentSecrets()
 	live := s.liveSecrets
 	return func(text string) string {
 		r := redact.New(secrets).Follow(live)

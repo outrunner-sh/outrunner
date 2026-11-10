@@ -19,7 +19,8 @@ export function desktopDestination(next: string | null | undefined): string {
   const path = safeRelativePath(next);
   const url = new URL(path, "https://desktop.invalid");
   if (url.origin !== "https://desktop.invalid" || /^\/(?:auth|signin|onboarding)(?:\/|$)/.test(url.pathname)) return "/";
-  return `${url.pathname}${url.search}${url.hash}`;
+  // Checked again as parsed: resolving `/.//evil.com` leaves `//evil.com`.
+  return safeRelativePath(`${url.pathname}${url.search}${url.hash}`);
 }
 
 export function sealDesktopContext(context: DesktopContext): string {

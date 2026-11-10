@@ -404,7 +404,9 @@ async function restoreDaytonaWorkspace(
       const restored = await agent.restoreWorkspace(identity, {
         branch: workspace.branch,
         ...(workspace.branchRenamable && { branchRenamable: true }),
-        baseBranch: project.defaultBranch,
+        // The session's own base (a PR review's, an API session's), which
+        // the Changes diff and Claude's orientation go by; not the project's.
+        baseBranch: workspace.baseBranch || project.defaultBranch,
         sessionId: manifest.sessionId,
         downloads,
         ...(workspace.agent !== "claude" && { agent: workspace.agent }),

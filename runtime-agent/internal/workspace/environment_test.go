@@ -8,9 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"runtime-agent/internal/redact"
 )
 
 // A session's environment reaches its launch before its credential, is
@@ -183,5 +186,107 @@ func TestInstructionsFollowTheOrientation(t *testing.T) {
 	}
 	if err := s.SetInstructions("ws1", tooLarge); !errors.Is(err, ErrInvalidEnvironment) {
 		t.Errorf("too large: %v, want ErrInvalidEnvironment", err)
+	}
+}
+
+func TestWorthMaskingTellsKeysFromSettings(t *testing.T) {
+	for _, c := range []struct {
+		name, value string
+		want        bool
+	}{
+		{"DB_PASS", "s3cr3tPw", true},
+		{"STRIPE_KEY", "sk_9x8y7z", true},
+		{"SOME_NAME", "a-long-setting-name", true},
+		{"AWS_REGION", "us-east-1", false},
+		{"RUNTIME", "postgres16", false},
+		{"NODE_ENV", "production", false},
+		{"PORT", "8080", false},
+		{"API_TOKEN", "short", false},
+	} {
+		if got := worthMasking(c.name, c.value); got != c.want {
+			t.Errorf("worthMasking(%q, %q) = %v, want %v", c.name, c.value, got, c.want)
+		}
+	}
+}
+
+func TestFileTokensReadsJSONAndPEMFiles(t *testing.T) {
+	account := `{"type":"service_account","private_key_id":"0a1b2c3d4e","private_key":"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\n","client_id":"104523988123456789012","token_uri":"https://oauth2.googleapis.com/token"}`
+	got := fileTokens(account)
+	for _, want := range []string{"0a1b2c3d4e", "104523988123456789012", "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\n"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("JSON file tokens %q lack %q", got, want)
+		}
+	}
+	if slices.Contains(got, "service_account") || slices.Contains(got, "https://oauth2.googleapis.com/token") {
+		t.Errorf("JSON file tokens took a setting: %q", got)
+	}
+	pem := "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----\n"
+	if got := fileTokens(pem); len(got) != 1 || got[0] != strings.TrimSpace(pem) {
+		t.Errorf("PEM file tokens = %q", got)
+	}
+	// A last line of base64 padded with = reads as an assignment.
+	padded := "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIIrYSSNQFaA2Hwf1duRSxKtLYX5CHHkqTxBBYXLhZwOo\nAwEHoUQDQgAE=\n-----END EC PRIVATE KEY-----\n"
+	if got := fileTokens(padded); len(got) != 1 || got[0] != strings.TrimSpace(padded) {
+		t.Errorf("padded PEM file tokens = %q", got)
+	}
+	if got := fileTokens("PORT=8080\nAWS_REGION=us-east-1\nDB_PASS=s3cr3tPw\n"); !reflect.DeepEqual(got, []string{"s3cr3tPw"}) {
+		t.Errorf(".env file tokens = %q", got)
+	}
+	// A .env with a key inline keeps its other variables masked.
+	inline := "NODE_ENV=production\nAPP_NAME=myservice\nAPI_KEY=sk_live_abcdef1234567890\nPRIVATE_KEY=\"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\"\n"
+	key := "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----"
+	// Double-quoted, and single-quoted over several lines (the dotenv
+	// parser reads one line of that): the key is masked either way, and
+	// the settings beside it stay readable.
+	for _, file := range []string{inline, strings.ReplaceAll(inline, `"`, `'`)} {
+		got := fileTokens(file)
+		if !slices.Contains(got, "sk_live_abcdef1234567890") || !slices.Contains(got, key) || slices.Contains(got, "-----BEGIN PRIVATE KEY-----") {
+			t.Errorf("inline-key .env tokens = %q", got)
+		}
+		r := redact.New(got)
+		if masked := r.Text("env: NODE_ENV=production and APP_NAME=myservice, MIIEvQIBADANBgkq"); masked != "env: NODE_ENV=production and APP_NAME=myservice, ***" {
+			t.Errorf("masked = %q", masked)
+		}
+	}
+	// A block left open masks the whole file: alone, after a closed one, or
+	// before one (where its body would run into the next key's block).
+	closed := "A_KEY=\"-----BEGIN PRIVATE KEY-----\nAAAABBBBCCCCDDDD\n-----END PRIVATE KEY-----\"\n"
+	open := "B_KEY='-----BEGIN EC PRIVATE KEY-----\nEEEEFFFFGGGGHHHH\n'\n"
+	for file, want := range map[string]string{
+		open:          "x AAAABBBBCCCCDDDD ***",
+		closed + open: "x *** ***",
+		open + closed: "x *** ***",
+	} {
+		got := fileTokens(file)
+		if len(got) != 1 || got[0] != strings.TrimSpace(file) {
+			t.Errorf("open block tokens = %q", got)
+		}
+		if masked := redact.New(got).Text("x AAAABBBBCCCCDDDD EEEEFFFFGGGGHHHH"); masked != want {
+			t.Errorf("open block masked = %q, want %q", masked, want)
+		}
+	}
+	// Every label RFC 7468 allows, not only RSA/EC: an OpenSSH key, and one
+	// with a hyphen inside, masked as its block beside a readable setting.
+	ssh := "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----\n"
+	if got := fileTokens(ssh); len(got) != 1 || got[0] != strings.TrimSpace(ssh) {
+		t.Errorf("OpenSSH key tokens = %q", got)
+	}
+	hyphened := "-----BEGIN X-TEST PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END X-TEST PRIVATE KEY-----"
+	if got := fileTokens("NODE_ENV=production\nKEY=\"" + hyphened + "\"\n"); !slices.Contains(got, hyphened) || slices.Contains(got, "production") {
+		t.Errorf("hyphenated label tokens = %q", got)
+	}
+	for armor, want := range map[string]bool{
+		"X-TEST PRIVATE KEY": true,
+		"":                   true, // RFC 7468 allows an empty label
+		"-LEADING":           false,
+		"DOUBLE--HYPHEN":     false,
+		// A trailing hyphen runs into the armor's dashes and matches: the
+		// block is masked all the same.
+		"TRAIL-": true,
+	} {
+		block := "-----BEGIN " + armor + "-----\nx\n-----END " + armor + "-----"
+		if got := pemBlock.MatchString(block); got != want {
+			t.Errorf("pemBlock matches label %q: %v, want %v", armor, got, want)
+		}
 	}
 }

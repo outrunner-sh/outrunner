@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { attachCloudSession } from "@/lib/session/attach-session";
+import { AttachError, attachCloudSession } from "@/lib/session/attach-session";
+import { SESSION_ENDED } from "@/lib/session/session-codes";
 
 const urls = { ptyUrl: "wss://box/pty", eventsUrl: "wss://box/events" };
 const reply = (status: number, code?: string) => Response.json({ error: "Box is waking", ...(code && { code }) }, { status });
@@ -68,5 +69,17 @@ test("leaving a session cancels its retry backoff", async () => {
   await requested;
   controller.abort();
   await stopped;
+  assert.equal(calls, 1);
+});
+
+test("a session archived or deleted elsewhere is said with its code, once, never retried", async () => {
+  let calls = 0;
+  await assert.rejects(
+    attachCloudSession("w", "main", false, new AbortController().signal, {
+      fetch: async () => { calls++; return reply(409, SESSION_ENDED); },
+      wait: async () => { assert.fail("an ended session must not be retried"); },
+    }),
+    (error: unknown) => error instanceof AttachError && error.code === SESSION_ENDED && !error.retryable,
+  );
   assert.equal(calls, 1);
 });

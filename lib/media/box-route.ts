@@ -5,18 +5,22 @@
 
 import { NextResponse } from "next/server";
 
-import type { Answer, BoxRequest, BoxUploadDeps } from "@/lib/media/box-uploads";
+import { readCappedBody } from "@/lib/http/capped-body";
+import { type Answer, type BoxRequest, type BoxUploadDeps, MAX_BODY_BYTES } from "@/lib/media/box-uploads";
 import { boxUploadDeps } from "@/lib/media/box-uploads.deps";
 
 export async function answerBox(
   request: Request,
   step: (deps: BoxUploadDeps, request: BoxRequest) => Promise<Answer>,
 ): Promise<NextResponse> {
+  // Read no further than a box's request goes: anyone can post here.
+  const body = await readCappedBody(request, MAX_BODY_BYTES);
+  if (body === null) return NextResponse.json({ error: "Not a box's request." }, { status: 400 });
   const boxRequest: BoxRequest = {
     sandboxId: request.headers.get("x-outrunner-sandbox"),
     timestamp: request.headers.get("x-outrunner-timestamp"),
     signature: request.headers.get("x-outrunner-signature"),
-    body: await request.text(),
+    body,
   };
   try {
     const { status, body } = await step(boxUploadDeps(new URL(request.url).origin), boxRequest);

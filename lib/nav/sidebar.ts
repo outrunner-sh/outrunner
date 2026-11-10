@@ -110,7 +110,7 @@ export type SidebarSession = {
 export function deletionConsequence(deletion: SessionDeletion): string {
   switch (deletion.kind) {
     case "cloud":
-      return "Its worktree on the Runtime Computer is removed. Anything pushed to GitHub stays.";
+      return "Its worktree on the cloud computer is removed. Anything pushed to GitHub stays.";
     case "local-worktree":
       return "Its worktree on this Mac is removed. The branch stays in your repository.";
     case "local-in-place":

@@ -363,7 +363,7 @@ and remakes its ready boxes.
 ### Learnings
 
 ```sh
-curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \\
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
   "$OUTRUNNER/api/v1/learnings" -d '{ "scope": "org", "title": "Conventional Commits", "body": "Use Conventional Commits for every commit message and PR title." }'
 ```
 
@@ -395,6 +395,7 @@ outrunner send <id> "Also add a test for it." --wait
 outrunner read <id> --limit 20
 outrunner wait <id> --after 48213 --timeout 30m
 outrunner delete <id> --yes
+git log -1 --format=%B | outrunner triage --repo acme/web
 ```
 
 `create` takes `--repo` (`owner/name` or an id), `--model`, `--agent`,
@@ -406,6 +407,8 @@ exits 0 when it's over, 3 when the session needs input, 4 on timeout, 1
 when the session failed or stopped, and 5 when Outrunner couldn't be reached
 for a while (a dropped call, a deploy or a 5xx is tried again a few times
 first); it prints the command, fence and org included, that carries on.
+`list --project` takes `owner/name` too. `triage` files a work item, with
+`OUTRUNNER_API_KEY` through `POST /triage/items`.
 
 ## Webhooks
 

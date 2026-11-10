@@ -54,6 +54,14 @@ export async function boxSummary(workspace: Workspace): Promise<WorkspaceSummary
   return reached.agent.workspaceSummary(reached.identity).catch(() => null);
 }
 
+/** Text with the session's box secrets masked, or null when the box can't
+ *  be asked (asleep, unreachable, an agent from before masking). */
+export async function boxMask(workspace: Workspace, text: string): Promise<string | null> {
+  const reached = await reachBox(workspace).catch(() => null);
+  if (!reached) return null;
+  return reached.agent.maskText(reached.identity, text).catch(() => null);
+}
+
 /** Whether the session's agent is mid-turn. Its box is its own
  *  (lib/runtime/computer-scope.ts), so the box's activity is the session's. */
 export async function boxWorking(workspace: Workspace): Promise<boolean> {
