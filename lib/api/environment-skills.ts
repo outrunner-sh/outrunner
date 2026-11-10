@@ -11,6 +11,7 @@ import { GET as repoSkillsGET } from "@/app/api/environments/[id]/repo-skills/ro
 import { DELETE as skillDELETE } from "@/app/api/environments/[id]/skills/[skillId]/route";
 import { GET as skillsGET, POST as skillsPOST } from "@/app/api/environments/[id]/skills/route";
 import { GET as searchGET } from "@/app/api/skills/search/route";
+import { boxSetupRefused } from "@/lib/api/auth";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
 import { paginate, pageRequest } from "@/lib/api/pagination";
@@ -46,6 +47,8 @@ export async function listSkillsApi(context: ApiContext, id: string): Promise<Re
 /** POST /environments/{id}/skills: enable a catalog skill, `{name, slug,
  *  source}` as GET /skills/search gave it. */
 export async function enableSkillApi(context: ApiContext, id: string): Promise<Response> {
+  const refused = boxSetupRefused(context);
+  if (refused) return refused;
   if (!isUuid(id)) return notFound();
   const body = await jsonBody(context.request);
   if (body instanceof Response) return body;
@@ -55,6 +58,8 @@ export async function enableSkillApi(context: ApiContext, id: string): Promise<R
 
 /** DELETE /environments/{id}/skills/{skill_id}. */
 export async function disableSkillApi(context: ApiContext, id: string, skillId: string): Promise<Response> {
+  const refused = boxSetupRefused(context);
+  if (refused) return refused;
   if (!isUuid(id) || !isUuid(skillId)) return apiError(404, "No skill by that id on a project you can see.");
   const path = `/api/environments/${id}/skills/${skillId}`;
   return answer(context, await skillDELETE(appRequest(context.base, path, { method: "DELETE" }), routeParams({ id, skillId })), {
@@ -74,6 +79,8 @@ export async function listRegistriesApi(context: ApiContext, id: string): Promis
 
 /** POST /environments/{id}/skill-registries: `{url}`, a GitHub repository. */
 export async function addRegistryApi(context: ApiContext, id: string): Promise<Response> {
+  const refused = boxSetupRefused(context);
+  if (refused) return refused;
   if (!isUuid(id)) return notFound();
   const body = await jsonBody(context.request);
   if (body instanceof Response) return body;
@@ -86,6 +93,8 @@ export async function addRegistryApi(context: ApiContext, id: string): Promise<R
 
 /** DELETE /environments/{id}/skill-registries/{registry_id}. */
 export async function removeRegistryApi(context: ApiContext, id: string, registryId: string): Promise<Response> {
+  const refused = boxSetupRefused(context);
+  if (refused) return refused;
   if (!isUuid(id) || !isUuid(registryId)) return apiError(404, "No registry by that id on a project you can see.");
   const path = `/api/environments/${id}/skill-registries/${registryId}`;
   const response = await registryDELETE(appRequest(context.base, path, { method: "DELETE" }), routeParams({ id, registryId }));

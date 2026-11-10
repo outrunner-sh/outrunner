@@ -8,6 +8,7 @@
 
 import { DELETE as serverDELETE, PATCH as serverPATCH } from "@/app/api/environments/[id]/mcp-servers/[serverId]/route";
 import { GET as serversGET, POST as serversPOST } from "@/app/api/environments/[id]/mcp-servers/route";
+import { boxSetupRefused } from "@/lib/api/auth";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
 import { paginate, pageRequest } from "@/lib/api/pagination";
@@ -38,6 +39,8 @@ export async function listMcpServersApi(context: ApiContext, id: string): Promis
 
 /** POST /environments/{id}/mcp-servers. */
 export async function createMcpServerApi(context: ApiContext, id: string): Promise<Response> {
+  const refused = boxSetupRefused(context);
+  if (refused) return refused;
   if (!isUuid(id)) return notFound();
   const body = await jsonBody(context.request);
   if (body instanceof Response) return body;
@@ -50,6 +53,8 @@ export async function createMcpServerApi(context: ApiContext, id: string): Promi
 
 /** PATCH /environments/{id}/mcp-servers/{server_id}. */
 export async function updateMcpServerApi(context: ApiContext, id: string, serverId: string): Promise<Response> {
+  const refused = boxSetupRefused(context);
+  if (refused) return refused;
   if (!isUuid(id) || !isUuid(serverId)) return apiError(404, "No MCP server by that id on a project you can see.");
   const body = await jsonBody(context.request);
   if (body instanceof Response) return body;
@@ -63,6 +68,8 @@ export async function updateMcpServerApi(context: ApiContext, id: string, server
 
 /** DELETE /environments/{id}/mcp-servers/{server_id}. */
 export async function deleteMcpServerApi(context: ApiContext, id: string, serverId: string): Promise<Response> {
+  const refused = boxSetupRefused(context);
+  if (refused) return refused;
   if (!isUuid(id) || !isUuid(serverId)) return apiError(404, "No MCP server by that id on a project you can see.");
   const path = `/api/environments/${id}/mcp-servers/${serverId}`;
   const response = await serverDELETE(appRequest(context.base, path, { method: "DELETE" }), routeParams({ id, serverId }));

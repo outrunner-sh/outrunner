@@ -11,6 +11,7 @@ import { refreshMissions } from "@/hooks/use-missions";
 import { DRAFTS } from "@/lib/client/drafts";
 import { transferQueue } from "@/lib/session/prompt-queue";
 import { workspaceLabel } from "@/lib/nav/session-title";
+import { failureParts, GITHUB_RECONNECT_MESSAGE } from "@/lib/runtime/provision-failure";
 import type { Workspace } from "@/lib/runtime/types";
 import { deleteSession } from "@/lib/session/delete-session";
 import {
@@ -112,24 +113,35 @@ export function useStartOver(workspace: Workspace) {
 }
 
 /**
- * A cloud session whose box never came up. Try again starts over in a fresh
- * session; Delete removes the failed one.
+ * A cloud session whose box never came up: why in a sentence, what the box
+ * said behind Details. Try again starts over in a fresh session; Delete
+ * removes the failed one.
  */
 export function SessionDidntStart({ workspace, detail }: { workspace: Workspace; detail: string }) {
   const router = useRouter();
   const { start: tryAgain, starting: retrying, error: retryError } = useStartOver(workspace);
   const [deleting, setDeleting] = useState(false);
+  const { summary, detail: said } = failureParts(detail);
 
   return (
     <>
       <RouteMessage
         className="min-h-0 flex-1"
         title="This session didn't start"
-        detail={detail}
+        detail={summary}
         actions={[
           { label: "Try again", icon: <RotateCw className={retrying ? "is-working" : undefined} />, primary: true, disabled: retrying, onClick: () => void tryAgain() },
+          ...(detail === GITHUB_RECONNECT_MESSAGE ? [{ label: "Open settings", href: "/settings/connections" }] : []),
           { label: "Delete session", icon: <Trash2 />, disabled: retrying, onClick: () => setDeleting(true) },
         ]}
+        footer={
+          said && (
+            <details className="route-state-details">
+              <summary>Details</summary>
+              <p>{said}</p>
+            </details>
+          )
+        }
         message={
           retryError && (
             <InlineMessage

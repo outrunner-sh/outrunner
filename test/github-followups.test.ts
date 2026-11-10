@@ -222,6 +222,7 @@ function fakeDeps(
   let turns = startTurns ?? 0;
   const deps: FollowUpDeps = {
     scope: async () => ({ orgId: "o1", projectId: "p1" }),
+    projectScope: async () => ({ orgId: "o1", projectId: "p1" }),
     claim: async (key) => {
       if (claimed.has(key)) return false;
       claimed.add(key);
@@ -504,7 +505,7 @@ test("queued follow-ups recheck the exact project's remaining installation link"
   const checked: (string | undefined)[] = [];
   const { deps, recorded } = fakeDeps({
     waiting: [due()],
-    scope: async (_installation, _repo, projectId) => {
+    projectScope: async (_installation, projectId) => {
       checked.push(projectId);
       return null;
     },

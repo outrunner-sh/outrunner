@@ -50,7 +50,7 @@ type Payload = {
   account?: { login?: string };
   repository_selection?: string;
   sender?: { id?: number; login?: string };
-  repository?: { full_name?: string };
+  repository?: { full_name?: string; id?: number };
   pull_request?: {
     number?: number;
     html_url?: string;
@@ -165,8 +165,18 @@ export async function POST(request: Request) {
       // A PR from a session working on an item the Slack agent filed: its
       // thread hears of it.
       const pr = payload.pull_request;
-      if (payload.action === "opened" && pr?.head?.ref && pr.html_url && typeof pr.number === "number" && payload.repository?.full_name) {
+      if (
+        payload.action === "opened" &&
+        pr?.head?.ref &&
+        pr.html_url &&
+        typeof pr.number === "number" &&
+        payload.repository?.full_name &&
+        typeof payload.repository.id === "number"
+      ) {
         const opened = {
+          // GitHub's own id of the repository: projects match by it, not by a
+          // full name a write-level member can set.
+          repoId: payload.repository.id,
           repoFullName: payload.repository.full_name,
           headRef: pr.head.ref,
           number: pr.number,
@@ -174,7 +184,7 @@ export async function POST(request: Request) {
           title: pr.title ?? "",
         };
         after(() =>
-          announcePullRequest(opened).catch((error: unknown) => console.error("Slack agent: couldn't announce the PR", error)),
+          announcePullRequest(opened, installationId).catch((error: unknown) => console.error("Slack agent: couldn't announce the PR", error)),
         );
       }
       // Its session's pull request opened, closed or merged: recorded, for
@@ -183,7 +193,9 @@ export async function POST(request: Request) {
       const tracked = pullRequestEventOf(payload);
       if (tracked) {
         after(() =>
-          recordPullRequestEvent(tracked)
+          // The installation's own orgs' projects only: another org's renamed
+          // to collide with this repository must not receive its events.
+          recordPullRequestEvent(tracked, installationId)
             .catch((error: unknown) => {
               console.error("Couldn't record a session's pull request", error);
               return [];

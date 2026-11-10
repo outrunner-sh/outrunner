@@ -43,14 +43,29 @@ const GITHUB_REFUSED = /Invalid username or token|Authentication failed for 'htt
 export const GITHUB_RECONNECT_MESSAGE =
   "GitHub didn't accept your connection, so the repository couldn't be cloned. Reconnect GitHub in Settings → Connections, then start a new session.";
 
+/** What Daytona says when the account is out of room for another box: its
+ *  total disk, CPU or memory, or its sandbox count. */
+const SANDBOX_CAPACITY = /\b(?:total )?(?:disk|cpu|memory|sandbox(?:es)?) (?:limit|quota) exceeded\b|\bTotal (?:disk|CPU|memory) limit\b/i;
+
+/** Outrunner's sandbox account being full: nothing the user can do about it
+ *  there, so never Daytona's own words, which name an org and a dashboard
+ *  that are Outrunner's, not theirs. */
+export const PLATFORM_CAPACITY_MESSAGE =
+  "Outrunner's cloud has no room for another sandbox right now. This isn't a problem with your account; try again in a few minutes, and contact support if it keeps happening.";
+
 export function provisionFailureMessage(
   error: unknown,
   phase: ProvisionPhase | null,
   secrets: readonly (string | undefined | null)[],
+  /** The box is on Outrunner's sandbox account, not one of the user's own. */
+  platformBox = false,
 ): string {
   const step = phase ? ` while ${STEP[phase]}` : "";
   const detail = errorText(error);
   if (GITHUB_REFUSED.test(detail)) return GITHUB_RECONNECT_MESSAGE;
+  // Only where a box is made or started: a clone or install that runs out of
+  // room inside the box ("Disk quota exceeded" from git) is its own cause.
+  if (platformBox && (phase === null || phase === "allocate") && SANDBOX_CAPACITY.test(detail)) return PLATFORM_CAPACITY_MESSAGE;
   if (!detail) return `Setup failed${step}. Start a new session to try again.`;
   return `Setup failed${step}: ${truncate(redact(detail, secrets))}`;
 }
@@ -76,4 +91,14 @@ function redact(text: string, secrets: readonly (string | undefined | null)[]): 
 
 function truncate(text: string): string {
   return text.length > MAX_DETAIL_CHARS ? `${text.slice(0, MAX_DETAIL_CHARS - 1)}…` : text;
+}
+
+/**
+ * A stored failure message as the page shows it (NEE-231): a sentence first,
+ * and what the box or git said, if anything, behind Details.
+ */
+export function failureParts(message: string): { summary: string; detail: string | null } {
+  const match = /^Setup failed( while [^:]+)?: ([\s\S]+)$/.exec(message);
+  if (!match) return { summary: message, detail: null };
+  return { summary: `Setup failed${match[1] ?? ""}. Try again to start a fresh session.`, detail: match[2] };
 }

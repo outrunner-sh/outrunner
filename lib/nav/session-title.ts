@@ -34,3 +34,19 @@ export function titleToSet(workspace: { title: string | null }, prompt: string):
 export function workspaceLabel(workspace: Pick<Workspace, "title" | "branch">): string {
   return workspace.title || workspace.branch.replace(/^runtime\//, "");
 }
+
+/** A title the user typed to rename a session, made one line and trimmed;
+ *  null when nothing's left or it's longer than TITLE_MAX. */
+export function cleanTitle(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const title = raw.replace(/\s+/g, " ").trim();
+  return title && title.length <= TITLE_MAX ? title : null;
+}
+
+/** Why a typed title can't be saved, to say under the field; null when it
+ *  can, or is empty (Rename is just disabled). An automation's titles run
+ *  longer than TITLE_MAX, so renaming one can open over the limit. */
+export function titleProblem(raw: string): string | null {
+  const length = raw.replace(/\s+/g, " ").trim().length;
+  return length > TITLE_MAX ? `Up to ${TITLE_MAX} characters (this is ${length}).` : null;
+}
