@@ -128,7 +128,7 @@ export function NewWorkItemForm({
                 setBody(event.target.value);
                 setError(null);
               }}
-              className="field-sizing-content max-h-[45vh] min-h-24 w-full resize-none bg-transparent py-1 text-sm outline-none placeholder:text-muted-foreground/70"
+              className="field-sizing-content max-h-[45vh] min-h-24 w-full resize-none bg-transparent py-1 text-base outline-none sm:text-sm placeholder:text-muted-foreground/70"
             />
           </div>
 
