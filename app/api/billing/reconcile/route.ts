@@ -42,7 +42,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
   try {
-    const report = await runReconcile();
+    // Its own step: a billing error (a database outage, a bad migration)
+    // mustn't keep every sweep below from running, setups stuck and
+    // orphaned boxes running, until billing recovers. Still a 500, below.
+    const report = await runReconcile().catch((error: unknown) => {
+      console.error("Metering reconcile failed; running the other sweeps anyway", error);
+      return null;
+    });
     // Its own step: a failure here doesn't hide what the reconciler did.
     const allowancesRenewed =
       billingMode() === "stripe"
@@ -144,7 +150,7 @@ export async function POST(request: Request) {
         })
       : null;
     return NextResponse.json({
-      ...report,
+      ...(report ?? { error: "Reconcile failed." }),
       gcpResourcesDeleted,
       usage,
       allowancesRenewed,
@@ -161,7 +167,7 @@ export async function POST(request: Request) {
       orphansDeleted: orphans?.deleted ?? null,
       orphansHeld: orphans?.held ?? null,
       strayBoxesPaused: orphans?.paused ?? null,
-    });
+    }, { status: report ? 200 : 500 });
   } catch (error) {
     console.error("Reconcile failed", error);
     return NextResponse.json({ error: "Reconcile failed." }, { status: 500 });
