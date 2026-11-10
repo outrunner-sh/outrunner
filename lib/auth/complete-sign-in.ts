@@ -101,7 +101,7 @@ function joinRequested(base: string, admission: Extract<Admission, { kind: "requ
  * Repository access is a separate connection (Settings → Connections).
  *
  * Only in GITHUB_LEGACY_TOKENS `store` mode is the token itself kept, as
- * before: Supabase surfaces `provider_token` on the session returned by the
+ * before, and there not for a user connected through the App (it's revoked): Supabase surfaces `provider_token` on the session returned by the
  * code exchange and never stores or refreshes it, so this is the one place
  * it can be kept.
  *
@@ -147,7 +147,14 @@ async function captureGithubSignIn(user: User, token: string | undefined): Promi
   // Sign-in asked for `repo` here, so the token is revoked, not left live.
   const connection = await githubConnectionStatus(user.id).catch(() => null);
   if (connection && !connection.broken) {
-    await revokeUnkept(true);
+    // Nothing's stored either way; the alerts the store path raises still fire.
+    if (owner.kind === "unreachable") {
+      console.error(`GitHub couldn't be asked whose ${user.id}'s sign-in token is; not keeping it, as they're connected through the App.`);
+    } else if (owner.kind !== "user" || owner.id !== githubId) {
+      console.error(`Not storing a sign-in token for ${user.id}: GitHub doesn't vouch for it as their account's.`);
+    } else {
+      await revokeUnkept(true);
+    }
     return;
   }
 
