@@ -22,6 +22,7 @@ import { Markdown } from "@/components/markdown";
 import { PullRequestChip } from "@/components/missions/mission-parts";
 import { HomeSessionRoute, NewSessionRoute } from "@/components/new-session-route";
 import { OrgGitHubSettings } from "@/components/org-github";
+import { OrgMembersSettings } from "@/components/org-members";
 import { OrgGeneralSettings } from "@/components/org-settings";
 import { PageLayout } from "@/components/page-layout";
 import { ProjectSettings } from "@/components/project-settings";
@@ -57,6 +58,12 @@ import {
 } from "./fixtures";
 
 const subscribe = () => () => {};
+
+/** The members fixture's pending invite: sent 2 days before the page loaded,
+ *  expiring in 5. Computed once, outside render. */
+const LOADED_AT = Date.now();
+const INVITE_SENT_AT = new Date(LOADED_AT - 2 * 86_400_000).toISOString();
+const INVITE_EXPIRES_AT = new Date(LOADED_AT + 5 * 86_400_000).toISOString();
 
 /** A standalone test app: fixture navigation and APIs can never reach real resources. */
 export function FixturePage() {
@@ -267,6 +274,23 @@ export function FixturePage() {
               suspendedAt: null, suspended: false, installedBy: null, createdAt: "2026-10-30T00:00:00Z",
             }] : []}
             pending={false} installed={null} error={null}
+          />
+        </SettingsFrame>
+      ) : view === "members" ? (
+        <SettingsFrame>
+          <OrgMembersSettings
+            org={org}
+            me="u-ada"
+            members={[
+              { userId: "u-ada", login: "ada", name: "Ada Lovelace", email: "ada@neev.ai", avatarUrl: null, role: "admin", joinedAt: "2026-10-01T00:00:00Z" },
+              { userId: "u-alan", login: "alan", name: "Alan Turing", email: "alan@neev.ai", avatarUrl: null, role: "member", joinedAt: "2026-10-02T00:00:00Z" },
+            ]}
+            invites={[
+              { id: "inv-1", email: "grace@neev.ai", role: "member", invitedBy: "u-ada", createdAt: INVITE_SENT_AT, expiresAt: INVITE_EXPIRES_AT, expired: false },
+              { id: "inv-2", email: "linus@neev.ai", role: "admin", invitedBy: "u-ada", createdAt: "2026-10-01T00:00:00Z", expiresAt: "2026-10-08T00:00:00Z", expired: true },
+            ]}
+            requests={[]}
+            emails={params.get("email") === "1"}
           />
         </SettingsFrame>
       ) : view === "settings" ? (
