@@ -5,7 +5,8 @@
  * asked to deliver again for this; the tick looks anyway.
  */
 
-import { activityOf, notePullRequestActivity, settleRunner } from "@/lib/missions/pull-requests";
+import { activityOf } from "@/lib/missions/pull-request-activity";
+import { notePullRequestActivity, settleRunner } from "@/lib/missions/pull-requests";
 import { sessionById } from "@/lib/missions/store";
 
 export async function followPullRequestActivity(event: string | null, payload: Record<string, unknown>): Promise<void> {

@@ -49,6 +49,7 @@ function item(id: string, overrides: Partial<TriageItem> = {}): TriageItem {
     source: "app",
     sourceUrl: null,
     sourceRef: null,
+    sourceAuthor: null,
     duplicateOf: null,
     workspaceId: null,
     prompt: null,

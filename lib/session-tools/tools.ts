@@ -11,6 +11,9 @@
  *                      org's, newest first, those holding `query`'s words
  *   remember           a note for the next sessions, the user's own or
  *                      shared with the org (lib/memory)
+ *   rename_branch      the session's branch named for good, once, by its
+ *                      box: `check` a name, then `commit` the box's rename
+ *                      (lib/session/rename-branch.ts)
  *
  * Pure but for what's given (deps), for the route and the tests.
  */
@@ -18,6 +21,7 @@
 import { createLearning, LearningError, type LearningDeps } from "@/lib/learnings/actions";
 import { type LearningActor, learningScope, parseLearningText } from "@/lib/learnings/rules";
 import { addMemory, listMemories, MemoryError, type MemoryScope, type MemoryStore } from "@/lib/memory/actions";
+import { checkRename, commitRename, type RenameBranchDeps } from "@/lib/session/rename-branch";
 
 /** The session a call is for: its user, its org, and itself. */
 export type SessionToolScope = { userId: string; orgId: string; workspaceId: string };
@@ -27,6 +31,8 @@ export type SessionToolDeps = {
   actor(userId: string, orgId: string): Promise<LearningActor | null>;
   learnings: LearningDeps;
   memory: MemoryStore;
+  /** For rename_branch; without it, the tool is refused. */
+  renameBranch?: RenameBranchDeps;
   /** The app's address, for the links the answers give. */
   base: string;
 };
@@ -53,6 +59,8 @@ export async function callSessionTool(
       return readMemory(actor, args, deps);
     case "remember":
       return remember(actor, scope, args, deps);
+    case "rename_branch":
+      return renameBranch(scope, args, deps);
     default:
       return refuse(404, `Outrunner has no ${tool}: update the command (\`outrunner-session --help\`).`);
   }
@@ -128,5 +136,18 @@ async function remember(
   } catch (error) {
     if (error instanceof MemoryError) return refuse(error.status, error.message);
     throw error;
+  }
+}
+
+async function renameBranch(scope: SessionToolScope, args: Record<string, unknown>, deps: SessionToolDeps): Promise<SessionToolAnswer> {
+  if (!deps.renameBranch) return refuse(404, "Outrunner can't rename branches here.");
+  const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+  switch (args.phase) {
+    case "check":
+      return checkRename(scope.workspaceId, text(args.name), deps.renameBranch);
+    case "commit":
+      return commitRename(scope.workspaceId, text(args.from), text(args.to), deps.renameBranch);
+    default:
+      return refuse(400, "Update the command: a rename is checked, then committed.");
   }
 }

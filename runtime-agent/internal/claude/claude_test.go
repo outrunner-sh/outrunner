@@ -10,7 +10,7 @@ import (
 )
 
 func TestOrientationRendersWorkingDirAndBase(t *testing.T) {
-	got := Orientation("/work/ws1", "main", false)
+	got := Orientation("/work/ws1", "main", BranchChosen)
 
 	for _, want := range []string{
 		"You are working inside Outrunner, a Mac app that lets the user run many coding agents in parallel.",
@@ -29,7 +29,7 @@ func TestOrientationRendersWorkingDirAndBase(t *testing.T) {
 // The four workspace lines that reference Outrunner product behavior must always
 // render verbatim, independent of the templated branch/path values.
 func TestOrientationIncludesVerbatimLines(t *testing.T) {
-	got := Orientation("/work/ws1", "main", false)
+	got := Orientation("/work/ws1", "main", BranchChosen)
 
 	for _, want := range []string{
 		"Each workspace has a .context directory (gitignored) where you can save files to collaborate with other agents.",
@@ -69,24 +69,24 @@ func TestOrientationForANewWorktreeIsTheWholeBlock(t *testing.T) {
 		"If the user asks you to work on several unrelated tasks, you can suggest they start new workspaces.\n" +
 		"Sometimes the user might send you a message they meant to send in a different workspace or a different chat. If something doesn't make sense in the context of your work, just ask.\n" +
 		`If the user asks for help with Outrunner, you can ask them to go to "Help -> Send Feedback" to get in touch with our team.`
-	if got := Orientation("/work/ws1", "main", true); got != want {
+	if got := Orientation("/work/ws1", "main", BranchPlaceholder); got != want {
 		t.Errorf("orientation =\n%s\n\nwant\n%s", got, want)
 	}
 }
 
 func TestOrientationCallsTheBranchAPlaceholderOnlyWhenItIs(t *testing.T) {
 	const line = "You're on a new branch with a placeholder name."
-	if got := Orientation("/work/ws1", "main", false); strings.Contains(got, line) {
+	if got := Orientation("/work/ws1", "main", BranchChosen); strings.Contains(got, line) {
 		t.Errorf("a chosen branch was called a placeholder:\n%s", got)
 	}
 	// Nothing renames the branch, so the prompt must never promise it.
-	if got := Orientation("/work/ws1", "main", true); strings.Contains(got, "rename it in the background") {
+	if got := Orientation("/work/ws1", "main", BranchPlaceholder); strings.Contains(got, "rename it in the background") {
 		t.Errorf("orientation promises a rename Outrunner doesn't do:\n%s", got)
 	}
 }
 
 func TestOrientationOmitsBaseWhenUnknown(t *testing.T) {
-	got := Orientation("/work/ws1", "", false)
+	got := Orientation("/work/ws1", "", BranchChosen)
 
 	// Base is unknown (e.g. after a box restart): the target-branch guidance is
 	// dropped entirely rather than naming a bogus base.
@@ -109,7 +109,7 @@ func TestOrientationOmitsBaseWhenUnknown(t *testing.T) {
 }
 
 func TestOrientationDegradesWhenWorktreeMissing(t *testing.T) {
-	got := Orientation("", "main", false)
+	got := Orientation("", "main", BranchChosen)
 
 	// An empty worktree (defensive: the call site always supplies one) falls back
 	// to a generic phrase and a relative screenshot path — never a bare or broken
@@ -130,7 +130,7 @@ func TestOrientationDegradesWhenWorktreeMissing(t *testing.T) {
 }
 
 func TestCommandInjectsOrientation(t *testing.T) {
-	orientation := Orientation("/work/ws1", "main", false)
+	orientation := Orientation("/work/ws1", "main", BranchChosen)
 
 	for _, tc := range []struct {
 		name string

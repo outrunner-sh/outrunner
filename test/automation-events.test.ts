@@ -24,7 +24,7 @@ function prPayload(action: string, over: Record<string, unknown> = {}, pr: Recor
   return {
     action,
     installation: { id: 42 },
-    repository: { full_name: REPO },
+    repository: { full_name: REPO, id: 101 },
     pull_request: {
       number: 7,
       title: "Add automations",
@@ -44,7 +44,7 @@ function issuePayload(action: string, over: Record<string, unknown> = {}, issue:
   return {
     action,
     installation: { id: 42 },
-    repository: { full_name: REPO },
+    repository: { full_name: REPO, id: 101 },
     issue: { number: 12, title: "Flaky test", html_url: `https://github.com/${REPO}/issues/12`, user: { login: "someone" }, ...issue },
     ...over,
   };

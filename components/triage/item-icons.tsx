@@ -1,4 +1,6 @@
-import { Hash, type LucideIcon, Terminal, Webhook } from "lucide-react";
+import { Hash, type LucideIcon, Terminal, Ticket, Webhook } from "lucide-react";
+
+import { LinearIcon } from "@/components/brand-icons";
 
 import { SOURCE_LABELS, type WorkItemSource, type WorkItemStatus } from "@/lib/triage/work-items";
 import { cn } from "@/lib/utils";
@@ -68,11 +70,13 @@ export function StatusIcon({ status, className }: { status: WorkItemStatus; clas
   );
 }
 
-const SOURCE_ICONS: Record<WorkItemSource, LucideIcon | null> = {
+const SOURCE_ICONS: Record<WorkItemSource, LucideIcon | typeof LinearIcon | null> = {
   app: null,
   slack: Hash,
   cli: Terminal,
   api: Webhook,
+  linear: LinearIcon,
+  jira: Ticket,
 };
 
 /** Where an item came from, as an icon: none for one made in the app. */

@@ -344,7 +344,12 @@ export type DueFollowUp = {
 export type PullState = { open: boolean; headSha: string; headRef: string };
 
 export type FollowUpDeps = {
-  scope(installationId: number, repoFullName: string, projectId?: string): Promise<{ orgId: string; projectId: string } | null>;
+  /** The event's org and project, as the webhook matched them (by GitHub's
+   *  repository id): what a follow-up is queued on. */
+  scope(installationId: number, repoFullName: string): Promise<{ orgId: string; projectId: string } | null>;
+  /** A queued follow-up's own project, while the installation's live orgs
+   *  still have it: what it goes to. */
+  projectScope(installationId: number, projectId: string): Promise<{ orgId: string; projectId: string } | null>;
   claim(key: string): Promise<boolean>;
   linkedSessions(link: LinkTarget, orgId: string): Promise<LinkedSession[]>;
   /** The pull request a session recorded for a branch, when GitHub named
@@ -532,7 +537,7 @@ async function sendCi(f: DueFollowUp, deps: FollowUpDeps): Promise<string> {
     await deps.settle(f.id, outcome);
     return outcome;
   };
-  const scope = await deps.scope(f.installationId, f.repoFullName, f.projectId);
+  const scope = await deps.projectScope(f.installationId, f.projectId);
   if (!scope) return settle("no_scope");
   const pull = await deps.pull(f.installationId, f.repoFullName, f.prNumber);
   if (!pull) throw new Error(`couldn't read ${f.repoFullName}#${f.prNumber}`);
@@ -591,7 +596,7 @@ async function sendReviews(f: DueFollowUp, deps: FollowUpDeps): Promise<string> 
     await deps.settle(f.id, outcome);
     return outcome;
   };
-  const scope = await deps.scope(f.installationId, f.repoFullName, f.projectId);
+  const scope = await deps.projectScope(f.installationId, f.projectId);
   if (!scope) return settle("no_scope");
   const pull = await deps.pull(f.installationId, f.repoFullName, f.prNumber);
   if (!pull) throw new Error(`couldn't read ${f.repoFullName}#${f.prNumber}`);

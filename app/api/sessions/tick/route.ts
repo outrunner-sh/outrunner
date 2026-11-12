@@ -1,7 +1,8 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-import { optionalEnv } from "@/lib/env";
-import { bearerMatches } from "@/lib/http/bearer";
+import { after } from "@/lib/observability/after";
+import { cronAuth } from "@/lib/cron/auth";
+import { runCronJob } from "@/lib/cron/heartbeat.deps";
 import { runMissionTick } from "@/lib/missions/tick";
 import { runSessionsTick } from "@/lib/session/tick";
 
@@ -15,20 +16,23 @@ import { runSessionsTick } from "@/lib/session/tick";
  * Answered at once; the work runs after.
  */
 export async function POST(request: Request) {
-  const secret = optionalEnv("BILLING_CRON_SECRET");
-  if (!secret) return NextResponse.json({ error: "BILLING_CRON_SECRET is not set on this server." }, { status: 503 });
-  if (!bearerMatches(request.headers.get("authorization"), secret)) {
-    return NextResponse.json({ error: "Not allowed." }, { status: 401 });
-  }
-  after(async () => {
-    const done = await runSessionsTick().catch((error: unknown) => {
-      console.error("Sessions tick failed", error);
-      return null;
-    });
-    const delivered = done?.delivered;
-    if (done && (done.changed || done.pullRequests || done.skipped || done.failures || delivered?.emailed || delivered?.slacked || delivered?.digests)) console.log("Sessions tick", done);
-    const missions = await runMissionTick();
-    if (missions.turns || missions.pullRequests || missions.queued || missions.failures || missions.delivered) console.log("Missions tick", missions);
-  });
+  const refused = cronAuth(request);
+  if (refused) return refused;
+  after(() =>
+    runCronJob("sessions", async () => {
+      // The sessions' part failing doesn't keep Missions' from running; the
+      // job is still recorded as failed, below.
+      let failed: { error: unknown } | null = null;
+      const done = await runSessionsTick().catch((error: unknown) => {
+        failed = { error };
+        return null;
+      });
+      const delivered = done?.delivered;
+      if (done && (done.changed || done.pullRequests || done.skipped || done.failures || delivered?.emailed || delivered?.slacked || delivered?.digests)) console.log("Sessions tick", done);
+      const missions = await runMissionTick();
+      if (missions.turns || missions.pullRequests || missions.queued || missions.failures || missions.delivered) console.log("Missions tick", missions);
+      if (failed) throw (failed as { error: unknown }).error;
+    }),
+  );
   return NextResponse.json({ ticking: true });
 }

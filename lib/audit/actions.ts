@@ -15,6 +15,7 @@ export type AuditAction =
   | "org.renamed"
   | "member.invited"
   | "invite.revoked"
+  | "invite.resent"
   | "member.joined"
   | "request.approved"
   | "request.declined"
@@ -34,6 +35,12 @@ export type AuditAction =
   | "secret_sync.disconnected"
   | "secret_sync.linked"
   | "secret_sync.unlinked"
+  | "tracker.connected"
+  | "tracker.disconnected"
+  | "tracker.team_connected"
+  | "tracker.team_disconnected"
+  | "tracker.team_changed"
+  | "tracker.rule_changed"
   | "webhook.changed"
   | "webhook.secret_rotated"
   | "defaults.changed"
@@ -45,6 +52,7 @@ export type AuditAction =
   | "usage.changed"
   | "github.installed"
   | "github.removed"
+  | "github.share_removed"
   | "github.uninstalled"
   | "github.suspended"
   | "github.unsuspended"
@@ -111,6 +119,8 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `invited ${what} as ${text(d.role) ?? "a member"}`;
     case "invite.revoked":
       return `revoked the invite to ${what}`;
+    case "invite.resent":
+      return d.emailed === true ? `emailed ${what} a new invite link` : `made a new invite link for ${what}`;
     case "member.joined":
       return `joined as ${text(d.role) ?? "a member"}`;
     case "request.approved":
@@ -153,6 +163,18 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `linked the project ${what} to ${text(d.provider) ?? "?"}${text(d.target) ? ` (${text(d.target)})` : ""}`;
     case "secret_sync.unlinked":
       return `unlinked the project ${what} from ${text(d.provider) ?? "?"}`;
+    case "tracker.connected":
+      return `connected ${what}${text(d.label) ? ` (${text(d.label)})` : ""}`;
+    case "tracker.disconnected":
+      return `disconnected ${what}${text(d.label) ? ` (${text(d.label)})` : ""}`;
+    case "tracker.team_connected":
+      return `connected the team ${what}`;
+    case "tracker.team_disconnected":
+      return `disconnected the team ${what}`;
+    case "tracker.team_changed":
+      return `changed the settings of the team ${what}`;
+    case "tracker.rule_changed":
+      return `changed a triage rule of the team ${what}`;
     case "webhook.changed":
       return text(d.url) ? `set the API's webhook endpoint to ${text(d.url)}` : "removed the API's webhook endpoint";
     case "webhook.secret_rotated":
@@ -180,6 +202,8 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `added the GitHub App on ${what}`;
     case "github.removed":
       return `removed the GitHub App on ${what}`;
+    case "github.share_removed":
+      return `stopped sharing the GitHub App on ${what} with ${text(d.orgName) ?? "another org"}`;
     case "github.uninstalled":
       return `saw the GitHub App uninstalled on ${what}`;
     case "github.suspended":

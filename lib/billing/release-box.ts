@@ -10,6 +10,7 @@
  * wiring is release-box.deps.ts.
  */
 
+import { AGENT_FEATURE_SNAPSHOT_PATCH_INTEGRITY } from "@/lib/runtime/agent-protocol";
 import type { RuntimeComputer, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 
 /** A session in one of these needs no box: an archived one's Snapshot is what
@@ -60,6 +61,28 @@ export async function releaseBoxIfUnused(deps: ReleaseBoxDeps): Promise<boolean>
   await deps.closeInterval(sandboxId, deps.now());
   await deps.markStopped(computer.id, sandboxId);
   return true;
+}
+
+/**
+ * Whether a session's own box is deleted, not paused, as the session goes:
+ * when it ended (nothing comes back to it), when it was archived with its
+ * Snapshot saved and nobody is expected back (`dropBox`: archived by
+ * Outrunner, as an automation's superseded review), or when its provider
+ * can't pause a box (Restore rebuilds from the Snapshot either way).
+ */
+export function ownBoxDeleted(when: { ended: boolean; dropBox?: boolean; pausesBoxes: boolean }): boolean {
+  return when.ended || when.dropBox === true || !when.pausesBoxes;
+}
+
+/**
+ * Whether an archive asked to drop its box (`dropBox`) may: only when the
+ * agent that captured the Snapshot fails an archive on a broken `git diff`
+ * (AGENT_FEATURE_SNAPSHOT_PATCH_INTEGRITY). An older agent saves an empty
+ * patch instead, and deleting its box would lose the session's changes, so
+ * that box is paused.
+ */
+export function boxDroppableAfterArchive(dropBox: boolean | undefined, captureFeatures: readonly string[]): boolean {
+  return dropBox === true && captureFeatures.includes(AGENT_FEATURE_SNAPSHOT_PATCH_INTEGRITY);
 }
 
 export type DeleteBoxDeps = {

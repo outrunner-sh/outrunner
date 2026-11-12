@@ -5,12 +5,11 @@ import { recordAudit } from "@/lib/audit/record";
 import { getAuthUser } from "@/lib/auth/owner";
 import { acceptInvite, inviteByToken, MemberChangeError, setAdmitted } from "@/lib/db/org-members";
 import { githubErrorResponse } from "@/lib/github/http";
-import { optionalGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { signInFirst } from "@/lib/http/settings-save";
 import { endInviteeVisit } from "@/lib/orgs/invitee";
 import { setActiveOrg } from "@/lib/orgs/server";
-import { verifiedEmailsFor } from "@/lib/orgs/verified-emails";
+import { verifiedEmailsOf } from "@/lib/orgs/user-emails";
 
 /**
  * Accept an invite, `{ token }`, as the signed-in user: when the email it was
@@ -38,7 +37,7 @@ export async function POST(request: Request) {
       await endInviteeVisit(user);
       return NextResponse.json({ error: new MemberChangeError("invite_invalid").message }, { status: 410 });
     }
-    const emails = await verifiedEmailsFor(user, await optionalGithubToken(user.id));
+    const emails = await verifiedEmailsOf(user);
     if (!emails.some((e) => e.email.toLowerCase() === invite.email)) {
       await endInviteeVisit(user);
       return NextResponse.json(

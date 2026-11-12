@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { recordAudit } from "@/lib/audit/record";
 import { closeRuns, planIssueRuns, planRuns, startRun } from "@/lib/automations/runs";
@@ -14,6 +16,7 @@ import {
 } from "@/lib/db/automation-runs";
 import { archiveServerSessions } from "@/lib/session/server-session";
 
+import { markGithubAccountRevoked } from "@/lib/db/github-connections";
 import {
   forgetInstallation,
   installationHolder,
@@ -32,6 +35,7 @@ import { LOOP_EVENTS, runGitHubLoop } from "@/lib/github/loop.deps";
 import { pullRequestEventOf } from "@/lib/session/pull-request-event";
 import { notifyPullRequests } from "@/lib/notifications/record";
 import { recordPullRequestEvent } from "@/lib/session/pull-request-state";
+import { tellTrackersPullRequests } from "@/lib/trackers/write-back.deps";
 import { announcePullRequest } from "@/lib/slack/agent-run";
 import { followPullRequestActivity } from "@/lib/missions/webhook";
 
@@ -49,7 +53,7 @@ type Payload = {
   account?: { login?: string };
   repository_selection?: string;
   sender?: { id?: number; login?: string };
-  repository?: { full_name?: string };
+  repository?: { full_name?: string; id?: number };
   pull_request?: {
     number?: number;
     html_url?: string;
@@ -80,6 +84,10 @@ type Payload = {
  * Comments, and issues and pull requests closing, are the agent loop's
  * (lib/github/loop.ts): a mention of Outrunner steers a session, and a close
  * archives the sessions working on what closed.
+ *
+ * A user revoking the App's authorization on GitHub (`github_app_authorization`,
+ * sent to every App unasked) breaks their GitHub connection
+ * (Settings → Connections), for them to connect again.
  */
 export async function POST(request: Request) {
   const config = githubAppConfig();
@@ -100,6 +108,15 @@ export async function POST(request: Request) {
     payload = JSON.parse(raw) as Payload;
   } catch {
     return NextResponse.json({ error: "Not JSON." }, { status: 400 });
+  }
+  if (event === "github_app_authorization" && payload.action === "revoked" && typeof payload.sender?.id === "number") {
+    try {
+      await markGithubAccountRevoked(payload.sender.id);
+    } catch (error) {
+      console.error("GitHub webhook: couldn't break a revoked user authorization's connections", error);
+      return NextResponse.json({ error: "Try again." }, { status: 500 });
+    }
+    return new NextResponse(null, { status: 204 });
   }
   const installationId = payload.installation?.id;
   if (event === "ping" || typeof installationId !== "number") return new NextResponse(null, { status: 204 });
@@ -151,8 +168,18 @@ export async function POST(request: Request) {
       // A PR from a session working on an item the Slack agent filed: its
       // thread hears of it.
       const pr = payload.pull_request;
-      if (payload.action === "opened" && pr?.head?.ref && pr.html_url && typeof pr.number === "number" && payload.repository?.full_name) {
+      if (
+        payload.action === "opened" &&
+        pr?.head?.ref &&
+        pr.html_url &&
+        typeof pr.number === "number" &&
+        payload.repository?.full_name &&
+        typeof payload.repository.id === "number"
+      ) {
         const opened = {
+          // GitHub's own id of the repository: projects match by it, not by a
+          // full name a write-level member can set.
+          repoId: payload.repository.id,
           repoFullName: payload.repository.full_name,
           headRef: pr.head.ref,
           number: pr.number,
@@ -160,7 +187,7 @@ export async function POST(request: Request) {
           title: pr.title ?? "",
         };
         after(() =>
-          announcePullRequest(opened).catch((error: unknown) => console.error("Slack agent: couldn't announce the PR", error)),
+          announcePullRequest(opened, installationId).catch((error: unknown) => console.error("Slack agent: couldn't announce the PR", error)),
         );
       }
       // Its session's pull request opened, closed or merged: recorded, for
@@ -169,15 +196,20 @@ export async function POST(request: Request) {
       const tracked = pullRequestEventOf(payload);
       if (tracked) {
         after(() =>
-          recordPullRequestEvent(tracked)
+          // The installation's own orgs' projects only: another org's renamed
+          // to collide with this repository must not receive its events.
+          recordPullRequestEvent(tracked, installationId)
             .catch((error: unknown) => {
               console.error("Couldn't record a session's pull request", error);
               return [];
             })
             .then((changes) =>
-              notifyPullRequests(changes).catch((error: unknown) =>
-                console.error("Couldn't tell a session's owner of its pull request", error),
-              ),
+              Promise.all([
+                notifyPullRequests(changes).catch((error: unknown) =>
+                  console.error("Couldn't tell a session's owner of its pull request", error),
+                ),
+                tellTrackersPullRequests(changes),
+              ]),
             ),
         );
       }

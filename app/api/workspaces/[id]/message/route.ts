@@ -1,9 +1,18 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { getOwner } from "@/lib/auth/owner";
 import { resetCiTurnsOfSession } from "@/lib/db/github-loop";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { claimFirstPrompt, markFirstPromptSent, recordWorkspaceMode, releaseFirstPrompt, renewFirstPrompt } from "@/lib/db/repositories";
+import {
+  claimFirstPrompt,
+  clearWorkspaceFirstPrompt,
+  markFirstPromptSent,
+  recordWorkspaceMode,
+  releaseFirstPrompt,
+  renewFirstPrompt,
+} from "@/lib/db/repositories";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_MESSAGE_KEYS, AGENT_FEATURE_PLAN_MODE, SessionMode } from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
@@ -97,10 +106,14 @@ export async function POST(request: Request, context: RouteContext) {
   const gate = await gateFirstPrompt(
     chat ? null : firstPromptKey(body?.firstPromptKey),
     {
-      claim: (key) => claimFirstPrompt(workspace.id, key, abandonedBefore(new Date())),
-      renew: (key, claimedAt) => renewFirstPrompt(workspace.id, key, claimedAt),
-      sent: (key, claimedAt) => markFirstPromptSent(workspace.id, key, claimedAt),
-      release: (key, claimedAt) => releaseFirstPrompt(workspace.id, key, claimedAt),
+      claim: (key) => claimFirstPrompt(workspace.id, workspace.ownerId, key, abandonedBefore(new Date())),
+      renew: (key, claimedAt) => renewFirstPrompt(workspace.id, workspace.ownerId, key, claimedAt),
+      sent: (key, claimedAt) =>
+        // The kept copy is spent with this send: the box has the prompt, and
+        // nothing of it stays on the row (clearWorkspaceFirstPrompt, service
+        // role — a user session can't clear one itself).
+        markFirstPromptSent(workspace.id, workspace.ownerId, key, claimedAt).then(() => clearWorkspaceFirstPrompt(workspace.id, workspace.ownerId)),
+      release: (key, claimedAt) => releaseFirstPrompt(workspace.id, workspace.ownerId, key, claimedAt),
     },
     workspace.id,
   );
@@ -233,8 +246,8 @@ export async function POST(request: Request, context: RouteContext) {
   }
   // Working, for every client at once, and watched until its turn ends
   // (lib/session/watch.ts): where it stands in the sidebar follows.
-  after(() => watchSent(workspace.id, workspace.ownerId));
-  if (asked && asked !== workspace.mode) await recordWorkspaceMode(workspace.id, asked);
+  after(() => watchSent(workspace.id, workspace.ownerId), { where: "watch-sent", workspaceId: workspace.id });
+  if (asked && asked !== workspace.mode) await recordWorkspaceMode(workspace.id, workspace.ownerId, asked);
   // A session started from Slack, in step with its thread: what's typed here
   // goes there too, and the reply with it. Not what came from the thread, or
   // from GitHub, which no one typed here.

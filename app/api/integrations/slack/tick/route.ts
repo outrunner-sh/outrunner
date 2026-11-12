@@ -1,7 +1,9 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
+import { after } from "@/lib/observability/after";
+import { cronAuth } from "@/lib/cron/auth";
+import { recordHeartbeat, runCronJob } from "@/lib/cron/heartbeat.deps";
 import { optionalEnv } from "@/lib/env";
-import { bearerMatches } from "@/lib/http/bearer";
 import { runTick } from "@/lib/slack/proactive";
 
 /**
@@ -11,15 +13,18 @@ import { runTick } from "@/lib/slack/proactive";
  * at once; the work runs after.
  */
 export async function POST(request: Request) {
-  const secret = optionalEnv("BILLING_CRON_SECRET");
-  if (!secret) return NextResponse.json({ error: "BILLING_CRON_SECRET is not set on this server." }, { status: 503 });
-  if (!bearerMatches(request.headers.get("authorization"), secret)) {
-    return NextResponse.json({ error: "Not allowed." }, { status: 401 });
+  const refused = cronAuth(request);
+  if (refused) return refused;
+  // Not set up is the job done: its heartbeat says it ran.
+  if (!optionalEnv("SLACK_SIGNING_SECRET")) {
+    after(() => recordHeartbeat("slack"));
+    return NextResponse.json({ skipped: "Slack isn't set up." });
   }
-  if (!optionalEnv("SLACK_SIGNING_SECRET")) return NextResponse.json({ skipped: "Slack isn't set up." });
-  after(async () => {
-    const done = await runTick();
-    if (done.digests || done.nudges || done.followUps || done.replies) console.log("Slack agent tick", done);
-  });
+  after(() =>
+    runCronJob("slack", async () => {
+      const done = await runTick();
+      if (done.digests || done.nudges || done.followUps || done.replies) console.log("Slack agent tick", done);
+    }),
+  );
   return NextResponse.json({ ticking: true });
 }

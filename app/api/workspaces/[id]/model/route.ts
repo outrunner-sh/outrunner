@@ -172,7 +172,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
   // So its next relaunch goes back on it, its key fetched again.
   if (chat) await recordChatModel(workspace.id, chat, { model, effort: req.effort ?? null });
-  else await recordWorkspaceModel(workspace.id, { model, effort: req.effort ?? null });
+  else await recordWorkspaceModel(workspace.id, workspace.ownerId, { model, effort: req.effort ?? null });
   return NextResponse.json({ model: req.model, effort: req.effort ?? null });
 }
 

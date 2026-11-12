@@ -76,17 +76,21 @@ export async function markSession(
  * on coming back to it), and mark the session on screen seen whenever it has
  * a reply the user hasn't. `onListChanged` is called when the server lists
  * sessions the page doesn't have, or no longer lists one it does (made or
- * deleted elsewhere), for the page to re-read them.
+ * deleted elsewhere), or a branch other than the page's (renamed by its
+ * agent), for the page to re-read them.
  */
 export function useStandingsFeed({
   initial,
   ids,
+  branches,
   onScreen,
   onListChanged,
 }: {
   initial: Record<string, SessionStanding> | undefined;
   /** The cloud sessions the page lists. */
   ids: string[];
+  /** Their branches as the page has them, by id. */
+  branches?: Record<string, string>;
   /** The cloud session on screen, if one is. */
   onScreen: string | undefined;
   onListChanged: () => void;
@@ -96,9 +100,11 @@ export function useStandingsFeed({
   }, [initial]);
 
   const listed = useRef(ids);
+  const named = useRef(branches);
   const changed = useRef(onListChanged);
   useEffect(() => {
     listed.current = ids;
+    named.current = branches;
     changed.current = onListChanged;
   });
 
@@ -111,11 +117,21 @@ export function useStandingsFeed({
       try {
         const response = await fetch("/api/sessions/standings", { cache: "no-store" });
         if (!response.ok) return;
-        const body = (await response.json()) as { standings: Record<string, SessionStanding>; ids: string[] };
+        const body = (await response.json()) as {
+          standings: Record<string, SessionStanding>;
+          ids: string[];
+          branches?: Record<string, string>;
+        };
         if (stopped) return;
         STANDINGS.set(body.standings);
         const have = new Set(listed.current);
-        if (body.ids.length !== have.size || body.ids.some((id) => !have.has(id))) changed.current();
+        if (
+          body.ids.length !== have.size ||
+          body.ids.some((id) => !have.has(id)) ||
+          branchesDiffer(named.current, body.branches)
+        ) {
+          changed.current();
+        }
       } catch {
         // Offline for a moment: the next read catches up.
       } finally {
@@ -152,4 +168,11 @@ export function useStandingsFeed({
     document.addEventListener("visibilitychange", mark);
     return () => document.removeEventListener("visibilitychange", mark);
   }, [onScreen, unreadOnScreen]);
+}
+
+/** Whether a session both lists has a branch the server names otherwise:
+ *  renamed by its agent since the page read it. */
+export function branchesDiffer(page: Record<string, string> | undefined, server: Record<string, string> | undefined): boolean {
+  if (!page || !server) return false;
+  return Object.entries(server).some(([id, branch]) => id in page && page[id] !== branch);
 }

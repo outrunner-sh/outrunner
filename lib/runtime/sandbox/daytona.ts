@@ -103,7 +103,10 @@ export class DaytonaBackend implements SandboxBackend {
   /** Snapshot resources are fixed; never send `resources` on this path. */
   async create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox> {
     const daytona = await this.daytona();
-    const params = createParams(labels, size);
+    // Only Outrunner's own account: a user's own key's boxes keep their
+    // account's archive default, their quota being theirs.
+    const platform = !this.apiKey;
+    const params = createParams(labels, size, platform);
     let sandbox: Sandbox;
     try {
       sandbox = await daytona.create(params, { timeout: CREATE_TIMEOUT_SECONDS });
@@ -112,7 +115,7 @@ export class DaytonaBackend implements SandboxBackend {
       // only a missing snapshot, never auth, quotas, timeouts or other errors.
       if (!params.snapshot || !(error instanceof DaytonaNotFoundError) || !/snapshot/i.test(error.message)) throw error;
       console.warn(`Daytona snapshot ${params.snapshot} is unavailable; using the account's default snapshot`);
-      sandbox = await daytona.create(createParams(labels), { timeout: CREATE_TIMEOUT_SECONDS });
+      sandbox = await daytona.create(createParams(labels, undefined, platform), { timeout: CREATE_TIMEOUT_SECONDS });
     }
     if (size && (sandbox.cpu !== size.cpu || sandbox.memory !== size.memoryGb)) {
       console.warn(
@@ -227,14 +230,32 @@ export function daytonaSnapshotFor(size: BoxResources): string | undefined {
   return DAYTONA_SNAPSHOTS.find((s) => s.cpu <= size.cpu && s.memoryGb <= size.memoryGb)?.name;
 }
 
+/**
+ * Minutes a box stays stopped before Daytona archives it. A stopped
+ * container box holds its full disk against the account's storage quota
+ * until archived (https://www.daytona.io/docs/en/limits), and Daytona's
+ * default is 7 days: a week of paused sessions filled the account's whole
+ * quota and every new box was refused. Archived, the disk is in object
+ * storage and the box starts again from it (restore() takes "archived" as
+ * stopped), only slower; a day keeps an overnight resume quick. Set only
+ * on Outrunner's account: a user's own Daytona keeps its account's default.
+ */
+export const AUTO_ARCHIVE_MINUTES = 24 * 60;
+
 /** Without a size keep the account's default (including user-owned Daytona).
  * Outrunner's selected default size already arrives via boxSizeOn. */
-export function createParams(labels: Record<string, string>, size?: BoxResources): CreateSandboxFromSnapshotParams {
+export function createParams(
+  labels: Record<string, string>,
+  size?: BoxResources,
+  /** Outrunner's own account (DAYTONA_API_KEY), whose quota every tenant shares. */
+  platform = false,
+): CreateSandboxFromSnapshotParams {
   const snapshot = size && daytonaSnapshotFor(size);
   return {
     // Outrunner owns idle stopping; Daytona must not auto-stop/delete it.
     autoStopInterval: 0,
     autoDeleteInterval: -1,
+    ...(platform && { autoArchiveInterval: AUTO_ARCHIVE_MINUTES }),
     labels,
     envVars: { VNC_RESOLUTION: DESKTOP_RESOLUTION },
     ...(snapshot && { snapshot }),
@@ -374,11 +395,14 @@ export function box(sandbox: Sandbox): SandboxBox {
   };
 }
 
+/** How long a key check waits on Daytona: a page of sandboxes, at most. */
+const KEY_CHECK_TIMEOUT_MS = 15_000;
+
 /** Whether Daytona accepts `apiKey` (Settings → Sandbox checks one before
  *  saving it): false when it refuses it, a throw when it can't be asked. */
 export async function daytonaAcceptsKey(apiKey: string): Promise<boolean> {
   try {
-    await new Daytona({ apiKey }).list().next();
+    await withTimeout(new Daytona({ apiKey, requestTimeoutMs: KEY_CHECK_TIMEOUT_MS }).list().next(), KEY_CHECK_TIMEOUT_MS, "Daytona didn't answer a key check");
     return true;
   } catch (error) {
     const status = (error as { statusCode?: number }).statusCode;

@@ -222,3 +222,17 @@ export async function claimLease(name: string, seconds: number): Promise<boolean
   if (error) throw error;
   return data === true;
 }
+
+/** The box `computerId` last ran on, as its intervals record: what a row
+ *  that lost its box was on (lib/runtime/lost-box.ts). Null when it never
+ *  ran on one metered here. */
+export async function lastMeteredBox(computerId: string): Promise<string | null> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("compute_intervals")
+    .select("sandbox_id")
+    .eq("computer_id", computerId)
+    .order("started_at", { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  return data?.[0]?.sandbox_id ?? null;
+}

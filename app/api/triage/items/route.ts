@@ -27,7 +27,8 @@ export async function GET(request: Request) {
  * `outrunner triage`, a script; `?org=` picks the org). It lands in triage,
  * in the workspace `project` names (`owner/name`) or Unsorted. A `source_ref`
  * an item of the org already has makes it a note on that one instead
- * (`created: false`).
+ * (`created: false`). One starting with `linear:` or `jira:` is refused: those
+ * are how a tracker finds its issue's item.
  */
 export async function POST(request: Request) {
   const caller = await triageCaller(request, { allowToken: true });

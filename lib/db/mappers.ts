@@ -63,8 +63,20 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
     status: row.status,
     phase: row.phase,
     branch: row.branch,
+    // Absent before the migration that adds it.
+    branchRenamable: row.branch_renamable === true,
     // `?? null`: a deploy can run before the migration that adds the column.
     title: row.title ?? null,
+    // The first prompt kept for it while its box starts; absent before the
+    // migration that keeps it, and null once delivered. The key, not the
+    // text, marks one kept: a prompt of files alone has empty text.
+    firstPrompt: row.first_prompt != null && row.first_prompt_idempotency_key
+      ? {
+          prompt: row.first_prompt,
+          attachmentIds: row.first_prompt_attachments ?? [],
+          key: row.first_prompt_idempotency_key,
+        }
+      : null,
     baseBranch: row.base_branch,
     worktreePath: row.worktree_path ?? "",
     sandboxId: row.sandbox_id,
@@ -122,6 +134,7 @@ export function toRuntimeComputer(
 ): RuntimeComputer {
   return {
     id: row.id,
+    ownerId: row.owner_id,
     projectId: row.project_id,
     // `?? null`: a deploy can run before the migration that adds the column.
     workspaceId: row.workspace_id ?? null,

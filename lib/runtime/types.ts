@@ -110,7 +110,19 @@ export type SessionCheckout = {
   private?: boolean;
 };
 
-export type WorkspaceSource = "app" | "slack" | "automation" | "github" | "api";
+export type WorkspaceSource = "app" | "slack" | "automation" | "github" | "api" | "linear" | "jira";
+
+/** A session's first prompt as the server keeps it for the session while its
+ *  box starts (workspaces.first_prompt, 20261107100000), so a tab closed
+ *  during startup doesn't lose it: its text (empty for a prompt of files
+ *  alone), the uploaded files sent with it, and the key its every send
+ *  names, whoever sends it. Delivered by setup or the session page, whichever
+ *  first, then dropped. */
+export type StoredFirstPrompt = {
+  prompt: string;
+  attachmentIds: string[];
+  key: string;
+};
 
 export type Workspace = {
   id: string;
@@ -137,9 +149,18 @@ export type Workspace = {
   phase: ProvisionPhase | null;
   /** Branch checked out in the git worktree. */
   branch: string;
+  /** Its branch is the one Outrunner made up from the first prompt, which
+   *  its agent may rename once, before anything is pushed
+   *  (lib/session/rename-branch.ts). */
+  branchRenamable?: boolean;
   /** What the user first asked for (see sessionTitle); null until the first
    *  prompt, and for sessions from before titles existed. */
   title: string | null;
+  /** The first prompt kept on its row while its box starts
+   *  (StoredFirstPrompt), or is about to: null once delivered, and absent
+   *  on a session made in code rather than read, or before the migration
+   *  that keeps it. */
+  firstPrompt?: StoredFirstPrompt | null;
   baseBranch: string;
   /** Absolute path of the worktree inside the sandbox. */
   worktreePath: string;
@@ -214,6 +235,9 @@ export type ProvisionTimings = {
 
 export type RuntimeComputer = {
   id: string;
+  /** Whose plan the box counts toward; the server's writes name it
+   *  (20261106100000). */
+  ownerId: string;
   projectId: string;
   /** The workspace whose own box it is; null for a project's box shared by
    *  its sessions, from before each session had its own. */

@@ -63,8 +63,9 @@ export type ConversationNode =
       key: string;
       name: string;
       input: unknown;
-      /** The result's content, once it has arrived. */
-      result: { content: unknown } | null;
+      /** The result's content, once it has arrived, and whether the tool
+       *  failed. */
+      result: { content: unknown; isError?: boolean } | null;
     };
 
 /**
@@ -81,11 +82,13 @@ export function conversationNodes(
   events: AgentEvent[],
   { plansInProse = false, working = false }: { plansInProse?: boolean; working?: boolean } = {},
 ): ConversationNode[] {
-  const results = new Map<string, unknown>();
+  const results = new Map<string, { content: unknown; isError?: boolean }>();
   for (const event of events) {
     if (event.t !== "message") continue;
     for (const block of event.content) {
-      if (block.type === "tool_result") results.set(block.toolUseId, block.content);
+      if (block.type === "tool_result") {
+        results.set(block.toolUseId, { content: block.content, ...(block.isError && { isError: true }) });
+      }
     }
   }
 
@@ -265,13 +268,17 @@ function staleStart(events: AgentEvent[], index: number): boolean {
   return events.slice(index + 1).some((later) => later.t === "message" && !isEcho(later.uuid));
 }
 
-function toolNode(key: string, block: ToolUse, results: Map<string, unknown>): ConversationNode {
+function toolNode(
+  key: string,
+  block: ToolUse,
+  results: Map<string, { content: unknown; isError?: boolean }>,
+): ConversationNode {
   return {
     kind: "tool",
     key,
     name: block.name,
     input: block.input,
-    result: results.has(block.id) ? { content: results.get(block.id) } : null,
+    result: results.get(block.id) ?? null,
   };
 }
 

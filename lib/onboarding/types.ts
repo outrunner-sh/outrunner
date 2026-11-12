@@ -62,13 +62,17 @@ export type RepositoryList = {
 export type GitHubAccess = {
   orgs: { id: string; name: string; personal: boolean; admin: boolean; accounts: string[] }[];
   activeOrgId: string;
-  /** Signed in with GitHub: their own repositories, in an org without the App. */
+  /** Connected their own GitHub (Settings → Connections): their own
+   *  repositories, in their personal org. */
   personalGithub: boolean;
   /** The App is set up on this server, so an admin can install it. */
   appInstallable: boolean;
   /** Installing it needs a GitHub account linked first: GitHub can't be
    *  asked who installed it here (lib/github/installer.ts). */
   installNeedsGithub: boolean;
+  /** Their own GitHub can be connected here, through the App's user
+   *  authorization (app/api/github/user/connect). */
+  personalConnectable: boolean;
 };
 
 export type OnboardingEnv = {

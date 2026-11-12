@@ -38,7 +38,7 @@ export async function GET(request: Request) {
     if (!githubId) return back("error=verify_declined");
     const installation = await getInstallation(config, state.installationId);
     if (!installation) return back("error=no_installation");
-    await claimInstallation({ orgId: state.orgId, installation, githubId, userId: owner.id });
+    await claimInstallation({ orgId: state.orgId, installation, githubIds: [githubId], userId: owner.id });
     await setActiveOrg(state.orgId).catch(() => {});
     if (state.next) return NextResponse.redirect(appUrl(state.next, origin));
     return back(`installed=${encodeURIComponent(installation.accountLogin)}`);

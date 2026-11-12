@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { rerunRun, startRun, SUSPENDED } from "@/lib/automations/runs";
 import { startDeps } from "@/lib/automations/start-deps";
@@ -48,7 +50,7 @@ export async function POST(request: Request, { params }: Params) {
     // The run's earlier session is archived as its owner (no longer linked to
     // the run, nothing else would), alongside the new one starting: a
     // snapshot takes a while, and the new run doesn't need the old box gone.
-    after(() => Promise.all([startRun(run, startDeps()), staleSession ? archiveAsOwner(staleSession, run.runId) : null]));
+    after(() => Promise.all([startRun(run, startDeps()), staleSession ? archiveAsOwner(staleSession, run.runId) : null]), { where: "automation-run", orgId: id });
     return NextResponse.json({ runId: run.runId });
   } catch (error) {
     if (error instanceof InstallationSuspendedError) {

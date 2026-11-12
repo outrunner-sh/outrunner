@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -190,6 +191,7 @@ func (s *Service) SetEnvironment(ctx context.Context, workspaceID string, env, f
 	if err := s.putEnvRoot(workspaceID, files); err != nil {
 		return err
 	}
+	s.forgetSecrets()
 	if setup == "" {
 		if err := os.Remove(s.setupPath(workspaceID)); err != nil && !os.IsNotExist(err) {
 			return err
@@ -387,27 +389,106 @@ func (s *Service) copyEnvFilesOnce(workspaceID, worktree string) {
 // ("1", "production") is a setting, and masking it would blank ordinary output.
 const minMaskedEnv = 12
 
+// minMaskedKeyLike is the shortest value masked when it reads as a key or a
+// password rather than a setting (worthMasking).
+const minMaskedKeyLike = 8
+
+// secretName is a name (a variable's, a JSON field's, a flag's) that holds a
+// credential.
+var secretName = regexp.MustCompile(`(?i)(key|secret|token|pass|pwd|credential|auth|private|signature|cookie|session)`)
+
+// pemBlock is a PEM key from its armor to its end. Its label is as RFC 7468
+// has it: printable characters joined by single hyphens or spaces, none
+// leading or trailing ("OPENSSH PRIVATE KEY", "EC PRIVATE KEY"), or none at
+// all. An armor it doesn't match leaves the file masked whole (fileTokens),
+// never a leak.
+var pemBlock = regexp.MustCompile(`(?s)-----BEGIN ` + pemLabel + `-----.*?-----END ` + pemLabel + `-----`)
+
+const pemLabel = `(?:[^\s-]+(?:[- ][^\s-]+)*)?`
+
+// worthMasking says whether a variable's value is masked wherever the box's
+// output goes: a long one, or a shorter one whose name says it's a
+// credential (DB_PASS=s3cr3tPw). A short value under another name is a
+// setting (AWS_REGION=us-east-1, NODE_ENV=production), and masking it would
+// blank ordinary output.
+func worthMasking(name, value string) bool {
+	return len(value) >= minMaskedEnv || (len(value) >= minMaskedKeyLike && secretName.MatchString(name))
+}
+
+// fileTokens are the values a project file holds worth masking: a JSON
+// file's credential fields (a service account's private key and its id) and
+// its long random strings; else the PEM keys in it, and a .env file's
+// variables.
+func fileTokens(content string) []string {
+	var values []string
+	var doc any
+	if json.Unmarshal([]byte(content), &doc) == nil {
+		var walk func(name string, v any)
+		walk = func(name string, v any) {
+			switch t := v.(type) {
+			case string:
+				// A credential field's value, not an address (token_uri).
+				named := secretName.MatchString(name) && len(t) >= minMaskedKeyLike && !strings.Contains(t, "://")
+				random := len(t) >= 20 && strings.ContainsAny(t, "0123456789") && !strings.ContainsAny(t, " /")
+				if named || random {
+					values = append(values, t)
+				}
+			case []any:
+				for _, x := range t {
+					walk(name, x)
+				}
+			case map[string]any:
+				for k, x := range t {
+					walk(k, x)
+				}
+			}
+		}
+		walk("", doc)
+		return values
+	}
+	// A PEM key is masked as the block it is in the file, wherever it sits:
+	// a bare PEM file, or a .env's value however it's quoted (single quotes
+	// over several lines, which the dotenv parser reads one line of). Each
+	// of its lines is then masked (redact's variants), and the file's other
+	// lines stay the settings they are. Every armor line must open a block
+	// of its own that closes: one left open (its body runs on to who knows
+	// where, or into the next key's block) masks the file whole instead.
+	if armors := strings.Count(content, "-----BEGIN"); armors > 0 {
+		blocks := pemBlock.FindAllString(content, -1)
+		if len(blocks) < armors {
+			return []string{strings.TrimSpace(content)}
+		}
+		values = append(values, blocks...)
+	}
+	for _, entry := range dotenv.Parse(content) {
+		// A value of an armor line alone is a key cut short: its block
+		// above masks it.
+		partial := strings.Contains(entry.Value, "-----BEGIN") && !strings.Contains(entry.Value, "-----END")
+		if worthMasking(entry.Name, entry.Value) && !partial {
+			values = append(values, entry.Value)
+		}
+	}
+	return values
+}
+
 // envTokens are the session environments' values worth masking: their
 // variables', and those their files set.
 func (s *Service) envTokens() []string {
-	values := s.envFiles().tokens()
+	var tokens []string
+	for _, entry := range s.envFiles().entries() {
+		if worthMasking(entry.Name, entry.Value) {
+			tokens = append(tokens, entry.Value)
+		}
+	}
 	_ = filepath.WalkDir(filepath.Join(s.Root, "envroot"), func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
 		if data, err := os.ReadFile(path); err == nil {
-			for _, entry := range dotenv.Parse(string(data)) {
-				values = append(values, entry.Value)
-			}
+			tokens = append(tokens, fileTokens(string(data))...)
 		}
 		return nil
 	})
-	var tokens []string
-	for _, value := range values {
-		if len(value) >= minMaskedEnv {
-			tokens = append(tokens, value)
-		}
-	}
 	return tokens
 }
 

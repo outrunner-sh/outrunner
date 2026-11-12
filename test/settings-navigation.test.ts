@@ -42,6 +42,7 @@ test("breadcrumbs use the canonical personal and organization navigation labels"
     assert.equal(settingsNavigationTitle(`/settings/org${path}`), label);
   assert.equal(settingsNavigationTitle("/settings/org/github"), "GitHub");
   assert.equal(settingsNavigationTitle("/settings/org/slack"), "Slack");
+  assert.equal(settingsNavigationTitle("/settings/org/linear"), "Linear");
   assert.equal(settingsNavigationTitle("/settings/org/integrations/linear"), "Integrations");
   assert.equal(settingsNavigationTitle("/settings/unknown"), "Settings");
 });

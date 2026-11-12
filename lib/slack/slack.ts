@@ -51,14 +51,14 @@ const ID_PATTERN = /^[A-Z0-9]{2,32}$/;
 /** A signed, expiring payload: `<base64url json>.<hmac>`, the HMAC keyed by
  *  the app's signing secret and the payload's kind, so one kind can't pass
  *  for another. */
-function signPayload(kind: string, data: Record<string, unknown>, secret: string): string {
+export function signPayload(kind: string, data: Record<string, unknown>, secret: string): string {
   const payload = Buffer.from(JSON.stringify(data)).toString("base64url");
   return `${payload}.${createHmac("sha256", secret).update(`${kind}:${payload}`).digest("base64url")}`;
 }
 
 /** The payload {@link signPayload} signed, or null for a forged, broken or
  *  expired one (`exp`, in ms). */
-function verifyPayload(kind: string, token: unknown, secret: string, now: number): Record<string, unknown> | null {
+export function verifyPayload(kind: string, token: unknown, secret: string, now: number): Record<string, unknown> | null {
   if (!secret || typeof token !== "string" || token.length > 4000) return null;
   const [payload, signature, extra] = token.split(".");
   if (!payload || !signature || extra !== undefined) return null;

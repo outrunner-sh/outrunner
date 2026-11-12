@@ -14,6 +14,7 @@ import { usePendingSession } from "@/lib/session/pending-sessions";
 import { selectionMenu } from "./selection-fixtures";
 import { CLAUDE_DEFAULT_MODEL } from "@/lib/runtime/session-models";
 import type { Workspace } from "@/lib/runtime/types";
+import { JiraFixture, LinearCardFixture, LinearFixture, TrackerItemFixture } from "./linear-fixture";
 import { StartupFixture } from "./startup-fixture";
 import { Automations } from "@/components/automations";
 import { AutomationsLoading } from "@/components/automations-loading";
@@ -21,6 +22,7 @@ import { Markdown } from "@/components/markdown";
 import { PullRequestChip } from "@/components/missions/mission-parts";
 import { HomeSessionRoute, NewSessionRoute } from "@/components/new-session-route";
 import { OrgGitHubSettings } from "@/components/org-github";
+import { OrgMembersSettings } from "@/components/org-members";
 import { OrgGeneralSettings } from "@/components/org-settings";
 import { PageLayout } from "@/components/page-layout";
 import { ProjectSettings } from "@/components/project-settings";
@@ -56,6 +58,12 @@ import {
 } from "./fixtures";
 
 const subscribe = () => () => {};
+
+/** The members fixture's pending invite: sent 2 days before the page loaded,
+ *  expiring in 5. Computed once, outside render. */
+const LOADED_AT = Date.now();
+const INVITE_SENT_AT = new Date(LOADED_AT - 2 * 86_400_000).toISOString();
+const INVITE_EXPIRES_AT = new Date(LOADED_AT + 5 * 86_400_000).toISOString();
 
 /** A standalone test app: fixture navigation and APIs can never reach real resources. */
 export function FixturePage() {
@@ -243,6 +251,10 @@ export function FixturePage() {
         </Dialog>
       </PageLayout>
     );
+  else if (view === "linear") content = <LinearFixture state={state} member={params.get("role") === "member"} />;
+  else if (view === "jira") content = <JiraFixture state={state} member={params.get("role") === "member"} />;
+  else if (view === "linear-card") content = <LinearCardFixture state={state} />;
+  else if (view === "tracker-item") content = <TrackerItemFixture source={params.get("source") ?? "linear"} />;
   else if (view === "startup") content = <StartupFixture agent={params.get("harness") === "codex" ? "codex" : "claude"} shared={params.get("shared") === "1"} mission={params.get("kind") === "mission"} legacy={params.get("legacy") === "1"} />;
   else content = pathname === "/new" ? <NewSessionRoute server={<ServerAnswer value={null} />} /> : <HomeSessionRoute />;
   return (
@@ -256,12 +268,33 @@ export function FixturePage() {
               id: 42, accountLogin: "neevai-labs", accountType: "Organization", repositorySelection: "all",
               suspendedAt: null, suspended: false, installedBy: "preview-owner", createdAt: "2026-10-30T00:00:00Z",
               repositories: ["neevai-labs/outrunner"], total: 1, reachable: true,
+              shares: params.get("shared") === "1" ? [{
+                orgId: "00000000-0000-4000-a000-000000000077", orgName: "Personal", personal: true,
+                linkedAt: "2026-11-01T00:00:00Z", linkedBy: "u-alan", linkedByEmail: "alan@neev.ai", authority: null,
+              }] : [],
             }] : []}
             available={state !== "connected" ? [{
               id: 42, accountLogin: "neevai-labs", accountType: "Organization", repositorySelection: "all",
               suspendedAt: null, suspended: false, installedBy: null, createdAt: "2026-10-30T00:00:00Z",
             }] : []}
             pending={false} installed={null} error={null}
+          />
+        </SettingsFrame>
+      ) : view === "members" ? (
+        <SettingsFrame>
+          <OrgMembersSettings
+            org={org}
+            me="u-ada"
+            members={[
+              { userId: "u-ada", login: "ada", name: "Ada Lovelace", email: "ada@neev.ai", avatarUrl: null, role: "admin", joinedAt: "2026-10-01T00:00:00Z" },
+              { userId: "u-alan", login: "alan", name: "Alan Turing", email: "alan@neev.ai", avatarUrl: null, role: "member", joinedAt: "2026-10-02T00:00:00Z" },
+            ]}
+            invites={[
+              { id: "inv-1", email: "grace@neev.ai", role: "member", invitedBy: "u-ada", createdAt: INVITE_SENT_AT, expiresAt: INVITE_EXPIRES_AT, expired: false },
+              { id: "inv-2", email: "linus@neev.ai", role: "admin", invitedBy: "u-ada", createdAt: "2026-10-01T00:00:00Z", expiresAt: "2026-10-08T00:00:00Z", expired: true },
+            ]}
+            requests={[]}
+            emails={params.get("email") === "1"}
           />
         </SettingsFrame>
       ) : view === "settings" ? (

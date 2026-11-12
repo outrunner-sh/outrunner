@@ -7,6 +7,8 @@ import type { DomainOrg } from "@/lib/db/orgs";
 import { orgAdmins } from "@/lib/db/org-members";
 import { sendEmail } from "@/lib/email/send";
 import { optionalEnv } from "@/lib/env";
+import { inviteMessage, joinRequestMessage } from "@/lib/orgs/emails";
+import { INVITE_DAYS } from "@/lib/orgs/invite-token";
 
 /** Where links in an email point: the deployment's own origin. */
 export function appUrl(path: string, requestOrigin?: string): string {
@@ -21,17 +23,7 @@ export function inviteLink(token: string, requestOrigin?: string): string {
 
 /** Send an invite's link to its invitee; whether it went. */
 export function emailInvite(input: { to: string; orgName: string; inviter: string; link: string }): Promise<boolean> {
-  return sendEmail({
-    to: [input.to],
-    subject: `${input.inviter} invited you to ${input.orgName} on Outrunner`,
-    text: [
-      `${input.inviter} invited you to join ${input.orgName} on Outrunner.`,
-      "",
-      `Accept it here, signing in with GitHub: ${input.link}`,
-      "",
-      "Sign in with a GitHub account that has this email address verified. The link works for 7 days.",
-    ].join("\n"),
-  });
+  return sendEmail({ to: [input.to], ...inviteMessage({ ...input, days: INVITE_DAYS }) });
 }
 
 /** Tell an org's admins that `email` asked to join it. `origin`: the
@@ -40,13 +32,11 @@ export async function emailJoinRequest(org: DomainOrg, email: string, origin?: s
   const admins = (await orgAdmins(org.id)).flatMap((a) => (a.email ? [a.email] : []));
   await sendEmail({
     to: admins,
-    subject: `${email} asked to join ${org.name} on Outrunner`,
-    text: [
-      `${email} signed in to Outrunner and asked to join ${org.name}, whose domain (${org.domain}) their email is on.`,
-      "",
-      `Approve or decline it under Settings → Org → Members: ${appUrl("/settings/org/members", origin)}`,
-      "",
-      "They can't use Outrunner in your org until an admin approves them.",
-    ].join("\n"),
+    ...joinRequestMessage({
+      orgName: org.name,
+      domain: org.domain,
+      email,
+      link: appUrl("/settings/org/members", origin),
+    }),
   });
 }

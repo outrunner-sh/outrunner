@@ -69,6 +69,10 @@ func (s *Service) UseGitCredential(client *gitcred.Client) error {
 	if err := s.writeSessionToolsWrapper(); err != nil {
 		log.Printf("runtime-agent: sessions have no %s: %v", sessiontools.CommandName, err)
 	}
+	if err := s.writeGitWrapper(); err != nil {
+		// Pushes go through unguarded: the orientation still asks for a name.
+		log.Printf("runtime-agent: no guard on pushes of stand-in branches: %v", err)
+	}
 	s.env = gitCredentialEnv(s.env, s.RelayExecutable, s.Root, s.gitBinDir())
 	return nil
 }

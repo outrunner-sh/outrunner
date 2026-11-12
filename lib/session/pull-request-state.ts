@@ -9,112 +9,19 @@
  * which until now was only found when its page asked.
  */
 
+import { after } from "@/lib/observability/after";
+
 import { stateOf, type PullRequestEvent, type PullRequestState } from "@/lib/session/pull-request-event";
+import { recordPullRequestEventWith, type PullRequestChange } from "@/lib/session/pull-request-recording";
 import { githubGet, repoToken } from "@/lib/slack/github";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import { tellTrackersPullRequests } from "@/lib/trackers/write-back.deps";
 
-/** A pull request a session changed state (or was opened): changes recorded,
- *  by session. The sessions it's on are found by repository and branch, as
- *  the Slack agent's announcement finds them. */
-export async function recordPullRequestEvent(event: PullRequestEvent): Promise<Array<{ workspaceId: string; ownerId: string; from: PullRequestState | null; to: PullRequestState; number: number }>> {
-  const db = createSupabaseAdminClient();
-  const { data: projects, error: projectsError } = await db
-    .from("projects")
-    .select("id, org_id")
-    .ilike("full_name", event.repoFullName.replace(/[\\%_]/g, "\\$&"));
-  if (projectsError) throw projectsError;
-  if (!projects?.length) return [];
-  const projectIds = projects.map((p) => p.id);
-  // The repository's own sessions on the branch, and the sessions of several
-  // repositories in its orgs: never every org's sessions on a branch as
-  // common as `main`.
-  const [own, several] = await Promise.all([
-    db.from("workspaces").select("id, owner_id, project_id, checkouts").eq("branch", event.headRef).neq("status", "destroyed").in("project_id", projectIds),
-    db
-      .from("workspaces")
-      .select("id, owner_id, project_id, checkouts")
-      .eq("branch", event.headRef)
-      .neq("status", "destroyed")
-      .in("org_id", [...new Set(projects.map((p) => p.org_id))])
-      .not("checkouts", "is", null),
-  ]);
-  if (own.error) throw own.error;
-  if (several.error) throw several.error;
-  const sessions = [...new Map([...(own.data ?? []), ...(several.data ?? [])].map((s) => [s.id, s])).values()];
-  const changed: Array<{ workspaceId: string; ownerId: string; from: PullRequestState | null; to: PullRequestState; number: number }> = [];
-  const now = new Date().toISOString();
-  for (const session of sessions) {
-    // The repository it's in: the session's own, or one of a session of several.
-    const projectId = projectIds.find((id) => id === session.project_id || checkoutIds(session.checkouts).includes(id));
-    if (!projectId) continue;
-    const { data: existing, error: existingError } = await db
-      .from("pull_requests")
-      .select("id, state, github_number")
-      .eq("workspace_id", session.id)
-      .eq("project_id", projectId)
-      .maybeSingle();
-    if (existingError) throw existingError;
-    if (!existing) {
-      const { error } = await db.from("pull_requests").insert({
-        owner_id: session.owner_id,
-        workspace_id: session.id,
-        project_id: projectId,
-        github_number: event.number,
-        url: event.url,
-        title: event.title,
-        base_branch: event.baseRef,
-        head_branch: event.headRef,
-        state: event.state,
-        state_at: now,
-        checked_at: now,
-      });
-      // Recorded meanwhile by the session's page: its state is the next check's.
-      if (error && error.code !== "23505") throw error;
-      if (!error) changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: null, to: event.state, number: event.number });
-      continue;
-    }
-    if (existing.github_number !== event.number) {
-      // A new pull request from the branch after its last one closed
-      // unmerged: it's the session's now (one a repository, so it replaces
-      // the closed one). Otherwise it's another of the branch's, not this.
-      if (existing.state !== "closed" || event.state !== "open") continue;
-      const { data: replaced, error } = await db
-        .from("pull_requests")
-        .update({
-          github_number: event.number,
-          url: event.url,
-          title: event.title,
-          base_branch: event.baseRef,
-          state: event.state,
-          state_at: now,
-          checked_at: now,
-        })
-        .eq("id", existing.id)
-        .eq("state", "closed")
-        .select("id");
-      if (error) throw error;
-      // Reopened meanwhile (a page's read, another delivery): nothing changed
-      // here. A new pull request, not the closed one again: told as its first
-      // opening (from nothing), not as a reopen.
-      if (replaced?.length) {
-        changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: null, to: event.state, number: event.number });
-      }
-      continue;
-    }
-    if (existing.state === event.state) continue;
-    const { error } = await db
-      .from("pull_requests")
-      .update({ state: event.state, state_at: now, checked_at: now, title: event.title })
-      .eq("id", existing.id);
-    if (error) throw error;
-    changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: existing.state, to: event.state, number: event.number });
-  }
-  return changed;
-}
-
-function checkoutIds(checkouts: unknown): string[] {
-  if (!Array.isArray(checkouts)) return [];
-  return checkouts.flatMap((c) => (c && typeof c === "object" && typeof (c as { projectId?: unknown }).projectId === "string" ? [(c as { projectId: string }).projectId] : []));
+/** A pull request a session changed state (or was opened): recorded
+ *  (pull-request-recording.ts), on the real database, scoped to the orgs of
+ *  the installation the event's webhook came from. */
+export async function recordPullRequestEvent(event: PullRequestEvent, installationId: number): Promise<PullRequestChange[]> {
+  return recordPullRequestEventWith(event, installationId, createSupabaseAdminClient());
 }
 
 /**
@@ -124,7 +31,7 @@ function checkoutIds(checkouts: unknown): string[] {
  */
 export async function checkOpenPullRequests(
   limit = 25,
-): Promise<Array<{ workspaceId: string; ownerId: string; from: PullRequestState; to: PullRequestState; number: number }>> {
+): Promise<Array<{ workspaceId: string; projectId: string; ownerId: string; from: PullRequestState; to: PullRequestState; number: number }>> {
   const db = createSupabaseAdminClient();
   const { data: open, error } = await db
     .from("pull_requests")
@@ -140,7 +47,7 @@ export async function checkOpenPullRequests(
     .in("id", [...new Set(open.map((p) => p.project_id))]);
   if (projectsError) throw projectsError;
   const projectById = new Map((projects ?? []).map((p) => [p.id, p]));
-  const changed: Array<{ workspaceId: string; ownerId: string; from: PullRequestState; to: PullRequestState; number: number }> = [];
+  const changed: Array<{ workspaceId: string; projectId: string; ownerId: string; from: PullRequestState; to: PullRequestState; number: number }> = [];
   const now = new Date().toISOString();
   await Promise.all(
     open.map(async (pr) => {
@@ -158,7 +65,7 @@ export async function checkOpenPullRequests(
       if (updateError) throw updateError;
       // Recorded meanwhile (a webhook's delivery): it's that one's change.
       if (state && state !== pr.state && updated?.length) {
-        changed.push({ workspaceId: pr.workspace_id, ownerId: pr.owner_id, from: pr.state, to: state, number: pr.github_number });
+        changed.push({ workspaceId: pr.workspace_id, projectId: pr.project_id, ownerId: pr.owner_id, from: pr.state, to: state, number: pr.github_number });
       }
     }),
   );
@@ -170,9 +77,17 @@ export async function checkOpenPullRequests(
 export async function notePullRequestState(pullRequest: { id: string; state?: PullRequestState }, state: PullRequestState): Promise<void> {
   if ((pullRequest.state ?? "open") === state) return;
   const now = new Date().toISOString();
-  const { error } = await createSupabaseAdminClient()
+  const { data, error } = await createSupabaseAdminClient()
     .from("pull_requests")
     .update({ state, state_at: now, checked_at: now })
-    .eq("id", pullRequest.id);
+    .eq("id", pullRequest.id)
+    .select("workspace_id, project_id, github_number")
+    .maybeSingle();
   if (error) console.error(`Pull request ${pullRequest.id}: couldn't record it ${state}`, error);
+  // Recorded here, no webhook or tick will see it change: its tracker hears of it, after
+  // the answer: a page's visit doesn't wait on Linear.
+  if (data) {
+    const change = { workspaceId: data.workspace_id, projectId: data.project_id, from: pullRequest.state ?? "open", to: state, number: data.github_number };
+    after(() => tellTrackersPullRequests([change]));
+  }
 }

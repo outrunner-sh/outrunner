@@ -177,7 +177,7 @@ func TestUsageIsInClaudesTerms(t *testing.T) {
 	tr.Line(0, []byte(`{"type":"session_meta","payload":{"id":"s1"}}`+"\n"))
 	tr.Line(50, []byte(`{"type":"turn_context","payload":{"model":"gpt-5.5"}}`+"\n"))
 	if out := tr.Line(100, []byte(`{"timestamp":"t","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}}`+"\n")); len(out) != 0 || !tr.Holding() {
-		t.Fatalf("an assistant record was released before its usage: %q", out)
+		t.Fatalf("an assistant record was released before its usage: %+v", out)
 	}
 	out := tr.Line(200, []byte(`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":17363,"cached_input_tokens":17140,"cache_write_input_tokens":220,"output_tokens":49}}}}`+"\n"))
 	if len(out) != 1 {
@@ -286,7 +286,7 @@ func TestUsageThatComesLateGoesOnTheNextReply(t *testing.T) {
 		} `json:"message"`
 	}
 	if len(out) != 1 || json.Unmarshal(out[0].Line, &rec) != nil {
-		t.Fatalf("the reply's usage released %q", out)
+		t.Fatalf("the reply's usage released %+v", out)
 	}
 	want := Usage{InputTokens: 80, OutputTokens: 14, CacheReadInputTokens: 120}
 	if rec.Message.Usage != want {
@@ -351,14 +351,14 @@ func TestAPlanModePromptLosesItsPreamble(t *testing.T) {
 		} `json:"message"`
 	}
 	if len(out) != 1 || json.Unmarshal(out[0].Line, &rec) != nil {
-		t.Fatalf("released %q", out)
+		t.Fatalf("released %+v", out)
 	}
 	if rec.Message.Content != "Add dark mode" || rec.PermissionMode != "plan" {
 		t.Errorf("record = %+v, want the prompt alone, in plan mode", rec)
 	}
 	out = tr.Line(100, []byte(`{"type":"event_msg","payload":{"type":"user_message","message":"Build it"}}`+"\n"))
 	if len(out) != 1 || strings.Contains(string(out[0].Line), "permissionMode") {
-		t.Errorf("a prompt in build mode = %q, want no mode", out)
+		t.Errorf("a prompt in build mode = %+v, want no mode", out)
 	}
 }
 
@@ -416,6 +416,20 @@ func TestTranslationPreservesWhetherAssistantWorkContinues(t *testing.T) {
 		}
 		if rec.Message.StopReason != tc.want {
 			t.Errorf("payload %s: stop reason %q, want %q", tc.payload, rec.Message.StopReason, tc.want)
+		}
+	}
+}
+
+func TestToolFailedReadsCodexsSuccessFlag(t *testing.T) {
+	for output, want := range map[string]bool{
+		`{"content":"boom","success":false}`: true,
+		`{"content":"ok","success":true}`:    false,
+		`{"content":"ok"}`:                   false,
+		`"Exit code: 1"`:                     false,
+		``:                                   false,
+	} {
+		if got := toolFailed(json.RawMessage(output)); got != want {
+			t.Errorf("toolFailed(%s) = %v, want %v", output, got, want)
 		}
 	}
 }

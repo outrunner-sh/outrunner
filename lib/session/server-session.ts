@@ -26,6 +26,8 @@ export type ServerSessionStart = {
   projectId: string;
   /** The branch it starts from; the repository's default when not given. */
   baseBranch?: string;
+  /** Its own branch's name; a generated one when not given. */
+  branch?: string;
   title: string;
   /** The prompt it runs, sent once it's ready. */
   prompt: string;
@@ -37,9 +39,9 @@ export type ServerSessionStart = {
   reviewAsApp?: boolean;
   /** Told the session's id once its row is made, before its setup. */
   onCreated?: (workspaceId: string) => Promise<void>;
-  /** Where it was started: an automation's run, a Slack thread, or an
-   *  @mention on GitHub. */
-  source: Extract<WorkspaceSource, "automation" | "slack" | "github">;
+  /** Where it was started: an automation's run, a Slack thread, an @mention on
+   *  GitHub, or a delegation in Linear. */
+  source: Extract<WorkspaceSource, "automation" | "slack" | "github" | "linear" | "jira">;
 };
 
 /** Made and set up: ready (its prompt sent) or failed, with why. Or not made
@@ -66,7 +68,7 @@ export async function startServerSession(start: ServerSessionStart): Promise<Ser
         start.projectId,
         // Outrunner's models, on Outrunner's key (not `key: "own"`): the
         // user's allowance, not their Claude or their own OpenRouter key.
-        { provider: "outrunner", model: start.model ?? OUTRUNNER_MODELS[0].id, prompt: start.prompt },
+        { provider: "outrunner", model: start.model ?? OUTRUNNER_MODELS[0].id, prompt: start.prompt, ...(start.branch && { branch: start.branch }) },
         {
           baseBranch: start.baseBranch,
           title: start.title,
@@ -110,7 +112,16 @@ function refused(errorMessage: string): ServerSessionResult {
  * not ready or idle (stopped, deleted, already archived) is left as it is.
  * How many were archived; never throws.
  */
-export async function archiveServerSessions(userId: string, workspaceIds: readonly string[]): Promise<number> {
+export async function archiveServerSessions(
+  userId: string,
+  workspaceIds: readonly string[],
+  /** Delete each one's own box once its Snapshot is saved, rather than pause
+   *  it (lib/session/archive-session.ts): only for sessions nobody comes back
+   *  to, an automation's review sessions once superseded or their pull
+   *  request closed. The Slack, GitHub-loop and run-route archives keep the
+   *  box paused, as Restore there is expected. */
+  options: { dropBox?: boolean } = {},
+): Promise<number> {
   if (workspaceIds.length === 0) return 0;
   try {
     return await actAsUser(userId, async () => {
@@ -125,7 +136,7 @@ export async function archiveServerSessions(userId: string, workspaceIds: readon
           if (workspace.status !== "ready" && workspace.status !== "idle") continue;
           const resolution = resolveProvider(workspace);
           if (!resolution.ok || !isComputerProvider(resolution.provider)) continue;
-          const result = await archiveCloudSession(workspace, resolution.provider, owner);
+          const result = await archiveCloudSession(workspace, resolution.provider, owner, { dropBox: options.dropBox });
           if (result.ok) archived++;
           else console.warn(`Couldn't archive the session ${id}`, result);
         } catch (error) {
