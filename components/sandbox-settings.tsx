@@ -2,7 +2,7 @@
 
 import { PageHeader } from "@/components/page-layout";
 
-import { Check, Cloud, Copy, Lock, Pencil, SquareTerminal, Trash2 } from "lucide-react";
+import { Box, Check, Cloud, Copy, Lock, Pencil, SquareTerminal, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { DaytonaIcon, ModalIcon } from "@/components/brand-icons";
@@ -10,18 +10,19 @@ import { type OptionCard, OptionCards } from "@/components/option-cards";
 import { ConnectionStatus, DetailRow, Details, SectionHeader } from "@/components/settings-details";
 import { KeyInput } from "@/components/stored-key";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
 import { allowsBoxSize, boxSizeWithin, type Plan } from "@/lib/billing/plans";
 import { saveOutcome, type SaveFailure } from "@/lib/settings/save-error";
-import type { SandboxChoice, SandboxSettings, StoredKey } from "@/lib/db/credentials";
+import type { E2bSettings, SandboxChoice, SandboxSettings, StoredKey } from "@/lib/db/credentials";
 import { requestJson } from "@/lib/http/request-json";
 import { BOX_SIZES, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import { modalTokenInText, type ModalToken } from "@/lib/runtime/sandbox/modal-token";
 import { cn } from "@/lib/utils";
 import { gcpSetupCommand } from "@/lib/runtime/gcp/setup-command";
 
-type OwnSandbox = Exclude<SandboxChoice, "outrunner" | "gcp">;
+type OwnSandbox = Exclude<SandboxChoice, "outrunner" | "gcp" | "e2b">;
 
 /** What each sandbox is, for its card and the line under the cards. */
 const SANDBOXES: Record<SandboxChoice, { label: string; icon: OptionCard<SandboxChoice>["icon"]; detail: string }> = {
@@ -46,9 +47,15 @@ const SANDBOXES: Record<SandboxChoice, { label: string; icon: OptionCard<Sandbox
     detail:
       "Your Modal account, on your token. Modal bills you for it. Modal ends a sandbox after a day; Outrunner starts it again where it was the next time you open a session.",
   },
+  e2b: {
+    label: "E2B",
+    icon: Box,
+    detail:
+      "Your E2B account, at E2B's cloud or your own self-hosted E2B, on your API key. E2B bills you for it. Sandboxes pause with their memory, so a session resumes exactly where it was.",
+  },
 };
 
-const ORDER: SandboxChoice[] = ["outrunner", "daytona", "modal", "gcp"];
+const ORDER: SandboxChoice[] = ["outrunner", "daytona", "modal", "gcp", "e2b"];
 
 /** What a credential change is called when it fails, so the line says which. */
 function credentialSubject(sandbox: OwnSandbox): string {
@@ -138,8 +145,11 @@ export function SandboxSettingsForm({
     return run;
   }
 
+  // Followed while there's something to follow: a Google Cloud setup, or an
+  // E2B template being built in the user's account.
+  const e2bBuilding = settings.e2b?.connected && (settings.e2b.template === "building" || settings.e2b.template === "outdated" || settings.e2b.template === "none");
   useEffect(() => {
-    if (shown !== "gcp") return;
+    if (shown !== "gcp" && !(shown === "e2b" && e2bBuilding)) return;
     const controller = new AbortController();
     const timer = setInterval(() => {
       if (inUseNow.current !== settings.sandbox) return;
@@ -149,10 +159,12 @@ export function SandboxSettingsForm({
         .then((data) => { if (!controller.signal.aborted && revision === saveRevision.current && ORDER.includes(data.sandbox)) { setSettings(data); inUseNow.current = data.sandbox; } }).catch(() => {});
     }, 5000);
     return () => { controller.abort(); clearInterval(timer); };
-  }, [shown, settings.sandbox]);
+  }, [shown, settings.sandbox, e2bBuilding]);
 
   const inUse = settings.sandbox;
-  const ready = (sandbox: SandboxChoice) => sandbox === "outrunner" || settings[sandbox]?.connected;
+  // E2B is ready once Outrunner's template is built in the user's account.
+  const ready = (sandbox: SandboxChoice) =>
+    sandbox === "outrunner" || (sandbox === "e2b" ? settings.e2b?.connected && settings.e2b.template === "ready" : settings[sandbox]?.connected);
   // The size a box really gets on the sandbox in use: on Outrunner's, a saved
   // size beyond the plan is shown as the size new boxes get instead.
   const size = inUse === "outrunner" ? boxSizeWithin(plan, settings.boxSize).id : settings.boxSize;
@@ -169,7 +181,7 @@ export function SandboxSettingsForm({
 
       <div className="space-y-3">
         <OptionCards
-          columns={4}
+          columns={5}
           options={ORDER.map((id) => ({
             id,
             label: SANDBOXES[id].label,
@@ -192,6 +204,15 @@ export function SandboxSettingsForm({
 
       {shown === "gcp" ? (
         <GcpConnectionCard ownerId={ownerId} stored={settings.gcp} busy={busy} onRemove={() => void send("the Google Cloud connection", "DELETE", undefined, "?key=gcp")} />
+      ) : shown === "e2b" ? (
+        <E2bConnectionCard
+          stored={settings.e2b}
+          inUse={inUse === "e2b"}
+          busy={busy}
+          onSave={(connection) => send("the E2B API key", "PUT", () => ({ sandbox: inUseNow.current, ...connection }))}
+          onRebuild={() => void send("the E2B template", "PUT", () => ({ sandbox: inUseNow.current, e2bRebuild: true }))}
+          onRemove={() => void send("the E2B API key", "DELETE", undefined, "?key=e2b")}
+        />
       ) : shown !== "outrunner" ? (
         <SandboxCredential
           // Its own drafts per provider: a Modal secret typed in mustn't
@@ -224,7 +245,11 @@ export function SandboxSettingsForm({
           <p className="text-sm text-muted-foreground">
             {ready(shown)
               ? `New sessions run on ${SANDBOXES[inUse].label} now. Switching applies to new sessions. Existing sessions keep their current sandbox.`
-              : shown === "gcp" ? "Connect your Google Cloud project with the Outrunner CLI to run sessions there." : `Save your ${SANDBOXES[shown].label} ${shown === "modal" ? "token" : "API key"} above to run sessions there.`}
+              : shown === "gcp"
+                ? "Connect your Google Cloud project with the Outrunner CLI to run sessions there."
+                : shown === "e2b" && settings.e2b?.connected
+                  ? "New sessions can run on your E2B once Outrunner's template is built there."
+                  : `Save your ${SANDBOXES[shown].label} ${shown === "modal" ? "token" : "API key"} above to run sessions there.`}
           </p>
           <LoadingButton
             variant="outline"
@@ -401,6 +426,155 @@ function SandboxCredential({
               size="icon"
               aria-label={`Remove ${what}`}
               title={inUse ? `Remove ${what}: new sessions go back to Outrunner's sandboxes` : `Remove ${what}`}
+              disabled={busy}
+              onClick={onRemove}
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** What an E2B save sends: the key, and a self-hosted E2B's URLs (empty for
+ *  E2B's cloud). */
+type E2bBody = { e2bKey: string; e2bApiUrl: string; e2bSandboxUrl: string };
+
+/** Where Outrunner's template is in the user's E2B, in words. */
+const E2B_TEMPLATE_LINE: Record<E2bSettings["template"], string> = {
+  none: "Starting to build Outrunner's template in your E2B…",
+  building: "Building Outrunner's template in your E2B. This takes a few minutes; you can leave this page.",
+  ready: "Outrunner's template is ready in your E2B.",
+  failed: "Outrunner's template failed to build in your E2B.",
+  outdated: "Outrunner's tools were updated; rebuilding its template in your E2B.",
+};
+
+/**
+ * The user's own E2B: their API key (its last 4 once saved, never the key),
+ * E2B's cloud or a self-hosted E2B's two URLs, and Outrunner's box template,
+ * built in their account once the key is saved and followed here to ready.
+ */
+function E2bConnectionCard({
+  stored,
+  inUse,
+  busy,
+  onSave,
+  onRebuild,
+  onRemove,
+}: {
+  stored?: E2bSettings;
+  inUse: boolean;
+  busy: boolean;
+  onSave: (connection: E2bBody) => Promise<boolean>;
+  onRebuild: () => void;
+  onRemove: () => void;
+}) {
+  const [key, setKey] = useState("");
+  const [selfHosted, setSelfHosted] = useState(Boolean(stored?.apiUrl));
+  const [apiUrl, setApiUrl] = useState(stored?.apiUrl ?? "");
+  const [sandboxUrl, setSandboxUrl] = useState(stored?.sandboxUrl ?? "");
+  const [replacing, setReplacing] = useState(false);
+  const connected = stored?.connected ?? false;
+  const asking = !connected || replacing;
+  const typed = key.trim() !== "" && (!selfHosted || (apiUrl.trim() !== "" && sandboxUrl.trim() !== ""));
+
+  async function save() {
+    if (!typed || busy) return;
+    const ok = await onSave({
+      e2bKey: key.trim(),
+      e2bApiUrl: selfHosted ? apiUrl.trim() : "",
+      e2bSandboxUrl: selfHosted ? sandboxUrl.trim() : "",
+    });
+    if (ok) {
+      setKey("");
+      setReplacing(false);
+    }
+  }
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "Enter") void save();
+  };
+
+  return (
+    <div className="space-y-3">
+      <SectionHeader title="API key" link={{ href: "https://e2b.dev/dashboard?tab=keys", label: "E2B → Keys" }} />
+      <ConnectionStatus connected={connected} />
+      <Details>
+        <DetailRow term="Provider">E2B</DetailRow>
+        <DetailRow term="Where">{stored?.apiUrl ? new URL(stored.apiUrl).host : "E2B's cloud"}</DetailRow>
+        <DetailRow term="Billing">Your E2B account</DetailRow>
+        <DetailRow term="Box size">Small · 2 vCPU · 4 GB</DetailRow>
+      </Details>
+      {connected && stored ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/60 px-4 py-2.5">
+          <p className="text-sm text-muted-foreground">
+            {E2B_TEMPLATE_LINE[stored.template]}
+            {stored.template === "failed" && stored.templateError ? ` ${stored.templateError}` : ""}
+          </p>
+          {stored.template === "failed" ? (
+            <Button variant="outline" size="sm" disabled={busy} onClick={onRebuild}>
+              Rebuild
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {asking ? (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <KeyInput value={key} onChange={setKey} onKeyDown={onKeyDown} placeholder="Paste your E2B API key (e2b_…)" label="E2B API key" />
+            {replacing ? (
+              <Button variant="ghost" size="sm" onClick={() => setReplacing(false)}>
+                Cancel
+              </Button>
+            ) : null}
+            <LoadingButton
+              status={busy ? "pending" : "idle"}
+              labels={{ idle: "Save", pending: "Checking" }}
+              disabled={!typed}
+              onClick={() => void save()}
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <input type="checkbox" checked={selfHosted} onChange={(event) => setSelfHosted(event.target.checked)} />
+            Self-hosted E2B
+          </label>
+          {selfHosted ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Input
+                value={apiUrl}
+                onChange={(event) => setApiUrl(event.target.value)}
+                onKeyDown={onKeyDown}
+                placeholder="API URL (https://e2b-api.example.com)"
+                aria-label="E2B API URL"
+              />
+              <Input
+                value={sandboxUrl}
+                onChange={(event) => setSandboxUrl(event.target.value)}
+                onKeyDown={onKeyDown}
+                placeholder="Sandbox URL (https://e2b-sandbox.example.com)"
+                aria-label="E2B sandbox URL"
+              />
+            </div>
+          ) : null}
+          <p className="text-xs text-muted-foreground">
+            It&apos;s checked with E2B, then stored encrypted. Outrunner then builds its template (Claude Code, Codex
+            and gh) in your E2B account, which takes a few minutes.
+            {selfHosted ? " A self-hosted E2B must be reachable over https on a public host." : ""}
+          </p>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 px-4 py-2.5">
+          <span className="font-mono text-sm text-muted-foreground">········{stored?.hint ?? "····"}</span>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" aria-label="Replace API key" title="Replace API key" onClick={() => setReplacing(true)}>
+              <Pencil className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Remove API key"
+              title={inUse ? "Remove API key: new sessions go back to Outrunner's sandboxes" : "Remove API key"}
               disabled={busy}
               onClick={onRemove}
             >

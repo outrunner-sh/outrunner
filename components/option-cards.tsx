@@ -38,7 +38,7 @@ export function OptionCards<Id extends string>({
   label: string;
   /** What the tick means, for a screen reader: "in use", "chosen". */
   chosenLabel?: string;
-  columns?: 3 | 4;
+  columns?: 3 | 4 | 5;
 }) {
   const cards = useRef<Partial<Record<Id, HTMLButtonElement | null>>>({});
 
@@ -53,7 +53,7 @@ export function OptionCards<Id extends string>({
   }
 
   return (
-    <div role="tablist" aria-label={label} onKeyDown={onKeyDown} className={cn("grid gap-2", columns === 4 ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3")}>
+    <div role="tablist" aria-label={label} onKeyDown={onKeyDown} className={cn("grid gap-2", columns === 5 ? "grid-cols-2 sm:grid-cols-5" : columns === 4 ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3")}>
       {options.map(({ id, label: name, icon: Icon, connected }) => {
         const isChosen = id === chosen;
         const isShown = id === shown;
