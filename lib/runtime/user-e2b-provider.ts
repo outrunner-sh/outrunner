@@ -89,7 +89,11 @@ export class UserE2bRuntimeProvider extends ComputerRuntimeProvider {
     super(
       "user-e2b",
       new E2bBackend({
-        connection: async () => userE2bConnection(await stored()),
+        connection: async () => {
+          const found = await stored();
+          const { userE2bProxy } = await import("@/lib/runtime/sandbox/e2b-sdk");
+          return { ...userE2bConnection(found), proxy: await userE2bProxy({ apiUrl: found.apiUrl ?? undefined, sandboxUrl: found.sandboxUrl ?? undefined }) };
+        },
         template: async () => userE2bTemplate(await stored()),
       }),
     );

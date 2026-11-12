@@ -13,7 +13,10 @@ const SDK_FALLBACKS = ["E2B_API_URL", "E2B_SANDBOX_URL", "E2B_DOMAIN"] as const;
 
 /** Options reaching the E2B at `apiUrl` (E2B's cloud when unset) on `apiKey`,
  *  its boxes through `sandboxUrl` (a self-hosted client-proxy) when set. */
-export function e2bSdkOptions(target: { apiKey: string; apiUrl?: string; sandboxUrl?: string }, requestTimeoutMs = 2 * 60 * 1000) {
+export function e2bSdkOptions(
+  target: { apiKey: string; apiUrl?: string; sandboxUrl?: string; proxy?: string },
+  requestTimeoutMs = 2 * 60 * 1000,
+) {
   const set = SDK_FALLBACKS.filter((name) => process.env[name]);
   if (set.length > 0) {
     throw new Error(
@@ -27,5 +30,28 @@ export function e2bSdkOptions(target: { apiKey: string; apiUrl?: string; sandbox
     sandboxUrl: target.sandboxUrl,
     domain: E2B_CLOUD_DOMAIN,
     requestTimeoutMs,
+    ...(target.proxy ? { proxy: target.proxy } : {}),
   };
+}
+
+/**
+ * Options for a user's E2B: as {@link e2bSdkOptions}, and for a self-hosted
+ * one (a URL the user named), through the egress proxy (e2b-egress.ts), which
+ * reaches only the hosts they named, public-only. The SDK follows redirects
+ * with the key on and resolves names as it connects; through the proxy a
+ * redirect to any other host, or a name that turns private, goes nowhere.
+ * E2B's cloud is E2B's, and is reached direct.
+ */
+export async function userE2bSdkOptions(
+  target: { apiKey: string; apiUrl?: string; sandboxUrl?: string },
+  requestTimeoutMs = 2 * 60 * 1000,
+) {
+  return e2bSdkOptions({ ...target, proxy: await userE2bProxy(target) }, requestTimeoutMs);
+}
+
+/** The egress proxy for a user's self-hosted E2B; none for E2B's cloud. */
+export async function userE2bProxy(target: { apiUrl?: string; sandboxUrl?: string }): Promise<string | undefined> {
+  if (!target.apiUrl && !target.sandboxUrl) return undefined;
+  const { egressProxyFor, selfHostedE2bHosts } = await import("@/lib/runtime/sandbox/e2b-egress");
+  return egressProxyFor(selfHostedE2bHosts(target, E2B_CLOUD_DOMAIN));
 }

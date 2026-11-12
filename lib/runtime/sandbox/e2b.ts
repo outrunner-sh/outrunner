@@ -73,6 +73,9 @@ export type E2bConnection = {
   /** How long a box runs before E2B pauses it on its own: the backstop
    *  behind Outrunner's own idle pause, pushed back out while it's in use. */
   timeoutMs: number;
+  /** The proxy the SDK's calls go through: for a user's self-hosted E2B, the
+   *  egress proxy that reaches only their hosts (e2b-sdk.ts userE2bProxy). */
+  proxy?: string;
   /** This server's relay for browsers' WebSockets to a box: its path prefix,
    *  the key its tickets are signed with, and for a user's E2B, the user, bound
    *  into each ticket so the relay reaches only their box. */

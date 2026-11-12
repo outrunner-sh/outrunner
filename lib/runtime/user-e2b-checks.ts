@@ -32,11 +32,11 @@ export async function assertPublicHost(url: string): Promise<void> {
 /** Whether E2B at `apiUrl` (its cloud when unset) accepts `apiKey`: false
  *  when it refuses it, a throw when it can't be asked. */
 export async function e2bAcceptsKey(apiKey: string, apiUrl?: string): Promise<boolean> {
-  const [{ AuthenticationError, Sandbox }, { e2bSdkOptions }] = await Promise.all([
+  const [{ AuthenticationError, Sandbox }, { userE2bSdkOptions }] = await Promise.all([
     import("e2b"),
     import("@/lib/runtime/sandbox/e2b-sdk"),
   ]);
-  const options = { ...e2bSdkOptions({ apiKey, apiUrl }, 20_000), limit: 1 };
+  const options = { ...(await userE2bSdkOptions({ apiKey, apiUrl }, 20_000)), limit: 1 };
   try {
     await Sandbox.list(options).nextItems();
     return true;

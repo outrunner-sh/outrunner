@@ -524,6 +524,9 @@ export class AgentClient {
           authorization: `Bearer ${token}`,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
+        // The agent never redirects; a proxy that does (a user's own E2B)
+        // doesn't get our token, or the provider's headers, sent elsewhere.
+        redirect: "error",
         signal: AbortSignal.timeout(timeoutMs),
       },
     );

@@ -23,7 +23,7 @@ import {
 
 /** E2B's API for the user's account. */
 function targetOf(stored: StoredE2b) {
-  return { apiKey: stored.apiKey, apiUrl: stored.apiUrl ?? undefined };
+  return { apiKey: stored.apiKey, apiUrl: stored.apiUrl ?? undefined, user: true };
 }
 
 /**
