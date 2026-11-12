@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import { getOwner, type Owner } from "@/lib/auth/owner";
@@ -594,7 +596,7 @@ async function destroyDaytonaWorkspace(
     await agent.destroyWorkspace(identity);
   });
   // Its own box goes with it; the last session off a shared box pauses it.
-  if (response.ok) after(() => releaseWorkspaceBox(provider, workspace, true));
+  if (response.ok) after(() => releaseWorkspaceBox(provider, workspace, true), { where: "release-box", workspaceId: workspace.id });
   return response;
 }
 

@@ -5,6 +5,26 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  {
+    // Work after the response goes through lib/observability/after.ts: its
+    // errors are reported, and a shutdown waits for it (server.ts).
+    files: ["**/*.ts", "**/*.tsx"],
+    ignores: ["lib/observability/after.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "next/server",
+              importNames: ["after"],
+              message: "Use `after` from @/lib/observability/after: it reports errors and holds a shutdown until the work ends.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

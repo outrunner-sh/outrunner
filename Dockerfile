@@ -50,9 +50,15 @@ RUN test -n "$NEXT_PUBLIC_SUPABASE_URL" -a -n "$NEXT_PUBLIC_SUPABASE_ANON_KEY" \
   || (echo "ERROR: NEXT_PUBLIC_SUPABASE_* build args are empty; the client bundle would ship without them" && exit 1)
 RUN pnpm build
 
-# ---- runtime: `pnpm start` + the built agent binary --------------------------
+# ---- runtime: server.ts under tini + the built agent binary -------------------
 FROM base AS runtime
 ENV NODE_ENV=production
+# tini as PID 1: it passes SIGTERM on to node, which drains (server.ts) before
+# it exits, and reaps any child left behind. Node as PID 1 would get no
+# default signal handling, and `pnpm start` under it didn't pass SIGTERM on.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends tini \
+  && rm -rf /var/lib/apt/lists/*
 # Cloudflare Containers routes to the port the process listens on; `pnpm start`
 # runs server.ts (Next plus the Neev WebSocket relay) on ${PORT}. Keep in sync
 # with defaultPort in cloudflare/worker.ts.
@@ -70,4 +76,7 @@ EXPOSE 8080
 # running container is the latest deploy's). Last, so it costs no cache.
 ARG OUTRUNNER_BUILD=""
 ENV OUTRUNNER_BUILD=$OUTRUNNER_BUILD
-CMD ["pnpm", "start"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
+# What `pnpm start` runs, without pnpm and a shell in between to swallow the
+# signal (NODE_ENV is set above).
+CMD ["node", "--experimental-strip-types", "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON", "server.ts"]

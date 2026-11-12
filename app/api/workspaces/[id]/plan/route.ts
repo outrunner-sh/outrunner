@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { getOwner } from "@/lib/auth/owner";
 import { recordWorkspaceMode } from "@/lib/db/repositories";
@@ -67,7 +69,7 @@ export async function POST(request: Request, context: RouteContext) {
     // watched until the turn ends (lib/session/watch.ts), as a sent prompt
     // is. "answered" put nothing to work, so a session idle at its box isn't
     // marked working.
-    if (approved.result === "approved" && !chat) after(() => watchSent(workspace.id, workspace.ownerId));
+    if (approved.result === "approved" && !chat) after(() => watchSent(workspace.id, workspace.ownerId), { where: "watch-sent", workspaceId: workspace.id });
     return NextResponse.json(approved);
   } catch (error) {
     if (error instanceof OutdatedComputerError) {

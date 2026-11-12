@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { getOwner } from "@/lib/auth/owner";
 import {
@@ -64,7 +66,7 @@ export async function POST(request: Request, context: RouteContext) {
       provide: async (answer) => {
         await agent.provideSecrets(identity, answer, chat);
         // No longer waiting on the user: working again, and watched.
-        if (!chat) after(() => watchSent(workspace.id, workspace.ownerId));
+        if (!chat) after(() => watchSent(workspace.id, workspace.ownerId), { where: "watch-sent", workspaceId: workspace.id });
       },
       save: async (values) => {
         const environmentId = workspace.environmentId ?? (await defaultEnvironmentId(owner.id, workspace.projectId));
