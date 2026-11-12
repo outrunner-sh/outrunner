@@ -1,6 +1,6 @@
 /** What lib/trackers/linear-events.ts does its work with, on the server. */
 
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import { forgetAgentComment, liveRowsForIssue, stopAgentRow } from "@/lib/db/linear-agent";
 

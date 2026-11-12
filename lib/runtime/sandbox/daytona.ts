@@ -395,11 +395,14 @@ export function box(sandbox: Sandbox): SandboxBox {
   };
 }
 
+/** How long a key check waits on Daytona: a page of sandboxes, at most. */
+const KEY_CHECK_TIMEOUT_MS = 15_000;
+
 /** Whether Daytona accepts `apiKey` (Settings → Sandbox checks one before
  *  saving it): false when it refuses it, a throw when it can't be asked. */
 export async function daytonaAcceptsKey(apiKey: string): Promise<boolean> {
   try {
-    await new Daytona({ apiKey }).list().next();
+    await withTimeout(new Daytona({ apiKey, requestTimeoutMs: KEY_CHECK_TIMEOUT_MS }).list().next(), KEY_CHECK_TIMEOUT_MS, "Daytona didn't answer a key check");
     return true;
   } catch (error) {
     const status = (error as { statusCode?: number }).statusCode;

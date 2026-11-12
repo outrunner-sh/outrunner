@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
@@ -55,6 +57,6 @@ export async function POST(request: Request, context: RouteContext) {
   }
   // No longer waiting on the user: working again, and watched.
   // The sidebar follows the main chat's turn: a chat's own is its page's.
-  if (!chat) after(() => watchSent(workspace.id, workspace.ownerId));
+  if (!chat) after(() => watchSent(workspace.id, workspace.ownerId), { where: "watch-sent", workspaceId: workspace.id });
   return NextResponse.json({ result: "answered" });
 }

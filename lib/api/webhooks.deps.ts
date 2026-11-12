@@ -18,7 +18,7 @@
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import { GET as pullRequestGET } from "@/app/api/workspaces/[id]/pull-request/route";
 import type { ApiCaller } from "@/lib/api/auth";
