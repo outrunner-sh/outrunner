@@ -44,11 +44,11 @@ type EnvKey =
   | "NEEV_BASE_URL"
   | "NEEV_SANDBOX_TEMPLATE"
   // E2B sandboxes on our own E2B (Runtime Computer backend, RUNTIME_PROVIDER=e2b)
-  | "E2B_API_KEY"
-  | "E2B_API_URL"
-  | "E2B_SANDBOX_URL"
-  | "E2B_TEMPLATE"
-  | "E2B_GUEST_MTU"
+  | "OUTRUNNER_E2B_API_KEY"
+  | "OUTRUNNER_E2B_API_URL"
+  | "OUTRUNNER_E2B_SANDBOX_URL"
+  | "OUTRUNNER_E2B_TEMPLATE"
+  | "OUTRUNNER_E2B_GUEST_MTU"
   // Cross-compiled runtime-agent binary uploaded on provision (decision 1A).
   | "RUNTIME_AGENT_BINARY_PATH"
   // Provider selection

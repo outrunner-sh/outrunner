@@ -13,6 +13,7 @@ import {
   type SandboxBox,
 } from "@/lib/runtime/sandbox/backend";
 import { e2bRoute } from "@/lib/runtime/sandbox/e2b-route";
+import { e2bSdkOptions } from "@/lib/runtime/sandbox/e2b-sdk";
 import { E2B_RELAY_PREFIX, mintRelayTicket, relayKey } from "@/lib/runtime/sandbox/relay-ticket";
 
 /**
@@ -31,37 +32,67 @@ const REQUEST_TIMEOUT_MS = 2 * 60 * 1000;
 
 /** The template every box is made from: box/Dockerfile built for E2B by
  *  scripts/e2b-template.ts, named for the image tag so a box never runs tools
- *  at versions the agent wasn't built for. E2B_TEMPLATE overrides it. */
+ *  at versions the agent wasn't built for. OUTRUNNER_E2B_TEMPLATE overrides it. */
 export function e2bTemplate(): string {
-  return optionalEnv("E2B_TEMPLATE") ?? `outrunner-box-${BOX_IMAGE_TAG}`;
+  return optionalEnv("OUTRUNNER_E2B_TEMPLATE") ?? `outrunner-box-${BOX_IMAGE_TAG}`;
 }
 
 /**
- * The guest MTU to set on every box as it comes up, from E2B_GUEST_MTU; null
+ * The guest MTU to set on every box as it comes up, from OUTRUNNER_E2B_GUEST_MTU; null
  * to leave E2B's. Needed where the host's network carries smaller packets than
  * a box's 1500 (GCP's VPC is 1460), which otherwise cuts large downloads off
  * part way. A box comes up at 1500 whatever its template set, so it's set on
  * each create and resume.
  */
-export function guestMtu(value = optionalEnv("E2B_GUEST_MTU")): number | null {
+export function guestMtu(value = optionalEnv("OUTRUNNER_E2B_GUEST_MTU")): number | null {
   if (!value) return null;
   const mtu = Number(value);
   if (!Number.isInteger(mtu) || mtu < 576 || mtu > 9000) {
-    throw new Error(`E2B_GUEST_MTU must be a whole number from 576 to 9000, not "${value}".`);
+    throw new Error(`OUTRUNNER_E2B_GUEST_MTU must be a whole number from 576 to 9000, not "${value}".`);
   }
   return mtu;
 }
 
-/** The SDK's connection, on the deployment's own E2B (an Embed or a cluster).
- *  Both URLs are required: unset, the SDK would quietly use E2B's cloud, and
- *  a box made there couldn't be reached through E2B_SANDBOX_URL after. */
-function connection() {
+/**
+ * One E2B to make boxes on: the deployment's own (RUNTIME_PROVIDER=e2b, from
+ * the environment) or a user's (Settings → Sandbox, from their stored key).
+ */
+export type E2bConnection = {
+  apiKey: string;
+  /** The E2B API; unset is E2B's cloud. */
+  apiUrl?: string;
+  /** A self-hosted E2B's client-proxy, which routes to a box's port by
+   *  header: control calls carry them, and browsers, which can't, come through
+   *  {@link E2bConnection.relay}. Unset is E2B's cloud, which routes by host
+   *  (`<port>-<box>.<domain>`), so control calls and browsers go there direct. */
+  sandboxUrl?: string;
+  /** Set on every box as it comes up (see {@link guestMtu}); null to leave E2B's. */
+  guestMtu: number | null;
+  /** How long a box runs before E2B pauses it on its own: the backstop
+   *  behind Outrunner's own idle pause, pushed back out while it's in use. */
+  timeoutMs: number;
+  /** This server's relay for browsers' WebSockets to a header-routed box: its
+   *  path prefix and the key its tickets are signed with. */
+  relay: { prefix: string; key: string };
+};
+
+/** The deployment's own E2B, from the environment. Both URLs are required:
+ *  unset, the SDK would quietly use E2B's cloud, and a box made there
+ *  couldn't be reached through OUTRUNNER_E2B_SANDBOX_URL after. */
+export function deploymentE2bConnection(): E2bConnection {
   return {
-    apiKey: requireEnv("E2B_API_KEY"),
-    apiUrl: requireEnv("E2B_API_URL"),
-    sandboxUrl: requireEnv("E2B_SANDBOX_URL"),
-    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+    apiKey: requireEnv("OUTRUNNER_E2B_API_KEY"),
+    apiUrl: requireEnv("OUTRUNNER_E2B_API_URL"),
+    sandboxUrl: requireEnv("OUTRUNNER_E2B_SANDBOX_URL"),
+    guestMtu: guestMtu(),
+    timeoutMs: BOX_TIMEOUT_MS,
+    relay: { prefix: E2B_RELAY_PREFIX, key: relayKey(requireEnv("CREDENTIALS_ENCRYPTION_KEY"), "e2b") },
   };
+}
+
+/** The SDK's options for calls on `c`. */
+function sdk(c: E2bConnection) {
+  return e2bSdkOptions(c, REQUEST_TIMEOUT_MS);
 }
 
 /** Whether `error` is E2B saying the box doesn't exist (killed, or never was). */
@@ -99,46 +130,61 @@ export function forgetE2bHandles(): void {
 }
 
 /**
- * Push a running box's backstop timeout back out to {@link BOX_TIMEOUT_MS}
- * once less than half of it is left, so a box in use isn't paused under its
+ * Push a running box's backstop timeout back out to the connection's once
+ * less than half of it is left, so a box in use isn't paused under its
  * session, without a write to E2B on every call. Best effort: a box that
- * can't be extended now has hours left to try again.
+ * can't be extended now has half its time left to try again.
  */
-async function keepAlive(info: Pick<SandboxInfo, "sandboxId" | "endAt">, now = Date.now()): Promise<void> {
-  if (info.endAt.getTime() - now >= BOX_TIMEOUT_MS / 2) return;
-  await Sandbox.setTimeout(info.sandboxId, BOX_TIMEOUT_MS, connection()).catch((error: unknown) =>
+async function keepAlive(c: E2bConnection, info: Pick<SandboxInfo, "sandboxId" | "endAt">, now = Date.now()): Promise<void> {
+  if (info.endAt.getTime() - now >= c.timeoutMs / 2) return;
+  await Sandbox.setTimeout(info.sandboxId, c.timeoutMs, sdk(c)).catch((error: unknown) =>
     console.warn(`Could not extend E2B box ${info.sandboxId}'s timeout`, error),
   );
 }
 
 /**
- * Outrunner's boxes on the deployment's own E2B (RUNTIME_PROVIDER=e2b):
- * Firecracker VMs that pause with their memory, so a resumed box has its
- * agent, tmux and sessions still running. One box size for now, the
- * template's (Small); a request for another is logged and given that.
+ * Outrunner's boxes on an E2B: the deployment's own (RUNTIME_PROVIDER=e2b) or
+ * a user's (Settings → Sandbox). Firecracker VMs that pause with their
+ * memory, so a resumed box has its agent, tmux and sessions still running.
+ * One box size, the template's (Small); a request for another is logged and
+ * given that.
  */
 export class E2bBackend implements SandboxBackend {
+  private readonly connection: () => Promise<E2bConnection>;
+  private readonly template: () => Promise<string>;
+
+  // Plain fields, not parameter properties: Node's strip-only TypeScript
+  // (the test runner) can't run those.
+  /** `connection` reaches the E2B (the deployment's by default); `template`
+   *  is what a new box starts from (a name or an id), asked only on create, so
+   *  a template not ready yet stops new boxes and nothing else. */
+  constructor(options: { connection?: () => Promise<E2bConnection>; template?: () => Promise<string> } = {}) {
+    this.connection = options.connection ?? (async () => deploymentE2bConnection());
+    this.template = options.template ?? (async () => e2bTemplate());
+  }
+
   async create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox> {
-    const sandbox = await Sandbox.create(e2bTemplate(), {
-      ...connection(),
+    const [c, template] = await Promise.all([this.connection(), this.template()]);
+    const sandbox = await Sandbox.create(template, {
+      ...sdk(c),
       metadata: labels,
-      timeoutMs: BOX_TIMEOUT_MS,
+      timeoutMs: c.timeoutMs,
       lifecycle: { onTimeout: "pause" },
     });
     try {
-      const info = await Sandbox.getInfo(sandbox.sandboxId, connection());
+      const info = await Sandbox.getInfo(sandbox.sandboxId, sdk(c));
       if (size && (info.cpuCount !== size.cpu || info.memoryMB !== size.memoryGb * 1024)) {
         console.warn(
           `E2B box ${sandbox.sandboxId}: requested ${size.cpu} vCPU / ${size.memoryGb} GiB; ` +
-            `received ${info.cpuCount} vCPU / ${info.memoryMB / 1024} GiB (template ${e2bTemplate()})`,
+            `received ${info.cpuCount} vCPU / ${info.memoryMB / 1024} GiB (template ${template})`,
         );
       }
-      await setGuestMtu(sandbox);
+      await setGuestMtu(c, sandbox);
       HANDLES.set(sandbox.sandboxId, { sandbox, startedAt: info.startedAt.getTime() });
-      return box(sandbox, info);
+      return box(sandbox, info, c);
     } catch (error) {
       // Not left running where nothing records it.
-      await Sandbox.kill(sandbox.sandboxId, connection()).catch(() => {});
+      await Sandbox.kill(sandbox.sandboxId, sdk(c)).catch(() => {});
       throw error;
     }
   }
@@ -146,7 +192,8 @@ export class E2bBackend implements SandboxBackend {
   /** The box, running. Throws for one that isn't: unlike E2B's connect, this
    *  never resumes a paused box (alive/get must not start one). */
   async get(id: string): Promise<SandboxBox> {
-    const info = await Sandbox.getInfo(id, connection()).catch((error: unknown) => {
+    const c = await this.connection();
+    const info = await Sandbox.getInfo(id, sdk(c)).catch((error: unknown) => {
       // Deleted elsewhere (another server, the console): its handle goes too.
       if (notFound(error)) HANDLES.delete(id);
       throw error;
@@ -155,10 +202,10 @@ export class E2bBackend implements SandboxBackend {
       HANDLES.delete(id);
       throw new Error(`E2B box ${id} is ${info.state}, not running`);
     }
-    await keepAlive(info);
+    await keepAlive(c, info);
     const startedAt = info.startedAt.getTime();
     const held = HANDLES.get(id);
-    if (held?.startedAt === startedAt) return box(held.sandbox, info);
+    if (held?.startedAt === startedAt) return box(held.sandbox, info, c);
 
     // A handle means connect, which resumes a box paused since the look
     // above, and a resume is a new start. A new start that began once this
@@ -170,24 +217,24 @@ export class E2bBackend implements SandboxBackend {
     // a restore in this server is never paused under itself.
     const restoresBefore = RESTORES_BEGUN.get(id) ?? 0;
     const connectedAt = Date.now();
-    const sandbox = await Sandbox.connect(id, connection());
-    const after = await Sandbox.getInfo(id, connection());
+    const sandbox = await Sandbox.connect(id, sdk(c));
+    const after = await Sandbox.getInfo(id, sdk(c));
     const restarted = after.startedAt.getTime();
     const restoredHere = (RESTORES_BEGUN.get(id) ?? 0) !== restoresBefore || (RESTORES_RUNNING.get(id) ?? 0) > 0;
     if (restarted !== startedAt && restarted >= connectedAt - CLOCK_SKEW_MS && !restoredHere) {
       HANDLES.delete(id);
-      await Sandbox.pause(id, connection()).catch((error: unknown) =>
+      await Sandbox.pause(id, sdk(c)).catch((error: unknown) =>
         console.error(`E2B box ${id} was resumed while being reached and could not be paused again`, error),
       );
       throw new Error(`E2B box ${id} was paused while being reached; it's left paused`);
     }
     HANDLES.set(id, { sandbox, startedAt: restarted });
-    return box(sandbox, after);
+    return box(sandbox, after, c);
   }
 
   async alive(id: string): Promise<boolean> {
     try {
-      return (await Sandbox.getInfo(id, connection())).state === "running";
+      return (await Sandbox.getInfo(id, sdk(await this.connection()))).state === "running";
     } catch (error) {
       if (notFound(error)) return false;
       throw error;
@@ -196,13 +243,13 @@ export class E2bBackend implements SandboxBackend {
 
   async delete(id: string): Promise<void> {
     HANDLES.delete(id);
-    await Sandbox.kill(id, connection());
+    await Sandbox.kill(id, sdk(await this.connection()));
   }
 
   /** Pause with its memory: the next {@link restore} has it as it was. */
   async pause(id: string): Promise<void> {
     HANDLES.delete(id);
-    await Sandbox.pause(id, connection());
+    await Sandbox.pause(id, sdk(await this.connection()));
   }
 
   /** The paused (or still running) box `id`, running. Null when it's gone,
@@ -221,22 +268,23 @@ export class E2bBackend implements SandboxBackend {
   }
 
   private async resume(id: string): Promise<SandboxBox | null> {
+    const c = await this.connection();
     let sandbox: Sandbox;
     try {
-      sandbox = await Sandbox.connect(id, { ...connection(), timeoutMs: BOX_TIMEOUT_MS });
+      sandbox = await Sandbox.connect(id, { ...sdk(c), timeoutMs: c.timeoutMs });
     } catch (error) {
       if (notFound(error)) return null;
       throw error;
     }
     try {
-      await setGuestMtu(sandbox);
-      const info = await Sandbox.getInfo(id, connection());
+      await setGuestMtu(c, sandbox);
+      const info = await Sandbox.getInfo(id, sdk(c));
       HANDLES.set(id, { sandbox, startedAt: info.startedAt.getTime() });
-      return box(sandbox, info);
+      return box(sandbox, info, c);
     } catch (error) {
       // Resumed but not usable: paused again, keeping its sessions (this is
       // their only copy), rather than left running with nothing tracking it.
-      await Sandbox.pause(id, connection()).catch((pauseError: unknown) =>
+      await Sandbox.pause(id, sdk(c)).catch((pauseError: unknown) =>
         console.error(`Could not pause E2B box ${id} again`, pauseError),
       );
       throw error;
@@ -244,12 +292,11 @@ export class E2bBackend implements SandboxBackend {
   }
 }
 
-/** Set E2B_GUEST_MTU on the box's interface, as root (the box user's sudo is
- *  the image's, and this must not depend on it). */
-async function setGuestMtu(sandbox: Sandbox): Promise<void> {
-  const mtu = guestMtu();
-  if (mtu === null) return;
-  await sandbox.commands.run(`ip link set eth0 mtu ${mtu}`, { user: "root", timeoutMs: 30_000 });
+/** Set the connection's guest MTU on the box's interface, as root (the box
+ *  user's sudo is the image's, and this must not depend on it). */
+async function setGuestMtu(c: E2bConnection, sandbox: Sandbox): Promise<void> {
+  if (c.guestMtu === null) return;
+  await sandbox.commands.run(`ip link set eth0 mtu ${c.guestMtu}`, { user: "root", timeoutMs: 30_000 });
 }
 
 /** A command's output and exit code, a non-zero exit included: E2B throws
@@ -271,8 +318,12 @@ async function run(
 }
 
 /** A box's commands, files and ways in, from its sandbox. Exported for tests. */
-export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memoryMB">): SandboxBox {
+export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memoryMB">, c: E2bConnection): SandboxBox {
   const id = sandbox.sandboxId;
+  // How this server reaches the box's `port`: by header through a self-hosted
+  // client-proxy, or at the box's own host on E2B's cloud.
+  const route = (port: number) =>
+    c.sandboxUrl ? e2bRoute(id, port, c.sandboxUrl) : { base: `https://${sandbox.getHost(port)}`, headers: {} };
   const io: BoxIO = {
     exec: async (command) => {
       const { stdout, exitCode } = await run(sandbox, command);
@@ -299,22 +350,20 @@ export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memo
     io,
     gitExec,
     home: () => homeOf(io, `/home/${BOX_USER}`),
-    // Control calls go straight to E2B's proxy with its routing headers; the
-    // browser can't send those, so its WebSockets come through our relay.
+    // Control calls go to the box's port with whatever routing E2B needs. A
+    // browser can't send routing headers, so for a header-routed box its
+    // WebSockets come through our relay; a host-routed one it opens direct.
     agentEndpoint: async (port): Promise<AgentEndpoint> => {
-      const route = e2bRoute(id, port, requireEnv("E2B_SANDBOX_URL"));
-      const ticket = mintRelayTicket(id, port, relayKey(requireEnv("CREDENTIALS_ENCRYPTION_KEY"), "e2b"));
-      return {
-        controlBaseUrl: route.base,
-        controlHeaders: route.headers,
-        wsBaseUrl: `${requireEnv("RUNTIME_BASE_URL")}${E2B_RELAY_PREFIX}${id}/${port}/${ticket}`,
-      };
+      const { base, headers } = route(port);
+      const wsBaseUrl = c.sandboxUrl
+        ? `${requireEnv("RUNTIME_BASE_URL")}${c.relay.prefix}${id}/${port}/${mintRelayTicket(id, port, c.relay.key)}`
+        : base;
+      return { controlBaseUrl: base, controlHeaders: headers, wsBaseUrl };
     },
-    // E2B's proxy routes by the headers, and sends the box's server the
-    // Host it was asked on.
+    // Through E2B's proxy, which sends the box's server the Host it was asked on.
     previewTarget: async (port) => {
-      const route = e2bRoute(id, port, requireEnv("E2B_SANDBOX_URL"));
-      return { baseUrl: route.base, headers: route.headers, hostHeader: "upstream" };
+      const { base, headers } = route(port);
+      return { baseUrl: base, headers, hostHeader: "upstream" };
     },
   };
 }

@@ -1,6 +1,6 @@
 /**
  * How this server reaches a port in an E2B sandbox: E2B's client-proxy (the
- * deployment's E2B_SANDBOX_URL) routes a request by two headers naming the
+ * deployment's OUTRUNNER_E2B_SANDBOX_URL) routes a request by two headers naming the
  * sandbox and the port, so one base URL serves every box. A browser can't set
  * them, so its WebSockets come through this server's relay (relay.ts).
  *
@@ -15,9 +15,9 @@ export const E2B_SANDBOX_PORT_HEADER = "E2b-Sandbox-Port";
 export function e2bRoute(
   sandboxId: string,
   port: number,
-  sandboxUrl = process.env.E2B_SANDBOX_URL,
+  sandboxUrl = process.env.OUTRUNNER_E2B_SANDBOX_URL,
 ): { base: string; headers: Record<string, string> } {
-  if (!sandboxUrl) throw new Error("E2B_SANDBOX_URL is not set.");
+  if (!sandboxUrl) throw new Error("OUTRUNNER_E2B_SANDBOX_URL is not set.");
   return {
     base: sandboxUrl.replace(/\/+$/, ""),
     headers: { [E2B_SANDBOX_ID_HEADER]: sandboxId, [E2B_SANDBOX_PORT_HEADER]: String(port) },

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { boxBuildArgs } from "@/lib/runtime/box-image";
-import { e2bDockerfile } from "@/lib/runtime/e2b-template";
+import { e2bDockerfile, userE2bTemplateName } from "@/lib/runtime/e2b-template";
 
 test("box/Dockerfile becomes one E2B can build: pins written in, args and their guard gone", () => {
   const dockerfile = readFileSync(new URL("../box/Dockerfile", import.meta.url), "utf8");
@@ -33,4 +33,8 @@ test("an ARG box/Dockerfile adds later can't silently expand to nothing", () => 
   assert.throws(() => e2bDockerfile("FROM ubuntu\nARG FOO\nRUN echo $FOO\n", {}), /refers to FOO/);
   // Declared but unused is fine: nothing would expand to nothing.
   assert.equal(e2bDockerfile("FROM ubuntu\nARG FOO\nRUN echo hi\n", {}), "FROM ubuntu\nRUN echo hi\n");
+});
+
+test("a user's template is named for the image and the user", () => {
+  assert.equal(userE2bTemplateName("0b8a3ded-4489-4722-afd1-1d82e64ec2d5", "2fe23c90ef49"), "outrunner-box-2fe23c90ef49-0b8a3ded");
 });
