@@ -194,6 +194,17 @@ test("alive() keeps only running boxes of Outrunner's account for keepAlive, and
   await backend.alive("down");
   await backend.alive("up");
   assert.deepEqual(seen(), ["up"]);
+  // One gone from Daytona is dropped at once, not left to age out.
+  states.up = "gone";
+  const gone = backend as unknown as { client: Promise<Pick<Daytona, "get">> };
+  gone.client = Promise.resolve({
+    get: async (id: string) => {
+      if (id === "up") throw new DaytonaNotFoundError("Sandbox up not found");
+      return get(id);
+    },
+  } as unknown as Pick<Daytona, "get">);
+  assert.equal(await backend.alive("up"), false);
+  assert.deepEqual(seen(), []);
   // A user's own key: nothing kept, keepAlive does nothing for it.
   const theirs = new DaytonaBackend({ apiKey: async () => "their-key" });
   (theirs as unknown as { client: Promise<Pick<Daytona, "get">> }).client = Promise.resolve({ get } as unknown as Pick<Daytona, "get">);

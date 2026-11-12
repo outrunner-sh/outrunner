@@ -154,7 +154,10 @@ export class DaytonaBackend implements SandboxBackend {
       // computer lost while Daytona applies its new allocation.
       return state === "started" || state === "resizing";
     } catch (error) {
-      if (error instanceof DaytonaNotFoundError) return false;
+      if (error instanceof DaytonaNotFoundError) {
+        this.lastSeen.delete(id);
+        return false;
+      }
       throw error;
     }
   }
