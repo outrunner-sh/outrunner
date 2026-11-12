@@ -1,7 +1,7 @@
 /**
  * Cloudflare Containers entry for the Outrunner control plane.
  *
- * Deploy glue only: this runs the SAME container as Railway (Next.js
+ * Deploy glue only: this runs the control-plane container (Next.js
  * `pnpm start`, see ../Dockerfile) and forwards every request to it. There are
  * NO application code changes — the swap is purely a provider change.
  *
@@ -280,9 +280,8 @@ export class OutrunnerControlPlane extends Container<Env> {
     super(ctx, env);
 
     // Env passed to the container process. Non-secret config is inline; secrets
-    // come from Worker bindings (wrangler secret put ...). Mirrors the Railway
-    // "Variables" table 1:1 — RUNTIME_BASE_URL is the new domain, which also
-    // gates the app's same-origin CSRF checks.
+    // come from Worker bindings (wrangler secret put ...). RUNTIME_BASE_URL is
+    // the app's public origin, which also gates the app's same-origin CSRF checks.
     this.envVars = {
       NODE_ENV: "production",
       PORT: "8080",

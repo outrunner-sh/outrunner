@@ -4,7 +4,7 @@
 // set of immutable artifacts, assembles the manifest that addresses them, and
 // uploads everything to object storage through signed URLs minted by Next.
 //
-// The manifest is the contract (docs/architecture/m4-plan.md): every consumer
+// The manifest is the contract (docs/archive/m4-plan.md): every consumer
 // reads manifest.json and follows its pointers; nothing enumerates storage. The
 // manifest is uploaded LAST, so its presence marks the Snapshot complete.
 //

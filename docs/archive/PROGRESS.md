@@ -43,7 +43,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started
   - 🟡 Deferred to M3: move git/session ops off the `RuntimeProvider` interface; interactive session routes
 
 ## Milestone 3 — Workspace Session Experience — 🟡 IN PROGRESS
-Scope + contract: [`m3-handoff.md`](./m3-handoff.md), [`session-contract.md`](./session-contract.md).
+Scope + contract: [`m3-handoff.md`](./m3-handoff.md), [`session-contract.md`](../architecture/session-contract.md).
 Phased execution (Option A — transport-first):
 - ✅ Phase 1 — PTY transport spike proven on a live Daytona box (writer election verified; wire + agent PTY path frozen — see [`spike-m3-report.md`](./spike-m3-report.md))
 - ✅ Phase 2 — Conversation `/events` SSE + seq resume + virtualized Timeline (event log frozen — see [`spike-m3-report.md`](./spike-m3-report.md))

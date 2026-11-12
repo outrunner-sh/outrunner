@@ -5,7 +5,7 @@ it owns everything local to the box. Next.js (the **control plane**) never SSHs 
 it talks only to the agent, and only the agent talks to Claude, git, tmux, and the filesystem.
 
 **v1 implementation:** Go (single static binary; see rationale in
-[`runtime-v1-plan.md`](./runtime-v1-plan.md)). The [`protocol`](./protocol.md) is language-agnostic.
+[`runtime-v1-plan.md`](../archive/runtime-v1-plan.md)). The [`protocol`](./protocol.md) is language-agnostic.
 
 ## Trust model
 

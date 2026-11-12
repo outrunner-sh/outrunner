@@ -19,7 +19,7 @@ type RouteContext = { params: Promise<{ id: string }> };
  * tokenUsage, lastAssistantMessage) come from the agent's in-memory collector;
  * git-derived fields (changedFiles, filesTouched, commitCount) are shelled out
  * per request. See `docs/architecture/session-contract.md` +
- * `docs/architecture/m4-plan.md` for the frozen shape.
+ * `docs/archive/m4-plan.md` for the frozen shape.
  *
  * The initial browser attach receives the Summary inline via
  * POST /api/workspaces/[id]/session; this route is the polling surface.

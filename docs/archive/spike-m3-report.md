@@ -245,7 +245,7 @@ Provisionally frozen — first exercised in a real user flow in Phase 5/6:
 downstream consumer (Mission Engine, the M4 Snapshot manifest, notifications,
 the Runtime SDK, analytics) reads. M3 owns the type; nothing else defines it.
 
-### Frozen shape (matches `docs/architecture/m4-plan.md`)
+### Frozen shape (matches `docs/archive/m4-plan.md`)
 
 ```ts
 type WorkspaceSummary = {
@@ -339,7 +339,7 @@ Claude-token-less session (Hello-World repo has no dirt; no Claude → no tokens
 
 ### Frozen API — the M3 API Freeze rule now applies
 
-Per [`session-contract.md`](./session-contract.md), M3 is the canonical owner
+Per [`session-contract.md`](../architecture/session-contract.md), M3 is the canonical owner
 of `WorkspaceSummary`. Consumers import (Mission Engine, Runtime SDK,
 notifications) or mirror the struct (M4 archive Snapshot). **No new fields may
 be added before Phase 5 completes** unless a verified Phase 6/7 bug requires

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-# Control-plane image for Cloudflare Containers — the same `pnpm start` app as
-# the Railway setup. In this repo the cross-compiled runtime-agent binary is a
+# Control-plane image for Cloudflare Containers: the `pnpm start` app
+# (server.ts). In this repo the cross-compiled runtime-agent binary is a
 # gitignored build artifact (see .gitignore / scripts/build-agent.sh), so the
 # image BUILDS it rather than expecting a committed copy, then serves the whole
 # app on disk (not a standalone bundle) so lib/runtime/daytona-provider.ts can

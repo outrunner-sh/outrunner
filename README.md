@@ -22,9 +22,14 @@ workflow, but the session lives in the cloud, not on your machine.
 
 ## Status
 
-Phase 0 (architecture validated end-to-end on Daytona) and Milestone 1
-(foundations) are complete; the interactive execution path is in progress. See
-[`docs/architecture/PROGRESS.md`](docs/architecture/PROGRESS.md).
+In production at [app.outrunner.sh](https://app.outrunner.sh). The control plane
+(Next.js + `server.ts`) runs on Cloudflare Containers
+([`docs/deploy-cloudflare.md`](docs/deploy-cloudflare.md)); Supabase holds auth
+and data. Sessions run Claude Code or Codex on cloud boxes (Daytona by default,
+Neev, or a user's own Google Cloud or Modal account) or on your Mac through the
+desktop app, and are driven from the browser, the CLI, the [API](docs/api.md)
+and MCP. Earlier milestone plans and spike reports are in
+[`docs/archive/`](docs/archive/).
 
 ## Local setup
 
@@ -156,7 +161,6 @@ threat model included.
 - Missions and Ships — [`docs/missions.md`](docs/missions.md)
 - Doppler and Infisical secret sync — [`docs/secret-sync.md`](docs/secret-sync.md)
 - Previews, and who can reach what through one — [`docs/previews.md`](docs/previews.md)
-- Architecture — [`docs/architecture/runtime-v1-plan.md`](docs/architecture/runtime-v1-plan.md)
 - Agent & protocol — [`runtime-agent.md`](docs/architecture/runtime-agent.md), [`protocol.md`](docs/architecture/protocol.md)
-- Validation report — [`spike4-runtime-report.md`](docs/architecture/spike4-runtime-report.md)
 - GitHub App (`@outrunner` on issues and pull requests, its permissions and events) — [`docs/github-app.md`](docs/github-app.md)
+- Milestone plans and spike reports (historical) — [`docs/archive/`](docs/archive/)

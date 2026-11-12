@@ -6,7 +6,7 @@ Engine, the Runtime SDK, notifications, and future automation will build — rea
 this contract and no other.
 
 This document is intentionally short. It is invariant. See
-[`m3-handoff.md`](./m3-handoff.md), [`protocol.md`](./protocol.md), and
+[`m3-handoff.md`](../archive/m3-handoff.md), [`protocol.md`](./protocol.md), and
 [`runtime-agent.md`](./runtime-agent.md) for the shape of the wire.
 
 ## Inputs

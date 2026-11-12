@@ -23,7 +23,7 @@ import { requireFeature } from "@/lib/runtime/box-features";
 import type { SessionChat } from "@/lib/session/chats";
 
 // May ensure/boot a Runtime Computer before minting session tokens; give it the
-// same 60s cap as provisioning (serverless hosts only; a no-op on Railway).
+// same 60s cap as provisioning (serverless hosts only; a no-op in our long-running container).
 export const maxDuration = 60;
 
 type RouteContext = { params: Promise<{ id: string }> };
