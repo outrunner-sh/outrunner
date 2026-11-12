@@ -369,14 +369,19 @@ export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memo
     },
     // The template's desktop (box/e2b-desktop.sh), started on first use. Its
     // noVNC port is reachable from outside the box, so each link comes with a
-    // new VNC password; a header-routed box's is opened through our relay on a
-    // ticket for that port alone, lasting as long as the link.
+    // new VNC password, which the box replaces once the link's `ttlSeconds`
+    // are up: on E2B's cloud, whose link is the box's own host, that's the
+    // link's only expiry. A header-routed box's link also goes through our
+    // relay, on a ticket for that port alone, lasting as long.
     desktop: {
       start: async () => {
         await rootCommand(sandbox, "outrunner-desktop start", "start the desktop");
       },
       viewer: async (ttlSeconds) => {
-        const password = (await rootCommand(sandbox, "outrunner-desktop password", "set the desktop's password")).trim();
+        if (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0) throw new Error(`A desktop link's TTL must be whole seconds, not ${ttlSeconds}`);
+        const password = (
+          await rootCommand(sandbox, `outrunner-desktop password ${ttlSeconds}`, "set the desktop's password")
+        ).trim();
         if (!/^[A-Za-z0-9]{8}$/.test(password)) throw new Error("The desktop didn't give a password");
         const url = c.sandboxUrl
           ? `${requireEnv("RUNTIME_BASE_URL").replace(/^http/, "ws")}${c.relay.prefix}${id}/${NOVNC_PORT}/` +

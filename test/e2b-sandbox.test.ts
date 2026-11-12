@@ -349,7 +349,7 @@ test("the E2B SDK's own environment fallbacks are refused, not quietly used", ()
 test("an E2B box's desktop starts as root, and each link has a new password and a short ticket", async () => {
   let passwords = 0;
   const fake = fakeSandbox((command) =>
-    command === "outrunner-desktop password" ? { stdout: `Pw${++passwords}xYz9a\n`, stderr: "", exitCode: 0 } : { stdout: "", stderr: "", exitCode: 0 },
+    command === "outrunner-desktop password 120" ? { stdout: `Pw${++passwords}xYz9a\n`, stderr: "", exitCode: 0 } : { stdout: "", stderr: "", exitCode: 0 },
   );
   const desktop = box(fake.sandbox, INFO, deploymentE2bConnection()).desktop!;
   await desktop.start();
