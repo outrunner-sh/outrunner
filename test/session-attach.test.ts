@@ -112,11 +112,13 @@ test("a bare 500 or a Cloudflare 52x, no answer of the server's, is tried again:
     assert.deepEqual(result, urls);
     assert.equal(calls, 2);
   }
-  // One the server answered, with what happened, is not.
-  let calls = 0;
-  await assert.rejects(attachCloudSession("w", "main", false, new AbortController().signal, {
-    fetch: async () => { calls++; return Response.json({ error: "Runtime Computer secret missing.", code: "box-gone" }, { status: 500 }); },
-    wait: async () => { assert.fail("an answered refusal must not be retried"); },
-  }));
-  assert.equal(calls, 1);
+  // A 500 the server answered itself, saying what happened, code or not, is not.
+  for (const body of [{ error: "Runtime Computer secret missing." }, { error: "Its box ended.", code: "box-gone" }]) {
+    let calls = 0;
+    await assert.rejects(attachCloudSession("w", "main", false, new AbortController().signal, {
+      fetch: async () => { calls++; return Response.json(body, { status: 500 }); },
+      wait: async () => { assert.fail("an answered refusal must not be retried"); },
+    }), new RegExp(body.error));
+    assert.equal(calls, 1);
+  }
 });

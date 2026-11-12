@@ -137,6 +137,9 @@ before(() => {
     grant execute on function complete_pooled_warmup(uuid, text, text, text, jsonb) to authenticated;
   `);
     sql(readFileSync("supabase/migrations/20261106100000_workspaces_server_writes.sql", "utf8"));
+  sql(`create table compute_intervals (
+    id uuid primary key default gen_random_uuid(), computer_id uuid, sandbox_id text, started_at timestamptz not null default now()
+  )`);
   sql(readFileSync("supabase/migrations/20261112100000_claim_keeps_ended_box.sql", "utf8"));
 });
 
@@ -192,4 +195,11 @@ test("SQL: the claims still refuse another user's session or project", { skip },
     /workspace not found/);
   failsAs("authenticated", OTHER, `select should_provision from claim_runtime_computer('${PROJECT}', 'secret', null, null)`,
     /project not found/);
+});
+
+test("SQL: a computer's newest box is read by index, not by scanning every interval", { skip }, () => {
+  assert.equal(
+    sql(`select indexdef from pg_indexes where indexname = 'compute_intervals_computer_started_idx'`),
+    "CREATE INDEX compute_intervals_computer_started_idx ON public.compute_intervals USING btree (computer_id, started_at DESC)",
+  );
 });

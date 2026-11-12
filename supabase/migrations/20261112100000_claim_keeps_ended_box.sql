@@ -184,3 +184,9 @@ revoke all on function claim_workspace_computer(uuid, text, text, integer) from 
 revoke all on function claim_runtime_computer(uuid, text, text, integer) from public, anon;
 grant execute on function claim_workspace_computer(uuid, text, text, integer) to authenticated;
 grant execute on function claim_runtime_computer(uuid, text, text, integer) to authenticated;
+
+-- The box a computer last ran on (lib/billing/metering-store.ts lastMeteredBox):
+-- read when a session's row lost its box, and by the orphaned-box sweep for
+-- each row that may have. compute_intervals only grows.
+create index if not exists compute_intervals_computer_started_idx
+  on compute_intervals (computer_id, started_at desc);

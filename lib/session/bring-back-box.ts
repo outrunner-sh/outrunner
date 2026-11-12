@@ -17,7 +17,7 @@ import { optionalGitToken, sessionGitAs } from "@/lib/github/identity.deps";
 import { newBoxSize } from "@/lib/orgs/defaults";
 import type { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { scopeOf } from "@/lib/runtime/computer-scope";
-import { mayHaveLostBox } from "@/lib/runtime/lost-box";
+import { bringsBackLostBox } from "@/lib/runtime/lost-box";
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { boxSizeOn, computerMadeBy, endedBoxOf, sandboxOf } from "@/lib/runtime/sandbox-choice";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
@@ -45,13 +45,16 @@ export async function bringBack(
     if (await provider.computerRunning(computer.daytonaSandboxId)) return null;
     await markRuntimeComputerStoppedIfReady(computer.id, computer.ownerId, computer.daytonaSandboxId);
     ended = computer.daytonaSandboxId;
-  } else if (!ended && mayHaveLostBox(computer)) {
-    // A claim cut off mid-way left the row naming no box (lib/runtime/lost-box.ts):
-    // the box it was bringing back, paused with the session's files, is the
-    // one it last ran on. Brought back on it, as a box that ended is, rather
-    // than waiting on a claim nobody holds, or giving up on the session.
+  } else if (!ended && bringsBackLostBox(computer)) {
+    // A claim cut off mid-way, then let go of, left the row failed and naming
+    // no box (lib/runtime/lost-box.ts): the box it was bringing back, paused
+    // with the session's files, is the one it last ran on. Brought back on
+    // it, as a box that ended is, rather than giving up on the session. One
+    // that is gone since (deleted with its session archived, say) is no
+    // loss: every backend's restore answers null for a box it no longer has,
+    // and the provision makes a new one (ComputerRuntimeProvider.restoreBox).
     ended = (await lastMeteredBox(computer.id)) ?? undefined;
-    if (!ended && computer.status !== "provisioning") return null;
+    if (!ended) return null;
   } else if (!ended && computer.status !== "provisioning") {
     return null;
   }

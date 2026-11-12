@@ -21,41 +21,37 @@ import type { RuntimeComputerStatus } from "@/lib/runtime/types";
 /** Statuses a row can be left in by a cut-off claim: still claimed, or let
  *  go by the abandoned-claim sweep. `stopped` with no box is a box deleted on
  *  purpose (with its session), never a lost one. */
-const LEFT_BY_CUT_OFF_CLAIM: ReadonlySet<RuntimeComputerStatus> = new Set(["provisioning", "error"]);
+export const LEFT_BY_CUT_OFF_CLAIM: readonly RuntimeComputerStatus[] = ["provisioning", "error"];
 
 /** Whether a row in `status` naming `sandboxId` may have lost its box, so
- *  the box it last ran on is worth looking up. */
+ *  the box it last ran on is worth keeping. */
 export function mayHaveLostBox(row: { status: RuntimeComputerStatus; daytonaSandboxId: string | null }): boolean {
-  return row.daytonaSandboxId === null && LEFT_BY_CUT_OFF_CLAIM.has(row.status);
-}
-
-/** A metered stretch of a computer's box: which box, from when. */
-export type MeteredBox = { computerId: string; sandboxId: string; startedAt: string };
-
-/** Each computer's newest box, by its intervals' start. */
-export function lastBoxes(intervals: readonly MeteredBox[]): Map<string, string> {
-  const newest = new Map<string, MeteredBox>();
-  for (const interval of intervals) {
-    const was = newest.get(interval.computerId);
-    if (!was || Date.parse(interval.startedAt) > Date.parse(was.startedAt)) newest.set(interval.computerId, interval);
-  }
-  return new Map([...newest].map(([computerId, interval]) => [computerId, interval.sandboxId]));
+  return row.daytonaSandboxId === null && LEFT_BY_CUT_OFF_CLAIM.includes(row.status);
 }
 
 /**
- * Of the boxes in `intervals`, those a row lost: the newest box of a computer
- * whose row (in `rows`) may have lost it (mayHaveLostBox). The orphan sweep
- * keeps them, as a session's next open brings them back.
+ * Whether opening a session brings its row back on the box it last ran on:
+ * only once the claim is let go of (`error`). One still `provisioning` is a
+ * claim the database hands to no one else (claim_workspace_computer), so a
+ * box found for it would go unused; the abandoned-claim sweep lets it go.
+ */
+export function bringsBackLostBox(row: { status: RuntimeComputerStatus; daytonaSandboxId: string | null }): boolean {
+  return row.status === "error" && mayHaveLostBox(row);
+}
+
+/**
+ * Of `candidates` (boxes the orphan sweep would delete), those a row lost:
+ * the newest box (`lastBox`, from its intervals) of a row that may have lost
+ * it (mayHaveLostBox). The sweep keeps them, as a session's next open brings
+ * them back.
  */
 export function lostBoxes(
-  intervals: readonly MeteredBox[],
-  rows: readonly { id: string; status: RuntimeComputerStatus; daytonaSandboxId: string | null }[],
+  rows: readonly { status: RuntimeComputerStatus; daytonaSandboxId: string | null; lastBox: string | null }[],
+  candidates: ReadonlySet<string>,
 ): Set<string> {
-  const last = lastBoxes(intervals);
   const lost = new Set<string>();
   for (const row of rows) {
-    const box = last.get(row.id);
-    if (box && mayHaveLostBox(row)) lost.add(box);
+    if (row.lastBox && candidates.has(row.lastBox) && mayHaveLostBox(row)) lost.add(row.lastBox);
   }
   return lost;
 }
