@@ -71,6 +71,8 @@ export async function GET(request: Request, context: RouteContext) {
       return githubErrorResponse(error, "Could not look up the pull request. Please try again.");
     }
     if (!found) return NextResponse.json({ pullRequest: null, status: null });
+    // Only the session's owner records its pull request (the server writes it).
+    if (workspace.ownerId !== owner.id) return NextResponse.json({ pullRequest: null, status: null });
 
     try {
       pullRequest = await createWorkspacePullRequest({
@@ -103,8 +105,8 @@ export async function GET(request: Request, context: RouteContext) {
   if (status?.state === "closed") {
     const newest = await findPullRequest({ token, repoFullName, headBranch: workspace.branch }).catch(() => null);
     const next = supersedingPullRequest(pullRequest, status, newest);
-    if (next) {
-      const relinked = await relinkWorkspacePullRequest(pullRequest.id, next).catch((error: unknown) => {
+    if (next && workspace.ownerId === owner.id) {
+      const relinked = await relinkWorkspacePullRequest(pullRequest.id, { workspaceId: workspace.id, ownerId: owner.id }, next).catch((error: unknown) => {
         console.error(`Workspace ${id} pull request could not be relinked`, error);
         return null;
       });

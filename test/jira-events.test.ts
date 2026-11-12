@@ -137,7 +137,7 @@ function harness(over: Partial<JiraEventDeps> = {}, setup: { rules?: TrackerRule
     ...over,
   };
   let n = 0;
-  return { deps, log, send: (payload: unknown, identifier: string | null = `e${(n += 1)}`) => handleJiraEvent({ identifier, payload }, deps) };
+  return { deps, log, send: (payload: unknown, identifier: string | null = `e${(n += 1)}`, site = CLOUD) => handleJiraEvent({ identifier, payload, site }, deps) };
 }
 
 test("the site is read from what an event's self URLs say, as its payload has no site field", () => {
@@ -153,6 +153,13 @@ test("a site we don't have, or one disconnected, is ignored", async () => {
   assert.equal((await none.send({ webhookEvent: "jira:issue_created", issue: issue() })).reason, "not installed");
   const off = harness({ installation: async () => ({ ...INSTALL, disconnected: true }) });
   assert.equal((await off.send({ webhookEvent: "jira:issue_created", issue: issue() })).reason, "not installed");
+});
+
+test("an event whose signed token is another site's is ignored, before anything is done", async () => {
+  const h = harness({ eventSeen: async () => assert.fail("not deduped"), markEventSeen: async () => assert.fail("not marked") }, { rules: [rule()] });
+  const result = await h.send({ webhookEvent: "jira:issue_created", issue: issue() }, "e-other", "cloud-other");
+  assert.deepEqual(result, { handled: false, reason: "wrong site" });
+  assert.equal(h.log.triggers.length, 0);
 });
 
 test("our own account's events are dropped before dedupe, comments by who last wrote them", async () => {

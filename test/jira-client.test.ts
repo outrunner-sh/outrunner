@@ -23,6 +23,7 @@ import {
   signJiraState,
   toAdf,
   verifyJiraState,
+  jiraTokenSite,
   verifyJiraWebhookToken,
 } from "@/lib/trackers/jira";
 import { receiveJiraWebhook } from "@/lib/trackers/jira-webhook";
@@ -40,35 +41,47 @@ function jwt(claims: Record<string, unknown>, { alg = "HS256", secret = SECRET }
 const answering = (body: unknown, status = 200) => (async () => new Response(body === null ? null : JSON.stringify(body), { status })) as unknown as typeof fetch;
 
 test("a webhook's token is checked: its secret, its algorithm, and its expiry", () => {
-  const live = { exp: NOW / 1000 + 60 };
-  assert.equal(verifyJiraWebhookToken(`Bearer ${jwt(live)}`, SECRET, NOW), true);
-  assert.equal(verifyJiraWebhookToken(`Bearer ${jwt({})}`, SECRET, NOW), false, "real ones always carry one");
-  assert.equal(verifyJiraWebhookToken(`Bearer ${jwt({ exp: NOW / 1000 - 1 })}`, SECRET, NOW), false, "expired");
-  assert.equal(verifyJiraWebhookToken(`Bearer ${jwt({ exp: "soon" })}`, SECRET, NOW), false, "a strange expiry");
-  assert.equal(verifyJiraWebhookToken(`Bearer ${jwt(live, { secret: "other" })}`, SECRET, NOW), false, "another's secret");
-  assert.equal(verifyJiraWebhookToken(`Bearer ${jwt(live, { alg: "none" })}`, SECRET, NOW), false, "no token chooses how it's checked");
-  assert.equal(verifyJiraWebhookToken(null, SECRET, NOW), false);
+  const live = { exp: NOW / 1000 + 60, iss: "cloud-1" };
+  assert.deepEqual(verifyJiraWebhookToken(`Bearer ${jwt(live)}`, SECRET, NOW), live);
+  assert.equal(verifyJiraWebhookToken(`Bearer ${jwt({})}`, SECRET, NOW), null, "real ones always carry one");
+  assert.equal(verifyJiraWebhookToken(`Bearer ${jwt({ exp: NOW / 1000 - 1 })}`, SECRET, NOW), null, "expired");
+  assert.equal(verifyJiraWebhookToken(`Bearer ${jwt({ exp: "soon" })}`, SECRET, NOW), null, "a strange expiry");
+  assert.equal(verifyJiraWebhookToken(`Bearer ${jwt(live, { secret: "other" })}`, SECRET, NOW), null, "another's secret");
+  assert.equal(verifyJiraWebhookToken(`Bearer ${jwt(live, { alg: "none" })}`, SECRET, NOW), null, "no token chooses how it's checked");
+  assert.equal(verifyJiraWebhookToken(null, SECRET, NOW), null);
   const b64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
-  assert.equal(verifyJiraWebhookToken(`Bearer ${b64(null)}.${b64({ exp: NOW / 1000 + 60 })}.x`, SECRET, NOW), false, "a null header isn't a failure to answer");
+  assert.equal(verifyJiraWebhookToken(`Bearer ${b64(null)}.${b64({ exp: NOW / 1000 + 60 })}.x`, SECRET, NOW), null, "a null header isn't a failure to answer");
   const signed = (claims: unknown) => {
     const head = `${b64({ alg: "HS256" })}.${b64(claims)}`;
     return `Bearer ${head}.${createHmac("sha256", SECRET).update(head).digest("base64url")}`;
   };
-  assert.equal(verifyJiraWebhookToken(signed({ exp: NOW / 1000 + 60 }), SECRET, NOW), true);
-  assert.equal(verifyJiraWebhookToken(signed(null), SECRET, NOW), false, "nor null claims, even signed");
-  assert.equal(verifyJiraWebhookToken("Bearer a.b", SECRET, NOW), false);
-  assert.equal(verifyJiraWebhookToken(`Bearer ${jwt(live)}`, "", NOW), false, "no secret set");
+  assert.deepEqual(verifyJiraWebhookToken(signed({ exp: NOW / 1000 + 60 }), SECRET, NOW), { exp: NOW / 1000 + 60 });
+  assert.equal(verifyJiraWebhookToken(signed(null), SECRET, NOW), null, "nor null claims, even signed");
+  assert.equal(verifyJiraWebhookToken(signed([NOW]), SECRET, NOW), null, "nor claims that aren't an object");
+  assert.equal(verifyJiraWebhookToken("Bearer a.b", SECRET, NOW), null);
+  assert.equal(verifyJiraWebhookToken(`Bearer ${jwt(live)}`, "", NOW), null, "no secret set");
 });
 
-test("nothing unsigned is parsed, and a failure asks Jira to try again", async () => {
+test("a token's site is its context's cloud id, else its cloudId, else its issuer", () => {
+  assert.equal(jiraTokenSite({ context: { cloudId: "c-ctx" }, cloudId: "c-top", iss: "c-iss" }), "c-ctx");
+  assert.equal(jiraTokenSite({ cloudId: "c-top", iss: "c-iss" }), "c-top");
+  assert.equal(jiraTokenSite({ iss: "c-iss" }), "c-iss");
+  assert.equal(jiraTokenSite({ context: null, cloudId: "", iss: 7 }), null);
+  assert.equal(jiraTokenSite({ exp: 1 }), null);
+});
+
+test("nothing unsigned is parsed, a token naming no site is refused, and a failure asks Jira to try again", async () => {
   const body = new TextEncoder().encode(JSON.stringify({ webhookEvent: "jira:issue_created" }));
-  const good = `Bearer ${jwt({ exp: Date.now() / 1000 + 60 })}`;
+  const good = `Bearer ${jwt({ exp: Date.now() / 1000 + 60, context: { cloudId: "cloud-1" } })}`;
   const never = async () => assert.fail("not handled");
   assert.equal((await receiveJiraWebhook({ body, authorization: good, identifier: "x", secret: null }, never)).status, 404);
   assert.equal((await receiveJiraWebhook({ body, authorization: "Bearer nope", identifier: "x", secret: SECRET }, never)).status, 401);
+  const siteless = `Bearer ${jwt({ exp: Date.now() / 1000 + 60, sub: "someone" })}`;
+  assert.equal((await receiveJiraWebhook({ body, authorization: siteless, identifier: "x", secret: SECRET }, never)).status, 401);
   assert.equal((await receiveJiraWebhook({ body: new TextEncoder().encode("{"), authorization: good, identifier: "x", secret: SECRET }, never)).status, 400);
   const handled = await receiveJiraWebhook({ body, authorization: good, identifier: "x", secret: SECRET }, async (event) => {
     assert.equal(event.identifier, "x");
+    assert.equal(event.site, "cloud-1");
     return { handled: true };
   });
   assert.equal(handled.status, 200);

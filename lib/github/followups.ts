@@ -354,7 +354,7 @@ export type FollowUpDeps = {
   linkedSessions(link: LinkTarget, orgId: string): Promise<LinkedSession[]>;
   /** The pull request a session recorded for a branch, when GitHub named
    *  none for a run. */
-  pullForBranch(projectId: string, headBranch: string): Promise<number | null>;
+  pullForBranch(orgId: string, projectId: string, headBranch: string): Promise<number | null>;
   queue(followUp: {
     kind: "ci" | "review";
     installationId: number;
@@ -416,7 +416,7 @@ export async function queueCiFailure(event: string | null, payload: unknown, dep
   if (!scope) return [];
   let numbers = failure.prNumbers;
   if (numbers.length === 0 && failure.headBranch) {
-    const found = await deps.pullForBranch(scope.projectId, failure.headBranch);
+    const found = await deps.pullForBranch(scope.orgId, scope.projectId, failure.headBranch);
     numbers = found ? [found] : [];
   }
   const fresh: string[] = [];

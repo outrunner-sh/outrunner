@@ -80,6 +80,8 @@ export type JiraEventInput = {
   /** The X-Atlassian-Webhook-Identifier header: the same across retries. */
   identifier: string | null;
   payload: unknown;
+  /** The site (cloud id) its verified token was issued for (jiraTokenSite). */
+  site: string;
 };
 
 const ignored = (reason: string): JiraEventResult => ({ handled: false, reason });
@@ -157,6 +159,12 @@ export async function handleJiraEvent(input: JiraEventInput, deps: JiraEventDeps
     return ignored("not installed");
   }
   if (installation.disconnected) return ignored("not installed");
+  // The body says which site; the signed token must say the same one, or a token from one
+  // site the app is on could carry an event made up for another's.
+  if (installation.externalId !== input.site) {
+    console.warn("Jira: a signed event's token is for another site than its body names, so it was ignored");
+    return ignored("wrong site");
+  }
 
   // Before dedupe: what we wrote there must never come back and reopen an item.
   const author = payload.comment ? (payload.comment.updateAuthor ?? payload.comment.author) : payload.user;
