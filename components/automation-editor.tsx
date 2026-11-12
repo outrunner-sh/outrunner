@@ -28,6 +28,7 @@ import type { Schedule } from "@/lib/automations/schedule";
 import { CONNECTOR_NAME } from "@/lib/automations/connector-name";
 import type { WebhookUrl } from "@/lib/db/automation-webhooks";
 import { requestJson } from "@/lib/http/request-json";
+import { sameTarget } from "@/lib/missions/mission-automations";
 import { cn } from "@/lib/utils";
 
 /** What the editor opens with: an automation to change, or a new one's
@@ -232,13 +233,9 @@ export function AutomationEditor({
           }
         : null;
       // Sent when it changed (or it's new), like the other fields: a save
-      // that doesn't change what it sends doesn't ask the owner again.
-      const saved = draft.target?.kind === "mission" ? draft.target : null;
-      const targetChanged =
-        creating ||
-        !saved ||
-        JSON.stringify([saved.watch && { ...saved.watch, allowedAppIds: [...saved.watch.allowedAppIds].sort() }, [...saved.linearTeamIds].sort()]) !==
-          JSON.stringify([target?.watch && { ...target.watch, allowedAppIds: [...target.watch.allowedAppIds].sort() }, [...(target?.linearTeamIds ?? [])].sort()]);
+      // that doesn't change what it sends doesn't ask the owner again. The
+      // server's own comparison (lib/missions/mission-automations.ts).
+      const targetChanged = creating || !sameTarget(target ?? undefined, draft.target ?? null);
       const missionBody =
         target && missionChoice
           ? {

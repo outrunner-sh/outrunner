@@ -72,7 +72,7 @@ export function changesWhatItSends(change: Partial<AutomationInput>, saved?: Aut
 
 /** Whether two Mission targets send the same: the same Mission, watch
  *  (workspace, channel, filter, allowed apps) and Linear teams. */
-function sameTarget(a: AutomationInput["target"], b: AutomationInput["target"] | { kind: "session" } | null): boolean {
+export function sameTarget(a: AutomationInput["target"], b: AutomationInput["target"] | { kind: "session" } | null): boolean {
   if (!a || !b || a.kind !== b.kind) return false;
   if (a.kind !== "mission" || b.kind !== "mission") return true;
   const sorted = (list: readonly string[]) => [...list].sort().join("\u0000");
