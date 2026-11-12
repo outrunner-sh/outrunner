@@ -108,6 +108,11 @@ export interface SandboxBackend {
    *  stopped; a throw when the provider couldn't be asked. */
   alive(id: string): Promise<boolean>;
   delete(id: string): Promise<void>;
+  /** Tell the provider the box is still wanted, resetting its own idle
+   *  timer (Daytona's auto-stop): the reconciler's heartbeat for a box it has
+   *  looked at and kept running. Only where the provider stops idle boxes on
+   *  its own. */
+  keepAlive?(id: string): Promise<void>;
 }
 
 /** `$HOME` from the box's login shell, or `fallback` if it says nothing. */

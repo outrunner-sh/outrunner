@@ -88,32 +88,62 @@ function base64url(input: string): Buffer {
   return Buffer.from(input, "base64url");
 }
 
+/** A verified webhook token's claims. */
+export type JiraWebhookClaims = Record<string, unknown>;
+
 /**
- * Whether a webhook is Jira's: a dynamic webhook carries a JWT in Authorization, signed with
- * the app's client secret. As seen on real deliveries: HS256, with `exp` 15 minutes after `iat`,
- * so one without an `exp` isn't Jira's. The body isn't covered, so a captured token could carry
- * another one until then: Jira gives no signature over the body for these.
+ * A webhook's token's claims, if it is Jira's; else null. A dynamic webhook carries a JWT in
+ * Authorization, signed with the app's client secret. As seen on real deliveries: HS256, with
+ * `exp` 15 minutes after `iat`, so one without an `exp` isn't Jira's. The body isn't covered, so
+ * a captured token could carry another one until then: Jira gives no signature over the body
+ * for these. Every site's webhooks are signed with the same secret, so the token alone doesn't
+ * say which site sent it: {@link jiraTokenSite} does, and the event must be that site's.
  */
-export function verifyJiraWebhookToken(authorization: string | null, clientSecret: string, now = Date.now()): boolean {
-  if (!clientSecret || !authorization?.startsWith("Bearer ")) return false;
+export function verifyJiraWebhookToken(authorization: string | null, clientSecret: string, now = Date.now()): JiraWebhookClaims | null {
+  if (!clientSecret || !authorization?.startsWith("Bearer ")) return null;
   const token = authorization.slice("Bearer ".length);
   const parts = token.split(".");
-  if (parts.length !== 3) return false;
+  if (parts.length !== 3) return null;
   const [head, body, signature] = parts as [string, string, string];
   let header: { alg?: unknown } | null;
-  let claims: { exp?: unknown } | null;
+  let claims: JiraWebhookClaims | null;
   try {
     header = JSON.parse(base64url(head).toString("utf8")) as { alg?: unknown };
-    claims = JSON.parse(base64url(body).toString("utf8")) as { exp?: unknown };
+    claims = JSON.parse(base64url(body).toString("utf8")) as JiraWebhookClaims | null;
   } catch {
-    return false;
+    return null;
   }
   // Only HS256: no token can choose how it's checked.
-  if (header?.alg !== "HS256") return false;
+  if (header?.alg !== "HS256") return null;
   const wanted = createHmac("sha256", clientSecret).update(`${head}.${body}`).digest();
   const given = base64url(signature);
-  if (given.length !== wanted.length || !timingSafeEqual(given, wanted)) return false;
-  return typeof claims?.exp === "number" && claims.exp * 1000 > now;
+  if (given.length !== wanted.length || !timingSafeEqual(given, wanted)) return null;
+  if (typeof claims !== "object" || claims === null || Array.isArray(claims)) return null;
+  return typeof claims.exp === "number" && claims.exp * 1000 > now ? claims : null;
+}
+
+/** The site a verified token names, which claim said so, and every claim it had (their
+ *  names only, for diagnosing a token that doesn't say the site the way we read it). */
+export type JiraTokenSite = { site: string; from: "context.cloudId" | "cloudId" | "iss"; keys: string[] };
+
+/**
+ * The site (cloud id) a verified token was issued for: `context.cloudId`, else `cloudId`, else
+ * `iss`. Null when it names none, and such a token is refused: without it, a token from any
+ * site the app is installed on would carry another site's events. Which claim matched comes
+ * with it: `iss` may turn out to be the app's client id, which the wrong-site warning shows.
+ */
+export function jiraTokenSite(claims: JiraWebhookClaims): JiraTokenSite | null {
+  const context = claims.context;
+  const candidates: Array<[JiraTokenSite["from"], unknown]> = [
+    ["context.cloudId", typeof context === "object" && context !== null ? (context as Record<string, unknown>).cloudId : undefined],
+    ["cloudId", claims.cloudId],
+    ["iss", claims.iss],
+  ];
+  const keys = Object.keys(claims).sort();
+  for (const [from, candidate] of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return { site: candidate.trim(), from, keys };
+  }
+  return null;
 }
 
 type Fetcher = typeof fetch;

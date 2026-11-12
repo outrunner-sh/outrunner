@@ -485,7 +485,7 @@ insert into runtime_computers (owner_id, project_id, status, daytona_sandbox_id)
 select '11111111-1111-1111-1111-111111111111', id, 'ready', 'box-cap-b'
 from projects where owner_id = '11111111-1111-1111-1111-111111111111' and github_repo_id = 142;
 
-set role authed;
+set role service_role;
 set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
 
 do $$
@@ -500,14 +500,14 @@ begin
   select id into another_project from projects where owner_id = '11111111-1111-1111-1111-111111111111' and github_repo_id = 144;
 
   -- Reusing the project's ready box passes at the cap: no box would start.
-  select * into claimed from claim_runtime_computer(ready_project, 'agent-secret-1', 'v1', 1);
+  select * into claimed from claim_runtime_computer(auth.uid(), ready_project, 'agent-secret-1', 'v1', 1);
   if claimed.should_provision then
     raise exception 'FAIL: a ready box was said to need provision';
   end if;
 
   -- Starting another box is refused.
   begin
-    perform claim_runtime_computer(fresh_project, 'agent-secret-2', 'v1', 2);
+    perform claim_runtime_computer(auth.uid(), fresh_project, 'agent-secret-2', 'v1', 2);
     raise exception 'FAIL: a claim beyond the plan cap was allowed';
   exception when others then
     if SQLSTATE <> 'P4BX1' then
@@ -520,14 +520,14 @@ begin
   -- superuser — the part the app's admin client plays.
   perform set_config('role', 'none', true);
   update runtime_computers set provider = 'user-daytona' where daytona_sandbox_id = 'box-cap-b';
-  perform set_config('role', 'authed', true);
-  perform claim_runtime_computer(fresh_project, 'agent-secret-3', 'v1', 2);
+  perform set_config('role', 'service_role', true);
+  perform claim_runtime_computer(auth.uid(), fresh_project, 'agent-secret-3', 'v1', 2);
   if not exists (select 1 from runtime_computers where project_id = fresh_project and status = 'provisioning') then
     raise exception 'FAIL: the claim did not start a box within the cap';
   end if;
 
   -- A null cap is no cap: the deployment's owners.
-  perform claim_runtime_computer(another_project, 'agent-secret-4', 'v1', null);
+  perform claim_runtime_computer(auth.uid(), another_project, 'agent-secret-4', 'v1', null);
   if not exists (select 1 from runtime_computers where project_id = another_project and status = 'provisioning') then
     raise exception 'FAIL: an uncapped claim did not start a box';
   end if;
@@ -570,7 +570,7 @@ begin
   if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
     raise exception 'FAIL: a user-owned Modal box was counted';
   end if;
-  perform set_config('role', 'authed', true);
+  perform set_config('role', 'service_role', true);
 
   update runtime_computers
   set provider = 'user-gcp'
@@ -620,9 +620,8 @@ insert into workspaces (id, owner_id, project_id, branch)
 select '33333333-3333-3333-3333-333333333333'::uuid, owner_id, id, 'not-yours'
 from projects where owner_id = '22222222-2222-2222-2222-222222222222' limit 1;
 
--- The claim is granted to signed-in users only, which authed stands for.
-grant authenticated to authed;
-set role authed;
+-- The claims are the server's alone (20261112120000): run as service_role.
+set role service_role;
 set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
 
 do $$
@@ -635,22 +634,22 @@ declare
 begin
   select project_id into project from workspaces where id = '33333333-3333-3333-3333-333333333331';
 
-  select * into first_claim from claim_workspace_computer('33333333-3333-3333-3333-333333333331', 's-1', 'v1', null);
+  select * into first_claim from claim_workspace_computer(auth.uid(), '33333333-3333-3333-3333-333333333331', 's-1', 'v1', null);
   if not first_claim.should_provision then
     raise exception 'FAIL: a session''s first claim did not start its box';
   end if;
-  select * into again from claim_workspace_computer('33333333-3333-3333-3333-333333333331', 's-2', 'v1', null);
+  select * into again from claim_workspace_computer(auth.uid(), '33333333-3333-3333-3333-333333333331', 's-2', 'v1', null);
   if again.should_provision or again.runtime_computer_id <> first_claim.runtime_computer_id then
     raise exception 'FAIL: a second claim for one session started another box';
   end if;
 
-  select * into second_claim from claim_workspace_computer('33333333-3333-3333-3333-333333333332', 's-3', 'v1', null);
+  select * into second_claim from claim_workspace_computer(auth.uid(), '33333333-3333-3333-3333-333333333332', 's-3', 'v1', null);
   if not second_claim.should_provision or second_claim.runtime_computer_id = first_claim.runtime_computer_id then
     raise exception 'FAIL: two sessions of one project share a box';
   end if;
 
   -- The project's shared box is another row, never a session's own.
-  select * into shared_claim from claim_runtime_computer(project, 's-4', 'v1', null);
+  select * into shared_claim from claim_runtime_computer(auth.uid(), project, 's-4', 'v1', null);
   if shared_claim.runtime_computer_id in (first_claim.runtime_computer_id, second_claim.runtime_computer_id) then
     raise exception 'FAIL: the project''s shared claim returned a session''s own box';
   end if;
@@ -663,8 +662,8 @@ begin
   -- pause is the server's write (20261106100000).
   perform set_config('role', 'none', true);
   update runtime_computers set status = 'stopped' where id = first_claim.runtime_computer_id;
-  perform set_config('role', 'authed', true);
-  select * into again from claim_workspace_computer('33333333-3333-3333-3333-333333333331', 's-5', 'v1', null);
+  perform set_config('role', 'service_role', true);
+  select * into again from claim_workspace_computer(auth.uid(), '33333333-3333-3333-3333-333333333331', 's-5', 'v1', null);
   if not again.should_provision or again.runtime_computer_id <> first_claim.runtime_computer_id then
     raise exception 'FAIL: a stopped box was not claimed back on its own row';
   end if;
@@ -674,9 +673,9 @@ begin
   perform set_config('role', 'none', true);
   update runtime_computers set status = 'ready' where owner_id = '11111111-1111-1111-1111-111111111111';
   update runtime_computers set status = 'stopped' where id = second_claim.runtime_computer_id;
-  perform set_config('role', 'authed', true);
+  perform set_config('role', 'service_role', true);
   begin
-    perform claim_workspace_computer('33333333-3333-3333-3333-333333333332', 's-6', 'v1', 1);
+    perform claim_workspace_computer(auth.uid(), '33333333-3333-3333-3333-333333333332', 's-6', 'v1', 1);
     raise exception 'FAIL: a session''s box started past the plan''s cap';
   exception when others then
     if SQLSTATE <> 'P4BX1' then
@@ -685,7 +684,7 @@ begin
   end;
 
   begin
-    perform claim_workspace_computer('33333333-3333-3333-3333-333333333333', 's-7', 'v1', null);
+    perform claim_workspace_computer(auth.uid(), '33333333-3333-3333-3333-333333333333', 's-7', 'v1', null);
     raise exception 'FAIL: a box was claimed for another owner''s session';
   exception when others then
     if SQLERRM <> 'workspace not found' then
@@ -696,9 +695,9 @@ begin
   -- server's mark (20261106100000).
   perform set_config('role', 'none', true);
   update workspaces set status = 'destroyed' where id = '33333333-3333-3333-3333-333333333332';
-  perform set_config('role', 'authed', true);
+  perform set_config('role', 'service_role', true);
   begin
-    perform claim_workspace_computer('33333333-3333-3333-3333-333333333332', 's-8', 'v1', null);
+    perform claim_workspace_computer(auth.uid(), '33333333-3333-3333-3333-333333333332', 's-8', 'v1', null);
     raise exception 'FAIL: a box was claimed for an ended session';
   exception when others then
     if SQLERRM <> 'workspace not found' then
@@ -719,10 +718,18 @@ begin
   exception when unique_violation then
     null;
   end;
-  if has_function_privilege('anon', 'claim_workspace_computer(uuid, text, text, integer)', 'execute') then
-    raise exception 'FAIL: a signed-out caller may claim a box';
+  if has_function_privilege('anon', 'claim_workspace_computer(uuid, uuid, text, text, integer)', 'execute')
+     or has_function_privilege('authenticated', 'claim_workspace_computer(uuid, uuid, text, text, integer)', 'execute')
+     or has_function_privilege('authenticated', 'claim_runtime_computer(uuid, uuid, text, text, integer)', 'execute')
+     or has_function_privilege('authenticated', 'claim_pooled_computer(uuid, uuid, text, integer)', 'execute')
+     or has_function_privilege('authenticated', 'claim_pooled_warmup(uuid, uuid, text, integer, integer)', 'execute')
+     or has_function_privilege('authenticated', 'check_org_box_cap(uuid, uuid, integer)', 'execute') then
+    raise exception 'FAIL: a browser caller may claim a box (20261112120000: the server''s alone)';
   end if;
-  raise notice 'ok: one box per session, and only signed-in callers may claim one';
+  if not has_function_privilege('service_role', 'claim_workspace_computer(uuid, uuid, text, text, integer)', 'execute') then
+    raise exception 'FAIL: the server may not claim a box';
+  end if;
+  raise notice 'ok: one box per session, and only the server may claim one';
 end $$;
 
 -- 23. The warm pool (20261025120000): a project's pooled box is handed to one
@@ -750,7 +757,7 @@ begin
   end;
 end $$;
 
-set role authed;
+set role service_role;
 set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
 
 do $$
@@ -764,15 +771,15 @@ begin
   update runtime_computers set status = 'provisioning' where daytona_sandbox_id = 'box-pooled';
   before_count := live_metered_computers('11111111-1111-1111-1111-111111111111');
   update runtime_computers set status = 'stopped' where daytona_sandbox_id = 'box-pooled';
-  perform set_config('role', 'authed', true);
+  perform set_config('role', 'service_role', true);
   if before_count <> live_metered_computers('11111111-1111-1111-1111-111111111111') then
     raise exception 'FAIL: a pooled box counted toward the plan''s cap';
   end if;
 
-  if claim_pooled_computer('44444444-4444-4444-4444-444444444441', 'modal') is not null then
+  if claim_pooled_computer(auth.uid(), '44444444-4444-4444-4444-444444444441', 'modal') is not null then
     raise exception 'FAIL: a pooled box went to a session on another provider';
   end if;
-  taken := claim_pooled_computer('44444444-4444-4444-4444-444444444441', 'daytona');
+  taken := claim_pooled_computer(auth.uid(), '44444444-4444-4444-4444-444444444441', 'daytona');
   if taken is distinct from 'box-pooled' then
     raise exception 'FAIL: the pooled box was not handed over (got %)', taken;
   end if;
@@ -784,11 +791,11 @@ begin
     raise exception 'FAIL: the taken box is not the session''s own, stopped';
   end if;
   -- Taken: the next session finds none, and a session with a box keeps it.
-  if claim_pooled_computer('44444444-4444-4444-4444-444444444442', 'daytona') is not null then
+  if claim_pooled_computer(auth.uid(), '44444444-4444-4444-4444-444444444442', 'daytona') is not null then
     raise exception 'FAIL: one pooled box went to two sessions';
   end if;
   begin
-    perform claim_pooled_computer('33333333-3333-3333-3333-333333333333', 'daytona');
+    perform claim_pooled_computer(auth.uid(), '33333333-3333-3333-3333-333333333333', 'daytona');
     raise exception 'FAIL: a pooled box was claimed for another owner''s session';
   exception when others then
     if SQLERRM <> 'workspace not found' then
@@ -1691,10 +1698,10 @@ begin
     values (someone, project, 'claims-answer-once', 'main', 'daytona', 'creating') returning id into session;
   insert into runtime_computers (owner_id, project_id, agent_secret, status, pooled, pool_slot, daytona_sandbox_id, provider)
     values (someone, project, 's', 'stopped', true, 1, 'box-once', 'daytona');
-  if claim_pooled_computer(session, 'daytona') is distinct from 'box-once' then
+  if claim_pooled_computer(auth.uid(), session, 'daytona') is distinct from 'box-once' then
     raise exception 'FAIL: the ready box was not handed to the session';
   end if;
-  select count(*) into rows from claim_workspace_computer(session, 'secret', 'v1', null);
+  select count(*) into rows from claim_workspace_computer(auth.uid(), session, 'secret', 'v1', null);
   if rows <> 1 then
     raise exception 'FAIL: claiming a session''s stopped box answered % rows, want 1', rows;
   end if;
@@ -1705,7 +1712,7 @@ begin
   end if;
   update runtime_computers set status = 'stopped'
     where project_id = project and workspace_id is null and not pooled;
-  select count(*) into rows from claim_runtime_computer(project, 'secret', 'v1', null);
+  select count(*) into rows from claim_runtime_computer(auth.uid(), project, 'secret', 'v1', null);
   if rows <> 1 then
     raise exception 'FAIL: claiming a project''s stopped box answered % rows, want 1', rows;
   end if;
@@ -1766,32 +1773,59 @@ end $$;
 insert into runtime_computers (owner_id, project_id, agent_secret, image_version, status, daytona_sandbox_id)
 values ('22222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 's-org-cap', 'v1', 'ready', 'box-org-cap');
 
-set role authed;
+set role service_role;
 set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
 do $$
 begin
   -- A member's own box count is 0 here, but the org runs one: its cap of 1
   -- is reached.
   begin
-    perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1);
+    perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', auth.uid(), 1);
     raise exception 'FAIL: the org cap left out another member''s box';
   exception when others then
     if SQLSTATE <> 'P4BX1' then raise; end if;
   end;
-  perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 2);
+  perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', auth.uid(), 2);
   begin
-    perform check_org_box_cap((select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'), 5);
+    perform check_org_box_cap((select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'), auth.uid(), 5);
     raise exception 'FAIL: a user checked another org''s cap';
   exception when others then
     if SQLERRM <> 'org not found' then raise; end if;
   end;
+  -- No cap is no reason to skip membership (20261112120000).
+  begin
+    perform check_org_box_cap((select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'), auth.uid(), null);
+    raise exception 'FAIL: an uncapped check skipped org membership';
+  exception when others then
+    if SQLERRM <> 'org not found' then raise; end if;
+  end;
+  raise notice 'ok: an org''s box cap counts every member''s boxes, for its members';
+end $$;
+reset role;
+
+set role authed;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$
+begin
   begin
     perform live_org_computers('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
     raise exception 'FAIL: a user counted the org''s boxes directly';
   exception when insufficient_privilege then
     null;
   end;
-  raise notice 'ok: an org''s box cap counts every member''s boxes, for its members';
+  begin
+    perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', auth.uid(), null);
+    raise exception 'FAIL: a user checked the box cap directly';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    perform * from claim_runtime_computer(auth.uid(), 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 's', 'v1', null);
+    raise exception 'FAIL: a user claimed a box directly, with no cap';
+  exception when insufficient_privilege then
+    null;
+  end;
+  raise notice 'ok: the box cap and claims are not a signed-in user''s to call';
 end $$;
 reset role;
 
@@ -1827,24 +1861,24 @@ insert into org_connectors (org_id, user_id) values ('aaaaaaaa-aaaa-aaaa-aaaa-aa
 insert into runtime_computers (owner_id, project_id, agent_secret, image_version, status, daytona_sandbox_id)
 values ('44444444-4444-4444-4444-444444444444', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 's-conn', 'v1', 'ready', 'box-conn');
 
-set role authed;
+set role service_role;
 set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
 do $$
 begin
   -- A member: the connector's running box doesn't count.
-  perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1);
+  perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', auth.uid(), 1);
   raise notice 'ok: a member''s cap leaves out the connector''s boxes';
 end $$;
 set request.jwt.claim.sub = '44444444-4444-4444-4444-444444444444';
 do $$
 begin
   begin
-    perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1);
+    perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', auth.uid(), 1);
     raise exception 'FAIL: the connector''s cap left out its own box';
   exception when others then
     if SQLSTATE <> 'P4BX1' then raise; end if;
   end;
-  perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 2);
+  perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', auth.uid(), 2);
   raise notice 'ok: the connector''s cap counts its own boxes';
 end $$;
 reset role;
