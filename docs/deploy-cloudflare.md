@@ -185,6 +185,10 @@ conversation WebSockets through `/relay/neev/` on this domain. That is why
      node --experimental-strip-types --import ./scripts/test-loader.mjs scripts/verify-neev-lifecycle.ts
    ```
    All steps should pass. Pause and resume must keep the file.
+   `HTTP 403 forbidden: api key not scoped to this org/project` means the key
+   was made in another Neev project than `NEEV_ORG_ID` / `NEEV_PROJECT_ID`
+   name: all three must come from the same project. `HTTP 401` on the first
+   command means a personal access token, not a project key.
 3. **Rows from before providers were recorded.** A `runtime_computers` row
    with a null `provider` is read as the deployment's. After the switch it
    would be taken for a Neev box even when it's Daytona's: asked of Neev,
