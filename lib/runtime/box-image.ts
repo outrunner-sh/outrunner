@@ -9,19 +9,53 @@ import { createHash } from "node:crypto";
  * tag changes with it (its test says to what), and CI builds that image.
  */
 export const BOX_TOOLS = {
-  node: "22",
+  node: "22.23.5",
   claudeCode: "2.1.304",
   codex: "0.162.1",
   gh: "2.102.1",
 } as const;
 
-/** The build args box/Dockerfile takes, from {@link BOX_TOOLS}. */
+/**
+ * The sha256 of each download a box's tools are installed from, by
+ * architecture (Debian's names), so an install runs nothing it hasn't checked.
+ * Taken from each release's own published sums; bump them with the version:
+ *
+ *   node    https://nodejs.org/dist/v<node>/SHASUMS256.txt  (node-v<node>-linux-{x64,arm64}.tar.gz)
+ *   claude  https://downloads.claude.ai/claude-code-releases/<claudeCode>/manifest.json  (platforms.linux-{x64,arm64}.checksum)
+ *   gh      https://github.com/cli/cli/releases/download/v<gh>/gh_<gh>_checksums.txt  (gh_<gh>_linux_{amd64,arm64}.tar.gz)
+ *
+ * Codex comes from npm at its exact version, checked against the registry's
+ * integrity hash by npm itself.
+ */
+export const BOX_TOOL_SHA256 = {
+  node: {
+    amd64: "c54118104acc524633b5abe106bbf44a53126ec8b4e5fa105cb92b5d7de8a1a1",
+    arm64: "8bd3dc69eee8f3f226315a80d7d1d4faccf217a4c8fae500168ac2e38f3bdba3",
+  },
+  claudeCode: {
+    amd64: "ea0f135784631619a7a409d07322ecec964f9cc4fd377508ed1ba3f141f27912",
+    arm64: "c487117526509ab6d2ee6013e14f181faf68d6d6afe6bb0d4b2b4a9feca5ecb3",
+  },
+  gh: {
+    amd64: "77b9e297e94c50336823d0f84de7ef1be60cba704601fa0d98f129f47a94987b",
+    arm64: "5019b3cc6e8a03bb4d88600f8dbda2add8e6407705c159b0c63151036e77a1af",
+  },
+} as const;
+
+/** The build args box/Dockerfile takes, from {@link BOX_TOOLS} and
+ *  {@link BOX_TOOL_SHA256}. */
 export function boxBuildArgs(): Record<string, string> {
   return {
-    NODE_MAJOR: BOX_TOOLS.node,
+    NODE_VERSION: BOX_TOOLS.node,
+    NODE_SHA256_AMD64: BOX_TOOL_SHA256.node.amd64,
+    NODE_SHA256_ARM64: BOX_TOOL_SHA256.node.arm64,
     CLAUDE_CODE_VERSION: BOX_TOOLS.claudeCode,
+    CLAUDE_CODE_SHA256_AMD64: BOX_TOOL_SHA256.claudeCode.amd64,
+    CLAUDE_CODE_SHA256_ARM64: BOX_TOOL_SHA256.claudeCode.arm64,
     CODEX_VERSION: BOX_TOOLS.codex,
     GH_VERSION: BOX_TOOLS.gh,
+    GH_SHA256_AMD64: BOX_TOOL_SHA256.gh.amd64,
+    GH_SHA256_ARM64: BOX_TOOL_SHA256.gh.arm64,
   };
 }
 
@@ -39,7 +73,7 @@ export function boxImageTag(dockerfile: string): string {
 /** {@link boxImageTag} of box/Dockerfile as committed. Written out rather than
  *  computed, so the app needs no Dockerfile at runtime; its test fails when
  *  the two part. */
-export const BOX_IMAGE_TAG = "2fe23c90ef49";
+export const BOX_IMAGE_TAG = "4a9cd892d328";
 
 /** Where CI publishes the image, public. */
 export const BOX_IMAGE_REPOSITORY = "ghcr.io/neevai-labs/outrunner-box";
@@ -61,8 +95,8 @@ export function boxCheckScript(): string {
     `want Codex ${codex} "$(codex --version 2>/dev/null | awk '{print $NF}')"`,
     // "gh version 2.102.1 (2026-…)"
     `want gh ${gh} "$(gh --version 2>/dev/null | awk 'NR==1{print $3}')"`,
-    // "v22.11.0": the major is what's pinned (NodeSource gives its latest).
-    `want Node ${node} "$(node --version 2>/dev/null | cut -d. -f1 | cut -c2-)"`,
+    // "v22.23.5"
+    `want Node ${node} "$(node --version 2>/dev/null | cut -c2-)"`,
     `for tool in tmux git git-lfs jq rg npm python3 sudo; do ` +
       `command -v "$tool" >/dev/null || { echo "$tool is missing"; fail=1; }; done`,
     `exit $fail`,
