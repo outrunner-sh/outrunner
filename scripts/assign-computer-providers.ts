@@ -37,9 +37,10 @@ const neev =
       })
     : null;
 
-/** What a provider says about a box: it has it, a real not-found, or a
- *  refusal of the id (400/422, as asking one provider about the other's id
- *  may get). Anything else throws. */
+/** What a provider says about a box: it has it, a real not-found (both
+ *  answer 404 for an id that isn't theirs), or an unexplained 400/422 (out of
+ *  credits, say), which leaves the row for an operator. Anything else
+ *  throws. */
 async function ask(get: () => Promise<unknown>, notFound: (error: unknown) => boolean): Promise<BoxAnswer> {
   try {
     await get();

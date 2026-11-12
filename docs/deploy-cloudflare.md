@@ -193,8 +193,10 @@ conversation WebSockets through `/relay/neev/` on this domain. That is why
    (with the prod Supabase service role, `DAYTONA_API_KEY` and the `NEEV_*`
    keys in the environment). A row whose box both backends report not found
    is recorded as `daytona` (the box is gone, and either backend reads it as
-   gone). A box both claim, one a backend only refused the id of, or one
-   whose lookup failed is left and listed: rerun, or set it by hand. The authenticated `/api/health` reports
+   gone; both answer a real 404 for an id that isn't theirs). A box both
+   claim, one a backend refused with an unexplained 400/422 (out of credits,
+   say), or one whose lookup failed is left and listed: rerun once the cause
+   is fixed, or set it by hand. The authenticated `/api/health` reports
    `unrecordedProviderComputers`. Go on only when it is 0.
 4. **Secrets** (`cd outrunner/cloudflare`):
    ```bash

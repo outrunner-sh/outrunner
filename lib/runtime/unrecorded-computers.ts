@@ -29,8 +29,10 @@ export async function countUnrecordedComputers(): Promise<number | "unreachable"
 }
 
 /** What one provider said when asked about a box: it has it, a real
- *  not-found, or a refusal of the id (400/422), which says only that the id
- *  isn't one it takes, never that a box is gone. */
+ *  not-found (404), or an unexplained refusal (400/422), which never says a
+ *  box is gone. Asked about an id that isn't theirs (the other's UUID, a
+ *  name, junk), both Daytona and Neev answer 404, checked 2026-11-12, so a
+ *  box gone from both reads as two not-founds. */
 export type BoxAnswer = "yes" | "no" | "refused";
 
 /** What a row whose box no provider has is recorded as: the provider being
