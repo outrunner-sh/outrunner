@@ -249,6 +249,15 @@ export function OrgGitHubSettings({
                           ))}
                         </ul>
                       ) : null}
+                      {i.shares.length > 0 ? (
+                        <p className="text-[11px] text-muted-foreground">
+                          {`Removing ${i.accountLogin} from ${org.name} leaves ${
+                            i.shares.length === 1 ? "this org" : "these orgs"
+                          } connected, and no one can manage ${i.shares.length === 1 ? "it" : "them"} here until ${org.name} connects it again. Stop sharing first to cut ${
+                            i.shares.length === 1 ? "it" : "them"
+                          } off too.`}
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
                 </li>

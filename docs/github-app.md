@@ -116,9 +116,12 @@ GitHub**, and can **Stop sharing** with any of them (`GET
 /api/orgs/{id}/github/installations/{installationId}/shares`, `DELETE …/shares/{orgId}`, audited as
 `github.share_removed`). Uninstalling the App on GitHub still removes it from every org. The source doesn't
 move: if it disconnects it manages nothing until it is connected again, and no share takes its place. Only
-uninstalling, or deleting the source org, clears it; the next org GitHub's installer or owner connects then
-becomes the source. A source can remove any share, including one GitHub's installer or an owner made: it's the
-org that brought the installation, and they can connect it again.
+uninstalling, or deleting the source org, clears it; the next org newly connected with GitHub's installer or
+owner then becomes the source. An org already connected doesn't become it, even on the installer's say: its
+link may predate the rule. While the source is disconnected, its shares stay connected and no one in Outrunner
+can manage them, so the page warns its admins before they remove it, and they can stop sharing first. A source
+can remove any share, including one GitHub's installer or an owner made: it's the org that brought the
+installation, and they can connect it again.
 
 Installation metadata is global (`github_installations`); access is an independent link per organization
 (`org_github_installations`). Existing links are preserved by migrations `20261104100000` and

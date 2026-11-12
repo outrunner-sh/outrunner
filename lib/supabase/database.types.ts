@@ -1090,6 +1090,9 @@ type GithubInstallationRow = {
   suspended_at: string | null;
   created_at: string;
   updated_at: string;
+  /** The org that sees and manages its shares: the first linked by GitHub's
+   *  say (20261112130000). Stays when it disconnects; null once it's deleted. */
+  source_org_id: string | null;
 };
 
 type OrgGithubInstallationRow = {
