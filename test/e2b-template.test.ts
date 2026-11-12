@@ -47,4 +47,6 @@ test("only the user's own Outrunner templates are taken for theirs to clean up",
   assert.equal(isUserE2bTemplateName("outrunner-box-2fe23c90ef49-11111111", user), false);
   assert.equal(isUserE2bTemplateName("my-outrunner-box-2fe23c90ef49-0b8a3ded", user), false);
   assert.equal(isUserE2bTemplateName("base", user), false);
+  // A tag in another form than today's still counts as theirs.
+  assert.equal(isUserE2bTemplateName("outrunner-box-v2.abc-0b8a3ded", user), true);
 });

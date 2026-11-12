@@ -107,10 +107,12 @@ export async function e2bTemplateBuildStatus(target: E2bBuildTarget, build: E2bT
 }
 
 /** Whether `name` (as E2B lists it: bare, or `<team>/<name>`) is one of
- *  user `userId`'s templates, at any image. */
+ *  user `userId`'s templates, at any image: any tag {@link userE2bTemplateName}
+ *  could have written, not only today's 12-hex form, so a change to
+ *  BOX_IMAGE_TAG's format doesn't leave older ones behind uncleaned. */
 export function isUserE2bTemplateName(name: string, userId: string): boolean {
   const bare = name.slice(name.lastIndexOf("/") + 1).replace(/:.*$/, "");
-  return new RegExp(`^outrunner-box-[0-9a-f]{12}-${userId.replace(/-/g, "").slice(0, 8)}$`).test(bare);
+  return new RegExp(`^outrunner-box-[A-Za-z0-9_.]+-${userId.replace(/-/g, "").slice(0, 8)}$`).test(bare);
 }
 
 /**
