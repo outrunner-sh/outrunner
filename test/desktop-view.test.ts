@@ -93,6 +93,11 @@ test("openDesktop asks the session's desktop route for a link", async () => {
     return new Response(JSON.stringify({ url: "wss://6080-abc.example/websockify" }), { status: 200 });
   }) as unknown as typeof fetch;
   assert.deepEqual(await openDesktop("ws-1", fetchImpl), { url: "wss://6080-abc.example/websockify" });
+  // With the desktop's VNC password, where it has one.
+  assert.deepEqual(await openDesktop("ws-1", answer(200, { url: "wss://x/websockify", password: "Ab3dEf7h" })), {
+    url: "wss://x/websockify",
+    password: "Ab3dEf7h",
+  });
   assert.deepEqual(asked, { url: "/api/workspaces/ws-1/desktop", method: "POST" });
 });
 

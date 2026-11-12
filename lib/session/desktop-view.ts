@@ -112,7 +112,8 @@ function disconnectReason(status: DesktopView["status"], clean: boolean): string
 /**
  * Ask Outrunner for the desktop of session `workspaceId` (POST
  * /api/workspaces/[id]/desktop), starting it if it isn't running: the link
- * its VNC client connects to, or the refusal to show. Given up after
+ * its VNC client connects to (and its VNC password, where the desktop has
+ * one), or the refusal to show. Given up after
  * `timeoutMs`, as a refusal saying so.
  */
 export async function openDesktop(
@@ -120,7 +121,7 @@ export async function openDesktop(
   fetchImpl: typeof fetch = fetch,
   timeoutMs = OPEN_TIMEOUT_MS,
   timeoutSignal: (milliseconds: number) => AbortSignal = (milliseconds) => AbortSignal.timeout(milliseconds),
-): Promise<{ url: string } | Extract<DesktopEvent, { type: "refused" }>> {
+): Promise<{ url: string; password?: string } | Extract<DesktopEvent, { type: "refused" }>> {
   let res: Response;
   try {
     res = await fetchImpl(`/api/workspaces/${workspaceId}/desktop`, {
@@ -132,7 +133,9 @@ export async function openDesktop(
     const timedOut = error instanceof DOMException && error.name === "TimeoutError";
     return { type: "refused", httpStatus: 0, ...(timedOut && { error: DESKTOP_TIMED_OUT }) };
   }
-  const body = (await res.json().catch(() => ({}))) as { url?: unknown; error?: unknown };
-  if (res.ok && typeof body.url === "string" && body.url) return { url: body.url };
+  const body = (await res.json().catch(() => ({}))) as { url?: unknown; password?: unknown; error?: unknown };
+  if (res.ok && typeof body.url === "string" && body.url) {
+    return { url: body.url, ...(typeof body.password === "string" && body.password && { password: body.password }) };
+  }
   return { type: "refused", httpStatus: res.status, ...(typeof body.error === "string" && { error: body.error }) };
 }

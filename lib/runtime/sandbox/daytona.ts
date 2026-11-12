@@ -346,11 +346,11 @@ export function box(sandbox: Sandbox): SandboxBox {
       // proxy there forwards to the VNC server alone, a target fixed at its
       // launch that no client can change. So the link reaches the desktop,
       // and not the agent or Daytona's toolbox.
-      viewerUrl: async (ttlSeconds) => {
+      viewer: async (ttlSeconds) => {
         const url = new URL((await sandbox.getSignedPreviewUrl(NOVNC_PORT, ttlSeconds)).url);
         url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
         url.pathname = "/websockify";
-        return url.toString();
+        return { url: url.toString() };
       },
     },
     // The signed link, its credential good for this one port, and for a

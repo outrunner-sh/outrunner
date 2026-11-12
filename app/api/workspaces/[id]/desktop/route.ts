@@ -19,9 +19,10 @@ const DESKTOP_LINK_TTL_SECONDS = 120;
  * The desktop on a cloud session's box, for its owner's browser to view and,
  * if they choose, use: started here when it isn't running, so a box runs its
  * display only once someone opens the Desktop tab or the agent reaches for a
- * desktop tool. The answer is `{ url }`, the WebSocket of the desktop's noVNC
- * proxy with its credential in it, which reaches the desktop's VNC server and
- * nothing else on the box (lib/runtime/sandbox/daytona.ts).
+ * desktop tool. The answer is `{ url, password? }`: the WebSocket of the
+ * desktop's noVNC proxy with its credential in it, which reaches the
+ * desktop's VNC server and nothing else on the box, and the VNC password
+ * where the desktop has one (E2B's, a new one per link).
  */
 export async function POST(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) {
@@ -45,7 +46,7 @@ export async function POST(request: Request, context: RouteContext) {
         return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
       }
       if (!hasDesktop(workspace.provider)) {
-        return NextResponse.json({ error: "The desktop runs on Outrunner's Daytona sandboxes only." }, { status: 409 });
+        return NextResponse.json({ error: "This session's sandbox has no desktop." }, { status: 409 });
       }
       return null;
     },
@@ -54,11 +55,12 @@ export async function POST(request: Request, context: RouteContext) {
   const { workspace, provider, sandboxId } = reach.reached;
 
   try {
-    const url = await provider.openDesktop(sandboxId, DESKTOP_LINK_TTL_SECONDS);
-    if (!url) {
+    const link = await provider.openDesktop(sandboxId, DESKTOP_LINK_TTL_SECONDS);
+    if (!link) {
       return NextResponse.json({ error: "This session's sandbox has no desktop." }, { status: 409 });
     }
-    return NextResponse.json({ url });
+    // Never cached: the password is good until the next link is made.
+    return NextResponse.json(link, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error(`Desktop: failed for ${workspace.id}`, error);
     return NextResponse.json({ error: "Couldn't start the desktop. Please try again." }, { status: 502 });

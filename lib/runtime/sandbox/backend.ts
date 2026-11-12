@@ -70,12 +70,17 @@ export interface SandboxBox {
 export interface BoxDesktop {
   /** Start it, or leave it running if it is: resolves once it's up. */
   start(): Promise<void>;
-  /** The WebSocket a browser's VNC client connects to, its credential in the
-   *  URL and good for `ttlSeconds`: long enough to open the socket, which
-   *  stays open after it lapses. It reaches the desktop's VNC server and
-   *  nothing else on the box. */
-  viewerUrl(ttlSeconds: number): Promise<string>;
+  /** How a browser's VNC client gets on: the WebSocket, its credential in
+   *  the URL and good for `ttlSeconds` (long enough to open the socket, which
+   *  stays open after it lapses), and the VNC password, where the desktop has
+   *  one. It reaches the desktop's VNC server and nothing else on the box. */
+  viewer(ttlSeconds: number): Promise<DesktopLink>;
 }
+
+/** A desktop link for the owner's browser (the Desktop tab): its noVNC
+ *  socket, and the VNC password where the desktop asks for one (E2B's, whose
+ *  port anyone could reach; a new one each time). */
+export type DesktopLink = { url: string; password?: string };
 
 /** CPU and memory a new box boots with. */
 export type BoxResources = { cpu: number; memoryGb: number };

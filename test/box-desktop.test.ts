@@ -33,9 +33,9 @@ test("a Daytona box's desktop starts through computer use, and is viewed through
   const desktop = box(sandbox).desktop;
   assert.ok(desktop);
   await desktop.start();
-  const url = await desktop.viewerUrl(120);
+  const link = await desktop.viewer(120);
   assert.deepEqual(log, ["start", `signed ${NOVNC_PORT} 120`]);
-  assert.equal(url, `wss://${NOVNC_PORT}-tok3n.daytonaproxy01.net/websockify`);
+  assert.deepEqual(link, { url: `wss://${NOVNC_PORT}-tok3n.daytonaproxy01.net/websockify` });
 });
 
 /** A backend whose one box is `b`. */
@@ -51,7 +51,7 @@ function backendOf(b: SandboxBox): SandboxBackend {
 test("opening a desktop starts it first, then links to it", async () => {
   const { sandbox, log } = desktopSandbox();
   const provider = new ComputerRuntimeProvider("daytona", backendOf(box(sandbox)));
-  assert.equal(await provider.openDesktop("box-1", 60), `wss://${NOVNC_PORT}-tok3n.daytonaproxy01.net/websockify`);
+  assert.deepEqual(await provider.openDesktop("box-1", 60), { url: `wss://${NOVNC_PORT}-tok3n.daytonaproxy01.net/websockify` });
   assert.deepEqual(log, ["start", `signed ${NOVNC_PORT} 60`]);
 });
 

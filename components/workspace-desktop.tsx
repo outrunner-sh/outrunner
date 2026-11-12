@@ -87,7 +87,11 @@ export function WorkspaceDesktop({
       try {
         const { default: Client } = await loading;
         if (!live || !screen.current) return;
-        rfb = new Client(screen.current, opened.url, { wsProtocols: ["binary"] });
+        rfb = new Client(screen.current, opened.url, {
+          wsProtocols: ["binary"],
+          // A desktop with a VNC password (E2B's): this link's, given with it.
+          ...(opened.password && { credentials: { password: opened.password } }),
+        });
       } catch (error) {
         console.error("Desktop: the viewer didn't start", error);
         return send({ type: "viewerfailed" });
