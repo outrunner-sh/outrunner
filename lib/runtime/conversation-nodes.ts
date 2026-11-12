@@ -68,6 +68,9 @@ export type ConversationNode =
       result: { content: unknown; isError?: boolean } | null;
     };
 
+/** /context's report (isContextReport): shown as Markdown, the newest open. */
+export const CONTEXT_USAGE = "Context usage";
+
 /**
  * Flatten the event stream into rows. A tool result is shown with the call it
  * answers, matched by id, not as a row of its own; one that answers no call in
@@ -246,9 +249,6 @@ export function conversationNodes(
  * attached-file prompt leads with that wrapper and the user's words follow, so
  * hiding it would hide the prompt.
  */
-/** /context's report (isContextReport): shown as Markdown, the newest open. */
-export const CONTEXT_USAGE = "Context usage";
-
 export function metaLabel(meta: boolean, text: string): string | null {
   const t = text.trimStart();
   if (t.startsWith("Base directory for this skill")) return "Skill";

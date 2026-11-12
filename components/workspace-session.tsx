@@ -467,6 +467,9 @@ export function WorkspaceSession({
   // The secrets the agent asked for (request_secrets), the same way: a form
   // in place of the composer, put away while its answer is on the way.
   const secretRequest = useMemo(() => pendingSecretRequest(conversation.events), [conversation.events]);
+  // Walks the conversation back for where Claude last compacted: once per
+  // change, not on every render.
+  const contextNow = useMemo(() => contextUsage(conversation.events, shownModel), [conversation.events, shownModel]);
   const waitingOnSecrets = secretRequest !== null && !answeredHere.has(secretRequest.toolUseId);
   const [secretsSaveError, setSecretsSaveError] = useState<string | null>(null);
   const waitingOnUser = (question !== null && !answeredHere.has(question.toolUseId)) || waitingOnSecrets;
@@ -1475,7 +1478,7 @@ export function WorkspaceSession({
           modeChoice={{ mode, onChange: setMode }}
           onCompact={startup ? undefined : compact}
           onSideChat={onSideChat}
-          context={contextUsage(conversation.events, shownModel)}
+          context={contextNow}
           // Sent as itself, without the diff's comments, and only while no
           // edit, plan, switch or queue would take the send over.
           onContextReport={

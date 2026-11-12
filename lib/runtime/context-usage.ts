@@ -30,7 +30,9 @@ const NATIVE_1M: Record<string, [major: number, minor: number]> = {
  *  opus-4-7-v1:0) and Vertex's (claude-opus-4-7@20260101) alike. A dotted
  *  minor isn't one: OpenRouter's anthropic/claude-opus-4.7 is Opus 4 to it,
  *  so 200k, and anthropic/claude-haiku-5.5 Haiku 5 (Claude Code 2.1.304's
- *  /context, Nov 12). An alias is the family's newest. */
+ *  /context, Nov 12). A major is one digit, as to Claude Code: it runs
+ *  claude-opus-10-0 and claude-opus-47 at 200k, so the ring does too. An
+ *  alias is the family's newest. */
 function claudeModel(model: string): { family: string; major: number; minor: number } | null {
   const id = model.toLowerCase().replace(/\[1m\]$/, "");
   const alias = /^(opus|sonnet|haiku|fable)$/.exec(id);

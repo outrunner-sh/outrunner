@@ -53,6 +53,7 @@ test("the window is Claude Code's, for every form a model's ID takes", () => {
     "claude-haiku-4-5-20251001": 200_000,
     "claude-haiku-5": 200_000,
     "claude-opus-47": 200_000,
+    "claude-opus-10-0": 200_000,
     // Bedrock's and Vertex's.
     "us.anthropic.claude-opus-4-7-v1:0": 1_000_000,
     "claude-opus-4-7@20260101": 1_000_000,
