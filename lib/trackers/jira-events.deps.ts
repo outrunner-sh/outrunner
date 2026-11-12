@@ -1,6 +1,6 @@
 /** What lib/trackers/jira-events.ts does its work with, on the server. */
 
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import { archiveOnClose } from "@/lib/db/github-loop";
 import { forgetJiraComment, jiraRow, stopJiraRow } from "@/lib/db/jira-sessions";

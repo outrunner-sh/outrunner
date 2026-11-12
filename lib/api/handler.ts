@@ -8,7 +8,7 @@
  * A bearer key needs no Origin check: no browser sends one on its own.
  */
 
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import { authorize, wantedOrg, type ApiCaller } from "@/lib/api/auth";
 import { apiAuthDeps } from "@/lib/api/auth.deps";
@@ -18,6 +18,7 @@ import { DEFAULT_LIMIT, RateLimiter, rateHeaders, type RateLimitRule } from "@/l
 import { getOwner, type Owner } from "@/lib/auth/owner";
 import { recordApiRequest, touchApiKey, touchCliToken } from "@/lib/db/api-keys";
 import { optionalEnv } from "@/lib/env";
+import { reportError } from "@/lib/observability/report";
 import { ActAsUserError, actAsUserKept } from "@/lib/supabase/acting-user";
 
 export type ApiContext = {
@@ -111,6 +112,7 @@ async function run(request: Request, caller: ApiCaller, work: (context: ApiConte
   } catch (error) {
     if (error instanceof ActAsUserError) return apiError(401, error.message);
     console.error(`API: ${request.method} ${new URL(request.url).pathname} failed`, error);
+    reportError(error, { where: "api", orgId: caller.orgId, userId: caller.userId, extra: { method: request.method, path: new URL(request.url).pathname } });
     return apiError(500, "Outrunner couldn't do that. It logged why; try again.");
   }
 }

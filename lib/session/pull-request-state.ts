@@ -9,7 +9,7 @@
  * which until now was only found when its page asked.
  */
 
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import { stateOf, type PullRequestEvent, type PullRequestState } from "@/lib/session/pull-request-event";
 import { recordPullRequestEventWith, type PullRequestChange } from "@/lib/session/pull-request-recording";

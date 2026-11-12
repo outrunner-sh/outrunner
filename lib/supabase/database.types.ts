@@ -1369,6 +1369,16 @@ type TrackerIssueClaimRow = {
 };
 
 // supabase/migrations/20261110100000_jira_delegation.sql
+// supabase/migrations/20261112150000_cron_heartbeats.sql
+type CronHeartbeatRow = {
+  job: string;
+  last_run_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  updated_at: string;
+};
+
 type JiraIssueSessionRow = {
   installation_id: string;
   issue_id: string;
@@ -1865,6 +1875,12 @@ export type Database = {
         Row: TrackerIssueClaimRow;
         Insert: TrackerIssueClaimRow;
         Update: Partial<TrackerIssueClaimRow>;
+        Relationships: [];
+      };
+      cron_heartbeats: {
+        Row: CronHeartbeatRow;
+        Insert: Insert<CronHeartbeatRow, "job">;
+        Update: Partial<CronHeartbeatRow>;
         Relationships: [];
       };
       jira_issue_sessions: {

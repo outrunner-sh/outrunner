@@ -94,6 +94,9 @@ interface Env {
   LINEAR_CLIENT_ID?: string;
   LINEAR_CLIENT_SECRET?: string;
   LINEAR_WEBHOOK_SECRET?: string;
+  /** Error tracking (lib/observability/report.ts): the Sentry project's DSN.
+   *  Without it, errors are only logged. */
+  SENTRY_DSN?: string;
   /** The Outrunner Jira app (docs/jira-app.md). Without them, Jira can't be connected. */
   JIRA_CLIENT_ID?: string;
   JIRA_CLIENT_SECRET?: string;
@@ -118,6 +121,11 @@ const IMAGE_VERSION_KEY = "image-version";
  *  started regardless, and how often that's looked at. */
 const STOPPED_TIMEOUT_MS = 30_000;
 const STOPPED_POLL_MS = 250;
+
+/** How long a container asked to stop (SIGTERM) gets to drain before it's
+ *  killed: server.ts waits up to 30s for requests and after() work under
+ *  way, then exits; a few seconds more for that and Sentry's flush. */
+const DRAIN_TIMEOUT_MS = 40_000;
 
 export class OutrunnerControlPlane extends Container<Env> {
   // Next.js listens on $PORT (8080) inside the container — keep in sync with
@@ -146,8 +154,10 @@ export class OutrunnerControlPlane extends Container<Env> {
    * file alone never reached users. A deploy restarts the Durable Object,
    * though, and the deploy's version is stored with the container it starts:
    * the first request under a new one replaces a container started under an
-   * older one. Destroyed, not asked to stop: `pnpm start` runs as PID 1 and
-   * doesn't answer SIGTERM.
+   * older one: asked to stop (SIGTERM), so the work under way in it (a
+   * session's setup, a cron job) can finish, and killed only if it hasn't
+   * within DRAIN_TIMEOUT_MS (replaceContainer). Requests meanwhile wait here,
+   * as they did for the start, and go to the new one.
    *
    * A request the Container class couldn't send because the container wasn't
    * running is sent again, once, after starting it: it never reached the app,
@@ -211,7 +221,7 @@ export class OutrunnerControlPlane extends Container<Env> {
       if (this.replacements >= 3) return;
       this.replacements++;
       console.log(`The container runs build ${String(build)}, not ${want}: replacing it`);
-      await this.destroy();
+      await this.replaceContainer();
       // Started here for the same reason as in runCurrentImage.
       await this.startWhenStopped();
     })()
@@ -238,7 +248,7 @@ export class OutrunnerControlPlane extends Container<Env> {
         return;
       }
       console.log(`Replacing a container from deploy ${startedUnder ?? "(unrecorded)"} with deploy ${version}'s`);
-      await this.destroy();
+      await this.replaceContainer();
       // Recorded before the start: if that fails, the next request starts the
       // container, and it's this deploy's either way.
       await this.ctx.storage.put(IMAGE_VERSION_KEY, version);
@@ -252,6 +262,23 @@ export class OutrunnerControlPlane extends Container<Env> {
       console.error("Couldn't run the latest deploy's container", error);
     });
     return this.current;
+  }
+
+  /**
+   * Stops the running container gracefully before a new one is started: a
+   * SIGTERM, which server.ts answers by draining (no new connections; the
+   * requests and after() work under way finish, up to 30s; the terminal
+   * relays closed for the browser to reconnect) and exiting. Killed if it's
+   * still running after DRAIN_TIMEOUT_MS. Its callers then start the new one
+   * (startWhenStopped), and wait, as before, for it to answer on its port.
+   */
+  private async replaceContainer(): Promise<void> {
+    if (!this.ctx.container?.running) return;
+    await this.stop("SIGTERM");
+    const stopped = await waitFor(() => !this.ctx.container?.running, DRAIN_TIMEOUT_MS, STOPPED_POLL_MS);
+    if (stopped) return;
+    console.error(`The container didn't stop within ${DRAIN_TIMEOUT_MS / 1000}s of SIGTERM; killing it`);
+    await this.destroy();
   }
 
   /**
@@ -335,6 +362,7 @@ export class OutrunnerControlPlane extends Container<Env> {
       ...(env.LINEAR_WEBHOOK_SECRET ? { LINEAR_WEBHOOK_SECRET: env.LINEAR_WEBHOOK_SECRET } : {}),
       ...(env.JIRA_CLIENT_ID ? { JIRA_CLIENT_ID: env.JIRA_CLIENT_ID } : {}),
       ...(env.JIRA_CLIENT_SECRET ? { JIRA_CLIENT_SECRET: env.JIRA_CLIENT_SECRET } : {}),
+      ...(env.SENTRY_DSN ? { SENTRY_DSN: env.SENTRY_DSN } : {}),
     };
     // No shared GITHUB_PAT / ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN: the
     // app stopped reading them when it went multi-user. Each user's own

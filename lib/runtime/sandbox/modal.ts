@@ -11,7 +11,7 @@ import {
 } from "modal";
 
 import { boxSize, DEFAULT_BOX_SIZE } from "@/lib/runtime/box-sizes";
-import { CLAUDE_CODE_VERSION } from "@/lib/runtime/claude-cli";
+import { claudeNativeInstallCommand } from "@/lib/runtime/claude-cli";
 import { CODEX_PACKAGE } from "@/lib/runtime/codex-cli";
 import { AGENT_PORT, type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import { ghInstallCommand } from "@/lib/runtime/github-cli";
@@ -57,7 +57,11 @@ const LIFETIME_MS = 24 * 60 * 60 * 1000;
 const SNAPSHOT_WAIT_MS = 120_000;
 const BOX_HOME = `/home/${BOX_USER}`;
 
-export const MODAL_BASE_IMAGE = "node:22-bookworm";
+/** Pinned by digest, so the image a box is built on can't change under the
+ *  tag. To bump: the index digest of the new tag, e.g.
+ *  `docker buildx imagetools inspect node:22-bookworm`. */
+export const MODAL_BASE_IMAGE =
+  "node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb";
 /** What the agent needs on top of node:22 (git and curl are in it). Claude
  *  Code is installed for the box user at the pinned version, so it can keep
  *  itself up to date from there (and the deploy's own check passes);
@@ -66,7 +70,7 @@ export const MODAL_IMAGE_SETUP = [
   "RUN apt-get update && apt-get install -y --no-install-recommends tmux git-lfs ripgrep jq " +
     "&& rm -rf /var/lib/apt/lists/*",
   `RUN useradd -m -s /bin/bash ${BOX_USER}`,
-  `RUN su - ${BOX_USER} -c 'curl -fsSL https://claude.ai/install.sh | bash -s ${CLAUDE_CODE_VERSION}'`,
+  `RUN su - ${BOX_USER} -c ${shellQuote(claudeNativeInstallCommand())}`,
   `RUN npm install -g ${CODEX_PACKAGE}`,
   `RUN ${ghInstallCommand({ sudo: false })}`,
 ];
