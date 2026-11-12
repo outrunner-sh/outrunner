@@ -7,7 +7,7 @@
  * say (a Ship's whole response) opens.
  */
 
-import { AlertTriangle, Archive, CheckCircle2, ChevronRight, GitMerge, GitPullRequest, GitPullRequestClosed, Hash, MessageSquare, MessageSquareReply } from "lucide-react";
+import { AlertTriangle, Archive, CheckCircle2, ChevronRight, GitMerge, GitPullRequest, GitPullRequestClosed, Ban, Hash, Inbox, MessageSquare, MessageSquareReply } from "lucide-react";
 import Link from "next/link";
 
 import { Markdown } from "@/components/markdown";
@@ -24,12 +24,15 @@ const KIND: Record<ParsedRunnerEvent["kind"], { label: string; Icon: typeof Chec
   slack_request: { label: "asked in Slack", Icon: MessageSquare, tone: "text-[#a3a3a3]" },
   slack_answer: { label: "answered in Slack", Icon: MessageSquareReply, tone: "text-[#a3a3a3]" },
   slack_channel: { label: "Slack channel", Icon: Hash, tone: "text-[#a3a3a3]" },
+  request: { label: "new request", Icon: Inbox, tone: "text-[#a3a3a3]" },
+  request_update: { label: "request updated", Icon: MessageSquareReply, tone: "text-[#a3a3a3]" },
+  request_cancelled: { label: "request cancelled", Icon: Ban, tone: "text-[#8f8f8f]" },
 };
 
 /** The line a card shows before it's opened. */
 function headline(event: ParsedRunnerEvent): { line: string; rest: string | null; link: string | null } {
   const link = /https:\/\/github\.com\/\S+\/pull\/\d+/.exec(event.body)?.[0] ?? null;
-  if (event.kind === "slack_request" || event.kind === "slack_answer" || event.kind === "slack_channel") {
+  if (!event.runnerId) {
     const first = event.body.split("\n").find((l) => l.trim()) ?? event.body;
     return { line: first.replace(/[*_`#>]/g, "").trim(), rest: event.body.trim() !== first.trim() ? event.body : null, link: event.permalink ?? null };
   }

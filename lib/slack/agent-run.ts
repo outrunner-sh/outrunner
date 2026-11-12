@@ -108,8 +108,11 @@ export type AgentMessage = {
   topLevel?: boolean;
   /** Slack's id for the event (a Mission's request is keyed by it). */
   eventId?: string | null;
-  /** A bot's message: heard only by a Mission on call that takes bots'. */
+  /** A bot's message: heard only by a Mission on call that takes bots', or
+   *  a Mission's watch that allows its app. */
   botId?: string | null;
+  /** A bot's app id (Slack's A…), for a watch's allowlist. */
+  appId?: string | null;
   /** Its files' names. */
   files?: string[];
 };

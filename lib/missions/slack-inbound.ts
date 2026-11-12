@@ -17,6 +17,10 @@
  * two), or whose processor died. A failure is tried again with backoff; the
  * last try says sorry in the thread, as an unsaved one would.
  *
+ * A new message in a channel a Mission's automation watches is saved the
+ * same way, and its processor runs the watches (lib/missions/slack-watch.ts)
+ * rather than the agent.
+ *
  * Duplicates between a mention's `message` and `app_mention` events are left
  * to the Slack agent (lib/slack/agent-run.ts), which answers the
  * app_mention and drops the message copy, saved or not.
@@ -31,6 +35,8 @@ export const MAX_INBOUND_ATTEMPTS = 8;
 export type InboundDeps = {
   binding(teamId: string, channelId: string): Promise<MissionChannel | null>;
   thread(teamId: string, channelId: string, threadTs: string): Promise<MissionThread | null>;
+  /** Whether a Mission's watch hears it (lib/missions/slack-watch.ts). */
+  watched?(message: AgentMessage): Promise<boolean>;
   /** Save it under its event id; false when it was saved before;
    *  "unavailable" when there's nowhere to save it (the migration that adds
    *  the table isn't applied yet). */
@@ -58,7 +64,8 @@ export async function missionEligible(message: AgentMessage, deps: Pick<InboundD
  *  Mission, or the Slack agent's as before. Throws when it can't tell, or
  *  can't save: the endpoint answers so that Slack retries. */
 export async function acceptInbound(eventId: string, message: AgentMessage, deps: InboundDeps): Promise<"saved" | "duplicate" | "not_mission"> {
-  if (!(await missionEligible(message, deps))) return "not_mission";
+  const mine = (await missionEligible(message, deps)) || (deps.watched ? await deps.watched(message) : false);
+  if (!mine) return "not_mission";
   const saved = await deps.save(eventId, message);
   // Before the migration: handled as before, unsaved, rather than refused.
   if (saved === "unavailable") return "not_mission";

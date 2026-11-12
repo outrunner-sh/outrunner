@@ -6,7 +6,8 @@
  * Slack channel it's on call in (connect, pause, disconnect).
  */
 
-import { FolderGit2, Users } from "lucide-react";
+import { FolderGit2, Users, Zap } from "lucide-react";
+import Link from "next/link";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { MissionGlyph, StatusDot } from "@/components/missions/mission-parts";
@@ -174,6 +175,16 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
         </span>
       )}
       {mission && <MissionSlackChip missionId={missionId} onError={setFailed} />}
+      {mission && (
+        <Link
+          href={`/missions/${missionId}/triggers`}
+          title="What sends this Mission work: schedules, webhooks, watched Slack channels, Linear"
+          className="hidden shrink-0 items-center gap-1 rounded-md border border-white/[0.08] px-1.5 py-0.5 text-[12px] text-[#a3a3a3] transition-colors hover:bg-white/[0.05] md:inline-flex"
+        >
+          <Zap className="size-3" />
+          Triggers
+        </Link>
+      )}
     </div>
   );
 }

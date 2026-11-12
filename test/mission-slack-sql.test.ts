@@ -322,3 +322,95 @@ test("an ambiguous or failed post doesn't hold its thread up; a question card is
   psql(`insert into mission_slack_asks (mission_id, thread_id, question, options, op_key) values ('${m}', '${t}', 'q', '{a}', 'ask:${m}')`);
   fails(`insert into mission_slack_asks (mission_id, thread_id, question, options, op_key) values ('${m}', '${t}', 'q', '{a}', 'ask:${m}')`, /op_key_key/);
 });
+
+// ---------------------------------------------------------------------------
+// 20261113100000_mission_inputs.sql
+// ---------------------------------------------------------------------------
+
+function missionAutomation(m: string, triggers: string, inputs = "{}"): string {
+  return psql(
+    `select create_mission_automation(gen_random_uuid(), null, 'a', null, 'p', '${triggers}', true, '{}', '{}', jsonb_build_object('mission_id', '${m}') || '${inputs}'::jsonb)`,
+  );
+}
+
+test("existing automations are sessions' and stay so; a Mission's needs its Mission", { skip }, () => {
+  assert.equal(psql(`select string_agg(distinct target_kind, ',') from automations where target_mission_id is null`), "session");
+  fails(`insert into automations (triggers, target_kind) values ('{schedule}', 'mission')`, /automations_target_check/);
+  fails(`insert into automations (triggers, target_kind, target_mission_id) values ('{schedule}', 'session', '${mission()}')`, /automations_target_check/);
+  // A watched channel or Linear are a Mission's only.
+  fails(`insert into automations (triggers) values ('{slack.message}')`, /automations_inputs_check/);
+  fails(`insert into automations (triggers) values ('{linear.issue}')`, /automations_inputs_check/);
+});
+
+test("a Mission's automation is made whole, with its inputs; its triggers are a Mission's", { skip }, () => {
+  const m = mission();
+  const watching = missionAutomation(m, "{slack.message}", `{"watch_team_id":"T1","watch_channel_id":"C500","filter_prompt":"bugs","allowed_app_ids":["A123"]}`);
+  assert.equal(psql(`select target_kind || ',' || watch_channel_id || ',' || array_to_string(allowed_app_ids, ',') from automations where id = '${watching}'`), "mission,C500,A123");
+  // A watch with no channel, Linear with no team, a GitHub trigger: refused.
+  fails(`select create_mission_automation(gen_random_uuid(), null, 'a', null, 'p', '{slack.message}', true, '{}', '{}', '{"mission_id":"${m}"}')`, /automations_inputs_check/);
+  fails(`select create_mission_automation(gen_random_uuid(), null, 'a', null, 'p', '{linear.issue}', true, '{}', '{}', '{"mission_id":"${m}"}')`, /automations_inputs_check/);
+  fails(`select create_mission_automation(gen_random_uuid(), null, 'a', null, 'p', '{pull_request.opened}', true, '{}', '{}', '{"mission_id":"${m}"}')`, /automations_inputs_check/);
+  const linear = missionAutomation(m, "{linear.issue,webhook}", `{"linear_team_ids":["team-1"]}`);
+  // Inputs change; its target doesn't.
+  const org = psql(`select org_id from automations where id = '${linear}'`);
+  assert.equal(psql(`select set_mission_automation_inputs('${org}', '${linear}', '{"linear_team_ids":["team-2"],"webhook_hmac_sealed":"sealed"}')`), "t");
+  // Another org's call changes nothing.
+  assert.equal(psql(`select set_mission_automation_inputs(gen_random_uuid(), '${linear}', '{"linear_team_ids":[]}')`), "f");
+  assert.equal(psql(`select array_to_string(linear_team_ids, ',') || ',' || webhook_hmac_sealed from automations where id = '${linear}'`), "team-2,sealed");
+  // A Mission deleted takes its automations with it.
+  psql(`delete from workspaces where id = '${m}'`);
+  assert.equal(psql(`select count(*) from automations where id in ('${watching}', '${linear}')`), "0");
+});
+
+test("runs: a Mission's triggers, and skipped with why", { skip }, () => {
+  const a = psql(`select id from automations limit 1`);
+  psql(`insert into automation_runs (automation_id, trigger, status) values ('${a}', 'slack.message', 'skipped'), ('${a}', 'linear.issue', 'ready')`);
+  fails(`insert into automation_runs (automation_id, trigger, status) values ('${a}', 'schedule', 'maybe')`, /automation_runs_status_check/);
+});
+
+test("one Slack message is one request anywhere: the first claim has it", { skip }, () => {
+  const a = mission();
+  const b = mission();
+  psql(`insert into mission_slack_message_claims (slack_team_id, channel_id, message_ts, mission_id, source, claim_key) values ('T1', 'C600', '1731400000.000100', '${a}', 'slack', 'slack:Ev1')`);
+  fails(
+    `insert into mission_slack_message_claims (slack_team_id, channel_id, message_ts, mission_id, source, claim_key) values ('T1', 'C600', '1731400000.000100', '${b}', 'slack_watch', 'run:x')`,
+    /mission_slack_message_claims_pkey/,
+  );
+});
+
+test("requests carry their source, details and status; trigger requests go untold until told", { skip }, () => {
+  const m = mission();
+  psql(`insert into mission_slack_requests (mission_id, request_key, source, title, details) values ('${m}', 'run:1', 'webhook', 'Deploy', '{"text":"go"}')`);
+  assert.equal(psql(`select source || ',' || status || ',' || (announced_at is null) from mission_slack_requests where request_key = 'run:1'`), "webhook,open,true");
+  fails(`insert into mission_slack_requests (mission_id, request_key, source) values ('${m}', 'run:2', 'email')`, /source_check/);
+  fails(`update mission_slack_requests set status = 'done' where request_key = 'run:1'`, /status_check/);
+  // Slack's own, from before, are Slack's.
+  psql(`insert into mission_slack_requests (mission_id, request_key) values ('${m}', 'Ev9')`);
+  assert.equal(psql(`select source from mission_slack_requests where request_key = 'Ev9'`), "slack");
+  psql(`insert into mission_events (mission_id, kind, idempotency_key) values ('${m}', 'request', 'request:${m}:run:1'), ('${m}', 'request_cancelled', 'request_cancelled:${m}:run:1')`);
+});
+
+test("a root post has no thread yet, and only a root post", { skip }, () => {
+  const m = mission();
+  psql(
+    `insert into mission_slack_posts (op_key, mission_id, binding_revision, team_id, channel_id, thread_ts, kind, payload, request_key) values ('root:${m}', '${m}', gen_random_uuid(), 'T1', 'C700', null, 'root', '{"chunks":["x"]}', 'run:1')`,
+  );
+  fails(
+    `insert into mission_slack_posts (op_key, mission_id, binding_revision, team_id, channel_id, thread_ts, kind, payload) values ('reply:${m}', '${m}', gen_random_uuid(), 'T1', 'C700', null, 'reply', '{"chunks":["x"]}')`,
+    /root_check/,
+  );
+  // Roots don't hold each other up: each is its own thread to be.
+  psql(
+    `insert into mission_slack_posts (op_key, mission_id, binding_revision, team_id, channel_id, thread_ts, kind, payload, request_key) values ('root2:${m}', '${m}', gen_random_uuid(), 'T1', 'C700', null, 'root', '{"chunks":["y"]}', 'run:2')`,
+  );
+  assert.deepEqual(claimPosts().filter((k) => k.endsWith(m)).sort(), [`root2:${m}`, `root:${m}`].sort());
+});
+
+test("a delegation is approved only with an approver", { skip }, () => {
+  const m = mission();
+  const a = missionAutomation(m, "{schedule}");
+  psql(`insert into mission_delegations (automation_id, mission_id) values ('${a}', '${m}')`);
+  fails(`update mission_delegations set approved_at = now() where automation_id = '${a}'`, /mission_delegations_check/);
+  psql(`insert into auth.users (id) values ('${OWNER}') on conflict do nothing`);
+  psql(`update mission_delegations set approved_at = now(), approved_by = '${OWNER}' where automation_id = '${a}'`);
+});

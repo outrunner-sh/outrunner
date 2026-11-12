@@ -238,7 +238,7 @@ test("a mention becomes a Ship and its pull request's cards, once each, through 
     canRead: async (userId: string) => userId === "ana",
     post: async (post: QueuedPost, message: { text: string; marker: string }) => {
       const ts = `${tsClock++}.000100`;
-      slack.push({ ts, thread: post.threadTs, text: message.text, marker: message.marker });
+      slack.push({ ts, thread: post.threadTs ?? ts, text: message.text, marker: message.marker });
       if (loseNextSend) {
         loseNextSend = false;
         throw new SlackUnknownOutcomeError("chat.postMessage", new Error("timeout"));

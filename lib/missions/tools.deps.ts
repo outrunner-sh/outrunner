@@ -43,6 +43,9 @@ import { missionLevel } from "@/lib/missions/slack-route.deps";
 import { askBlocks } from "@/lib/missions/slack-text";
 import type { MissionSlackDeps } from "@/lib/missions/slack-tools";
 import { userNames } from "@/lib/slack/web";
+import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import { askLinear } from "@/lib/trackers/ask-linear";
+import { linearAgentActivity } from "@/lib/trackers/linear";
 import { asBrowser } from "@/lib/slack/research";
 import { allows } from "@/lib/orgs/access";
 import { actAsUser } from "@/lib/supabase/acting-user";
@@ -83,25 +86,64 @@ function missionSlackDeps(): MissionSlackDeps {
     ledger: shipLedger,
     auditShip: async (mission, binding, request, runnerId) => {
       const requester = request?.requestedBy ?? null;
+      const orgId = binding?.orgId ?? mission.orgId;
+      if (!orgId) return;
       await recordAudit({
-        orgId: binding.orgId,
+        orgId,
         actor: requester ? { id: requester, githubLogin: "", name: await personLabel(requester), email: null } : "system",
         action: "mission.slack_ship_started",
         resource: { type: "mission", id: mission.id, label: mission.title ?? mission.branch },
         details: {
           runner_id: runnerId,
-          slack_team_id: binding.teamId,
-          slack_channel_id: binding.channelId,
-          ...(request && { request_id: request.requestKey, requested_by: request.requestedBy, requested_by_slack: request.requestedBySlack }),
+          ...(binding && { slack_team_id: binding.teamId, slack_channel_id: binding.channelId }),
+          ...(request && {
+            request_id: request.requestKey,
+            request_source: request.source ?? "slack",
+            requested_by: request.requestedBy,
+            requested_by_slack: request.requestedBySlack,
+          }),
           runs_as: mission.ownerId,
         },
       });
     },
+    // In the issue's agent session, as Outrunner's app (so Linear's webhook
+    // of it is our own, and dropped: isOwnLinearEvent). Claimed first, once
+    // a key; a failed send can be tried again.
+    linearReply: async (request, text, opKey) => {
+      if (!request.installationId || !request.externalSession) return "failed";
+      const db = createSupabaseAdminClient();
+      const { error } = await db.from("mission_linear_replies").insert({ op_key: opKey, mission_id: request.missionId });
+      if (error) {
+        if (error.code !== "23505") throw error;
+        const { data: retried, error: retryError } = await db
+          .from("mission_linear_replies")
+          .update({ status: "sending" })
+          .eq("op_key", opKey)
+          .eq("status", "failed")
+          .select("op_key");
+        if (retryError) throw retryError;
+        if (!retried?.length) return "duplicate";
+      }
+      try {
+        await askLinear(request.installationId, undefined, (token) =>
+          linearAgentActivity(token, request.externalSession as string, { type: "response", body: text }),
+        );
+      } catch (failure) {
+        console.warn(`Mission ${request.missionId}: a Linear reply didn't go`, failure instanceof Error ? failure.message : "");
+        await db.from("mission_linear_replies").update({ status: "failed" }).eq("op_key", opKey);
+        return "failed";
+      }
+      await db.from("mission_linear_replies").update({ status: "sent" }).eq("op_key", opKey);
+      return "sent";
+    },
     requesterName: async (request, thread) => {
       const binding = await missionBinding(request.missionId);
       const slackUser = request.requestedBySlack;
-      const name = binding && slackUser ? ((await userNames(await botToken(binding), [slackUser])).get(slackUser) ?? slackUser) : "someone";
-      return { name, permalink: thread?.permalink ?? null };
+      const name =
+        binding && slackUser
+          ? ((await userNames(await botToken(binding), [slackUser])).get(slackUser) ?? slackUser)
+          : (request.details?.from ?? (request.requestedBy ? await personLabel(request.requestedBy) : "someone"));
+      return { name, permalink: thread?.permalink ?? request.details?.link ?? null };
     },
   };
 }

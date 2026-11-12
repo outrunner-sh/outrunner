@@ -73,6 +73,12 @@ project can task it. In its threads: `!aside` keeps a message from it, `!mute` /
 on the project. It starts at most 6 Ships an hour and 30 a day. The commands are exact and handled directly, not
 by a model. Channels with no Mission keep everything below. See [Missions](missions.md#on-call-in-slack).
 
+**Watching a channel for a Mission.** A Mission's trigger can watch a channel (docs/missions.md, "Triggers"): new
+messages there that pass its filter become requests to the Mission, posted as new messages in the Mission's own
+channel. Invite Outrunner to the watched channel. Apps' and bots' messages are heard only from the app ids the trigger
+allows; Outrunner's own never. This uses the `message.channels` / `message.groups` events and history scopes already in
+the manifest; no new scopes.
+
 **It speaks first, too:**
 
 - **Follow-ups in the item's thread.** It posts the validator's verdict on the session's pull request. On FAIL or PARTIAL it offers **Send back to the session**, which wakes the session with the findings; the validator checks again when the PR updates. A merge closes the item (done) and says so; a PR closed without merging is reported, and the item stays open.

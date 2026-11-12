@@ -1780,3 +1780,130 @@ test("un-delegated again while a re-delegation is under way: it's found once the
   await send(prompted("again"), reply);
   assert.equal(reply.log.started.length, 1);
 });
+
+// --- Routed to a Mission (lib/missions/linear-route.ts)
+
+import { cancelIssue, type LinearMissionDeps, pickRoute } from "@/lib/missions/linear-route";
+import type { MissionRequest } from "@/lib/missions/slack-store";
+import type { LinearIssueEvent } from "@/lib/automations/run-event";
+
+function missionRoutes(over: Partial<LinearMissionDeps> = {}) {
+  const requests: MissionRequest[] = [];
+  const log = { runs: [] as LinearIssueEvent[], updates: [] as { key: string; id: string; text: string }[], cancelled: [] as string[] };
+  const mission: LinearMissionDeps = {
+    routes: async () => [
+      { automationId: "route-b", missionId: "mission-b", teamIds: [TEAM], createdAt: "2026-11-02T00:00:00Z" },
+      { automationId: "route-a", missionId: "mission-a", teamIds: [TEAM, "team-9"], createdAt: "2026-11-01T00:00:00Z" },
+    ],
+    missionTitle: async (id) => (id === "mission-a" ? "On call: web" : "Other"),
+    canRead: async (userId) => userId === "ana-user",
+    run: async (_automationId, event) => {
+      log.runs.push(event);
+      if (requests.some((r) => r.requestKey === `linear:${event.agentSessionId}`)) return null;
+      requests.push({
+        missionId: "mission-a",
+        requestKey: `linear:${event.agentSessionId}`,
+        threadId: null,
+        bindingRevision: null,
+        messageTs: null,
+        requestedBy: event.requestedBy,
+        requestedBySlack: null,
+        source: "linear",
+        status: "open",
+        externalRef: event.issueId,
+        externalSession: event.agentSessionId,
+        installationId: event.installationId,
+      });
+      return { status: "ready", reason: null, requestKey: `linear:${event.agentSessionId}` };
+    },
+    forSession: async (agentSessionId) => requests.find((r) => r.externalSession === agentSessionId) ?? null,
+    update: async (request, update) => {
+      if (request.status === "cancelled") return "cancelled";
+      // As the real one: keyed by the update, once.
+      if (!log.updates.some((u) => u.key === request.requestKey && u.id === update.id)) log.updates.push({ key: request.requestKey, id: update.id, text: update.text });
+      return "sent";
+    },
+    cancel: async (request) => {
+      if (request.status === "cancelled") return false;
+      request.status = "cancelled";
+      log.cancelled.push(request.requestKey);
+      return true;
+    },
+    forIssue: async (_i, issueId) => requests.filter((r) => r.externalRef === issueId && r.status === "open"),
+    ...over,
+  };
+  return { mission, requests, log };
+}
+
+test("a team routed to a Mission: the issue is its request, never a session; the oldest route picks one Mission", async () => {
+  const m = missionRoutes();
+  const h = harness({ mission: m.mission }, { scope: scope({ defaultProjectId: WEB.id }) });
+  await send(created(), h);
+  assert.equal(h.log.started.length, 0, "no session");
+  assert.equal(m.log.runs.length, 1);
+  assert.equal(m.log.runs[0].requestedBy, "ana-user");
+  assert.equal(m.log.runs[0].agentSessionId, AGENT);
+  assert.deepEqual(said(h.log).at(-1), { type: "response", body: 'Sent to the Mission "On call: web". It answers here.' });
+  assert.equal(h.current()?.stage, "working");
+  assert.equal(h.current()?.workspaceId, null);
+  assert.equal(pickRoute(await m.mission.routes("o"), "team-9")?.missionId, "mission-a");
+  assert.equal(pickRoute(await m.mission.routes("o"), "team-x"), null);
+});
+
+test("an issue a session has already stays with it; an unmatched team goes today's way", async () => {
+  const m = missionRoutes();
+  const owned = harness({ mission: m.mission }, { scope: scope({ defaultProjectId: WEB.id }), item: item({ workspaceId: "workspace-9", projectId: WEB.id }) });
+  await send(created(), owned);
+  assert.equal(m.log.runs.length, 0, "the session has it");
+  assert.deepEqual(owned.log.sent.map((s) => s.workspaceId), ["workspace-9"]);
+  const unmatched = harness({ mission: missionRoutes({ routes: async () => [] }).mission }, { scope: scope({ defaultProjectId: WEB.id }) });
+  await send(created(), unmatched);
+  assert.equal(unmatched.log.started.length, 1, "a session, as before");
+});
+
+test("a delegator who can't read the Mission's project is told so, and no session starts instead", async () => {
+  const m = missionRoutes({ canRead: async () => false });
+  const h = harness({ mission: m.mission }, { scope: scope({ defaultProjectId: WEB.id }) });
+  await send(created(), h);
+  assert.equal(h.log.started.length, 0);
+  assert.equal(m.log.runs.length, 0);
+  assert.match((said(h.log).at(-1) as { body: string }).body, /whose project you can't read/);
+});
+
+test("what's said later steers the same request, never a fresh Ship; our own words are ignored", async () => {
+  const m = missionRoutes();
+  const h = harness({ mission: m.mission }, { scope: scope({ defaultProjectId: WEB.id }) });
+  await send(created(), h);
+  await send(prompted("also check the API", { id: "act-1" }), h);
+  await send(prompted("and Safari", { id: "act-2" }), h);
+  assert.deepEqual(m.log.updates.map((u) => [u.key, u.id, u.text]), [[`linear:${AGENT}`, "act-1", "also check the API"], [`linear:${AGENT}`, "act-2", "and Safari"]]);
+  assert.equal(m.log.runs.length, 1, "one request");
+  assert.equal(h.log.started.length, 0);
+  assert.equal(h.log.sent.length, 0);
+  assert.deepEqual(said(h.log).at(-1), { type: "response", body: "Sent to the Mission." });
+  // The app's own activity, echoed: nothing.
+  await send(prompted("Replied in Linear.", { id: "act-3", userId: "app-user" }), h);
+  assert.equal(m.log.updates.length, 2, "nothing of ours reaches the Mission");
+  // Someone unlinked: told, nothing sent.
+  await send(prompted("hi", { id: "act-4", userId: "stranger" }), h);
+  assert.equal(m.log.updates.length, 2);
+});
+
+test("a stop, the issue taken back or closed cancels that issue's request only", async () => {
+  const m = missionRoutes();
+  const h = harness({ mission: m.mission }, { scope: scope({ defaultProjectId: WEB.id }) });
+  await send(created(), h);
+  // Another issue's request, which must survive.
+  await m.mission.run("route-a", { ...m.log.runs[0], agentSessionId: "agent-2", issueId: "issue-2" });
+  await send({ ...prompted(""), agentActivity: { signal: "stop" } } as AgentPayload, h);
+  assert.deepEqual(m.log.cancelled, [`linear:${AGENT}`]);
+  assert.deepEqual(said(h.log).at(-1), { type: "response", body: REPLIES.stopped });
+  assert.equal(h.log.stopped.length, 0, "no session to interrupt");
+  // Told later: the request is stopped.
+  await send(prompted("more", { id: "act-9" }), h);
+  assert.match((said(h.log).at(-1) as { body: string }).body, /was stopped/);
+  // Closing issue-2 cancels its request, and nothing of issue-1's again.
+  assert.equal(await cancelIssue(INSTALL.id, "issue-2", "the issue closed in Linear", m.mission), 1);
+  assert.deepEqual(m.log.cancelled, [`linear:${AGENT}`, "linear:agent-2"]);
+  assert.equal(await cancelIssue(INSTALL.id, ISSUE, "taken back", m.mission), 0);
+});

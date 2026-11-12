@@ -47,15 +47,21 @@ export type QueuedPost = {
   bindingRevision: string;
   teamId: string;
   channelId: string;
-  threadTs: string;
-  kind: "reply" | "ask" | "reaction" | "card";
+  /** Null for a root post: a new message in the channel, which becomes a
+   *  request's thread (lib/missions/requests.ts). */
+  threadTs: string | null;
+  kind: "reply" | "ask" | "reaction" | "card" | "root";
   payload: PostPayload;
   requester: string | null;
+  /** A root post's request. */
+  requestKey?: string | null;
 };
 
 /** A post taken from the queue. */
 export type ClaimedPost = QueuedPost & {
   id: string;
+  /** When it was queued (a root post is looked for in the channel since). */
+  createdAt?: string;
   attempt: number;
   progress: number;
   postedTs: string[];
@@ -76,8 +82,9 @@ export type OutboxPostDeps = {
    *  SlackUnknownOutcomeError when Slack didn't answer. */
   post(post: QueuedPost, message: { text: string; blocks?: SlackBlocks; marker: string }): Promise<string>;
   react(post: QueuedPost, ts: string, name: string): Promise<void>;
-  /** The markers of the bot's posts in the thread, and whether all were read. */
-  markers(post: QueuedPost): Promise<{ markers: Map<string, string>; complete: boolean }>;
+  /** The markers of the bot's posts in the thread (a root post's: in the
+   *  channel lately), and whether all were read. */
+  markers(post: ClaimedPost): Promise<{ markers: Map<string, string>; complete: boolean }>;
   /** A chunk posted: recorded before the next goes. */
   progressed(post: ClaimedPost, progress: number, postedTs: string[]): Promise<void>;
   /** A question card posted: its message, for the click to update. */
@@ -142,7 +149,7 @@ async function recheck(post: ClaimedPost, deps: OutboxPostDeps): Promise<string 
   if (binding.revision !== post.bindingRevision || binding.teamId !== post.teamId || binding.channelId !== post.channelId) {
     return "the Mission was put on call again since (another binding): queued posts aren't moved to it";
   }
-  if (await deps.muted(post.teamId, post.channelId, post.threadTs)) return "the thread is muted";
+  if (post.threadTs && (await deps.muted(post.teamId, post.channelId, post.threadTs))) return "the thread is muted";
   const mission = await deps.mission(post.missionId);
   if (!mission || mission.kind !== "mission" || mission.status === "destroying" || mission.status === "destroyed") return "the Mission is gone";
   if (post.requester && !(await deps.canRead(post.requester, mission))) return "the person who asked can no longer read the project";

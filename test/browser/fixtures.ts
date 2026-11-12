@@ -228,6 +228,7 @@ export const automations: Automation[] = [
   archived: false,
   runsUsed: 0,
   runsAs: null,
+  target: { kind: "session" },
   createdAt: "2026-10-28T07:00:00Z",
 }));
 export const templates = [

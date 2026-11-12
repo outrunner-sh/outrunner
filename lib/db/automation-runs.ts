@@ -33,7 +33,20 @@ export type RunCandidate = {
   labels: string[];
   /** A new session each run, or its last one on the repository. */
   sessionMode: SessionMode;
+  /** Where its runs go: a new session, or a Mission as a request
+   *  (lib/missions/automation-target.ts). Absent: a session. */
+  target?: CandidateTarget;
 };
+
+/** A Mission automation's destination and inputs, as a run needs them. */
+export type CandidateTarget =
+  | { kind: "session" }
+  | {
+      kind: "mission";
+      missionId: string;
+      watch: { teamId: string; channelId: string; filterPrompt: string; allowedAppIds: string[] } | null;
+      linearTeamIds: string[];
+    };
 
 type Admin = ReturnType<typeof createSupabaseAdminClient>;
 
@@ -53,7 +66,7 @@ async function candidatesOf(
   if (links.length === 0) return [];
   let automationsQuery = supabase
     .from("automations")
-    .select("id, org_id, name, prompt, triggers, runs_as, reviewers, labels, session_mode")
+    .select("id, org_id, name, prompt, triggers, runs_as, reviewers, labels, session_mode, target_kind, target_mission_id, watch_team_id, watch_channel_id, filter_prompt, allowed_app_ids, linear_team_ids")
     .in("id", [...new Set(links.map((l) => l.automation_id))])
     .eq("org_id", orgId);
   if (enabledOnly) automationsQuery = automationsQuery.eq("enabled", true);
@@ -91,6 +104,18 @@ async function candidatesOf(
         reviewers: a.reviewers,
         labels: a.labels,
         sessionMode: a.session_mode,
+        target:
+          a.target_kind === "mission" && a.target_mission_id
+            ? {
+                kind: "mission" as const,
+                missionId: a.target_mission_id,
+                watch:
+                  a.watch_team_id && a.watch_channel_id && a.filter_prompt
+                    ? { teamId: a.watch_team_id, channelId: a.watch_channel_id, filterPrompt: a.filter_prompt, allowedAppIds: a.allowed_app_ids }
+                    : null,
+                linearTeamIds: a.linear_team_ids,
+              }
+            : { kind: "session" as const },
       },
     ];
   });
@@ -352,7 +377,8 @@ export async function automationCandidates(automationIds: readonly string[]): Pr
     .is("suspended_at", null);
   if (error) throw error;
   const live = new Set((installations ?? []).map((i) => `${i.org_id}:${i.account_login.toLowerCase()}`));
-  return candidates.filter((c) => live.has(`${c.orgId}:${c.repoFullName.split("/")[0].toLowerCase()}`));
+  // A Mission's run makes a request, not a session working as the App.
+  return candidates.filter((c) => c.target?.kind === "mission" || live.has(`${c.orgId}:${c.repoFullName.split("/")[0].toLowerCase()}`));
 }
 
 /** How long a run may stay "started" before it's taken to have been cut off:
@@ -384,12 +410,19 @@ export async function sweepStalledRuns(now = new Date()): Promise<number> {
 /** Keep how a run went. */
 export async function settleRun(
   runId: string,
-  outcome: { status: "started" | "ready" | "failed" | "refused"; workspaceId?: string | null; reason?: string | null },
+  outcome: {
+    status: "started" | "ready" | "failed" | "refused" | "skipped";
+    workspaceId?: string | null;
+    reason?: string | null;
+    /** A Mission's run: the request it made. */
+    missionRequestKey?: string | null;
+  },
 ): Promise<void> {
   const { error } = await createSupabaseAdminClient()
     .from("automation_runs")
     .update({
       status: outcome.status,
+      ...(outcome.missionRequestKey !== undefined ? { mission_request_key: outcome.missionRequestKey } : {}),
       ...(outcome.workspaceId !== undefined ? { workspace_id: outcome.workspaceId } : {}),
       reason: outcome.reason ?? null,
       updated_at: new Date().toISOString(),
@@ -441,9 +474,13 @@ export async function listRuns(
   limit = RECENT_RUNS,
   onlyId?: string,
   kind?: TriggerKind,
+  /** Only these automations' (a Mission's Triggers view). */
+  automationIds?: readonly string[],
 ): Promise<AutomationRun[]> {
   const supabase = createSupabaseAdminClient();
-  const { data: automations, error } = await supabase.from("automations").select("id, name").eq("org_id", orgId);
+  let automationsQuery = supabase.from("automations").select("id, name").eq("org_id", orgId);
+  if (automationIds) automationsQuery = automationsQuery.in("id", [...automationIds]);
+  const { data: automations, error } = await automationsQuery;
   if (error) throw error;
   if (!automations?.length) return [];
   let query = supabase

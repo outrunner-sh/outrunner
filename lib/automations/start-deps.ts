@@ -54,5 +54,10 @@ export function startDeps(): StartDeps {
     // The way the Slack agent gives its thread's session a question:
     // resumed if its box was paused, restored if it was archived.
     continueSession: (userId, workspaceId, prompt) => wakeAndSend(userId, workspaceId, prompt),
+    // A Mission's: its request, never a session (lib/missions/automation-target.ts).
+    startMissionRun: async (run) => {
+      const { runForMission } = await import("@/lib/missions/automation-target.deps");
+      await runForMission(run);
+    },
   };
 }

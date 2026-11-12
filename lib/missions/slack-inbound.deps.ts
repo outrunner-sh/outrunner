@@ -23,6 +23,11 @@ export function inboundDeps(): InboundDeps {
     // endpoint answers so that Slack sends the event again.
     binding: channelBinding,
     thread: channelThread,
+    watched: async (message) => {
+      const { watchEligible } = await import("@/lib/missions/slack-watch");
+      const { watchDeps } = await import("@/lib/missions/slack-watch.deps");
+      return watchEligible(message, watchDeps());
+    },
     save: async (eventId, message) => {
       const { data, error } = await db()
         .from("mission_slack_inbound")
@@ -42,6 +47,13 @@ export function inboundDeps(): InboundDeps {
       return row ? { message: row.message as unknown as AgentMessage, attempt: row.attempt } : null;
     },
     handle: async (message, options) => {
+      // A watched channel's new message: the watches' (not the agent's).
+      const { processWatchedMessage, watchable } = await import("@/lib/missions/slack-watch");
+      if (watchable(message)) {
+        const { watchDeps } = await import("@/lib/missions/slack-watch.deps");
+        await processWatchedMessage(message, watchDeps());
+        return;
+      }
       const { handleAgentMessage } = await import("@/lib/slack/agent-run");
       await handleAgentMessage(message, options);
     },

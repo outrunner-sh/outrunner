@@ -21,6 +21,7 @@ import {
   bindChannel,
   channelBinding,
   channelThread,
+  claimSlackMessage,
   recordRequest,
   setChannelPaused,
   setThreadMuted,
@@ -193,6 +194,8 @@ export function slackRouteDeps(
     projectName: projectNameOf,
     acceptThread: (input) => acceptThread({ ...input, teamId, channelId: channel }),
     recordRequest,
+    claimMessage: (ts, missionId, requestKey) =>
+      claimSlackMessage({ teamId, channelId: channel, ts, missionId, source: "slack", claimKey: `slack:${requestKey}` }),
     setMuted: setThreadMuted,
     setPaused: async (missionId, paused) => {
       await setChannelPaused(missionId, paused);

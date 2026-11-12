@@ -190,6 +190,85 @@ Slack's retries, timeouts and rebinds
     Otherwise its owner carries on with it in Outrunner. Pause and mute
     don't stop these: they're about Slack, and work already started goes on.
 
+## Triggers
+
+Besides you and its Slack channel, a Mission takes work from **triggers**:
+automations (Settings' **Automations**, or **Triggers** in the Mission's
+header) whose destination is the Mission rather than a new session. Each run
+is a **request** to the Mission, never a session, whatever happens: a paused
+Mission's runs are recorded as skipped, a refused one says why.
+
+- **Making one.** In the automation editor, pick **A Mission, as a request**
+  (or open the Mission's **Triggers** → **New trigger**). It needs write on the
+  Mission's project; its one repository is the project's, and its
+  destination never changes once made. Existing automations are sessions'
+  and run exactly as before.
+- **The owner's approval.** An unattended trigger sends work only under a
+  delegation the Mission's owner approved (`mission_delegations`): approved
+  at once when the owner makes it, otherwise waiting until they approve it in
+  the Mission's Triggers (where they can revoke it too). Unapproved, revoked,
+  or with the owner unable to read the project, its runs are refused.
+- **What a request is.** Recorded (`mission_slack_requests`, with its source,
+  text and who it runs for: the approving owner, or a Linear delegator),
+  then, on call, a **root post** in the Mission's bound channel (a new
+  message per request, through the post queue), which becomes its thread;
+  then the Mission is told once (`<request source=… request_id=… thread=…>`).
+  Off call, or if the root post fails, it's told with no thread. A crash in
+  between is caught by the tick. Text from outside is data in the Mission's
+  prompt, and escaped in Slack (no pings, no hidden links).
+- **Answering.** The Slack tools take `request_id` in place of `thread`;
+  `linear_reply` answers a Linear request. `spawn_runner` takes the
+  `request_id` (and a `spawn_key`), on call or off, so each request's Ships
+  and pull requests are tracked as Slack's are.
+- **Run history.** Every run is in the automation's run history (and the
+  Mission's Triggers): made a request (`ready`), skipped (`No match: …`, the
+  Mission paused, the message another request's), failed (a filter that
+  failed: run it again) or refused.
+
+The four inputs:
+
+1. **Watched channels** (`slack.message`). A Slack channel, a filter prompt
+   (up to 2000 characters) and, optionally, the app ids whose messages it
+   hears. Each new message there (not thread replies, not mentions of
+   Outrunner, which are the bound channel's or the agent's) is saved before
+   Slack is answered, then run past the filter: a model call on the org's key
+   with no tools, the message given as data, answering strict JSON. Match,
+   no match and the filter's reason are kept on the run; an answer it can't
+   read, or a failed call, is a failed run (run it again), never a match.
+   Apps' and bots' messages are heard only from the allowed app ids, and
+   Outrunner's own never, whatever the list says, so a Mission's root posts
+   can't loop back. One message is one run an automation (its key is the
+   message), and one request anywhere: a claim (`mission_slack_message_claims`)
+   lets only the first of the bound channel's route and the watches have it.
+   Results go to the Mission's bound channel as a new root post per request.
+2. **Webhooks.** The automation webhook's token and route. A Mission's
+   requires a delivery key (`Idempotency-Key`, or `X-Delivery-Id`): the same
+   key is the same request, and the same key with a different body is a 409.
+   With a signing secret set (the editor; sealed at rest), each body must
+   carry `X-Outrunner-Signature: sha256=<hex HMAC-SHA256 of the raw body>`
+   (401 otherwise). URLs in a payload are never fetched; nothing of the body,
+   the key or the secret is logged.
+3. **Schedules.** `automation_schedules` and its tick. Each occurrence has
+   its own identity: the schedule, its config revision (a hash of when it
+   runs, so saving it unchanged or renaming the automation keeps it) and the
+   time on the schedule's own clock, so the hour a DST change repeats is one
+   occurrence and an edit never runs one twice. While the Mission is paused,
+   occurrences are recorded as skipped. Times an outage missed are folded
+   into the one run, which says how many.
+4. **Linear** (`linear.issue`). A route names Linear teams; an issue
+   delegated to Outrunner in one goes to the route's Mission (the oldest
+   route naming the team). An issue a session has already stays with it;
+   an unmatched team's issues go today's way. The delegator (linked) needs
+   read on the Mission's project; refused, it never becomes a session
+   instead. What's said later in the issue's agent session reaches the same
+   request (`<request_update>`), never a fresh Ship. A stop there, the issue
+   taken back, or the issue closing cancels that issue's request only
+   (`<request_cancelled>`): its Ships take no more work for it. The Mission
+   answers with `linear_reply`, posted as Outrunner's app in the agent
+   session, once per text; Linear's webhook drops its own app's events, and
+   a prompt by the app is ignored too. In v1 a route is by team; its labels
+   don't filter yet.
+
 ## How it works
 
 | Piece | Where |
@@ -213,6 +292,14 @@ Slack's retries, timeouts and rebinds
 | Reliability: saved events, spawn keys, the post queue, revisions | `supabase/migrations/20261112210000_mission_slack_reliability.sql` |
 | Saving and processing Slack's events | `lib/missions/slack-inbound.ts`, `app/api/integrations/slack/events` |
 | The post queue | `lib/missions/slack-outbox.ts` |
+| Triggers: schema (targets, inputs, delegations, request sources, message claims, root posts) | `supabase/migrations/20261113100000_mission_inputs.sql` |
+| A Mission's run, and its request | `lib/missions/automation-target.ts`, `lib/missions/requests.ts`, `startRun` in `lib/automations/runs.ts` |
+| Watched channels | `lib/missions/slack-watch.ts`, `lib/missions/slack-inbound.ts` |
+| Webhooks | `lib/missions/webhook-target.ts`, `app/api/automations/webhook/[token]` |
+| Schedules | `occurrenceKey` and `missedSince` in `lib/automations/schedule.ts`, `planScheduledRuns` |
+| Linear | `lib/missions/linear-route.ts`, hooked into `lib/trackers/linear-agent.ts` and `linear-events.ts` |
+| Who may point an automation at a Mission | `lib/missions/mission-automations.ts`, `/api/missions/[id]/triggers`, the org's automation routes |
+| Triggers UI | `components/automation-editor.tsx` (destination), `components/missions/mission-triggers.tsx`, `/missions/[id]/triggers` |
 | UI | `components/missions/*`, `hooks/use-missions.ts`, `GET /api/missions` |
 
 ### Tools
@@ -234,6 +321,9 @@ alone.
 | `slack_reply` | On call: queue a post in a request's thread (Markdown made mrkdwn, chunked). `post_key` for a deliberate repeat. |
 | `slack_ask` | On call: queue a question card in a thread, 1 to 5 options and Other. |
 | `slack_react` | On call: queue 👀, ✅ or ❌ on a request's message (`request_id`, or the thread's latest). |
+| `linear_reply` | A Linear request's reply, in its agent session, once per text. |
+
+The Slack tools take a trigger's `request_id` in place of `thread`.
 
 On call, `spawn_runner` takes `request_id` (the request it's for; the older
 `thread` names that thread's latest) and needs a `spawn_key`: see
@@ -274,6 +364,9 @@ A Ship's events for its Mission go through an outbox (`mission_events`):
   can't go on (its setup failed, its agent exited, its box stopped answering
   for five minutes, it never started on a message).
 - **merged / closed:** one of its pull requests.
+- **request / request_update / request_cancelled:** a trigger's request,
+  something added to it (a Linear prompt), or its cancellation (a Linear
+  issue stopped, taken back or closed), with no Ship.
 - **slack_request / slack_answer / slack_channel:** on call in Slack, with
   no Ship: a request, a question card's answer, the binding changing. They're
   delivered as `<slack_request>`, `<slack_answer>` and `<slack_channel>`
@@ -347,7 +440,7 @@ twice records it once. Events are delivered in batches:
 - **Migrations:** `pnpm db:migrate`, including
   `20261112200000_mission_slack.sql` and
   `20261112210000_mission_slack_reliability.sql` for Missions on call in
-  Slack. Until the first is applied, the Slack agent behaves as before (it
+  Slack, and `20261113100000_mission_inputs.sql` for triggers. Until the first is applied, the Slack agent behaves as before (it
   can't tell a channel has a Mission, so it treats none as having one). Apply
   both before the code that uses them is deployed.
 
@@ -407,6 +500,17 @@ twice records it once. Events are delivered in batches:
   in the thread, ambiguous when the thread can't settle it, Retry-After.
 - `test/mission-slack-cards.test.ts`: 2 Ships and 3 pull requests in one
   thread, each card its own, once.
+- `test/mission-triggers.test.ts`: a Mission's run never a session; approval,
+  pause, the owner's access; the filter's match, no match and failures; one
+  message one request; the request recorded once, root-posted, told once,
+  updated and cancelled alone; who may point an automation at a Mission.
+- `test/mission-inputs.test.ts`: watched channels (which messages, the app
+  allowlist, Outrunner's own output never, one message one run, never both
+  the bound route and a watch), webhooks (keys, conflicts, signatures) and
+  schedules (DST, edits, missed times).
+- `test/linear-agent.test.ts` (Routed to a Mission): routes, an owned issue
+  staying with its session, updates steering the same request, echoes
+  ignored, stops and closes cancelling that issue's request only.
 - `test/mission-slack-e2e.test.ts`: a mention through a crash, the outbox,
   the Mission's tools (a lost spawn retried), the queue (a lost send) and the
   Ship's cards, each message once and in order.

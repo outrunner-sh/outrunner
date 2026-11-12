@@ -23,7 +23,7 @@ import {
 import { sessionById } from "@/lib/missions/store";
 import { allows } from "@/lib/orgs/access";
 import type { Json, MissionSlackPostRow } from "@/lib/supabase/database.types";
-import { addReaction, postMessage, threadMarkers } from "@/lib/slack/web";
+import { addReaction, channelMarkers, postMessage, threadMarkers } from "@/lib/slack/web";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** A sender's lease: long enough for a long reply's chunks. */
@@ -51,6 +51,8 @@ function toClaimed(row: MissionSlackPostRow): ClaimedPost {
     kind: row.kind,
     payload: row.payload as PostPayload,
     requester: row.requester,
+    requestKey: row.request_key,
+    createdAt: row.created_at,
     attempt: row.attempts,
     progress: row.progress,
     postedTs: row.posted_ts,
@@ -65,9 +67,13 @@ export function postDeps(): OutboxPostDeps {
     mission: sessionById,
     canRead: async (userId, mission) => allows(await missionLevel(userId, mission), "read"),
     post: async (post, message) =>
-      postMessage(await token(post.teamId), { channel: post.channelId, threadTs: post.threadTs, ...message }),
+      postMessage(await token(post.teamId), { channel: post.channelId, ...(post.threadTs && { threadTs: post.threadTs }), ...message }),
     react: async (post, ts, name) => addReaction(await token(post.teamId), { channel: post.channelId, ts, name }),
-    markers: async (post) => threadMarkers(await token(post.teamId), post.channelId, post.threadTs),
+    markers: async (post) =>
+      post.threadTs
+        ? threadMarkers(await token(post.teamId), post.channelId, post.threadTs)
+        : // A root post: the channel since a minute before it was queued.
+          channelMarkers(await token(post.teamId), post.channelId, String(Math.floor(Date.parse(post.createdAt ?? new Date().toISOString()) / 1000) - 60)),
     progressed: async (post, progress, postedTs) => {
       const { error } = await db()
         .from("mission_slack_posts")
@@ -108,6 +114,13 @@ async function record(post: ClaimedPost, outcome: PostOutcome): Promise<void> {
   if (outcome.status === "ambiguous" || outcome.status === "failed") {
     console.warn(`Mission ${post.missionId}: Slack post ${post.opKey} ${outcome.status}: ${outcome.error}`);
   }
+  // A request's root post settled: its thread, if it went, and the Mission
+  // told of the request (lib/missions/requests.ts). Late or missed, the
+  // tick tells it.
+  if (post.kind === "root" && post.requestKey && outcome.status !== "retry") {
+    const { rootSettled } = await import("@/lib/missions/requests.deps");
+    await rootSettled(post, outcome.status === "sent" ? (outcome.postedTs[0] ?? null) : null);
+  }
 }
 
 /** Send what's due now: one post (`target`), or any (the tick). How many
@@ -122,7 +135,8 @@ export async function deliverPosts(target: string | null, max = 25): Promise<num
     const outcome = await deliverPost(post, deps).catch(
       (failure: unknown): PostOutcome => ({
         status: "retry",
-        error: failure instanceof Error ? failure.message : String(failure),
+        // A database error is a plain object with a message.
+        error: failure instanceof Error ? failure.message : ((failure as { message?: unknown } | null)?.message?.toString() ?? String(failure)),
         delaySeconds: 30,
         inDoubt: post.inDoubt,
         progress: post.progress,
@@ -162,6 +176,7 @@ export async function queuePost(post: QueuedPost): Promise<QueueOutcome> {
     kind: post.kind,
     payload: post.payload as Json,
     requester: post.requester,
+    request_key: post.requestKey ?? null,
   };
   const { data, error } = await db()
     .from("mission_slack_posts")

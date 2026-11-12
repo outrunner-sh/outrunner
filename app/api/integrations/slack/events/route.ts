@@ -21,6 +21,8 @@ type SlackEvent = {
   channel?: string;
   channel_type?: string;
   files?: { name?: string }[];
+  app_id?: string;
+  bot_profile?: { app_id?: string };
 };
 
 /**
@@ -93,9 +95,15 @@ function agentMessage(teamId: string, event: SlackEvent, eventId: string): Agent
   const files = (event.files ?? []).flatMap((f) => (typeof f.name === "string" ? [f.name.slice(0, 200)] : [])).slice(0, 20);
   const extra = { eventId, ...(files.length > 0 && { files }) };
   if (event.bot_id) {
-    if (event.type !== "app_mention") return null;
     const user = event.user ?? event.bot_id;
-    return { teamId, channel: event.channel, user, text: event.text, ts: event.ts, threadTs: event.thread_ts, mention: true, botId: event.bot_id, ...extra };
+    const appId = event.app_id ?? event.bot_profile?.app_id ?? null;
+    if (event.type === "app_mention") {
+      return { teamId, channel: event.channel, user, text: event.text, ts: event.ts, threadTs: event.thread_ts, mention: true, botId: event.bot_id, appId, ...extra };
+    }
+    // A bot's new message in a channel: heard only by a Mission's watch that
+    // allows its app (lib/missions/slack-watch.ts), never by the agent.
+    if (event.type !== "message" || (event.subtype && event.subtype !== "bot_message") || event.thread_ts || event.channel_type === "im") return null;
+    return { topLevel: true, teamId, channel: event.channel, channelType: event.channel_type ?? null, user, text: event.text, ts: event.ts, threadTs: null, mention: false, botId: event.bot_id, appId, ...extra };
   }
   if (!event.user) return null;
   if (event.type === "app_mention") {

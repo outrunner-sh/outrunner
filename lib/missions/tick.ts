@@ -15,6 +15,7 @@
  */
 
 import { deliverNow, missionsWithPendingEvents } from "@/lib/missions/outbox.deps";
+import { announceUntold } from "@/lib/missions/requests.deps";
 import { processDueInbound } from "@/lib/missions/slack-inbound.deps";
 import { deliverDuePosts } from "@/lib/missions/slack-outbox.deps";
 import { settleDueRunners } from "@/lib/missions/pull-requests";
@@ -37,13 +38,15 @@ export async function runMissionTick(): Promise<{
   delivered: number;
   slackInbound: number;
   slackPosts: number;
+  untold: number;
 }> {
-  const [turns, pullRequests, queued, failures, slackInbound] = await Promise.all([
+  const [turns, pullRequests, queued, failures, slackInbound, untold] = await Promise.all([
     quietly("turns", () => checkStaleWatches()),
     quietly("pull requests", () => settleDueRunners()),
     quietly("queued messages", () => sendWaitingQueued()),
     quietly("failures", () => reportFailedRunners()),
     quietly("saved Slack events", () => processDueInbound()),
+    quietly("untold requests", () => announceUntold()),
   ]);
   // Last: what the parts above recorded goes in the same tick.
   const delivered = await quietly("deliveries", async () => {
@@ -61,5 +64,6 @@ export async function runMissionTick(): Promise<{
     delivered: delivered ?? 0,
     slackInbound: slackInbound ?? 0,
     slackPosts: slackPosts ?? 0,
+    untold: untold ?? 0,
   };
 }

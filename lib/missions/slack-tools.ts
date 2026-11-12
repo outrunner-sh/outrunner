@@ -49,15 +49,17 @@ export type MissionSlackDeps = {
     threadId: string | null;
     requester: string | null;
     requesterSlack: string | null;
-    revision: string;
+    revision: string | null;
   }): Promise<SpawnReservation>;
   linkShip(id: string, runnerId: string): Promise<void>;
   releaseShip(id: string): Promise<void>;
   ledger(runnerId: string): Promise<ShipLedger | null>;
   /** The org's audit log: a Ship started from Slack. */
-  auditShip(mission: Workspace, binding: MissionChannel, request: MissionRequest | null, runnerId: string): Promise<void>;
+  auditShip(mission: Workspace, binding: MissionChannel | null, request: MissionRequest | null, runnerId: string): Promise<void>;
   /** Who asked, for the Ship's brief: their name, and the thread's link. */
   requesterName(request: MissionRequest, thread: MissionThread | null): Promise<{ name: string; permalink: string | null }>;
+  /** Reply to a Linear request in its agent session, once under `opKey`. */
+  linearReply?(request: MissionRequest, text: string, opKey: string): Promise<"sent" | "duplicate" | "failed">;
 };
 
 export type ToolResult = { text: string; isError?: boolean };
@@ -66,7 +68,10 @@ const THREAD = {
   type: "string",
   description: "The thread a <slack_request> came from: its thread attribute (a Slack ts like 1731400000.123456).",
 };
-const REQUEST_ID = { type: "string", description: "The request_id attribute of the <slack_request> this is for." };
+const REQUEST_ID = {
+  type: "string",
+  description: "The request_id attribute of the <slack_request> or <request> this is for. Instead of thread: a trigger's request is answered in its own thread.",
+};
 const POST_KEY = {
   type: "string",
   description: "Optional: your own key for this post (letters, digits, . _ : -). The same key in the same thread is one post, however often it's called.",
@@ -79,8 +84,8 @@ export const SLACK_TOOLS = [
       "Post in a thread of this Mission's Slack channel, the one a <slack_request> came from. Markdown, made Slack's mrkdwn; long text goes in several messages. Queued and posted shortly: calling it again with the same text (or post_key) for the same request is one post. The only way to talk in Slack: you can't post anywhere else or send DMs.",
     inputSchema: {
       type: "object",
-      properties: { thread: THREAD, text: { type: "string", description: "What to say, in Markdown." }, post_key: POST_KEY },
-      required: ["thread", "text"],
+      properties: { thread: THREAD, request_id: REQUEST_ID, text: { type: "string", description: "What to say, in Markdown." }, post_key: POST_KEY },
+      required: ["text"],
       additionalProperties: false,
     },
   },
@@ -92,10 +97,11 @@ export const SLACK_TOOLS = [
       type: "object",
       properties: {
         thread: THREAD,
+        request_id: REQUEST_ID,
         question: { type: "string", description: "The question, in Slack mrkdwn." },
         options: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 5, description: "1 to 5 short answers (up to 75 characters each)." },
       },
-      required: ["thread", "question", "options"],
+      required: ["question", "options"],
       additionalProperties: false,
     },
   },
@@ -106,7 +112,18 @@ export const SLACK_TOOLS = [
     inputSchema: {
       type: "object",
       properties: { thread: THREAD, emoji: { type: "string", enum: ["eyes", "white_check_mark", "x"] }, request_id: REQUEST_ID },
-      required: ["thread", "emoji"],
+      required: ["emoji"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "linear_reply",
+    description:
+      "Reply to a request that came from Linear (source=\"linear\"), in the issue's Outrunner agent session, where its people read it. Once per text: calling it again with the same text is one reply.",
+    inputSchema: {
+      type: "object",
+      properties: { request_id: REQUEST_ID, text: { type: "string", description: "What to say, in Markdown." } },
+      required: ["request_id", "text"],
       additionalProperties: false,
     },
   },
@@ -187,7 +204,25 @@ function postIn(
 /** Run one of the Slack tools for the Mission. */
 export async function callSlackTool(mission: Workspace, name: string, args: Record<string, unknown>, deps: MissionSlackDeps | undefined): Promise<ToolResult> {
   if (!deps) return refuse(NOT_ON_CALL);
-  const scoped = await scopedThread(mission, args.thread, deps);
+  if (name === "linear_reply") return linearReply(mission, args, deps);
+  // A trigger's request names its thread through its request_id.
+  let threadArg = args.thread;
+  if (!given(threadArg) && given(args.request_id)) {
+    const request = typeof args.request_id === "string" ? await deps.request(mission.id, args.request_id.trim()) : null;
+    if (!request) return refuse(NO_SUCH_REQUEST);
+    if (request.status === "cancelled") return refuse("That request was cancelled: post nothing more for it.");
+    const thread = request.threadId ? await deps.threadById(request.threadId) : null;
+    if (!thread) {
+      return refuse(
+        request.source === "linear"
+          ? "That request came from Linear: answer it with linear_reply."
+          : "That request has no Slack thread: the Mission isn't on call in a channel, or its post there didn't go. Tell its owner in your reply here instead.",
+      );
+    }
+    threadArg = thread.threadTs;
+  }
+  if (!given(threadArg)) return refuse("Name the thread (or the request_id) this is for.");
+  const scoped = await scopedThread(mission, threadArg, deps);
   if ("error" in scoped) return refuse(scoped.error);
   const { binding, thread } = scoped;
   const latest = await deps.latestRequest(thread.id);
@@ -262,6 +297,20 @@ export async function callSlackTool(mission: Workspace, name: string, args: Reco
   }
 }
 
+/** linear_reply: a Linear request's reply, in its agent session, once. */
+async function linearReply(mission: Workspace, args: Record<string, unknown>, deps: MissionSlackDeps): Promise<ToolResult> {
+  const request = typeof args.request_id === "string" ? await deps.request(mission.id, args.request_id.trim()) : null;
+  if (!request || request.source !== "linear") return refuse("This Mission has no Linear request with that request_id.");
+  if (request.status === "cancelled") return refuse("That request was cancelled (its issue closed, or was taken back): reply nothing more.");
+  const text = typeof args.text === "string" ? args.text.trim() : "";
+  if (!text) return refuse("text is required.");
+  if (text.length > 12000) return refuse("Keep it under 12000 characters.");
+  if (!deps.linearReply) return refuse("Linear isn't reachable from here.");
+  const outcome = await deps.linearReply(request, text, `linear:${mission.id}:${request.requestKey}:${hash(text)}`);
+  if (outcome === "failed") return refuse("Linear didn't take the reply. Try again shortly.");
+  return { text: outcome === "sent" ? "Replied in Linear." : "Already replied (the same text): it isn't posted twice." };
+}
+
 /** A Ship start on call, prepared: its reservation (place, key, the session
  *  id it gets), and what its brief says of who asked. */
 export type SlackStart = {
@@ -269,7 +318,8 @@ export type SlackStart = {
   plannedRunnerId: string;
   /** Reserved by an earlier call that never made its Ship: resumed. */
   resumed: boolean;
-  binding: MissionChannel;
+  /** The binding it started under; null off call (a Linear request). */
+  binding: MissionChannel | null;
   thread: MissionThread | null;
   request: MissionRequest | null;
   briefNote: string | null;
@@ -281,13 +331,18 @@ export type SlackStart = {
  *  still able to read the project. */
 export async function recheckStart(mission: Workspace, start: Pick<SlackStart, "binding" | "thread" | "request">, deps: MissionSlackDeps): Promise<string | null> {
   const binding = await deps.binding(mission.id);
-  if (!binding || binding.revision !== start.binding.revision) return "the Mission is no longer on call in that channel (or was put on call again since)";
-  if (binding.paused) return "the Mission is paused in Slack: start nothing new until someone says @Outrunner resume";
+  // Started on call: still on call the same way. A request from a trigger
+  // with no channel (Linear, an unbound Mission) holds to its own checks.
+  if (start.binding) {
+    if (!binding || binding.revision !== start.binding.revision) return "the Mission is no longer on call in that channel (or was put on call again since)";
+  }
+  if (binding?.paused) return "the Mission is paused in Slack: start nothing new until someone says @Outrunner resume";
   if (start.thread) {
     const thread = await deps.threadById(start.thread.id);
     if (!thread || thread.missionId !== mission.id) return "the thread is no longer this Mission's";
     if (thread.muted) return "the thread is muted";
   }
+  if (start.request?.status === "cancelled") return "that request was cancelled";
   if (start.request?.requestedBy && !(await deps.canRead(start.request.requestedBy, mission))) {
     return "the person who asked can no longer read this project";
   }
@@ -308,7 +363,9 @@ export async function slackSpawn(
 ): Promise<null | { error: string } | { existing: string } | SlackStart> {
   if (!deps) return given(args.request_id) || given(args.thread) ? { error: NOT_ON_CALL } : null;
   const binding = await deps.binding(mission.id);
-  if (!binding) return given(args.request_id) || given(args.thread) ? { error: NOT_ON_CALL } : null;
+  // Off call, a Ship for no request goes as any Mission's; one for a
+  // request (Linear's, say) is keyed and tracked all the same.
+  if (!binding && !given(args.request_id)) return given(args.thread) ? { error: NOT_ON_CALL } : null;
   const spawnKey = typeof args.spawn_key === "string" ? args.spawn_key.trim() : "";
   if (!SPAWN_KEY.test(spawnKey)) {
     return {
@@ -322,16 +379,18 @@ export async function slackSpawn(
   let thread: MissionThread | null = null;
   if (given(args.request_id)) {
     request = typeof args.request_id === "string" ? await deps.request(mission.id, args.request_id.trim()) : null;
-    thread = request?.threadId ? await deps.threadById(request.threadId) : null;
-    if (!request || !thread || !inChannel(thread, mission, binding)) return { error: NO_SUCH_REQUEST };
-    if (given(args.thread) && args.thread !== thread.threadTs) return { error: "request_id and thread name different threads." };
-  } else if (given(args.thread)) {
+    if (!request) return { error: NO_SUCH_REQUEST };
+    thread = request.threadId ? await deps.threadById(request.threadId) : null;
+    // A thread it has is in the channel the Mission's on call in now.
+    if (thread && (!binding || !inChannel(thread, mission, binding))) return { error: NO_SUCH_REQUEST };
+    if (given(args.thread) && (!thread || args.thread !== thread.threadTs)) return { error: "request_id and thread name different threads." };
+  } else if (given(args.thread) && binding) {
     const scoped = await scopedThread(mission, args.thread, deps);
     if ("error" in scoped) return { error: scoped.error };
     thread = scoped.thread;
     request = await deps.latestRequest(thread.id);
   }
-  if (request?.bindingRevision && request.bindingRevision !== binding.revision) {
+  if (request?.bindingRevision && binding && request.bindingRevision !== binding.revision) {
     return { error: "That request came in before the Mission was put on call again: ask the requester to mention Outrunner again." };
   }
   const why = await recheckStart(mission, { binding, thread, request }, deps);
@@ -344,10 +403,10 @@ export async function slackSpawn(
     threadId: thread?.id ?? null,
     requester: request?.requestedBy ?? null,
     requesterSlack: request?.requestedBySlack ?? null,
-    revision: binding.revision,
+    revision: binding?.revision ?? null,
   });
   if ("refused" in reserved) {
-    if (thread) {
+    if (thread && binding) {
       await deps
         .queue(
           postIn(binding, thread, {
@@ -375,7 +434,8 @@ export async function slackSpawn(
   let briefNote: string | null = null;
   if (request) {
     const who = await deps.requesterName(request, thread).catch(() => ({ name: "someone", permalink: thread?.permalink ?? null }));
-    briefNote = `\n\n---\nRequested in Slack by ${who.name}${who.permalink ? ` (${who.permalink})` : ""}. In your pull request's description, say: "Requested by ${who.name} in Slack."`;
+    const via = { slack: "in Slack", slack_watch: "in Slack", webhook: "by webhook", schedule: "on a schedule", linear: "in Linear" }[request.source ?? "slack"];
+    briefNote = `\n\n---\nRequested ${via} by ${who.name}${who.permalink ? ` (${who.permalink})` : ""}. In your pull request's description, say: "Requested by ${who.name} ${via}."`;
   }
   return { reservation: reserved.id, plannedRunnerId: reserved.plannedRunnerId, resumed: reserved.existing, binding, thread, request, briefNote };
 }
@@ -388,8 +448,14 @@ export async function recheckMessage(mission: Workspace, runnerId: string, deps:
   if (!deps) return null;
   const ledger = await deps.ledger(runnerId);
   if (!ledger?.requestKey) return null;
-  const binding = await deps.binding(mission.id);
-  if (!binding || (ledger.bindingRevision && binding.revision !== ledger.bindingRevision)) {
+  const request = await deps.request(mission.id, ledger.requestKey);
+  if (request?.status === "cancelled") {
+    return "That Ship's request was cancelled (its issue closed, or was taken back): it takes no more work for it. Archive it (archive_runner) unless it has an open pull request.";
+  }
+  // Started on call: only while that binding stands. Started off call (a
+  // Linear request): bound to none.
+  const binding = ledger.bindingRevision ? await deps.binding(mission.id) : null;
+  if (ledger.bindingRevision && (!binding || binding.revision !== ledger.bindingRevision)) {
     return "That Ship was started for a Slack request under a binding that has ended (the Mission went off call, or was put on call again). Its owner can carry on with it in Outrunner.";
   }
   if (ledger.requestedBy && !(await deps.canRead(ledger.requestedBy, mission))) {

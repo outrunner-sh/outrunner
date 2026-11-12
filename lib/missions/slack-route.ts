@@ -72,8 +72,11 @@ export type SlackRouteDeps = {
     startedBy: string | null;
     startedBySlack: string | null;
   }): Promise<MissionThread>;
+  /** Claim the Slack message for this request: one message is one request
+   *  anywhere (a watch may hear the same channel). False: another has it. */
+  claimMessage?(ts: string, missionId: string, requestKey: string): Promise<boolean>;
   /** Record the request, once (its key is the Slack event's). */
-  recordRequest(request: MissionRequest): Promise<void>;
+  recordRequest(request: MissionRequest): Promise<unknown>;
   setMuted(threadId: string, muted: boolean): Promise<void>;
   setPaused(missionId: string, paused: boolean): Promise<void>;
   /** Take the Mission off call here, and tell it. */
@@ -221,6 +224,7 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
 
   const permalink = await deps.permalink(message.ts).catch(() => null);
   const requestKey = message.eventId ?? `${message.teamId}:${message.channel}:${message.ts}`;
+  if (deps.claimMessage && !(await deps.claimMessage(message.ts, mission.id, requestKey))) return true;
   const accepted = await deps.acceptThread({
     missionId: mission.id,
     threadTs,

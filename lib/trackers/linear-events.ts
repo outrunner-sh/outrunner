@@ -78,6 +78,9 @@ export type LinearEventDeps = ArchiveClosedDeps & {
   duplicateOf(installationId: string, issueId: string): Promise<string | null>;
   session(workspaceId: string): Promise<ClosedSession | null>;
   archiveOnClose(orgId: string): Promise<boolean>;
+  /** The issue taken back or closed: its Missions' requests cancelled, and
+   *  only those (lib/missions/linear-route.ts). Absent: none. */
+  missionIssueEnded?(installationId: string, issueId: string, reason: string): Promise<void>;
   /** Run after the webhook has answered. */
   defer(work: () => Promise<unknown>): void;
 };
@@ -247,6 +250,11 @@ async function handleIssue(installation: TrackerInstallation, payload: Payload, 
       if (scope && held) await deps.addNote(scope.orgId, held.id, systemNote(eventId, "undelegated", "Outrunner was un-delegated in Linear, so its turn stopped. The session stays.", issue.url));
     }
     await deps.stopDelegation(installation.id, issue.id);
+    await deps.missionIssueEnded?.(installation.id, issue.id, "taken back in Linear");
+  }
+  // Closed just now: a Mission's request for it is done with.
+  if (issue.closed && "stateId" in from && !(Boolean(from.completedAt) || Boolean(from.canceledAt))) {
+    await deps.missionIssueEnded?.(installation.id, issue.id, "the issue closed in Linear");
   }
   if (app && delegate === app && "delegateId" in from && from.delegateId !== app) {
     const again = {

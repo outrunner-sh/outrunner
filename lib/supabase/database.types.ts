@@ -180,7 +180,11 @@ export type MissionEventKind =
   // 20261112200000_mission_slack.sql: Slack's news, with no Ship.
   | "slack_request"
   | "slack_answer"
-  | "slack_channel";
+  | "slack_channel"
+  // 20261113100000_mission_inputs.sql: requests from automations and Linear.
+  | "request"
+  | "request_update"
+  | "request_cancelled";
 type MissionEventRow = {
   id: string;
   mission_id: string;
@@ -257,8 +261,37 @@ type MissionSlackRequestRow = {
   message_ts: string | null;
   requested_by: string | null;
   requested_by_slack: string | null;
+  /** 20261113100000_mission_inputs.sql */
+  source: "slack" | "slack_watch" | "webhook" | "schedule" | "linear";
+  status: "open" | "cancelled";
+  title: string | null;
+  external_ref: string | null;
+  external_session: string | null;
+  installation_id: string | null;
+  automation_id: string | null;
+  announced_at: string | null;
+  details: Json | null;
   created_at: string;
 };
+type MissionDelegationRow = {
+  automation_id: string;
+  mission_id: string;
+  requested_by: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+};
+type MissionSlackMessageClaimRow = {
+  slack_team_id: string;
+  channel_id: string;
+  message_ts: string;
+  mission_id: string;
+  source: "slack" | "slack_watch";
+  claim_key: string;
+  created_at: string;
+};
+type MissionLinearReplyRow = { op_key: string; mission_id: string; status: "sending" | "sent" | "failed"; created_at: string };
 export type MissionSlackPostRow = {
   id: string;
   op_key: string;
@@ -266,14 +299,17 @@ export type MissionSlackPostRow = {
   binding_revision: string;
   team_id: string;
   channel_id: string;
-  thread_ts: string;
-  kind: "reply" | "ask" | "reaction" | "card";
+  /** Null for a root post only (20261113100000). */
+  thread_ts: string | null;
+  kind: "reply" | "ask" | "reaction" | "card" | "root";
   payload: Json;
   requester: string | null;
   status: "pending" | "sent" | "ambiguous" | "failed" | "dropped";
   progress: number;
   posted_ts: string[];
   in_doubt: boolean;
+  /** A root post's request. */
+  request_key: string | null;
   attempts: number;
   lease_until: string | null;
   next_attempt_at: string;
@@ -1012,7 +1048,10 @@ export type AutomationTriggerDb =
   | "issues.opened"
   | "issues.labeled"
   | "schedule"
-  | "webhook";
+  | "webhook"
+  // 20261113100000_mission_inputs.sql: a Mission's own.
+  | "slack.message"
+  | "linear.issue";
 
 type AutomationRow = {
   id: string;
@@ -1036,11 +1075,20 @@ type AutomationRow = {
   session_mode: "new" | "reuse";
   archived_at: string | null;
   runs_since: string;
+  /** supabase/migrations/20261113100000_mission_inputs.sql */
+  target_kind: "session" | "mission";
+  target_mission_id: string | null;
+  watch_team_id: string | null;
+  watch_channel_id: string | null;
+  filter_prompt: string | null;
+  allowed_app_ids: string[];
+  linear_team_ids: string[];
+  webhook_hmac_sealed: string | null;
   created_at: string;
   updated_at: string;
 };
 
-export type AutomationRunStatusDb = "queued" | "started" | "ready" | "failed" | "refused";
+export type AutomationRunStatusDb = "queued" | "started" | "ready" | "failed" | "refused" | "skipped";
 
 type AutomationRunRow = {
   id: string;
@@ -1075,6 +1123,8 @@ type AutomationRunRow = {
   check_reviewed_at: string | null;
   /** How the review closes the check: { conclusion, output }. */
   check_review: Json | null;
+  /** The Mission request it made (20261113100000_mission_inputs.sql). */
+  mission_request_key: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -2058,6 +2108,24 @@ export type Database = {
         Update: Partial<MissionSlackPostRow>;
         Relationships: [];
       };
+      mission_delegations: {
+        Row: MissionDelegationRow;
+        Insert: Insert<MissionDelegationRow, "automation_id" | "mission_id">;
+        Update: Partial<MissionDelegationRow>;
+        Relationships: [];
+      };
+      mission_slack_message_claims: {
+        Row: MissionSlackMessageClaimRow;
+        Insert: Insert<MissionSlackMessageClaimRow, "slack_team_id" | "channel_id" | "message_ts" | "mission_id" | "source" | "claim_key">;
+        Update: Partial<MissionSlackMessageClaimRow>;
+        Relationships: [];
+      };
+      mission_linear_replies: {
+        Row: MissionLinearReplyRow;
+        Insert: Insert<MissionLinearReplyRow, "op_key" | "mission_id">;
+        Update: Partial<MissionLinearReplyRow>;
+        Relationships: [];
+      };
       mission_slack_asks: {
         Row: MissionSlackAskRow;
         Insert: Insert<MissionSlackAskRow, "mission_id" | "thread_id" | "question" | "options">;
@@ -2360,6 +2428,25 @@ export type Database = {
       codex_connection_use: { Args: { k: string; actor: string; requested_org: string | null; gen: string }; Returns: boolean };
       codex_connection_change: { Args: { k: string; op: string; a?: Json }; Returns: Json };
       // supabase/migrations/20261102200000_missions.sql
+      create_mission_automation: {
+        Args: {
+          target_org: string;
+          runner: string;
+          automation_name: string;
+          automation_template: string | null;
+          automation_prompt: string;
+          automation_triggers: string[];
+          is_enabled: boolean;
+          project_ids: string[];
+          settings: Json;
+          inputs: Json;
+        };
+        Returns: string;
+      };
+      set_mission_automation_inputs: {
+        Args: { target_org: string; automation: string; inputs: Json };
+        Returns: boolean;
+      };
       claim_mission_slack_inbound: {
         Args: { target: string; lease_seconds: number };
         Returns: { message: Json; attempt: number }[];

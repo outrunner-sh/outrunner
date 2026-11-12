@@ -29,6 +29,27 @@ export type MissionEventPayload = {
   reason?: string;
   /** slack_request / slack_answer / slack_channel: where in Slack, and what. */
   slack?: SlackEventPayload;
+  /** request / request_update / request_cancelled: a request from one of
+   *  the Mission's triggers (docs/missions.md, "Triggers"). */
+  request?: RequestEventPayload;
+};
+
+/** Where a request came from, and what it says. */
+export type RequestEventPayload = {
+  source: "slack_watch" | "webhook" | "schedule" | "linear";
+  /** Its key, which the Mission's tools take as request_id. */
+  key: string;
+  /** Its thread in the Mission's bound channel, once its root post went. */
+  thread?: string | null;
+  /** The automation that made it, by name. */
+  automation?: string | null;
+  title?: string | null;
+  /** What it says (data, never instructions to the Mission). */
+  text?: string | null;
+  from?: string | null;
+  link?: string | null;
+  /** request_cancelled: why. */
+  reason?: string | null;
 };
 
 /** Slack's news for a Mission on call (docs/missions.md, "On call in Slack"). */
@@ -63,7 +84,14 @@ export type SlackEventPayload = {
 };
 
 /** The kinds that are Slack's, with no Ship. */
-export const SLACK_EVENT_KINDS = ["slack_request", "slack_answer", "slack_channel"] as const satisfies readonly MissionEventKind[];
+export const SLACK_EVENT_KINDS = [
+  "slack_request",
+  "slack_answer",
+  "slack_channel",
+  "request",
+  "request_update",
+  "request_cancelled",
+] as const satisfies readonly MissionEventKind[];
 
 export function isSlackEvent(kind: MissionEventKind): kind is (typeof SLACK_EVENT_KINDS)[number] {
   return (SLACK_EVENT_KINDS as readonly string[]).includes(kind);
@@ -102,6 +130,11 @@ export const eventKey = {
   slackAnswer: (askId: string) => `slack_answer:${askId}`,
   /** The binding changing: once a change. */
   slackChannel: (missionId: string, bound: boolean, at: string) => `slack_channel:${missionId}:${bound ? "on" : "off"}:${at}`,
+  /** A trigger's request: once. */
+  request: (missionId: string, key: string) => `request:${missionId}:${key}`,
+  /** An update to it (a Linear prompt): once each. */
+  requestUpdate: (missionId: string, key: string, updateId: string) => `request_update:${missionId}:${key}:${updateId}`,
+  requestCancelled: (missionId: string, key: string) => `request_cancelled:${missionId}:${key}`,
 };
 
 function attr(value: string): string {
@@ -113,7 +146,9 @@ function attr(value: string): string {
  *  block and pass off one of its own as an event, to the Mission or the
  *  page. */
 function inert(text: string): string {
-  return text.replace(/<(\/?)(runner|slack)_(event|request|answer|channel)/gi, "<$1$2-$3");
+  return text
+    .replace(/<(\/?)(runner|slack)_(event|request|answer|channel)/gi, "<$1$2-$3")
+    .replace(/<(\/?)request(_update|_cancelled)?\b/gi, (_m, close: string, rest: string | undefined) => `<${close}request${rest ? rest.replace("_", "-") : "-"}`);
 }
 
 function prLine(pr: PullRequestRef | undefined): string {
@@ -146,6 +181,14 @@ function body(event: MissionEvent): string {
     }
     case "slack_answer":
       return `Your question: ${p.slack?.question ?? ""}\nAnswer: ${p.slack?.answer ?? ""}`;
+    case "request": {
+      const r = p.request;
+      return [r?.title ? `Title: ${r.title}` : "", r?.text?.trim() || "(no text)"].filter(Boolean).join("\n\n");
+    }
+    case "request_update":
+      return p.request?.text?.trim() || "(no text)";
+    case "request_cancelled":
+      return `Cancelled${p.request?.reason ? `: ${p.request.reason}` : ""}. Stop this request's work: archive its Ships that have no open pull request (archive_runner), and start nothing more for it. Other requests go on.`;
     case "slack_channel":
       return p.slack?.bound
         ? `You are now on call in the Slack channel ${channelLabel(p.slack)}.\n\n${ON_CALL_PROMPT}`
@@ -161,6 +204,19 @@ function channelLabel(slack: SlackEventPayload | undefined): string {
 /** One of Slack's events as the Mission reads it: its own tag, naming the
  *  thread its slack_* tools take. */
 function formatSlackEvent(event: MissionEvent): string {
+  const r = event.payload.request;
+  if (r) {
+    const attrs = [
+      `source="${attr(r.source)}"`,
+      `request_id="${attr(r.key)}"`,
+      r.thread && `thread="${attr(r.thread)}"`,
+      r.automation && `automation="${attr(r.automation)}"`,
+      r.from && `from="${attr(r.from)}"`,
+      r.link && `link="${attr(r.link)}"`,
+      `at="${event.createdAt}"`,
+    ].filter(Boolean);
+    return `<${event.kind} ${attrs.join(" ")}>\n${inert(body(event))}\n</${event.kind}>`;
+  }
   const s = event.payload.slack;
   const attrs = [
     s?.thread && `thread="${attr(s.thread)}"`,
@@ -199,7 +255,7 @@ export type ParsedRunnerEvent = {
   permalink?: string | null;
 };
 
-const BLOCK = /<(runner_event|slack_request|slack_answer|slack_channel)\s+([^>]*)>\n?([\s\S]*?)\n?<\/\1>/g;
+const BLOCK = /<(runner_event|slack_request|slack_answer|slack_channel|request|request_update|request_cancelled)\s+([^>]*)>\n?([\s\S]*?)\n?<\/\1>/g;
 const ATTR = /(\w+)="([^"]*)"/g;
 
 function unattr(value: string): string {
@@ -215,7 +271,7 @@ export function parseRunnerEvents(text: string): { events: ParsedRunnerEvent[]; 
       const kind = tag as MissionEventKind;
       // The Mission's own instructions aren't news to show.
       const shown = kind === "slack_channel" ? inner.split("\n")[0] : inner;
-      events.push({ kind, runnerId: "", runner: null, at: found.at ?? null, body: shown.trim(), from: found.from ?? null, permalink: found.permalink ?? null });
+      events.push({ kind, runnerId: "", runner: null, at: found.at ?? null, body: shown.trim(), from: found.from ?? found.source ?? null, permalink: found.permalink ?? found.link ?? null });
       return "";
     }
     const kind = found.kind as MissionEventKind;

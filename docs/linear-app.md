@@ -137,3 +137,12 @@ away.
 - **The clock:** the cron that reconciles billing every 2 minutes also calls
   `POST /api/integrations/trackers/tick` with `BILLING_CRON_SECRET`, which refreshes tokens with under 2 hours left, so a
   webhook almost never has to wait for one.
+
+
+## Issues routed to a Mission
+
+A Mission's trigger can route a Linear team's delegated issues to the Mission (docs/missions.md, "Triggers"):
+an issue delegated to Outrunner in that team becomes a request to the Mission instead of a session of its own,
+unless a session has it already. What's said later in its agent session reaches the same request; a stop, taking
+it back, or closing the issue cancels that request's work only. The Mission replies in the agent session as
+Outrunner's app. Apply `20261113100000_mission_inputs.sql` first; teams with no route work as before.

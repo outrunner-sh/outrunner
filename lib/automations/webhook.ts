@@ -13,6 +13,9 @@ export type WebhookEvent = {
   receivedAt: string;
   /** The JSON posted; null for an empty body. */
   payload: unknown;
+  /** A Mission's: the body's sha256, so the same key with another body is
+   *  refused. */
+  payloadHash?: string;
 };
 
 /** The largest body a webhook takes: a payload, not a file. */

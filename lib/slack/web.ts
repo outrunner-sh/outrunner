@@ -255,3 +255,35 @@ export async function channelName(token: string, channel: string): Promise<strin
   const answer = await call<{ channel?: { name?: string } }>(token, "conversations.info", { channel }, "form").catch(() => null);
   return answer?.channel?.name ?? null;
 }
+
+/** The markers of the bot's posts in a channel since `oldest` (a ts), for a
+ *  root post whose send went unanswered; whether every message was read. */
+export async function channelMarkers(
+  token: string,
+  channel: string,
+  oldest: string,
+  maxPages = 3,
+): Promise<{ markers: Map<string, string>; complete: boolean }> {
+  const markers = new Map<string, string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < maxPages; page++) {
+    const answer = await call<{
+      messages?: { ts: string; metadata?: { event_type?: string; event_payload?: { op?: unknown } } }[];
+      has_more?: boolean;
+      response_metadata?: { next_cursor?: string };
+    }>(token, "conversations.history", { channel, oldest, limit: 200, include_all_metadata: true, ...(cursor && { cursor }) }, "form");
+    for (const m of answer.messages ?? []) {
+      const op = m.metadata?.event_type === MARKER_EVENT ? m.metadata.event_payload?.op : undefined;
+      if (typeof op === "string") markers.set(op, m.ts);
+    }
+    cursor = answer.response_metadata?.next_cursor || undefined;
+    if (!answer.has_more || !cursor) return { markers, complete: true };
+  }
+  return { markers, complete: false };
+}
+
+/** Who the bot is in a Slack workspace: its user and bot ids (auth.test). */
+export async function botIdentity(token: string): Promise<{ userId: string | null; botId: string | null }> {
+  const answer = await call<{ user_id?: string; bot_id?: string }>(token, "auth.test", {}, "form");
+  return { userId: answer.user_id ?? null, botId: answer.bot_id ?? null };
+}

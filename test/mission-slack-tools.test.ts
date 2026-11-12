@@ -30,7 +30,7 @@ function channel(missionId: string, channelId: string, patch: Partial<MissionCha
   return { missionId, orgId: "o1", teamId: "T1", channelId, boundBy: "wes", listen: "mentions", allowBotMessages: false, paused: false, revision: `rev-${missionId}`, ...patch };
 }
 
-type Ledger = { id: string; missionId: string; requestKey: string | null; spawnKey: string; threadId: string | null; plannedRunnerId: string; runnerId: string | null; requestedBy: string | null; revision: string };
+type Ledger = { id: string; missionId: string; requestKey: string | null; spawnKey: string; threadId: string | null; plannedRunnerId: string; runnerId: string | null; requestedBy: string | null; revision: string | null };
 
 /** m1 on call in C1, m2 in C2; m3 in none. m1's threads: t1 (two
  *  requests, by Ana then Bo), t3 muted, t4 of a channel it was on call in
@@ -191,7 +191,8 @@ test("a Mission queues posts only in its own threads of the channel it's on call
     ] as const) {
       const result = await call(deps, "m1", name, { ...args, thread: ts });
       assert.equal(result.isError, true, `${name} ${ts}`);
-      assert.match(result.text, /no such thread/, `${name} ${ts}`);
+      // No thread at all: told to name one (or a request_id).
+      assert.match(result.text, ts ? /no such thread/ : /Name the thread/, `${name} ${ts}`);
     }
   }
   assert.match((await call(deps, "m1", "slack_reply", { thread: "1731400000.000300", text: "x" })).text, /muted/);
@@ -412,4 +413,48 @@ test("message_runner to a Slack Ship: rechecked against its binding and requeste
   // A Ship not started for Slack isn't held to any of it.
   const own = json((await call(w.deps, "m3", "spawn_runner", { prompt: "y" })).text).runner_id;
   assert.equal((await call(w.deps, "m3", "message_runner", { runner_id: own, message: "hi" })).isError, undefined);
+});
+
+// --- Requests from triggers (lib/missions/requests.ts)
+
+test("a trigger's request is answered in its own thread by its request_id; Linear's with linear_reply, once", async () => {
+  const w = world();
+  w.requests.push(
+    { missionId: "m1", requestKey: "run:r1", threadId: "t1", bindingRevision: "rev-m1", messageTs: null, requestedBy: "ana", requestedBySlack: null, source: "webhook", status: "open" },
+    { missionId: "m1", requestKey: "linear:agent-1", threadId: null, bindingRevision: null, messageTs: null, requestedBy: "ana", requestedBySlack: null, source: "linear", status: "open", installationId: "i1", externalSession: "agent-1" },
+    { missionId: "m1", requestKey: "run:gone", threadId: "t1", bindingRevision: "rev-m1", messageTs: null, requestedBy: "ana", requestedBySlack: null, source: "schedule", status: "cancelled" },
+  );
+  const replied: string[] = [];
+  w.deps.slack!.linearReply = async (_request, text, opKey) => {
+    if (replied.includes(opKey)) return "duplicate";
+    replied.push(opKey);
+    return text ? "sent" : "failed";
+  };
+  assert.match((await call(w.deps, "m1", "slack_reply", { request_id: "run:r1", text: "Looking." })).text, /^Queued/);
+  assert.equal([...w.queue.values()].at(-1)?.threadTs, "1731400000.000100");
+  assert.match((await call(w.deps, "m1", "slack_reply", { request_id: "linear:agent-1", text: "x" })).text, /linear_reply/);
+  assert.match((await call(w.deps, "m1", "slack_reply", { request_id: "run:gone", text: "x" })).text, /cancelled/);
+  assert.equal((await call(w.deps, "m1", "linear_reply", { request_id: "linear:agent-1", text: "On it." })).text, "Replied in Linear.");
+  assert.match((await call(w.deps, "m1", "linear_reply", { request_id: "linear:agent-1", text: "On it." })).text, /Already replied/);
+  assert.equal((await call(w.deps, "m1", "linear_reply", { request_id: "run:r1", text: "x" })).isError, true, "not a Linear request");
+  // Another Mission's request: as no request.
+  assert.equal((await call(w.deps, "m2", "linear_reply", { request_id: "linear:agent-1", text: "x" })).isError, true);
+});
+
+test("a Linear request's Ships start off call too, keyed and tracked; a cancelled request's take nothing more", async () => {
+  const w = world();
+  w.bindings.splice(0, w.bindings.length);
+  w.requests.push({ missionId: "m1", requestKey: "linear:agent-1", threadId: null, bindingRevision: null, messageTs: null, requestedBy: "ana", requestedBySlack: null, source: "linear", status: "open" });
+  const started = JSON.parse((await call(w.deps, "m1", "spawn_runner", { prompt: "Fix it.", request_id: "linear:agent-1", spawn_key: "fix" })).text) as { runner_id: string };
+  assert.equal(started.runner_id, "planned-1");
+  assert.deepEqual(w.ledger.map((l) => [l.requestKey, l.revision]), [["linear:agent-1", null]]);
+  assert.match(w.started[0].brief, /Requested in Linear by Ana/);
+  // Off call with no request: as any Mission's, unkeyed.
+  assert.equal((await call(w.deps, "m1", "spawn_runner", { prompt: "chore" })).isError, undefined);
+  // Its Ship takes messages, though no binding stands for it.
+  assert.equal((await call(w.deps, "m1", "message_runner", { runner_id: "planned-1", message: "go on" })).isError, undefined);
+  // Cancelled: no more Ships for it, and its Ship takes no more messages.
+  w.requests[w.requests.length - 1].status = "cancelled";
+  assert.match((await call(w.deps, "m1", "spawn_runner", { prompt: "more", request_id: "linear:agent-1", spawn_key: "more" })).text, /cancelled/);
+  assert.match((await call(w.deps, "m1", "message_runner", { runner_id: "planned-1", message: "go on" })).text, /request was cancelled/);
 });

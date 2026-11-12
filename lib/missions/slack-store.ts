@@ -6,6 +6,7 @@
  * tools and its routes).
  */
 
+import type { Json } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 function db() {
@@ -332,9 +333,24 @@ export type MissionRequest = {
   messageTs: string | null;
   requestedBy: string | null;
   requestedBySlack: string | null;
+  /** Where it came from (20261113100000_mission_inputs.sql); Slack's own
+   *  when absent. */
+  source?: "slack" | "slack_watch" | "webhook" | "schedule" | "linear";
+  /** Cancelled: its Ships take no more work for it. */
+  status?: "open" | "cancelled";
+  title?: string | null;
+  externalRef?: string | null;
+  externalSession?: string | null;
+  installationId?: string | null;
+  automationId?: string | null;
+  announcedAt?: string | null;
+  /** What the Mission is told of it (a trigger's request). */
+  details?: RequestDetails | null;
 };
 
-function toRequest(row: {
+export type RequestDetails = { text: string; from?: string | null; link?: string | null; automationName?: string | null };
+
+type RequestRow = {
   mission_id: string;
   request_key: string;
   thread_id: string | null;
@@ -342,7 +358,18 @@ function toRequest(row: {
   message_ts: string | null;
   requested_by: string | null;
   requested_by_slack: string | null;
-}): MissionRequest {
+  source?: MissionRequest["source"];
+  status?: MissionRequest["status"];
+  title?: string | null;
+  external_ref?: string | null;
+  external_session?: string | null;
+  installation_id?: string | null;
+  automation_id?: string | null;
+  announced_at?: string | null;
+  details?: unknown;
+};
+
+function toRequest(row: RequestRow): MissionRequest {
   return {
     missionId: row.mission_id,
     requestKey: row.request_key,
@@ -351,12 +378,21 @@ function toRequest(row: {
     messageTs: row.message_ts,
     requestedBy: row.requested_by,
     requestedBySlack: row.requested_by_slack,
+    source: row.source ?? "slack",
+    status: row.status ?? "open",
+    title: row.title ?? null,
+    externalRef: row.external_ref ?? null,
+    externalSession: row.external_session ?? null,
+    installationId: row.installation_id ?? null,
+    automationId: row.automation_id ?? null,
+    announcedAt: row.announced_at ?? null,
+    details: (row.details as RequestDetails | null | undefined) ?? null,
   };
 }
 
-/** Record a request, once: a retry of it changes nothing. */
-export async function recordRequest(request: MissionRequest): Promise<void> {
-  const { error } = await db()
+/** Record a request, once: a retry of it changes nothing. True when it's new. */
+export async function recordRequest(request: MissionRequest): Promise<boolean> {
+  const { data, error } = await db()
     .from("mission_slack_requests")
     .upsert(
       {
@@ -367,10 +403,130 @@ export async function recordRequest(request: MissionRequest): Promise<void> {
         message_ts: request.messageTs,
         requested_by: request.requestedBy,
         requested_by_slack: request.requestedBySlack,
+        ...(request.source && request.source !== "slack" && {
+          source: request.source,
+          title: request.title ?? null,
+          external_ref: request.externalRef ?? null,
+          external_session: request.externalSession ?? null,
+          installation_id: request.installationId ?? null,
+          automation_id: request.automationId ?? null,
+          details: (request.details ?? null) as Json,
+        }),
       },
       { onConflict: "mission_id,request_key", ignoreDuplicates: true },
-    );
+    )
+    .select("request_key");
   if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
+/** A request's thread, once its root post went. */
+export async function setRequestThread(missionId: string, requestKey: string, threadId: string): Promise<void> {
+  const { error } = await db().from("mission_slack_requests").update({ thread_id: threadId }).eq("mission_id", missionId).eq("request_key", requestKey);
+  if (error) throw error;
+}
+
+/** The Mission was told of the request: true for the first only. */
+export async function markAnnounced(missionId: string, requestKey: string): Promise<boolean> {
+  const { data, error } = await db()
+    .from("mission_slack_requests")
+    .update({ announced_at: new Date().toISOString() })
+    .eq("mission_id", missionId)
+    .eq("request_key", requestKey)
+    .is("announced_at", null)
+    .select("request_key");
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
+/** Cancel a request: true when it was open. */
+export async function cancelRequestRow(missionId: string, requestKey: string): Promise<boolean> {
+  const { data, error } = await db()
+    .from("mission_slack_requests")
+    .update({ status: "cancelled" })
+    .eq("mission_id", missionId)
+    .eq("request_key", requestKey)
+    .eq("status", "open")
+    .select("request_key");
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
+/** Requests from triggers the Mission hasn't been told of, made before
+ *  `before`: for the tick. */
+export async function unannouncedRequests(before: Date, max = 25): Promise<MissionRequest[]> {
+  const { data, error } = await db()
+    .from("mission_slack_requests")
+    .select("*")
+    .is("announced_at", null)
+    .neq("source", "slack")
+    .lt("created_at", before.toISOString())
+    .order("created_at", { ascending: true })
+    .limit(max);
+  if (error) throw error;
+  return (data ?? []).map(toRequest);
+}
+
+/** The request a Linear agent session is, if one is. */
+export async function requestForExternalSession(source: "linear", externalSession: string): Promise<MissionRequest | null> {
+  const { data, error } = await db()
+    .from("mission_slack_requests")
+    .select("*")
+    .eq("source", source)
+    .eq("external_session", externalSession)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toRequest(data) : null;
+}
+
+/** A root post's status, for a request the tick finds untold. */
+export async function rootPostStatus(missionId: string, requestKey: string): Promise<{ status: string; createdAt: string } | null> {
+  const { data, error } = await db()
+    .from("mission_slack_posts")
+    .select("status, created_at")
+    .eq("mission_id", missionId)
+    .eq("request_key", requestKey)
+    .eq("kind", "root")
+    .maybeSingle();
+  if (error) throw error;
+  return data ? { status: data.status, createdAt: data.created_at } : null;
+}
+
+/** Claim one Slack message for one request, anywhere: true when this claim
+ *  has it (made now, or made before under the same key). */
+export async function claimSlackMessage(input: {
+  teamId: string;
+  channelId: string;
+  ts: string;
+  missionId: string;
+  source: "slack" | "slack_watch";
+  claimKey: string;
+}): Promise<boolean> {
+  const { error } = await db().from("mission_slack_message_claims").insert({
+    slack_team_id: input.teamId,
+    channel_id: input.channelId,
+    message_ts: input.ts,
+    mission_id: input.missionId,
+    source: input.source,
+    claim_key: input.claimKey,
+  });
+  if (!error) return true;
+  if (error.code !== "23505") {
+    // Before the migration that adds it: no exclusivity to keep yet.
+    if (error.code === "42P01" || error.code === "PGRST205") return true;
+    throw error;
+  }
+  const { data, error: readError } = await db()
+    .from("mission_slack_message_claims")
+    .select("claim_key")
+    .eq("slack_team_id", input.teamId)
+    .eq("channel_id", input.channelId)
+    .eq("message_ts", input.ts)
+    .maybeSingle();
+  if (readError) throw readError;
+  return data?.claim_key === input.claimKey;
 }
 
 export async function requestByKey(missionId: string, requestKey: string): Promise<MissionRequest | null> {
@@ -404,7 +560,7 @@ export async function reserveSpawn(input: {
   threadId: string | null;
   requester: string | null;
   requesterSlack: string | null;
-  revision: string;
+  revision: string | null;
 }): Promise<SpawnReservation> {
   const { data, error } = await db().rpc("reserve_mission_slack_spawn", {
     target: input.missionId,
