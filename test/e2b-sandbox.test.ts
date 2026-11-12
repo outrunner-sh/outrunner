@@ -217,6 +217,27 @@ test("a restore in this server is never paused by a get running alongside it", a
   assert.ok(!calls.includes("pause"), calls.join(","));
 });
 
+test("a restore here that finished while a get was connecting isn't paused by that get", async () => {
+  let started = 1_000;
+  const backend = new E2bBackend();
+  const calls = fakeE2b({
+    getInfo: () => info("running", started),
+    connect: async (...args: never[]) => {
+      const opts = args[1] as { timeoutMs?: number };
+      if (opts.timeoutMs === BOX_TIMEOUT_MS) {
+        // The restore's own connect: it resumes the box now.
+        started = Date.now();
+        return fakeSandbox().sandbox;
+      }
+      // The get's connect: paused and restored here, start to finish, meanwhile.
+      await backend.restore("sbx-1");
+      return fakeSandbox().sandbox;
+    },
+  });
+  await backend.get("sbx-1");
+  assert.ok(!calls.includes("pause"), calls.join(","));
+});
+
 test("a box deleted elsewhere drops its handle", async () => {
   let gone = false;
   const calls = fakeE2b({

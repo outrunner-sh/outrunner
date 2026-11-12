@@ -78,9 +78,12 @@ function notFound(error: unknown): boolean {
  */
 const HANDLES = new Map<string, { sandbox: Sandbox; startedAt: number }>();
 
-/** Boxes this server is restoring now, which a concurrent get must not
- *  pause under it. */
-const RESTORING = new Set<string>();
+/** How many restores of each box this server has begun. A get that sees the
+ *  count move while it connects knows a restore here resumed the box (one
+ *  still running, or one that finished meanwhile), and never pauses it under
+ *  that restore. Bounded like {@link HANDLES}: by the boxes this server has
+ *  restored. */
+const RESTORES = new Map<string, number>();
 
 /** How far E2B's clock may be from ours when telling a resume this server's
  *  get caused from someone's restore just before it. */
@@ -161,11 +164,13 @@ export class E2bBackend implements SandboxBackend {
     // running. The clocks are E2B's and ours, so a restore within
     // CLOCK_SKEW_MS before the connect is taken for this call's resume, and
     // a restore in this server is never paused under itself.
+    const restoresBefore = RESTORES.get(id) ?? 0;
     const connectedAt = Date.now();
     const sandbox = await Sandbox.connect(id, connection());
     const after = await Sandbox.getInfo(id, connection());
     const restarted = after.startedAt.getTime();
-    if (restarted !== startedAt && restarted >= connectedAt - CLOCK_SKEW_MS && !RESTORING.has(id)) {
+    const restoredMeanwhile = (RESTORES.get(id) ?? 0) !== restoresBefore;
+    if (restarted !== startedAt && restarted >= connectedAt - CLOCK_SKEW_MS && !restoredMeanwhile) {
       HANDLES.delete(id);
       await Sandbox.pause(id, connection()).catch((error: unknown) =>
         console.error(`E2B box ${id} was resumed while being reached and could not be paused again`, error),
@@ -200,15 +205,7 @@ export class E2bBackend implements SandboxBackend {
    *  so a new box is the only way on. E2B's metadata can't be changed after
    *  create, so `labels` stay as the box was made with. */
   async restore(id: string): Promise<SandboxBox | null> {
-    RESTORING.add(id);
-    try {
-      return await this.resume(id);
-    } finally {
-      RESTORING.delete(id);
-    }
-  }
-
-  private async resume(id: string): Promise<SandboxBox | null> {
+    RESTORES.set(id, (RESTORES.get(id) ?? 0) + 1);
     let sandbox: Sandbox;
     try {
       sandbox = await Sandbox.connect(id, { ...connection(), timeoutMs: BOX_TIMEOUT_MS });
