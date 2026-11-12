@@ -9,6 +9,7 @@ const CATALOG = {
     { id: "s-todo", name: "Todo", type: "unstarted" },
     { id: "s-progress", name: "In Progress", type: "started" },
     { id: "s-review", name: "In Review", type: "started" },
+    { id: "s-blocked", name: "Blocked", type: "started" },
     { id: "s-done", name: "Done", type: "completed" },
     { id: "s-canceled", name: "Canceled", type: "canceled" },
     { id: "s-duplicate", name: "Duplicate", type: "duplicate" },
@@ -80,7 +81,7 @@ test("connected: the team, its rules by name, and its settings", async ({ page }
   await expect(page.getByRole("checkbox", { name: /Accept sessions started by Linear rules/ })).not.toBeChecked();
   await expect(page.getByLabel("Most rule-started sessions a day")).toHaveValue("20");
   // Work isn't moved to a closed state.
-  await expect(page.getByLabel("State when a session starts").locator("option")).toHaveText(["Session started: no change", "Started: Backlog", "Started: Todo", "Started: In Progress", "Started: In Review"]);
+  await expect(page.getByLabel("State when a session starts").locator("option")).toHaveText(["Session started: no change", "Started: Backlog", "Started: Todo", "Started: In Progress", "Started: In Review", "Started: Blocked"]);
   // A team already connected isn't offered again.
   await expect(page.getByLabel("Team to connect").locator("option")).toHaveText(["Pick a team", "Operations (OPS)"]);
   await fitsTheWidth(page);
@@ -105,6 +106,26 @@ test("a stored state that isn't on offer doesn't read as no change", async ({ pa
   await expect(page.getByLabel("State when a session starts").locator("option:checked")).toHaveText("Started: In Progress");
 });
 
+test("Blocked and Done: picked like the others, Done from the team's done states only", async ({ page }, info) => {
+  await open(page, "state=connected");
+  const blocked = page.getByLabel("State while it's blocked");
+  const done = page.getByLabel("State when its PR merges");
+  await expect(blocked).toHaveValue("");
+  await expect(done).toHaveValue("");
+  await expect(done.locator("option")).toHaveText(["PR merged: no change", "PR merged: Done"]);
+  await expect(blocked.locator("option")).toHaveText(["Blocked: no change", "Blocked: Backlog", "Blocked: Todo", "Blocked: In Progress", "Blocked: In Review", "Blocked: Blocked"]);
+  await expect(blocked).toBeEnabled();
+  const setBlocked = page.waitForRequest((r) => r.method() === "PATCH" && r.url().endsWith("/trackers/scopes/scope-1"));
+  await blocked.selectOption({ label: "Blocked: Blocked" });
+  expect((await setBlocked).postDataJSON()).toEqual({ stateMap: { started: "s-progress", inReview: "s-review", done: null, blocked: "s-blocked" } });
+  await expect(done).toBeEnabled();
+  const setDone = page.waitForRequest((r) => r.method() === "PATCH" && r.url().endsWith("/trackers/scopes/scope-1"));
+  await done.selectOption({ label: "PR merged: Done" });
+  expect((await setDone).postDataJSON()).toMatchObject({ stateMap: { done: "s-done" } });
+  await fitsTheWidth(page);
+  await shot(page, info, "states-blocked-done");
+});
+
 test("connected: a change sends what the routes expect", async ({ page }) => {
   await open(page, "state=connected");
   const accept = page.waitForRequest((r) => r.method() === "PATCH" && r.url().endsWith("/trackers/scopes/scope-1"));
@@ -117,7 +138,7 @@ test("connected: a change sends what the routes expect", async ({ page }) => {
   await expect(page.getByLabel("State when its PR opens")).toBeEnabled();
   const state = page.waitForRequest((r) => r.method() === "PATCH" && r.url().endsWith("/trackers/scopes/scope-1"));
   await page.getByLabel("State when its PR opens").selectOption({ label: "PR opened: no change" });
-  expect((await state).postDataJSON()).toEqual({ stateMap: { started: "s-progress", inReview: null } });
+  expect((await state).postDataJSON()).toEqual({ stateMap: { started: "s-progress", inReview: null, done: null, blocked: null } });
 
   await page.route("**/api/orgs/org-1/trackers/install-1/teams", (route) =>
     route.request().method() === "POST" ? route.fulfill({ json: { scope: {} } }) : route.fulfill({ json: { teams: TEAMS } }),
