@@ -111,6 +111,10 @@ interface Env {
   /** Optional; the SDK's own API URL unless set (another Neev region or
    *  environment). */
   NEEV_BASE_URL?: string;
+  /** "create" makes every Neev box from the template; unset, a box is
+   *  restored from this version's golden snapshot where there is one
+   *  (scripts/neev-golden.ts). */
+  NEEV_BOX_SOURCE?: string;
   /**
    * Previews' domain (lib/previews/host.ts): `<slug>.<domain>` reaches a
    * server on a session's box. A plain variable, not a secret; it needs the
@@ -350,6 +354,7 @@ export class OutrunnerControlPlane extends Container<Env> {
       ...(env.NEEV_PROJECT_ID ? { NEEV_PROJECT_ID: env.NEEV_PROJECT_ID } : {}),
       ...(env.NEEV_SANDBOX_TEMPLATE ? { NEEV_SANDBOX_TEMPLATE: env.NEEV_SANDBOX_TEMPLATE } : {}),
       ...(env.NEEV_BASE_URL ? { NEEV_BASE_URL: env.NEEV_BASE_URL } : {}),
+      ...(env.NEEV_BOX_SOURCE ? { NEEV_BOX_SOURCE: env.NEEV_BOX_SOURCE } : {}),
       ...(env.RUNTIME_PREVIEW_DOMAIN ? { RUNTIME_PREVIEW_DOMAIN: env.RUNTIME_PREVIEW_DOMAIN } : {}),
       ...(env.BILLING_CRON_SECRET ? { BILLING_CRON_SECRET: env.BILLING_CRON_SECRET } : {}),
       ...(env.STRIPE_SECRET_KEY ? { STRIPE_SECRET_KEY: env.STRIPE_SECRET_KEY } : {}),

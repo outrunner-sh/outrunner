@@ -100,6 +100,8 @@ async function main() {
   if (!provisioned || !sandboxId) return;
 
   await step("agent health through the tunnel", health);
+  const healthy = results.at(-1);
+  if (healthy?.ok) console.log(`    create to agent healthy: ${Math.round((results[0].seconds + healthy.seconds) * 10) / 10}s`);
   await step("command as the box user, writing a file", async () => {
     const out = await sh(
       `echo ${MARK} > ~/${MARK}.txt && whoami && nproc && free -m | awk '/Mem/{print $2" MB"}' && ` +

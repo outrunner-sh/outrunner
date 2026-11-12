@@ -348,3 +348,128 @@ test("a box's home is read from passwd, never from a login shell's output", () =
     passwd = out("", 2);
     assert.equal(await box.home(), "/workspace/runtime", "the new layout's when passwd can't say");
   }));
+
+/** A Neev backend whose client records creates and serves golden lookups:
+ *  `golden` is the snapshot a lookup finds (null: none); `restoreFails`
+ *  makes a restore refused. Commands on the box answer `toolsPresent`. */
+function goldenBackend(opts: { golden: string | null; restoreFails?: boolean; toolsPresent?: boolean }) {
+  const creates: Array<Record<string, unknown>> = [];
+  let lookups = 0;
+  const box = (name: string) => ({
+    id: `id-${name}`,
+    name,
+    phase: "Ready",
+    connectUrl: "https://box.example.test",
+    resources: { cpu: 1, memory_gb: 2 },
+    waitUntilReady: async () => {},
+    delete: async () => {},
+  });
+  const client = {
+    sandboxes: {
+      list: async ({ name }: { name: string }) => {
+        lookups += 1;
+        return { items: opts.golden ? [{ id: "golden-box", name }] : [], total: opts.golden ? 1 : 0 };
+      },
+      listSnapshots: async () => ({
+        items: opts.golden ? [{ id: opts.golden, status: "Ready", restorability: "restorable", created_at: "2026-11-12T00:00:00Z" }] : [],
+      }),
+      create: async (params: Record<string, unknown>) => {
+        creates.push(params);
+        if (params.restore && opts.restoreFails) throw new Error("Snapshot not found.");
+        return box(String(params.name));
+      },
+    },
+  };
+  const prepared: string[] = [];
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body)) as { command: string; args: string[] };
+    const line = [body.command, ...body.args].join(" ");
+    prepared.push(line);
+    const tools = line.includes("command -v tmux");
+    const exit = tools ? (opts.toolsPresent ? 0 : 1) : 0;
+    // prepare() polls for its exit file: "0" at once.
+    const stdout = line.includes("cat /workspace/.outrunner-prepare.exit") ? Buffer.from("0\n").toString("base64") : "";
+    return new Response([JSON.stringify({ type: "stdout", data: stdout }), JSON.stringify({ type: "exit", exit_code: exit })].join("\n"));
+  }) as unknown as typeof fetch;
+  const backend = new NeevBackend();
+  (backend as unknown as { client: unknown }).client = client;
+  return { backend, creates, prepared, lookups: () => lookups };
+}
+
+const SMALL = { cpu: 1, memoryGb: 2 };
+const LABELS = { "runtime.role": "computer", "runtime.engine": "claude" };
+
+test("a golden box's name carries its size and version, and is never one the orphan sweep lists", async () => {
+  const { goldenName, goldenSizeKey, goldenVersion } = await import("@/lib/runtime/sandbox/neev");
+  assert.equal(goldenSizeKey({ cpu: 2, memoryGb: 4 }), "2c4g");
+  assert.equal(goldenSizeKey({ cpu: 0.5, memoryGb: 1 }), "0p5c1g", "a DNS name");
+  assert.match(goldenVersion(), /^[0-9a-f]{8}$/);
+  assert.equal(goldenVersion(), goldenVersion(), "stable");
+  assert.equal(goldenName({ cpu: 8, memoryGb: 16 }, "1a2b3c4d"), "outrunner-golden-8c16g-1a2b3c4d");
+  for (const size of [SMALL, { cpu: 8, memoryGb: 16 }]) {
+    assert.equal(neevBoxLabels(goldenName(size), "app.example.com"), null, "never swept");
+  }
+});
+
+test("a new box is restored from this version's golden snapshot, at its size, and isn't set up again", () =>
+  withKey(async () => {
+    const { goldenName } = await import("@/lib/runtime/sandbox/neev");
+    const { backend, creates, prepared } = goldenBackend({ golden: "snap-1", toolsPresent: true });
+    const box = await backend.create(LABELS, SMALL);
+    assert.equal(creates.length, 1);
+    assert.equal(creates[0].restore, "snap-1");
+    assert.deepEqual(creates[0].resources, { cpu: 1, memory_gb: 2, disk_gb: 30 });
+    assert.equal(creates[0].allowInternet, true);
+    assert.match(String(creates[0].name), /^outrunner-claude-/, "the box's own name, not the golden one's");
+    assert.notEqual(creates[0].name, goldenName(SMALL));
+    assert.equal(prepared.some((line) => line.includes("setsid")), false, "the setup script isn't run");
+    assert.ok(box.id);
+  }));
+
+test("with no golden box, NEEV_BOX_SOURCE=create, or no size, a box is made from the template and set up", () =>
+  withKey(async () => {
+    const none = goldenBackend({ golden: null });
+    await none.backend.create(LABELS, SMALL);
+    assert.equal(none.creates[0].restore, undefined);
+    assert.equal(none.creates[0].sandbox_template_id, "sb-ubuntu-26-04-dev");
+    assert.ok(none.prepared.some((line) => line.includes("setsid")), "set up the slow way");
+
+    const sized = goldenBackend({ golden: "snap-1" });
+    await sized.backend.create(LABELS);
+    assert.equal(sized.creates[0].restore, undefined, "no size: no golden to match");
+    assert.equal(sized.lookups(), 0);
+
+    process.env.NEEV_BOX_SOURCE = "create";
+    try {
+      const off = goldenBackend({ golden: "snap-1" });
+      await off.backend.create(LABELS, SMALL);
+      assert.equal(off.creates[0].restore, undefined);
+      assert.equal(off.lookups(), 0, "not even looked up");
+    } finally {
+      delete process.env.NEEV_BOX_SOURCE;
+    }
+  }));
+
+test("a golden snapshot Neev won't restore falls back to the template, and is looked up again next time", () =>
+  withKey(async () => {
+    const { backend, creates, lookups } = goldenBackend({ golden: "snap-gone", restoreFails: true });
+    await backend.create(LABELS, SMALL);
+    assert.deepEqual(creates.map((c) => c.restore ?? "template"), ["snap-gone", "template"]);
+    await backend.create(LABELS, SMALL);
+    assert.equal(lookups(), 2, "the failed one was forgotten");
+  }));
+
+test("a golden lookup is kept a while: not two Neev calls per box", () =>
+  withKey(async () => {
+    const { backend, lookups } = goldenBackend({ golden: "snap-1", toolsPresent: true });
+    await backend.create(LABELS, SMALL);
+    await backend.create(LABELS, SMALL);
+    assert.equal(lookups(), 1);
+  }));
+
+test("a restored box missing its tools is set up after all", () =>
+  withKey(async () => {
+    const { backend, prepared } = goldenBackend({ golden: "snap-1", toolsPresent: false });
+    await backend.create(LABELS, SMALL);
+    assert.ok(prepared.some((line) => line.includes("setsid")));
+  }));

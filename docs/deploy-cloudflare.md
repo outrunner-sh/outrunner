@@ -191,7 +191,22 @@ conversation WebSockets through `/relay/neev/` on this domain. That is why
    "NEEV_API_KEY is a personal access token" means a `pat-nc-…` key was set;
    an `HTTP 401` once the box exists means the key isn't a project key with
    Resource Type "Sandboxes" (`sk-nc-…`).
-3. **Rows from before providers were recorded.** A `runtime_computers` row
+3. **Golden boxes.** New Neev boxes are restored from a golden snapshot of
+   their size, with the tools already installed: about 45 s from create to a
+   healthy agent, instead of about 2 min 20 s. Build them in the project prod
+   uses (one paused box per size, about 4 minutes, idempotent):
+   ```bash
+   node --experimental-strip-types --import ./scripts/test-loader.mjs scripts/neev-golden.ts
+   ```
+   Run it again whenever a merge changes `neevPrepareScript` (the pinned
+   Claude Code, Codex or gh), the template or the disk: the golden version
+   (a hash of those) changes, and until then boxes are made the slow way.
+   A new agent needs no rebuild. `--prune` deletes other versions' golden
+   boxes, once nothing deployed runs them. `NEEV_BOX_SOURCE=create` turns
+   golden boxes off. A golden box gone, or a restore Neev refuses, falls
+   back to the template. Never delete a golden box by hand while it's in
+   use: its snapshot goes with it.
+4. **Rows from before providers were recorded.** A `runtime_computers` row
    with a null `provider` is read as the deployment's. After the switch it
    would be taken for a Neev box even when it's Daytona's: asked of Neev,
    read as gone, and left running unmetered. Production ran Neev, then
@@ -209,7 +224,7 @@ conversation WebSockets through `/relay/neev/` on this domain. That is why
    say), or one whose lookup failed is left and listed: rerun once the cause
    is fixed, or set it by hand. The authenticated `/api/health` reports
    `unrecordedProviderComputers`. Go on only when it is 0.
-4. **Secrets** (`cd outrunner/cloudflare`):
+5. **Secrets** (`cd outrunner/cloudflare`):
    ```bash
    pnpm dlx wrangler secret put NEEV_API_KEY       # sk-nc-…, Resource Type "Sandboxes"
    pnpm dlx wrangler secret put NEEV_ORG_ID
@@ -217,11 +232,11 @@ conversation WebSockets through `/relay/neev/` on this domain. That is why
    pnpm dlx wrangler secret put RUNTIME_PROVIDER   # neev
    # Keep DAYTONA_API_KEY as it is: existing sessions' boxes are on Daytona.
    ```
-5. **Deploy.** The container reads its environment when it starts. Run
+6. **Deploy.** The container reads its environment when it starts. Run
    Actions → *Deploy to Cloudflare Containers* → *Run workflow* on `main`
    (empty `ref`), or merge anything to main. Either restarts it and drops
    live sessions.
-6. **Verify.**
+7. **Verify.**
    - `curl -H "authorization: Bearer $BILLING_CRON_SECRET" https://app.outrunner.sh/api/health`
      reports `provider: "neev"`, `configured.neev: true`,
      `configured.daytona: true`, `managedProviders: ["neev", "daytona"]` and
@@ -248,7 +263,7 @@ pnpm dlx wrangler secret put RUNTIME_PROVIDER   # daytona (or: wrangler secret d
 # Keep the NEEV_* secrets: sessions started on Neev keep their boxes there.
 ```
 
-Then deploy (step 5) and check `/api/health` reports `provider: "daytona"`
+Then deploy (step 6) and check `/api/health` reports `provider: "daytona"`
 and `managedProviders: ["daytona", "neev"]`. New sessions go to Daytona.
 Sessions started on Neev keep running on Neev. Deleting the `NEEV_*` secrets
 strands those: they can't be opened, paused or deleted from Outrunner, and
@@ -273,9 +288,10 @@ after the cutover.
   6 GB of 30) and `/workspace` (the rest). Boxes are made with 30 GB, and the
   box user's home (repository mirror, worktrees, dependencies) lives on
   `/workspace/runtime`, which survives a pause like the root does.
-- **Slower cold starts.** Each new box installs tmux, Claude Code, Codex and
-  `gh` (~1 min, `neevPrepareScript`), where Daytona starts from a prebuilt
-  snapshot in seconds. The warm pool hides this for pooled projects.
+- **Slower cold starts without golden boxes.** Made from the template, a box
+  installs tmux, Claude Code, Codex and `gh` (~2 min, `neevPrepareScript`);
+  restored from a golden snapshot, about 30 s. Daytona starts from a
+  prebuilt snapshot in seconds.
 - **A paused box is kept 30 days, then Neev deletes it.** Daytona archives it
   after a day and keeps it. An archived session restores from its Snapshot
   either way. Unpushed work on a box paused over 30 days is lost.

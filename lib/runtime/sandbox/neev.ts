@@ -47,6 +47,55 @@ import { closeNeevTunnels, neevTunnel } from "@/lib/runtime/sandbox/neev-tunnel"
  */
 
 const DEFAULT_TEMPLATE = "sb-ubuntu-26-04-dev";
+
+/** The template boxes are made from (NEEV_SANDBOX_TEMPLATE). */
+export function neevTemplate(): string {
+  return optionalEnv("NEEV_SANDBOX_TEMPLATE") ?? DEFAULT_TEMPLATE;
+}
+
+/** How long a golden snapshot lookup (or its absence) is trusted. */
+const GOLDEN_CACHE_MS = 10 * 60_000;
+
+/** Prefix of Neev's golden boxes. It never matches neevBoxLabels' shape, so
+ *  the orphaned-box sweep never lists, let alone deletes, one. */
+export const GOLDEN_PREFIX = "outrunner-golden-";
+
+/**
+ * The version of what a golden box holds: a hash of the setup script (which
+ * pins Claude Code, Codex and gh), the template, the disk and the home's
+ * place. Any change makes a new version, and boxes ignore the old golden
+ * boxes (made the slow way) until scripts/neev-golden.ts builds the new
+ * ones; as Daytona's snapshot tag. The agent isn't in it: it's uploaded to
+ * every box as it is provisioned.
+ */
+export function goldenVersion(): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ script: neevPrepareScript(), template: neevTemplate(), disk: NEEV_DISK_GB, home: BOX_HOME }))
+    .digest("hex")
+    .slice(0, 8);
+}
+
+/** A size as a golden box's name has it: `2c4g`. */
+export function goldenSizeKey(size: BoxResources): string {
+  return `${size.cpu}c${size.memoryGb}g`.replace(/\./g, "p");
+}
+
+/** The golden box for `size` at this version: `outrunner-golden-2c4g-1a2b3c4d`. */
+export function goldenName(size: BoxResources, version = goldenVersion()): string {
+  return `${GOLDEN_PREFIX}${goldenSizeKey(size)}-${version}`;
+}
+
+/** The newest ready, restorable snapshot of the golden box `name`, or null
+ *  where there's no such box or snapshot. */
+export async function findGoldenSnapshot(neev: Neev, name: string): Promise<string | null> {
+  const page = await neev.sandboxes.list({ name, limit: 10 });
+  const golden = page.items.find((box) => box.name === name);
+  if (!golden) return null;
+  const snapshots = (await neev.sandboxes.listSnapshots(golden.id, { limit: 50 })).items
+    .filter((snap) => snap.status === "Ready" && (snap as { restorability?: string }).restorability !== "unrestorable")
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  return snapshots[0]?.id ?? null;
+}
 /**
  * The box user's home, where the agent, the repository mirror, worktrees and
  * every dependency a session installs live: on /workspace, the box's data
@@ -85,6 +134,9 @@ export function neevPrepareScript(): string {
     step("codex", codexInstallCommand({ sudo: false })),
     step("github cli", ghInstallCommand({ sudo: false })),
     step("user", `id -u ${BOX_USER} >/dev/null 2>&1 || useradd -m -d ${BOX_HOME} -s /bin/bash ${BOX_USER}`),
+    // Caches only, never what was installed: a smaller disk delta is a
+    // smaller pause, resume and golden snapshot.
+    step("clean", "apt-get clean; rm -rf /var/lib/apt/lists/* /root/.npm /root/.cache"),
     'echo "[$(date +%T)] done"',
   ].join("\n");
 }
@@ -140,9 +192,10 @@ export class NeevBackend implements SandboxBackend {
   async create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox> {
     // Before Neev is asked: a box nothing can run on is never made.
     runtimeKey();
-    const sandbox = await this.neev().sandboxes.create({
-      name: neevBoxName(labels),
-      sandbox_template_id: optionalEnv("NEEV_SANDBOX_TEMPLATE") ?? DEFAULT_TEMPLATE,
+    const name = neevBoxName(labels);
+    const sandbox = (await this.fromGolden(name, size)) ?? (await this.neev().sandboxes.create({
+      name,
+      sandbox_template_id: neevTemplate(),
       // Deny-all by default; the box clones from GitHub and Claude reaches its
       // model provider.
       allowInternet: true,
@@ -153,17 +206,66 @@ export class NeevBackend implements SandboxBackend {
       lifecycle: { ...NEEV_LIFECYCLE },
       // CPU and memory: otherwise the template's own (2 vCPU, 2 GB for the default).
       resources: { ...(size && neevResources(size)), disk_gb: NEEV_DISK_GB },
-    });
+    }));
     try {
-      await sandbox.waitUntilReady();
+      await sandbox.waitUntilReady({ timeoutMs: READY_TIMEOUT_MS });
       const conn = this.connection(sandbox);
       const runtime = new SandboxRuntime(conn);
-      await prepare(runtime);
+      // A golden box's restore has the tools and the user already; anything
+      // else (or one that somehow lacks them) is set up here.
+      if (!(await hasTools(runtime))) await prepare(runtime);
       return this.box(sandbox, runtime, conn);
     } catch (error) {
       await sandbox.delete().catch(() => {});
       throw error;
     }
+  }
+
+  /**
+   * A new box restored from this version's golden snapshot for `size`
+   * (lib/runtime/sandbox/neev-golden.ts), with the tools and the box user
+   * already on it: about a third of the time of making one and setting it up.
+   * Null when there's none (NEEV_BOX_SOURCE=create, no size, no golden box
+   * for this version and size, or its snapshot isn't ready), or Neev
+   * wouldn't restore it: the caller makes one from the template instead.
+   */
+  private async fromGolden(name: string, size?: BoxResources): Promise<Sandbox | null> {
+    if (!size || optionalEnv("NEEV_BOX_SOURCE") === "create") return null;
+    const snapshotId = await this.goldenSnapshot(size).catch((error: unknown) => {
+      console.warn(`Could not look up Neev's golden snapshot for ${goldenSizeKey(size)}; making the box from the template`, error);
+      return null;
+    });
+    if (!snapshotId) return null;
+    try {
+      console.info(`Neev box ${name}: restoring golden snapshot ${snapshotId} (${goldenSizeKey(size)})`);
+      return await this.neev().sandboxes.create({
+        name,
+        restore: snapshotId,
+        allowInternet: true,
+        lifecycle: { ...NEEV_LIFECYCLE },
+        // A restore must be the snapshot's own size, which is this size's.
+        resources: { ...neevResources(size), disk_gb: NEEV_DISK_GB },
+      } as Parameters<Neev["sandboxes"]["create"]>[0]);
+    } catch (error) {
+      // Gone since it was looked up (its golden box deleted takes it along),
+      // or refused: forgotten, and the box made the slow way.
+      this.goldens.delete(goldenSizeKey(size));
+      console.warn(`Neev wouldn't restore golden snapshot ${snapshotId}; making the box from the template`, error);
+      return null;
+    }
+  }
+
+  /** Golden snapshots by size, looked up at most every GOLDEN_CACHE_MS:
+   *  each lookup is two Neev calls of about a second. */
+  private readonly goldens = new Map<string, { snapshotId: string | null; at: number }>();
+
+  private async goldenSnapshot(size: BoxResources): Promise<string | null> {
+    const key = goldenSizeKey(size);
+    const cached = this.goldens.get(key);
+    if (cached && Date.now() - cached.at < GOLDEN_CACHE_MS) return cached.snapshotId;
+    const snapshotId = await findGoldenSnapshot(this.neev(), goldenName(size));
+    this.goldens.set(key, { snapshotId, at: Date.now() });
+    return snapshotId;
   }
 
   async get(id: string): Promise<SandboxBox> {
@@ -459,6 +561,13 @@ function listedState(phase: string): string {
     default:
       return "unknown";
   }
+}
+
+/** Whether a box has everything prepare() installs, and its user: so a
+ *  golden box's restore needn't run it again. */
+export async function hasTools(runtime: Pick<SandboxRuntime, "exec">): Promise<boolean> {
+  const check = `id -u ${BOX_USER} >/dev/null && command -v tmux git-lfs rg jq claude codex gh >/dev/null`;
+  return (await runtime.exec("bash", ["-lc", check])).exitCode === 0;
 }
 
 /** Whether a box still has what prepare() gave it (its user): false after a
