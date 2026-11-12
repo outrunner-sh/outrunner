@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 import { z } from "zod";
 
 import { getOwner } from "@/lib/auth/owner";
@@ -33,7 +35,7 @@ export async function POST(request: Request, context: RouteContext) {
       if (error instanceof EnvironmentAccessError) return NextResponse.json({ error: error.message }, { status: 403 });
       throw error;
     }
-    after(() => refillAfterChange(owner, id));
+    after(() => refillAfterChange(owner, id), { where: "refill-pool", userId: owner.id });
     return NextResponse.json(await getEnvironment(owner.id, id));
   });
 }

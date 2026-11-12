@@ -14,7 +14,9 @@ import { optionalEnv } from "@/lib/env";
 import { PLAN_MODE_PREAMBLE } from "@/lib/api/create-request";
 import { generatedBranch, insertOnBranch } from "@/lib/session/generated-branch";
 
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import type { AgentId } from "@/lib/agents/registry";
 import { AgentAuthError, resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
@@ -662,7 +664,7 @@ async function createOnce(
       boxSize: options.boxSize,
     });
   if (options.inline) await provision();
-  else after(provision);
+  else after(provision, { where: "provision", workspaceId: workspace.id, orgId: project.orgId, userId: owner.id });
   // The whole row, not only its id: the caller opens the session on it at once
   // (lib/session/pending-sessions.ts), rather than waiting for the layout's
   // data to be read again. Read back rather than sent as it was inserted,
@@ -1038,7 +1040,7 @@ async function provisionWorkspace({
       const refill = () =>
         refillProjectPool({ provider, owner, project, environmentId: workspace.environmentId, githubToken, sessionEnv });
       if (inline) await refill();
-      else after(refill);
+      else after(refill, { where: "refill-pool", workspaceId: workspace.id, userId: owner.id });
       return;
     }
 

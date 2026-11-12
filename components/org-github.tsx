@@ -9,7 +9,7 @@ import { useState } from "react";
 import { GitHubIcon } from "@/components/brand-icons";
 import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
 import { InlineMessage } from "@/components/ui/notice";
-import type { OrgInstallation } from "@/lib/db/github-installations";
+import type { InstallationShare, OrgInstallation } from "@/lib/db/github-installations";
 import { installationSettingsUrl } from "@/lib/github/listing";
 import { requestJson } from "@/lib/http/request-json";
 import type { Org } from "@/lib/orgs/active";
@@ -20,14 +20,24 @@ export type InstallationView = OrgInstallation & {
   total: number;
   /** Whether Outrunner could reach it just now. */
   reachable: boolean;
+  /** The other orgs it's shared with, for its source org's admins; null for
+   *  anyone else. */
+  shares: InstallationShare[] | null;
+};
+
+const AUTHORITY: Record<string, string> = {
+  installer: "as its GitHub installer",
+  account_owner: "as the GitHub account's owner",
+  org_owner: "as a GitHub organization owner",
 };
 
 /** What the setup route sends back, said for the page. */
 const ERRORS: Record<string, string> = {
   not_configured: "The GitHub App isn't set up on this Outrunner yet.",
-  not_admin: "You must administer this org and an org already connected to the installation to share it.",
+  not_admin: "You must administer this org to connect an installation to it.",
   link_expired: "That install link has expired, or was someone else's. Start again from here.",
-  not_installer: "Only whoever installed the App on GitHub can make its first org connection. Ask them to add it here.",
+  not_installer:
+    "Only whoever installed the App on GitHub, or an owner of the GitHub account or organization it's installed on, can connect it to an org. Ask them to add it here.",
   verify_declined:
     "Outrunner needs that one-time GitHub sign-in to confirm you installed the App. Install it again and allow it to finish.",
   no_installation:
@@ -81,6 +91,22 @@ export function OrgGitHubSettings({
       router.refresh();
     } catch (cause) {
       setFailure(cause instanceof Error ? cause.message : "Couldn't add it. Try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const unshare = async (id: number, orgId: string) => {
+    setBusy(id);
+    setFailure(null);
+    try {
+      await requestJson(`/api/orgs/${org.id}/github/installations/${id}/shares/${orgId}`, {
+        method: "DELETE",
+        fallback: "Couldn't do that. Try again.",
+      });
+      router.refresh();
+    } catch (cause) {
+      setFailure(cause instanceof Error ? cause.message : "Couldn't do that. Try again.");
     } finally {
       setBusy(null);
     }
@@ -193,6 +219,44 @@ export function OrgGitHubSettings({
                       {i.repositories.join(", ")}
                       {i.total > i.repositories.length ? `, and ${i.total - i.repositories.length} more` : ""}
                     </p>
+                  ) : null}
+                  {admin && i.shares ? (
+                    <div className="space-y-1 pl-7" data-testid={`shares-${i.id}`}>
+                      <p className="text-xs font-medium text-foreground">
+                        {i.shares.length === 0 ? `Not shared with any other Outrunner org.` : "Also shared with"}
+                      </p>
+                      {i.shares.length > 0 ? (
+                        <ul className="divide-y divide-border/60 overflow-hidden rounded-md border border-border/60">
+                          {i.shares.map((s) => (
+                            <li key={s.orgId} className="flex items-center gap-3 px-2.5 py-1.5">
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-xs text-foreground">
+                                  {s.personal ? `${s.orgName} (personal org)` : s.orgName}
+                                </p>
+                                <p className="truncate text-[11px] text-muted-foreground">
+                                  {`Connected ${new Date(s.linkedAt).toLocaleDateString()}${s.linkedByEmail ? ` by ${s.linkedByEmail}` : ""}${
+                                    s.authority ? ` ${AUTHORITY[s.authority]}` : ""
+                                  }`}
+                                </p>
+                              </div>
+                              <HoldToConfirm
+                                label="Stop sharing"
+                                disabled={busy !== null}
+                                onConfirm={() => void unshare(i.id, s.orgId)}
+                                className="h-6 px-2 text-[11px]"
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {i.shares.length > 0 ? (
+                        <p className="text-[11px] text-muted-foreground">
+                          {i.shares.length === 1
+                            ? `Removing ${i.accountLogin} from ${org.name} leaves this org connected, and no one can manage that share here until ${org.name} connects ${i.accountLogin} again. Stop sharing first to cut it off too.`
+                            : `Removing ${i.accountLogin} from ${org.name} leaves these orgs connected, and no one can manage those shares here until ${org.name} connects ${i.accountLogin} again. Stop sharing first to cut them off too.`}
+                        </p>
+                      ) : null}
+                    </div>
                   ) : null}
                 </li>
               ))}

@@ -52,6 +52,7 @@ export type AuditAction =
   | "usage.changed"
   | "github.installed"
   | "github.removed"
+  | "github.share_removed"
   | "github.uninstalled"
   | "github.suspended"
   | "github.unsuspended"
@@ -201,6 +202,8 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `added the GitHub App on ${what}`;
     case "github.removed":
       return `removed the GitHub App on ${what}`;
+    case "github.share_removed":
+      return `stopped sharing the GitHub App on ${what} with ${text(d.orgName) ?? "another org"}`;
     case "github.uninstalled":
       return `saw the GitHub App uninstalled on ${what}`;
     case "github.suspended":
