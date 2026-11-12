@@ -33,7 +33,7 @@ var (
 	ErrRewindBusy = errors.New("the agent is working: stop it before editing a message")
 	// ErrRewindUnsupported is an edit of a message from before a chat
 	// switched harnesses: that history is kept, not edited.
-	ErrRewindUnsupported = errors.New("this computer's engine can't edit a sent message")
+	ErrRewindUnsupported = errors.New("this message can't be edited")
 	// ErrNotAPrompt is an edit of a message that isn't one of the chat's
 	// prompts (a reply, a tool's result, or one not in its log).
 	ErrNotAPrompt = errors.New("that message isn't one of this chat's prompts")

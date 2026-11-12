@@ -151,23 +151,14 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
   // --- Runtime Computer lifecycle (the honest surface) ----------------------
 
   /**
-   * Provision the always-on box and deploy the agent, then optionally seed the
-   * bare mirror (provisionClaudeComputer). Times its stages and deletes the
-   * half-built sandbox on failure so a retry starts clean.
+   * Provision the always-on box and deploy the agent: on the backend's base
+   * image, which ships node, deployClaude adds tmux and an up-to-date Claude
+   * Code, then boots the agent rooted at $HOME, seeding CLAUDE_CODE_OAUTH_TOKEN
+   * so each Claude session authenticates; meanwhile it seeds the bare mirror
+   * when given a repository. Times its stages and deletes the half-built sandbox
+   * on failure so a retry starts clean.
    */
   async provisionComputer(
-    input: ProvisionComputerInput,
-  ): Promise<ProvisionedComputer> {
-    return this.provisionClaudeComputer(input);
-  }
-
-  /**
-   * Claude Code engine provisioning on the backend's base image, which ships
-   * the `claude` CLI + node; deployClaude only adds tmux and boots the agent in
-   * Claude mode rooted at $HOME, seeding CLAUDE_CODE_OAUTH_TOKEN so each Claude
-   * session authenticates. No snapshot, no subscription-refresh trap.
-   */
-  private async provisionClaudeComputer(
     input: ProvisionComputerInput,
   ): Promise<ProvisionedComputer> {
     const binary = await this.binary();
@@ -262,8 +253,8 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     return timer.stage("sandbox_restore", () => restore(previous, labels, input.size));
   }
 
-  /** Refresh the shared mirror before creating a new worktree. Both engines
-   *  clone it to $HOME/repo.git, so it is found from the box's home. */
+  /** Refresh the shared mirror before creating a new worktree. The agent
+   *  clones it to $HOME/repo.git, so it is found from the box's home. */
   async fetchMirror(sandboxId: string, githubToken?: string): Promise<void> {
     const box = await this.backend.get(sandboxId);
     await fetchMirror(box.gitExec, {

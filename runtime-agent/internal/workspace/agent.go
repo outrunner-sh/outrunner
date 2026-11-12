@@ -82,8 +82,7 @@ func (s *Service) Agents() []string {
 // Empty is Claude. A Codex CLI that is missing is left to Start, which says
 // how to install it.
 func (s *Service) CheckAgent(name string) error {
-	switch {
-	case !ValidAgent(name):
+	if !ValidAgent(name) {
 		return fmt.Errorf("unknown agent %q", name)
 	}
 	return nil
