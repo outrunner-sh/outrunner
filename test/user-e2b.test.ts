@@ -216,7 +216,20 @@ test("a self-hosted E2B's URLs must be https origins on public hosts", () => {
 });
 
 
-test("a desktop in a user's E2B cloud is opened at its own host, with its password", async () => {
+test("a desktop on a user's E2B cloud box with a traffic token goes through the relay, owner and token sealed", async () => {
+  const fake = fakeSandbox((command) =>
+    command === "outrunner-desktop password 120" ? { stdout: "Ab3dEf7h\n", stderr: "", exitCode: 0 } : { stdout: "", stderr: "", exitCode: 0 },
+  );
+  const sandbox = { ...fake.sandbox, trafficAccessToken: "tat-user", getHost: (port: number) => `${port}-sbx-1.e2b.app` } as unknown as Sandbox;
+  const { url, password } = await box(sandbox, INFO, userE2bConnection(STORED)).desktop!.viewer(120);
+  assert.equal(password, "Ab3dEf7h");
+  const prefix = `wss://app.example${USER_E2B_RELAY_PREFIX}sbx-1/6080/`;
+  assert.ok(url.startsWith(prefix) && url.endsWith("/websockify"), url);
+  const opened = openRelayTicket(url.slice(prefix.length, -"/websockify".length), "sbx-1", 6080, relayKey("credentials-key", "user-e2b"));
+  assert.deepEqual(readE2bRelaySecret(opened?.secret), { token: "tat-user", owner: "user-1" });
+});
+
+test("a desktop on a user's E2B cloud box from before traffic tokens is opened at its own host, with its password", async () => {
   const fake = fakeSandbox((command) =>
     command === "outrunner-desktop password 120" ? { stdout: "Ab3dEf7h\n", stderr: "", exitCode: 0 } : { stdout: "", stderr: "", exitCode: 0 },
   );
