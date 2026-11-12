@@ -1097,12 +1097,12 @@ type OrgGithubInstallationRow = {
   installation_id: number;
   installed_by: string | null;
   created_at: string;
-  // supabase/migrations/20261112100000_github_installation_sharing.sql
+  // supabase/migrations/20261112130000_github_installation_sharing.sql
   authority: GithubLinkAuthority | null;
   authorized_github_id: number | null;
 };
 
-/** How GitHub authorized an org's link to an installation (20261112100000). */
+/** How GitHub authorized an org's link to an installation (20261112130000). */
 export type GithubLinkAuthority = "installer" | "account_owner" | "org_owner";
 
 type GithubInstallationShareRow = {

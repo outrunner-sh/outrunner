@@ -46,7 +46,7 @@ before(() => {
     insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_id, removed_from)
     values (45, 'previously-removed', 'Organization', 'all', 7, '${ORG}');
   `);
-  for (const file of ["20261104100000_shared_github_installations.sql", "20261112100000_github_installation_sharing.sql"]) {
+  for (const file of ["20261104100000_shared_github_installations.sql", "20261112130000_github_installation_sharing.sql"]) {
     execFileSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-q", "-f", `supabase/migrations/${file}`], { stdio: "pipe" });
   }
   // Supabase grants these on pre-existing tables; exercise the invoker RPC

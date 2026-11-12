@@ -91,7 +91,7 @@ A GitHub App installation can connect to multiple Outrunner organizations. In th
 **Settings → Org → GitHub**, select **Add to <org>** under **Available GitHub connections**. There is no
 need to uninstall or reinstall the App.
 
-**GitHub decides who may connect it, not Outrunner** (`20261112100000`). Every new org connection needs the
+**GitHub decides who may connect it, not Outrunner** (`20261112130000`). Every new org connection needs the
 connecting admin (of the destination org) to be, on GitHub, either:
 
 - the installation's **installer** (named by GitHub's `installation` webhook), or
@@ -118,7 +118,7 @@ it from every org.
 
 Installation metadata is global (`github_installations`); access is an independent link per organization
 (`org_github_installations`). Existing links are preserved by migrations `20261104100000` and
-`20261112100000`; `supabase/review/github_installation_links.sql` lists, read-only, links to review against
+`20261112130000`; `supabase/review/github_installation_links.sql` lists, read-only, links to review against
 the rule above. Removing a connection only removes that organization's link. GitHub uninstallations and
 suspensions apply to every linked organization. Webhook events reach each linked organization's matching
 projects, with separate membership checks and deduplication per project. Queued follow-ups recheck the exact

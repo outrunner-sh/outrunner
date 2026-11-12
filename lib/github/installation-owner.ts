@@ -3,7 +3,7 @@
  * says: its installer, or an owner of the account it's installed on (the
  * account itself, for a user account; an organization owner, for an
  * organization). Administering another Outrunner org that uses it grants
- * nothing (20261112100000_github_installation_sharing.sql).
+ * nothing (20261112130000_github_installation_sharing.sql).
  *
  * Asked of GitHub as the installation: an organization's owners need the
  * App's "Members: Read" organization permission

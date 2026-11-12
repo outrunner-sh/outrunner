@@ -7,7 +7,7 @@
 -- One row per org link of every installation that is either linked to more
 -- than one org, or whose link wasn't made by its verified GitHub installer.
 -- `verdict` says how the link fares under the rule of
--- 20261112100000_github_installation_sharing.sql (a new link needs the
+-- 20261112130000_github_installation_sharing.sql (a new link needs the
 -- GitHub installer, or a GitHub owner of the installation's account):
 --
 --   ok: installer          made by the GitHub user who installed it

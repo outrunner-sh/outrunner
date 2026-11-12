@@ -30,7 +30,7 @@ alter table org_github_installations
   add column authority text check (authority in ('installer', 'account_owner', 'org_owner')),
   add column authorized_github_id bigint;
 comment on column org_github_installations.authority is
-  'How GitHub authorized this link: the installer, the user account itself, or an owner of the GitHub organization. Null: made before 20261112100000.';
+  'How GitHub authorized this link: the installer, the user account itself, or an owner of the GitHub organization. Null: made before 20261112130000.';
 
 -- The source org's view orders links by when they were made.
 create index org_github_installations_installation_created_idx
