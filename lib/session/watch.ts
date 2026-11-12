@@ -19,6 +19,7 @@ import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { resolveProvider } from "@/lib/runtime/resolve";
 import { toRuntimeComputer, toWorkspace } from "@/lib/db/mappers";
 import { notifyActivity } from "@/lib/notifications/record";
+import { recordSessionCalls } from "@/lib/missions/spend.deps";
 import { readStream } from "@/lib/session/event-stream";
 import { foldEvents, IDLE, type TurnState } from "@/lib/session/turn-state";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -111,6 +112,10 @@ export async function readSession(workspaceId: string): Promise<ActivityChange |
   );
   if (cursor > 0) url.searchParams.set("lastEventId", String(cursor));
   const read = await readStream(url.toString(), cursor);
+  // A Mission's or Ship's model calls, before the cursor moves past them: a
+  // failure leaves them to be read again, and each call counts once however
+  // often it's read (docs/mission-spend.md).
+  await recordSessionCalls(workspace, read.events);
   // From the start of a log, the state starts over, but a reply already
   // known stays known (its unread mark mustn't come back on a new box).
   const from = sameBox && before ? before : { ...IDLE, repliedAt: before?.repliedAt ?? null, replyPreview: before?.replyPreview ?? null };

@@ -66,6 +66,10 @@ This replaces the earlier Mission Engine design
   handles it, and a Mission's routine turn ends aren't told.
 - Missions run on Claude Code. Ships use the Mission's model, agent and
   effort unless it asks for others.
+- **Spend:** what a Mission and its Ships spent, by UTC day and ISO week,
+  each figure labelled reported, estimated or unavailable
+  ([`mission-spend.md`](mission-spend.md)). Policy accounting only: it bills
+  no one and caps nothing.
 
 ## How it works
 
@@ -84,6 +88,7 @@ This replaces the earlier Mission Engine design
 | Tick | `lib/missions/tick.ts`, after the sessions tick's reads (`/api/sessions/tick`) |
 | Archiving a Mission with its Ships | `lib/missions/archive.ts`, `POST /api/missions/[id]/archive` |
 | UI | `components/missions/*`, `hooks/use-missions.ts`, `GET /api/missions` |
+| What the Mission and its Ships spent, by day and week ([`mission-spend.md`](mission-spend.md)) | `lib/missions/spend*.ts`, `GET /api/missions/[id]/spend` |
 
 ### Tools
 
@@ -238,3 +243,5 @@ twice records it once. Events are delivered in batches:
   the cap's trigger under racing inserts, and the outbox's claims, leases and
   backoff. It needs `MISSIONS_PG`; CI provides one.
 - `runtime-agent/internal/workspace/message_keys_test.go`: send-once keys.
+- `test/mission-spend.test.ts` and `test/mission-spend-sql.test.ts`: spend
+  accounting ([`mission-spend.md`](mission-spend.md)).

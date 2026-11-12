@@ -654,6 +654,11 @@ type ConversationMessage struct {
 	// Usage is the model call's tokens, on an assistant turn whose log has
 	// them: what the call read and wrote is how full the context is.
 	Usage *TokenUsageAmounts `json:"usage,omitempty"`
+	// CallID is the id of the model call Usage is from (Claude's message
+	// id), set beside Usage where the log names one. Claude logs each block
+	// of a reply as its own record with the reply's usage so far, so records
+	// sharing a CallID are one call, counted once.
+	CallID string `json:"callId,omitempty"`
 	// ContextWindow is the model's context, in tokens, where the log says it
 	// (Codex's does; Claude's doesn't).
 	ContextWindow int `json:"contextWindow,omitempty"`
