@@ -104,7 +104,15 @@ export async function recordSessionGap(
   const missionId = missionOf(workspace);
   if (!missionId) return;
   try {
-    const until = (lastRead.box && (await boxStoppedAt(lastRead.box))) || new Date();
+    // Not known (not metered, or the lookup failed): now, which marks too
+    // much rather than too little.
+    const stopped = lastRead.box
+      ? await boxStoppedAt(lastRead.box).catch((error: unknown) => {
+          console.error(`Mission spend: couldn't tell when ${lastRead.box} stopped; marking to now`, error);
+          return null;
+        })
+      : null;
+    const until = stopped ?? new Date();
     await recordCalls(gapCalls({ workspaceId: workspace.id, missionId }, lastRead, until));
   } catch (error) {
     if (!isMissingFunction(error)) console.error(`Mission spend: couldn't mark ${workspace.id}'s unread stretch`, error);

@@ -116,9 +116,11 @@ export async function readSession(workspaceId: string): Promise<ActivityChange |
   // failure leaves them to be read again, and each call counts once however
   // often it's read (docs/mission-spend.md).
   await recordSessionCalls(workspace, read.events);
-  // Read on from where a turn cut off (settled idle) left it, on the same
-  // box: that stretch is being read after all.
-  if (sameBox && activity?.stream_box && before?.turn === "idle") await closeSessionGap(workspace, activity.stream_box, cursor);
+  // Read on from where a cut-off turn left it, on the same box (whatever
+  // the turn shows now: a send that woke the box marks it working first):
+  // that stretch is being read after all. Box and cursor name the gap
+  // exactly, and the partial index keeps the look cheap.
+  if (sameBox && activity?.stream_box) await closeSessionGap(workspace, activity.stream_box, cursor);
   // From the start of a log, the state starts over, but a reply already
   // known stays known (its unread mark mustn't come back on a new box).
   const from = sameBox && before ? before : { ...IDLE, repliedAt: before?.repliedAt ?? null, replyPreview: before?.replyPreview ?? null };
