@@ -46,6 +46,7 @@ create index org_github_installations_sharer_idx
 -- connected_org_ids still says the installation was ever connected (no
 -- installer "first connection" after that).
 alter table github_installations add column root_org_ids uuid[] not null default '{}';
+create index github_installations_root_orgs_idx on github_installations using gin (root_org_ids);
 
 -- What was taken away, and why: the backfill's audit and every revocation
 -- after it, for support to explain or restore.
@@ -78,14 +79,23 @@ end;
 $$;
 
 -- Every share that goes is logged, with why: a revocation's reason, set for
--- the transaction by the function revoking it, and otherwise a disconnect
--- (its own, or its source's, through the foreign key's cascade).
+-- the transaction by the function revoking it; else what went with it (the
+-- App uninstalled on GitHub, its own org deleted, its source org deleted, or
+-- its source's link disconnected); else `disconnected`, its own link removed.
 create function log_github_share_removal() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   insert into github_installation_link_revocations (org_id, installation_id, installed_by, shared_from_org, link_created_at, reason)
   values (old.org_id, old.installation_id, old.installed_by, old.shared_from_org, old.created_at,
-          coalesce(nullif(current_setting('outrunner.github_share_revocation', true), ''), 'disconnected'));
+          coalesce(nullif(current_setting('outrunner.github_share_revocation', true), ''),
+                   case
+                     when not exists (select 1 from github_installations where installation_id = old.installation_id) then 'uninstalled'
+                     when not exists (select 1 from organizations where id = old.org_id) then 'org_deleted'
+                     when not exists (select 1 from organizations where id = old.shared_from_org) then 'source_deleted'
+                     when not exists (select 1 from org_github_installations
+                                      where org_id = old.shared_from_org and installation_id = old.installation_id) then 'source_disconnected'
+                     else 'disconnected'
+                   end));
   return null;
 end;
 $$;
@@ -111,6 +121,8 @@ revoke all on function revoke_github_installation_shares(uuid, uuid, text) from 
 create function revoke_github_shares_on_admin_loss() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
+  -- The org itself going: its links cascade, logged as such.
+  if not exists (select 1 from organizations where id = old.org_id) then return null; end if;
   if tg_op = 'DELETE' then
     perform revoke_github_installation_shares(old.org_id, old.user_id, 'sharer_removed');
   elsif old.role = 'admin' and (new.role is distinct from 'admin' or new.org_id <> old.org_id or new.user_id <> old.user_id) then
@@ -170,9 +182,9 @@ begin
   if cardinality(inst.connected_org_ids) = 0 then return 'not_installer'; end if;
   -- A share: never into a personal org, and only from an org the actor
   -- administers now; it lasts while they do (and while the source does).
-  -- Their membership row is locked until this commits, so a removal or
-  -- demotion running alongside waits and then revokes this share too, or
-  -- goes first and leaves no source.
+  -- Their membership row and the source link are locked until this
+  -- commits, so a removal, demotion or disconnect running alongside waits
+  -- and then revokes this share too, or goes first and leaves no source.
   select personal_owner_id is not null into personal from organizations where id = target_org;
   if personal then return 'personal_org'; end if;
   select l.org_id into source
@@ -181,7 +193,7 @@ begin
   where l.installation_id = target_installation
   order by (l.shared_from_org is null) desc, l.created_at
   limit 1
-  for share of m;
+  for share of m, l;
   if source is null then return 'not_admin'; end if;
   insert into org_github_installations (org_id, installation_id, installed_by, shared_from_org)
   values (target_org, target_installation, actor_id, source);

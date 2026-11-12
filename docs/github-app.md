@@ -124,7 +124,8 @@ GitHub role change sends no webhook the App receives. A share therefore depends 
 which Outrunner sees change.
 
 Every share that goes is recorded in `github_installation_link_revocations` (server-only), with its reason
-(`sharer_removed`, `sharer_not_admin`, `sharer_deleted`, `disconnected`). Migration `20261112110000` audited
+(`sharer_removed`, `sharer_not_admin`, `sharer_deleted`, `source_disconnected`, `source_deleted`, `org_deleted`,
+`uninstalled`, or `disconnected` for its own link removed). Migration `20261112110000` audited
 the links made before it. The first connected organization (and a user-account owner's own) became root
 connections. Each other link was kept as a share only if it is a team organization and its sharer still
 administers an earlier kept connection. Otherwise it was revoked with reason `backfill:personal_org`,

@@ -159,7 +159,7 @@ test("SQL: disconnecting the source, or deleting the sharer's account, revokes t
   assert.equal(sharedFrom(Z, CUSTOMER), X);
   sql(`delete from org_github_installations where org_id = '${X}' and installation_id = ${CUSTOMER}`);
   assert.deepEqual(linked(CUSTOMER), []);
-  assert.equal(revoked(Z, CUSTOMER), "disconnected");
+  assert.equal(revoked(Z, CUSTOMER), "source_disconnected");
   // X held the root link, so its admins can reconnect it, and share again.
   assert.equal(link(X, CUSTOMER, B), "");
   assert.equal(link(Z, CUSTOMER, B), "");
@@ -199,6 +199,47 @@ test("SQL: a share made while its sharer is being removed doesn't outlive the re
   assert.match(await sharing, /linked/);
   assert.deepEqual(linked(3003), [Q]);
   assert.equal(revoked(R, 3003), "sharer_removed");
+});
+
+test("SQL: the log says what took a share: its own disconnect, its source org, its own org, or an uninstall", { skip }, () => {
+  const [src, mid, leaf, other] = [20, 21, 22, 23].map(id);
+  sql(`insert into organizations values ('${src}', null), ('${mid}', null), ('${leaf}', null), ('${other}', null)`);
+  for (const o of [src, mid, leaf, other]) member(o, D);
+  sql(`insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_id)
+       values (4004, 'logged', 'Organization', 'all', 901);
+       insert into org_github_installations (org_id, installation_id) values ('${src}', 4004)`);
+  assert.equal(link(mid, 4004, D), "");
+  assert.equal(link(leaf, 4004, D), ""); // From src, the root.
+  assert.equal(link(other, 4004, D), "");
+  sql(`delete from org_github_installations where org_id = '${other}' and installation_id = 4004`);
+  assert.equal(revoked(other, 4004), "disconnected");
+  sql(`delete from organizations where id = '${leaf}'`);
+  assert.equal(revoked(leaf, 4004), "org_deleted");
+  sql(`delete from organizations where id = '${src}'`);
+  assert.equal(revoked(mid, 4004), "source_deleted");
+  sql(`insert into organizations values ('${src}', null); insert into org_github_installations (org_id, installation_id) values ('${src}', 4004)`);
+  member(src, D);
+  assert.equal(link(mid, 4004, D), "");
+  sql("delete from github_installations where installation_id = 4004");
+  assert.equal(revoked(mid, 4004), "uninstalled");
+});
+
+test("SQL: a share racing its source's disconnect is refused or revoked, never an error", { skip }, async () => {
+  const [src, dst] = [24, 25].map(id);
+  sql(`insert into organizations values ('${src}', null), ('${dst}', null)`);
+  member(src, D); member(dst, D);
+  sql(`insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_id)
+       values (5005, 'raced-source', 'Organization', 'all', 902);
+       insert into org_github_installations (org_id, installation_id) values ('${src}', 5005)`);
+  const sharing = new Promise<string>((resolve, reject) =>
+    execFile("psql", [url, "-v", "ON_ERROR_STOP=1", "-qtA", "-c",
+      `begin; set role service_role; select coalesce(link_github_installation('${dst}', 5005, null, '${D}'), 'linked'); select pg_sleep(1.5); commit;`],
+    (error, stdout) => (error ? reject(error) : resolve(stdout.trim()))));
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  sql(`delete from org_github_installations where org_id = '${src}' and installation_id = 5005`);
+  assert.match(await sharing, /linked/);
+  assert.deepEqual(linked(5005), []);
+  assert.equal(revoked(dst, 5005), "source_disconnected");
 });
 
 test("SQL: browser clients can't read revocations or call the revocation functions", { skip }, () => {
