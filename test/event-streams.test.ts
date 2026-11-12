@@ -58,7 +58,7 @@ test("an event stream named in writeHead's headers, object or array, counts too"
   }
 });
 
-test("destroying an open event stream, as shutdown() does, ends it for the client and drops it from the set", async () => {
+test("destroying an open event stream, as shutdown() does, ends it for the client and drops it from the set", { timeout: 5000 }, async () => {
   const s = await serve((res) => {
     res.setHeader("content-type", "text/event-stream");
     res.write("data: x\n\n");
