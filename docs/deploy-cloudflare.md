@@ -240,10 +240,10 @@ previews stay off).
 
 ## Deploy
 
-Production deploys go through GitHub Actions (`.github/workflows/deploy.yml`);
-see [Deploying and rolling back](#deploying-and-rolling-back). Each deploy
-restarts the single prod container and drops live sessions, so each one needs
-a person's approval.
+Production deploys go through GitHub Actions (`.github/workflows/deploy.yml`)
+and are **manual-only**; see [Deploying and rolling back](#deploying-and-rolling-back).
+Each deploy restarts the single prod container and drops live sessions, so
+merging to main deploys nothing: a person starts each one.
 
 The workflow builds `../Dockerfile` (context = `outrunner/`), pushes the image,
 and wires the Worker + Durable Object + `app.outrunner.sh` (and the old domain's
@@ -252,27 +252,34 @@ redirect). The first-time equivalent from a laptop with a working Docker is
 
 ## Deploying and rolling back
 
-1. **Merge to main.** CI runs on the merge commit.
-2. **CI passes → the deploy waits.** The *Deploy to Cloudflare Containers* run
-   starts; its `plan` job writes a summary (the SHA, the commits since the
-   live build, and a migration warning) and the `deploy` job waits for review
-   on the `production` environment.
-3. **Run migrations first.** If the summary says the deploy touches
-   `supabase/migrations/`, run `pnpm db:migrate` before you approve.
-4. **Approve.** Open the run in Actions → *Review deployments* → tick
-   `production` → *Approve and deploy* (or *Reject* to skip it). Only one
-   deploy runs at a time; a newer one waiting replaces an older one waiting.
+1. **Merge to main.**
+2. **Wait for CI to go green** on the merge commit. The deploy refuses any
+   commit without a successful CI run on main.
+3. **Actions → *Deploy to Cloudflare Containers* → *Run workflow*.** Leave
+   *Use workflow from* on `main`. Leave `ref` empty to deploy main's head,
+   or give a SHA. Starting the run is the approval; it deploys right away.
+4. **Migrate first if the summary says so.** If the deploy changes
+   `supabase/migrations/`, the run stops before deploying anything and its
+   summary lists the migrations. Run `pnpm db:migrate`, then run the workflow
+   again with `migrations-applied` checked. To skip the failed run, check
+   `supabase/migrations/` yourself and migrate before starting.
 5. **Health check.** The job waits until `/api/health` reports the new SHA and
-   the configuration report is all true; a red job means users don't have it.
+   the configuration report is all true. A red job means users don't have it.
 
-**Rollback:** Actions → *Deploy to Cloudflare Containers* → *Run workflow* on
-`main`, with `ref` set to the previous good SHA (the summary of the last good
-deploy shows it). It must be on main and have passed CI, and it still needs
-approval. If the rollback removes migrations, the database keeps them; tick
-`migrations-applied` only after `pnpm db:migrate` when it adds some. For the
-fastest rollback, without a rebuild:
-`cd outrunner/cloudflare && pnpm dlx wrangler rollback` (then check `/api/health`
-reports the old build). A later approved deploy replaces it.
+Only one deploy runs at a time. If you start another while one runs, it waits;
+a third replaces the waiting one, so the last one started wins.
+
+**Rollback:** run the workflow the same way with `ref` set to the previous
+good SHA (the summary of the last good deploy shows it). The SHA must be on
+main and have passed CI. A rollback doesn't undo migrations; the database keeps
+them. For the fastest rollback, without a rebuild:
+`cd outrunner/cloudflare && pnpm dlx wrangler rollback`. Then check that
+`/api/health` reports the old build. The next deploy replaces it.
+
+**Required reviewers:** the `production` environment allows only `main` and
+has no required reviewers, because GitHub's Free plan doesn't offer them for
+private repositories. On GitHub Team, add a required reviewer under Settings →
+Environments → `production`. Deploys then pause for approval after the summary.
 
 ## Pre-deploy checklist
 
@@ -280,7 +287,7 @@ reports the old build). A later approved deploy replaces it.
       on both the outrunner.sh and neev.ai zones.
 - [ ] All secrets set via `wrangler secret put`.
 - [ ] `https://app.outrunner.sh` as the Supabase Site URL and in its redirect allowlist.
-- [ ] Supabase migrations applied (`pnpm db:migrate`) before approving.
+- [ ] Supabase migrations applied (`pnpm db:migrate`) before deploying.
 
 ## Smoke test
 

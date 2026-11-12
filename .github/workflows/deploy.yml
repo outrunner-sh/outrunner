@@ -21,21 +21,17 @@ name: Deploy to Cloudflare Containers
 # here. They live as Worker secrets, set once with `wrangler secret put`, and
 # survive deploys — so they never pass through CI.
 
-# Deploys need a person: each one restarts the single prod container and drops
-# live sessions. A push to main runs CI; when CI passes, this workflow plans the
-# deploy (summary below) and the deploy job waits on the `production`
-# environment's required reviewer. Approve or reject it under Actions.
+# Deploys are manual-only: each one restarts the single prod container and
+# drops live sessions, so merging to main (and CI passing) deploys nothing.
+# A person starts each deploy with Actions -> Run workflow, and that click is
+# the approval. (Required reviewers on the `production` environment need a paid
+# GitHub plan; on GitHub Team they could be added as a second gate.)
 #
-# Rollback: run this workflow by hand with `ref` set to an earlier main SHA
-# (it must be on main and have passed CI). See docs/deploy-cloudflare.md.
+# Rollback: run it with `ref` set to an earlier main SHA. Either way the
+# commit must be on main and have a successful CI run on main.
+# See docs/deploy-cloudflare.md.
 
 on:
-  # After CI finishes on main. The job conditions below accept only a CI
-  # success on a push to this repo's main, never a pull request's run.
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
     inputs:
       ref:
@@ -53,15 +49,8 @@ permissions:
 
 jobs:
   plan:
-    # Resolves what to deploy, checks it, and writes the job summary the
-    # reviewer reads before approving. No environment: it runs right away.
-    if: >-
-      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' ||
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+    # Resolves what to deploy, checks it, and writes the job summary. Fails,
+    # and so deploys nothing, on anything it can't vouch for.
     runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
@@ -77,37 +66,36 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
           INPUT_REF: ${{ inputs.ref }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = workflow_run ]; then
-            sha="$RUN_SHA"
-          else
-            sha=$(git rev-parse --verify "${INPUT_REF:-origin/main}^{commit}" 2>/dev/null) \
-              || { echo "::error::'$INPUT_REF' is not a commit in this repository"; exit 1; }
+          # The `production` environment only allows main; say so plainly
+          # rather than leave it to a rejected deployment.
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Run this workflow from main (the 'Use workflow from' menu); pick the commit with the ref input"
+            exit 1
           fi
+          sha=$(git rev-parse --verify "${INPUT_REF:-origin/main}^{commit}" 2>/dev/null) \
+            || { echo "::error::'$INPUT_REF' is not a commit in this repository"; exit 1; }
           # Production is main's: never ship a commit main doesn't contain.
           if ! git merge-base --is-ancestor "$sha" origin/main; then
             echo "::error::$sha is not on main; only main's commits deploy to production"
             exit 1
           fi
-          # Only commits CI passed. (A workflow_run trigger is already one.)
-          if [ "$EVENT" = workflow_dispatch ]; then
-            ok=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&status=success&per_page=1" --jq .total_count)
-            if [ "$ok" = 0 ]; then
-              echo "::error::CI has no successful run for $sha; deploy a commit that passed CI"
-              exit 1
-            fi
+          # Only commits CI passed on main (not a pull request's run, which
+          # tests a merge with an older base).
+          ok=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&branch=main&status=success&per_page=1" --jq .total_count)
+          if [ "$ok" = 0 ]; then
+            echo "::error::CI has no successful run on main for $sha (still running, failed, or never ran). Wait for CI to go green, or pick a commit that passed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/ci.yml?query=branch%3Amain"
+            exit 1
           fi
+          echo "Deploying $sha"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Summarize the deploy
         shell: bash
         env:
           SHA: ${{ steps.resolve.outputs.sha }}
-          EVENT: ${{ github.event_name }}
           MIGRATIONS_APPLIED: ${{ inputs.migrations-applied }}
         run: |
           set -euo pipefail
@@ -129,9 +117,9 @@ jobs:
 
           migrations=""
           if [ -z "$live" ]; then
-            echo "Can't tell what's live, so no commit list. **Check \`supabase/migrations/\` yourself before approving.**" >> "$GITHUB_STEP_SUMMARY"
+            echo "Can't tell what's live, so no commit list. **Check \`supabase/migrations/\` yourself before deploying.**" >> "$GITHUB_STEP_SUMMARY"
           elif [ "$live" = "$SHA" ]; then
-            echo "This commit is already live: approving redeploys it (and restarts the container)." >> "$GITHUB_STEP_SUMMARY"
+            echo "This commit is already live: this redeploys it (and restarts the container)." >> "$GITHUB_STEP_SUMMARY"
           elif git merge-base --is-ancestor "$live" "$SHA"; then
             {
               echo "### Commits since the last deploy"
@@ -153,40 +141,40 @@ jobs:
 
           if [ -n "$migrations" ]; then
             {
-              echo "### ⚠️ Run \`pnpm db:migrate\` before approving"
+              echo "### ⚠️ Run \`pnpm db:migrate\` before deploying"
               echo
               echo "This deploy adds or changes migrations:"
               echo
               while read -r f; do echo "- \`$f\`"; done <<< "$migrations"
               echo
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::warning::This deploy changes supabase/migrations/: run pnpm db:migrate before approving"
-            # A manual run has to say it was done; one after CI can't take
-            # input, so its reviewer sees the warning above instead.
-            if [ "$EVENT" = workflow_dispatch ] && [ "$MIGRATIONS_APPLIED" != true ]; then
-              echo "::error::This deploy changes supabase/migrations/. Run pnpm db:migrate, then run this workflow again with migrations-applied checked."
+            # Whoever runs the deploy has to say migrations were applied.
+            if [ "$MIGRATIONS_APPLIED" != true ]; then
+              echo "::error::This deploy changes supabase/migrations/. Nothing was deployed. Run pnpm db:migrate, then run this workflow again with migrations-applied checked."
               exit 1
             fi
+            echo "::notice::This deploy changes supabase/migrations/; migrations-applied is checked"
           fi
 
   deploy:
     needs: plan
-    # Waits here for a required reviewer of the `production` environment
-    # (Settings -> Environments). Reject the run to skip a deploy.
+    # The `production` environment (Settings -> Environments) allows main
+    # only and records each deploy. It has no required reviewers: the
+    # free plan doesn't offer them, so starting the run is the approval.
     environment:
       name: production
       url: https://app.outrunner.sh
     # One deploy at a time, in order: one under way is never cut off. One
-    # waiting behind it (for approval or for the slot) is replaced by a newer
-    # one, since GitHub keeps one pending per group; the newer one contains
-    # it. The plan job above sits outside the group, so it never waits.
+    # waiting behind it is replaced by a newer one, since GitHub keeps one
+    # pending per group: the last one started wins. The plan job above sits
+    # outside the group, so it never waits.
     concurrency:
       group: deploy-production
       cancel-in-progress: false
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
-      # What ships. Not github.sha: after workflow_run that's main's head
-      # at the time, not the commit CI passed.
+      # What ships: the resolved ref, not github.sha (main's head when the
+      # run started).
       DEPLOY_SHA: ${{ needs.plan.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
