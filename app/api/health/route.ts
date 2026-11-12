@@ -1,6 +1,7 @@
 import { connection, NextResponse } from "next/server";
 
 import { billingMode } from "@/lib/billing/mode";
+import { emailStatus } from "@/lib/email/send";
 import { bearerMatches } from "@/lib/http/bearer";
 import { optionalEnv, providerName } from "@/lib/env";
 import { keySource } from "@/lib/openrouter/keys";
@@ -57,6 +58,9 @@ export async function GET(request: Request) {
     // The cron's secret for the reconciler, which pauses idle boxes and keeps
     // cloud hours; without it neither happens.
     billingCron: Boolean(optionalEnv("BILLING_CRON_SECRET")),
+    // Whether invites and requests to join are emailed (RESEND_API_KEY and
+    // EMAIL_FROM); "not_configured" is valid: admins share invite links.
+    email: emailStatus(),
   };
 
   /**

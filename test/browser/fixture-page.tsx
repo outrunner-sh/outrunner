@@ -22,6 +22,7 @@ import { Markdown } from "@/components/markdown";
 import { PullRequestChip } from "@/components/missions/mission-parts";
 import { HomeSessionRoute, NewSessionRoute } from "@/components/new-session-route";
 import { OrgGitHubSettings } from "@/components/org-github";
+import { OrgMembersSettings } from "@/components/org-members";
 import { OrgGeneralSettings } from "@/components/org-settings";
 import { PageLayout } from "@/components/page-layout";
 import { ProjectSettings } from "@/components/project-settings";
@@ -267,6 +268,23 @@ export function FixturePage() {
               suspendedAt: null, suspended: false, installedBy: null, createdAt: "2026-10-30T00:00:00Z",
             }] : []}
             pending={false} installed={null} error={null}
+          />
+        </SettingsFrame>
+      ) : view === "members" ? (
+        <SettingsFrame>
+          <OrgMembersSettings
+            org={org}
+            me="u-ada"
+            members={[
+              { userId: "u-ada", login: "ada", name: "Ada Lovelace", email: "ada@neev.ai", avatarUrl: null, role: "admin", joinedAt: "2026-10-01T00:00:00Z" },
+              { userId: "u-alan", login: "alan", name: "Alan Turing", email: "alan@neev.ai", avatarUrl: null, role: "member", joinedAt: "2026-10-02T00:00:00Z" },
+            ]}
+            invites={[
+              { id: "inv-1", email: "grace@neev.ai", role: "member", invitedBy: "u-ada", createdAt: new Date(Date.now() - 2 * 86_400_000).toISOString(), expiresAt: new Date(Date.now() + 5 * 86_400_000).toISOString(), expired: false },
+              { id: "inv-2", email: "linus@neev.ai", role: "admin", invitedBy: "u-ada", createdAt: "2026-10-01T00:00:00Z", expiresAt: "2026-10-08T00:00:00Z", expired: true },
+            ]}
+            requests={[]}
+            emails={params.get("email") === "1"}
           />
         </SettingsFrame>
       ) : view === "settings" ? (

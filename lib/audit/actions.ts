@@ -15,6 +15,7 @@ export type AuditAction =
   | "org.renamed"
   | "member.invited"
   | "invite.revoked"
+  | "invite.resent"
   | "member.joined"
   | "request.approved"
   | "request.declined"
@@ -117,6 +118,8 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `invited ${what} as ${text(d.role) ?? "a member"}`;
     case "invite.revoked":
       return `revoked the invite to ${what}`;
+    case "invite.resent":
+      return d.emailed === true ? `emailed ${what} a new invite link` : `made a new invite link for ${what}`;
     case "member.joined":
       return `joined as ${text(d.role) ?? "a member"}`;
     case "request.approved":

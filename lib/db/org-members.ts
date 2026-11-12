@@ -9,13 +9,14 @@
 import type { User } from "@supabase/supabase-js";
 
 import { ADMITTED_KEY, githubLogin, isAdmitted, onAllowlist } from "@/lib/auth/allowlist";
-import { hashSecret, randomSecret } from "@/lib/auth/cli-login";
+import { hashSecret } from "@/lib/auth/cli-login";
 import { connectorsAmong } from "@/lib/automations/connector";
 import type { OrgRole } from "@/lib/orgs/active";
+import { INVITE_DAYS, newInviteToken } from "@/lib/orgs/invite-resend";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** How long an invite link works. */
-export const INVITE_DAYS = 7;
+export { INVITE_DAYS };
 /** How long after a declined request its asker may ask again. */
 export const REQUEST_AGAIN_DAYS = 7;
 
@@ -157,7 +158,7 @@ export async function createInvite(input: {
     .is("accepted_at", null)
     .is("revoked_at", null);
   if (revokeError) throw revokeError;
-  const token = `or_inv_${randomSecret()}`;
+  const token = newInviteToken();
   const { data, error } = await supabase
     .from("organization_invites")
     .insert({
@@ -182,6 +183,39 @@ export async function createInvite(input: {
       expiresAt: data.expires_at,
       expired: false,
     },
+  };
+}
+
+/**
+ * Give an org's open invite a new token's hash and expiry, for resending it
+ * (lib/orgs/invite-resend.ts): the old link's hash is no invite's any more,
+ * so it stops working. Null when there's no open invite by that id.
+ */
+export async function rotateInvite(input: {
+  orgId: string;
+  inviteId: string;
+  tokenHash: string;
+  expiresAt: string;
+}): Promise<OpenInvite | null> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("organization_invites")
+    .update({ token_hash: input.tokenHash, expires_at: input.expiresAt })
+    .eq("org_id", input.orgId)
+    .eq("id", input.inviteId)
+    .is("accepted_at", null)
+    .is("revoked_at", null)
+    .select("id, email, role, invited_by, created_at, expires_at");
+  if (error) throw error;
+  const row = data?.[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    email: row.email,
+    role: row.role as OrgRole,
+    invitedBy: row.invited_by,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    expired: false,
   };
 }
 

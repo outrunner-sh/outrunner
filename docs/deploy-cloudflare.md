@@ -129,6 +129,27 @@ secret, also calls `POST /api/automations/tick`, which starts the runs of
 automations' schedules that have come due: without the secret, scheduled
 automations don't run.
 
+**Email** (optional): org invites, and requests to join for an org's admins,
+are sent through [Resend](https://resend.com). Without it nothing is emailed:
+an admin copies an invite's link from Settings → Org → Members and shares it,
+and the page says so.
+
+1. In Resend, add the sending domain (e.g. `outrunner.sh`) under Domains and
+   add the DNS records it shows (SPF, DKIM) at the DNS host. Wait until
+   Resend shows the domain as verified: until then it refuses mail from it.
+2. Create an API key with "Sending access" for that domain.
+3. Set both secrets. `EMAIL_FROM` must be an address on the verified domain.
+
+```bash
+pnpm dlx wrangler secret put RESEND_API_KEY   # re_…
+pnpm dlx wrangler secret put EMAIL_FROM       # Outrunner <hello@outrunner.sh>
+```
+
+`/api/health` reports `configured.email: "configured"` once both are in
+(`"not_configured"` otherwise). An admin can resend a pending invite from the
+members page; it gets a new link, the old one stops working, and it works for
+7 more days.
+
 **Neev sandboxes** (optional; cloud sessions run on Daytona otherwise): set
 the provider and Neev's three keys, then deploy.
 
