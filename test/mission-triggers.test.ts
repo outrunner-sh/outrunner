@@ -345,3 +345,13 @@ test("the editor's input: Mission-only triggers need a Mission; a Mission's take
   const plain = parseAutomationInput({ ...base, triggers: ["pull_request.opened"] }, { full: true });
   assert.ok(plain.ok && plain.value.target === undefined);
 });
+
+test("a change by someone other than the owner to what a trigger sends needs the owner's approval again; renaming or switching doesn't", async () => {
+  const { changesWhatItSends } = await import("@/lib/missions/mission-automations");
+  for (const change of [{ prompt: "x" }, { triggers: ["webhook" as const] }, { schedules: [] }, { webhookSecret: null }, { target: { kind: "mission" as const, missionId: MISSION, watch: null, linearTeamIds: ["t"] } }, { projectIds: ["p1"] }]) {
+    assert.equal(changesWhatItSends(change), true, JSON.stringify(change));
+  }
+  for (const change of [{ name: "y" }, { enabled: false }, { archived: true }, {}]) {
+    assert.equal(changesWhatItSends(change), false, JSON.stringify(change));
+  }
+});

@@ -3,9 +3,9 @@ import { NextResponse } from "next/server";
 import { missionCaller } from "@/lib/missions/trigger-routes";
 import { savingAutomation } from "@/lib/automations/routes";
 import { parseAutomationInput } from "@/lib/automations/rules";
-import { deleteAutomation, getAutomation, setDelegation, updateAutomation } from "@/lib/db/automations";
+import { deleteAutomation, getAutomation, resetDelegation, setDelegation, updateAutomation } from "@/lib/db/automations";
 import { isUuid } from "@/lib/ids";
-import { checkMissionTarget } from "@/lib/missions/mission-automations";
+import { changesWhatItSends, checkMissionTarget } from "@/lib/missions/mission-automations";
 import { missionLevel } from "@/lib/missions/slack-route.deps";
 import { sessionById } from "@/lib/missions/store";
 
@@ -35,7 +35,9 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (!automation) return NextResponse.json(NOT_FOUND, { status: 404 });
   if (approving) {
     if (!caller.isOwner) return NextResponse.json({ error: "Only the Mission's owner approves what sends it work." }, { status: 403 });
-    await setDelegation(automationId, caller.mission.id, caller.userId, body?.approved === true);
+    if (!(await setDelegation(automationId, caller.mission.id, caller.userId, body?.approved === true))) {
+      return NextResponse.json({ error: "There's no approval to revoke." }, { status: 404 });
+    }
     return NextResponse.json({ id: automationId, approved: body?.approved === true });
   }
   const { target: _sent, projectIds: _ignored, ...rest } = body ?? {};
@@ -49,6 +51,9 @@ export async function PATCH(request: Request, context: RouteContext) {
   return savingAutomation(async () => {
     const checked = await checkMissionTarget(caller.mission.orgId, caller.userId, parsed.value, automation.target, { mission: sessionById, level: missionLevel });
     if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: checked.status });
+    // Someone else changing what it sends: the owner approves it again.
+    // Withdrawn first, so no run goes under the old approval with the new config.
+    if (!caller.isOwner && changesWhatItSends(checked.input)) await resetDelegation(automationId);
     if (!(await updateAutomation(caller.mission.orgId, automationId, caller.userId, checked.input))) return NextResponse.json(NOT_FOUND, { status: 404 });
     return NextResponse.json({ id: automationId });
   });

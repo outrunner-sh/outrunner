@@ -37,10 +37,13 @@ export function watchDeps(): WatchDeps {
     self: (teamId) => {
       let known = selves.get(teamId);
       if (!known) {
+        // A failure rejects (and isn't kept): the loop guard never runs on
+        // half an identity; the saved message is tried again.
         known = (async () => {
           const install = await getInstallation(teamId);
-          const ids = install ? await botIdentity(install.botToken).catch(() => ({ userId: null, botId: null })) : { userId: null, botId: null };
-          return { userId: ids.userId ?? install?.botUserId ?? null, botId: ids.botId };
+          if (!install) return { userId: null, botId: null };
+          const ids = await botIdentity(install.botToken);
+          return { userId: ids.userId ?? install.botUserId ?? null, botId: ids.botId };
         })();
         selves.set(teamId, known);
         // Not kept on failure: the next message asks again.

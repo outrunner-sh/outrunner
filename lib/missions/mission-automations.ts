@@ -56,3 +56,11 @@ export async function checkMissionTarget(
     input: { ...input, ...(input.projectIds !== undefined || !existing ? { projectIds: [mission.projectId] } : {}) },
   };
 }
+
+/** Whether a change alters what an automation sends its Mission (anything
+ *  but its name, or switching it on, off or archiving it): a change the
+ *  Mission's owner must approve again, unless it's theirs. */
+export function changesWhatItSends(change: Partial<AutomationInput>): boolean {
+  const harmless = new Set(["name", "enabled", "archived"]);
+  return Object.entries(change).some(([key, value]) => value !== undefined && !harmless.has(key));
+}

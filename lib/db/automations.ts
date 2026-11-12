@@ -417,17 +417,40 @@ export async function requestDelegation(automationId: string, missionId: string,
   if (error) throw error;
 }
 
-/** The Mission's owner approves (or revokes) an automation sending it work. */
+/** The Mission's owner approves (or revokes) an automation sending it work.
+ *  Approving makes its row if a failed write left none. */
 export async function setDelegation(automationId: string, missionId: string, ownerId: string, approve: boolean): Promise<boolean> {
   const now = new Date().toISOString();
-  const { data, error } = await createSupabaseAdminClient()
+  const db = createSupabaseAdminClient();
+  if (approve) {
+    const { data, error } = await db
+      .from("mission_delegations")
+      .upsert(
+        { automation_id: automationId, mission_id: missionId, approved_by: ownerId, approved_at: now, revoked_at: null },
+        { onConflict: "automation_id" },
+      )
+      .select("automation_id, mission_id");
+    if (error) throw error;
+    return (data ?? []).some((d) => d.mission_id === missionId);
+  }
+  const { data, error } = await db
     .from("mission_delegations")
-    .update(approve ? { approved_by: ownerId, approved_at: now, revoked_at: null } : { revoked_at: now })
+    .update({ revoked_at: now })
     .eq("automation_id", automationId)
     .eq("mission_id", missionId)
     .select("automation_id");
   if (error) throw error;
   return (data ?? []).length > 0;
+}
+
+/** A change by someone other than the Mission's owner to what an automation
+ *  sends it: its approval is withdrawn until the owner approves again. */
+export async function resetDelegation(automationId: string): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("mission_delegations")
+    .update({ approved_by: null, approved_at: null })
+    .eq("automation_id", automationId);
+  if (error) throw error;
 }
 
 /** Whether a Mission's owner has approved this automation sending it work,

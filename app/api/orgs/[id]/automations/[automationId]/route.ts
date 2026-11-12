@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 
 import { parseAutomationInput } from "@/lib/automations/rules";
 import { savingAutomation } from "@/lib/automations/routes";
-import { deleteAutomation, getAutomation, updateAutomation } from "@/lib/db/automations";
-import { checkMissionTarget } from "@/lib/missions/mission-automations";
+import { deleteAutomation, getAutomation, resetDelegation, updateAutomation } from "@/lib/db/automations";
+import { changesWhatItSends, checkMissionTarget } from "@/lib/missions/mission-automations";
 import { missionLevel } from "@/lib/missions/slack-route.deps";
 import { sessionById } from "@/lib/missions/store";
 import { isUuid } from "@/lib/ids";
@@ -28,6 +28,11 @@ export async function PATCH(request: Request, { params }: Params) {
     if (!saved) return NextResponse.json(NOT_FOUND, { status: 404 });
     const target = await checkMissionTarget(id, caller.owner.id, parsed.value, saved.target, { mission: sessionById, level: missionLevel });
     if (!target.ok) return NextResponse.json({ error: target.error }, { status: target.status });
+    // Someone other than the Mission's owner changing what it sends: the
+    // owner approves it again (withdrawn before the change goes in).
+    if (target.mission && target.mission.ownerId !== caller.owner.id && changesWhatItSends(target.input)) {
+      await resetDelegation(automationId);
+    }
     if (!(await updateAutomation(id, automationId, caller.owner.id, target.input))) {
       return NextResponse.json(NOT_FOUND, { status: 404 });
     }
