@@ -26,6 +26,7 @@ import { daytonaAcceptsKey } from "@/lib/runtime/sandbox/daytona";
 import { modalAcceptsToken } from "@/lib/runtime/sandbox/modal";
 import { checkModalToken } from "@/lib/runtime/sandbox/modal-token";
 import { assertPublicHost, e2bAcceptsKey, e2bUrl } from "@/lib/runtime/user-e2b-checks";
+import { cleanUpUserE2b } from "@/lib/runtime/user-e2b-cleanup";
 import { buildUserE2bTemplate, refreshUserE2bTemplate } from "@/lib/runtime/user-e2b-template";
 
 /**
@@ -228,8 +229,19 @@ export async function DELETE(request: Request) {
     if (key === "gcp") {
       try { await disconnectGcp(owner.id); }
       catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Could not disconnect Google Cloud." }, { status: 409 }); }
-    } else if (key === "e2b") await clearE2bConnection(owner.id);
-    else await (key === "modal" ? clearModalToken(owner.id) : clearDaytonaKey(owner.id));
+    } else if (key === "e2b") {
+      // Read before it's forgotten: what Outrunner made in their E2B (boxes,
+      // templates) goes with it, so none of it stays billed to them.
+      const stored = await getStoredE2b(owner.id);
+      await clearE2bConnection(owner.id);
+      const e2bCleanup = stored
+        ? await cleanUpUserE2b(owner.id, stored).catch((error: unknown) => {
+            console.warn(`Could not clean up user ${owner.id}'s E2B`, error);
+            return null;
+          })
+        : null;
+      return NextResponse.json({ ...(await getSandboxSettings(owner.id)), e2bCleanup });
+    } else await (key === "modal" ? clearModalToken(owner.id) : clearDaytonaKey(owner.id));
     return NextResponse.json(await getSandboxSettings(owner.id));
   });
 }
