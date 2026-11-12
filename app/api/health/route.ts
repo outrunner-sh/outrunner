@@ -8,6 +8,7 @@ import { checkDaytona, checkOpenRouter } from "@/lib/health/dependencies";
 import { isDraining } from "@/lib/observability/drain";
 import { optionalEnv, providerName } from "@/lib/env";
 import { platformComputerProviders } from "@/lib/runtime/provider";
+import { isNeevPersonalToken } from "@/lib/runtime/sandbox/neev";
 import { countUnrecordedComputers } from "@/lib/runtime/unrecorded-computers";
 import { keySource } from "@/lib/openrouter/keys";
 import { codexCliVersion, probeCodexSchema } from "@/lib/codex/rollout";
@@ -50,8 +51,10 @@ export async function GET(request: Request) {
     // otherwise looks healthy cannot actually run a workspace.
     credentialEncryption: Boolean(optionalEnv("CREDENTIALS_ENCRYPTION_KEY")),
     daytona: Boolean(optionalEnv("DAYTONA_API_KEY")),
+    // A personal access token passes Neev's API but not a sandbox's runtime.
     neev:
       Boolean(optionalEnv("NEEV_API_KEY")) &&
+      !isNeevPersonalToken(optionalEnv("NEEV_API_KEY")) &&
       Boolean(optionalEnv("NEEV_ORG_ID")) &&
       Boolean(optionalEnv("NEEV_PROJECT_ID")),
     modal:

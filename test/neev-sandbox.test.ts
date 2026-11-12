@@ -267,3 +267,26 @@ test("new boxes are made with Neev's idle pause as a backstop, never deleted whi
   assert.equal(NEEV_LIFECYCLE.idle_timeout_seconds, 4 * 60 * 60);
   assert.equal(NEEV_LIFECYCLE.max_lifetime_seconds, 0);
 });
+
+test("a personal access token is refused before any box is made", async () => {
+  const { isNeevPersonalToken } = await import("@/lib/runtime/sandbox/neev");
+  assert.equal(isNeevPersonalToken("pat-nc-abc"), true);
+  assert.equal(isNeevPersonalToken("sk-nc-abc"), false);
+  assert.equal(isNeevPersonalToken(undefined), false);
+  const saved = { key: process.env.NEEV_API_KEY, org: process.env.NEEV_ORG_ID, project: process.env.NEEV_PROJECT_ID };
+  Object.assign(process.env, { NEEV_API_KEY: "pat-nc-personal", NEEV_ORG_ID: "org", NEEV_PROJECT_ID: "proj" });
+  let fetched = false;
+  globalThis.fetch = (async () => {
+    fetched = true;
+    return new Response("{}");
+  }) as unknown as typeof fetch;
+  try {
+    await assert.rejects(new NeevBackend().create({}), /personal access token[\s\S]*sk-nc-/);
+    assert.equal(fetched, false, "Neev was never called: no box to make and delete");
+  } finally {
+    for (const [name, value] of [["NEEV_API_KEY", saved.key], ["NEEV_ORG_ID", saved.org], ["NEEV_PROJECT_ID", saved.project]] as const) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});

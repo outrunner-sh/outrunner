@@ -108,7 +108,7 @@ export class NeevBackend implements SandboxBackend {
   private neev(): Neev {
     if (!this.client) {
       this.client = new Neev({
-        apiKey: requireEnv("NEEV_API_KEY"),
+        apiKey: neevApiKey(),
         orgId: requireEnv("NEEV_ORG_ID"),
         projectId: requireEnv("NEEV_PROJECT_ID"),
         baseURL: optionalEnv("NEEV_BASE_URL"),
@@ -287,7 +287,7 @@ export class NeevBackend implements SandboxBackend {
     const id = sandbox.id;
     const connectUrl = sandbox.connectUrl;
     if (!connectUrl) throw new Error(`Neev sandbox ${id} has no connect URL (phase ${sandbox.phase})`);
-    return { connectUrl: connectUrl.replace(/\/$/, ""), apiKey: requireEnv("NEEV_API_KEY") };
+    return { connectUrl: connectUrl.replace(/\/$/, ""), apiKey: neevApiKey() };
   }
 
   private box(sandbox: Sandbox, runtime: SandboxRuntime, conn: Connection): SandboxBox {
@@ -349,6 +349,25 @@ export class NeevBackend implements SandboxBackend {
       }),
     };
   }
+}
+
+/** Whether `key` is a personal access token (`pat-nc-…`): Neev's API takes
+ *  one (create, list, pause), but a sandbox's runtime refuses it, so a box
+ *  is made and then nothing can run on it. */
+export function isNeevPersonalToken(key: string | undefined): boolean {
+  return !!key && key.startsWith("pat-");
+}
+
+/** NEEV_API_KEY, refused up front when it's a personal access token, rather
+ *  than after a box is made (and deleted) on every session. */
+function neevApiKey(): string {
+  const key = requireEnv("NEEV_API_KEY");
+  if (isNeevPersonalToken(key)) {
+    throw new Error(
+      'NEEV_API_KEY is a personal access token (pat-nc-…); Neev sandboxes need a project API key with Resource Type "Sandboxes" (sk-nc-…).',
+    );
+  }
+  return key;
 }
 
 /** Sandboxes per page when listing. */

@@ -157,8 +157,10 @@ orphans) for as long as that backend's credentials stay set
 after moving to Neev, and keep the `NEEV_*` keys after rolling back.
 
 `NEEV_API_KEY` is a project API key with Resource Type "Sandboxes"
-(`sk-nc-…`). A personal access token (`pat-nc-…`) won't do, because the
-sandbox itself refuses it. `NEEV_SANDBOX_TEMPLATE` (default
+(`sk-nc-…`). A personal access token (`pat-nc-…`) won't do: Neev's API
+takes it (boxes are created and listed), but every command inside a box gets
+HTTP 401, so no session can start. The app refuses one before making a box,
+and `/api/health` reports `configured.neev: false` with one set. `NEEV_SANDBOX_TEMPLATE` (default
 `sb-ubuntu-26-04-dev`) and `NEEV_BASE_URL` (the SDK's own API URL) are
 optional. Nothing uses a Neev preview URL. The app reaches each sandbox
 through its runtime on that key, and relays the browser's terminal and
