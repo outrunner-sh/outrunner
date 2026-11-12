@@ -84,6 +84,11 @@ export type OutboxPostDeps = {
   askPosted?(askId: string, ts: string): Promise<void>;
 };
 
+/** What queueing a post came to: queued now (new, or one that had failed or
+ *  been dropped, queued again); queued before and still to go; sent before;
+ *  or sent with no answer, so not to be posted again blindly. */
+export type QueueOutcome = "queued" | "already_pending" | "already_sent" | "ambiguous";
+
 /** How many tries a post gets. */
 export const MAX_POST_ATTEMPTS = 8;
 
@@ -102,6 +107,17 @@ const FATAL = new Set([
   "message_not_found",
   "thread_not_found",
   "invalid_name",
+  "invalid_arguments",
+  "invalid_blocks_format",
+  "invalid_metadata_format",
+  "invalid_metadata_schema",
+  "metadata_too_large",
+  "too_many_attachments",
+  "cannot_reply_to_message",
+  "restricted_action",
+  "restricted_action_read_only_channel",
+  "restricted_action_thread_locked",
+  "restricted_action_non_threadable_channel",
 ]);
 
 export function backoffSeconds(attempt: number): number {

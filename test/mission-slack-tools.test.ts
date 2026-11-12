@@ -50,6 +50,8 @@ function world() {
     { missionId: "m2", requestKey: "Ev9", threadId: "t2", bindingRevision: "rev-m2", messageTs: "1731400000.000200", requestedBy: "ana", requestedBySlack: "UANA" },
   ];
   const queue = new Map<string, QueuedPost>();
+  /** Each queued post's status, as mission_slack_posts would have it. */
+  const status = new Map<string, "pending" | "sent" | "failed" | "dropped" | "ambiguous">();
   const ledger: Ledger[] = [];
   const audits: string[] = [];
   const started: RunnerStart[] = [];
@@ -69,11 +71,15 @@ function world() {
     request: async (missionId, key) => requests.find((r) => r.missionId === missionId && r.requestKey === key) ?? null,
     latestRequest: async (threadId) => requests.filter((r) => r.threadId === threadId).at(-1) ?? null,
     canRead: async (userId) => readers.has(userId),
-    // As mission_slack_posts' unique op_key: queued once.
+    // As queuePost: once a key; one failed or dropped queued again.
     queue: async (post) => {
-      if (queue.has(post.opKey)) return false;
+      const was = status.get(post.opKey);
+      if (was === "pending") return "already_pending";
+      if (was === "sent") return "already_sent";
+      if (was === "ambiguous") return "ambiguous";
       queue.set(post.opKey, post);
-      return true;
+      status.set(post.opKey, "pending");
+      return "queued";
     },
     saveAsk: async (input) => `00000000-0000-0000-0000-${String(queue.size).padStart(12, "0")}`.slice(0, 36) || input.opKey,
     askBlocks,
@@ -143,7 +149,7 @@ function world() {
     writeNotes: async () => undefined,
     slack,
   };
-  return { deps, queue, ledger, audits, started, state, bindings, threads, readers, sessions, requests };
+  return { deps, queue, status, ledger, audits, started, state, bindings, threads, readers, sessions, requests };
 }
 
 const call = (deps: MissionToolDeps, missionId: string, name: string, args: Record<string, unknown>) => callMissionTool({ missionId }, name, args, deps);
@@ -204,6 +210,24 @@ test("a tool call tried again is one post; post_key makes deliberate repeats dis
   assert.equal(queue.size, 2);
 });
 
+test("a post that failed or was dropped is queued again; one sent or ambiguous isn't, and the Mission is told which", async () => {
+  const { deps, status } = world();
+  const reply = () => call(deps, "m1", "slack_reply", { thread: "1731400000.000100", text: "Done." });
+  await reply();
+  const [key] = status.keys();
+  for (const [was, said] of [
+    ["failed", /^Queued/],
+    ["dropped", /^Queued/],
+    ["sent", /^Already posted/],
+    ["ambiguous", /couldn't be told/],
+  ] as const) {
+    status.set(key, was);
+    const result = await reply();
+    assert.match(result.text, said, was);
+    assert.equal(result.isError, was === "ambiguous" ? true : undefined, was);
+  }
+});
+
 test("slack_react marks a request's own message: the one named, or the thread's latest", async () => {
   const { deps, queue } = world();
   await call(deps, "m1", "slack_react", { thread: "1731400000.000100", emoji: "eyes" });
@@ -223,7 +247,7 @@ test("slack_react marks a request's own message: the one named, or the thread's 
 test("slack_ask queues a card with its options and Other, once", async () => {
   const { deps, queue } = world();
   const asked = await call(deps, "m1", "slack_ask", { thread: "1731400000.000100", question: "Which env?", options: ["staging", "prod", "staging"] });
-  assert.match(asked.text, /^Queued: question card/);
+  assert.match(asked.text, /^Queued: the question card/);
   assert.match((await call(deps, "m1", "slack_ask", { thread: "1731400000.000100", question: "Which env?", options: ["staging", "prod"] })).text, /^Already queued/);
   const [card] = queue.values();
   assert.equal(card.kind, "ask");

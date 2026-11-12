@@ -15,7 +15,7 @@
  */
 
 import type { MissionEventKind, MissionEventPayload, PullRequestRef } from "@/lib/missions/events";
-import type { QueuedPost } from "@/lib/missions/slack-outbox";
+import type { QueueOutcome, QueuedPost } from "@/lib/missions/slack-outbox";
 import type { MissionChannel, MissionRequest, MissionThread, ShipLedger } from "@/lib/missions/slack-store";
 import { pullRequestCard } from "@/lib/missions/slack-text";
 
@@ -24,7 +24,7 @@ export type AnnounceDeps = {
   binding(missionId: string): Promise<MissionChannel | null>;
   latestThread(binding: MissionChannel): Promise<MissionThread | null>;
   latestRequest(threadId: string): Promise<MissionRequest | null>;
-  queue(post: QueuedPost): Promise<boolean>;
+  queue(post: QueuedPost): Promise<QueueOutcome>;
 };
 
 export type CardKind = "opened" | "ready" | "merged" | "closed";
@@ -59,7 +59,7 @@ export async function announcePullRequest(
 ): Promise<boolean> {
   const place = await shipPlace(input.missionId, input.runnerId, deps);
   if (!place || place.thread.muted) return false;
-  return deps.queue({
+  return (await deps.queue({
     opKey: cardKey(input.kind, input.runnerId, input.pr, input.eventKey),
     missionId: input.missionId,
     bindingRevision: place.revision,
@@ -69,7 +69,7 @@ export async function announcePullRequest(
     kind: "card",
     payload: { chunks: [pullRequestCard(input.kind, input.pr, input.ship)] },
     requester: place.ledger.requestedBy,
-  });
+  })) === "queued";
 }
 
 /** A Ship's event, as a card in its thread if it's one Slack hears. */
@@ -93,7 +93,7 @@ export async function announceWaiting(missionId: string, waitKey: string, url: s
   const thread = await deps.latestThread(binding);
   if (!thread || thread.muted) return false;
   const request = await deps.latestRequest(thread.id);
-  return deps.queue({
+  return (await deps.queue({
     opKey: `waiting:${missionId}:${waitKey}`,
     missionId,
     bindingRevision: binding.revision,
@@ -103,5 +103,5 @@ export async function announceWaiting(missionId: string, waitKey: string, url: s
     kind: "card",
     payload: { chunks: [`:raised_hand: The Mission is waiting on a decision from its owner before it goes on${url ? `: <${url}|answer in Outrunner>` : "."}`] },
     requester: request?.requestedBy ?? thread.startedBy,
-  });
+  })) === "queued";
 }

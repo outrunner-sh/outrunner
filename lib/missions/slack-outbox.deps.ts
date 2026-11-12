@@ -17,6 +17,7 @@ import {
   type OutboxPostDeps,
   type PostOutcome,
   type PostPayload,
+  type QueueOutcome,
   type QueuedPost,
 } from "@/lib/missions/slack-outbox";
 import { sessionById } from "@/lib/missions/store";
@@ -144,36 +145,61 @@ function later(work: () => Promise<unknown>): void {
 }
 
 /**
- * Queue a post: once under its key (one queued before is left as it is).
- * It's sent right after the response; the tick tries again if that fails.
- * Whether it was new.
+ * Queue a post under its key. A new one is queued; one under the same key
+ * that failed or was dropped is queued again (as this call has it: the
+ * queue checks it again before it goes, and chunks already posted stay
+ * posted); one pending or sent is left as it is, and one ambiguous too, as
+ * it may have posted. Sent right after the response; the tick tries again
+ * if that fails.
  */
-export async function queuePost(post: QueuedPost): Promise<boolean> {
+export async function queuePost(post: QueuedPost): Promise<QueueOutcome> {
+  const fields = {
+    mission_id: post.missionId,
+    binding_revision: post.bindingRevision,
+    team_id: post.teamId,
+    channel_id: post.channelId,
+    thread_ts: post.threadTs,
+    kind: post.kind,
+    payload: post.payload as Json,
+    requester: post.requester,
+  };
   const { data, error } = await db()
     .from("mission_slack_posts")
-    .upsert(
-      {
-        op_key: post.opKey,
-        mission_id: post.missionId,
-        binding_revision: post.bindingRevision,
-        team_id: post.teamId,
-        channel_id: post.channelId,
-        thread_ts: post.threadTs,
-        kind: post.kind,
-        payload: post.payload as Json,
-        requester: post.requester,
-      },
-      { onConflict: "op_key", ignoreDuplicates: true },
-    )
+    .upsert({ op_key: post.opKey, ...fields }, { onConflict: "op_key", ignoreDuplicates: true })
     .select("id");
   if (error) throw error;
-  const id = data?.[0]?.id;
+  let id: string | null = data?.[0]?.id ?? null;
+  if (!id) {
+    const { data: again, error: againError } = await db()
+      .from("mission_slack_posts")
+      .update({
+        ...fields,
+        status: "pending",
+        attempts: 0,
+        in_doubt: false,
+        lease_until: null,
+        next_attempt_at: new Date().toISOString(),
+        last_error: null,
+        finished_at: null,
+      })
+      .eq("op_key", post.opKey)
+      .in("status", ["failed", "dropped"])
+      .select("id");
+    if (againError) throw againError;
+    id = again?.[0]?.id ?? null;
+  }
+  if (!id) {
+    const { data: existing, error: readError } = await db().from("mission_slack_posts").select("status").eq("op_key", post.opKey).maybeSingle();
+    if (readError) throw readError;
+    return existing?.status === "sent" ? "already_sent" : existing?.status === "ambiguous" ? "ambiguous" : "already_pending";
+  }
+  const queued = id;
   // The thread's oldest goes first: sending this one may send an earlier.
   later(async () => {
-    await deliverPosts(id ?? null, id ? 1 : 5);
-    if (id) await deliverPosts(null, 5);
+    await deliverPosts(queued, 1);
+    await deliverPosts(null, 5);
   });
-  return Boolean(id);
+  return "queued";
 }
 
 /** The tick's part: posts due, and old finished ones pruned. */
@@ -187,8 +213,9 @@ export async function deliverDuePosts(): Promise<number> {
   await db()
     .from("mission_slack_posts")
     .delete()
-    .in("status", ["sent", "dropped"])
-    .lt("finished_at", new Date(Date.now() - 14 * 24 * 60 * 60_000).toISOString())
+    // Finished ones, kept a fortnight to look into, user content included.
+    .in("status", ["sent", "dropped", "failed", "ambiguous"])
+    .lt("created_at", new Date(Date.now() - 14 * 24 * 60 * 60_000).toISOString())
     .then(
       () => undefined,
       () => undefined,

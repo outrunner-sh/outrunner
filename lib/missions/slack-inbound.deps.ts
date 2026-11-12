@@ -64,7 +64,7 @@ export async function processInboundNow(eventId: string): Promise<void> {
 
 /** The tick's part: saved events never processed, or whose processor died
  *  (older than a minute, so the one right after the answer goes first), and
- *  old processed ones pruned. */
+ *  old finished ones pruned. */
 export async function processDueInbound(max = 25): Promise<number> {
   const { data, error } = await db().rpc("due_mission_slack_inbound", { max_events: max, grace_seconds: 60 });
   if (error) throw error;
@@ -72,14 +72,19 @@ export async function processDueInbound(max = 25): Promise<number> {
   for (const row of data ?? []) {
     if ((await processInbound(row.event_id, inboundDeps()).catch(() => "retry")) === "done") done++;
   }
-  await db()
-    .from("mission_slack_inbound")
-    .delete()
-    .eq("status", "done")
-    .lt("processed_at", new Date(Date.now() - 3 * 24 * 60 * 60_000).toISOString())
-    .then(
-      () => undefined,
-      () => undefined,
-    );
+  const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60_000).toISOString();
+  // Saved messages are people's words: done ones kept 3 days, failed ones
+  // 14 (time to look into them), then gone.
+  for (const [status, days] of [["done", 3], ["failed", 14]] as const) {
+    await db()
+      .from("mission_slack_inbound")
+      .delete()
+      .eq("status", status)
+      .lt("created_at", daysAgo(days))
+      .then(
+        () => undefined,
+        () => undefined,
+      );
+  }
   return done;
 }

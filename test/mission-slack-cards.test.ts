@@ -42,9 +42,9 @@ function world() {
     latestThread: async () => thread,
     latestRequest: async () => ({ missionId: "m1", requestKey: "Ev2", threadId: "t1", bindingRevision: "rev1", messageTs: "1731400010.000100", requestedBy: "bo", requestedBySlack: "UBO" }),
     queue: async (post) => {
-      if (queue.has(post.opKey)) return false;
+      if (queue.has(post.opKey)) return "already_pending";
       queue.set(post.opKey, post);
-      return true;
+      return "queued";
     },
   };
   return { deps, queue, ledgers };

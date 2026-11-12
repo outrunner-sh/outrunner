@@ -23,7 +23,7 @@
 
 import { createHash } from "node:crypto";
 
-import type { QueuedPost, SlackBlocks } from "@/lib/missions/slack-outbox";
+import type { QueueOutcome, QueuedPost, SlackBlocks } from "@/lib/missions/slack-outbox";
 import type { MissionChannel, MissionRequest, MissionThread, ShipLedger, SpawnReservation } from "@/lib/missions/slack-store";
 import { limitText, reactionName } from "@/lib/missions/slack-text";
 import type { Workspace } from "@/lib/runtime/types";
@@ -38,8 +38,8 @@ export type MissionSlackDeps = {
   latestRequest(threadId: string): Promise<MissionRequest | null>;
   /** Whether someone can still read the Mission's project. */
   canRead(userId: string, mission: Workspace): Promise<boolean>;
-  /** Queue a post; true when it's new (false: queued before, under its key). */
-  queue(post: QueuedPost): Promise<boolean>;
+  /** Queue a post under its key (slack-outbox.deps.ts's queuePost). */
+  queue(post: QueuedPost): Promise<QueueOutcome>;
   saveAsk(input: { missionId: string; threadId: string; question: string; options: string[]; opKey: string }): Promise<string>;
   askBlocks(askId: string, question: string, options: string[]): SlackBlocks;
   reserveSpawn(input: {
@@ -194,9 +194,21 @@ export async function callSlackTool(mission: Workspace, name: string, args: Reco
   // Whose request a post answers: their access is checked again before it goes.
   const requester = latest?.requestedBy ?? thread.startedBy;
   const about = latest?.requestKey ?? "-";
-  const queued = (fresh: boolean, what: string) => ({
-    text: fresh ? `Queued: ${what} posts in the thread shortly.` : `Already queued (the same ${what}): it isn't posted twice.`,
-  });
+  const queued = (outcome: QueueOutcome, what: string): ToolResult => {
+    switch (outcome) {
+      case "queued":
+        return { text: `Queued: the ${what} posts in the thread shortly.` };
+      case "already_pending":
+        return { text: `Already queued (the same ${what}): it isn't posted twice.` };
+      case "already_sent":
+        return { text: `Already posted (the same ${what}): it isn't posted twice. Use post_key for a deliberate repeat.` };
+      case "ambiguous":
+        return {
+          text: `The same ${what} went unanswered by Slack earlier, and whether it posted couldn't be told, so it isn't posted again. Check the thread, or use post_key to post it anew.`,
+          isError: true,
+        };
+    }
+  };
   switch (name) {
     case "slack_reply": {
       const text = typeof args.text === "string" ? args.text.trim() : "";
@@ -206,7 +218,7 @@ export async function callSlackTool(mission: Workspace, name: string, args: Reco
         return refuse("post_key is up to 80 letters, digits, . _ : or -.");
       }
       const key = typeof args.post_key === "string" ? `k:${args.post_key}` : `h:${about}:${hash(text)}`;
-      const fresh = await deps.queue(
+      const outcome = await deps.queue(
         postIn(binding, thread, {
           opKey: `reply:${mission.id}:${thread.threadTs}:${key}`,
           kind: "reply",
@@ -214,7 +226,7 @@ export async function callSlackTool(mission: Workspace, name: string, args: Reco
           requester,
         }),
       );
-      return queued(fresh, "reply");
+      return queued(outcome, "reply");
     }
     case "slack_ask": {
       const question = typeof args.question === "string" ? args.question.trim() : "";
@@ -225,12 +237,11 @@ export async function callSlackTool(mission: Workspace, name: string, args: Reco
       if (options.length < 1 || options.length > 5) return refuse("Give 1 to 5 options.");
       const opKey = `ask:${mission.id}:${thread.threadTs}:${about}:${hash(question, ...options)}`;
       const askId = await deps.saveAsk({ missionId: mission.id, threadId: thread.id, question, options, opKey });
-      const fresh = await deps.queue(
+      const outcome = await deps.queue(
         postIn(binding, thread, { opKey, kind: "ask", payload: { text: question, blocks: deps.askBlocks(askId, question, options), askId }, requester }),
       );
-      return {
-        text: `${queued(fresh, "question card").text} The first answer comes back to you as a <slack_answer> block; end your turn until then.`,
-      };
+      const said = queued(outcome, "question card");
+      return said.isError ? said : { text: `${said.text} The first answer comes back to you as a <slack_answer> block; end your turn until then.` };
     }
     case "slack_react": {
       const emoji = typeof args.emoji === "string" ? reactionName(args.emoji) : null;
@@ -241,10 +252,10 @@ export async function callSlackTool(mission: Workspace, name: string, args: Reco
         if (!request || request.threadId !== thread.id || !request.messageTs) return refuse(NO_SUCH_REQUEST);
         ts = request.messageTs;
       }
-      const fresh = await deps.queue(
-        postIn(binding, thread, { opKey: `react:${binding.channelId}:${ts}:${emoji}`, kind: "reaction", payload: { ts, name: emoji }, requester }),
+      const outcome = await deps.queue(
+        postIn(binding, thread, { opKey: `react:${mission.id}:${binding.channelId}:${ts}:${emoji}`, kind: "reaction", payload: { ts, name: emoji }, requester }),
       );
-      return queued(fresh, "reaction");
+      return queued(outcome, "reaction");
     }
     default:
       return refuse(`No tool is called ${name}.`);
@@ -346,7 +357,7 @@ export async function slackSpawn(
             requester: request?.requestedBy ?? null,
           }),
         )
-        .catch(() => false);
+        .catch(() => "already_pending" as const);
     }
     return {
       error: `The Ship didn't start: this Mission reached its limit on Ships started while on call (${reserved.limit} ${

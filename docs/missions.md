@@ -163,7 +163,9 @@ Slack's retries, timeouts and rebinds
   that id. A timeout is no proof, so its place stays for the retry.
 - **Posts go through a queue.** Every reply, question card, reaction and
   system card is queued in `mission_slack_posts` under a stable key (a
-  retried tool call is one post; the tools answer "queued"), and sent in
+  retried tool call is one post; the tools answer "queued"; one that failed
+  or was dropped is queued again, one sent or ambiguous isn't, and the tool
+  says which), and sent in
   order within its thread, right after it's queued and by the tick. Slack's
   rate limit waits its Retry-After; other failures back off (15 seconds,
   doubling, to ten minutes, 8 tries); refusals no retry changes fail at once.
@@ -171,7 +173,9 @@ Slack's retries, timeouts and rebinds
   next. Each post carries a marker in its message metadata: a send Slack
   never answered is looked for in the thread before it's posted again, and
   if the thread can't settle it (it can't be read, or is too long), the post
-  is marked `ambiguous`, never posted again blindly.
+  is marked `ambiguous`, never posted again blindly. Saved events and
+  finished posts are pruned: done events after 3 days, failed ones and
+  finished posts after 14.
 - **Checked again right before acting.**
   - Each post: the binding is the one it was queued under (same revision,
     as a rebind is a new one), the thread isn't muted, and whoever's request

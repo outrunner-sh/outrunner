@@ -179,9 +179,9 @@ test("a mention becomes a Ship and its pull request's cards, once each, through 
       latestRequest: async (threadId) => requests.filter((r) => r.threadId === threadId).at(-1) ?? null,
       canRead: async (userId) => userId === "ana",
       queue: async (post) => {
-        if (posts.some((p) => p.opKey === post.opKey)) return false;
+        if (posts.some((p) => p.opKey === post.opKey)) return "already_pending";
         posts.push({ ...post, id: `p${posts.length + 1}`, status: "pending", attempt: 0, progress: 0, postedTs: [], inDoubt: false });
-        return true;
+        return "queued";
       },
       saveAsk: async () => "00000000-0000-0000-0000-0000000000aa",
       askBlocks,
