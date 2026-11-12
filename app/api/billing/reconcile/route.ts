@@ -10,7 +10,6 @@ import { cronAuth } from "@/lib/cron/auth";
 import { recordHeartbeat } from "@/lib/cron/heartbeat.deps";
 import { errorText } from "@/lib/cron/heartbeats";
 import { reportError } from "@/lib/observability/report";
-import { optionalEnv } from "@/lib/env";
 import { sweepFollowUps } from "@/lib/github/followups.deps";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { getRuntimeProvider, platformComputerProviders } from "@/lib/runtime/provider";
