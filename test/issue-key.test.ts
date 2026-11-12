@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { isValidBranchName } from "@/lib/runtime/git";
 import { prInstructions } from "@/lib/session/pr-instructions";
 import { insertOnBranch } from "@/lib/session/generated-branch";
-import { branchHint, issueBranch, issueFirstBranch, issueKeyOfUrl, nextFreeBranch, trackerIssueOf } from "@/lib/trackers/issue-key";
+import { branchHint, freeIssueBranchOf, issueBranch, issueFirstBranch, issueKeyOfUrl, nextFreeBranch, trackerIssueOf } from "@/lib/trackers/issue-key";
 
 test("the key is read from either tracker's link", () => {
   assert.equal(issueKeyOfUrl("https://linear.app/acme/issue/ENG-123/checkout-breaks"), "ENG-123");
@@ -124,4 +124,15 @@ test("the route's answer is only for someone who can see the session, and Create
   assert.match(route, /getWorkspace\(id\)/);
   const panel = readFileSync("components/workspace-environment.tsx", "utf8");
   assert.match(panel, /\.catch\(\(\) => null\)/);
+});
+
+test("an issue's branch is free of the project's sessions and of GitHub: a person's own is never reused", async () => {
+  const onGitHub = (names: string[]) => async (branch: string) => names.includes(branch);
+  assert.equal(await freeIssueBranchOf("eng-1-x", [], onGitHub([])), "eng-1-x");
+  assert.equal(await freeIssueBranchOf("eng-1-x", [], onGitHub(["eng-1-x"])), "eng-1-x-2", "a person made it on GitHub");
+  assert.equal(await freeIssueBranchOf("eng-1-x", ["eng-1-x"], onGitHub(["eng-1-x-2"])), "eng-1-x-3");
+  assert.equal(await freeIssueBranchOf("eng-1-x", ["ENG-1-X"], onGitHub([])), "eng-1-x-2", "any case");
+  // GitHub not asked, or failing: the project's sessions alone decide.
+  assert.equal(await freeIssueBranchOf("eng-1-x", ["eng-1-x"], null), "eng-1-x-2");
+  assert.equal(await freeIssueBranchOf("eng-1-x", [], async () => { throw new Error("GitHub down"); }), "eng-1-x");
 });

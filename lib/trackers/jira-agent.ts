@@ -99,8 +99,6 @@ export type JiraAgentDeps = {
   start(start: ServerSessionStart): Promise<ServerSessionResult>;
   send(ownerId: string, workspaceId: string, text: string): Promise<boolean>;
   stop(ownerId: string, workspaceId: string): Promise<boolean>;
-  /** A branch named for the issue, free in that project. */
-  branchFor(projectId: string, key: string, title: string): Promise<string>;
   /** Where its conversation is, before a send: activity after it is that send's turn. */
   sendBaseline(workspaceId: string): Promise<number | null>;
   /** A turn was sent: from now on the relay and the tick watch it. */
@@ -161,7 +159,12 @@ export async function handleJiraTrigger(installation: TrackerInstallation, trigg
       return;
     }
   } catch (error) {
+    // The event is already marked seen, so no retry comes: say so, or it's lost without a word.
+    // It stays marked, as unmarking would let a retry start a second session.
     console.error("Jira: couldn't take an issue", error);
+    await deps
+      .comment(installation.id, issueId, "Something went wrong in Outrunner, so this didn't start. Try again.")
+      .catch((commentError: unknown) => console.error("Jira: couldn't say a trigger was lost", commentError));
     return;
   }
   let watching = false;
@@ -525,7 +528,7 @@ async function startSession(
     prompt,
     model,
     source: SOURCE,
-    ...(standing.key && { branch: await deps.branchFor(project.id, standing.key, title) }),
+    ...(standing.key && { issue: { source: "jira" as const, key: standing.key } }),
     onCreated: async (workspaceId) => {
       // Not the stage: a stop since stays a stop.
       await deps.setRowWorkspace(installation.id, issueId, workspaceId);

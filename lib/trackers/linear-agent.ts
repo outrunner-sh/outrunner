@@ -107,8 +107,6 @@ export type AgentDeps = {
   start(start: ServerSessionStart): Promise<ServerSessionResult>;
   send(ownerId: string, workspaceId: string, text: string): Promise<boolean>;
   stop(ownerId: string, workspaceId: string): Promise<boolean>;
-  /** A branch named for the issue, free in that project. */
-  branchFor(projectId: string, key: string, title: string): Promise<string>;
   /** How long a stop waits on the session before saying it may still be running: the webhook
    *  it answers has 5s. */
   interruptWaitMs: number;
@@ -879,7 +877,7 @@ async function startSession(context: Context, scope: TrackerScope, runner: Runne
     prompt,
     model,
     source: SOURCE,
-    ...(key && { branch: await deps.branchFor(project.id, key, title) }),
+    ...(key && { issue: { source: "linear" as const, key } }),
     onCreated: async (workspaceId) => {
       // Not the stage: a stop since stays a stop.
       await deps.setRowWorkspace(agentSessionId, workspaceId);

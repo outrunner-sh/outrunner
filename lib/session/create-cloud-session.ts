@@ -54,7 +54,7 @@ import {
 import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
 import { getWorkItem, linkWorkItemToSession, projectOrgId, triageActor, trackerIssueOfItem } from "@/lib/db/work-items";
 import { freeIssueBranch } from "@/lib/session/issue-branch";
-import { issueFirstBranch } from "@/lib/trackers/issue-key";
+import { issueFirstBranch, type TrackerIssue } from "@/lib/trackers/issue-key";
 import { tellTrackersSessionStarted } from "@/lib/trackers/write-back.deps";
 import { isUuid } from "@/lib/ids";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
@@ -139,13 +139,13 @@ async function madeBefore(id: string, ownerId: string, projectId: string): Promi
 }
 
 /** The branch a session on this item's issue is on; null when it follows none. */
-async function branchOfItem(userId: string, projectId: string, workItemId: string): Promise<string | null> {
+async function branchOfItem(userId: string, projectId: string, workItemId: string, knownOnGitHub: (branch: string) => Promise<boolean>): Promise<string | null> {
   const orgId = await projectOrgId(projectId);
   // Its title names the branch, so only an item they can see: linking it comes later.
   const actor = orgId ? await triageActor(userId, orgId) : null;
   const visible = actor ? await getWorkItem(actor, workItemId) : null;
   const issue = orgId && visible ? await trackerIssueOfItem(orgId, workItemId) : null;
-  return issue ? freeIssueBranch(projectId, issue, issue.title) : null;
+  return issue ? freeIssueBranch(projectId, issue, issue.title, knownOnGitHub) : null;
 }
 
 /** The session can't run without the user's Claude: say so, and where to fix it. */
@@ -230,6 +230,9 @@ export type ServerSessionOptions = {
   /** The project (an `environments` row) it starts from, one the user may
    *  read; the repository's default project when not given. */
   environmentId?: string;
+  /** The tracker's issue it works on: its branch is named for that, free of the project's
+   *  sessions and of GitHub. */
+  issue?: TrackerIssue;
 };
 
 /**
@@ -490,23 +493,26 @@ async function createOnce(
     prompt: (options.firstMessage ?? (typeof body.prompt === "string" ? body.prompt : "")).replace(PLAN_MODE_PREAMBLE, ""),
   };
   let workspace;
-  // On a tracker's issue, it's named for that (lib/trackers/issue-key.ts). Not worth failing over.
-  const issueBranchName = !requestedBranch && typeof body.workItemId === "string" && body.workItemId ? await branchOfItem(owner.id, project.id, body.workItemId).catch(() => null) : null;
+  // Every repository at once. Without a token, GitHub isn't asked: nothing gets pushed there
+  // either.
+  const knownOnGitHub = async (branch: string) =>
+    (
+      await Promise.all(
+        branchRepos.map((repo) => (repo.token ? branchKnownOnGitHub({ token: repo.token, repoFullName: repo.fullName, branch }) : false)),
+      )
+    ).some(Boolean);
+  // On a tracker's issue, it's named for that (lib/trackers/issue-key.ts): the one a tracker
+  // started it on, else the item's it was started from. Not worth failing over.
+  const issueBranchOf = (): Promise<string | null> =>
+    options.issue
+      ? freeIssueBranch(project.id, options.issue, options.title ?? "", knownOnGitHub)
+      : typeof body.workItemId === "string" && body.workItemId
+        ? branchOfItem(owner.id, project.id, body.workItemId, knownOnGitHub)
+        : Promise.resolve(null);
+  const issueBranchName = requestedBranch ? null : await issueBranchOf().catch(() => null);
 
   try {
-    const generation = {
-      sessionBranches: (base: string) => projectBranchesLike(project.id, base),
-      // Every repository at once. Without a token, GitHub isn't asked:
-      // nothing gets pushed there either.
-      knownOnGitHub: async (branch: string) =>
-        (
-          await Promise.all(
-            branchRepos.map((repo) =>
-              repo.token ? branchKnownOnGitHub({ token: repo.token, repoFullName: repo.fullName, branch }) : false,
-            ),
-          )
-        ).some(Boolean),
-    };
+    const generation = { sessionBranches: (base: string) => projectBranchesLike(project.id, base), knownOnGitHub };
     // On a tracker's issue, named for that first (lib/trackers/issue-key.ts).
     // Two people starting on one item can both find a name free: the one that
     // loses takes the issue's next free name, else a generated one, since it's
@@ -518,7 +524,7 @@ async function createOnce(
         issueFirstBranch({
           first: issueBranchName,
           lost,
-          next: () => branchOfItem(owner.id, project.id, body.workItemId as string).catch(() => null),
+          next: () => issueBranchOf().catch(() => null),
           generated: () => generatedBranch(about, generation, lost),
           issueNamed: issueBranches,
         }),

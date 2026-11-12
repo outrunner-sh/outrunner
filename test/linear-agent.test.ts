@@ -23,7 +23,6 @@ import {
   handleRedelegated,
   withoutEscapes,
 } from "@/lib/trackers/linear-agent";
-import { issueBranch } from "@/lib/trackers/issue-key";
 import type { TriageActor } from "@/lib/triage/access";
 import type { WorkItem } from "@/lib/triage/work-items";
 
@@ -168,7 +167,6 @@ function harness(over: Partial<AgentDeps> = {}, setup: { scope?: TrackerScope | 
       log.stopped.push(workspaceId);
       return true;
     },
-    branchFor: async (_p, key, title) => issueBranch("linear", key, title),
     interruptWaitMs: 5,
     sendBaseline: async () => 1000,
     openWatch: async (_id, sent) => void log.watches.push(sent),
@@ -738,11 +736,11 @@ test("what's kept of a delegation is capped: guidance too, and only its text", (
 test("the session's branch and first prompt carry the issue's key", async () => {
   const h = harness({}, { scope: scope({ defaultProjectId: WEB.id }) });
   await send(created(), h);
-  assert.equal(h.log.started[0]?.branch, "eng-1-checkout-breaks");
+  assert.deepEqual(h.log.started[0]?.issue, { source: "linear", key: "ENG-1" }, "named for it where the session starts, against GitHub too");
   assert.match(h.log.started[0]?.prompt ?? "", /Keep ENG-1 in any branch you name, e\.g\. `fix\/eng-1-what-it-does`/);
   const keyless = harness({}, { scope: scope({ defaultProjectId: WEB.id }) });
   await send(created({ issue: { identifier: undefined } }), keyless);
-  assert.equal(keyless.log.started[0]?.branch, undefined, "a generated one then");
+  assert.equal(keyless.log.started[0]?.issue, undefined, "a generated one then");
   assert.doesNotMatch(keyless.log.started[0]?.prompt ?? "", /Keep/);
 });
 
@@ -1054,7 +1052,7 @@ test("delegated again by a rule is a rule's, and starts on the issue as the even
   await handleRedelegated(INSTALL, again, on.deps);
   assert.equal(on.log.started[0]?.userId, "ana-user");
   assert.equal(on.log.started[0]?.title, "Checkout breaks");
-  assert.equal(on.log.started[0]?.branch, "eng-1-checkout-breaks");
+  assert.deepEqual(on.log.started[0]?.issue, { source: "linear", key: "ENG-1" });
 });
 
 test("a delegation by an app has no creatorId at all, and takes the rule's path", async () => {

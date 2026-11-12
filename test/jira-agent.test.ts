@@ -8,7 +8,6 @@ import type { TrackerFiling, TrackerNote } from "@/lib/db/work-items";
 import type { ServerSessionResult, ServerSessionStart } from "@/lib/session/server-session";
 import type { JiraIssueStanding } from "@/lib/trackers/jira";
 import { handleJiraTrigger, resumeJiraAfterLink, JIRA_REPLIES, type JiraAgentDeps, jiraCapReply, jiraFirstPrompt, type JiraTrigger } from "@/lib/trackers/jira-agent";
-import { issueBranch } from "@/lib/trackers/issue-key";
 import type { TriageActor } from "@/lib/triage/access";
 import type { WorkItem } from "@/lib/triage/work-items";
 
@@ -122,7 +121,6 @@ function harness(over: Partial<JiraAgentDeps> = {}, setup: Setup = {}) {
       log.interrupted.push(workspaceId);
       return true;
     },
-    branchFor: async (_p, key, title) => issueBranch("jira", key, title),
     sendBaseline: async () => 1000,
     openWatch: async () => {
       log.watches += 1;
@@ -426,11 +424,11 @@ test("J6: the owner's answer that @mentions us is the answer, with the saved pro
 test("the branch and first prompt carry the issue's key", async () => {
   const h = harness();
   await h.run(assigned);
-  assert.equal(h.log.started[0]?.branch, "ENG-1-fix-it", "Jira wants its key uppercase");
+  assert.deepEqual(h.log.started[0]?.issue, { source: "jira", key: "ENG-1" }, "named for it where the session starts, against GitHub too");
   assert.match(h.log.started[0]?.prompt ?? "", /Keep ENG-1 in any branch you name/);
   const keyless = harness({}, { standing: { ...STANDING, key: null } });
   await keyless.run(assigned);
-  assert.equal(keyless.log.started[0]?.branch, undefined);
+  assert.equal(keyless.log.started[0]?.issue, undefined);
 });
 
 test("the hold goes before the watch, and a failed watch doesn't matter", async () => {
@@ -802,4 +800,28 @@ test("work picking up moves a Blocked issue back to started: a steer, or a start
   const inReview = harness({}, { scope: scope({ stateMap: BLOCKING }), standing: { ...STANDING, stateId: "4", stateType: "started" }, item: item({ workspaceId: "w" }), session: { id: "w", ownerId: "ana-user", projectId: WEB.id, status: "ready" } });
   await inReview.run(mention("and this"));
   assert.deepEqual(inReview.log.transitions, []);
+});
+
+test("a trigger that couldn't take its issue says so, as no retry will come", async () => {
+  for (const kind of ["assigned", "mentioned"] as const) {
+    const h = harness({
+      claim: async () => {
+        throw new Error("database down");
+      },
+    });
+    await h.run(kind === "assigned" ? assigned : mention("please"));
+    assert.deepEqual(h.log.comments, ["Something went wrong in Outrunner, so this didn't start. Try again."], kind);
+    assert.deepEqual(h.log.started, []);
+  }
+  // Saying so failing too isn't a throw out of the trigger.
+  const quiet = harness({
+    claim: async () => {
+      throw new Error("database down");
+    },
+    comment: async () => {
+      throw new Error("Jira down");
+    },
+  });
+  await quiet.run(assigned);
+  assert.deepEqual(quiet.log.started, []);
 });
