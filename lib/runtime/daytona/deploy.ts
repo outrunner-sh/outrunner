@@ -25,12 +25,6 @@ import type { ProvisionStage, StageTiming, ProvisionTimings } from "@/lib/runtim
 /** The single port the agent listens on; the preview URL is derived from it. */
 export const AGENT_PORT = 8080;
 
-/** On-box layout. Non-root `runtime` user, home `/home/runtime` (frozen image). */
-export const AGENT_ROOT = "/home/runtime";
-export const AGENT_BINARY_PATH = `${AGENT_ROOT}/runtime-agent`;
-export const AGENT_GZ_PATH = `${AGENT_BINARY_PATH}.gz`;
-export const AGENT_LOG_PATH = `${AGENT_ROOT}/runtime-agent.log`;
-
 export type ExecResult = { stdout: string; exitCode: number };
 
 /** How the deploy reaches one box. Provided by the SDK provider in production
@@ -57,41 +51,6 @@ export function shellQuote(value: string): string {
  *  bottleneck the pt2 spike identified. */
 export function compressAgent(binary: Buffer): Buffer {
   return gzipSync(binary, { level: 6 });
-}
-
-/** Unpack + make executable. Run synchronously so a gunzip/chmod failure
- *  surfaces as a non-zero exit *before* we try to launch. */
-export function agentPrepScript(): string {
-  return `gunzip -f ${AGENT_GZ_PATH} && chmod 755 ${AGENT_BINARY_PATH}`;
-}
-
-/**
- * Launch the agent, fully detached. `setsid … < /dev/null &` divorces it from
- * the launching session's process group so nothing kills it when the launch
- * call returns; stdout/stderr are captured to a log for diagnosis. This is run
- * through the async {@link BoxIO.launch} path — a synchronous exec would block
- * on the daemon forever.
- *
- * `RUNTIME_AGENT_SECRET` is the per-computer secret. Project secrets (Claude /
- * GitHub tokens) are delivered here at launch and live only in the agent's
- * process memory — the agent seeds each Claude session's env from its own
- * os.Environ(), so nothing is written to disk on the box.
- */
-export function agentLaunchScript(
-  secret: string,
-  env: Record<string, string> = {},
-): string {
-  const extra = Object.entries(env)
-    .map(([key, value]) => `${key}=${shellQuote(value)}`)
-    .join(" ");
-  const assignments =
-    `RUNTIME_AGENT_SECRET=${shellQuote(secret)} ` +
-    `RUNTIME_AGENT_ROOT=${AGENT_ROOT} PORT=${AGENT_PORT}` +
-    (extra ? ` ${extra}` : "");
-  return (
-    `setsid env ${assignments} ` +
-    `${AGENT_BINARY_PATH} > ${AGENT_LOG_PATH} 2>&1 < /dev/null &`
-  );
 }
 
 /** Loopback health probe run on the box; proves the process bound its port. */
@@ -145,66 +104,6 @@ export type WaitOptions = {
   intervalMs?: number;
   sleep?: (ms: number) => Promise<void>;
 };
-
-/** Stage 1: push the gzipped agent to the box. The pt2 spike proved this is the
- *  provisioning bottleneck, which is why the payload is compressed first. */
-export async function uploadAgent(io: BoxIO, binary: Buffer): Promise<void> {
-  await io.upload(compressAgent(binary), AGENT_GZ_PATH);
-}
-
-/** Stage 2: unpack (synchronous, so failures throw) then launch the daemon
- *  detached via the async path, seeding its env with project secrets. */
-export async function bootAgent(
-  io: BoxIO,
-  secret: string,
-  env: Record<string, string> = {},
-): Promise<void> {
-  const prep = await io.exec(`bash -lc ${shellQuote(agentPrepScript())}`);
-  if (prep.exitCode !== 0) {
-    throw new Error(`agent prep failed (exit ${prep.exitCode}): ${prep.stdout.trim()}`);
-  }
-  await io.launch(`bash -lc ${shellQuote(agentLaunchScript(secret, env))}`);
-}
-
-/** Stage 3: poll loopback `/health` until the agent binds, or throw with the
- *  log tail — the single most useful artifact when a boot fails. Returns the
- *  log so callers can surface the "listening on :8080" line. */
-export async function waitForAgentHealth(
-  io: BoxIO,
-  options: WaitOptions = {},
-): Promise<{ logTail: string }> {
-  const attempts = options.attempts ?? 20;
-  const intervalMs = options.intervalMs ?? 500;
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-
-  for (let i = 0; i < attempts; i += 1) {
-    const probe = await io.exec(`bash -lc ${shellQuote(agentHealthProbe())}`);
-    if (probe.stdout.trim() === "200") {
-      const log = await io.exec(`cat ${AGENT_LOG_PATH} 2>&1 || true`);
-      return { logTail: log.stdout.trim() };
-    }
-    await sleep(intervalMs);
-  }
-
-  const log = await io.exec(`cat ${AGENT_LOG_PATH} 2>&1 || true`);
-  throw new Error(`agent did not bind :${AGENT_PORT}. log:\n${log.stdout.trim()}`);
-}
-
-/**
- * Convenience for callers that don't need per-stage timing (the verify script):
- * upload → boot → wait-for-health in one call. The provider composes the three
- * primitives itself so it can time each stage independently.
- */
-export async function deployAgent(
-  io: BoxIO,
-  binary: Buffer,
-  secret: string,
-  options: WaitOptions & { env?: Record<string, string> } = {},
-): Promise<{ logTail: string }> {
-  await uploadAgent(io, binary);
-  await bootAgent(io, secret, options.env);
-  return waitForAgentHealth(io, options);
-}
 
 // ---------------------------------------------------------------------------
 // jcode engine deploy
@@ -349,7 +248,7 @@ export async function startJcodeBridge(
   throw new Error(`jcode bridge socket ${p.apiSocket} never appeared. log:\n${log.stdout.trim()}`);
 }
 
-/** Upload + unpack + launch the agent in jcode mode (mirrors bootAgent). */
+/** Upload + unpack + launch the agent in jcode mode. */
 export async function bootJcodeAgent(
   io: BoxIO,
   binary: Buffer,

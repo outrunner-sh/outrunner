@@ -39,7 +39,6 @@ import type { BoxResources, PreviewTarget, SandboxBackend, SandboxBox } from "@/
 import type {
   ChangedFile,
   CommitWorkspaceResult,
-  CreatePullRequestResult,
   CreateWorkspaceResult,
   ProviderName,
   ProvisionStage,
@@ -743,20 +742,12 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     return notWiredYet("commitWorkspace");
   }
 
-  pushWorkspaceBranch(): Promise<void> {
-    return notWiredYet("pushWorkspaceBranch");
-  }
-
   suspendWorkspace(): Promise<void> {
     return notWiredYet("suspendWorkspace");
   }
 
   destroyWorkspace(): Promise<void> {
     return notWiredYet("destroyWorkspace");
-  }
-
-  createPullRequest(): Promise<CreatePullRequestResult> {
-    return notWiredYet("createPullRequest");
   }
 }
 

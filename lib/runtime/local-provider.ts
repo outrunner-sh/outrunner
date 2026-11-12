@@ -8,7 +8,6 @@ import {
   cloneRepo,
   commitAll,
   listChangedFiles as gitListChangedFiles,
-  pushBranch,
   readFileDiff,
   sanitizeBranch,
   type GitExec,
@@ -17,11 +16,8 @@ import type {
   ChangedFile,
   CommitWorkspaceInput,
   CommitWorkspaceResult,
-  CreatePullRequestInput,
-  CreatePullRequestResult,
   CreateWorkspaceInput,
   CreateWorkspaceResult,
-  PushWorkspaceBranchInput,
   RuntimeProvider,
 } from "@/lib/runtime/types";
 
@@ -212,25 +208,6 @@ export class LocalRuntimeProvider implements RuntimeProvider {
       message: input.message,
       author: input.author,
     });
-  }
-
-  async pushWorkspaceBranch(input: PushWorkspaceBranchInput): Promise<void> {
-    const worktree = await this.requireWorktree(input.workspaceId);
-    await pushBranch(this.git, {
-      worktree,
-      repoFullName: input.repoFullName,
-      branch: input.branch,
-      token: input.githubToken,
-    });
-  }
-
-  async createPullRequest(
-    input: CreatePullRequestInput,
-  ): Promise<CreatePullRequestResult> {
-    void input;
-    throw new Error(
-      "Pull requests are created through Runtime's GitHub API path.",
-    );
   }
 
   private async requireWorktree(workspaceId: string): Promise<string> {
