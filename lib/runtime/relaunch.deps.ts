@@ -22,7 +22,7 @@ export async function readyRelaunch(
   workspace: Pick<Workspace, "agent" | "model" | "orgId">,
   ownerId: string,
 ): Promise<void> {
-  workspace = { ...workspace, ...await reconcileHarnessSelection(agent, identity, workspace) };
+  workspace = { ...workspace, ...await reconcileHarnessSelection(agent, identity, workspace, ownerId) };
   await signInSession(
     sessionAuthClient(agent, identity, upgrade),
     workspace.agent,
@@ -46,7 +46,7 @@ export async function readyChatRelaunch(
   chat: Pick<SessionChat, "id" | "agent" | "model">,
   ownerId: string,
 ): Promise<void> {
-  chat = { ...chat, ...await reconcileHarnessSelection(agent, identity, chat, chat.id) };
+  chat = { ...chat, ...await reconcileHarnessSelection(agent, identity, chat, ownerId, chat.id) };
   await signInSession(
     sessionAuthClient(agent, identity, upgrade, chat.id),
     chat.agent,

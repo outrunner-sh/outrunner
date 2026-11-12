@@ -77,9 +77,11 @@ export type InstallState = {
   installationId?: number;
 };
 
-/** Where an install may come back to, besides the org's GitHub settings. */
-export type InstallReturn = "/onboarding";
-export const isInstallReturn = (value: unknown): value is InstallReturn => value === "/onboarding";
+/** Where an install may come back to, besides the org's GitHub settings:
+ *  onboarding, or the user's own GitHub connection (Settings → Connections). */
+export type InstallReturn = "/onboarding" | "/settings/connections";
+export const isInstallReturn = (value: unknown): value is InstallReturn =>
+  value === "/onboarding" || value === "/settings/connections";
 
 /** The `state` an install link carries, signed so the setup route knows the
  *  org and the admin are the ones it sent. */
@@ -189,11 +191,13 @@ export type Installation = {
   repositorySelection: "all" | "selected";
   /** When GitHub suspended it, if it's suspended. */
   suspendedAt: string | null;
+  /** The account's GitHub id, when GitHub said it (never renamed or reused). */
+  accountId?: number | null;
 };
 
 type ApiInstallation = {
   id: number;
-  account: { login: string; type: string } | null;
+  account: { login: string; type: string; id?: number } | null;
   repository_selection: string;
   suspended_at: string | null;
 };
@@ -208,6 +212,7 @@ export function toInstallation(i: Partial<ApiInstallation> & { id?: number }): I
     accountType: i.account.type === "Organization" ? "Organization" : "User",
     repositorySelection: i.repository_selection === "selected" ? "selected" : "all",
     suspendedAt: i.suspended_at ?? null,
+    accountId: typeof i.account.id === "number" ? i.account.id : null,
   };
 }
 

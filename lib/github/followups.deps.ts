@@ -15,11 +15,12 @@ import {
   settleFollowUp,
   takeFollowUp,
 } from "@/lib/db/github-loop";
+import { projectLevel } from "@/lib/db/org-access";
 import { appSlug, githubAppConfig, installationToken } from "@/lib/github/app";
 import { commitCheckRuns, jobLogTail } from "@/lib/github/ci";
 import { GitHubConversationError, postIssueComment, readPull, readReview } from "@/lib/github/conversation";
 import { flushFollowUps, type FollowUpDeps, MAX_CI_TURNS, waitAndFlush } from "@/lib/github/followups";
-import { loopDeps } from "@/lib/github/loop.deps";
+import { loopMember } from "@/lib/github/loop.deps";
 import { readPullBranches } from "@/lib/github/mentions";
 import { wakeAndSend } from "@/lib/slack/research";
 
@@ -29,10 +30,17 @@ async function token(installationId: number): Promise<string> {
   return installationToken(config, installationId);
 }
 
-export function followUpDeps(scope?: { orgId: string; projectId: string }): FollowUpDeps {
-  const loop = loopDeps();
+/** `scope` is the webhook event's, which its follow-ups are queued on; null
+ *  for a flush, which queues none (each follow-up keeps its own project,
+ *  checked again by projectScope). Queueing without it throws, rather than
+ *  reading as "no project matched". */
+export function followUpDeps(scope: { orgId: string; projectId: string } | null): FollowUpDeps {
   return {
-    scope: scope ? async () => scope : installationProject,
+    scope: async () => {
+      if (!scope) throw new Error("GitHub follow-ups: queueing needs the webhook event's scope");
+      return scope;
+    },
+    projectScope: installationProject,
     claim: claimLoopAct,
     linkedSessions,
     pullForBranch,
@@ -59,8 +67,8 @@ export function followUpDeps(scope?: { orgId: string; projectId: string }): Foll
         throw error;
       }
     },
-    member: loop.member,
-    level: loop.level,
+    member: loopMember,
+    level: projectLevel,
     wakeAndSend: (ownerId, workspaceId, prompt, from) => wakeAndSend(ownerId, workspaceId, prompt, from),
     humanSpoke: resetCiTurns,
     comment: async (installationId, repoFullName, number, body) =>
@@ -80,13 +88,13 @@ export function followUpDeps(scope?: { orgId: string; projectId: string }): Foll
  * leaves them for the cron's tick (sweepFollowUps).
  */
 export async function flushWhenDue(ids: readonly string[]): Promise<void> {
-  await waitAndFlush(ids, followUpDeps()).catch((error: unknown) => console.error("GitHub follow-ups: flush failed", error));
+  await waitAndFlush(ids, followUpDeps(null)).catch((error: unknown) => console.error("GitHub follow-ups: flush failed", error));
 }
 
 /** The cron's part (app/api/billing/reconcile): follow-ups due that no
  *  webhook's wait sent, and records past their use. How many went. */
 export async function sweepFollowUps(): Promise<number> {
-  const results = await flushFollowUps(followUpDeps());
+  const results = await flushFollowUps(followUpDeps(null));
   await pruneLoopRecords().catch((error: unknown) => console.error("GitHub loop: pruning old records failed", error));
   return [...results.values()].filter((outcome) => outcome === "sent").length;
 }

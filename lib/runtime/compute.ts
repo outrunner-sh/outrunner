@@ -15,6 +15,7 @@ import type {
 
 type TransitionWorkspace = (input: {
   id: string;
+  ownerId: string;
   from: WorkspaceStatus[];
   patch: {
     status: WorkspaceStatus;
@@ -74,6 +75,7 @@ export async function ensureLiveSandbox(
 
   const claimed = await deps.transitionWorkspace({
     id: workspace.id,
+    ownerId: workspace.ownerId,
     from: RESUMABLE,
     patch: { status: "resuming", errorMessage: null },
   });
@@ -93,6 +95,7 @@ export async function ensureLiveSandbox(
     });
     const settled = await deps.transitionWorkspace({
       id: workspace.id,
+      ownerId: workspace.ownerId,
       from: ["resuming"],
       patch: { status: "ready", sandboxId, errorMessage: null, touchActive: true },
     });
@@ -109,6 +112,7 @@ export async function ensureLiveSandbox(
     await deps
       .transitionWorkspace({
         id: workspace.id,
+        ownerId: workspace.ownerId,
         from: ["resuming"],
         patch: {
           status: workspace.status,

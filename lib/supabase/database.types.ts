@@ -17,10 +17,10 @@ export type Json =
 
 // supabase/migrations/20261030120000_work_items.sql
 export type WorkItemStatusDb = "triage" | "todo" | "in_progress" | "done" | "declined" | "duplicate";
-export type WorkItemSourceDb = "app" | "slack" | "cli" | "api";
+export type WorkItemSourceDb = "app" | "slack" | "cli" | "api" | "linear" | "jira";
 
 // supabase/migrations/20261102120000_api_keys.sql
-export type WorkspaceSourceDb = "app" | "slack" | "automation" | "github" | "api";
+export type WorkspaceSourceDb = "app" | "slack" | "automation" | "github" | "api" | "linear" | "jira";
 
 export type WorkspaceStatusDb =
   | "creating"
@@ -105,6 +105,7 @@ type WorkspaceRow = {
   status: WorkspaceStatusDb;
   phase: ProvisionPhaseDb | null;
   branch: string;
+  branch_renamable: boolean;
   /** What the user first asked for; null until the first prompt. */
   title: string | null;
   base_branch: string;
@@ -145,6 +146,13 @@ type WorkspaceRow = {
   first_prompt_key: string | null;
   first_prompt_claimed_at: string | null;
   first_prompt_sent_at: string | null;
+  /** The first prompt kept for it while its box starts, with its
+   *  attachments and the key its every send names (20261105090000); null
+   *  once delivered, absent before the migration. The server's alone to
+   *  write or clear. */
+  first_prompt?: string | null;
+  first_prompt_attachments?: string[] | null;
+  first_prompt_idempotency_key?: string | null;
   /** The Slack thread it was started from (20261031200000). */
   slack_thread_url: string | null;
   slack_sync: boolean;
@@ -662,6 +670,10 @@ type UserCredentialsRow = {
   box_size_chosen: boolean;
   // Settings → Account (supabase/migrations/20261030100000_github_identity.sql).
   github_identity: "personal" | "app";
+  // GitHub's verified emails at the last GitHub sign-in
+  // (supabase/migrations/20261105100000_github_user_connections.sql).
+  github_verified_emails: Array<{ email: string; primary: boolean }> | null;
+  github_verified_emails_at: string | null;
   // Settings → Providers (supabase/migrations/20261016140000_user_openrouter_key.sql).
   // Replaced by user_provider_keys; dropped in a later release.
   openrouter_key_ciphertext: string | null;
@@ -766,6 +778,23 @@ type OrgProviderKeyRow = {
   key_ciphertext: string;
   key_hint: string | null;
   updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// Settings → Connections → GitHub: the Outrunner GitHub App's user
+// authorization. Service-role-only (RLS on, no policies); see
+// supabase/migrations/20261105100000_github_user_connections.sql.
+type UserGithubConnectionRow = {
+  user_id: string;
+  github_user_id: number;
+  github_login: string;
+  access_token_ciphertext: string;
+  access_token_expires_at: string | null;
+  refresh_token_ciphertext: string | null;
+  refresh_token_expires_at: string | null;
+  refresh_claimed_until: string | null;
+  broken_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1074,6 +1103,9 @@ type GithubInstallationRow = {
   suspended_at: string | null;
   created_at: string;
   updated_at: string;
+  /** The org that sees and manages its shares: the first linked by GitHub's
+   *  say (20261112130000). Stays when it disconnects; null once it's deleted. */
+  source_org_id: string | null;
 };
 
 type OrgGithubInstallationRow = {
@@ -1081,6 +1113,22 @@ type OrgGithubInstallationRow = {
   installation_id: number;
   installed_by: string | null;
   created_at: string;
+  // supabase/migrations/20261112130000_github_installation_sharing.sql
+  authority: GithubLinkAuthority | null;
+  authorized_github_id: number | null;
+};
+
+/** How GitHub authorized an org's link to an installation (20261112130000). */
+export type GithubLinkAuthority = "installer" | "account_owner" | "org_owner";
+
+type GithubInstallationShareRow = {
+  org_id: string;
+  org_name: string;
+  personal: boolean;
+  linked_at: string;
+  linked_by: string | null;
+  linked_by_email: string | null;
+  authority: GithubLinkAuthority | null;
 };
 
 type OrgGithubInstallationDetailsRow = GithubInstallationRow & OrgGithubInstallationRow;
@@ -1199,6 +1247,8 @@ type WorkItemRow = {
   source: WorkItemSourceDb;
   source_url: string | null;
   source_ref: string | null;
+  source_author: string | null;
+  tracker_installation_id: string | null;
   duplicate_of: string | null;
   workspace_id: string | null;
   triaged_at: string | null;
@@ -1217,6 +1267,159 @@ type WorkItemNoteRow = {
   source: WorkItemSourceDb;
   source_url: string | null;
   author: string | null;
+  source_ref: string | null;
+  created_at: string;
+};
+
+// supabase/migrations/20261108120000_trackers.sql
+export type TrackerProviderDb = "linear" | "jira";
+
+type TrackerInstallationRow = {
+  id: string;
+  provider: TrackerProviderDb;
+  external_id: string;
+  site_url: string | null;
+  name: string | null;
+  app_user_id: string | null;
+  access_token_ciphertext: string | null;
+  refresh_token_ciphertext: string | null;
+  token_expires_at: string | null;
+  refresh_expires_at: string | null;
+  refreshing_until: string | null;
+  webhook_id: string | null;
+  app_user_name: string | null;
+  webhook_expires_at: string | null;
+  installed_by: string | null;
+  disconnected_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type OrgTrackerInstallationRow = {
+  org_id: string;
+  installation_id: string;
+  connected_by: string | null;
+  created_at: string;
+};
+
+type TrackerScopeRow = {
+  id: string;
+  installation_id: string;
+  org_id: string;
+  external_team_id: string;
+  name: string | null;
+  set_by: string | null;
+  state_map: Json | null;
+  default_project_id: string | null;
+  accept_rule_sessions: boolean;
+  rule_sessions_per_day: number;
+  rule_sessions_on: string | null;
+  rule_sessions_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type TrackerRuleRow = {
+  id: string;
+  org_id: string;
+  scope_id: string;
+  position: number;
+  project_id: string | null;
+  labels: string[];
+  states: string[];
+  priorities: string[];
+  issue_types: string[];
+  assignees: string[];
+  set_by: string | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type TrackerLinkRow = {
+  installation_id: string;
+  external_user_id: string;
+  owner_id: string;
+  external_name: string | null;
+  created_at: string;
+};
+
+// supabase/migrations/20261109100000_linear_delegation.sql
+type LinearAgentSessionRow = {
+  agent_session_id: string;
+  installation_id: string;
+  org_id: string | null;
+  issue_id: string;
+  item_id: string | null;
+  workspace_id: string | null;
+  owner_id: string | null;
+  stage: "awaiting_repo" | "awaiting_link" | "working" | "stopped";
+  prompt: string | null;
+  rule_started: boolean;
+  ask: Json | null;
+  asked_user: string | null;
+  from_mention: boolean;
+  session_created_at: string | null;
+  team_id: string | null;
+  open_when_asked: boolean;
+  slot_taken: boolean;
+  stop_mark: string | null;
+  relayed_hash: string | null;
+  relay_until: string | null;
+  watch: Json | null;
+  last_said_at: string | null;
+  said_hash: string | null;
+  asked_digest: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type TrackerIssueClaimRow = {
+  installation_id: string;
+  issue_id: string;
+  holder: string;
+  until: string;
+};
+
+// supabase/migrations/20261110100000_jira_delegation.sql
+// supabase/migrations/20261112150000_cron_heartbeats.sql
+type CronHeartbeatRow = {
+  job: string;
+  last_run_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  updated_at: string;
+};
+
+type JiraIssueSessionRow = {
+  installation_id: string;
+  issue_id: string;
+  org_id: string | null;
+  item_id: string | null;
+  workspace_id: string | null;
+  owner_id: string | null;
+  stage: "awaiting_repo" | "awaiting_link" | "working" | "stopped";
+  prompt: string | null;
+  comment_id: string | null;
+  asked_user: string | null;
+  ask_text: string | null;
+  team_id: string | null;
+  open_when_asked: boolean;
+  slot_taken: boolean;
+  stop_mark: string | null;
+  rule_started: boolean;
+  relayed_hash: string | null;
+  relay_until: string | null;
+  watch: Json | null;
+  asked_digest: string | null;
+  claim_until: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type TrackerEventSeenRow = {
+  event_id: string;
   created_at: string;
 };
 
@@ -1645,6 +1848,66 @@ export type Database = {
         Update: Partial<WorkItemNoteRow>;
         Relationships: [];
       };
+      tracker_installations: {
+        Row: TrackerInstallationRow;
+        Insert: Insert<TrackerInstallationRow, "provider" | "external_id">;
+        Update: Partial<TrackerInstallationRow>;
+        Relationships: [];
+      };
+      org_tracker_installations: {
+        Row: OrgTrackerInstallationRow;
+        Insert: Insert<OrgTrackerInstallationRow, "org_id" | "installation_id">;
+        Update: Partial<OrgTrackerInstallationRow>;
+        Relationships: [];
+      };
+      tracker_scopes: {
+        Row: TrackerScopeRow;
+        Insert: Insert<TrackerScopeRow, "installation_id" | "org_id" | "external_team_id">;
+        Update: Partial<TrackerScopeRow>;
+        Relationships: [];
+      };
+      tracker_rules: {
+        Row: TrackerRuleRow;
+        Insert: Insert<TrackerRuleRow, "org_id" | "scope_id">;
+        Update: Partial<TrackerRuleRow>;
+        Relationships: [];
+      };
+      tracker_links: {
+        Row: TrackerLinkRow;
+        Insert: Insert<TrackerLinkRow, "installation_id" | "external_user_id" | "owner_id">;
+        Update: Partial<TrackerLinkRow>;
+        Relationships: [];
+      };
+      linear_agent_sessions: {
+        Row: LinearAgentSessionRow;
+        Insert: Insert<LinearAgentSessionRow, "agent_session_id" | "installation_id" | "issue_id">;
+        Update: Partial<LinearAgentSessionRow>;
+        Relationships: [];
+      };
+      tracker_issue_claims: {
+        Row: TrackerIssueClaimRow;
+        Insert: TrackerIssueClaimRow;
+        Update: Partial<TrackerIssueClaimRow>;
+        Relationships: [];
+      };
+      cron_heartbeats: {
+        Row: CronHeartbeatRow;
+        Insert: Insert<CronHeartbeatRow, "job">;
+        Update: Partial<CronHeartbeatRow>;
+        Relationships: [];
+      };
+      jira_issue_sessions: {
+        Row: JiraIssueSessionRow;
+        Insert: Insert<JiraIssueSessionRow, "installation_id" | "issue_id">;
+        Update: Partial<JiraIssueSessionRow>;
+        Relationships: [];
+      };
+      tracker_events_seen: {
+        Row: TrackerEventSeenRow;
+        Insert: Insert<TrackerEventSeenRow, "event_id">;
+        Update: Partial<TrackerEventSeenRow>;
+        Relationships: [];
+      };
       slack_installations: {
         Row: SlackInstallationRow;
         Insert: Insert<SlackInstallationRow, "team_id" | "bot_user_id" | "bot_token_ciphertext">;
@@ -1867,6 +2130,12 @@ export type Database = {
         Update: Partial<OrgProviderKeyRow>;
         Relationships: [];
       };
+      user_github_connections: {
+        Row: UserGithubConnectionRow;
+        Insert: Insert<UserGithubConnectionRow, "user_id" | "github_user_id" | "github_login" | "access_token_ciphertext">;
+        Update: Partial<UserGithubConnectionRow>;
+        Relationships: [];
+      };
       user_provider_keys: {
         Row: UserProviderKeyRow;
         Insert: Insert<UserProviderKeyRow, "user_id" | "provider" | "key_ciphertext">;
@@ -1967,7 +2236,22 @@ export type Database = {
       select_gcp_connection: { Args: { for_owner: string; for_connection: string; requested_size?: string }; Returns: undefined };
       disconnect_gcp_connection: { Args: { for_owner: string; for_connection: string }; Returns: undefined };
       link_github_installation: {
-        Args: { target_org: string; target_installation: number; github_user_id: number | null; actor_id: string };
+        Args: {
+          target_org: string;
+          target_installation: number;
+          github_user_id: number | null;
+          actor_id: string;
+          verified_owner?: "account_owner" | "org_owner" | null;
+        };
+        Returns: string | null;
+      };
+      github_installation_source: { Args: { target_installation: number }; Returns: string | null };
+      github_installation_shares: {
+        Args: { source_org: string; target_installation: number };
+        Returns: GithubInstallationShareRow[];
+      };
+      remove_github_installation_share: {
+        Args: { source_org: string; target_installation: number; target_org: string };
         Returns: string | null;
       };
       set_slack_channel_access: {
@@ -2069,6 +2353,8 @@ export type Database = {
         Returns: undefined;
       };
       // supabase/migrations/20261030120000_work_items.sql
+      claim_rule_session: { Args: { target_scope: string }; Returns: boolean };
+      claim_tracker_issue: { Args: { target_installation: string; target_issue: string; claimant: string; hold_seconds: number }; Returns: string | null };
       triage_project_levels: {
         Args: { member: string; target_org: string };
         Returns: { project_id: string; level: AccessLevelDb }[];
@@ -2183,6 +2469,7 @@ export type Database = {
       complete_pooled_warmup: {
         Args: {
           requested_computer_id: string;
+          expected_owner: string;
           requested_sandbox_id: string;
           requested_provider: string;
           requested_agent_base_url: string;

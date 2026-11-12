@@ -66,6 +66,10 @@ type CreateWorkspaceRequest struct {
 	RepoFullName string `json:"repoFullName"`
 	Branch       string `json:"branch"`
 	BaseBranch   string `json:"baseBranch"`
+	// BranchRenamable says Outrunner made the branch up from the first
+	// prompt: the agent may give it its real name once, before anything is
+	// pushed (`outrunner-session rename-branch`).
+	BranchRenamable bool `json:"branchRenamable,omitempty"`
 	// RepoPath, when set, is an existing checkout on this machine to branch the
 	// worktree from instead of the computer's bare mirror. Only the desktop
 	// shell sends it: a local session works in the user's own clone.
@@ -260,11 +264,13 @@ type RestoreDownload struct {
 type RestoreWorkspaceRequest struct {
 	// Chats are the session's other chats, brought back beside it
 	// (FeatureChatSnapshots).
-	Chats      []RestoreChat     `json:"chats,omitempty"`
-	Branch     string            `json:"branch"`
-	BaseBranch string            `json:"baseBranch,omitempty"`
-	SessionID  *string           `json:"sessionId"`
-	Downloads  []RestoreDownload `json:"downloads"`
+	Chats  []RestoreChat `json:"chats,omitempty"`
+	Branch string        `json:"branch"`
+	// BranchRenamable is CreateWorkspaceRequest's, as the session has it now.
+	BranchRenamable bool              `json:"branchRenamable,omitempty"`
+	BaseBranch      string            `json:"baseBranch,omitempty"`
+	SessionID       *string           `json:"sessionId"`
+	Downloads       []RestoreDownload `json:"downloads"`
 	// Agent is the session's agent ("claude", "codex"; empty is Claude): a
 	// fresh box has no record of it. A Codex session's optional "rollout"
 	// download resumes Codex itself; without it the session starts afresh,
@@ -608,6 +614,9 @@ type ContentBlock struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"toolUseId,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"`
+	// IsError marks a tool result as the tool's failure (Claude's
+	// `is_error`): a command that exited non-zero, an edit that didn't apply.
+	IsError bool `json:"isError,omitempty"`
 	// Source is an image block's picture, as Claude logs one pasted into its
 	// prompt: the bytes in base64 and their type. Data is left out past
 	// MaxImageBlockData, so one huge paste can't swell every frame; the
@@ -754,8 +763,12 @@ type TokenUsage struct {
 	ServiceTier              string `json:"service_tier,omitempty"`
 }
 
-// WorkspaceStateChanged reports a workspace lifecycle transition.
-// state ∈ {starting, running, exited, archived, degraded}.
+// FeatureSnapshotPatchIntegrity marks an agent whose archive fails, rather
+// than saving an empty patch, when git diff fails in a working repository
+// (snapshot/tree.go). The control plane only deletes a box after an archive
+// (dropBox) when the agent that captured it advertises this.
+const FeatureSnapshotPatchIntegrity = "snapshot-patch-integrity"
+
 // FeatureRewind marks an agent that edits a sent message: POST
 // /workspaces/{id}/rewind cuts a chat's conversation back to just before one
 // of its prompts, and its stream says so (ConversationRewound).
@@ -787,6 +800,8 @@ type ConversationRewound struct {
 	Reset   bool   `json:"reset,omitempty"`
 }
 
+// WorkspaceStateChanged reports a workspace lifecycle transition.
+// state ∈ {starting, running, exited, archived, degraded}.
 type WorkspaceStateChanged struct {
 	T           string `json:"t"` // "state"
 	WorkspaceID string `json:"workspaceId"`

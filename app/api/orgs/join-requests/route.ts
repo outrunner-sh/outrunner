@@ -4,12 +4,11 @@ import { getAuthUser, getOwner } from "@/lib/auth/owner";
 import { requestToJoin } from "@/lib/db/org-members";
 import { orgsForDomains } from "@/lib/db/orgs";
 import { githubErrorResponse } from "@/lib/github/http";
-import { optionalGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { signInFirst } from "@/lib/http/settings-save";
 import { primaryDomain } from "@/lib/orgs/domains";
 import { emailJoinRequest } from "@/lib/orgs/notify";
-import { verifiedEmailsFor } from "@/lib/orgs/verified-emails";
+import { verifiedEmailsOf } from "@/lib/orgs/user-emails";
 
 /**
  * Ask to join the org that claimed the signed-in user's email domain (their
@@ -25,7 +24,7 @@ export async function POST(request: Request) {
   if (!owner || !user) return signInFirst();
 
   try {
-    const emails = await verifiedEmailsFor(user, await optionalGithubToken(owner.id));
+    const emails = await verifiedEmailsOf(user);
     const domain = primaryDomain(emails);
     const [org] = domain ? await orgsForDomains([domain]) : [];
     if (!org) {

@@ -42,6 +42,7 @@ export function settingsNavigationTitle(pathname: string): string {
   if (organization) return organization[1];
   if (pathname === "/settings/org/github") return "GitHub";
   if (pathname === "/settings/org/slack") return "Slack";
+  if (pathname === "/settings/org/linear") return "Linear";
   if (pathname.startsWith("/settings/org/integrations/")) return "Integrations";
   return "Settings";
 }

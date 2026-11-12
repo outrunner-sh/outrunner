@@ -24,6 +24,7 @@ import type { OrgRoleInfo } from "@/lib/db/org-access";
 import type { JoinRequest, Member, OpenInvite, Person } from "@/lib/db/org-members";
 import { requestJson } from "@/lib/http/request-json";
 import type { Org, OrgRole } from "@/lib/orgs/active";
+import { inviteExpiry } from "@/lib/orgs/invite-expiry";
 import { cn } from "@/lib/utils";
 
 /**
@@ -313,7 +314,11 @@ function Invites({
   const [role, setRole] = useState<OrgRole>("member");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [made, setMade] = useState<{ email: string; link: string; emailed: boolean } | null>(null);
+  /** The link just made, by inviting or resending, and whether it was emailed. */
+  const [made, setMade] = useState<{ email: string; link: string; emailed: boolean; resent: boolean } | null>(null);
+  const [resending, setResending] = useState<string | null>(null);
+  /** When the page was shown, to say how long each invite has left. */
+  const [shownAt, setShownAt] = useState(() => Date.now());
   const [copied, setCopied] = useState(false);
 
   const invite = async () => {
@@ -326,14 +331,35 @@ function Invites({
         has: (d) => typeof d.link === "string",
         fallback: "Couldn't invite them. Try again.",
       });
-      setMade({ email: email.trim().toLowerCase(), link: data.link, emailed: data.emailed });
+      setMade({ email: email.trim().toLowerCase(), link: data.link, emailed: data.emailed, resent: false });
       setCopied(false);
       setEmail("");
+      setShownAt(() => Date.now());
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Couldn't invite them. Try again.");
     } finally {
       setSending(false);
+    }
+  };
+
+  /** Send an open invite again: a new link, the old one stops working. */
+  const resend = async (invite: OpenInvite) => {
+    setResending(invite.id);
+    setError(null);
+    try {
+      const data = await requestJson<{ link: string; emailed: boolean }>(
+        `/api/orgs/${org.id}/invites/${invite.id}/resend`,
+        { method: "POST", has: (d) => typeof d.link === "string", fallback: "Couldn't resend that invite. Try again." },
+      );
+      setMade({ email: invite.email, link: data.link, emailed: data.emailed, resent: true });
+      setCopied(false);
+      setShownAt(() => Date.now());
+      router.refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Couldn't resend that invite. Try again.");
+    } finally {
+      setResending(null);
     }
   };
 
@@ -350,6 +376,13 @@ function Invites({
           They sign in with a GitHub account that has this email verified.{" "}
           {emails ? "We'll email them the link." : "Share the link with them: it's shown once, and works for 7 days."}
         </p>
+        {emails ? null : (
+          <p className="text-xs text-muted-foreground/80">
+            Invites won&apos;t be emailed until <code className="font-mono">RESEND_API_KEY</code> and{" "}
+            <code className="font-mono">EMAIL_FROM</code> are set on the deployment, so copy each link and send it
+            yourself.
+          </p>
+        )}
       </div>
       <div className="flex max-w-lg items-center gap-2">
         <Input
@@ -383,15 +416,15 @@ function Invites({
       {error ? <InlineMessage actions={[{ label: "Dismiss", onClick: () => setError(null) }]}>{error}</InlineMessage> : null}
       {made ? (
         <div className="max-w-lg space-y-2 rounded-lg border border-border/60 p-3">
-          <p className="text-[13px] text-foreground">
-            {made.emailed ? `Emailed ${made.email} their link.` : `Send ${made.email} this link. It won't be shown again.`}
-          </p>
+          <p className="text-[13px] text-foreground">{madeMessage(made)}</p>
+          {made.resent && made.emailed ? null : (
           <div className="flex items-center gap-2">
             <Input readOnly value={made.link} onFocus={(event) => event.currentTarget.select()} aria-label="Invite link" />
             <button type="button" className="route-state-button gap-1.5" onClick={() => void copy(made.link)}>
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />} {copied ? "Copied" : "Copy"}
             </button>
           </div>
+          )}
         </div>
       ) : null}
       {invites.length > 0 ? (
@@ -403,13 +436,24 @@ function Invites({
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] text-foreground">{i.email}</p>
                   <p className="text-xs text-muted-foreground">
-                    {i.role === "admin" ? "Admin" : "Member"} · {expired ? "expired: invite again for a new link" : "waiting"}
+                    {i.role === "admin" ? "Admin" : "Member"} ·{" "}
+                    <span title={new Date(i.expiresAt).toUTCString()} suppressHydrationWarning>
+                      {expired ? "expired: resend it for a new link" : `waiting, ${inviteExpiry(i.expiresAt, shownAt)}`}
+                    </span>
                   </p>
                 </div>
                 <button
                   type="button"
                   className="route-state-button"
-                  disabled={busy !== null}
+                  disabled={busy !== null || resending !== null}
+                  onClick={() => void resend(i)}
+                >
+                  {resending === i.id ? "Resending…" : "Resend"}
+                </button>
+                <button
+                  type="button"
+                  className="route-state-button"
+                  disabled={busy !== null || resending !== null}
                   onClick={() => void change(`revoke:${i.id}`, `/api/orgs/${org.id}/invites/${i.id}`, "DELETE")}
                 >
                   Withdraw
@@ -421,4 +465,14 @@ function Invites({
       ) : null}
     </div>
   );
+}
+
+/** What the panel says of the link just made. */
+function madeMessage(made: { email: string; emailed: boolean; resent: boolean }): string {
+  if (made.resent) {
+    return made.emailed
+      ? `Emailed ${made.email} a new link. The old one no longer works.`
+      : `Send ${made.email} this new link. The old one no longer works, and this one won't be shown again.`;
+  }
+  return made.emailed ? `Emailed ${made.email} their link.` : `Send ${made.email} this link. It won't be shown again.`;
 }

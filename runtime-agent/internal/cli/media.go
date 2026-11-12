@@ -334,6 +334,14 @@ func mediaUploadCommand(ctx context.Context, args []string, stdout, stderr io.Wr
 		fmt.Fprintln(stderr, `outrunner: --access is "public" or "private"`)
 		return 2
 	}
+	// GitHub's image proxy shows no image over 5 MiB: such a GIF uploads,
+	// then shows broken in the pull request.
+	if strings.EqualFold(filepath.Ext(path), ".gif") {
+		if info, err := os.Stat(path); err == nil && info.Size() >= MaxGIFBytes {
+			fmt.Fprintf(stderr, "outrunner: %s is %s, over the %s GitHub shows: a pull request shows it broken. Make a smaller one from the recording (not the GIF): `outrunner media gif <recording> --duration <s>`.\n",
+				filepath.Base(path), megabytes(info.Size()), megabytes(MaxGIFBytes))
+		}
+	}
 	cwd, _ := os.Getwd()
 	agent, err := boxAgentFromEnv(os.Getenv, cwd)
 	if err != nil {

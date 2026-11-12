@@ -56,7 +56,7 @@ export const neevRelayDeps: RelayDeps = {
 export function createSandboxRelay(deps: RelayDeps, prefix: string) {
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
-  return function relay(req: IncomingMessage, socket: Duplex, head: Buffer): boolean {
+  function relay(req: IncomingMessage, socket: Duplex, head: Buffer): boolean {
     const url = new URL(req.url ?? "/", "http://relay");
     if (!url.pathname.startsWith(prefix)) return false;
 
@@ -74,8 +74,22 @@ export function createSandboxRelay(deps: RelayDeps, prefix: string) {
 
     void connect(deps, wss, { req, socket, head, sandboxId, port, secret: opened.secret, path: `/${target}${url.search}` });
     return true;
+  }
+
+  /** Closes every relayed connection with `code` (server.ts, on SIGTERM:
+   *  1012, "service restart"; the browser reconnects on any close) and
+   *  answers how many there were. Each one's agent side is closed with it. */
+  relay.closeAll = (code: number, reason: string): number => {
+    const open = [...wss.clients];
+    for (const client of open) closeWith(client, code, Buffer.from(reason));
+    return open.length;
   };
+  return relay;
 }
+
+/** "Service restart": the server is going away and a new one takes over;
+ *  reconnect. */
+export const SERVICE_RESTART = 1012;
 
 async function connect(
   deps: RelayDeps,

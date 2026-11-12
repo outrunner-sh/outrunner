@@ -102,6 +102,26 @@ func TestListPrintsSessionsAndFilters(t *testing.T) {
 	}
 }
 
+func TestListFindsTheProjectByName(t *testing.T) {
+	api := &fakeAPI{}
+	server := api.server(t)
+	var out, errs bytes.Buffer
+	if code := listCommand(context.Background(), server.URL, signedIn, []string{"--project", "Acme/Web"}, &out, &errs); code != 0 {
+		t.Fatalf("exit %d: %s", code, errs.String())
+	}
+	req, _ := api.last()
+	if req.URL.Path != "/api/v1/workspaces" || req.URL.Query().Get("project_id") != "p1" {
+		t.Fatalf("asked %s?%s", req.URL.Path, req.URL.RawQuery)
+	}
+	errs.Reset()
+	if code := listCommand(context.Background(), server.URL, signedIn, []string{"--project", "acme/nope"}, &out, &errs); code != 1 {
+		t.Fatalf("unknown repository: exit %d", code)
+	}
+	if !strings.Contains(errs.String(), "no repository named acme/nope") {
+		t.Fatalf("said %q", errs.String())
+	}
+}
+
 func TestJSONPrintsTheAPIsAnswer(t *testing.T) {
 	server := (&fakeAPI{}).server(t)
 	var out, errs bytes.Buffer

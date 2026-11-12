@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { personLabel } from "@/lib/audit/labels";
 import { recordAudit } from "@/lib/audit/record";
@@ -74,7 +76,7 @@ export async function DELETE(request: Request, { params }: Params) {
       await closeAdmissionIfAlone(userId).catch((error: unknown) =>
         console.error(`Could not close ${userId}'s way in after leaving org ${id}`, error),
       );
-    });
+    }, { where: "member-removal", orgId: id });
     return NextResponse.json({ removed: userId, left: leaving });
   });
 }

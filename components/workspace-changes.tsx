@@ -101,7 +101,9 @@ export function WorkspaceChanges({
           <div>
             {message && <p aria-live="polite" className="px-4 py-3 text-destructive text-xs">{message}</p>}
             {files && files.length === 0 && !message && (
-              <p className="px-4 py-8 text-center text-muted-foreground text-xs">No uncommitted changes.</p>
+              <p className="px-4 py-8 text-center text-muted-foreground text-xs">
+                {baseBranch ? `No files differ from ${baseBranch}.` : "No changes."}
+              </p>
             )}
             {hasChanges &&
               files!.map((file) => {

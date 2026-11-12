@@ -66,6 +66,7 @@ import type { KeyHolder, ModelMenu } from "@/lib/runtime/session-models";
 import { BOX_IMAGE_TAG } from "@/lib/runtime/box-image";
 import { DEFAULT_BOX_SIZE, isBoxSizeId, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import type { ModalToken } from "@/lib/runtime/sandbox/modal";
+import type { VerifiedEmail } from "@/lib/orgs/domains";
 import type { Database } from "@/lib/supabase/database.types";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -130,8 +131,22 @@ export async function getGithubToken(userId: string): Promise<string | null> {
   return openOrNull(data?.github_token_ciphertext, userId, "github");
 }
 
+/** Whether an old sign-in token is kept for the user, without opening it. */
+export async function hasGithubToken(userId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("user_credentials")
+    .select("github_token_ciphertext")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  return Boolean(data?.github_token_ciphertext);
+}
+
 /**
- * Persist the GitHub OAuth provider_token captured at the auth callback.
+ * Persist the GitHub OAuth provider_token captured at the auth callback: only
+ * while GITHUB_LEGACY_TOKENS is `store` (lib/github/legacy-token.ts). Signing
+ * in is otherwise identity alone, and repository access is the GitHub App's
+ * user authorization (lib/db/github-connections.ts).
  *
  * Supabase exposes provider_token only in the session immediately after OAuth
  * and never refreshes it, so the callback is the one chance to capture it. Skips
@@ -161,13 +176,46 @@ export async function setGithubToken(
 }
 
 /** Forget the user's GitHub token: for one an invite signed in who never got
- *  in (lib/orgs/invitee.ts). */
+ *  in (lib/orgs/invitee.ts), and the old sign-in token once it's replaced
+ *  or removed (lib/github/legacy-token.ts). */
 export async function clearGithubToken(userId: string): Promise<void> {
   const { error } = await createSupabaseAdminClient()
     .from("user_credentials")
     .update({ github_token_ciphertext: null, github_token_login: null, github_token_updated_at: null })
     .eq("user_id", userId);
   if (error) throw error;
+}
+
+/** The emails GitHub verified for the user at their last GitHub sign-in,
+ *  kept instead of the token that read them (lib/orgs/verified-emails.ts):
+ *  none before one, or before the migration. */
+export async function getGithubVerifiedEmails(userId: string): Promise<VerifiedEmail[]> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("user_credentials")
+    .select("github_verified_emails")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error && probeStatus(error) === "outdated") return [];
+  if (error) throw error;
+  const kept = data?.github_verified_emails;
+  return Array.isArray(kept)
+    ? kept.flatMap((e) => (typeof e?.email === "string" ? [{ email: e.email, primary: e.primary === true }] : []))
+    : [];
+}
+
+/** Keep what GitHub said the user's verified emails are, at sign-in. */
+export async function setGithubVerifiedEmails(userId: string, emails: VerifiedEmail[]): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("user_credentials")
+    .upsert(
+      {
+        user_id: userId,
+        github_verified_emails: emails.map((e) => ({ email: e.email, primary: e.primary })),
+        github_verified_emails_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+  if (error && probeStatus(error) !== "outdated") throw error;
 }
 
 /** Who a user's sessions clone, push and open pull requests as

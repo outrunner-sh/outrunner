@@ -3,7 +3,6 @@
 A **provider swap** of the control plane onto Cloudflare Containers — the app is
 unchanged. Containers runs the same `pnpm start` container, so the filesystem,
 Node runtime, and the on-disk `runtime-agent` binary all work as on Railway.
-**Railway stays intact** as rollback.
 
 In this monorepo the control-plane app lives under **`outrunner/`**, and the
 cross-compiled agent binary is a **gitignored build artifact** (not committed).
@@ -98,20 +97,57 @@ for s in SLACK_SIGNING_SECRET SLACK_CLIENT_ID SLACK_CLIENT_SECRET; do
 done
 ```
 
+The Linear app likewise (docs/linear-app.md). Without them, Linear can't be connected.
+
+The Jira app likewise (`JIRA_CLIENT_ID`, `JIRA_CLIENT_SECRET`; docs/jira-app.md). Without them, Jira can't be connected.
+
+```bash
+for s in LINEAR_CLIENT_ID LINEAR_CLIENT_SECRET LINEAR_WEBHOOK_SECRET; do
+  pnpm dlx wrangler secret put "$s"
+done
+```
+
 **Cloud hours and idle pausing**: a cron in `wrangler.jsonc` runs the
 reconciler every 2 minutes (`worker.ts`, `scheduled`). It records how long
 Outrunner's boxes run and pauses one idle for 15 minutes; the next session
 resumes it. It needs a shared secret, any long random string:
 
 ```bash
-openssl rand -base64 32 | pnpm dlx wrangler secret put BILLING_CRON_SECRET
+secret=$(openssl rand -base64 32)
+printf %s "$secret" | pnpm dlx wrangler secret put BILLING_CRON_SECRET
+printf %s "$secret" | gh secret set HEALTH_CHECK_SECRET
 ```
+
+The deploy workflow's last step reads the full `/api/health` report with it,
+so the repo's `HEALTH_CHECK_SECRET` Actions secret must hold the same value;
+rotate both together.
 
 Without it, boxes run until deleted and no hours are recorded. `/api/health`
 reports `billingCron: true` once it is in. The same cron, with the same
 secret, also calls `POST /api/automations/tick`, which starts the runs of
 automations' schedules that have come due: without the secret, scheduled
 automations don't run.
+
+**Email** (optional): org invites, and requests to join for an org's admins,
+are sent through [Resend](https://resend.com). Without it nothing is emailed:
+an admin copies an invite's link from Settings → Org → Members and shares it,
+and the page says so.
+
+1. In Resend, add the sending domain (e.g. `outrunner.sh`) under Domains and
+   add the DNS records it shows (SPF, DKIM) at the DNS host. Wait until
+   Resend shows the domain as verified: until then it refuses mail from it.
+2. Create an API key with "Sending access" for that domain.
+3. Set both secrets. `EMAIL_FROM` must be an address on the verified domain.
+
+```bash
+pnpm dlx wrangler secret put RESEND_API_KEY   # re_…
+pnpm dlx wrangler secret put EMAIL_FROM       # Outrunner <hello@outrunner.sh>
+```
+
+`/api/health` reports `configured.email: "configured"` once both are in
+(`"not_configured"` otherwise). An admin can resend a pending invite from the
+members page; it gets a new link, the old one stops working, and it works for
+7 more days.
 
 **Neev sandboxes** (optional; cloud sessions run on Daytona otherwise): set
 the provider and Neev's three keys, then deploy.
@@ -204,13 +240,51 @@ previews stay off).
 
 ## Deploy
 
-```bash
-cd outrunner/cloudflare
-pnpm dlx wrangler deploy
-```
+Production deploys go through GitHub Actions (`.github/workflows/deploy.yml`).
+Merging to main deploys automatically once CI passes. See
+[Deploying and rolling back](#deploying-and-rolling-back).
 
-Builds `../Dockerfile` (context = `outrunner/`), pushes the image, and wires the
-Worker + Durable Object + `app.outrunner.sh` (and the old domain's redirect).
+The workflow builds `../Dockerfile` (context = `outrunner/`), pushes the image,
+and wires the Worker + Durable Object + `app.outrunner.sh` (and the old domain's
+redirect). The first-time equivalent from a laptop with a working Docker is
+`cd outrunner/cloudflare && pnpm dlx wrangler deploy`.
+
+## Deploying and rolling back
+
+1. **Before merging, apply migrations.** If the PR adds or changes files in
+   `supabase/migrations/`, run `pnpm db:migrate` first. The deploy doesn't run
+   migrations. Its summary warns when they changed, but it deploys anyway.
+2. **Merge to main.** Each deploy restarts the single prod container and drops
+   live sessions, so merge with that in mind.
+3. **CI goes green → it deploys.** *Deploy to Cloudflare Containers* starts
+   when CI succeeds on the merge commit. CI runs for pull requests and forks
+   never deploy. The run's summary shows the SHA, the commits since the live
+   build, and any migrations.
+4. **Health check.** The job waits until `/api/health` reports the new SHA and
+   the configuration report is all true. A red job means users don't have it.
+
+Only one deploy runs at a time. A deploy queued while another runs waits. A
+newer run replaces a waiting one, whatever commit either deploys, so a pending
+rollback can be bumped by the next merge's deploy (and the reverse). Check the
+run that actually deployed. Automatic runs never go backwards. A run for a
+commit that's no longer main's head stands down when the head's CI passed or
+is running, and one whose commit the live build already contains fails before
+deploying. That covers CI finishing out of order, or a re-run of an old
+commit's CI.
+
+**Rollback or redeploy:** Actions → *Deploy to Cloudflare Containers* →
+*Run workflow* on `main`, with `ref` set to the previous good SHA. The summary
+of the last good deploy shows it; leave `ref` empty for main's head. The
+commit must be on main and have passed CI there (a push run, not a PR's).
+A manual run that changes `supabase/migrations/` fails before deploying unless
+`migrations-applied` is checked. So does one when `/api/health` can't say
+what's live. The gate checks the box, not the database, so check it even if
+you migrated first. A rollback doesn't undo migrations; the database keeps them. For the
+fastest rollback, without a rebuild:
+`cd outrunner/cloudflare && pnpm dlx wrangler rollback`. Then check that
+`/api/health` reports the old build. The next merge to main deploys over it.
+
+The `production` environment allows only `main` and has no required reviewers.
 
 ## Pre-deploy checklist
 
@@ -218,7 +292,7 @@ Worker + Durable Object + `app.outrunner.sh` (and the old domain's redirect).
       on both the outrunner.sh and neev.ai zones.
 - [ ] All secrets set via `wrangler secret put`.
 - [ ] `https://app.outrunner.sh` as the Supabase Site URL and in its redirect allowlist.
-- [ ] Supabase migrations applied.
+- [ ] Supabase migrations applied (`pnpm db:migrate`) before merging.
 
 ## Smoke test
 
@@ -237,8 +311,3 @@ Worker + Durable Object + `app.outrunner.sh` (and the old domain's redirect).
 - **Verify the fast-moving bits** — the `containers` wrangler schema and the
   `@cloudflare/containers` API change; confirm against current docs before the
   first deploy. `worker.ts`/`wrangler.jsonc` are scaffolding.
-
-## Rollback
-
-Railway is untouched: point the domain back at the Railway service and set its
-`RUNTIME_BASE_URL` accordingly.

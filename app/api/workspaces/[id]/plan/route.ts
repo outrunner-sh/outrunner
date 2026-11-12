@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { getOwner } from "@/lib/auth/owner";
 import { recordWorkspaceMode } from "@/lib/db/repositories";
@@ -61,13 +63,13 @@ export async function POST(request: Request, context: RouteContext) {
     // Approved, it builds; answered already, it is in the mode its agent read
     // off its screen. The row follows, so the session opens in it again.
     const mode = approved.result === "answered" ? (approved.mode ?? "build") : "build";
-    if (!chat && workspace.mode !== mode) await recordWorkspaceMode(workspace.id, mode);
+    if (!chat && workspace.mode !== mode) await recordWorkspaceMode(workspace.id, workspace.ownerId, mode);
     // An approval puts the session to work (Claude builds in the same turn;
     // Codex takes it as a prompt): working for every client at once, and
     // watched until the turn ends (lib/session/watch.ts), as a sent prompt
     // is. "answered" put nothing to work, so a session idle at its box isn't
     // marked working.
-    if (approved.result === "approved" && !chat) after(() => watchSent(workspace.id, workspace.ownerId));
+    if (approved.result === "approved" && !chat) after(() => watchSent(workspace.id, workspace.ownerId), { where: "watch-sent", workspaceId: workspace.id });
     return NextResponse.json(approved);
   } catch (error) {
     if (error instanceof OutdatedComputerError) {

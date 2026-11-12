@@ -11,6 +11,8 @@ const event = (action: string, resourceLabel: string | null, details: Record<str
 
 test("each kind of event reads as what happened", () => {
   assert.equal(describeAudit(event("member.invited", "ada@acme.dev", { role: "admin" })), "invited ada@acme.dev as admin");
+  assert.equal(describeAudit(event("invite.resent", "ada@acme.dev", { emailed: true })), "emailed ada@acme.dev a new invite link");
+  assert.equal(describeAudit(event("invite.resent", "ada@acme.dev", { emailed: false })), "made a new invite link for ada@acme.dev");
   assert.equal(describeAudit(event("member.role_changed", "ada", { role: "admin" })), "made ada an admin");
   assert.equal(describeAudit(event("member.roles_set", "ada", { roles: [] })), "took ada's roles away");
   assert.equal(
@@ -44,6 +46,7 @@ test("each kind of event reads as what happened", () => {
 
 test("events group by what they're about", () => {
   assert.equal(auditGroup("invite.revoked"), "members");
+  assert.equal(auditGroup("invite.resent"), "members");
   assert.equal(auditGroup("access.changed"), "access");
   assert.equal(auditGroup("usage.changed"), "settings");
   assert.equal(auditGroup("github.uninstalled"), "github");

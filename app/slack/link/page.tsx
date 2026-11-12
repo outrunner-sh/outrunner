@@ -46,11 +46,10 @@ export default async function SlackLinkPage({
           </div>
         ) : !ready ? (
           <div className="space-y-2">
-            <h1 className="text-sm">Sign in with Slack isn&apos;t set up on this deployment.</h1>
+            <h1 className="text-sm">Sign in with Slack isn&apos;t available yet.</h1>
             <p className="text-xs text-muted-foreground">
-              Its admin sets <code className="font-mono">SLACK_CLIENT_ID</code> and{" "}
-              <code className="font-mono">SLACK_CLIENT_SECRET</code>: see{" "}
-              <code className="font-mono">docs/slack-app.md</code>.
+              Linking Slack to Outrunner hasn&apos;t been turned on. Ask your Outrunner admin, or write to{" "}
+              <a href="mailto:support@outrunner.sh" className="underline underline-offset-2">support@outrunner.sh</a>.
             </p>
           </div>
         ) : !orgs ? (

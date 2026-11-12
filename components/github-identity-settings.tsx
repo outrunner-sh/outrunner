@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 export type IdentityOrgView = { name: string; installedOn: string[]; admin: boolean };
 
 /**
- * Settings → Account → GitHub identity: who the user's sessions clone, push
+ * Settings → Connections → GitHub identity: who the user's sessions clone, push
  * and open pull requests as (lib/github/identity.ts). Their own GitHub
  * account, as every session had before, or the Outrunner GitHub App of each
  * session's org. Says what the App reaches in the org they're looking at.

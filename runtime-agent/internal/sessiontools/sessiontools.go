@@ -105,6 +105,9 @@ Commands:
       Keep a note for the next sessions: a fact worth knowing later, one
       or two lines. --org shares it with everyone in the org. Never a
       secret. The note may come on stdin instead ("-").
+  rename-branch <type>/<what-it-does>
+      Give the session's branch its real name, once, before it's pushed:
+      e.g. fix/google-sign-in-redirect. A taken name is numbered (-2).
 `
 
 // Main runs a command and returns its exit status: 0 done, 1 refused or
@@ -190,6 +193,12 @@ func parse(command string, args []string, stdin io.Reader) (string, json.RawMess
 		}
 		raw, err := json.Marshal(map[string]string{"scope": scope, "body": body})
 		return "remember", raw, err
+	case "rename-branch":
+		if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
+			return "", nil, errors.New("rename-branch needs the one new name, e.g. fix/google-sign-in-redirect")
+		}
+		raw, err := json.Marshal(map[string]string{"name": strings.TrimSpace(args[0])})
+		return "rename_branch", raw, err
 	}
 	return "", nil, fmt.Errorf("no command %q", command)
 }

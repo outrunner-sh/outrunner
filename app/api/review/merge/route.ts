@@ -9,7 +9,8 @@ import {
   type MergeAccess,
   mergePullRequest,
 } from "@/lib/github/client";
-import { requireGithubToken } from "@/lib/github/token";
+import { githubErrorResponse } from "@/lib/github/http";
+import { MissingGithubTokenError, requireGithubToken } from "@/lib/github/token";
 import { type MergeAction, refuseMerge } from "@/lib/review/merge-plan";
 import { readableRepo } from "@/lib/review/pulls";
 import { triageCaller } from "@/lib/triage/caller";
@@ -18,8 +19,9 @@ const ACTIONS: ReadonlySet<MergeAction> = new Set(["merge", "queue", "bypass"]);
 
 /**
  * Merge from the Review tab, as the person clicking: with their own GitHub
- * token, never the App's, so GitHub holds them to their own access and
- * names them as who merged. At the commit they saw: GitHub refuses one that
+ * connection (the App's user token, lib/github/personal.ts), never the App's
+ * installation, so GitHub holds them to their own access and names them as
+ * who merged. At the commit they saw: GitHub refuses one that
  * moved since.
  *
  *   merge   by the branch's rules, only once the PR passes them;
@@ -43,8 +45,14 @@ export async function POST(request: Request) {
   let token: string;
   try {
     token = await requireGithubToken(caller.owner.id);
-  } catch {
-    return NextResponse.json({ error: "Connect your GitHub account to merge (sign out and in again)." }, { status: 409 });
+  } catch (error) {
+    // Only no connection (or a broken one) is "connect"; GitHub out of reach
+    // mid-renewal is a try-again.
+    if (!(error instanceof MissingGithubTokenError)) return githubErrorResponse(error, "Couldn't reach GitHub. Try again.");
+    return NextResponse.json(
+      { error: "Connect GitHub in Settings → Connections to merge.", reconnect: true, settingsHref: "/settings/connections" },
+      { status: 409 },
+    );
   }
   const pull = { token, repoFullName: repo.fullName, number: body.number };
   try {

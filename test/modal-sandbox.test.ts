@@ -3,9 +3,10 @@ import { test } from "node:test";
 
 import { InvalidError, NotFoundError, SnapshotCreationError, TimeoutError } from "modal";
 
-import { CLAUDE_CODE_VERSION } from "@/lib/runtime/claude-cli";
+import { BOX_TOOL_SHA256 } from "@/lib/runtime/box-image";
+import { claudeNativeInstallCommand } from "@/lib/runtime/claude-cli";
 import { CODEX_PACKAGE } from "@/lib/runtime/codex-cli";
-import { AGENT_PORT } from "@/lib/runtime/daytona/deploy";
+import { AGENT_PORT, shellQuote } from "@/lib/runtime/daytona/deploy";
 import { GH_VERSION } from "@/lib/runtime/github-cli";
 import { box, MODAL_IMAGE_SETUP, noSnapshot, sandboxParams } from "@/lib/runtime/sandbox/modal";
 
@@ -29,13 +30,15 @@ test("a box with no size asked for gets Outrunner's default, not Modal's eighth 
 
 test("the image has what the agent needs, and the user Claude runs as", () => {
   const setup = MODAL_IMAGE_SETUP.join("\n");
-  for (const part of ["tmux", "jq", "useradd -m", "claude.ai/install.sh"]) {
+  for (const part of ["tmux", "jq", "useradd -m"]) {
     assert.ok(setup.includes(part), `the image lacks ${part}`);
   }
   // Installed by the box user, so Claude Code can update itself, from the
   // pinned version the deploy then finds already there.
-  assert.match(setup, /su - runtime -c '[^']*install\.sh/);
-  assert.ok(setup.includes(`install.sh | bash -s ${CLAUDE_CODE_VERSION}'`), "the image lacks the pinned Claude Code");
+  assert.ok(setup.includes(`su - runtime -c ${shellQuote(claudeNativeInstallCommand())}`), "the image lacks the pinned Claude Code");
+  // Checked before it runs, never piped from a URL into a shell.
+  assert.ok(setup.includes(BOX_TOOL_SHA256.claudeCode.amd64), "Claude Code's download isn't checked");
+  assert.doesNotMatch(setup, /\|\s*(sudo\s+)?(ba)?sh(\s|'|$)/m);
   // Codex at the version the agent reads, for every user.
   assert.ok(setup.includes(`RUN npm install -g ${CODEX_PACKAGE}`), "the image lacks the pinned Codex");
   // `gh` for the orientation's `gh pr create`: not in node:22-bookworm, nor in

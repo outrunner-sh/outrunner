@@ -6,7 +6,7 @@
  * events that arrive together go together.
  */
 
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import { boxSummary, sessionWorking } from "@/lib/missions/box";
 import { readSession } from "@/lib/session/watch";
@@ -185,6 +185,9 @@ async function lastEventAt(runner: Workspace): Promise<string | null> {
   const { data } = await db().from("session_activity").select("event_at").eq("workspace_id", runner.id).maybeSingle();
   return data?.event_at ?? (await boxSummary(runner).catch(() => null))?.lastActivity ?? null;
 }
+
+/** The same looks, for a turn watched from elsewhere (lib/trackers/linear-relay.ts). */
+export { lookAtRunner as boxSummaryLook, lastEventAt as eventAtOf };
 
 export function watchDeps(): WatchDeps {
   return {

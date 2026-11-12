@@ -2,13 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  atRest,
   boxLabels,
+  boxStatuses,
   deploymentName,
   DEPLOYMENT_LABEL,
   type ListedBox,
   ORPHAN_GRACE_MS,
   ORPHAN_SWEEP_MAX,
   orphanedBoxes,
+  strayRunningBoxes,
   sweepable,
 } from "@/lib/runtime/orphan-boxes";
 
@@ -111,4 +114,53 @@ test("boxes are made with their role, engine and deployment", () => {
     [DEPLOYMENT_LABEL]: "outrunner.example",
   });
   assert.deepEqual(boxLabels("jcode", null), { "runtime.role": "computer", "runtime.engine": "jcode" });
+});
+
+test("a box running under a row that says it's paused or failed is paused, once old and quiet", () => {
+  const statusOf = new Map([["sb-1", "stopped"], ["sb-2", "error"], ["sb-3", "ready"], ["sb-4", "provisioning"]]);
+  const boxes = [ours(), ours({ id: "sb-2", lastActivityAt: ago(5 * HOUR) }), ours({ id: "sb-3" }), ours({ id: "sb-4" })];
+  // Longest quiet first; a ready or provisioning row's box is the reconciler's.
+  assert.deepEqual(strayRunningBoxes(boxes, statusOf, options), ["sb-2", "sb-1"]);
+});
+
+test("a stray is left alone while recent, not running, unnamed, or another deployment's", () => {
+  const statusOf = new Map([["sb-1", "stopped"]]);
+  // A restore under way starts the box before its row says ready.
+  assert.deepEqual(strayRunningBoxes([ours({ lastActivityAt: ago(ORPHAN_GRACE_MS / 2) })], statusOf, options), []);
+  assert.deepEqual(strayRunningBoxes([ours({ state: "stopped" })], statusOf, options), []);
+  assert.deepEqual(strayRunningBoxes([ours({ state: "starting" })], statusOf, options), []);
+  assert.deepEqual(strayRunningBoxes([ours()], new Map(), options), []);
+  // Unlabelled boxes may be another deployment's, whose rows these aren't.
+  assert.deepEqual(strayRunningBoxes([box()], statusOf, options), []);
+  assert.deepEqual(strayRunningBoxes([ours({ labels: { [DEPLOYMENT_LABEL]: "staging.example" } })], statusOf, options), []);
+  assert.deepEqual(strayRunningBoxes([ours()], statusOf, { ...options, deployment: null }), []);
+});
+
+test("one run pauses at most ORPHAN_SWEEP_MAX strays", () => {
+  const boxes = Array.from({ length: ORPHAN_SWEEP_MAX + 5 }, (_, i) => ours({ id: `sb-${i}` }));
+  const statusOf = new Map(boxes.map((b) => [b.id, "stopped"]));
+  assert.equal(strayRunningBoxes(boxes, statusOf, options).length, ORPHAN_SWEEP_MAX);
+});
+
+test("a box's status is the one of a row not at rest, over any at rest, in either order", () => {
+  for (const rows of [
+    [{ sandboxId: "sb-1", status: "stopped" }, { sandboxId: "sb-1", status: "provisioning" }],
+    [{ sandboxId: "sb-1", status: "provisioning" }, { sandboxId: "sb-1", status: "error" }],
+  ]) {
+    assert.equal(boxStatuses(rows).get("sb-1"), "provisioning");
+  }
+  const statusOf = boxStatuses([
+    { sandboxId: "sb-2", status: "error" },
+    { sandboxId: "sb-2", status: "stopped" },
+    { sandboxId: null, status: "ready" },
+  ]);
+  assert.ok(atRest(statusOf.get("sb-2")!));
+  assert.equal(statusOf.size, 1);
+  // A box a row is bringing back isn't a stray, whichever row came first.
+  assert.deepEqual(strayRunningBoxes([ours()], boxStatuses([{ sandboxId: "sb-1", status: "stopped" }, { sandboxId: "sb-1", status: "ready" }]), options), []);
+});
+
+test("at rest is stopped or failed, nothing on its way or running", () => {
+  assert.ok(atRest("stopped") && atRest("error"));
+  for (const status of ["ready", "provisioning", "creating"]) assert.equal(atRest(status), false, status);
 });

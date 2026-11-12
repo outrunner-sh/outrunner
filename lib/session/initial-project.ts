@@ -27,3 +27,17 @@ export function lastSessionProjectId(
   const recent = workspaces.reduce((a, b) => (newestFirst(recency(a), recency(b)) > 0 ? b : a));
   return projects.some((p) => p.id === recent.projectId) ? recent.projectId : undefined;
 }
+
+/**
+ * The repository home starts on: one a session was just refused in, while
+ * the screen still says why (its reason is said only under that repository),
+ * else the most recent session's (lastSessionProjectId).
+ */
+export function homeProjectId(
+  projects: { id: string }[],
+  workspaces: Pick<Workspace, "projectId" | "lastActiveAt" | "createdAt">[],
+  refusedIn: string | undefined,
+): string | undefined {
+  if (refusedIn && projects.some((p) => p.id === refusedIn)) return refusedIn;
+  return lastSessionProjectId(projects, workspaces);
+}

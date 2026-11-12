@@ -14,6 +14,7 @@ import {
   type LocalStatus,
   LocalSocket,
   localAgentState,
+  retryableLocalFailure,
   localSocketUrl,
   logInToCodex,
   messageForLocalError,
@@ -190,6 +191,26 @@ test("a folder re-check that fails is gone only when the app says so, not on a h
   assert.equal(folderGone(await checkFailing("agent-unreachable: connection refused")), false);
   assert.equal(folderGone(await checkFailing("agent-did-not-start")), false);
   assert.equal(folderGone(new Error("folder-missing")), false);
+});
+
+test("a reconnect tries a local session again only when its agent was briefly unreachable", async () => {
+  // As the app fails a command: through the same path an attach takes.
+  const failing = (reason: string) => {
+    (globalThis as Record<string, unknown>).window = {
+      __RUNTIME_DESKTOP__: true,
+      __TAURI__: { core: { invoke: () => Promise.reject(reason), Channel: class {} } },
+    };
+    return checkLocalFolder("/Users/ada/app").then(
+      () => assert.fail("expected the call to fail"),
+      (error: unknown) => error,
+    );
+  };
+  assert.equal(retryableLocalFailure(await failing("agent-unreachable: connection refused")), true);
+  for (const reason of ["agent-did-not-start", "agent-missing", "folder-missing", "agent: unknown workspace"]) {
+    assert.equal(retryableLocalFailure(await failing(reason)), false, reason);
+  }
+  // Not one of the app's: the cloud side's to judge (retryableAttachFailure).
+  assert.equal(retryableLocalFailure(new TypeError("Failed to fetch")), false);
 });
 
 test("a runner that didn't start says why, what still works, and where its log is", async () => {
