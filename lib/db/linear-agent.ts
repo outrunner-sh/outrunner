@@ -208,6 +208,7 @@ function toRelayRow(row: Row): RelayRow {
   return {
     agentSessionId: row.agent_session_id,
     installationId: row.installation_id,
+    issueId: row.issue_id,
     orgId: row.org_id,
     teamId: row.team_id,
     workspaceId: row.workspace_id,

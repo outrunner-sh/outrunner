@@ -760,3 +760,46 @@ test("what was said before the question still counts once it's answered", async 
   await ruled.run({ kind: "mentioned", issueId: ISSUE, actor: { id: "automation", name: "A", kind: "rule" }, text: `[model=${known}]` });
   assert.equal(ruled.current()?.askText, null);
 });
+
+// --- Blocked, and started again
+
+const BLOCKING = { started: "3", inReview: "4", done: null, blocked: "9" };
+
+test("waiting on someone, or a start that failed: the issue goes to Blocked", async () => {
+  const repo = harness({}, { scope: scope({ stateMap: BLOCKING, defaultProjectId: null }) });
+  await repo.run(assigned);
+  assert.equal(repo.current()?.stage, "awaiting_repo");
+  assert.deepEqual(repo.log.transitions, ["9"]);
+
+  const link = harness({ linkedOwner: async () => null }, { scope: scope({ stateMap: BLOCKING }) });
+  await link.run(assigned);
+  assert.equal(link.current()?.stage, "awaiting_link");
+  assert.deepEqual(link.log.transitions, ["9"]);
+
+  const failed = harness(
+    { start: async (start) => (await start.onCreated?.("w-new"), { workspaceId: "w-new", status: "failed", errorMessage: "no box" } as ServerSessionResult) },
+    { scope: scope({ stateMap: BLOCKING }), standing: { ...STANDING, stateId: "3", stateType: "started" } },
+  );
+  await failed.run(assigned);
+  assert.equal(failed.log.transitions.at(-1), "9");
+
+  const closed = harness({}, { scope: scope({ stateMap: BLOCKING, defaultProjectId: null }), standing: { ...STANDING, stateId: "5", stateType: "completed" } });
+  await closed.run(assigned);
+  assert.deepEqual(closed.log.transitions, []);
+});
+
+test("work picking up moves a Blocked issue back to started: a steer, or a start", async () => {
+  const steer = harness({}, { scope: scope({ stateMap: BLOCKING }), standing: { ...STANDING, stateId: "9", stateType: "started" }, item: item({ workspaceId: "w" }), session: { id: "w", ownerId: "ana-user", projectId: WEB.id, status: "ready" } });
+  await steer.run(mention("and this"));
+  assert.equal(steer.log.sent.length, 1);
+  assert.deepEqual(steer.log.transitions, ["3"]);
+
+  const start = harness({}, { scope: scope({ stateMap: BLOCKING }), standing: { ...STANDING, stateId: "9", stateType: "started" } });
+  await start.run(assigned);
+  assert.equal(start.log.started.length, 1);
+  assert.deepEqual(start.log.transitions, ["3"]);
+
+  const inReview = harness({}, { scope: scope({ stateMap: BLOCKING }), standing: { ...STANDING, stateId: "4", stateType: "started" }, item: item({ workspaceId: "w" }), session: { id: "w", ownerId: "ana-user", projectId: WEB.id, status: "ready" } });
+  await inReview.run(mention("and this"));
+  assert.deepEqual(inReview.log.transitions, []);
+});

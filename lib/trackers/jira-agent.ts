@@ -17,6 +17,7 @@
  * what goes wrong is said on the issue, as nothing makes Jira deliver it again.
  */
 
+import { blockedTarget, type IssueState, startedTarget } from "@/lib/trackers/rules";
 import type { AccessLevel } from "@/lib/orgs/access";
 import { allows } from "@/lib/orgs/access";
 import type { JiraRow } from "@/lib/db/jira-sessions";
@@ -274,6 +275,7 @@ async function resolveRunner(context: Context, scope: TrackerScope, standing: Ji
     }
     const written = await deps.saveRow(rowOf(context, { orgId: scope.orgId, teamId: scope.externalTeamId, openWhenAsked: standing.open, stage: "awaiting_link", prompt: jiraFirstPrompt(installation, standing, trigger), ruleStarted, commentId: trigger.commentId ?? null, askedUser: externalId, askText: trigger.kind === "mentioned" ? trigger.text : null }), seen);
     if (!written) return null;
+    await moveIssue(context, scope, standing, blockedTarget, "blocked");
     await say(`Link your Jira account to Outrunner, and this carries on: ${deps.linkUrl()}`);
     return null;
   }
@@ -412,6 +414,7 @@ async function delegate(context: Context): Promise<boolean> {
         if (standing.open && (await closedSince(context, scope, item, session.ownerId, session.id))) return false;
         if (item && session.projectId) await deps.linkItem(scope.orgId, item.id, { workspaceId: session.id, projectId: session.projectId });
         await deps.openWatch(installation.id, issueId, { sentAt, baselineActivity });
+        await moveToStarted(context, scope, standing);
         return true;
       }
     }
@@ -435,6 +438,7 @@ async function delegate(context: Context): Promise<boolean> {
     const askText = said ?? (row?.ownerId === actor.userId ? row.askText : null) ?? null;
     const written = await deps.saveRow(rowOf(context, { orgId: scope.orgId, teamId: scope.externalTeamId, openWhenAsked: standing.open, slotTaken: runner.slotTaken, itemId: item?.id ?? null, ownerId: actor.userId, stage: "awaiting_repo", prompt, ruleStarted: runner.ruleStarted, commentId: trigger.commentId ?? null, askText }), row);
     if (!written) return false;
+    await moveIssue(context, scope, standing, blockedTarget, "blocked");
     await say(askRepoComment(readable, "Which repository should this run on?"));
     return false;
   }
@@ -545,6 +549,7 @@ async function startSession(
   if (stoppedSince) return false;
   const reason = result.errorMessage ?? "Its setup failed.";
   await deps.stopRow(installation.id, issueId);
+  await moveIssue(context, scope, standing, blockedTarget, "blocked");
   await deps.comment(installation.id, issueId, result.workspaceId ? `The session couldn't start: ${reason}\n\n${deps.sessionUrl(result.workspaceId)}` : `The session couldn't start: ${reason}`);
   if (item) {
     await deps.addNote(scope.orgId, item.id, {
@@ -559,14 +564,26 @@ async function startSession(
   return false;
 }
 
-/** The project's status for work started, unless the issue is already past it. A workflow
+/** The project's status for work started, from not started yet or from Blocked. A workflow
  *  may offer no way there, and then it stays. */
-async function moveToStarted({ installation, deps, issueId }: Context, scope: TrackerScope, standing: JiraIssueStanding): Promise<void> {
-  const status = scope.stateMap?.started;
-  if (!status || standing.stateType !== "unstarted") return;
+function moveToStarted(context: Context, scope: TrackerScope, standing: JiraIssueStanding): Promise<void> {
+  return moveIssue(context, scope, standing, startedTarget, "started");
+}
+
+/** Move the issue as `target` says, from where it was when this began (lib/trackers/rules.ts).
+ *  Best effort: the work goes on whether or not Jira moves. */
+async function moveIssue(
+  { installation, deps, issueId }: Context,
+  scope: TrackerScope,
+  standing: JiraIssueStanding,
+  target: (map: TrackerScope["stateMap"], issue: IssueState) => string | null,
+  what: string,
+): Promise<void> {
+  const status = target(scope.stateMap, standing);
+  if (!status) return;
   try {
     if (!(await deps.transition(installation.id, issueId, status))) console.warn(`Jira: no transition to status ${status} from where issue ${issueId} is`);
   } catch (error) {
-    console.warn("Jira: couldn't move an issue to started", error);
+    console.warn(`Jira: couldn't move an issue to ${what}`, error);
   }
 }

@@ -34,6 +34,8 @@ export const STILL_WORKING = "Still working.";
 export type RelayRow = {
   agentSessionId: string;
   installationId: string;
+  /** The tracker's issue. */
+  issueId: string;
   orgId: string | null;
   teamId: string | null;
   workspaceId: string | null;
@@ -58,6 +60,8 @@ export type RelayDeps = {
   /** How to bring back a session that was archived. */
   reviveHint: string;
   load(agentSessionId: string): Promise<RelayRow | null>;
+  /** The turn was lost: its issue goes to the team's Blocked, if it has one. Best effort. */
+  blocked(row: RelayRow): Promise<void>;
   /** Whether the org it was asked through is still connected to that team. */
   connected(row: RelayRow): Promise<boolean>;
   session(workspaceId: string): Promise<{ status: WorkspaceStatus; errorMessage?: string | null } | null>;
@@ -158,6 +162,7 @@ async function lookOnce(agentSessionId: string, deps: RelayDeps): Promise<boolea
     case "lost":
       // Said first: if it can't be, the next look says it, and only then does it stop.
       await finish({ type: "error", body: `The session stopped: ${verdict.cause}.\n\n${link}` });
+      await deps.blocked(row).catch((error: unknown) => console.warn(`${deps.trackerName}: couldn't move an issue to blocked`, error));
       if (session.status === "failed") await deps.stop(agentSessionId);
       return true;
     case "closed":

@@ -186,6 +186,7 @@ export async function jiraRelayRow(installationId: string, issueId: string): Pro
   return {
     agentSessionId: data.issue_id,
     installationId: data.installation_id,
+    issueId: data.issue_id,
     orgId: data.org_id,
     teamId: data.team_id,
     workspaceId: data.workspace_id,

@@ -17,12 +17,13 @@ function watch(over: Partial<WatchState> = {}): WatchState {
 const iso = (ms: number) => new Date(ms).toISOString();
 const summary = (message: string | null, at: number, state = "ready") => ({ lastAssistantMessage: message, lastActivity: iso(at), state });
 
-function harness(setup: { row?: Partial<RelayRow>; status?: WorkspaceStatus; errorMessage?: string; look?: RelayLook; gone?: boolean; sayFails?: boolean; now: number; jira?: boolean; connected?: boolean }) {
+function harness(setup: { row?: Partial<RelayRow>; status?: WorkspaceStatus; errorMessage?: string; look?: RelayLook; gone?: boolean; sayFails?: boolean; now: number; jira?: boolean; connected?: boolean; blockedFails?: boolean }) {
   const said: LinearActivity[] = [];
-  const log = { stopped: 0, restored: 0, questionsReleased: 0, thoughtsRestored: 0 };
+  const log = { stopped: 0, restored: 0, questionsReleased: 0, thoughtsRestored: 0, blocked: 0 };
   let row: RelayRow = {
     agentSessionId: "a",
     installationId: "i",
+    issueId: "issue",
     orgId: "o",
     teamId: "t",
     workspaceId: "w",
@@ -47,6 +48,10 @@ function harness(setup: { row?: Partial<RelayRow>; status?: WorkspaceStatus; err
     messageMax: setup.jira ? 100 : null,
     reviveHint: setup.jira ? "Assign or mention Outrunner again to bring it back." : "Delegate the issue again to bring it back.",
     load: async () => row,
+    blocked: async () => {
+      if (setup.blockedFails) throw new Error("tracker down");
+      log.blocked += 1;
+    },
     connected: async () => setup.connected ?? true,
     session: async () => (setup.gone ? null : { status: setup.status ?? "ready", errorMessage: setup.errorMessage }),
     look: async () => setup.look ?? { reachable: true, working: true, summary: summary("Earlier text", SENT + 1000) },
@@ -323,4 +328,17 @@ test("a turn sent after this read isn't closed by the last one's ending", async 
   assert.equal(h.said.length, 0, "nothing said for the old turn");
   assert.equal(h.row().watch?.sentAt, newer, "the newer turn's watch stays");
   assert.notEqual(h.row().relayUntil, null);
+});
+
+test("a lost turn moves its issue to Blocked, and a tracker that won't still lets it end", async () => {
+  const lost = harness({ now: SENT + 2 * MINUTE, status: "failed" });
+  assert.equal(await lost.look(), true);
+  assert.equal(lost.log.blocked, 1);
+  const failing = harness({ now: SENT + 2 * MINUTE, status: "failed", blockedFails: true });
+  assert.equal(await failing.look(), true);
+  assert.equal(failing.log.stopped, 1);
+  // A turn that ended well blocks nothing.
+  const over = harness({ now: SENT + 121 * MINUTE, look: { reachable: true, working: false, summary: summary("Done", SENT + 1000) }, row: { watch: watch({ seenWorking: true, quietSince: SENT }) } });
+  await over.look();
+  assert.equal(over.log.blocked, 0);
 });

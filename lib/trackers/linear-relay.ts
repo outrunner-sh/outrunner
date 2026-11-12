@@ -23,7 +23,8 @@ import { orgUsesInstallation, scopeForTeam } from "@/lib/db/trackers";
 import { optionalEnv } from "@/lib/env";
 import { watchUntil } from "@/lib/session/turn-watch";
 import { askLinear } from "@/lib/trackers/ask-linear";
-import { linearAgentActivity } from "@/lib/trackers/linear";
+import { linearAgentActivity, linearIssueStanding, linearSetIssueState } from "@/lib/trackers/linear";
+import { blockedTarget } from "@/lib/trackers/rules";
 import { checkTurnRelay, type RelayDeps, THOUGHT_EVERY_MS } from "@/lib/trackers/turn-watch-relay";
 
 /** How long a turn is watched after a send. A long one, as the watch knows a dead or stuck
@@ -45,6 +46,13 @@ const relayDeps: RelayDeps = {
   messageMax: null,
   reviveHint: "Delegate the issue again to bring it back.",
   load: agentRelayRow,
+  blocked: async (row) => {
+    const scope = row.teamId ? await scopeForTeam(row.installationId, row.teamId) : null;
+    if (!scope?.stateMap?.blocked || scope.orgId !== row.orgId) return;
+    const standing = await askLinear(row.installationId, null, (token) => linearIssueStanding(token, row.issueId));
+    const state = standing ? blockedTarget(scope.stateMap, standing) : null;
+    if (state) await askLinear(row.installationId, undefined, (token) => linearSetIssueState(token, row.issueId, state));
+  },
   connected: async (row) => {
     if (!row.orgId) return true;
     if (row.teamId) return (await scopeForTeam(row.installationId, row.teamId))?.orgId === row.orgId;
