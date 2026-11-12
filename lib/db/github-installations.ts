@@ -1,8 +1,10 @@
 /** Global GitHub installation metadata and independent organization links.
  * Only trusted server routes and signed GitHub webhooks call these helpers. */
 
-import type { Installation } from "@/lib/github/app";
+import { githubAppConfig, type Installation } from "@/lib/github/app";
+import { appOwnership, type GitHubOwnership, linkIdentity } from "@/lib/github/installation-owner";
 import { isUuid } from "@/lib/ids";
+import type { GithubLinkAuthority } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 export type OrgInstallation = Installation & { suspended: boolean; installedBy: string | null; createdAt: string };
@@ -47,8 +49,10 @@ export async function listOrgInstallations(orgId: string): Promise<OrgInstallati
   return ((data ?? []) as Row[]).map(toOrgInstallation);
 }
 
-/** Installations this admin may connect, including those used by another
- * organization they administer. Never expose other organizations' names. */
+/** Installations this admin might connect here: those they installed, and
+ * those used by another org they administer. Connecting still needs GitHub's
+ * say (claimInstallation): administering another org grants nothing. Never
+ * expose other organizations' names. */
 export async function listAvailableFor(githubId: number | null, orgId: string, userId: string): Promise<OrgInstallation[]> {
   if (!isUuid(orgId)) return [];
   const supabase = createSupabaseAdminClient();
@@ -57,32 +61,26 @@ export async function listAvailableFor(githubId: number | null, orgId: string, u
   if (membershipError) throw membershipError;
   const administered = new Set((memberships ?? []).map((m) => m.org_id));
   if (!administered.has(orgId)) return [];
-  const [installed, shared, previous] = await Promise.all([
+  const [installed, shared] = await Promise.all([
     githubId
       ? supabase.from("github_installations").select("*").eq("installer_id", githubId)
       : Promise.resolve({ data: [], error: null }),
     supabase.from("org_github_installation_details").select(COLUMNS).in("org_id", [...administered]),
-    supabase.from("github_installations").select("*").contains("connected_org_ids", [orgId]),
   ]);
   if (installed.error) throw installed.error;
   if (shared.error) throw shared.error;
-  if (previous.error) throw previous.error;
   const candidates = new Map<number, Row>([
     ...(installed.data ?? []).map((i) => [i.installation_id, { ...i, installed_by: null }] as const),
-    ...(previous.data ?? []).map((i) => [i.installation_id, { ...i, installed_by: null }] as const),
     ...(shared.data ?? []).map((i) => [i.installation_id, i] as const),
   ]);
   if (candidates.size === 0) return [];
   const { data: links, error: linksError } = await supabase.from("org_github_installations")
     .select("installation_id, org_id").in("installation_id", [...candidates.keys()]);
   if (linksError) throw linksError;
-  return [...candidates.values()].filter((i) => {
-    const connected = (links ?? []).filter((l) => l.installation_id === i.installation_id);
-    return !connected.some((l) => l.org_id === orgId)
-      && (i.connected_org_ids.includes(orgId)
-        || (i.connected_org_ids.length === 0 && connected.length === 0)
-        || connected.some((l) => administered.has(l.org_id)));
-  }).sort((a, b) => a.account_login.localeCompare(b.account_login)).map(toOrgInstallation);
+  return [...candidates.values()]
+    .filter((i) => !(links ?? []).some((l) => l.installation_id === i.installation_id && l.org_id === orgId))
+    .sort((a, b) => a.account_login.localeCompare(b.account_login))
+    .map(toOrgInstallation);
 }
 
 /** All linked organizations, plus the original GitHub installer. */
@@ -135,24 +133,86 @@ export class ClaimError extends Error {
 }
 
 /** Connect without moving or replacing any other organization's link.
- * The database checks source and destination org administration, or verifies
- * the installer for a first connection. */
+ * GitHub must vouch for it: one of the user's GitHub accounts (their
+ * sign-in's, the one they connected; each verified by GitHub) is the
+ * installer, or owns the installation's account (lib/github/
+ * installation-owner.ts). The database checks the destination's
+ * administration and the installer, and records how it was authorized. */
 export async function claimInstallation(input: {
   orgId: string;
   installation: Installation;
-  githubId: number | null;
+  githubIds: Array<number | null | undefined>;
   userId: string;
+  /** Whether GitHub says this GitHub user owns the installation's account;
+   *  asked of GitHub as the App when not given. */
+  ownership?: (githubId: number) => Promise<GitHubOwnership | null>;
 }): Promise<void> {
   if (!isUuid(input.orgId)) throw new ClaimError("unknown");
-  const { data, error } = await createSupabaseAdminClient().rpc("link_github_installation", {
-    target_org: input.orgId,
-    target_installation: input.installation.id,
-    github_user_id: input.githubId,
-    actor_id: input.userId,
+  const holder = await installationHolder(input.installation.id);
+  if (!holder) throw new ClaimError("unknown");
+  if (!holder.orgIds.includes(input.orgId)) {
+    const config = input.ownership ? null : githubAppConfig();
+    const ownership = input.ownership ?? (config ? appOwnership(config, input.installation) : async () => null);
+    const identity = await linkIdentity(input.githubIds, holder.installerId, ownership);
+    const { data, error } = await createSupabaseAdminClient().rpc("link_github_installation", {
+      target_org: input.orgId,
+      target_installation: input.installation.id,
+      github_user_id: identity.githubId,
+      actor_id: input.userId,
+      verified_owner: identity.verifiedOwner,
+    });
+    if (error) throw error;
+    if (data) throw new ClaimError(data as ClaimRefusal);
+  }
+  await refreshInstallation(input.orgId, input.installation);
+}
+
+/** Another org an installation is shared with, as its source org sees it. */
+export type InstallationShare = {
+  orgId: string;
+  orgName: string;
+  personal: boolean;
+  linkedAt: string;
+  linkedBy: string | null;
+  linkedByEmail: string | null;
+  /** How GitHub authorized it; null for one made before that was recorded. */
+  authority: GithubLinkAuthority | null;
+};
+
+/** The other orgs the installation is shared with, or null when this org
+ * isn't its source (its earliest connection): only the source sees them. */
+export async function listInstallationShares(orgId: string, installationId: number): Promise<InstallationShare[] | null> {
+  if (!isUuid(orgId)) return null;
+  const supabase = createSupabaseAdminClient();
+  const { data: source, error: sourceError } = await supabase.rpc("github_installation_source", { target_installation: installationId });
+  if (sourceError) throw sourceError;
+  if (source !== orgId) return null;
+  const { data, error } = await supabase.rpc("github_installation_shares", { source_org: orgId, target_installation: installationId });
+  if (error) throw error;
+  return (data ?? []).map((r) => ({
+    orgId: r.org_id,
+    orgName: r.org_name,
+    personal: r.personal,
+    linkedAt: r.linked_at,
+    linkedBy: r.linked_by,
+    linkedByEmail: r.linked_by_email,
+    authority: r.authority,
+  }));
+}
+
+/** Why a share wasn't removed. */
+export type ShareRefusal = "not_source" | "not_shared";
+
+/** Disconnect another org from this org's installation, as its source org. */
+export async function removeInstallationShare(orgId: string, installationId: number, targetOrgId: string): Promise<ShareRefusal | null> {
+  if (!isUuid(orgId) || !isUuid(targetOrgId)) return "not_shared";
+  const { data, error } = await createSupabaseAdminClient().rpc("remove_github_installation_share", {
+    source_org: orgId,
+    target_installation: installationId,
+    target_org: targetOrgId,
   });
   if (error) throw error;
-  if (data) throw new ClaimError(data as ClaimRefusal);
-  await refreshInstallation(input.orgId, input.installation);
+  return (data as ShareRefusal | null) ?? null;
 }
 
 /** Refresh an org's installation from GitHub's word; false when the org

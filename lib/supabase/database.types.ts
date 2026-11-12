@@ -1097,6 +1097,22 @@ type OrgGithubInstallationRow = {
   installation_id: number;
   installed_by: string | null;
   created_at: string;
+  // supabase/migrations/20261112100000_github_installation_sharing.sql
+  authority: GithubLinkAuthority | null;
+  authorized_github_id: number | null;
+};
+
+/** How GitHub authorized an org's link to an installation (20261112100000). */
+export type GithubLinkAuthority = "installer" | "account_owner" | "org_owner";
+
+type GithubInstallationShareRow = {
+  org_id: string;
+  org_name: string;
+  personal: boolean;
+  linked_at: string;
+  linked_by: string | null;
+  linked_by_email: string | null;
+  authority: GithubLinkAuthority | null;
 };
 
 type OrgGithubInstallationDetailsRow = GithubInstallationRow & OrgGithubInstallationRow;
@@ -2188,7 +2204,22 @@ export type Database = {
       select_gcp_connection: { Args: { for_owner: string; for_connection: string; requested_size?: string }; Returns: undefined };
       disconnect_gcp_connection: { Args: { for_owner: string; for_connection: string }; Returns: undefined };
       link_github_installation: {
-        Args: { target_org: string; target_installation: number; github_user_id: number | null; actor_id: string };
+        Args: {
+          target_org: string;
+          target_installation: number;
+          github_user_id: number | null;
+          actor_id: string;
+          verified_owner?: "account_owner" | "org_owner" | null;
+        };
+        Returns: string | null;
+      };
+      github_installation_source: { Args: { target_installation: number }; Returns: string | null };
+      github_installation_shares: {
+        Args: { source_org: string; target_installation: number };
+        Returns: GithubInstallationShareRow[];
+      };
+      remove_github_installation_share: {
+        Args: { source_org: string; target_installation: number; target_org: string };
         Returns: string | null;
       };
       set_slack_channel_access: {
