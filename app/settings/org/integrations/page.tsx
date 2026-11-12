@@ -7,7 +7,7 @@ import { Suspense } from "react";
 
 import { GitHubIcon, JiraIcon, LinearIcon, SlackIcon } from "@/components/brand-icons";
 import { IntegrationCard } from "@/components/integration-card";
-import { deploymentCard } from "@/lib/integrations/card";
+import { deploymentCards } from "@/lib/integrations/card";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { listOrgInstallations } from "@/lib/db/github-installations";
@@ -64,10 +64,11 @@ async function IntegrationsSection() {
   const slackTeams = (slack?.workspaces ?? []).filter((w) => w.installed).map((w) => w.teamName ?? w.teamId);
   const install = slackInstallUrl();
   // Each needs an app registered for this deployment before anyone can install it.
-  const githubCard = deploymentCard({ connected: github.length > 0, admin, configureHref: "/settings/org/github", installHref: githubAppConfig() ? "/api/github/app/install" : null, external: true });
-  const slackCard = deploymentCard({ connected: slackTeams.length > 0, admin, configureHref: "/settings/org/slack", installHref: install, external: true, installableByMembers: true });
-  const linearCard = deploymentCard({ connected: linear.length > 0, admin, configureHref: "/settings/org/linear", installHref: linearConfig() ? "/settings/org/linear" : null });
-  const jiraCard = deploymentCard({ connected: jira.length > 0, admin, configureHref: "/settings/org/jira", installHref: jiraConfig() ? "/settings/org/jira" : null });
+  const cards = deploymentCards({
+    admin,
+    apps: { github: githubAppConfig() !== null, slackInstallUrl: install, linear: linearConfig() !== null, jira: jiraConfig() !== null },
+    connected: { github: github.length > 0, slack: slackTeams.length > 0, linear: linear.length > 0, jira: jira.length > 0 },
+  });
 
   return (
     <section className="@container space-y-6">
@@ -87,16 +88,16 @@ async function IntegrationsSection() {
           name="GitHub"
           description="Push branches, open pull requests, run automations."
           connected={github.length ? github.join(", ") : null}
-          note={githubCard.note}
-          action={githubCard.action}
+          note={cards.github.note}
+          action={cards.github.action}
         />
         <IntegrationCard
           icon={<SlackIcon />}
           name="Slack"
           description="Mention @Outrunner in any channel."
           connected={slackTeams.length ? slackTeams.join(", ") : null}
-          note={slackCard.note}
-          action={slackCard.action}
+          note={cards.slack.note}
+          action={cards.slack.action}
         />
         <IntegrationCard
           icon={<LinearIcon />}
@@ -104,8 +105,8 @@ async function IntegrationsSection() {
           description="File issues to Triage by rules, and keep them in step."
           connected={linear.length ? linear.map((l) => l.name ?? l.externalId).join(", ") : null}
           problem={linear.some((l) => l.disconnected) ? "Disconnected: rules have stopped. Reconnect it." : null}
-          note={linearCard.note}
-          action={linearCard.action}
+          note={cards.linear.note}
+          action={cards.linear.action}
         />
         <IntegrationCard
           icon={<JiraIcon />}
@@ -113,8 +114,8 @@ async function IntegrationsSection() {
           description="File issues to Triage by rules, and keep them in step."
           connected={jira.length ? jira.map((j) => j.name ?? j.externalId).join(", ") : null}
           problem={jira.some((j) => j.disconnected) ? "Disconnected: rules have stopped. Reconnect it." : null}
-          note={jiraCard.note}
-          action={jiraCard.action}
+          note={cards.jira.note}
+          action={cards.jira.action}
         />
         <IntegrationCard
           icon={<KeyRound />}

@@ -26,3 +26,25 @@ export function deploymentCard(input: {
   }
   return { action: null, note: "Ask an admin to connect it." };
 }
+
+type Card = ReturnType<typeof deploymentCard>;
+
+/**
+ * The four deployment-wide cards, from what this deployment has apps for and what the org has
+ * connected: the Integrations page's wiring, apart from its loaders.
+ */
+export function deploymentCards(input: {
+  admin: boolean;
+  /** This deployment's apps: whether each is set up, or Slack's install link. */
+  apps: { github: boolean; slackInstallUrl: string | null; linear: boolean; jira: boolean };
+  /** What the org has connected of each. */
+  connected: { github: boolean; slack: boolean; linear: boolean; jira: boolean };
+}): { github: Card; slack: Card; linear: Card; jira: Card } {
+  const { admin, apps, connected } = input;
+  return {
+    github: deploymentCard({ connected: connected.github, admin, configureHref: "/settings/org/github", installHref: apps.github ? "/api/github/app/install" : null, external: true }),
+    slack: deploymentCard({ connected: connected.slack, admin, configureHref: "/settings/org/slack", installHref: apps.slackInstallUrl, external: true, installableByMembers: true }),
+    linear: deploymentCard({ connected: connected.linear, admin, configureHref: "/settings/org/linear", installHref: apps.linear ? "/settings/org/linear" : null }),
+    jira: deploymentCard({ connected: connected.jira, admin, configureHref: "/settings/org/jira", installHref: apps.jira ? "/settings/org/jira" : null }),
+  };
+}
