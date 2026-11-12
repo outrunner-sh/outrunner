@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { DEPLOYMENT_PROVIDERS } from "@/lib/env";
 import { startupEnvProblems } from "@/lib/startup-env";
 
 const COMPLETE = {
@@ -31,6 +32,17 @@ test("the provider's own settings are required with it, and only with it", () =>
     "NEEV_PROJECT_ID is not set",
   ]);
   assert.equal(startupEnvProblems({ ...COMPLETE, RUNTIME_PROVIDER: "kubernetes" }).length, 1);
+  assert.deepEqual(startupEnvProblems({ ...COMPLETE, RUNTIME_PROVIDER: "e2b", E2B_API_KEY: "e2b_k" }), [
+    "E2B_API_URL is not set",
+    "E2B_SANDBOX_URL is not set",
+  ]);
+});
+
+test("every provider the app runs on is one a deployment may start with", () => {
+  for (const provider of DEPLOYMENT_PROVIDERS) {
+    const problems = startupEnvProblems({ ...COMPLETE, RUNTIME_PROVIDER: provider });
+    assert.ok(!problems.some((problem) => problem.startsWith("RUNTIME_PROVIDER")), `${provider}: ${problems.join("; ")}`);
+  }
 });
 
 test("a malformed URL is named, an optional one only when set", () => {

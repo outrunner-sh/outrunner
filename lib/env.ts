@@ -135,11 +135,15 @@ export function requireEnv(key: EnvKey): string {
   return value;
 }
 
+/** Every RUNTIME_PROVIDER a deployment may run (lib/startup-env.ts checks
+ *  against the same list at boot). */
+export const DEPLOYMENT_PROVIDERS = ["local", "modal", "daytona", "neev", "e2b"] as const;
+
 /** Which RuntimeProvider implementation to use. */
 export function providerName(): ProviderName {
   const provider = optionalEnv("RUNTIME_PROVIDER") ?? "local";
-  if (provider === "local" || provider === "modal" || provider === "daytona" || provider === "neev" || provider === "e2b") {
-    return provider;
+  if ((DEPLOYMENT_PROVIDERS as readonly string[]).includes(provider)) {
+    return provider as (typeof DEPLOYMENT_PROVIDERS)[number];
   }
   throw new Error(
     `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "modal", "daytona", "neev" or "e2b".`,

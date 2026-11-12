@@ -36,7 +36,8 @@ export function e2bDockerfile(dockerfile: string, args: Record<string, string>, 
     text = text.replace(new RegExp(`\\$(\\{${name}\\}|${name}(?![A-Za-z0-9_]))`, "g"), () => value);
   }
 
-  const left = [...declared].filter((name) => new RegExp(`\\$(\\{${name}\\}|${name}\\b)`).test(text));
+  // Any form Docker expands, `${NAME:-default}` and `${NAME:+x}` included.
+  const left = [...declared].filter((name) => new RegExp(`\\$\\{?${name}\\b`).test(text));
   if (left.length > 0) throw new Error(`box/Dockerfile still refers to ${left.join(", ")} after substitution`);
   if (/^RUN test -n/m.test(text)) throw new Error("box/Dockerfile's build-arg guard changed; update e2bDockerfile");
 
