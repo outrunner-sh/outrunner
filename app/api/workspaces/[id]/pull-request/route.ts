@@ -63,6 +63,9 @@ export async function GET(request: Request, context: RouteContext) {
 
   let pullRequest: WorkspacePullRequest | null = recorded;
   if (!pullRequest) {
+    // Only the session's owner records its pull request (the server writes it): anyone else
+    // gets none yet, without asking GitHub on every poll.
+    if (workspace.ownerId !== owner.id) return NextResponse.json({ pullRequest: null, status: null });
     let found;
     try {
       found = await findPullRequest({ token, repoFullName, headBranch: workspace.branch });
@@ -71,8 +74,6 @@ export async function GET(request: Request, context: RouteContext) {
       return githubErrorResponse(error, "Could not look up the pull request. Please try again.");
     }
     if (!found) return NextResponse.json({ pullRequest: null, status: null });
-    // Only the session's owner records its pull request (the server writes it).
-    if (workspace.ownerId !== owner.id) return NextResponse.json({ pullRequest: null, status: null });
 
     try {
       pullRequest = await createWorkspacePullRequest({

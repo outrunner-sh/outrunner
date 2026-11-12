@@ -774,7 +774,9 @@ export async function claimRuntimeComputer(input: {
   // Deployed before the migration ran: the claims are still the user's own,
   // by auth.uid(). TODO: drop this once 20261112120000 is everywhere.
   if (claimBeforeServerOnly(error)) {
-    console.warn("Box claims from before 20261112120000: run the migrations");
+    // 42883 can also come from inside the new claim (a helper it calls is missing): keep its
+    // own error here, as the legacy call's would hide it.
+    console.warn("Box claims from before 20261112120000: run the migrations", error?.message);
     const supabase = await createSupabaseServerClient();
     const legacy = supabase.rpc as unknown as (
       fn: string,

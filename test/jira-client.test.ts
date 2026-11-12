@@ -63,9 +63,13 @@ test("a webhook's token is checked: its secret, its algorithm, and its expiry", 
 });
 
 test("a token's site is its context's cloud id, else its cloudId, else its issuer", () => {
-  assert.equal(jiraTokenSite({ context: { cloudId: "c-ctx" }, cloudId: "c-top", iss: "c-iss" }), "c-ctx");
-  assert.equal(jiraTokenSite({ cloudId: "c-top", iss: "c-iss" }), "c-top");
-  assert.equal(jiraTokenSite({ iss: "c-iss" }), "c-iss");
+  assert.deepEqual(jiraTokenSite({ context: { cloudId: "c-ctx" }, cloudId: "c-top", iss: "c-iss" }), {
+    site: "c-ctx",
+    from: "context.cloudId",
+    keys: ["cloudId", "context", "iss"],
+  });
+  assert.deepEqual(jiraTokenSite({ cloudId: "c-top", iss: "c-iss" }), { site: "c-top", from: "cloudId", keys: ["cloudId", "iss"] });
+  assert.deepEqual(jiraTokenSite({ iss: "c-iss", exp: 1 }), { site: "c-iss", from: "iss", keys: ["exp", "iss"] }, "says it was the issuer");
   assert.equal(jiraTokenSite({ context: null, cloudId: "", iss: 7 }), null);
   assert.equal(jiraTokenSite({ exp: 1 }), null);
 });
@@ -81,7 +85,7 @@ test("nothing unsigned is parsed, a token naming no site is refused, and a failu
   assert.equal((await receiveJiraWebhook({ body: new TextEncoder().encode("{"), authorization: good, identifier: "x", secret: SECRET }, never)).status, 400);
   const handled = await receiveJiraWebhook({ body, authorization: good, identifier: "x", secret: SECRET }, async (event) => {
     assert.equal(event.identifier, "x");
-    assert.equal(event.site, "cloud-1");
+    assert.deepEqual(event.site, { site: "cloud-1", from: "context.cloudId", keys: ["context", "exp"] });
     return { handled: true };
   });
   assert.equal(handled.status, 200);

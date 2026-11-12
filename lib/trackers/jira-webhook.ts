@@ -5,7 +5,7 @@
  * a retry wouldn't change it. Retries keep their identifier, which is what dedupes them.
  */
 
-import { jiraTokenSite, verifyJiraWebhookToken } from "@/lib/trackers/jira";
+import { type JiraTokenSite, jiraTokenSite, verifyJiraWebhookToken } from "@/lib/trackers/jira";
 import { TokenUnavailableError } from "@/lib/trackers/tokens";
 
 /** A body Jira means for us is far below this; anything bigger isn't worth reading. */
@@ -24,7 +24,7 @@ export type JiraWebhookInput = {
 
 export async function receiveJiraWebhook(
   input: JiraWebhookInput,
-  handle: (event: { identifier: string | null; payload: unknown; site: string }) => Promise<{ handled: boolean; reason?: string }>,
+  handle: (event: { identifier: string | null; payload: unknown; site: JiraTokenSite }) => Promise<{ handled: boolean; reason?: string }>,
 ): Promise<JiraReceipt> {
   if (!input.secret) return { status: 404, body: { error: "Jira isn't set up here." } };
   if (input.body.byteLength > MAX_BODY_BYTES) return { status: 413, body: { error: "Too large." } };

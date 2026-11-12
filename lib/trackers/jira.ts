@@ -122,20 +122,26 @@ export function verifyJiraWebhookToken(authorization: string | null, clientSecre
   return typeof claims.exp === "number" && claims.exp * 1000 > now ? claims : null;
 }
 
+/** The site a verified token names, which claim said so, and every claim it had (their
+ *  names only, for diagnosing a token that doesn't say the site the way we read it). */
+export type JiraTokenSite = { site: string; from: "context.cloudId" | "cloudId" | "iss"; keys: string[] };
+
 /**
  * The site (cloud id) a verified token was issued for: `context.cloudId`, else `cloudId`, else
  * `iss`. Null when it names none, and such a token is refused: without it, a token from any
- * site the app is installed on would carry another site's events.
+ * site the app is installed on would carry another site's events. Which claim matched comes
+ * with it: `iss` may turn out to be the app's client id, which the wrong-site warning shows.
  */
-export function jiraTokenSite(claims: JiraWebhookClaims): string | null {
+export function jiraTokenSite(claims: JiraWebhookClaims): JiraTokenSite | null {
   const context = claims.context;
-  const candidates = [
-    typeof context === "object" && context !== null ? (context as Record<string, unknown>).cloudId : undefined,
-    claims.cloudId,
-    claims.iss,
+  const candidates: Array<[JiraTokenSite["from"], unknown]> = [
+    ["context.cloudId", typeof context === "object" && context !== null ? (context as Record<string, unknown>).cloudId : undefined],
+    ["cloudId", claims.cloudId],
+    ["iss", claims.iss],
   ];
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  const keys = Object.keys(claims).sort();
+  for (const [from, candidate] of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return { site: candidate.trim(), from, keys };
   }
   return null;
 }

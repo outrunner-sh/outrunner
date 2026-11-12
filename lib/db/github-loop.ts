@@ -295,25 +295,19 @@ export async function settleFollowUp(id: string, outcome: string): Promise<void>
  *  server's own (20261112110000), and the org is checked here too, so one
  *  can't be attributed to another org's project. */
 export async function pullForBranch(orgId: string, projectId: string, headBranch: string): Promise<number | null> {
-  const supabase = db();
-  const { data, error } = await supabase
+  // One query, inner-joined on the session (pull_requests' (owner_id, workspace_id) foreign
+  // key), so no number of other orgs' rows can hide the org's own.
+  const { data, error } = await db()
     .from("pull_requests")
-    .select("github_number, workspace_id")
+    .select("github_number, workspaces!inner(org_id)")
     .eq("project_id", projectId)
     .eq("head_branch", headBranch)
+    .eq("workspaces.org_id", orgId)
     .order("created_at", { ascending: false })
-    .limit(20);
+    .limit(1)
+    .maybeSingle();
   if (error) throw error;
-  const rows = data ?? [];
-  if (rows.length === 0) return null;
-  const { data: sessions, error: sessionsError } = await supabase
-    .from("workspaces")
-    .select("id")
-    .in("id", [...new Set(rows.map((r) => r.workspace_id))])
-    .eq("org_id", orgId);
-  if (sessionsError) throw sessionsError;
-  const inOrg = new Set((sessions ?? []).map((w) => w.id));
-  return rows.find((r) => inOrg.has(r.workspace_id))?.github_number ?? null;
+  return data?.github_number ?? null;
 }
 
 /** A person spoke on a pull request: CI's turns on it count from none. */
