@@ -5,7 +5,7 @@
  * a retry wouldn't change it. Retries keep their identifier, which is what dedupes them.
  */
 
-import { verifyJiraWebhookToken } from "@/lib/trackers/jira";
+import { type JiraTokenSite, jiraTokenSite, verifyJiraWebhookToken } from "@/lib/trackers/jira";
 import { TokenUnavailableError } from "@/lib/trackers/tokens";
 
 /** A body Jira means for us is far below this; anything bigger isn't worth reading. */
@@ -24,11 +24,19 @@ export type JiraWebhookInput = {
 
 export async function receiveJiraWebhook(
   input: JiraWebhookInput,
-  handle: (event: { identifier: string | null; payload: unknown }) => Promise<{ handled: boolean; reason?: string }>,
+  handle: (event: { identifier: string | null; payload: unknown; site: JiraTokenSite }) => Promise<{ handled: boolean; reason?: string }>,
 ): Promise<JiraReceipt> {
   if (!input.secret) return { status: 404, body: { error: "Jira isn't set up here." } };
   if (input.body.byteLength > MAX_BODY_BYTES) return { status: 413, body: { error: "Too large." } };
-  if (!verifyJiraWebhookToken(input.authorization, input.secret, input.now)) return { status: 401, body: { error: "Bad token." } };
+  const claims = verifyJiraWebhookToken(input.authorization, input.secret, input.now);
+  if (!claims) return { status: 401, body: { error: "Bad token." } };
+  // The site the token was issued for; the event must be that site's (handleJiraEvent).
+  const site = jiraTokenSite(claims);
+  if (!site) {
+    // Never the token: only which claims it had, to see if Jira changed how it says the site.
+    console.warn(`Jira: a signed webhook token named no site (claims: ${Object.keys(claims).sort().join(", ")}), so it was refused`);
+    return { status: 401, body: { error: "Bad token." } };
+  }
 
   let payload: unknown;
   try {
@@ -37,7 +45,7 @@ export async function receiveJiraWebhook(
     return { status: 400, body: { error: "Not JSON." } };
   }
   try {
-    return { status: 200, body: await handle({ identifier: input.identifier, payload }) };
+    return { status: 200, body: await handle({ identifier: input.identifier, payload, site }) };
   } catch (error) {
     // Someone else's refresh is taking too long: Jira can try again soon.
     if (error instanceof TokenUnavailableError) return { status: 503, body: { error: "Try again." } };
