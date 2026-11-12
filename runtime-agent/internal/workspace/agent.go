@@ -68,30 +68,23 @@ func ValidAgent(name string) bool {
 
 // Agents lists the agents this computer can run a session on: Claude always
 // (a computer without it says so when a session starts), Codex when its CLI
-// is installed and the engine is the one that runs it: the jcode engine runs
-// its own sessions, whatever agent a create names.
+// is installed.
 func (s *Service) Agents() []string {
 	agents := []string{AgentClaude}
-	if _, err := s.lookPath("codex"); err == nil && s.jcode == nil {
+	if _, err := s.lookPath("codex"); err == nil {
 		agents = append(agents, AgentCodex)
 	}
 	return agents
 }
 
-// ErrAgentUnsupported is a session asked for on an agent this computer's
-// engine can't run: made anyway, it would run another agent instead.
-var ErrAgentUnsupported = errors.New("this computer's engine can't run that agent")
-
 // CheckAgent refuses an agent a create or restore names that this computer
-// can't run: one there is no such agent as, or Codex on the jcode engine.
+// can't run: one there is no such agent as.
 // Empty is Claude. A Codex CLI that is missing is left to Start, which says
 // how to install it.
 func (s *Service) CheckAgent(name string) error {
 	switch {
 	case !ValidAgent(name):
 		return fmt.Errorf("unknown agent %q", name)
-	case name == AgentCodex && s.jcode != nil:
-		return ErrAgentUnsupported
 	}
 	return nil
 }
@@ -119,9 +112,6 @@ func (s *Service) launchCommand(workspaceID, worktree string, resume bool) []str
 // record shape, or "" while there is none yet: the file the conversation
 // stream, the Summary and Archive read.
 func (s *Service) SessionLog(workspaceID string) string {
-	if s.jcode != nil {
-		return s.jcode.ConversationLog(workspaceID)
-	}
 	if f, _ := s.getFacts(workspaceID); f.Harness != nil {
 		return s.harnessLog(workspaceID)
 	}

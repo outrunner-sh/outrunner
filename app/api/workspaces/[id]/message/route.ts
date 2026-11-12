@@ -30,8 +30,8 @@ import { watchSent } from "@/lib/session/watch";
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**
- * Deliver a user prompt to a workspace's agent session. This is the jcode-engine
- * prompt path: the browser composer POSTs here (same-origin), and we proxy to
+ * Deliver a user prompt to a workspace's agent session. The browser composer
+ * POSTs here (same-origin), and we proxy to
  * the runtime-agent's /message over the control preview URL. The reply streams
  * back to the browser on the Conversation SSE, not in this response.
  *

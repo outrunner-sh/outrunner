@@ -422,8 +422,7 @@ const CredentialToken = z.string().regex(/^[\x21-\x26\x28-\x5b\x5d-\x7e]{20,400}
  * (another agent's is refused);
  * none takes the credential away and carries no token. An unknown session is
  * 404 with the NOT_FOUND envelope (an agent without the route: a bare 404);
- * a credential on an engine that runs sessions on its own login (jcode),
- * 409 UNSUPPORTED.
+ * an agent may answer a credential it can't take with 409 UNSUPPORTED.
  */
 /**
  * POST /workspaces/{id}/answer: the user's reply to the questions the session

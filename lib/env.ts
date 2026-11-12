@@ -28,7 +28,6 @@ type EnvKey =
   // Modal
   | "MODAL_TOKEN_ID"
   | "MODAL_TOKEN_SECRET"
-  | "MODAL_APP_NAME"
   // Daytona (Runtime Computer backend)
   | "DAYTONA_API_KEY"
   | "DAYTONA_API_URL"
@@ -105,14 +104,7 @@ type EnvKey =
   // The Slack agent: the OpenRouter model it thinks with (default
   // anthropic/claude-sonnet-5.5). It runs on the org's key for Outrunner's
   // models, within the org's plan allowance.
-  | "SLACK_AGENT_MODEL"
-  // Agent engine: "jcode" provisions a jcode box; unset/other = Claude Code.
-  | "RUNTIME_ENGINE"
-  // Where the control plane reads jcode credentials to inject (default ~/.jcode).
-  | "JCODE_AUTH_DIR"
-  // Inline base64 jcode credentials for a hosted control plane with no ~/.jcode.
-  | "JCODE_AUTH_JSON"
-  | "JCODE_AUTH_REFRESH_JSON";
+  | "SLACK_AGENT_MODEL";
 
 export function optionalEnv(key: EnvKey): string | undefined {
   const value = process.env[key];
@@ -132,10 +124,10 @@ export function requireEnv(key: EnvKey): string {
 /** Which RuntimeProvider implementation to use. */
 export function providerName(): ProviderName {
   const provider = optionalEnv("RUNTIME_PROVIDER") ?? "local";
-  if (provider === "local" || provider === "modal" || provider === "daytona" || provider === "neev") {
+  if (provider === "local" || provider === "daytona" || provider === "neev") {
     return provider;
   }
   throw new Error(
-    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "modal", "daytona" or "neev".`,
+    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "daytona" or "neev".`,
   );
 }

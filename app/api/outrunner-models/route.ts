@@ -8,7 +8,6 @@ import { isUuid } from "@/lib/ids";
 import { getSandboxSettings, ownSandboxKeys } from "@/lib/db/credentials";
 import { providerForNewSessions } from "@/lib/runtime/sandbox-choice";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
-import { optionalEnv } from "@/lib/env";
 import type { AgentConnection, AgentId } from "@/lib/agents/registry";
 import { agentConnection, type AgentAuthStore } from "@/lib/agents/resolve";
 import { getOwner } from "@/lib/auth/owner";
@@ -85,6 +84,6 @@ async function newSessionHarnesses(user: string, workspace: Workspace | null): P
     const existing = workspace ? resolveProvider(workspace) : null;
     if (existing && !existing.ok) return [];
     const provider = existing?.ok ? existing.provider : providerForNewSessions(await getSandboxSettings(user), ownSandboxKeys(user));
-    return isComputerProvider(provider) && optionalEnv("RUNTIME_ENGINE") !== "jcode" ? ["claude", "codex"] : ["claude"];
+    return isComputerProvider(provider) ? ["claude", "codex"] : ["claude"];
   } catch { return []; }
 }

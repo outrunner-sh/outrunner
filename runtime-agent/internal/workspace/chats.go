@@ -55,9 +55,6 @@ func ChatKey(workspaceID, chatID string) string {
 var (
 	// ErrUnknownChat is a chat the session has no record of.
 	ErrUnknownChat = errors.New("unknown chat")
-	// ErrChatsUnsupported is a chat asked of the jcode engine, whose bridge
-	// runs one conversation per workspace.
-	ErrChatsUnsupported = errors.New("this computer's engine runs one chat per session")
 )
 
 // owner is the session whose worktree, environment and provided secrets a
@@ -126,9 +123,6 @@ type ChatInput struct {
 // carries the conversation it continues over as a handoff its first prompt
 // is sent with (handoff). Making a chat that exists is a no-op.
 func (s *Service) CreateChat(ctx context.Context, workspaceID string, in ChatInput) error {
-	if s.jcode != nil {
-		return ErrChatsUnsupported
-	}
 	if !ValidChatID(in.ChatID) {
 		return fmt.Errorf("invalid chat id %q", in.ChatID)
 	}

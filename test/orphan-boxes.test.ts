@@ -113,7 +113,7 @@ test("boxes are made with their role, engine and deployment", () => {
     "runtime.engine": "claude",
     [DEPLOYMENT_LABEL]: "outrunner.example",
   });
-  assert.deepEqual(boxLabels("jcode", null), { "runtime.role": "computer", "runtime.engine": "jcode" });
+  assert.deepEqual(boxLabels("claude", null), { "runtime.role": "computer", "runtime.engine": "claude" });
 });
 
 test("a box running under a row that says it's paused or failed is paused, once old and quiet", () => {

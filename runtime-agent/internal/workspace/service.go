@@ -26,7 +26,6 @@ import (
 	"runtime-agent/internal/codex"
 	"runtime-agent/internal/desktop"
 	"runtime-agent/internal/gitcred"
-	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/media"
 	"runtime-agent/internal/preview"
 	"runtime-agent/internal/protocol"
@@ -108,11 +107,6 @@ type Service struct {
 	recordersMu sync.Mutex
 	recorders   map[string]*cast.Recorder
 
-	// jcode, when set, runs workspaces as sessions on a jcode api-bridge instead
-	// of Claude-in-tmux. nil means the default Claude Code engine. Start, Stop,
-	// SessionLog, SessionAlive, and SendMessage branch on it.
-	jcode *jcodeEngine
-
 	// DefaultPermissionMode applies when a workspace's recorded facts carry no
 	// mode — one created before modes existed, or whose facts file is gone. The
 	// desktop shell sets it so that gap can never widen a local session to
@@ -184,13 +178,6 @@ type Service struct {
 	desktopFound      atomic.Bool
 	desktopMu         sync.Mutex
 	desktopNotFoundAt time.Time
-}
-
-// UseJcode switches the service to the jcode engine, driving workspaces through
-// the given (already connected) harness-API client instead of Claude-in-tmux.
-// Called once at construction when RUNTIME_ENGINE=jcode.
-func (s *Service) UseJcode(client *jcode.Client) {
-	s.jcode = newJcodeEngine(client, s.Root)
 }
 
 // workspaceFacts are the per-workspace details Create learns and Start/Resume
@@ -746,13 +733,6 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 		}
 	}
 	name := sessionName(workspaceID)
-	if s.jcode != nil {
-		if err := s.jcode.StartSession(ctx, workspaceID, s.worktreePath(workspaceID)); err != nil {
-			return "", err
-		}
-		s.beginSummary(workspaceID, s.worktreePath(workspaceID))
-		return name, nil
-	}
 	worktree := s.worktreePath(workspaceID)
 	if s.tmux.HasSession(ctx, name) {
 		// A session started before the status line was hidden loses it on its
@@ -861,8 +841,6 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 var (
 	// ErrUnknownWorkspace is a workspace this agent has no record of.
 	ErrUnknownWorkspace = errors.New("unknown workspace")
-	// ErrModelUnsupported is a model switch on an engine that has none (jcode).
-	ErrModelUnsupported = errors.New("this engine cannot switch models")
 	// ErrGatewayUnsupported is a gateway asked of a Codex session that serves
 	// only Claude's API: Codex speaks OpenAI's, which of the gateways only
 	// OpenRouter serves (codex.RunsThrough).
@@ -904,9 +882,6 @@ type ModelChoice struct {
 // only at launch). It is refused while Claude is mid-turn, which the relaunch
 // would cut off.
 func (s *Service) SetModel(ctx context.Context, workspaceID string, choice ModelChoice, anthropicToken string) error {
-	if s.jcode != nil {
-		return ErrModelUnsupported // jcode's bridge launches its own sessions
-	}
 	defer s.lockLifecycle(workspaceID)()
 	f, ok := s.getFacts(workspaceID)
 	if !ok {
@@ -1020,15 +995,6 @@ func (s *Service) relaunch(ctx context.Context, workspaceID, anthropicToken stri
 func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken string, resume bool, lock *sendState) (string, error) {
 	lock.staged = nil // the composer it was typed into is about to go
 	name := sessionName(workspaceID)
-	if s.jcode != nil {
-		// jcode sessions live on the bridge; StartSession is idempotent and
-		// re-attaches Runtime's view. --continue semantics are the bridge's.
-		if err := s.jcode.StartSession(ctx, workspaceID, s.worktreePath(workspaceID)); err != nil {
-			return "", err
-		}
-		s.beginSummary(workspaceID, s.worktreePath(workspaceID))
-		return name, nil
-	}
 	if err := s.requireWorktree(workspaceID); err != nil {
 		return "", err
 	}
@@ -1266,11 +1232,6 @@ func (s *Service) stopHeld(ctx context.Context, workspaceID string) error {
 		_ = s.stopHeld(ctx, key)
 		unlock()
 	}
-	if s.jcode != nil {
-		s.jcode.StopSession(workspaceID)
-		s.endSummary(workspaceID)
-		return nil
-	}
 	// Finalize the cast BEFORE killing tmux — the recorder taps the live pane, so
 	// the pane must still exist while it drains its tail and closes the file.
 	s.stopRecorder(ctx, workspaceID)
@@ -1278,9 +1239,8 @@ func (s *Service) stopHeld(ctx context.Context, workspaceID string) error {
 	return s.tmux.KillSession(ctx, sessionName(workspaceID))
 }
 
-// SendMessage delivers a user prompt to a workspace's agent session. Two engine
-// paths: the jcode engine forwards it to the api-bridge; the default Claude/tmux
-// engine stages the prompt in Claude's composer and submits it. Sends are
+// SendMessage delivers a user prompt to a workspace's agent session: it stages
+// the prompt in Claude's composer and submits it. Sends are
 // serialized per workspace so concurrent prompts can't interleave into one.
 //
 // Delivery is the fiddly part. A freshly-launched Claude accepts the pasted text
@@ -1307,14 +1267,6 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 // put in the prompt's mode first, and a prompt that answers the agent's plan
 // closes its menu first.
 func (s *Service) SendPrompt(workspaceID string, p Prompt) error {
-	if s.jcode != nil {
-		if p.Mode == ModePlan {
-			return ErrModeUnsupported
-		}
-		lock := s.lockSend(workspaceID)
-		defer lock.Unlock()
-		return s.jcode.SendMessage(workspaceID, p.Content)
-	}
 	if p.Mode != "" && p.Mode != ModePlan && p.Mode != ModeBuild {
 		return fmt.Errorf("unknown mode %q", p.Mode)
 	}
@@ -1493,9 +1445,6 @@ const (
 // It takes the send lock, so a stop clicked while a prompt is being delivered
 // stops the turn that prompt starts, rather than racing its Enter.
 func (s *Service) Interrupt(ctx context.Context, workspaceID string) error {
-	if s.jcode != nil {
-		return s.jcode.Interrupt(ctx, workspaceID)
-	}
 	if _, ok := s.getFacts(workspaceID); !ok {
 		return ErrUnknownWorkspace
 	}
@@ -1977,9 +1926,6 @@ func (s *Service) stopRecorder(ctx context.Context, workspaceID string) {
 // *detach* (the tmux attach client EOFs, but Claude keeps running) apart from a
 // real process *exit* — only the latter should surface as an exit to the UI.
 func (s *Service) SessionAlive(ctx context.Context, workspaceID string) bool {
-	if s.jcode != nil {
-		return s.jcode.Active(workspaceID)
-	}
 	return s.tmux.HasSession(ctx, sessionName(workspaceID))
 }
 
@@ -2098,9 +2044,6 @@ func (s *Service) Activity() (last time.Time, turnInProgress, unknown bool) {
 // changing or restarting the user process. A non-empty result explains why
 // Activity cannot establish the complete set of live sessions.
 func (s *Service) recoverRunningSummaries(ctx context.Context) string {
-	if s.jcode != nil {
-		return "" // jcode boxes are metered but are not paused by the reconciler.
-	}
 	names, err := s.tmux.ListSessions(ctx)
 	if err != nil {
 		return fmt.Sprintf("couldn't list tmux sessions: %v", err)
@@ -2325,7 +2268,7 @@ func (s *Service) beginSummary(workspaceID, worktree string) {
 		s.summaries[workspaceID] = sum
 	}
 	s.summariesMu.Unlock()
-	if f, _ := s.getFacts(workspaceID); f.Agent == AgentCodex && s.jcode == nil {
+	if f, _ := s.getFacts(workspaceID); f.Agent == AgentCodex {
 		// Before the collector, which reads what the tail writes.
 		s.startCodexTail(workspaceID)
 	}
@@ -2367,7 +2310,7 @@ func (s *Service) SummaryOf(ctx context.Context, workspaceID string) protocol.Wo
 	// session gone says otherwise. Only when tmux says so: one that couldn't
 	// be asked isn't taken for gone. A watcher of the turn (a Mission's,
 	// lib/missions/watch.ts) then hears it ended rather than wait for good.
-	if snap.State == "running" && s.jcode == nil {
+	if snap.State == "running" {
 		if exists, err := s.tmux.SessionExists(ctx, sessionName(workspaceID)); err == nil && !exists {
 			snap.State = "exited"
 		}

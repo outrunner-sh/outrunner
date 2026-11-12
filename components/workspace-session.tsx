@@ -238,7 +238,7 @@ export function WorkspaceSession({
   );
   const [initialDeliveryComplete, setInitialDeliveryComplete] = useState(false);
 
-  // The jcode engine has no PTY: prompts go over the /message API and the reply
+  // Prompts go over the /message API, not the PTY, and the reply
   // streams back on the Conversation SSE. So input readiness and errors come
   // from the session attachment + conversation stream.
   const [sendError, setSendError] = useState<FailedSend | null>(null);

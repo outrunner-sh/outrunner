@@ -81,7 +81,7 @@ type rawRecord struct {
 
 // rawBlock is a content block as the log writes it. Claude names a tool
 // result's call `tool_use_id`; the logs Runtime writes itself (a Codex
-// translation, the jcode engine's) marshal protocol.ContentBlock, which names
+// translation) marshal protocol.ContentBlock, which names
 // it `toolUseId`. Both are read, so a result pairs with its call either way.
 // Likewise a failed result: Claude's `is_error`, Runtime's `isError`.
 type rawBlock struct {

@@ -173,7 +173,7 @@ export class AgentClient {
   }
 
   /**
-   * Deliver a user prompt to the workspace's agent session (jcode engine). The
+   * Deliver a user prompt to the workspace's agent session. The
    * reply streams back on the Conversation SSE; this just starts the turn.
    */
   async sendMessage(

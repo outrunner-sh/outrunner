@@ -72,13 +72,13 @@ func (s *Service) lastActiveAt(workspaceID string, f workspaceFacts) string {
 	return f.CreatedAt
 }
 
-// ownsTranscript is whether SessionLog can only be this session's: the jcode
-// engine keeps one log per workspace, a session with a ClaudeSessionID is
+// ownsTranscript is whether SessionLog can only be this session's: a Codex
+// session's log is Runtime's own, a session with a ClaudeSessionID is
 // found by that id, and any other session but an in-place one works in its
 // own worktree, whose Claude project directory is its alone. An in-place
 // session from before ClaudeSessionID shares the folder's directory with other
 // sessions (and the user's own Claude Code), where "the newest log" may be
 // anyone's.
 func (s *Service) ownsTranscript(f workspaceFacts) bool {
-	return s.jcode != nil || f.Agent == AgentCodex || f.ClaudeSessionID != "" || !f.InPlace
+	return f.Agent == AgentCodex || f.ClaudeSessionID != "" || !f.InPlace
 }

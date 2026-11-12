@@ -10,7 +10,6 @@ import { withOrgDefault } from "@/lib/orgs/defaults";
 import { agentConnection } from "@/lib/agents/resolve";
 import { codexModelsFor } from "@/lib/codex/model-catalog.deps";
 import { creationSelection } from "@/lib/runtime/selection";
-import { optionalEnv } from "@/lib/env";
 import { PLAN_MODE_PREAMBLE } from "@/lib/api/create-request";
 import { generatedBranch, insertOnBranch } from "@/lib/session/generated-branch";
 
@@ -327,7 +326,7 @@ async function createOnce(
       { status: 503 },
     );
   }
-  const supported: AgentId[] = isComputerProvider(provider) && optionalEnv("RUNTIME_ENGINE") !== "jcode" ? ["claude", "codex"] : ["claude"];
+  const supported: AgentId[] = isComputerProvider(provider) ? ["claude", "codex"] : ["claude"];
   let agentId: AgentId;
   try {
     const selection = creationSelection(groups, withOrgDefault(mine, orgDefaults.defaultModel), {

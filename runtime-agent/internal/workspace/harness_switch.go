@@ -166,9 +166,6 @@ func (s *Service) recoverHarnessHeld(ctx context.Context, id string) error {
 // cover the stop, handoff, native launch and first delivery, so Mission/Slack
 // sends cannot land on the old harness after it has been stopped.
 func (s *Service) SwitchHarness(ctx context.Context, id string, in HarnessInput) (*HarnessState, error) {
-	if s.jcode != nil {
-		return nil, ErrChatsUnsupported
-	}
 	defer s.lockLifecycle(id)()
 	lock := s.lockSend(id)
 	defer lock.Unlock()

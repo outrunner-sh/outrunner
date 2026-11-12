@@ -195,7 +195,7 @@ test("a running box's agent is upgraded in place, once however many ask at once"
   assert.equal(log.length, 2);
 });
 
-test("two providers for one box share its upgrade; a jcode engine upgrades none", async () => {
+test("two providers for one box share its upgrade", async () => {
   const log: string[] = [];
   const backend = restoringBackend(log, null);
   // One provider per request, as for a user's own sandbox.
@@ -204,17 +204,6 @@ test("two providers for one box share its upgrade; a jcode engine upgrades none"
     new ComputerRuntimeProvider("user-daytona", backend).upgradeAgent("sb-shared", "s3cret", {}),
   ]);
   assert.deepEqual(log, ["sb-shared: agent launched"]);
-
-  const saved = process.env.RUNTIME_ENGINE;
-  process.env.RUNTIME_ENGINE = "jcode";
-  try {
-    const jcode = new ComputerRuntimeProvider("daytona", backend);
-    assert.equal(jcode.upgradesAgents, false);
-    await assert.rejects(jcode.upgradeAgent("sb-j", "s3cret", {}));
-  } finally {
-    if (saved === undefined) delete process.env.RUNTIME_ENGINE;
-    else process.env.RUNTIME_ENGINE = saved;
-  }
 });
 
 test("a delete that must be known to have worked says so when it hasn't", async () => {

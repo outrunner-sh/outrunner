@@ -574,17 +574,6 @@ func TestClaudeIsBusyOnlyMidTurn(t *testing.T) {
 	}
 }
 
-func TestTheJcodeEngineRefusesAModelSwitch(t *testing.T) {
-	s := NewService(t.TempDir())
-	s.jcode = &jcodeEngine{}
-	if err := s.SetModel(context.Background(), "ws-j", ModelChoice{Model: "opus"}, ""); !errors.Is(err, ErrModelUnsupported) {
-		t.Fatalf("SetModel on jcode = %v, want ErrModelUnsupported", err)
-	}
-	if _, ok := s.getFacts("ws-j"); ok {
-		t.Error("a refused switch was recorded")
-	}
-}
-
 func TestARepeatedCreateKeepsTheGateway(t *testing.T) {
 	root := t.TempDir()
 	s := NewService(root)

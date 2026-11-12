@@ -40,10 +40,6 @@ type Prompt struct {
 	RequirePlan bool
 }
 
-// ErrModeUnsupported is plan mode asked of an engine that runs its sessions
-// itself (jcode).
-var ErrModeUnsupported = errors.New("this engine can't run a session in plan mode")
-
 // switchesMode reports whether a prompt in mode would put the session in
 // another mode than it is in.
 func (s *Service) switchesMode(workspaceID, mode string) bool {
@@ -140,10 +136,6 @@ func (s *Service) dismissHeld(workspaceID string) error {
 	return ErrNotInterrupted
 }
 
-// ErrCompactUnsupported is a compaction asked of an engine that runs its
-// sessions itself (jcode).
-var ErrCompactUnsupported = errors.New("this engine can't compact a session")
-
 // compactAttempts bounds how long a compaction is waited on to start: it
 // starts at once, and runs for as long as the summary takes.
 const compactAttempts = 10
@@ -155,9 +147,6 @@ const compactAttempts = 10
 // stream shows it once it is written. Refused mid-turn, and in a menu, where
 // the command would be read as a choice.
 func (s *Service) Compact(workspaceID, instructions string) error {
-	if s.jcode != nil {
-		return ErrCompactUnsupported
-	}
 	if _, ok := s.getFacts(workspaceID); !ok {
 		return ErrUnknownWorkspace
 	}
@@ -299,7 +288,7 @@ func (s *Service) PlanAnsweredMode(workspaceID string) string {
 	if f.Plan {
 		mode = ModePlan
 	}
-	if s.jcode == nil && f.Agent != AgentCodex {
+	if f.Agent != AgentCodex {
 		ctx, cancel := context.WithTimeout(context.Background(), switchCheckTimeout)
 		defer cancel()
 		if pane, err := s.tmux.CapturePane(ctx, sessionName(workspaceID)); err == nil {
@@ -382,9 +371,6 @@ func planOption(mode claude.PermissionMode) func(line string) bool {
 // prompt in build mode, the menu closed first. Either way the session is out
 // of plan mode after.
 func (s *Service) ApprovePlan(workspaceID string) (string, error) {
-	if s.jcode != nil {
-		return "", ErrModeUnsupported
-	}
 	f, ok := s.getFacts(workspaceID)
 	if !ok {
 		return "", ErrUnknownWorkspace
