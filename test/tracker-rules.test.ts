@@ -133,7 +133,9 @@ test("where an issue moves: started, blocked and done, never over a person's own
   // Done: only from where a session put it.
   assert.equal(doneTarget(map, { stateId: "prog", stateType: "started" }), "done");
   assert.equal(doneTarget(map, { stateId: "rev", stateType: "started" }), "done");
-  assert.equal(doneTarget(map, { stateId: "blk", stateType: "started" }), null);
+  // A lost turn after the PR opened left it Blocked: merging still finishes it.
+  assert.equal(doneTarget(map, { stateId: "blk", stateType: "started" }), "done");
+  assert.equal(doneTarget({ ...map, blocked: null }, { stateId: "blk", stateType: "started" }), null);
   assert.equal(doneTarget(map, { stateId: "todo", stateType: "unstarted" }), null);
   assert.equal(doneTarget(map, { stateId: null, stateType: "started" }), null);
   assert.equal(doneTarget({ ...map, done: null }, { stateId: "rev", stateType: "started" }), null);

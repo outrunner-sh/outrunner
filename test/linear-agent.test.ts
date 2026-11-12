@@ -1832,3 +1832,27 @@ test("work picking up moves a Blocked issue back to started: a reply, a steer, o
   await send(prompted("and this"), inReview);
   assert.deepEqual(inReview.log.states, []);
 });
+
+test("a team with no state to move to asks Linear nothing about the issue", async () => {
+  let asked = 0;
+  const standing = (stateId: string, stateType: string) => async () => (asked++, at(stateId, stateType)());
+
+  // Blocked: waiting on which repository. One ask fewer than with a Blocked state.
+  await send(created(), harness({ standing: standing("st-todo", "unstarted") }, { scope: scope({ stateMap: BLOCKING }) }));
+  const withBlocked = asked;
+  asked = 0;
+  const noBlocked = harness({ standing: standing("st-todo", "unstarted") }, { scope: scope({ stateMap: { ...BLOCKING, blocked: null } }) });
+  await send(created(), noBlocked);
+  assert.equal(noBlocked.current()?.stage, "awaiting_repo");
+  assert.equal(asked, withBlocked - 1);
+
+  // Started: a reply to a working session. One ask fewer than with a started state.
+  asked = 0;
+  await send(prompted("and this"), harness({ standing: standing("st-blocked", "started") }, { row: working(), scope: scope({ stateMap: BLOCKING }) }));
+  const withStarted = asked;
+  asked = 0;
+  const noStarted = harness({ standing: standing("st-blocked", "started") }, { row: working(), scope: scope({ stateMap: { ...BLOCKING, started: null } }) });
+  await send(prompted("and this"), noStarted);
+  assert.equal(noStarted.log.sent.length, 1);
+  assert.equal(asked, withStarted - 1);
+});

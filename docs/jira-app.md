@@ -81,7 +81,7 @@ Assign an issue to the Outrunner user, or @mention it in a comment or the descri
 | Still running after 24 hours | A comment saying so, with the session's link, and no more from that turn |
 | The session fails, or can't start | A comment with why. The status doesn't change. |
 | A PR opens | A remote link on the issue, and it moves to the project's In Review status, if it has one and its workflow allows |
-| A PR merges | The item goes to Done if it's still open. Assigned, the issue moves to the project's Done status too, if it has one and its workflow allows, but only from the started or In Review status a session put it in: a person's own move since stands. |
+| A PR merges | The item goes to Done if it's still open. Assigned, the issue moves to the project's Done status too, if it has one and its workflow allows, but only from the started, In Review or Blocked status a session put it in: a person's own move since stands. |
 | The session waits on someone (which repository, or linking an account), its setup fails, or its turn is lost | The issue moves to the project's Blocked status, if it has one and its workflow allows, unless it's done. Work picking up again (a mention, an assign, a start) moves it back to started. |
 | A PR closes without merging | A note on the item |
 

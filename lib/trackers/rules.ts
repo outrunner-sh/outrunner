@@ -184,11 +184,11 @@ export function blockedTarget(map: StateMap | null, issue: IssueState): string |
   return map.blocked;
 }
 
-/** Done, when its PR merges: only from the states a session put it in, so a person's own
- *  move since wins. */
+/** Done, when its PR merges: only from the states a session put it in (Blocked too, as a lost
+ *  turn after the PR opened leaves it there), so a person's own move since wins. */
 export function doneTarget(map: StateMap | null, issue: IssueState): string | null {
   if (!map?.done || !issue.stateId) return null;
-  return issue.stateId === map.started || issue.stateId === map.inReview ? map.done : null;
+  return [map.started, map.inReview, map.blocked].includes(issue.stateId) ? map.done : null;
 }
 
 /** A connected team's settings as the page sends them; what's left out stays. */

@@ -777,7 +777,8 @@ async function steerExisting(
   if (item && session.projectId) await deps.linkItem(scope.orgId, item.id, { workspaceId: session.id, projectId: session.projectId });
   await deps.addUrl(context.installation.id, context.agentSessionId, { label: "Outrunner session", url: deps.sessionUrl(session.id) }).catch(() => undefined);
   await deps.openWatch(context.agentSessionId, { sentAt, baselineActivity });
-  await moveToStarted(context, scope, issueIdOf(context.payload) as string);
+  const steeredIssue = issueIdOf(context.payload);
+  if (steeredIssue) await moveToStarted(context, scope, steeredIssue);
   return "sent";
 }
 
@@ -923,16 +924,17 @@ function moveToStarted(context: Context, scope: TrackerScope, issueId: string): 
   return moveIssue(context, scope, issueId, startedTarget, "started");
 }
 
-/** Move the issue as `target` says, from where it is now (lib/trackers/rules.ts). Best effort:
- *  the work goes on whether or not Linear moves. */
+/** Move the issue to `what` as `target` says, from where it is now (lib/trackers/rules.ts).
+ *  Best effort: the work goes on whether or not Linear moves. A team with no state for it
+ *  asks Linear nothing, as this runs within the webhook's time. */
 async function moveIssue(
   { installation, deps }: Context,
   scope: TrackerScope,
   issueId: string,
   target: (map: TrackerScope["stateMap"], issue: IssueState) => string | null,
-  what: string,
+  what: "started" | "blocked",
 ): Promise<void> {
-  if (!scope.stateMap) return;
+  if (!scope.stateMap?.[what]) return;
   try {
     const standing = await deps.standing(installation.id, issueId);
     const state = standing ? target(scope.stateMap, standing) : null;
