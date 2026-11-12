@@ -4,10 +4,11 @@
  * the user's session path must run exactly as when they start it themselves.
  *
  * That path reads through the user's own Supabase client, cookie bound,
- * under RLS, and its database functions ask auth.uid() (a box's claim counts
- * their plan's boxes): the service role can't stand in for it. (The tables'
- * own writes are the server's alone — 20261106100000 — and go through the
- * admin client whatever session is acting.) So this signs in as the user for
+ * under RLS, and asks Supabase Auth who is signed in (a box's claim counts
+ * that user's boxes, lib/db/repositories.ts claimingUserId): the service role
+ * can't stand in for it. (The tables' own writes, and the box claims since
+ * 20261112120000, are the server's alone — 20261106100000 — and go through
+ * the admin client whatever session is acting.) So this signs in as the user for
  * the length of `work`, with a one-time login token
  * the admin API mints (never emailed), and createSupabaseServerClient()
  * answers with that client inside it. The session is signed out after.

@@ -66,7 +66,7 @@ bun run tauri dev      # launches the app against the hosted site
 ```
 
 Both `tauri dev` and `tauri build` first run `bun run sidecars`, which builds the
-agent with `scripts/build-agent-desktop.sh` (needs Go ≥ 1.22) and tmux with
+agent with `scripts/build-agent-desktop.sh` (needs Go ≥ 1.27; `runtime-agent/go.mod` pins the toolchain) and tmux with
 `scripts/build-tmux-desktop.sh` (from pinned source, about a minute the first
 time, then skipped while current). The app ships tmux so This Mac sessions need
 no tmux installed. Run it by hand before a bare `cargo build` or `cargo test`,

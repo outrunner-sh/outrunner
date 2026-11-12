@@ -130,10 +130,12 @@ test("claudeInstallScript installs the pinned gh, for the architecture the box r
   const s = claudeInstallScript();
   assert.ok(s.includes(`/v${GH_VERSION}/gh_${GH_VERSION}_linux_$arch.tar.gz`), "installs the pinned gh");
   // uname, not dpkg: the mapping must cover both architectures a box runs on.
-  assert.match(s, /x86_64\) arch=amd64;; aarch64\|arm64\) arch=arm64;;/);
+  // Each with its release's pinned sha256.
+  assert.match(s, /x86_64\|amd64\) arch=amd64 sum=[0-9a-f]{64};; aarch64\|arm64\) arch=arm64 sum=[0-9a-f]{64};;/);
   // Whole release down before anything is unpacked, so a cut connection can't
   // leave a half-written gh on the PATH.
   assert.ok(s.indexOf("-o \"$tmp/gh.tar.gz\"") < s.indexOf("tar -xzf"), "downloads before unpacking");
+  assert.ok(s.indexOf("sha256sum -c") < s.indexOf("tar -xzf"), "checks the download before unpacking");
   assert.ok(s.includes("sudo install -m 0755"), "installs it as root, world-executable");
   assert.ok(s.includes("/usr/local/bin/gh"), "puts gh on every user's PATH");
 });

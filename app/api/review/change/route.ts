@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { linkedSessions, linkSession, resetCiTurns } from "@/lib/db/github-loop";
 import { type LineQuote, requestChange, startSoon } from "@/lib/review/change";

@@ -3,16 +3,17 @@ import { test } from "node:test";
 
 import { PLANS } from "@/lib/billing/plans";
 import type { UsageControls } from "@/lib/billing/usage-controls";
-import { sweepOrgUsage, type UsageSweepDeps } from "@/lib/billing/usage-sweep";
+import { type Account, orgLimitReason, pauseReason, planHoursReason, sweepOrgUsage, type UsageSweepDeps } from "@/lib/billing/usage-sweep";
 
 const period = { start: new Date("2026-11-01T00:00:00Z"), end: new Date("2026-12-01T00:00:00Z") };
 
-function world(used: number, controls: UsageControls, sent = new Set<number>()) {
+function world(used: number, controls: UsageControls, sent = new Set<number>(), accounts: Account[] = [{ kind: "team", orgId: "o-1" }]) {
   const emailed: number[] = [];
   const paused: string[] = [];
+  const reasons: string[] = [];
   const claimed = new Set(sent);
   const deps: UsageSweepDeps = {
-    busyOrgs: async () => ["o-1"],
+    busyAccounts: async () => accounts,
     controls: async () => controls,
     entitlements: async () => ({ plan: PLANS.pro, period }),
     hoursUsed: async () => used,
@@ -30,13 +31,17 @@ function world(used: number, controls: UsageControls, sent = new Set<number>()) 
     },
     canPause: true,
     runningBoxes: async () => [
-      { id: "c-1", sandboxId: "sb-1" },
-      { id: "c-2", sandboxId: "sb-2" },
+      { id: "c-1", sandboxId: "sb-1", ownerId: "u-1", workspaceId: "w-1" },
+      { id: "c-2", sandboxId: "sb-2", ownerId: "u-2", workspaceId: "w-2" },
     ],
-    pause: async (box) => void paused.push(box.sandboxId),
+    exempt: async () => false,
+    pause: async (box, reason) => {
+      paused.push(box.sandboxId);
+      reasons.push(reason);
+    },
     log: () => {},
   };
-  return { deps, emailed, paused };
+  return { deps, emailed, paused, reasons };
 }
 
 test("each threshold crossed is emailed once; below the limit nothing is paused", async () => {
@@ -56,18 +61,74 @@ test("at the admins' limit, the org's running boxes pause", async () => {
   const report = await sweepOrgUsage(w.deps);
   assert.deepEqual(w.paused, ["sb-1", "sb-2"]);
   assert.equal(report.paused, 2);
+  assert.equal(w.reasons[0], orgLimitReason(PLANS.pro, { limitPercent: 80, alertThresholds: [] }));
 });
 
-test("an org with no limit and no alerts isn't looked at", async () => {
-  let asked = false;
-  const w = world(500, { limitPercent: null, alertThresholds: [] });
-  w.deps.hoursUsed = async () => {
-    asked = true;
-    return 500;
-  };
+test("an org with no limit and no alerts still pauses at its plan's hours", async () => {
+  const within = world(PLANS.pro.cloudHoursPerMonth - 1, { limitPercent: null, alertThresholds: [] });
+  await sweepOrgUsage(within.deps);
+  assert.deepEqual(within.paused, []);
+  const over = world(PLANS.pro.cloudHoursPerMonth, { limitPercent: null, alertThresholds: [] });
+  const report = await sweepOrgUsage(over.deps);
+  assert.deepEqual(over.paused, ["sb-1", "sb-2"]);
+  assert.equal(report.paused, 2);
+  assert.deepEqual(over.emailed, []);
+  assert.deepEqual(over.reasons, [planHoursReason(PLANS.pro), planHoursReason(PLANS.pro)]);
+});
+
+test("every owner over their plan's hours is paused: personal orgs and connectors too, with no admins' controls read", async () => {
+  for (const account of [{ kind: "personal", orgId: "o-me" }, { kind: "connector", ownerId: "u-bot" }] as Account[]) {
+    const w = world(PLANS.pro.cloudHoursPerMonth + 3, { limitPercent: 50, alertThresholds: [50] }, new Set(), [account]);
+    let controlsRead = false;
+    w.deps.controls = async () => {
+      controlsRead = true;
+      return { limitPercent: 50, alertThresholds: [50] };
+    };
+    const seen: Account[] = [];
+    w.deps.hoursUsed = async (a) => {
+      seen.push(a);
+      return PLANS.pro.cloudHoursPerMonth + 3;
+    };
+    await sweepOrgUsage(w.deps);
+    assert.deepEqual(seen, [account]);
+    assert.equal(controlsRead, false);
+    assert.deepEqual(w.emailed, []);
+    assert.deepEqual(w.paused, ["sb-1", "sb-2"]);
+    assert.match(w.reasons[0], /plan's 100 cloud hours are used up/);
+  }
+});
+
+test("a personal org within its hours runs on", async () => {
+  const w = world(10, { limitPercent: null, alertThresholds: [] }, new Set(), [{ kind: "personal", orgId: "o-me" }]);
   await sweepOrgUsage(w.deps);
-  assert.equal(asked, false);
   assert.deepEqual(w.paused, []);
+});
+
+test("an owner exempt from plan limits keeps their box; the org's others pause", async () => {
+  const w = world(PLANS.pro.cloudHoursPerMonth * 2, { limitPercent: null, alertThresholds: [] });
+  w.deps.exempt = async (ownerId) => ownerId === "u-1";
+  const report = await sweepOrgUsage(w.deps);
+  assert.deepEqual(w.paused, ["sb-2"]);
+  assert.equal(report.paused, 1);
+});
+
+test("the plan's reason offers an upgrade only where there is one to buy", () => {
+  assert.match(planHoursReason(PLANS.free), /upgrade for more hours/);
+  assert.match(planHoursReason(PLANS.pro, "team"), /upgrade for more hours/);
+  for (const [plan, kind] of [[PLANS.max, "team"], [PLANS.enterprise, "personal"], [PLANS.pro, "connector"]] as const) {
+    const reason = planHoursReason(plan, kind);
+    assert.doesNotMatch(reason, /upgrade/);
+    assert.match(reason, /start again next period/);
+  }
+});
+
+test("the reason is the limit that stops it: the admins' below the plan's, the plan's past both", () => {
+  const controls = { limitPercent: 50, alertThresholds: [] };
+  assert.equal(pauseReason(PLANS.pro, controls, 40), null);
+  assert.equal(pauseReason(PLANS.pro, controls, 50), orgLimitReason(PLANS.pro, controls));
+  assert.equal(pauseReason(PLANS.pro, controls, 100), planHoursReason(PLANS.pro));
+  assert.equal(pauseReason(PLANS.pro, null, 99.9), null);
+  assert.match(orgLimitReason(PLANS.pro, controls), /^Its box was paused: the org's usage limit \(50% of its plan's 100/);
 });
 
 test("a box that won't pause doesn't stop the others", async () => {

@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
 import { requireEnv } from "@/lib/env";
+import { timeoutSignal } from "@/lib/http/timeout";
 import { actingUserClient } from "@/lib/supabase/acting-user";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -54,6 +55,21 @@ export function createSupabaseAdminClient() {
     {
       cookies: { getAll: () => [], setAll: () => {} },
       auth: { persistSession: false, autoRefreshToken: false },
+      global: { fetch: adminFetch },
     },
   );
 }
+
+/** How long the service-role client waits on Supabase: a query, or a
+ *  Storage transfer (a snapshot up or down), before it gives up. Without a
+ *  limit, a hung connection held a request, an after() or a cron tick for
+ *  good. */
+const ADMIN_QUERY_TIMEOUT_MS = 30_000;
+const ADMIN_STORAGE_TIMEOUT_MS = 120_000;
+
+/** fetch, with the limit above, kept alongside the caller's own signal. */
+export const adminFetch: typeof fetch = (input, init) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const ms = url.includes("/storage/v1/") ? ADMIN_STORAGE_TIMEOUT_MS : ADMIN_QUERY_TIMEOUT_MS;
+  return fetch(input, { ...init, signal: timeoutSignal(ms, init?.signal) });
+};

@@ -10,7 +10,7 @@
  * the owner reads its conversation or acts on it.
  */
 
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import { GET as pullRequestGET } from "@/app/api/workspaces/[id]/pull-request/route";
 import { POST as answerPOST } from "@/app/api/workspaces/[id]/answer/route";
@@ -575,7 +575,7 @@ async function sessionOnlySecrets(
     return apiError(502, "Couldn't send them to the session. Please try again.");
   }
   // No longer waiting on the user: working again, and watched, as the form's.
-  if (!chat) after(() => watchSent(workspace.id, workspace.ownerId));
+  if (!chat) after(() => watchSent(workspace.id, workspace.ownerId), { where: "watch-sent", workspaceId: workspace.id });
   return Response.json({ result: "provided", saved: false, workspace_id: workspace.id, ...(chat && { chat_id: chat }) });
 }
 

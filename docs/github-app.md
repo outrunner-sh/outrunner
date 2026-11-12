@@ -89,19 +89,47 @@ before, so until a grant is revoked, a sign-in's token still carries `repo`.
 
 A GitHub App installation can connect to multiple Outrunner organizations. In the new organization's
 **Settings → Org → GitHub**, select **Add to <org>** under **Available GitHub connections**. There is no
-need to uninstall or reinstall the App. The connecting admin must administer both the destination organization and
-an organization already using the installation. This also supports older installations without a recorded
-installer and admins who signed in without GitHub. An installation that is not connected anywhere can be
-connected by its verified GitHub installer, who must administer the destination organization.
+need to uninstall or reinstall the App.
+
+**GitHub decides who may connect it, not Outrunner** (`20261112130000`). Every new org connection needs the
+connecting admin (of the destination org) to be, on GitHub, either:
+
+- the installation's **installer** (named by GitHub's `installation` webhook), or
+- an **owner of the account it's installed on**: the user account itself, or an **owner of the GitHub
+  organization**. Outrunner asks GitHub (`GET /orgs/{org}/memberships/{username}`, as the installation),
+  which needs the App's **Members: Read** organization permission. Installations that haven't granted it
+  answer 403, and only their installer can connect them.
+
+The admin's GitHub accounts are the ones GitHub vouched for: their GitHub sign-in, their GitHub connection
+(**Settings → Connections**), or a one-time GitHub sign-in for the App when neither qualifies. Administering
+another Outrunner org that uses the installation grants nothing. Neither does having been connected before:
+`connected_org_ids` is history only. Each link records how it was authorized (`authority`:
+`installer`, `account_owner` or `org_owner`; null for links made before this rule).
+
+**When a member leaves or is removed from an org**, the links they made of that org's installations into
+other orgs are removed with them (a database trigger on `organization_members`). The exception is a user
+account's own installation that the account's owner linked.
+
+**The source org** (the first org it was connected to, recorded as `github_installations.source_org_id`) sees
+the other orgs it's shared with, who connected each and how, under the installation in **Settings → Org →
+GitHub**, and can **Stop sharing** with any of them (`GET
+/api/orgs/{id}/github/installations/{installationId}/shares`, `DELETE …/shares/{orgId}`, audited as
+`github.share_removed`). Uninstalling the App on GitHub still removes it from every org. The source doesn't
+move: if it disconnects it manages nothing until it is connected again, and no share takes its place. Only
+uninstalling, or deleting the source org, clears it; the next org newly connected with GitHub's installer or
+owner then becomes the source. An org already connected doesn't become it, even on the installer's say: its
+link may predate the rule. While the source is disconnected, its shares stay connected and no one in Outrunner
+can manage them, so the page warns its admins before they remove it, and they can stop sharing first. A source
+can remove any share, including one GitHub's installer or an owner made: it's the org that brought the
+installation, and they can connect it again.
 
 Installation metadata is global (`github_installations`); access is an independent link per organization
-(`org_github_installations`). Existing links are preserved by migration `20261104100000`. Removing a
-connection only removes that organization's link. GitHub uninstallations and suspensions apply to every
-linked organization. Webhook events reach each linked organization's matching projects, with separate
-membership checks and deduplication per project. Queued follow-ups recheck the exact project's connection.
-Authorization history survives disconnects and organization deletion. An admin can reconnect a previously
-authorized organization; sharing with an unrelated organization requires an active source connection.
-The historical GitHub installer cannot reclaim a revoked installation through a new organization.
+(`org_github_installations`). Existing links are preserved by migrations `20261104100000` and
+`20261112130000`; `supabase/review/github_installation_links.sql` lists, read-only, links to review against
+the rule above. Removing a connection only removes that organization's link. GitHub uninstallations and
+suspensions apply to every linked organization. Webhook events reach each linked organization's matching
+projects, with separate membership checks and deduplication per project. Queued follow-ups recheck the exact
+project's connection.
 
 ## What it does on GitHub
 
