@@ -1,0 +1,25 @@
+/**
+ * How this server reaches a port in an E2B sandbox: E2B's client-proxy (the
+ * deployment's E2B_SANDBOX_URL) routes a request by two headers naming the
+ * sandbox and the port, so one base URL serves every box. A browser can't set
+ * them, so its WebSockets come through this server's relay (relay.ts).
+ *
+ * Imports nothing from the app: the custom server loads it as is.
+ */
+
+export const E2B_SANDBOX_ID_HEADER = "E2b-Sandbox-Id";
+export const E2B_SANDBOX_PORT_HEADER = "E2b-Sandbox-Port";
+
+/** The base URL and headers that reach `port` in sandbox `sandboxId`. Throws
+ *  when E2B isn't configured here, rather than route somewhere else. */
+export function e2bRoute(
+  sandboxId: string,
+  port: number,
+  sandboxUrl = process.env.E2B_SANDBOX_URL,
+): { base: string; headers: Record<string, string> } {
+  if (!sandboxUrl) throw new Error("E2B_SANDBOX_URL is not set.");
+  return {
+    base: sandboxUrl.replace(/\/+$/, ""),
+    headers: { [E2B_SANDBOX_ID_HEADER]: sandboxId, [E2B_SANDBOX_PORT_HEADER]: String(port) },
+  };
+}

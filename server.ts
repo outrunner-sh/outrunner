@@ -18,7 +18,8 @@ import { onForgetPreview } from "./lib/previews/forget.ts";
 import { edgeHostSigned, previewSigningKey, sessionUser } from "./lib/previews/tokens.ts";
 import { GATE_PATH, GATE_SECRET_ENV, GATE_SECRET_HEADER } from "./lib/previews/wire.ts";
 import { createSandboxRelay, neevRelayDeps } from "./lib/runtime/sandbox/relay.ts";
-import { NEEV_RELAY_PREFIX } from "./lib/runtime/sandbox/relay-ticket.ts";
+import { E2B_RELAY_PREFIX, NEEV_RELAY_PREFIX, relayKey } from "./lib/runtime/sandbox/relay-ticket.ts";
+import { e2bRoute } from "./lib/runtime/sandbox/e2b-route.ts";
 import { GCP_RELAY_PREFIX, gcpRelayKey } from "./lib/runtime/gcp/relay-ticket.ts";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -53,7 +54,12 @@ const gcpRelay = createSandboxRelay({
     return { base: url.origin, headers: {} };
   },
 }, GCP_RELAY_PREFIX);
-const relays = [neevRelay, gcpRelay];
+// E2B's proxy routes by headers, which the relay sets on its own connection.
+const e2bRelay = createSandboxRelay({
+  key: () => process.env.CREDENTIALS_ENCRYPTION_KEY ? relayKey(process.env.CREDENTIALS_ENCRYPTION_KEY, "e2b") : undefined,
+  tunnel: async (id, agentPort) => e2bRoute(id, agentPort),
+}, E2B_RELAY_PREFIX);
+const relays = [neevRelay, gcpRelay, e2bRelay];
 const previews = createPreviewProxy({
   domain: () => previewDomain(),
   appHost: () => (process.env.RUNTIME_BASE_URL ? new URL(process.env.RUNTIME_BASE_URL).host : null),

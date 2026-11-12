@@ -43,6 +43,12 @@ type EnvKey =
   | "NEEV_PROJECT_ID"
   | "NEEV_BASE_URL"
   | "NEEV_SANDBOX_TEMPLATE"
+  // E2B sandboxes on our own E2B (Runtime Computer backend, RUNTIME_PROVIDER=e2b)
+  | "E2B_API_KEY"
+  | "E2B_API_URL"
+  | "E2B_SANDBOX_URL"
+  | "E2B_TEMPLATE"
+  | "E2B_GUEST_MTU"
   // Cross-compiled runtime-agent binary uploaded on provision (decision 1A).
   | "RUNTIME_AGENT_BINARY_PATH"
   // Provider selection
@@ -112,10 +118,10 @@ export function requireEnv(key: EnvKey): string {
 /** Which RuntimeProvider implementation to use. */
 export function providerName(): ProviderName {
   const provider = optionalEnv("RUNTIME_PROVIDER") ?? "local";
-  if (provider === "local" || provider === "modal" || provider === "daytona" || provider === "neev") {
+  if (provider === "local" || provider === "modal" || provider === "daytona" || provider === "neev" || provider === "e2b") {
     return provider;
   }
   throw new Error(
-    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "modal", "daytona" or "neev".`,
+    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "modal", "daytona", "neev" or "e2b".`,
   );
 }
