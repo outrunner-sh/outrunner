@@ -59,6 +59,12 @@ import {
 
 const subscribe = () => () => {};
 
+/** The members fixture's pending invite: sent 2 days before the page loaded,
+ *  expiring in 5. Computed once, outside render. */
+const LOADED_AT = Date.now();
+const INVITE_SENT_AT = new Date(LOADED_AT - 2 * 86_400_000).toISOString();
+const INVITE_EXPIRES_AT = new Date(LOADED_AT + 5 * 86_400_000).toISOString();
+
 /** A standalone test app: fixture navigation and APIs can never reach real resources. */
 export function FixturePage() {
   const ready = useSyncExternalStore(subscribe, () => true, () => false);
@@ -280,7 +286,7 @@ export function FixturePage() {
               { userId: "u-alan", login: "alan", name: "Alan Turing", email: "alan@neev.ai", avatarUrl: null, role: "member", joinedAt: "2026-10-02T00:00:00Z" },
             ]}
             invites={[
-              { id: "inv-1", email: "grace@neev.ai", role: "member", invitedBy: "u-ada", createdAt: new Date(Date.now() - 2 * 86_400_000).toISOString(), expiresAt: new Date(Date.now() + 5 * 86_400_000).toISOString(), expired: false },
+              { id: "inv-1", email: "grace@neev.ai", role: "member", invitedBy: "u-ada", createdAt: INVITE_SENT_AT, expiresAt: INVITE_EXPIRES_AT, expired: false },
               { id: "inv-2", email: "linus@neev.ai", role: "admin", invitedBy: "u-ada", createdAt: "2026-10-01T00:00:00Z", expiresAt: "2026-10-08T00:00:00Z", expired: true },
             ]}
             requests={[]}
