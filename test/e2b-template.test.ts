@@ -12,8 +12,8 @@ test("box/Dockerfile becomes one E2B can build: pins written in, args and their 
   assert.doesNotMatch(text, /^ARG /m);
   assert.doesNotMatch(text, /^RUN test -n/m);
   assert.doesNotMatch(text, /^# syntax=/m);
-  assert.doesNotMatch(text, /\$\{?(NODE_MAJOR|CLAUDE_CODE_VERSION|CODEX_VERSION|GH_VERSION)\b/);
-  assert.match(text, new RegExp(`install.sh \\| bash -s "${args.CLAUDE_CODE_VERSION}"`));
+  for (const name of Object.keys(args)) assert.doesNotMatch(text, new RegExp(`\\$\\{?${name}\\b`));
+  assert.ok(text.includes(args.CLAUDE_CODE_VERSION));
   assert.match(text, new RegExp(`@openai/codex@${args.CODEX_VERSION}`));
 
   // With an MTU, the build VM is set to it before its first download.
@@ -23,8 +23,9 @@ test("box/Dockerfile becomes one E2B can build: pins written in, args and their 
 });
 
 test("an arg left unset fails the build rather than ship an image without it", () => {
-  // `$X` without braces isn't one E2B's text can be given a value for.
-  assert.throws(() => e2bDockerfile("FROM ubuntu\nARG X\nRUN echo $X\n", { X: "1" }), /refers to X/);
+  assert.throws(() => e2bDockerfile("FROM ubuntu\nARG X\nARG Y\nRUN echo $X $Y\n", { X: "1" }), /refers to Y/);
+  // `$X` without braces is written in too, and a longer name sharing its start is left alone.
+  assert.equal(e2bDockerfile('FROM ubuntu\nARG X\nARG X_SUM\nRUN echo "$X" $X_SUM\n', { X: "1", X_SUM: "ab" }), 'FROM ubuntu\nRUN echo "1" ab\n');
   assert.equal(e2bDockerfile("FROM ubuntu\nARG X\nRUN echo ${X}\n", { X: "1" }), "FROM ubuntu\nRUN echo 1\n");
 });
 

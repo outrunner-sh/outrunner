@@ -6,12 +6,13 @@
  * with nothing left to pass in.
  */
 
-/** The guard box/Dockerfile opens with, refusing a build without its args;
- *  it runs on two lines. */
+/** The older guard box/Dockerfile opened with, refusing a build without its
+ *  args; it runs on two lines. A guard in another form (a `for` over the
+ *  args) is kept: with the values written in, it passes. */
 const ARG_GUARD = /^RUN test -n "\$NODE_MAJOR"[^\n]*\\\n[^\n]*\n/m;
 
 /**
- * `dockerfile` with every `${NAME}` of `args` replaced by its value, its
+ * `dockerfile` with every `${NAME}` and `$NAME` of `args` replaced by its value, its
  * `# syntax`, `ARG` lines and arg guard removed, and, with `mtu`, the build
  * VM's interface set to it before anything is downloaded (where the host's
  * network carries smaller packets, large downloads otherwise break off).
@@ -30,7 +31,10 @@ export function e2bDockerfile(dockerfile: string, args: Record<string, string>, 
       return !line.startsWith("# syntax=") && !arg;
     })
     .join("\n");
-  for (const [name, value] of Object.entries(args)) text = text.replaceAll(`\${${name}}`, value);
+  // Both `${NAME}` and `$NAME`, as Docker expands an ARG in either form.
+  for (const [name, value] of Object.entries(args)) {
+    text = text.replace(new RegExp(`\\$(\\{${name}\\}|${name}(?![A-Za-z0-9_]))`, "g"), () => value);
+  }
 
   const left = [...declared].filter((name) => new RegExp(`\\$(\\{${name}\\}|${name}\\b)`).test(text));
   if (left.length > 0) throw new Error(`box/Dockerfile still refers to ${left.join(", ")} after substitution`);
