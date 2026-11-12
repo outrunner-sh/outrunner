@@ -64,10 +64,10 @@ async function IntegrationsSection() {
   const slackTeams = (slack?.workspaces ?? []).filter((w) => w.installed).map((w) => w.teamName ?? w.teamId);
   const install = slackInstallUrl();
   // Each needs an app registered for this deployment before anyone can install it.
-  const githubCard = deploymentCard({ connected: github.length > 0, admin, configureHref: "/settings/org/github", installHref: githubAppConfig() ? "/api/github/app/install" : null, external: true, setupDoc: "docs/github-app.md" });
-  const slackCard = deploymentCard({ connected: slackTeams.length > 0, admin, configureHref: "/settings/org/slack", installHref: install, external: true, installableByMembers: true, setupDoc: "docs/slack-app.md" });
-  const linearCard = deploymentCard({ connected: linear.length > 0, admin, configureHref: "/settings/org/linear", installHref: linearConfig() ? "/settings/org/linear" : null, setupDoc: "docs/linear-app.md" });
-  const jiraCard = deploymentCard({ connected: jira.length > 0, admin, configureHref: "/settings/org/jira", installHref: jiraConfig() ? "/settings/org/jira" : null, setupDoc: "docs/jira-app.md" });
+  const githubCard = deploymentCard({ connected: github.length > 0, admin, configureHref: "/settings/org/github", installHref: githubAppConfig() ? "/api/github/app/install" : null, external: true });
+  const slackCard = deploymentCard({ connected: slackTeams.length > 0, admin, configureHref: "/settings/org/slack", installHref: install, external: true, installableByMembers: true });
+  const linearCard = deploymentCard({ connected: linear.length > 0, admin, configureHref: "/settings/org/linear", installHref: linearConfig() ? "/settings/org/linear" : null });
+  const jiraCard = deploymentCard({ connected: jira.length > 0, admin, configureHref: "/settings/org/jira", installHref: jiraConfig() ? "/settings/org/jira" : null });
 
   return (
     <section className="@container space-y-6">

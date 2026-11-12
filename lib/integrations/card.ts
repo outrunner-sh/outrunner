@@ -1,8 +1,7 @@
 /**
  * What a deployment-wide integration's card on Settings → Org → Integrations offers: GitHub,
  * Slack, Linear and Jira each need an app registered for the deployment before anyone can
- * install them. Without one, an admin would otherwise see a card with nothing on it and no
- * reason why.
+ * install them. A card with nothing to do says why, rather than staying blank.
  */
 
 export type IntegrationAction = { kind: "configure" | "install" | "connect"; href: string; external?: boolean } | null;
@@ -18,12 +17,12 @@ export function deploymentCard(input: {
   external?: boolean;
   /** Who can install: an admin, unless the service decides itself (Slack). */
   installableByMembers?: boolean;
-  /** Where the deployment's setup is written down. */
-  setupDoc: string;
 }): { action: IntegrationAction; note: string | null } {
   if (input.connected) return { action: { kind: "configure", href: input.configureHref }, note: null };
-  const may = input.admin || input.installableByMembers === true;
-  if (input.installHref && may) return { action: { kind: "install", href: input.installHref, ...(input.external && { external: true }) }, note: null };
-  if (!input.installHref && input.admin) return { action: null, note: `Not set up on this deployment yet: its app has to be added first (${input.setupDoc}).` };
-  return { action: null, note: null };
+  // The settings pages say how to add one, for whoever runs the deployment.
+  if (!input.installHref) return { action: null, note: "Not available on this deployment yet." };
+  if (input.admin || input.installableByMembers === true) {
+    return { action: { kind: "install", href: input.installHref, ...(input.external && { external: true }) }, note: null };
+  }
+  return { action: null, note: "Ask an admin to connect it." };
 }

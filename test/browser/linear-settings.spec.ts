@@ -207,15 +207,25 @@ test("the Integrations card shows Linear's mark, and says when its connection is
   await shot(page, info, "card-connected");
 });
 
-test("on a deployment with no Linear app, the card tells an admin why there's nothing to do", async ({ page }, info) => {
+test("a card with nothing to do says why: no app on this deployment, or an admin's to connect", async ({ page }, info) => {
   await stub(page);
-  await page.goto("/settings/org/integrations?view=linear-card&state=unset");
-  await expect(page.getByText(/Not set up on this deployment yet/)).toBeVisible();
-  await expect(page.getByText(/docs\/linear-app\.md/)).toBeVisible();
+  for (const state of ["unset", "unset-member"]) {
+    await page.goto(`/settings/org/integrations?view=linear-card&state=${state}`);
+    await expect(page.getByText("Not available on this deployment yet.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Linear/ })).toHaveCount(0);
+    await expect(page.getByText("Connected", { exact: true })).toHaveCount(0);
+    await fitsTheWidth(page);
+    await shot(page, info, `card-${state}`);
+  }
+  await page.goto("/settings/org/integrations?view=linear-card&state=member");
+  await expect(page.getByText("Ask an admin to connect it.", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: /Linear/ })).toHaveCount(0);
-  await expect(page.getByText("Connected", { exact: true })).toHaveCount(0);
-  await fitsTheWidth(page);
-  await shot(page, info, "card-unset");
+  await shot(page, info, "card-member");
+  // An admin on a deployment with the app: Install, and no note.
+  await page.goto("/settings/org/integrations?view=linear-card&state=none");
+  await expect(page.getByRole("link", { name: "Install Linear" })).toBeVisible();
+  await expect(page.getByText("Ask an admin to connect it.")).toHaveCount(0);
+  await expect(page.getByText("Not available on this deployment yet.")).toHaveCount(0);
 });
 
 test("a member sees everything, and can change nothing", async ({ page }, info) => {

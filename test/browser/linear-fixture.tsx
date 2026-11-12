@@ -115,7 +115,19 @@ export function JiraFixture({ state, member }: { state: string; member: boolean 
 }
 
 /** Org → Integrations' Linear card, connected and with its connection lost. */
+/** Each card state, as the Integrations page would ask `deploymentCard` for it. */
+const CARD_STATES: Record<string, { connected: boolean; admin: boolean; installHref: string | null }> = {
+  connected: { connected: true, admin: true, installHref: "/settings/org/linear" },
+  disconnected: { connected: true, admin: true, installHref: "/settings/org/linear" },
+  none: { connected: false, admin: true, installHref: "/settings/org/linear" },
+  member: { connected: false, admin: false, installHref: "/settings/org/linear" },
+  unset: { connected: false, admin: true, installHref: null },
+  "unset-member": { connected: false, admin: false, installHref: null },
+};
+
 export function LinearCardFixture({ state }: { state: string }) {
+  const card = CARD_STATES[state] ?? CARD_STATES.connected;
+  const shown = deploymentCard({ ...card, configureHref: "/settings/org/linear" });
   return (
     <SettingsFrame>
       <section className="@container space-y-6">
@@ -125,10 +137,10 @@ export function LinearCardFixture({ state }: { state: string }) {
             icon={<LinearIcon />}
             name="Linear"
             description="File issues to Triage by rules, and keep them in step."
-            connected={state === "none" || state === "unset" ? null : "Acme"}
+            connected={card.connected ? "Acme" : null}
             problem={state === "disconnected" ? "Disconnected: rules have stopped. Reconnect it." : null}
-            note={state === "unset" ? deploymentCard({ connected: false, admin: true, configureHref: "/settings/org/linear", installHref: null, setupDoc: "docs/linear-app.md" }).note : null}
-            action={state === "unset" ? null : state === "none" ? { kind: "install", href: "/settings/org/linear" } : { kind: "configure", href: "/settings/org/linear" }}
+            note={shown.note}
+            action={shown.action}
           />
         </div>
       </section>
