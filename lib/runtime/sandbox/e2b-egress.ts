@@ -126,8 +126,9 @@ export function selfHostedE2bHosts(target: { apiUrl?: string; sandboxUrl?: strin
   return [...hosts];
 }
 
-/** Stop the proxy: a test seam. */
+/** Stop the proxy, and the fetches pointed at it: a test seam. */
 export function stopE2bEgress(): void {
+  void import("@/lib/runtime/sandbox/e2b-sdk").then(({ closeProxiedFetches }) => closeProxiedFetches());
   server?.close();
   server = null;
   started = null;

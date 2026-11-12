@@ -38,6 +38,14 @@ test("the provider's own settings are required with it, and only with it", () =>
   ]);
 });
 
+test("the E2B SDK's own fallbacks are refused at boot, whatever the provider", () => {
+  assert.deepEqual(startupEnvProblems({ ...COMPLETE, E2B_API_URL: "https://e2b.example", E2B_DOMAIN: "e2b.example" }), [
+    "E2B_API_URL is set, which the E2B SDK would use for every E2B: rename it to OUTRUNNER_E2B_API_URL",
+    "E2B_DOMAIN is set, which the E2B SDK would use for every E2B: unset it",
+  ]);
+  assert.deepEqual(startupEnvProblems({ ...COMPLETE, E2B_SANDBOX_URL: " " }), [], "blank is unset");
+});
+
 test("every provider the app runs on is one a deployment may start with", () => {
   for (const provider of DEPLOYMENT_PROVIDERS) {
     const problems = startupEnvProblems({ ...COMPLETE, RUNTIME_PROVIDER: provider });
