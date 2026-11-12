@@ -57,8 +57,7 @@ RUN case "$(dpkg --print-architecture)" in \
   && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${arch}.tar.gz" -o /tmp/node.tar.gz \
   && echo "${sum}  /tmp/node.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 --no-same-owner \
-    --exclude='*.md' --exclude=LICENSE \
-  && rm /tmp/node.tar.gz
+  && rm -f /tmp/node.tar.gz /usr/local/README.md /usr/local/CHANGELOG.md /usr/local/LICENSE
 
 # gh's own release (Ubuntu's is years behind), downloaded whole before unpacking.
 RUN arch="$(dpkg --print-architecture)" \
