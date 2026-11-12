@@ -29,7 +29,7 @@ const byProvider: Record<string, Record<string, z.ZodType>> = {
   neev: { NEEV_API_KEY: present, NEEV_ORG_ID: present, NEEV_PROJECT_ID: present },
   modal: { MODAL_TOKEN_ID: present, MODAL_TOKEN_SECRET: present },
   // Both URLs too: unset, the SDK would quietly use E2B's cloud.
-  e2b: { E2B_API_KEY: present, E2B_API_URL: present, E2B_SANDBOX_URL: present },
+  e2b: { OUTRUNNER_E2B_API_KEY: present, OUTRUNNER_E2B_API_URL: present, OUTRUNNER_E2B_SANDBOX_URL: present },
 };
 
 /** Each problem with `env`, as "NAME is not set"; empty when it's fine. */

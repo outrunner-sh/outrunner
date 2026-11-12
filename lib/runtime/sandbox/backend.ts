@@ -17,6 +17,10 @@ export type AgentEndpoint = {
   controlHeaders: Record<string, string>;
   /** Base URL a browser WebSocket can open as is (any credential in it). */
   wsBaseUrl: string;
+  /** The fetch control calls go through, where it isn't the plain one: a
+   *  user's self-hosted E2B's goes through the egress proxy, so its host
+   *  is reached public-only as each connection is made. */
+  controlFetch?: typeof fetch;
 };
 
 /** How this server reaches a port on a box for a preview: a base URL, the

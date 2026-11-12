@@ -32,9 +32,9 @@ test("the provider's own settings are required with it, and only with it", () =>
     "NEEV_PROJECT_ID is not set",
   ]);
   assert.equal(startupEnvProblems({ ...COMPLETE, RUNTIME_PROVIDER: "kubernetes" }).length, 1);
-  assert.deepEqual(startupEnvProblems({ ...COMPLETE, RUNTIME_PROVIDER: "e2b", E2B_API_KEY: "e2b_k" }), [
-    "E2B_API_URL is not set",
-    "E2B_SANDBOX_URL is not set",
+  assert.deepEqual(startupEnvProblems({ ...COMPLETE, RUNTIME_PROVIDER: "e2b", OUTRUNNER_E2B_API_KEY: "e2b_k" }), [
+    "OUTRUNNER_E2B_API_URL is not set",
+    "OUTRUNNER_E2B_SANDBOX_URL is not set",
   ]);
 });
 

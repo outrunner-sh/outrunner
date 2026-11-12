@@ -143,9 +143,9 @@ export class AgentClient {
   private readonly target: AgentTarget;
   private readonly fetchFn: FetchFn;
 
-  constructor(target: AgentTarget, fetchFn: FetchFn = fetch) {
+  constructor(target: AgentTarget, fetchFn?: FetchFn) {
     this.target = target;
-    this.fetchFn = fetchFn;
+    this.fetchFn = fetchFn ?? target.controlFetch ?? fetch;
   }
 
   async createWorkspace(

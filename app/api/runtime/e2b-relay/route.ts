@@ -20,6 +20,9 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
  * share one), and the destination comes from their stored E2B, never the
  * request, and must still be public.
  */
+/** The shape of a box id on E2B's cloud: letters and digits only. */
+const E2B_CLOUD_SANDBOX_ID = /^[a-z0-9]{1,64}$/i;
+
 export async function POST(request: Request) {
   const key = process.env[GATE_SECRET_ENV];
   if (!key || !bearerMatches(`Bearer ${request.headers.get(GATE_SECRET_HEADER) ?? ""}`, key)) {
@@ -51,7 +54,10 @@ export async function POST(request: Request) {
   const stored = await getStoredE2b(data.owner_id);
   if (!stored) return new Response(null, { status: 404 });
   if (!stored.sandboxUrl) {
-    // E2B's cloud routes by host, a name of E2B's, not the user's.
+    // E2B's cloud routes by host, a name of E2B's, not the user's. The id
+    // came from the user's E2B (one they may once have self-hosted), so only
+    // one E2B's cloud could have made goes into that name.
+    if (!E2B_CLOUD_SANDBOX_ID.test(body.id)) return new Response(null, { status: 400 });
     return NextResponse.json({
       base: `https://${AGENT_PORT}-${body.id}.${E2B_CLOUD_DOMAIN}`,
       headers: token ? { [E2B_TRAFFIC_TOKEN_HEADER]: token } : {},

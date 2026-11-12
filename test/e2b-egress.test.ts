@@ -95,3 +95,13 @@ test("the E2B SDK sends its calls through the proxy it's given", async () => {
   await assert.rejects(Sandbox.list({ ...options, limit: 1 }).nextItems());
   assert.ok(asked.includes("e2b-api.example.com:443"), JSON.stringify(asked));
 });
+
+test("our own fetches to a user's E2B go through the egress proxy too", async () => {
+  const { proxiedFetch } = await import("@/lib/runtime/sandbox/e2b-sdk");
+  const target = await listen(createServer((_req, res) => res.end("reached")));
+  // Named, but loopback: the proxy refuses it as it connects, so the fetch fails.
+  const fetchVia = await proxiedFetch(await egressProxyFor(["localhost"]));
+  await assert.rejects(fetchVia(`http://localhost:${target}/`));
+  // And a host not named at all.
+  await assert.rejects(fetchVia("https://example.org/"));
+});
