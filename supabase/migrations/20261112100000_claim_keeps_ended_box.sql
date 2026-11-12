@@ -187,6 +187,7 @@ grant execute on function claim_runtime_computer(uuid, text, text, integer) to a
 
 -- The box a computer last ran on (lib/billing/metering-store.ts lastMeteredBox):
 -- read when a session's row lost its box, and by the orphaned-box sweep for
--- each row that may have. compute_intervals only grows.
+-- each row that may have. compute_intervals only grows; a plain (locking)
+-- build is brief at its size (599 rows, 312 kB in production on 2026-11-12).
 create index if not exists compute_intervals_computer_started_idx
   on compute_intervals (computer_id, started_at desc);

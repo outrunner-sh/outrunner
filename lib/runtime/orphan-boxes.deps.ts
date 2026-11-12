@@ -4,6 +4,7 @@
  */
 
 import { allRows, lastMeteredBox } from "@/lib/billing/metering-store";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { optionalEnv } from "@/lib/env";
 import { boxGone } from "@/lib/runtime/computer-provider";
 import {
@@ -32,6 +33,10 @@ let lastHeld = "";
 
 /** Ids asked about per query: a long `in` list makes a long URL. */
 const LOOKUP_CHUNK = 100;
+
+/** Newest-interval lookups in flight at once (lostOf): each an indexed
+ *  `limit 1` read. */
+const LOST_LOOKUP_CONCURRENCY = 4;
 
 /**
  * Delete the deployment's Daytona boxes that no runtime_computers row names
@@ -126,10 +131,10 @@ async function namedBoxes(ids: string[]): Promise<Map<string, string>> {
 
 /** Which of `ids` is the box a row lost (lostBoxes): the newest a computer
  *  ran on, by its intervals, whose row names none while claimed or failed.
- *  From those rows, which are rare, rather than from the boxes' intervals,
- *  which grow with every resume: each row's newest interval alone, so no
- *  page cap can cut off the one that matters. A lookup that fails throws,
- *  so nothing is deleted on a guess. */
+ *  From those rows rather than from the boxes' intervals, which grow with
+ *  every resume: each row's newest interval alone, so no page cap can cut
+ *  off the one that matters. A lookup that fails throws, so nothing is
+ *  deleted on a guess. */
 async function lostOf(ids: string[]): Promise<Set<string>> {
   if (ids.length === 0) return new Set();
   const supabase = createSupabaseAdminClient();
@@ -142,13 +147,13 @@ async function lostOf(ids: string[]): Promise<Set<string>> {
       .order("id")
       .range(from, to),
   );
-  const withBoxes = await Promise.all(
-    rows.map(async (row) => ({
+  // Failed fresh provisions and pool refills leave such rows too, and they
+  // stay until reopened: a few at a time, not a burst of one per row.
+  const withBoxes = await mapWithConcurrency(rows, LOST_LOOKUP_CONCURRENCY, async (row) => ({
       status: row.status,
       daytonaSandboxId: row.daytona_sandbox_id,
       lastBox: await lastMeteredBox(row.id),
-    })),
-  );
+    }));
   return lostBoxes(withBoxes, new Set(ids));
 }
 
