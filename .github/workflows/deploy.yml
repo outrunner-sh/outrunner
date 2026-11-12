@@ -65,6 +65,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
+      deploy: ${{ steps.resolve.outputs.deploy }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -102,15 +103,35 @@ jobs:
           fi
           # Only commits CI passed on main (not a pull request's run, which
           # tests a merge with an older base). A workflow_run trigger is one.
-          ok=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&branch=main&status=success&per_page=1" --jq .total_count)
+          ok=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&event=push&branch=main&status=success&per_page=1" --jq .total_count)
           if [ "$ok" = 0 ]; then
             echo "::error::CI has no successful run on main for $sha (still running, failed, or never ran). Wait for CI to go green, or pick a commit that passed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/ci.yml?query=branch%3Amain"
             exit 1
           fi
-          echo "Deploying $sha"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
+          # CI on main can finish out of order, and re-running an old
+          # commit's CI (to clear a flake) concludes success too. An automatic
+          # run for a commit that's no longer main's head stands down when
+          # the head's CI passed or is still going: that run deploys it, with
+          # this commit in it. Standing down here, before the deploy job,
+          # keeps this run from replacing the head's pending deploy.
+          deploy=true
+          head=$(git rev-parse origin/main)
+          if [ "$EVENT" = workflow_run ] && [ "$sha" != "$head" ]; then
+            pending=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$head&event=push&branch=main" \
+              --jq '[.workflow_runs[] | select(.status != "completed" or .conclusion == "success")] | length')
+            if [ "$pending" != 0 ]; then
+              deploy=false
+              echo "::notice::Not deploying $sha: main's head $head is newer and its CI passed or is running, so its deploy ships this commit"
+              echo "Skipped: main's head \`${head:0:12}\` is newer and its CI passed or is running; its deploy ships this commit." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+          if [ "$deploy" = true ]; then echo "Deploying $sha"; fi
+
       - name: Summarize the deploy
+        if: steps.resolve.outputs.deploy == 'true'
         shell: bash
         env:
           SHA: ${{ steps.resolve.outputs.sha }}
@@ -136,7 +157,14 @@ jobs:
 
           migrations=""
           if [ -z "$live" ]; then
-            echo "Can't tell what's live, so no commit list. **Check \`supabase/migrations/\` yourself before merging.**" >> "$GITHUB_STEP_SUMMARY"
+            echo "Can't tell what's live, so no commit list. **Check \`supabase/migrations/\` yourself.**" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Can't tell which build is live, so can't tell whether this deploy changes supabase/migrations/"
+            # Health being down is when people redeploy by hand: don't let the
+            # migrations gate turn off because the diff is unknown.
+            if [ "$EVENT" = workflow_dispatch ] && [ "$MIGRATIONS_APPLIED" != true ]; then
+              echo "::error::Can't tell which build is live (/api/health reports none), so can't tell whether this deploy changes supabase/migrations/. Nothing was deployed. Make sure pnpm db:migrate has run, then run this workflow again with migrations-applied checked."
+              exit 1
+            fi
           elif [ "$live" = "$SHA" ]; then
             echo "This commit is already live: this redeploys it (and restarts the container)." >> "$GITHUB_STEP_SUMMARY"
           elif git merge-base --is-ancestor "$live" "$SHA"; then
@@ -178,15 +206,17 @@ jobs:
 
   deploy:
     needs: plan
+    if: needs.plan.outputs.deploy == 'true'
     # The `production` environment (Settings -> Environments) allows main
     # only and records each deploy. No required reviewers: main deploys.
     environment:
       name: production
       url: https://app.outrunner.sh
-    # One deploy at a time, in order: one under way is never cut off. One
-    # waiting behind it is replaced by a newer one, since GitHub keeps one
-    # pending per group: the latest wins, and contains the ones before it. The plan job above sits
-    # outside the group, so it never waits.
+    # One deploy at a time: one under way is never cut off. GitHub keeps one
+    # pending run per group, so a newer run replaces a waiting one, whatever
+    # commit either deploys. A waiting manual rollback can be bumped by the
+    # next merge's deploy, and the reverse. The plan job sits outside the
+    # group, so a run it stands down never bumps anything.
     concurrency:
       group: deploy-production
       cancel-in-progress: false
@@ -248,10 +278,23 @@ jobs:
         # served, but never the build that was already live: on a rollback
         # that build contains this commit and would pass without a deploy.
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
         run: |
           build=$(curl -fsS --max-time 20 https://app.outrunner.sh/api/health | python3 -c "import json,sys; print(json.load(sys.stdin).get('build') or '')" || true)
           echo "Live before deploy: ${build:-unknown}"
           echo "PREV_BUILD=$build" >> "$GITHUB_ENV"
+          # An automatic deploy never goes backwards (CI can finish out of
+          # order; the plan's stand-down is checked earlier, this is now).
+          # Rollbacks are manual (workflow_dispatch).
+          if [ "$EVENT" = workflow_run ] && [[ "$build" =~ ^[0-9a-f]{40}$ ]] && [ "$build" != "$DEPLOY_SHA" ]; then
+            status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$DEPLOY_SHA...$build" --jq .status 2>&1 || true)
+            if [ "$status" = ahead ]; then
+              echo "::error::Live build $build already contains $DEPLOY_SHA; an automatic deploy won't roll it back. Roll back with Run workflow and a ref."
+              exit 1
+            fi
+          fi
 
       - name: Deploy
         uses: cloudflare/wrangler-action@v3

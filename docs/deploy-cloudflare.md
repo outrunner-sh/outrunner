@@ -264,14 +264,22 @@ redirect). The first-time equivalent from a laptop with a working Docker is
    the configuration report is all true. A red job means users don't have it.
 
 Only one deploy runs at a time. A deploy queued while another runs waits. A
-newer one replaces a waiting one, and the newer one contains its commits.
+newer run replaces a waiting one, whatever commit either deploys, so a pending
+rollback can be bumped by the next merge's deploy (and the reverse). Check the
+run that actually deployed. Automatic runs never go backwards. A run for a
+commit that's no longer main's head stands down when the head's CI passed or
+is running, and one whose commit the live build already contains fails before
+deploying. That covers CI finishing out of order, or a re-run of an old
+commit's CI.
 
 **Rollback or redeploy:** Actions → *Deploy to Cloudflare Containers* →
 *Run workflow* on `main`, with `ref` set to the previous good SHA. The summary
 of the last good deploy shows it; leave `ref` empty for main's head. The
-commit must be on main and have passed CI there. A manual run that changes
-`supabase/migrations/` fails before deploying unless `migrations-applied` is
-checked. A rollback doesn't undo migrations; the database keeps them. For the
+commit must be on main and have passed CI there (a push run, not a PR's).
+A manual run that changes `supabase/migrations/` fails before deploying unless
+`migrations-applied` is checked. So does one when `/api/health` can't say
+what's live. The gate checks the box, not the database, so check it even if
+you migrated first. A rollback doesn't undo migrations; the database keeps them. For the
 fastest rollback, without a rebuild:
 `cd outrunner/cloudflare && pnpm dlx wrangler rollback`. Then check that
 `/api/health` reports the old build. The next merge to main deploys over it.
