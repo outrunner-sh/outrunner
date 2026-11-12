@@ -1584,7 +1584,9 @@ begin
   if has_table_privilege('authenticated', 'github_installations', 'select')
      or has_table_privilege('anon', 'github_installations', 'select')
      or has_table_privilege('authenticated', 'org_github_installations', 'select')
-     or has_table_privilege('anon', 'org_github_installation_details', 'select') then
+     or has_table_privilege('anon', 'org_github_installation_details', 'select')
+     or has_table_privilege('authenticated', 'github_installation_link_revocations', 'select')
+     or has_function_privilege('authenticated', 'revoke_github_installation_shares(uuid, uuid, text)', 'execute') then
     raise exception 'FAIL: users may read the App''s installations or org links';
   end if;
   insert into github_installations (installation_id, account_login, account_type, repository_selection)

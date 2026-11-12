@@ -264,14 +264,15 @@ export function FixturePage() {
         <SettingsFrame>
           <OrgGitHubSettings
             org={{ ...org, name: "neevcloud" }} configured
-            installations={state === "connected" ? [{
+            installations={state === "connected" || state === "shared" ? [{
               id: 42, accountLogin: "neevai-labs", accountType: "Organization", repositorySelection: "all",
               suspendedAt: null, suspended: false, installedBy: "preview-owner", createdAt: "2026-10-30T00:00:00Z",
+              shared: state === "shared",
               repositories: ["neevai-labs/outrunner"], total: 1, reachable: true,
             }] : []}
-            available={state !== "connected" ? [{
+            available={state !== "connected" && state !== "shared" ? [{
               id: 42, accountLogin: "neevai-labs", accountType: "Organization", repositorySelection: "all",
-              suspendedAt: null, suspended: false, installedBy: null, createdAt: "2026-10-30T00:00:00Z",
+              suspendedAt: null, suspended: false, installedBy: null, createdAt: "2026-10-30T00:00:00Z", shared: false,
             }] : []}
             pending={false} installed={null} error={null}
           />

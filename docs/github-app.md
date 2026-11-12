@@ -89,19 +89,57 @@ before, so until a grant is revoked, a sign-in's token still carries `repo`.
 
 A GitHub App installation can connect to multiple Outrunner organizations. In the new organization's
 **Settings → Org → GitHub**, select **Add to <org>** under **Available GitHub connections**. There is no
-need to uninstall or reinstall the App. The connecting admin must administer both the destination organization and
-an organization already using the installation. This also supports older installations without a recorded
-installer and admins who signed in without GitHub. An installation that is not connected anywhere can be
-connected by its verified GitHub installer, who must administer the destination organization.
+need to uninstall or reinstall the App.
+
+Every connection (`org_github_installations` link) records the authority it was made with
+(migration `20261112110000`, `link_github_installation`):
+
+- **Root connections** (`shared_from_org` is null):
+  - The installation's first connection, by its verified GitHub installer. Their GitHub sign-in, their connected
+    GitHub account, or a one-time GitHub authorization proves who they are. They must administer the
+    destination organization.
+  - An installation on a GitHub **user** account, linked by that account's owner. Only the owner can install
+    an App on their own account, so they are its installer. They can connect it to any organization they
+    administer, including their personal organization.
+  - An organization that held a root connection reconnecting (`root_org_ids`), by any of its current admins.
+- **Shares** (`shared_from_org` is the source organization; `installed_by` is the sharer): an admin of an
+  organization connected to the installation links it to another **team** organization they administer. A share
+  lasts only while its authority does. It is revoked automatically when:
+  - the sharer stops administering the source organization (removed, left, demoted, or their account deleted);
+  - the source organization's own connection goes (disconnected, organization deleted, or the App uninstalled).
+
+  Revocation is transitive: shares made from a revoked share go too. A revoked organization isn't "previously
+  authorized", so it can't reconnect on its own. It needs a new share from someone who administers a connected
+  organization. The settings page marks shared connections.
+
+A **personal organization never receives a share.** An admin of a customer's organization can't copy the
+customer's installation into their own organization and keep it after they leave. A personal organization gets
+an installation only as a root connection: the App on its owner's GitHub account, or one they installed on
+GitHub and connected first. To work on an organization's repositories from a personal organization, use your
+own GitHub connection (Settings → Connections), which GitHub limits to what you can reach.
+
+Outrunner doesn't verify GitHub organization-admin status for sharing. The App has no **Members** permission, so it
+can't read GitHub organization roles. Adding that permission would require every installation to accept it, and a
+GitHub role change sends no webhook the App receives. A share therefore depends on the sharer's Outrunner admin role,
+which Outrunner sees change.
+
+Every share that goes is recorded in `github_installation_link_revocations` (server-only), with its reason
+(`sharer_removed`, `sharer_not_admin`, `sharer_deleted`, `disconnected`). Migration `20261112110000` audited
+the links made before it. The first connected organization (and a user-account owner's own) became root
+connections. Each other link was kept as a share only if it is a team organization and its sharer still
+administers an earlier kept connection. Otherwise it was revoked with reason `backfill:personal_org`,
+`backfill:sharer_not_admin` or `backfill:sharer_unknown`. To restore a link that was revoked by mistake, a
+current admin of a connected organization adds it again from the destination organization.
+
+Installation tokens already handed out (an hour at most) and repositories already cloned on a box aren't recalled
+by a revocation. New listings, clones, sessions, automation runs and token requests stop at once.
 
 Installation metadata is global (`github_installations`); access is an independent link per organization
-(`org_github_installations`). Existing links are preserved by migration `20261104100000`. Removing a
-connection only removes that organization's link. GitHub uninstallations and suspensions apply to every
-linked organization. Webhook events reach each linked organization's matching projects, with separate
-membership checks and deduplication per project. Queued follow-ups recheck the exact project's connection.
-Authorization history survives disconnects and organization deletion. An admin can reconnect a previously
-authorized organization; sharing with an unrelated organization requires an active source connection.
-The historical GitHub installer cannot reclaim a revoked installation through a new organization.
+(`org_github_installations`). Removing a connection only removes that organization's link (and the shares made
+from it). GitHub uninstallations and suspensions apply to every linked organization. Webhook events reach each
+linked organization's matching projects, with separate membership checks and deduplication per project. Queued
+follow-ups recheck the exact project's connection. Authorization history survives disconnects and organization
+deletion. The historical GitHub installer cannot reclaim a revoked installation through a new organization.
 
 ## What it does on GitHub
 

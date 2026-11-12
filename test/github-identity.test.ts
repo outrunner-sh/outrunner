@@ -23,6 +23,7 @@ function installation(id: number, login: string, extra: Partial<OrgInstallation>
     suspendedAt: null,
     suspended: false,
     installedBy: null,
+    shared: false,
     createdAt: "2026-10-27T00:00:00Z",
     ...extra,
   };

@@ -49,7 +49,7 @@ async function GitHubSection({ searchParams }: { searchParams: Promise<Query> })
   const [kept, available] = config
     ? await Promise.all([
         listOrgInstallations(org.id).catch(() => []),
-        // Includes installations already connected to another org they administer.
+        // Includes shares of installations connected to another org they administer (team orgs only).
         org.role === "admin" ? listAvailableFor(owner.githubId, org.id, owner.id).catch(() => []) : Promise.resolve([]),
       ])
     : [[], []];

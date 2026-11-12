@@ -18,8 +18,9 @@ const WAIT_FOR_WEBHOOK_MS = 8_000;
  * Where GitHub sends an org's admin back after installing the App, or after
  * changing which repositories it reaches ("Redirect on update").
  *
- * - From our signed install link: the admin can connect an installation
- *   already used by another org they administer. A first connection needs
+ * - From our signed install link: the admin can share an installation
+ *   already used by another org they administer into a team org (it lasts
+ *   while they administer that org; never into a personal org). A first connection needs
  *   the GitHub installer named by the webhook: the admin's GitHub sign-in, or
  *   the GitHub account they connected for repositories (Settings →
  *   Connections, which GitHub vouched for). When neither is, ask them to
@@ -112,7 +113,7 @@ export async function GET(request: Request) {
     return done(installation.accountLogin);
   } catch (error) {
     if (error instanceof ClaimError) {
-      const code = { unknown: "no_installation", not_installer: "not_installer", not_admin: "not_admin" };
+      const code = { unknown: "no_installation", not_installer: "not_installer", not_admin: "not_admin", personal_org: "personal_org" };
       return back(`error=${code[error.reason]}`);
     }
     console.error(`Could not keep GitHub installation ${installationId}`, error);

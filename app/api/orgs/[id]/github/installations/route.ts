@@ -6,8 +6,9 @@ import { getInstallation, githubAppConfig } from "@/lib/github/app";
 import { orgCaller } from "@/lib/orgs/routes";
 
 /**
- * Connect an installation to the org, `{ installationId }`, including an
- * installation already connected to another org the admin administers.
+ * Connect an installation to the org, `{ installationId }`, including a share
+ * of one connected to another org the admin administers (a team org only;
+ * it lasts while they administer that org).
  */
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -38,7 +39,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           ? "Only whoever installed it on GitHub can make its first org connection."
           : error.reason === "not_admin"
             ? "You must administer this org and an org already connected to this installation."
-            : "Outrunner hasn't heard of this installation from GitHub.";
+            : error.reason === "personal_org"
+              ? "A personal org can't take another org's GitHub connection. Install the App on your own GitHub account instead."
+              : "Outrunner hasn't heard of this installation from GitHub.";
       return NextResponse.json({ error: message, code: error.reason }, { status: 409 });
     }
     console.error(`Could not claim installation ${installationId}`, error);
