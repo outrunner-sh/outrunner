@@ -7,8 +7,13 @@
 # app on disk (not a standalone bundle) so lib/runtime/daytona-provider.ts can
 # read it at runtime.
 
+# Base images are pinned by digest, so a tag can't change under a build. To
+# bump one: its new tag's index digest, e.g.
+#   docker buildx imagetools inspect node:22-slim
+# (keep golang's minor in step with runtime-agent/go.mod).
+
 # ---- agent: cross-compile runtime-agent to a static linux/amd64 binary -------
-FROM golang:1.22-bookworm AS agent
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS agent
 WORKDIR /src
 COPY runtime-agent/ ./runtime-agent/
 WORKDIR /src/runtime-agent
@@ -17,7 +22,7 @@ RUN GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
     -o /out/runtime-agent-linux-amd64 ./cmd/runtime-agent
 
 # ---- base node ---------------------------------------------------------------
-FROM node:22-slim AS base
+FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS base
 RUN corepack enable
 WORKDIR /app
 
@@ -56,6 +61,10 @@ ENV PORT=8080
 ENV RUNTIME_AGENT_BINARY_PATH=bin/runtime-agent-linux-amd64
 COPY --from=build /app /app
 COPY --from=agent /out/runtime-agent-linux-amd64 /app/bin/runtime-agent-linux-amd64
+# Not root: the image's own `node` user (uid 1000). The app stays root-owned
+# and read-only to it; Next's cache is the one place it writes under /app.
+RUN mkdir -p /app/.next/cache && chown -R node:node /app/.next/cache
+USER node
 EXPOSE 8080
 # The commit it's built from, for /api/health (cloudflare/worker.ts checks the
 # running container is the latest deploy's). Last, so it costs no cache.
