@@ -307,3 +307,23 @@ test("a personal access token is refused before any box is made, and still manag
     }
   }
 });
+
+test("a box's home is on its data disk, and boxes get room for a repository and its dependencies", async () => {
+  const { NEEV_DISK_GB } = await import("@/lib/runtime/sandbox/neev");
+  assert.match(neevPrepareScript(), /useradd -m -d \/workspace\/runtime /);
+  assert.ok(NEEV_DISK_GB >= 20 && NEEV_DISK_GB % 10 === 0 && NEEV_DISK_GB <= 100, "a size Neev takes");
+  let sent: { resources?: unknown } = {};
+  const backend = new NeevBackend();
+  (backend as unknown as { client: unknown }).client = {
+    sandboxes: {
+      create: async (params: { resources?: unknown }) => {
+        sent = params;
+        throw new Error("stop here");
+      },
+    },
+  };
+  await withKey(() => assert.rejects(backend.create({}, { cpu: 4, memoryGb: 8 }), /stop here/));
+  assert.deepEqual(sent.resources, { cpu: 4, memory_gb: 8, disk_gb: NEEV_DISK_GB });
+  await withKey(() => assert.rejects(backend.create({}), /stop here/));
+  assert.deepEqual(sent.resources, { disk_gb: NEEV_DISK_GB }, "the template's CPU and memory, with the disk");
+});

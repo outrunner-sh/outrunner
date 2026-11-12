@@ -263,6 +263,14 @@ after the cutover.
   port, which only Daytona gives. Previews work (proxied through the tunnel).
 - **No live memory growth.** Memory autoscaling is off on Neev boxes, though
   Neev can resize in place (`sandboxes.update`). Not wired yet.
+- **Slower resumes.** After `resume`, Neev reports `NotReady` for about
+  40 s before `Ready` on a box with the tools installed (measured
+  2026-11-12; a bare box takes about 5 s), then the agent redeploys in about
+  7 s. Daytona starts a stopped box in seconds.
+- **Two filesystems.** Neev splits `disk_gb` into a small root (4 GB of 10,
+  6 GB of 30) and `/workspace` (the rest). Boxes are made with 30 GB, and the
+  box user's home (repository mirror, worktrees, dependencies) lives on
+  `/workspace/runtime`, which survives a pause like the root does.
 - **Slower cold starts.** Each new box installs tmux, Claude Code, Codex and
   `gh` (~1 min, `neevPrepareScript`), where Daytona starts from a prebuilt
   snapshot in seconds. The warm pool hides this for pooled projects.

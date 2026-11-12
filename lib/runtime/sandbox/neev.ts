@@ -12,6 +12,7 @@ import type { GitExec } from "@/lib/runtime/git";
 import {
   asUserArgs,
   BOX_USER,
+  homeOf,
   type AgentEndpoint,
   type BoxResources,
   type SandboxBackend,
@@ -47,7 +48,23 @@ import { closeNeevTunnels, neevTunnel } from "@/lib/runtime/sandbox/neev-tunnel"
  */
 
 const DEFAULT_TEMPLATE = "sb-ubuntu-26-04-dev";
-const BOX_HOME = `/home/${BOX_USER}`;
+/**
+ * The box user's home, where the agent, the repository mirror, worktrees and
+ * every dependency a session installs live: on /workspace, the box's data
+ * disk. The root filesystem is small (4 GB for a 10 GB box, 3 GB of it free
+ * once the tools are in), and grows little with the disk; /workspace gets the
+ * rest, survives a pause like the root does, and doesn't count against the
+ * box's memory (measured on real boxes, 2026-11-12). A box made before this
+ * keeps its user's home in /home (home() reads it off the box).
+ */
+const BOX_HOME = `/workspace/${BOX_USER}`;
+/**
+ * The disk every box is made with, in GB (Neev: multiples of 10, 10-100):
+ * 6 GB for the root, 24 GB for /workspace, the home. Daytona's boxes have
+ * 10 GB on one filesystem; a box's repository, its worktrees and their
+ * node_modules need room past that.
+ */
+export const NEEV_DISK_GB = 30;
 /** Uploads land here (the only writable tree), then move into place. */
 const UPLOAD_DIR = "/workspace";
 /** Installing tmux and Claude Code measured ~55 s; leave room for a slow mirror. */
@@ -68,7 +85,7 @@ export function neevPrepareScript(): string {
     step("claude code", claudeInstallCommand({ sudo: false })),
     step("codex", codexInstallCommand({ sudo: false })),
     step("github cli", ghInstallCommand({ sudo: false })),
-    step("user", `id -u ${BOX_USER} >/dev/null 2>&1 || useradd -m -s /bin/bash ${BOX_USER}`),
+    step("user", `id -u ${BOX_USER} >/dev/null 2>&1 || useradd -m -d ${BOX_HOME} -s /bin/bash ${BOX_USER}`),
     'echo "[$(date +%T)] done"',
   ].join("\n");
 }
@@ -135,8 +152,8 @@ export class NeevBackend implements SandboxBackend {
       // (IDLE_BACKSTOP_SECONDS), and never deletes a box that isn't paused.
       // A paused one is kept PAUSED_RETENTION_SECONDS, then deleted.
       lifecycle: { ...NEEV_LIFECYCLE },
-      // Otherwise the template's own (2 vCPU, 2 GB for the default).
-      ...(size && { resources: neevResources(size) }),
+      // CPU and memory: otherwise the template's own (2 vCPU, 2 GB for the default).
+      resources: { ...(size && neevResources(size)), disk_gb: NEEV_DISK_GB },
     });
     try {
       await sandbox.waitUntilReady();
@@ -341,7 +358,9 @@ export class NeevBackend implements SandboxBackend {
       memoryGb: sandbox.resources?.memory_gb,
       io,
       gitExec,
-      home: async () => BOX_HOME,
+      // Its user's own: /workspace/runtime, or /home/runtime on a box made
+      // before homes moved to the data disk.
+      home: () => homeOf(io, BOX_HOME),
       // Control calls go through the tunnel from this server; the browser's
       // WebSockets come to this server's relay, which uses the same tunnel.
       agentEndpoint: async (port): Promise<AgentEndpoint> => ({

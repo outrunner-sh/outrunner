@@ -101,7 +101,10 @@ async function main() {
 
   await step("agent health through the tunnel", health);
   await step("command as the box user, writing a file", async () => {
-    const out = await sh(`echo ${MARK} > ~/${MARK}.txt && whoami && nproc && free -m | awk '/Mem/{print $2" MB"}' && df -h ~ | tail -1`);
+    const out = await sh(
+      `echo ${MARK} > ~/${MARK}.txt && whoami && nproc && free -m | awk '/Mem/{print $2" MB"}' && ` +
+        `df -h ~ /workspace /tmp 2>/dev/null | tail -n +2 | awk '{print $6": "$2" ("$4" free)"}'`,
+    );
     return out.replace(/\n/g, " | ");
   });
   await step("orphan sweep lists it as this deployment's", async () => {
@@ -120,10 +123,23 @@ async function main() {
     const alive = await provider.computerRunning(sandboxId!);
     const phase = (await neev.sandboxes.get(sandboxId!)).phase;
     if (alive) throw new Error(`still alive, phase ${phase}`);
-    return `phase ${phase}`;
+    // Until Neev has finished: what a session resuming later finds.
+    const start = performance.now();
+    let now = phase;
+    while (now === "Pausing" && performance.now() - start < 180_000) {
+      await new Promise((r) => setTimeout(r, 2_000));
+      now = (await neev.sandboxes.get(sandboxId!)).phase;
+    }
+    if (now !== "Paused") throw new Error(`phase ${now} after ${secs(start)}s`);
+    return `phase ${phase}, then Paused after ${secs(start)}s`;
   });
   await step("resume on the same box, agent booted again", async () => {
-    const result = await provider.provisionComputer({ secret, size: SIZE, previousSandboxId: sandboxId! });
+    const result = await provider.provisionComputer({
+      secret,
+      size: SIZE,
+      previousSandboxId: sandboxId!,
+      onStage: (stage, ms) => console.log(`    ${stage}: ${Math.round(ms / 100) / 10}s`),
+    });
     if (result.sandboxId !== sandboxId) throw new Error(`a new box ${result.sandboxId}, not ${sandboxId}`);
     return `phase ${(await neev.sandboxes.get(sandboxId!)).phase}`;
   });
