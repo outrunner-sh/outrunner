@@ -5,7 +5,7 @@ import { orgCaller } from "@/lib/orgs/routes";
 
 /**
  * The other Outrunner orgs this org's installation is shared with: for the
- * admins of its source org (its earliest connection) alone, so the org that
+ * admins of its source org (the first org it was connected to) alone, so the org that
  * brought it can see where else its repositories are reached from, and take
  * that away (./[orgId]).
  */

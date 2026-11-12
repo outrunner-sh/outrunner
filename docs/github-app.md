@@ -110,11 +110,15 @@ another Outrunner org that uses the installation grants nothing. Neither does ha
 other orgs are removed with them (a database trigger on `organization_members`). The exception is a user
 account's own installation that the account's owner linked.
 
-**The source org** (the installation's earliest connection) sees the other orgs it's shared with, who
-connected each and how, under the installation in **Settings → Org → GitHub**, and can **Stop sharing**
-with any of them (`GET /api/orgs/{id}/github/installations/{installationId}/shares`,
-`DELETE …/shares/{orgId}`, audited as `github.share_removed`). Uninstalling the App on GitHub still removes
-it from every org.
+**The source org** (the first org it was connected to, recorded as `github_installations.source_org_id`) sees
+the other orgs it's shared with, who connected each and how, under the installation in **Settings → Org →
+GitHub**, and can **Stop sharing** with any of them (`GET
+/api/orgs/{id}/github/installations/{installationId}/shares`, `DELETE …/shares/{orgId}`, audited as
+`github.share_removed`). Uninstalling the App on GitHub still removes it from every org. The source doesn't
+move: if it disconnects it manages nothing until it is connected again, and no share takes its place. Only
+uninstalling, or deleting the source org, clears it; the next org GitHub's installer or owner connects then
+becomes the source. A source can remove any share, including one GitHub's installer or an owner made: it's the
+org that brought the installation, and they can connect it again.
 
 Installation metadata is global (`github_installations`); access is an independent link per organization
 (`org_github_installations`). Existing links are preserved by migrations `20261104100000` and

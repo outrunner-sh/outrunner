@@ -7,7 +7,7 @@ import { githubOwnership, linkIdentity } from "@/lib/github/installation-owner";
 const org = { id: 42, accountLogin: "acme", accountType: "Organization" as const, accountId: 900 };
 const user = { id: 43, accountLogin: "ada", accountType: "User" as const, accountId: 7 };
 
-type Answer = { status: number; body?: unknown };
+type Answer = { status: number; body?: unknown; headers?: Record<string, string> };
 function github(answers: Record<string, Answer>) {
   const asked: string[] = [];
   const doFetch = (async (url: string | URL, init?: RequestInit) => {
@@ -15,7 +15,7 @@ function github(answers: Record<string, Answer>) {
     asked.push(path);
     assert.equal((init?.headers as Record<string, string>).Authorization, "Bearer inst-token");
     const answer = answers[path] ?? { status: 404 };
-    return new Response(answer.body === undefined ? null : JSON.stringify(answer.body), { status: answer.status });
+    return new Response(answer.body === undefined ? null : JSON.stringify(answer.body), { status: answer.status, headers: answer.headers });
   }) as typeof fetch;
   return { doFetch, asked };
 }
@@ -55,6 +55,20 @@ test("members, pending owners, renamed logins and refusals are not owners", asyn
 
 test("GitHub failing is an error, not a no", async () => {
   await assert.rejects(githubOwnership(org, 99, token, github({ "/user/99": { status: 502 } }).doFetch));
+});
+
+test("a rate limit is an error, not a no, primary or secondary", async () => {
+  const user = { "/user/99": { status: 200, body: { id: 99, login: "grace" } } };
+  for (const headers of [{ "x-ratelimit-remaining": "0" }, { "retry-after": "60" }] as Record<string, string>[]) {
+    await assert.rejects(githubOwnership(org, 99, token, github({ "/user/99": { status: 403, headers } }).doFetch), /rate-limited/);
+    await assert.rejects(
+      githubOwnership(org, 99, token, github({ ...user, "/orgs/acme/memberships/grace": { status: 403, headers } }).doFetch),
+      /rate-limited/,
+    );
+  }
+  // A plain 403 (no Members permission) is still a no.
+  const plain = github({ ...user, "/orgs/acme/memberships/grace": { status: 403, headers: { "x-ratelimit-remaining": "4999" } } });
+  assert.equal(await githubOwnership(org, 99, token, plain.doFetch), null);
 });
 
 test("the identity a link is made with: the installer first, then a verified owner", async () => {

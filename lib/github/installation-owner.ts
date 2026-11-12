@@ -38,6 +38,11 @@ async function get<T>(doFetch: Fetch, path: string, token: string): Promise<T | 
     cache: "no-store",
     signal: AbortSignal.timeout(15_000),
   });
+  // A rate limit is GitHub not answering, not a no: an error, said as one, rather than an
+  // "only the installer" refusal and a pointless sign-in round trip.
+  if (response.status === 403 && (response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after"))) {
+    throw new GitHubAppError(`GitHub rate-limited GET ${path.split("/").slice(0, 3).join("/")}`, 403);
+  }
   // Not found, or not permitted (the App lacks Members: Read): not an owner.
   if (response.status === 403 || response.status === 404) return null;
   if (!response.ok) throw new GitHubAppError(`GitHub answered ${response.status} to GET ${path.split("/").slice(0, 3).join("/")}`, response.status);

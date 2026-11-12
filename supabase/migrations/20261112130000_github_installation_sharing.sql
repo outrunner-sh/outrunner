@@ -21,9 +21,13 @@
 --   query in supabase/review/github_installation_links.sql lists them.
 -- - A member leaving or removed from an org takes with them the links they
 --   made of its installations into other orgs.
--- - The source org (the installation's earliest link) can list and remove the
---   other orgs it's shared with (github_installation_shares,
---   remove_github_installation_share).
+-- - The source org can list and remove the other orgs it's shared with
+--   (github_installation_shares, remove_github_installation_share). It's
+--   recorded (github_installations.source_org_id), not derived: the first org
+--   linked, by GitHub's say, and it doesn't move when it disconnects, so a
+--   share can never become the source by outliving it. Only an uninstall (the
+--   row goes) or the source org's deletion clears it; then the next org
+--   GitHub's installer or owner links becomes the source.
 begin;
 
 alter table org_github_installations
@@ -32,9 +36,16 @@ alter table org_github_installations
 comment on column org_github_installations.authority is
   'How GitHub authorized this link: the installer, the user account itself, or an owner of the GitHub organization. Null: made before 20261112130000.';
 
--- The source org's view orders links by when they were made.
-create index org_github_installations_installation_created_idx
-  on org_github_installations (installation_id, created_at, org_id);
+-- The org an installation was first linked to: the one that sees and
+-- manages its shares. Existing installations: their earliest link (in
+-- production, each made by its GitHub installer).
+alter table github_installations
+  add column source_org_id uuid references organizations (id) on delete set null;
+update github_installations g set source_org_id = (
+  select l.org_id from org_github_installations l
+  where l.installation_id = g.installation_id
+  order by l.created_at, l.org_id limit 1
+);
 
 drop function if exists link_github_installation(uuid, bigint, bigint, uuid);
 
@@ -74,6 +85,9 @@ begin
   end if;
   insert into org_github_installations (org_id, installation_id, installed_by, authority, authorized_github_id)
   values (target_org, target_installation, actor_id, how, github_user_id) on conflict do nothing;
+  -- The first org linked by GitHub's say is the source; it stays so.
+  update github_installations set source_org_id = target_org
+  where installation_id = target_installation and source_org_id is null;
   return null;
 end;
 $$;
@@ -82,7 +96,8 @@ grant execute on function link_github_installation(uuid, bigint, bigint, uuid, t
 
 -- A member leaving or removed from an org: the links they made of its
 -- installations into other orgs go too. A user's own account's installation,
--- linked by its owner, stays: nobody but them could have made it.
+-- linked by its owner, stays: nobody but them could have made it. A link from
+-- before this (authority null) was vouched for by no one, and goes.
 create function drop_departed_member_github_links() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
@@ -93,7 +108,7 @@ begin
     and l.org_id <> old.org_id
     and exists (select 1 from org_github_installations src
                 where src.installation_id = l.installation_id and src.org_id = old.org_id)
-    and not (i.account_type = 'User' and l.authority in ('installer', 'account_owner'));
+    and not (i.account_type = 'User' and coalesce(l.authority, '') in ('installer', 'account_owner'));
   return old;
 end;
 $$;
@@ -101,13 +116,15 @@ revoke all on function drop_departed_member_github_links() from public, anon, au
 create trigger organization_members_drop_github_links after delete on organization_members
 for each row execute function drop_departed_member_github_links();
 
--- The installation's source org: its earliest link. Only it sees, and can
--- remove, the others.
+-- The installation's source org, while it's still linked: only it sees, and
+-- can remove, the others. Disconnected, it manages nothing until it's linked
+-- again (which needs GitHub's say), and no other org takes its place.
 create function github_installation_source(target_installation bigint)
 returns uuid language sql stable set search_path = public as $$
-  select org_id from org_github_installations
-  where installation_id = target_installation
-  order by created_at, org_id limit 1
+  select g.source_org_id from github_installations g
+  where g.installation_id = target_installation
+    and exists (select 1 from org_github_installations l
+                where l.installation_id = g.installation_id and l.org_id = g.source_org_id)
 $$;
 revoke all on function github_installation_source(bigint) from public, anon, authenticated;
 grant execute on function github_installation_source(bigint) to service_role;

@@ -180,7 +180,8 @@ export type InstallationShare = {
 };
 
 /** The other orgs the installation is shared with, or null when this org
- * isn't its source (its earliest connection): only the source sees them. */
+ * isn't its source (the first org it was connected to, while still connected):
+ * only the source sees them. */
 export async function listInstallationShares(orgId: string, installationId: number): Promise<InstallationShare[] | null> {
   if (!isUuid(orgId)) return null;
   const supabase = createSupabaseAdminClient();
