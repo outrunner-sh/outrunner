@@ -58,7 +58,28 @@ func (s *Service) SessionTool(ctx context.Context, call sessiontools.Call) (int,
 		return 0, sessiontools.Answer{}, ErrUnknownWorkspace
 	}
 	// The control plane knows the owning session, not a chat's runtime key.
-	call.Workspace = s.owner(call.Workspace)
+	owner := s.owner(call.Workspace)
+	if call.Tool == RenameBranchTool {
+		// The branch is this box's to rename, between the control plane's
+		// say-so and its record (rename_branch.go).
+		return s.renameBranch(ctx, owner, call.Args)
+	}
+	call.Workspace = owner
+	return s.post(ctx, call)
+}
+
+// passOn calls one of the control plane's session tools for the session
+// owner, as the agent itself.
+func (s *Service) passOn(ctx context.Context, owner, tool string, args any) (int, sessiontools.Answer, error) {
+	raw, err := json.Marshal(args)
+	if err != nil {
+		return 0, sessiontools.Answer{}, err
+	}
+	return s.post(ctx, sessiontools.Call{Workspace: owner, Tool: tool, Args: raw})
+}
+
+// post sends a call to the control plane, and returns its status and answer.
+func (s *Service) post(ctx context.Context, call sessiontools.Call) (int, sessiontools.Answer, error) {
 	body, err := json.Marshal(call)
 	if err != nil {
 		return 0, sessiontools.Answer{}, err

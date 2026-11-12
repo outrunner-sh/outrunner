@@ -4,7 +4,7 @@ import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { MISSION_ICONS } from "@/lib/missions/icons";
 import { missionsFor, ownsMission, setMissionProfile } from "@/lib/missions/view.deps";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -32,9 +32,9 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (icon !== null && !MISSION_ICONS.some((i) => i.key === icon)) return NextResponse.json({ error: "Choose one of the icons." }, { status: 400 });
   if (title !== null && (!title || title.length > 120)) return NextResponse.json({ error: "A name of 1 to 120 characters." }, { status: 400 });
   if (title !== null) {
-    // As the owner, under their row's policy: a row it filters out is no
-    // rename, said as one.
-    const { data, error } = await (await createSupabaseServerClient()).from("workspaces").update({ title }).eq("id", id).select("id");
+    // ownsMission has said the owner may; the row itself is the server's to
+    // write (20261106100000), so through the admin client.
+    const { data, error } = await createSupabaseAdminClient().from("workspaces").update({ title }).eq("id", id).select("id");
     if (error) throw error;
     if (!data?.length) return NextResponse.json({ error: "Mission not found." }, { status: 404 });
   }

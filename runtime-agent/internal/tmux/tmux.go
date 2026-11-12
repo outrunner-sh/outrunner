@@ -45,6 +45,17 @@ func Args(args ...string) []string {
 	return append(base, args...)
 }
 
+// Session is the exact target for the session `name`. A bare -t name falls
+// back to a prefix match when no session has that name, so with the main
+// chat's session (ws-<id>) gone, ws-<id> named a side chat's (ws-<id>_<chat>):
+// a start found it "running", a kill took the side chat, a prompt went to it.
+func Session(name string) string { return "=" + name }
+
+// Pane is the exact target for the active pane of the session `name`, for
+// commands whose -t is a pane (send-keys, paste-buffer, capture-pane,
+// set-option, display-message, pipe-pane), which don't take Session's form.
+func Pane(name string) string { return "=" + name + ":" }
+
 // Command builds a tmux invocation against Runtime's server.
 func Command(ctx context.Context, args ...string) *exec.Cmd {
 	return exec.CommandContext(ctx, program, Args(args...)...)
@@ -124,12 +135,12 @@ func writeLaunchScript(command []string) (string, error) {
 // would only spend a row on the session name and a clock. Best-effort: a
 // session that keeps its bar works the same.
 func (m *Manager) HideStatus(ctx context.Context, name string) {
-	_ = Command(ctx, "set-option", "-t", name, "status", "off").Run()
+	_ = Command(ctx, "set-option", "-t", Pane(name), "status", "off").Run()
 }
 
 // HasSession reports whether a session with the given name exists.
 func (m *Manager) HasSession(ctx context.Context, name string) bool {
-	return Command(ctx, "has-session", "-t", name).Run() == nil
+	return Command(ctx, "has-session", "-t", Session(name)).Run() == nil
 }
 
 // SessionExists is HasSession for a caller that must not mistake a tmux that
@@ -137,7 +148,7 @@ func (m *Manager) HasSession(ctx context.Context, name string) bool {
 // tmux said so (no such session, or no server at all).
 func (m *Manager) SessionExists(ctx context.Context, name string) (bool, error) {
 	var stderr bytes.Buffer
-	cmd := Command(ctx, "has-session", "-t", name)
+	cmd := Command(ctx, "has-session", "-t", Session(name))
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if err == nil {
@@ -167,7 +178,7 @@ func (m *Manager) KillSession(ctx context.Context, name string) error {
 	if !m.HasSession(ctx, name) {
 		return nil
 	}
-	if out, err := Command(ctx, "kill-session", "-t", name).CombinedOutput(); err != nil {
+	if out, err := Command(ctx, "kill-session", "-t", Session(name)).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux kill-session %s: %v: %s", name, err, out)
 	}
 	return nil
@@ -196,7 +207,7 @@ func (m *Manager) Paste(ctx context.Context, name, text string) error {
 	}
 	// -p: bracketed paste (newlines land as input, not submits). -d: delete the
 	// buffer afterward so buffers don't accumulate across sends.
-	if out, err := Command(ctx, "paste-buffer", "-t", name, "-b", buf, "-d", "-p").CombinedOutput(); err != nil {
+	if out, err := Command(ctx, "paste-buffer", "-t", Pane(name), "-b", buf, "-d", "-p").CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux paste-buffer %s: %v: %s", name, err, out)
 	}
 	return nil
@@ -205,7 +216,7 @@ func (m *Manager) Paste(ctx context.Context, name, text string) error {
 // SubmitEnter presses Enter in the session's active pane, submitting whatever is
 // currently staged in Claude's composer.
 func (m *Manager) SubmitEnter(ctx context.Context, name string) error {
-	if out, err := Command(ctx, "send-keys", "-t", name, "Enter").CombinedOutput(); err != nil {
+	if out, err := Command(ctx, "send-keys", "-t", Pane(name), "Enter").CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux send-keys Enter %s: %v: %s", name, err, out)
 	}
 	return nil
@@ -214,7 +225,7 @@ func (m *Manager) SubmitEnter(ctx context.Context, name string) error {
 // SendKey presses one named key (tmux's names: Enter, Down, Up) in the
 // session's active pane.
 func (m *Manager) SendKey(ctx context.Context, name, key string) error {
-	if out, err := Command(ctx, "send-keys", "-t", name, key).CombinedOutput(); err != nil {
+	if out, err := Command(ctx, "send-keys", "-t", Pane(name), key).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux send-keys %s %s: %v: %s", key, name, err, out)
 	}
 	return nil
@@ -225,7 +236,7 @@ func (m *Manager) SendKeys(ctx context.Context, name string, keys ...string) err
 	if len(keys) == 0 {
 		return nil
 	}
-	if out, err := Command(ctx, append([]string{"send-keys", "-t", name}, keys...)...).CombinedOutput(); err != nil {
+	if out, err := Command(ctx, append([]string{"send-keys", "-t", Pane(name)}, keys...)...).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux send-keys %s: %v: %s", name, err, out)
 	}
 	return nil
@@ -235,7 +246,7 @@ func (m *Manager) SendKeys(ctx context.Context, name string, keys ...string) err
 // sequences (-e): what tells a dim placeholder in an input box from text
 // typed there.
 func (m *Manager) CapturePaneStyled(ctx context.Context, name string) (string, error) {
-	out, err := Command(ctx, "capture-pane", "-t", name, "-p", "-e").Output()
+	out, err := Command(ctx, "capture-pane", "-t", Pane(name), "-p", "-e").Output()
 	if err != nil {
 		return "", fmt.Errorf("tmux capture-pane -e %s: %w", name, err)
 	}
@@ -246,7 +257,7 @@ func (m *Manager) CapturePaneStyled(ctx context.Context, name string) (string, e
 // pane. Used to detect when Claude's TUI has finished mounting and is ready to
 // accept a submitted prompt.
 func (m *Manager) CapturePane(ctx context.Context, name string) (string, error) {
-	out, err := Command(ctx, "capture-pane", "-t", name, "-p").Output()
+	out, err := Command(ctx, "capture-pane", "-t", Pane(name), "-p").Output()
 	if err != nil {
 		return "", fmt.Errorf("tmux capture-pane %s: %w", name, err)
 	}

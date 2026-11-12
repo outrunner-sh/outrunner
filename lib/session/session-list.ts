@@ -10,6 +10,7 @@ import { recency } from "@/lib/nav/workspace-nav-groups";
 import type { ProviderName, Workspace, WorkspacePullRequest, WorkspaceStatus } from "@/lib/runtime/types";
 import type { AppData } from "@/lib/session/session-view";
 import type { SessionStanding, Standing } from "@/lib/session/standing";
+import { withoutGeneratedPrefix } from "@/lib/session/branch-name";
 
 /** Where a session was started. */
 export type SessionSource = "app" | "slack" | "triage" | "automation" | "mac";
@@ -69,7 +70,7 @@ export function standingOf(entry: SessionListEntry, now: number): SessionStandin
 
 /**
  * The rows `filter` keeps, newest first. Search is case-insensitive over the
- * title, branch (without the generated `runtime/`), repository and owner.
+ * title, branch (without the old generated `runtime/`), repository and owner.
  */
 export function filterSessions(entries: SessionListEntry[], filter: ListFilter, now: number): SessionListEntry[] {
   const q = filter.query.trim().toLowerCase();
@@ -80,7 +81,7 @@ export function filterSessions(entries: SessionListEntry[], filter: ListFilter, 
       if (filter.source !== "any" && e.source !== filter.source) return false;
       if (filter.status !== "any" && standingOf(e, now).standing !== filter.status) return false;
       if (!q) return true;
-      return [e.title, e.branch.replace(/^runtime\//, ""), e.project, e.owner.name, e.owner.login ?? ""].some((field) =>
+      return [e.title, withoutGeneratedPrefix(e.branch), e.project, e.owner.name, e.owner.login ?? ""].some((field) =>
         field.toLowerCase().includes(q),
       );
     })

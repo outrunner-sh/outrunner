@@ -71,9 +71,20 @@ type EnvKey =
   | "GITHUB_APP_SLUG"
   | "GITHUB_APP_PRIVATE_KEY"
   | "GITHUB_APP_WEBHOOK_SECRET"
-  // Optional: the App's client secret, to ask GitHub who installed it for an
-  // admin with no GitHub account linked (lib/github/installer.ts).
+  // The App's client secret: users connect their own GitHub through the App's
+  // user authorization with it (lib/github/user-auth.ts, Settings →
+  // Connections), and GitHub is asked who installed it for an admin with no
+  // GitHub account linked (lib/github/installer.ts).
   | "GITHUB_APP_CLIENT_SECRET"
+  // The old sign-in tokens' cutover (lib/github/legacy-token.ts): `store`
+  // (sign-in asks for `repo` and keeps its token, as before), `fallback`
+  // (kept ones still work until their users connect; the default with
+  // GITHUB_APP_CLIENT_SECRET set) or `off` (never used).
+  | "GITHUB_LEGACY_TOKENS"
+  // Optional: the OAuth App Supabase's GitHub sign-in uses, to revoke the
+  // old `repo` grants and sign-ins' tokens on GitHub (lib/github/legacy-token.ts).
+  | "GITHUB_OAUTH_CLIENT_ID"
+  | "GITHUB_OAUTH_CLIENT_SECRET"
   // Dollars a month on Outrunner's models for each org's outrunner-connector,
   // which its automations run as (lib/billing/plans.ts connectorPlan).
   | "AUTOMATION_MODEL_ALLOWANCE_USD"
@@ -88,6 +99,15 @@ type EnvKey =
   // Slack user signs in with Slack. Unset, no one can link.
   | "SLACK_CLIENT_ID"
   | "SLACK_CLIENT_SECRET"
+  // The Linear app (docs/linear-app.md): its OAuth client and its webhook's
+  // signing secret. Any unset, Linear can't be connected.
+  | "LINEAR_CLIENT_ID"
+  | "LINEAR_CLIENT_SECRET"
+  | "LINEAR_WEBHOOK_SECRET"
+  // The Jira app (docs/jira-app.md): its OAuth client, whose secret also signs its
+  // webhooks. Any unset, Jira can't be connected.
+  | "JIRA_CLIENT_ID"
+  | "JIRA_CLIENT_SECRET"
   // The Slack agent: the OpenRouter model it thinks with (default
   // anthropic/claude-sonnet-5.5). It runs on the org's key for Outrunner's
   // models, within the org's plan allowance.

@@ -55,19 +55,49 @@ func (s *Service) inspectFolder(ctx context.Context, path string) (localFolder, 
 	return localFolder{path: top, git: true, branch: branch}, nil
 }
 
+// branchAttempts is how far freeCheckoutBranch numbers a name (-2, -3…)
+// before giving up on it, as the web app does (lib/session/branch-name.ts).
+const branchAttempts = 20
+
 // addCheckoutWorktree creates the workspace's worktree on a new branch in the
 // checkout at repoPath: forked from the freshest copy of baseBranch when one is
-// named, else from the checkout's current commit — as Claude Code does.
-func (s *Service) addCheckoutWorktree(ctx context.Context, repoPath, worktree, branch, baseBranch string) error {
+// named, else from the checkout's current commit — as Claude Code does. The
+// branch is the one asked for, or its next free number when the checkout
+// already has that one; the one made is returned.
+func (s *Service) addCheckoutWorktree(ctx context.Context, repoPath, worktree, branch, baseBranch string) (string, error) {
 	s.refreshBase(ctx, repoPath, baseBranch)
 	base, err := s.resolveBase(ctx, repoPath, baseBranch)
 	if err != nil {
-		return err
+		return "", err
 	}
+	branch = s.freeCheckoutBranch(ctx, repoPath, branch)
 	if _, err := s.git(ctx, repoPath, "worktree", "add", "-b", branch, worktree, base); err != nil {
-		return fmt.Errorf("worktree add: %w", err)
+		return "", fmt.Errorf("worktree add: %w", err)
 	}
-	return nil
+	return branch, nil
+}
+
+// freeCheckoutBranch is branch, or branch-2, branch-3… the first the user's
+// checkout has neither as a branch of its own nor from origin: a session
+// never takes over a branch that's already there. Past the last attempt, the
+// name as asked, for worktree add to refuse.
+func (s *Service) freeCheckoutBranch(ctx context.Context, repoPath, branch string) string {
+	for n := 1; n <= branchAttempts; n++ {
+		candidate := branch
+		if n > 1 {
+			candidate = fmt.Sprintf("%s-%d", branch, n)
+		}
+		if !s.hasRef(ctx, repoPath, "refs/heads/"+candidate) && !s.hasRef(ctx, repoPath, "refs/remotes/origin/"+candidate) {
+			return candidate
+		}
+	}
+	return branch
+}
+
+// hasRef reports whether the repository at repoPath has ref.
+func (s *Service) hasRef(ctx context.Context, repoPath, ref string) bool {
+	_, err := s.git(ctx, repoPath, "rev-parse", "--verify", "--quiet", ref)
+	return err == nil
 }
 
 // refreshBase fetches the base branch so a session starts from what is on the

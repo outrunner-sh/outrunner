@@ -355,7 +355,7 @@ export function RepositorySelect({
       {open && (
         <div
           className={cn(
-            "bg-popover border-border absolute left-1/2 z-50 flex w-80 -translate-x-1/2 flex-col overflow-hidden rounded-lg border shadow-xl",
+            "bg-popover border-border absolute left-0 z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col sm:left-1/2 sm:-translate-x-1/2 overflow-hidden rounded-lg border shadow-xl",
             place.side === "below" ? "top-full mt-2" : "bottom-full mb-2",
           )}
           style={{ maxHeight: place.maxHeight }}
@@ -390,7 +390,7 @@ export function RepositorySelect({
               aria-autocomplete="list"
               placeholder="Search repositories…"
               aria-label="Search repositories"
-              className="placeholder:text-muted-foreground w-full bg-transparent py-2.5 pl-9 pr-3 text-sm outline-none"
+              className="placeholder:text-muted-foreground w-full bg-transparent py-2.5 pl-9 pr-3 text-base outline-none sm:text-sm"
             />
           </div>
 

@@ -493,6 +493,10 @@ export const CreateWorkspaceRequest = z.object({
   workspaceId: z.string().min(1),
   repoFullName: z.string().min(1),
   branch: z.string().min(1),
+  /** Outrunner made `branch` up from the first prompt: the agent may give it
+   *  its real name once, before it's pushed (lib/session/rename-branch.ts).
+   *  An agent from before ignores it, and the branch keeps its name. */
+  branchRenamable: z.boolean().optional(),
   baseBranch: z.string().min(1),
   /** Existing checkout on the user's Mac to branch from (local sessions only);
    *  omitted, the worktree comes from the computer's bare mirror. */
@@ -572,6 +576,13 @@ export type ArchiveUpload = z.infer<typeof ArchiveUpload>;
  *  restore brings each back (RestoreWorkspaceRequest.chats). */
 export const AGENT_FEATURE_CHAT_SNAPSHOTS = "chat-snapshots";
 
+/** The agent's archive fails, rather than saving an empty patch, when
+ *  `git diff` fails in a working repository (runtime-agent snapshot/tree.go).
+ *  An archive only deletes the box after it (dropBox) when the agent that
+ *  captured the Snapshot says so: an older agent's Snapshot may be missing
+ *  the session's changes, so its box is paused instead. */
+export const AGENT_FEATURE_SNAPSHOT_PATCH_INTEGRITY = "snapshot-patch-integrity";
+
 /** One chat an archive captures beside the main conversation: the control
  *  plane's record of it (echoed into the manifest) and the signed upload URLs
  *  its conversation, and a Codex chat's rollout, go to. */
@@ -637,6 +648,8 @@ export type RestoreDownload = z.infer<typeof RestoreDownload>;
 export const RestoreWorkspaceRequest = z
   .object({
     branch: z.string().min(1),
+    /** CreateWorkspaceRequest's, as the session has it now. */
+    branchRenamable: z.boolean().optional(),
     baseBranch: z.string().optional(),
     sessionId: z.string().min(1).nullable(),
     downloads: z.array(RestoreDownload),
@@ -841,7 +854,9 @@ export const ContentBlock = z.discriminatedUnion("type", [
     name: z.string(),
     input: z.unknown(),
   }),
-  z.object({ type: z.literal("tool_result"), toolUseId: z.string(), content: z.unknown() }),
+  // `isError`: the tool failed (Claude's `is_error`); absent from an agent
+  // from before it, and when it didn't.
+  z.object({ type: z.literal("tool_result"), toolUseId: z.string(), content: z.unknown(), isError: z.boolean().optional() }),
   // An image pasted into Claude's prompt (in its terminal), in Claude's own
   // shape. `data` is base64, left out by the agent past its cap
   // (MaxImageBlockData), and absent from an agent from before it.

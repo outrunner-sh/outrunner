@@ -3,14 +3,13 @@ import { NextResponse } from "next/server";
 import { getAuthUser, getOwner } from "@/lib/auth/owner";
 import { createTeamOrg, orgsForDomains, TeamOrgError } from "@/lib/db/orgs";
 import { githubErrorResponse } from "@/lib/github/http";
-import { optionalGithubToken } from "@/lib/github/token";
 import { databaseNotUpdated } from "@/lib/http/database-not-updated";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { signInFirst } from "@/lib/http/settings-save";
 import { orgName } from "@/lib/orgs/active";
 import { createTeamOrgFor } from "@/lib/orgs/create";
 import { setActiveOrg } from "@/lib/orgs/server";
-import { verifiedEmailsFor } from "@/lib/orgs/verified-emails";
+import { verifiedEmailsOf } from "@/lib/orgs/user-emails";
 
 /**
  * Make a team org, `{ name }`, with the signed-in user as its admin, and show
@@ -35,7 +34,7 @@ export async function POST(request: Request) {
 
   try {
     const outcome = await createTeamOrgFor(owner.id, name, {
-      verifiedEmails: async () => verifiedEmailsFor(user, await optionalGithubToken(owner.id)),
+      verifiedEmails: async () => verifiedEmailsOf(user),
       orgsForDomains,
       create: createTeamOrg,
     });

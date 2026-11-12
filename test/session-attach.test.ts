@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { attachCloudSession } from "@/lib/session/attach-session";
+import { AttachError, attachCloudSession, retryableAttachFailure } from "@/lib/session/attach-session";
+import { BOX_GONE, BOX_RESTORE_FAILED, SESSION_ENDED, SESSION_NOT_STARTED } from "@/lib/session/session-codes";
 
 const urls = { ptyUrl: "wss://box/pty", eventsUrl: "wss://box/events" };
 const reply = (status: number, code?: string) => Response.json({ error: "Box is waking", ...(code && { code }) }, { status });
@@ -69,4 +70,55 @@ test("leaving a session cancels its retry backoff", async () => {
   controller.abort();
   await stopped;
   assert.equal(calls, 1);
+});
+
+test("a session archived or deleted elsewhere is said with its code, once, never retried", async () => {
+  let calls = 0;
+  await assert.rejects(
+    attachCloudSession("w", "main", false, new AbortController().signal, {
+      fetch: async () => { calls++; return reply(409, SESSION_ENDED); },
+      wait: async () => { assert.fail("an ended session must not be retried"); },
+    }),
+    (error: unknown) => error instanceof AttachError && error.code === SESSION_ENDED && !error.retryable,
+  );
+  assert.equal(calls, 1);
+});
+
+test("what the reconnect loop may try again: a failure on the way, never one that names what happened", async () => {
+  const failure = (status: number, code?: string) =>
+    attachCloudSession("w", "main", false, new AbortController().signal, {
+      fetch: async () => reply(status, code),
+      wait: async () => {},
+    }).then(() => assert.fail("attached"), (error: unknown) => error);
+  assert.equal(retryableAttachFailure(await failure(503, BOX_RESTORE_FAILED)), true);
+  assert.equal(retryableAttachFailure(await failure(502)), true);
+  assert.equal(retryableAttachFailure(new TypeError("Failed to fetch")), true);
+  // Any code the route names that isn't a failed restore ends it, a new one
+  // (a session archived from another tab) as much as the known ones.
+  for (const [status, code] of [[410, BOX_GONE], [502, SESSION_NOT_STARTED], [409, SESSION_ENDED], [401, undefined], [404, undefined]] as const) {
+    assert.equal(retryableAttachFailure(await failure(status, code)), false, `${status} ${code}`);
+  }
+  assert.equal(retryableAttachFailure(new AttachError("x", null)), false);
+  assert.equal(retryableAttachFailure(new Error("Malformed session response from server")), false);
+});
+
+test("a bare 500 or a Cloudflare 52x, no answer of the server's, is tried again: a deploy replacing the control plane", async () => {
+  for (const status of [500, 520, 524]) {
+    let calls = 0;
+    const result = await attachCloudSession("w", "main", false, new AbortController().signal, {
+      fetch: async () => (++calls === 1 ? new Response("upstream gone", { status }) : Response.json(urls)),
+      wait: async () => {},
+    });
+    assert.deepEqual(result, urls);
+    assert.equal(calls, 2);
+  }
+  // A 500 the server answered itself, saying what happened, code or not, is not.
+  for (const body of [{ error: "Runtime Computer secret missing." }, { error: "Its box ended.", code: "box-gone" }]) {
+    let calls = 0;
+    await assert.rejects(attachCloudSession("w", "main", false, new AbortController().signal, {
+      fetch: async () => { calls++; return Response.json(body, { status: 500 }); },
+      wait: async () => { assert.fail("an answered refusal must not be retried"); },
+    }), new RegExp(body.error));
+    assert.equal(calls, 1);
+  }
 });

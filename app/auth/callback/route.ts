@@ -3,6 +3,8 @@ import { connection, NextResponse } from "next/server";
 import { signInProvider } from "@/lib/auth/identity";
 import { completeSignIn, redirectBase, signInError } from "@/lib/auth/complete-sign-in";
 import { safeRelativePath } from "@/lib/auth/redirect";
+import { githubAppConfig } from "@/lib/github/app";
+import { readConnectState, USER_CALLBACK_PATH } from "@/lib/github/user-auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
@@ -14,6 +16,11 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
  * `code`. We exchange it for a session
  * — which sets the auth cookies on this response — then finish as every
  * sign-in does (lib/auth/complete-sign-in.ts): the allowlist first.
+ *
+ * The desktop shell sends every code its loopback listener hears here, so
+ * one from connecting GitHub for repositories (our signed `state`,
+ * lib/github/user-auth.ts) goes on to that flow's own callback, in the same
+ * webview that started it.
  */
 export async function GET(request: Request) {
   // Per request, never prerendered at build (Cache Components prerenders a
@@ -22,6 +29,11 @@ export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const base = redirectBase(requestUrl);
   const next = safeRelativePath(requestUrl.searchParams.get("next"));
+
+  const config = githubAppConfig();
+  if (config && readConnectState(config.webhookSecret, requestUrl.searchParams.get("state"))) {
+    return NextResponse.redirect(`${base}${USER_CALLBACK_PATH}${requestUrl.search}`);
+  }
 
   // The provider/Supabase can bounce back with an error instead of a code
   // (user cancelled, provider misconfigured).

@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { isOwner } from "@/lib/auth/allowlist";
 import { slackLinkTarget } from "@/lib/db/slack-links";

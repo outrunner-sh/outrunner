@@ -195,6 +195,17 @@ async function environmentRepos(orgId: string, environmentId: string): Promise<E
   });
 }
 
+/** The org of a project the user can see (not archived), or null: what
+ *  getEnvironment answers for orgId, without the rest. */
+export async function environmentOrgId(userId: string, id: string): Promise<string | null> {
+  const [level, { data, error }] = await Promise.all([
+    environmentLevel(userId, id),
+    createSupabaseAdminClient().from("environments").select("org_id").eq("id", id).is("archived_at", null).maybeSingle(),
+  ]);
+  if (error) throw error;
+  return level ? (data?.org_id ?? null) : null;
+}
+
 /** The id of the repository's default project, or null when it has none
  *  yet, or the user can't read the repository. Makes nothing. */
 export async function findDefaultEnvironmentId(userId: string, projectId: string): Promise<string | null> {

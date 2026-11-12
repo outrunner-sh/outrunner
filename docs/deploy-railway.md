@@ -69,6 +69,9 @@ Requires a local Go toolchain (cross-compiles `GOOS=linux GOARCH=amd64`).
 Optional: `DAYTONA_API_URL`, `DAYTONA_TARGET`. Railway injects `PORT` itself —
 don't set it.
 
+With Linear (docs/linear-app.md) or Jira (docs/jira-app.md) connected, an external cron has to call `POST /api/integrations/trackers/tick` with
+`BILLING_CRON_SECRET` as a bearer token.
+
 ## Auth callback wiring
 
 GitHub OAuth runs through Supabase, so:

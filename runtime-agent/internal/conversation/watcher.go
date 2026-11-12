@@ -83,15 +83,20 @@ type rawRecord struct {
 // result's call `tool_use_id`; the logs Runtime writes itself (a Codex
 // translation, the jcode engine's) marshal protocol.ContentBlock, which names
 // it `toolUseId`. Both are read, so a result pairs with its call either way.
+// Likewise a failed result: Claude's `is_error`, Runtime's `isError`.
 type rawBlock struct {
 	protocol.ContentBlock
 	ClaudeToolUseID string `json:"tool_use_id"`
+	ClaudeIsError   bool   `json:"is_error"`
 }
 
 func (b rawBlock) block() protocol.ContentBlock {
 	out := b.ContentBlock
 	if out.ToolUseID == "" {
 		out.ToolUseID = b.ClaudeToolUseID
+	}
+	if b.ClaudeIsError {
+		out.IsError = true
 	}
 	// Only an image's source is a picture the timeline shows (a document's
 	// is a PDF), and only up to MaxImageBlockData of it.

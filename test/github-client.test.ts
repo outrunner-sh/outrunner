@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 
 import {
+  branchKnownOnGitHub,
   findPullRequest,
   getGitHubRepository,
   getPullRequestStatus,
@@ -261,7 +262,7 @@ test("a 401 means the token is dead: the route asks the user to reconnect", asyn
   const response = githubErrorResponse(error, "fallback");
   assert.equal(response.status, 502);
   assert.deepEqual(await response.json(), {
-    error: "Your GitHub connection has expired. Sign out and back in to reconnect.",
+    error: "Your GitHub connection has expired. Reconnect GitHub in Settings → Connections.",
     reconnect: true,
   });
 });
@@ -307,4 +308,25 @@ test("getGitHubRepository: null for what the token can't see, an error for a rat
   assert.equal(await getGitHubRepository("t", "acme/repo/extra"), null);
   assert.equal(await getGitHubRepository("t", -1), null);
   assert.equal(seen.length, before);
+});
+
+test("a branch GitHub knows: one there now, or an old pull request's head", async () => {
+  const lookup = { token: "gh-test-token", repoFullName: "acme/repo", branch: "fix/login" };
+  let seen = setFetchByUrl((url) => (url.pathname.endsWith("/git/ref/heads/fix/login") ? new Response("{}", { status: 200 }) : assert.fail(String(url))));
+  assert.equal(await branchKnownOnGitHub(lookup), true);
+  assert.equal(seen.length, 1);
+
+  // Deleted since its pull request merged: the pull request still has it.
+  seen = setFetchByUrl((url) =>
+    url.pathname.includes("/git/ref/") ? new Response("{}", { status: 404 }) : new Response(JSON.stringify([apiPull(7)]), { status: 200 }),
+  );
+  assert.equal(await branchKnownOnGitHub(lookup), true);
+  assert.equal(seen[1].searchParams.get("head"), "acme:fix/login");
+  assert.equal(seen[1].searchParams.get("state"), "all");
+
+  setFetchByUrl((url) => (url.pathname.includes("/git/ref/") ? new Response("{}", { status: 404 }) : new Response("[]", { status: 200 })));
+  assert.equal(await branchKnownOnGitHub(lookup), false);
+
+  setFetchByUrl(() => new Response("{}", { status: 500 }));
+  await assert.rejects(branchKnownOnGitHub(lookup), GitHubSyncError);
 });

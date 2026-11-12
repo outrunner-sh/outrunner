@@ -11,9 +11,12 @@ import { agentConnection } from "@/lib/agents/resolve";
 import { codexModelsFor } from "@/lib/codex/model-catalog.deps";
 import { creationSelection } from "@/lib/runtime/selection";
 import { optionalEnv } from "@/lib/env";
-import { randomUUID } from "node:crypto";
+import { PLAN_MODE_PREAMBLE } from "@/lib/api/create-request";
+import { generatedBranch, insertOnBranch } from "@/lib/session/generated-branch";
 
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import type { AgentId } from "@/lib/agents/registry";
 import { AgentAuthError, resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
@@ -29,20 +32,32 @@ import {
   ownSandboxKeys,
   type SandboxSettings,
 } from "@/lib/db/credentials";
+import { isMetered } from "@/lib/billing/metering-store";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import {
+  claimFirstPrompt,
+  clearWorkspaceFirstPrompt,
   createWorkspaceRow,
   getProject,
   getRuntimeComputer,
   getWorkspace,
   liveWorkspaceOnBranch,
+  markFirstPromptSent,
+  projectBranchesLike,
   markRuntimeComputerStoppedIfReady,
   recordWorkspaceModel,
+  releaseFirstPrompt,
+  renewFirstPrompt,
   setWorkspaceTitleIfUnset,
+  storeWorkspaceFirstPrompt,
   transitionWorkspace,
+  workspaceFirstPrompt,
 } from "@/lib/db/repositories";
 import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
-import { linkWorkItemToSession, projectOrgId, triageActor } from "@/lib/db/work-items";
+import { getWorkItem, linkWorkItemToSession, projectOrgId, triageActor, trackerIssueOfItem } from "@/lib/db/work-items";
+import { freeIssueBranch } from "@/lib/session/issue-branch";
+import { issueFirstBranch } from "@/lib/trackers/issue-key";
+import { tellTrackersSessionStarted } from "@/lib/trackers/write-back.deps";
 import { isUuid } from "@/lib/ids";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import {
@@ -62,6 +77,7 @@ import { newBoxSize } from "@/lib/orgs/defaults";
 import { appUrl } from "@/lib/orgs/notify";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_CODEX_GATEWAY, AGENT_FEATURE_MULTI_REPO } from "@/lib/runtime/agent-protocol";
+import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { requireFeature } from "@/lib/runtime/box-features";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
@@ -104,9 +120,12 @@ import { refillProjectPool, takePooledBox } from "@/lib/runtime/warm-pool.deps";
 import type { BoxSizeId } from "@/lib/runtime/box-sizes";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace, WorkspaceSource } from "@/lib/runtime/types";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
+import { deliverStoredFirstPrompt, firstPromptToKeep } from "@/lib/session/deliver-first-prompt";
+import { abandonedBefore, gateFirstPrompt } from "@/lib/session/first-prompt-claim";
 import { evidenceToolsFor, prGuide } from "@/lib/session/pr-template";
 import { SETTING_UP } from "@/lib/session/provisioning";
-import { getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
+import { watchSent } from "@/lib/session/watch";
+import { branchKnownOnGitHub, getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
 import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
 import { GitIdentityError } from "@/lib/github/identity";
 import { gitTokensFor, markReviewSession, REVIEW_AS_APP, requireGitToken } from "@/lib/github/identity.deps";
@@ -121,8 +140,14 @@ async function madeBefore(id: string, ownerId: string, projectId: string): Promi
   return made && made.ownerId === ownerId && made.projectId === projectId ? made : null;
 }
 
-function generatedBranch(): string {
-  return `runtime/${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+/** The branch a session on this item's issue is on; null when it follows none. */
+async function branchOfItem(userId: string, projectId: string, workItemId: string): Promise<string | null> {
+  const orgId = await projectOrgId(projectId);
+  // Its title names the branch, so only an item they can see: linking it comes later.
+  const actor = orgId ? await triageActor(userId, orgId) : null;
+  const visible = actor ? await getWorkItem(actor, workItemId) : null;
+  const issue = orgId && visible ? await trackerIssueOfItem(orgId, workItemId) : null;
+  return issue ? freeIssueBranch(projectId, issue, issue.title) : null;
 }
 
 /** The session can't run without the user's Claude: say so, and where to fix it. */
@@ -143,8 +168,16 @@ export type SessionRequest = {
   effort?: unknown;
   /** The agent the session is asked to run (requestedAgent). */
   agent?: unknown;
-  /** The first prompt, only to name the session by. */
+  /** The first prompt: it names the session by, and — with `promptKey` — is
+   *  kept server-side too while its box starts (firstPromptToKeep). */
   prompt?: unknown;
+  /** The first prompt's idempotency key: the server keeps its own copy of
+   *  the prompt under it, so the tab that made the session can close during
+   *  startup without losing it. Absent on a client from before, whose copy
+   *  waits in its tab as it always did. */
+  promptKey?: unknown;
+  /** The first prompt's uploaded files, kept with it to go with it. */
+  attachmentIds?: unknown;
   /** The triage item the session was started from (Start session). */
   workItemId?: unknown;
   /** The id the screen made for it (a UUID), so its page opens at once, on
@@ -165,6 +198,9 @@ export type ServerSessionOptions = {
   title?: string;
   /** Sent to the agent once it's ready, as the user's first message would be. */
   firstMessage?: string;
+  /** Files uploaded for the first message (POST /api/attachments), put on
+   *  the box and named in it as the composer's are. */
+  firstAttachmentIds?: string[];
   /** Set it up before answering, not after: for a caller with no page waiting. */
   inline?: boolean;
   /** Only on Outrunner's models metered to the user (their allowance): a
@@ -355,7 +391,7 @@ async function createOnce(
     return NextResponse.json(
       {
         error:
-          "Connect your GitHub account in Settings → Account to clone a private repository.",
+          "Connect GitHub in Settings → Connections to clone a private repository.",
       },
       { status: 409 },
     );
@@ -427,6 +463,9 @@ async function createOnce(
   if (!isValidBranchName(baseBranch)) {
     return NextResponse.json({ error: "The session's base branch isn't a valid Git branch name." }, { status: 400 });
   }
+  // Every repository the session's branch is made in, for a generated one to
+  // be free in each.
+  const branchRepos = [{ fullName: project.fullName, token: githubToken.token }];
   const checkouts = environmentId ? projectCheckouts(await sessionCheckouts(owner.id, environmentId), project.id, baseBranch) : null;
   if (checkouts) {
     if (!isComputerProvider(provider)) {
@@ -440,31 +479,77 @@ async function createOnce(
       // this token still clones, so only a private one is refused.
       const otherToken = await tokenFor(other.fullName);
       if ("refusal" in otherToken) return otherToken.refusal;
+      branchRepos.push({ fullName: other.fullName, token: otherToken.token });
       const refused = await githubRefusal(otherToken.token, { fullName: other.fullName, private: other.private ?? true });
       if (refused) return refused;
     }
   }
 
+  // What a generated branch is named from: the title the caller gave, else
+  // the first prompt, the server's own or the one the screen sent to name it.
+  const about = {
+    title: options.title,
+    prompt: (options.firstMessage ?? (typeof body.prompt === "string" ? body.prompt : "")).replace(PLAN_MODE_PREAMBLE, ""),
+  };
   let workspace;
+  // On a tracker's issue, it's named for that (lib/trackers/issue-key.ts). Not worth failing over.
+  const issueBranchName = !requestedBranch && typeof body.workItemId === "string" && body.workItemId ? await branchOfItem(owner.id, project.id, body.workItemId).catch(() => null) : null;
+
   try {
-    workspace = await createWorkspaceRow({
-      ...(askedId && { id: askedId }),
-      ownerId: owner.id,
-      projectId: project.id,
-      environmentId,
-      checkouts,
-      branch: requestedBranch || generatedBranch(),
-      baseBranch,
-      provider: provider.name,
-      agent: agentId,
-      source: options.source,
-      kind: options.kind,
-      parentMissionId: options.parentMissionId,
+    const generation = {
+      sessionBranches: (base: string) => projectBranchesLike(project.id, base),
+      // Every repository at once. Without a token, GitHub isn't asked:
+      // nothing gets pushed there either.
+      knownOnGitHub: async (branch: string) =>
+        (
+          await Promise.all(
+            branchRepos.map((repo) =>
+              repo.token ? branchKnownOnGitHub({ token: repo.token, repoFullName: repo.fullName, branch }) : false,
+            ),
+          )
+        ).some(Boolean),
+    };
+    // On a tracker's issue, named for that first (lib/trackers/issue-key.ts).
+    // Two people starting on one item can both find a name free: the one that
+    // loses takes the issue's next free name, else a generated one, since it's
+    // our name, not one anyone asked for.
+    const issueBranches = new Set<string>();
+    workspace = await insertOnBranch({
+      requested: requestedBranch,
+      generate: (lost) =>
+        issueFirstBranch({
+          first: issueBranchName,
+          lost,
+          next: () => branchOfItem(owner.id, project.id, body.workItemId as string).catch(() => null),
+          generated: () => generatedBranch(about, generation, lost),
+          issueNamed: issueBranches,
+        }),
+      insert: (branch) =>
+        createWorkspaceRow({
+          ...(askedId && { id: askedId }),
+          ownerId: owner.id,
+          projectId: project.id,
+          environmentId,
+          checkouts,
+          branch,
+          // Made up here, for the agent to give it its real name once it
+          // knows the change: not a review's (it pushes nothing of its own),
+          // nor a GitHub follow-up's (it pushes to its pull request's head),
+          // nor one named for a tracker's issue (its key stays in it).
+          branchRenamable: !requestedBranch && !issueBranches.has(branch) && !options.reviewAsApp && options.source !== "github",
+          baseBranch,
+          provider: provider.name,
+          agent: agentId,
+          source: options.source,
+          kind: options.kind,
+          parentMissionId: options.parentMissionId,
+        }),
+      isBranchTaken: (error) => isUniqueViolation(error) && !isIdTaken(error),
     });
     progress.inserted = true;
     if (chosenModel) {
       const intended = { model: chosenModel, effort: compatibleEffort(chosenModel, chosenEffort) };
-      await recordWorkspaceModel(workspace.id, intended);
+      await recordWorkspaceModel(workspace.id, workspace.ownerId, intended);
       workspace = { ...workspace, model: intended };
     }
   } catch (error) {
@@ -478,7 +563,7 @@ async function createOnce(
     }
     // A requested branch can be one a live session already works on: name that
     // session and offer its page, rather than only saying one is there.
-    // (Generated branches can't collide.) Not the user's own, in a team org's
+    // (A generated one that collides is named again, above.) Not the user's own, in a team org's
     // project: another member has it, whose session they can't open. Anywhere
     // else (a session ended between the insert and the lookup), the plain
     // answer. If a lookup itself fails, the row's own failure is still the
@@ -506,18 +591,31 @@ async function createOnce(
     } catch (error) {
       console.error(`Workspace ${workspace.id}: its caller couldn't hear it was made`, error);
       const errorMessage = "Outrunner couldn't record what this session is for, so it didn't start.";
-      await transitionWorkspace({ id: workspace.id, from: SETTING_UP, patch: { status: "failed", errorMessage } }).catch(
+      await transitionWorkspace({ id: workspace.id, ownerId: workspace.ownerId, from: SETTING_UP, patch: { status: "failed", errorMessage } }).catch(
         (updateError: unknown) => console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
       );
       return NextResponse.json({ error: errorMessage }, { status: 500 });
     }
   }
   if (options.title) {
-    await setWorkspaceTitleIfUnset(workspace.id, options.title).catch((error: unknown) =>
+    await setWorkspaceTitleIfUnset(workspace.id, workspace.ownerId, options.title).catch((error: unknown) =>
       console.error(`Could not title session ${workspace.id}`, error),
     );
   } else {
     await nameSessionFromPrompt(workspace, typeof body.prompt === "string" ? body.prompt : "");
+  }
+  // The prompt also waits on the server (workspaces.first_prompt), under the
+  // key its every send names: the tab that made this session can close while
+  // its box starts without losing it — setup delivers the kept copy once the
+  // box is ready, racing the page's own copy under the same claim, so the
+  // box gets it once from whichever arrives (lib/session/deliver-first-prompt.ts).
+  // Only the new-session screen's own ask is kept: a session the server
+  // starts (an automation's, the API's) sends its first message its own way.
+  const kept = firstPromptToKeep(body);
+  if (kept) {
+    await storeWorkspaceFirstPrompt(workspace.id, workspace.ownerId, kept).catch((error: unknown) =>
+      console.error(`Workspace ${workspace.id}: couldn't keep its first prompt`, error),
+    );
   }
   // Started from a triage item: the item is in progress, on this session. The
   // session starts either way; the item is only bookkeeping.
@@ -525,10 +623,15 @@ async function createOnce(
     const workItemId = body.workItemId;
     // As a triager in the project's org: an item of another org is no item.
     await projectOrgId(project.id)
-      .then((orgId) => (orgId ? triageActor(owner.id, orgId) : null))
-      .then((actor) =>
-        actor ? linkWorkItemToSession(actor, workItemId, { workspaceId: workspace.id, projectId: project.id }) : undefined,
-      )
+      .then(async (orgId) => {
+        const actor = orgId ? await triageActor(owner.id, orgId) : null;
+        if (!orgId || !actor) return;
+        // Its issue in a tracker, if it has one, hears of it: only once it's really on this
+        // session, and only this org's. Not awaited: nothing here waits on one.
+        if (await linkWorkItemToSession(actor, workItemId, { workspaceId: workspace.id, projectId: project.id })) {
+          void tellTrackersSessionStarted(orgId, workItemId, owner.githubLogin ?? "someone in Outrunner", workspace.id);
+        }
+      })
       .catch((error: unknown) => console.error("Couldn't link the triage item to its session", error));
   }
 
@@ -554,13 +657,14 @@ async function createOnce(
       agentId,
       auth,
       firstMessage: options.firstMessage,
+      firstAttachmentIds: options.firstAttachmentIds,
       onSettled: options.onSettled,
       inline: options.inline ?? false,
       as,
       boxSize: options.boxSize,
     });
   if (options.inline) await provision();
-  else after(provision);
+  else after(provision, { where: "provision", workspaceId: workspace.id, orgId: project.orgId, userId: owner.id });
   // The whole row, not only its id: the caller opens the session on it at once
   // (lib/session/pending-sessions.ts), rather than waiting for the layout's
   // data to be read again. Read back rather than sent as it was inserted,
@@ -597,6 +701,7 @@ async function provisionWorkspace({
   agentId,
   auth,
   firstMessage,
+  firstAttachmentIds,
   onSettled,
   inline,
   as,
@@ -622,6 +727,7 @@ async function provisionWorkspace({
   agentId: AgentId;
   auth: ResolvedAuth;
   firstMessage?: string;
+  firstAttachmentIds?: string[];
   onSettled?: (outcome: SessionOutcome) => Promise<void>;
   /** Set up before the create answered (ServerSessionOptions.inline). */
   inline: boolean;
@@ -636,7 +742,7 @@ async function provisionWorkspace({
     );
   };
   const settle = async (patch: Parameters<typeof transitionWorkspace>[0]["patch"]) => {
-    const moved = await transitionWorkspace({ id: workspace.id, from: SETTING_UP, patch });
+    const moved = await transitionWorkspace({ id: workspace.id, ownerId: workspace.ownerId, from: SETTING_UP, patch });
     if (!moved) console.warn(`Workspace ${workspace.id} left setup before it finished (${patch.status})`);
     return moved !== null;
   };
@@ -714,9 +820,9 @@ async function provisionWorkspace({
           // box goes, so no one keeps paying for one nothing uses, and the
           // project gets a new computer where they chose.
           await retireComputer(madeBy, keys, sandboxId);
-          await markRuntimeComputerStoppedIfReady(currentComputer.id, sandboxId);
+          await markRuntimeComputerStoppedIfReady(currentComputer.id, currentComputer.ownerId, sandboxId);
         } else if (!(await provider.computerAlive(sandboxId))) {
-          await markRuntimeComputerStoppedIfReady(currentComputer.id, sandboxId);
+          await markRuntimeComputerStoppedIfReady(currentComputer.id, currentComputer.ownerId, sandboxId);
           endedBox = sandboxId;
         }
       }
@@ -740,6 +846,8 @@ async function provisionWorkspace({
       if (!computer.daytonaSandboxId) {
         throw new Error("Ready Runtime Computer has no sandbox id.");
       }
+      // The check can't narrow the id for the closures below; held here for them.
+      const sandboxId = computer.daytonaSandboxId;
 
       // Provisioning clones the mirror. A box set up before (a setup started
       // again) has it refreshed before the agent branches from the project's
@@ -790,6 +898,7 @@ async function provisionWorkspace({
           repoFullName: checkouts?.[0].fullName ?? project.fullName,
           baseBranch: checkouts?.[0].baseBranch ?? workspace.baseBranch,
           branch: workspace.branch,
+          ...(workspace.branchRenamable && { branchRenamable: true }),
           ...(checkouts && {
             repos: checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout, baseBranch: c.baseBranch })),
           }),
@@ -829,7 +938,7 @@ async function provisionWorkspace({
         fallback: defaultModel(menu),
       });
       // So its next relaunch goes back on it, its key fetched again.
-      await recordWorkspaceModel(workspace.id, startsOn);
+      await recordWorkspaceModel(workspace.id, workspace.ownerId, startsOn);
       await setPhase("health_check");
       await agent.startWorkspace(identity);
       logPhase("ready");
@@ -855,11 +964,63 @@ async function provisionWorkspace({
         await tell({ status: "failed", errorMessage: "The session was deleted while it was set up." });
         return;
       }
+      // The first prompt kept for this session as its box started: the tab
+      // that made it may be closed by now. Sent under the same key the
+      // session page's own copy of it names, so whichever of the two gets
+      // there first delivers it and the other stands down
+      // (lib/session/deliver-first-prompt.ts). It never fails the session,
+      // which started fine: a prompt that doesn't go stays kept for the page.
+      await deliverStoredFirstPrompt(
+        {
+          read: () => workspaceFirstPrompt(workspace.id, workspace.ownerId),
+          // Strict: no unguarded send — a claim that can't be made stands
+          // down, the kept copy left for the page (or a session reopened).
+          gate: (key) =>
+            gateFirstPrompt(
+              key,
+              {
+                claim: (k) => claimFirstPrompt(workspace.id, workspace.ownerId, k, abandonedBefore(new Date())),
+                renew: (k, claimedAt) => renewFirstPrompt(workspace.id, workspace.ownerId, k, claimedAt),
+                // Only marked: the delivery clears the kept copy itself once
+                // its own send went, as its one owner of the clear.
+                sent: (k, claimedAt) => markFirstPromptSent(workspace.id, workspace.ownerId, k, claimedAt),
+                release: (k, claimedAt) => releaseFirstPrompt(workspace.id, workspace.ownerId, k, claimedAt),
+              },
+              workspace.id,
+              { strict: true },
+            ),
+          attach: (prompt, attachmentIds) =>
+            materializeAttachments({
+              provider,
+              sandboxId: sandboxId,
+              worktreePath: created.worktree,
+              workspaceId: workspace.id,
+              attachmentIds,
+              prompt,
+            }),
+          send: (prompt) => agent.sendMessage(identity, prompt),
+          clear: () => clearWorkspaceFirstPrompt(workspace.id, workspace.ownerId),
+          // Watched as the page's own send would be (lib/session/watch.ts),
+          // so the sidebar shows the session working even with no page open.
+          watch: () => watchSent(workspace.id, workspace.ownerId),
+        },
+        workspace.id,
+      );
       // The server's own first message (an automation's prompt), sent as the
       // user's would be from the session page.
       if (firstMessage) {
         try {
-          await agent.sendMessage(identity, firstMessage);
+          const prompt = firstAttachmentIds?.length
+            ? await materializeAttachments({
+                provider,
+                sandboxId: computer.daytonaSandboxId,
+                worktreePath: created.worktree,
+                workspaceId: workspace.id,
+                attachmentIds: firstAttachmentIds,
+                prompt: firstMessage,
+              })
+            : firstMessage;
+          await agent.sendMessage(identity, prompt);
         } catch (error) {
           console.error(`Workspace ${workspace.id}: first message failed`, error);
           await tell({ status: "failed", errorMessage: "The session started, but its prompt couldn't be sent." });
@@ -879,7 +1040,7 @@ async function provisionWorkspace({
       const refill = () =>
         refillProjectPool({ provider, ownerId: owner.id, project, environmentId: workspace.environmentId, githubToken, sessionEnv });
       if (inline) await refill();
-      else after(refill);
+      else after(refill, { where: "refill-pool", workspaceId: workspace.id, userId: owner.id });
       return;
     }
 
@@ -920,7 +1081,7 @@ async function provisionWorkspace({
         ? error.message
         : refused
           ? refused.message
-          : provisionFailureMessage(error, phase, secrets);
+          : provisionFailureMessage(error, phase, secrets, isMetered(provider.name));
     const settled = await settle({ status: "failed", errorMessage }).catch((updateError: unknown) => {
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError);
       return true;
@@ -971,14 +1132,14 @@ async function githubRefusal(
     if (!project.private) return null;
     return NextResponse.json(
       {
-        error: `Your GitHub account can't see ${project.fullName} any more. Check its access on GitHub, or reconnect it in Settings → Account.`,
+        error: `Your GitHub account can't see ${project.fullName} any more. Check its access on GitHub, and that it's among the repositories you gave Outrunner (Settings → Connections → GitHub).`,
         reconnect: true,
         settingsHref: GITHUB_RECONNECT_HREF,
       },
       { status: 409 },
     );
   } catch (error) {
-    // With the link the form shows: where signing in again happens.
+    // With the link the form shows: where GitHub is connected again.
     if (error instanceof GitHubReconnectError) {
       return NextResponse.json({ error: error.message, reconnect: true, settingsHref: GITHUB_RECONNECT_HREF }, { status: 409 });
     }

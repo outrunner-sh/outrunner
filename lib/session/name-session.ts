@@ -10,13 +10,13 @@ import { titleToSet } from "@/lib/nav/session-title";
  * of a conversation from before titles were saved (POST …/title).
  */
 export async function nameSessionFromPrompt(
-  workspace: { id: string; title: string | null },
+  workspace: { id: string; ownerId: string; title: string | null },
   prompt: string,
 ): Promise<boolean> {
   const title = titleToSet(workspace, prompt);
   if (!title) return false;
   try {
-    return await setWorkspaceTitleIfUnset(workspace.id, title);
+    return await setWorkspaceTitleIfUnset(workspace.id, workspace.ownerId, title);
   } catch (error) {
     console.error(`Could not title session ${workspace.id}`, error);
     return false;

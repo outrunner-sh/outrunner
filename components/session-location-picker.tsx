@@ -62,7 +62,7 @@ export function SessionLocationMenu({
           onSelect={setLocation}
           icon={<Cloud />}
           label="Cloud"
-          detail="A Runtime Computer, on one of your GitHub repositories"
+          detail="A cloud computer, on one of your GitHub repositories"
         />
         <LocationItem
           value="local"

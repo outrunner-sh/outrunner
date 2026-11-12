@@ -23,12 +23,15 @@ function elapsed(startedAt: string, now: number): string {
 /** An honest queue echo, never an agent message or a delivery receipt. */
 export function QueuedFirstPrompt({ first }: { first: FirstPrompt }) {
   return (
-    <div className="mx-auto w-full max-w-3xl px-5 py-4">
-      <div className="timeline-prompt">
-        <MessageAttachments files={attachmentFiles(first.attachmentIds)} />
-        {first.prompt.trim() && <div>{first.prompt.trim()}</div>}
+    // Scrolls on its own: the conversation body around it clips.
+    <div className="timeline-scroll min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto w-full max-w-3xl px-5 py-4">
+        <div className="timeline-prompt">
+          <MessageAttachments files={attachmentFiles(first.attachmentIds)} />
+          {first.prompt.trim() && <div>{first.prompt.trim()}</div>}
+        </div>
+        <p className="mt-1 text-right text-[11px] text-muted-foreground">Queued · sends when ready</p>
       </div>
-      <p className="mt-1 text-right text-[11px] text-muted-foreground">Queued · sends when ready</p>
     </div>
   );
 }
@@ -41,7 +44,7 @@ export function StartupStatus({ startup }: { startup: SessionStartup }) {
       {startup.stalled ? <Clock className="size-3.5 shrink-0" /> : <Spinner className="size-3.5 shrink-0" />}
       <span className="min-w-0 flex-1">
         {startup.stalled ? "Startup is taking longer than expected" : "Starting your session"}
-        <span className="ml-2 tabular-nums" suppressHydrationWarning>{elapsed(startup.startedAt, now)}</span>
+        <span aria-hidden className="ml-2 tabular-nums" suppressHydrationWarning>{elapsed(startup.startedAt, now)}</span>
       </span>
       <button type="button" onClick={startup.onDetails} className="shrink-0 underline underline-offset-2">Session info</button>
     </div>

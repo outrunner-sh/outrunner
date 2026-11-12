@@ -7,6 +7,7 @@ import { EmailSignIn } from "@/components/email-signin";
 import { SignInButton } from "@/components/signin-button";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { safeRelativePath } from "@/lib/auth/redirect";
+import { githubSignInScopes } from "@/lib/github/legacy-token";
 import { cn } from "@/lib/utils";
 
 /** Human-readable copy for the error codes `/auth/callback` can return. */
@@ -77,7 +78,7 @@ export default async function SignInPage({
             </p>
           )}
           <div className="space-y-2">
-            <SignInButton provider="github" next={target} />
+            <SignInButton provider="github" next={target} githubScopes={githubSignInScopes()} />
             <SignInButton provider="google" next={target} />
           </div>
           <p aria-hidden className="flex items-center gap-3 text-[10px] tracking-wider text-muted-foreground uppercase">

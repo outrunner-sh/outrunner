@@ -17,12 +17,15 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 const DESKTOP_OAUTH_REDIRECT = "http://127.0.0.1:47823";
 
 /**
- * GitHub's scopes: the account login and verified emails, and `repo`, since
- * the token this sign-in mints is the one repository work runs as. Google asks
- * for Supabase's defaults (openid, email, profile): identity alone.
+ * GitHub's scopes: the account login and verified emails, identity alone
+ * (repository access is Settings → Connections → GitHub, the Outrunner GitHub
+ * App's own authorization). The server says otherwise only where sign-in
+ * still keeps a `repo` token (GITHUB_LEGACY_TOKENS=store,
+ * lib/github/legacy-token.ts), through `githubScopes`. Google asks for
+ * Supabase's defaults (openid, email, profile): identity alone.
  */
 const SCOPES: Record<SignInProvider, string | undefined> = {
-  github: "read:user user:email repo",
+  github: "read:user user:email",
   google: undefined,
 };
 
@@ -38,12 +41,12 @@ const PROVIDERS: Record<SignInProvider, { name: string; icon: React.ReactNode }>
  *
  * `link` adds the provider to the signed-in account instead of signing in
  * (Supabase's manual identity linking): how someone who signed in with Google
- * connects GitHub. The callback stores the GitHub token either way.
+ * signs in with GitHub too.
  */
-async function startOAuth(provider: SignInProvider, next: string, link: boolean): Promise<void> {
+async function startOAuth(provider: SignInProvider, next: string, link: boolean, scopes: string | undefined): Promise<void> {
   const supabase = createSupabaseBrowserClient();
   const begin = (options: { redirectTo: string; skipBrowserRedirect?: boolean }) => {
-    const credentials = { provider, options: { ...options, scopes: SCOPES[provider] } };
+    const credentials = { provider, options: { ...options, scopes: scopes ?? SCOPES[provider] } };
     return link ? supabase.auth.linkIdentity(credentials) : supabase.auth.signInWithOAuth(credentials);
   };
 
@@ -80,11 +83,17 @@ export function SignInButton({
   provider = "github",
   next = "/",
   link = false,
+  label,
+  githubScopes,
 }: {
   provider?: SignInProvider;
   next?: string;
   /** Connect the provider to the signed-in account rather than sign in. */
   link?: boolean;
+  /** Overrides the idle label, e.g. "Reconnect GitHub". */
+  label?: string;
+  /** GitHub's scopes as the server has them (githubSignInScopes). */
+  githubScopes?: string;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,7 +103,7 @@ export function SignInButton({
     setLoading(true);
     setError(null);
     try {
-      await startOAuth(provider, next, link);
+      await startOAuth(provider, next, link, provider === "github" ? githubScopes : undefined);
     } catch (error) {
       setError(error instanceof Error ? error.message : `Could not start ${link ? "connecting" : "sign-in"}.`);
       setLoading(false);
@@ -113,7 +122,7 @@ export function SignInButton({
         className="relative flex h-8 w-full items-center justify-center rounded-md border border-border bg-input/30 px-9 text-sm text-foreground transition-colors hover:bg-input/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
       >
         <span className="absolute left-3 flex items-center">{loading ? <Spinner className="size-4" /> : icon}</span>
-        {loading ? `Opening ${name}` : link ? `Connect ${name}` : `Continue with ${name}`}
+        {loading ? `Opening ${name}` : (label ?? (link ? `Connect ${name}` : `Continue with ${name}`))}
       </button>
       {error && <InlineMessage>{error}</InlineMessage>}
     </div>

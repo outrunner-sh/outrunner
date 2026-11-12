@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Check, Circle, Hammer, ImagePlus, ListChecks, MessageSquareText, Plus, Search, Settings2, Square, X } from "lucide-react";
+import { ArrowUp, Check, Circle, Hammer, ImagePlus, ListChecks, MessageSquareText, Plus, Search, Settings2, Square, Video, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -17,8 +17,17 @@ import { ComposerAttachment } from "@/components/attachment-thumbnails";
 import { Spinner } from "@/components/ui/loaders";
 import { InlineMessage } from "@/components/ui/notice";
 import { type PendingAttachment, useAttachments } from "@/hooks/use-attachments";
+import { useNow } from "@/hooks/use-now";
+import { useScreenRecorder } from "@/hooks/use-screen-recorder";
 import { DRAFTS, draftPaintScript, PAGE_ONLY, useDraft, useHydrating } from "@/lib/client/drafts";
-import { attachNotice, isImage, restoreDraft } from "@/lib/runtime/attachments";
+import { attachNotice, isImage, MAX_ATTACHMENTS_PER_MESSAGE, restoreDraft } from "@/lib/runtime/attachments";
+import {
+  RECORDING_LIMIT_MS,
+  RECORDING_WARN_AT_MS,
+  recordingClock,
+  recordingFiles,
+  stoppedNotice,
+} from "@/lib/session/screen-recording";
 import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
 import { CustomModelDialog } from "@/components/custom-model-dialog";
 import {
@@ -253,6 +262,21 @@ export function SessionComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const attachments = useAttachments(key);
+  // A recording of the screen: the video and a few of its frames (the agent
+  // can't watch a video, but sees images). Staged in the draft even while
+  // the session isn't connected, or the composer is gone (a question card
+  // in its place): uploading needs no session, and the recording can't be
+  // made again.
+  const recorder = useScreenRecorder({
+    onRecorded: ({ video, frames, stoppedBy, durationMs }) => {
+      const room = MAX_ATTACHMENTS_PER_MESSAGE - (DRAFTS.get(key)?.attachments.length ?? 0);
+      const { files: recorded, notice: short } = recordingFiles(video, frames, room);
+      attachments.add(recorded);
+      const said = [stoppedNotice(stoppedBy, durationMs), short].filter(Boolean).join(" ");
+      if (said) setNotice(said);
+    },
+    onNotice: setNotice,
+  });
   // Recall (↑/↓ in an empty box, Ctrl+R to search) of the user's prompts.
   const { history, remember } = usePromptHistory(canSend);
   const [recall, setRecall] = useState<Recall | null>(null);
@@ -331,6 +355,9 @@ export function SessionComposer({
   // A prompt of only attachments is legitimate — "here's a screenshot" — and
   // so is one of only comments on the diff.
   const hasSomethingToSend = value.trim() !== "" || readyIds.length > 0 || (comments?.items.length ?? 0) > 0;
+  // Why Send is off beyond the usual: a recording in progress (a message
+  // sent now would go without it), or the caller's reason.
+  const sendBlocked = recorder.recording ? "Stop the recording to send it with your message" : sendDisabledReason;
 
   /** Stage files, or say why they cannot be (attachNotice). */
   function addFiles(files: File[]) {
@@ -347,6 +374,11 @@ export function SessionComposer({
   usePageDrop(allowAttachments, setDragging, addFiles, textareaRef);
 
   function submit() {
+    // A message sent mid-recording would go without it.
+    if (recorder.recording) {
+      setNotice("Stop the recording to send it with your message.");
+      return;
+    }
     if (!canSend || sendDisabledReason || sending || !hasSomethingToSend || uploading || blindModel) return;
     let text = value.trim();
     let mode = modeChoice?.mode;
@@ -773,6 +805,25 @@ export function SessionComposer({
               <Plus />
             </button>
           )}
+          {allowAttachments &&
+            recorder.supported &&
+            (recorder.startedAt !== null ? (
+              <RecordingStop startedAt={recorder.startedAt} onStop={() => void recorder.stop()} />
+            ) : (
+              <button
+                type="button"
+                aria-label="Record screen"
+                title={
+                  attachments.items.length >= MAX_ATTACHMENTS_PER_MESSAGE
+                    ? `Up to ${MAX_ATTACHMENTS_PER_MESSAGE} files per message`
+                    : "Record your screen"
+                }
+                disabled={!canSend || recorder.starting || attachments.items.length >= MAX_ATTACHMENTS_PER_MESSAGE}
+                onClick={() => void recorder.start()}
+              >
+                <Video />
+              </button>
+            ))}
           {modeChoice && <ModeToggle choice={modeChoice} disabled={!canSend} />}
           {modelChoice ? (
             <ModelPicker model={model} choice={modelChoice} uploading={uploading} />
@@ -797,15 +848,38 @@ export function SessionComposer({
           <button
             type="submit"
             className="studio-composer-send"
-            disabled={!canSend || !!sendDisabledReason || sending || !hasSomethingToSend || uploading || blindModel !== null}
+            disabled={!canSend || !!sendBlocked || sending || !hasSomethingToSend || uploading || blindModel !== null}
             aria-label="Send"
-            title={sendDisabledReason ?? (blindModel ? `${blindModel.label} can't see images` : undefined)}
+            title={sendBlocked ?? (blindModel ? `${blindModel.label} can't see images` : undefined)}
           >
             <ArrowUp />
           </button>
         </span>
       </div>
     </form>
+  );
+}
+
+/** A screen recording in progress: how long so far, and Stop. */
+function RecordingStop({ startedAt, onStop }: { startedAt: number; onStop: () => void }) {
+  const elapsed = useNow(1000) - startedAt;
+  // Near the limit, the time it stops at too, so the stop isn't a surprise.
+  const ending = elapsed >= RECORDING_WARN_AT_MS;
+  return (
+    <button
+      type="button"
+      className={cn("studio-composer-recording", ending && "is-ending")}
+      onClick={onStop}
+      title={ending ? `Stops at ${recordingClock(RECORDING_LIMIT_MS)}` : "Stop recording"}
+      aria-label="Stop recording"
+    >
+      <span className="studio-composer-recording-dot" aria-hidden />
+      <span aria-hidden>
+        {recordingClock(elapsed)}
+        {ending && ` of ${recordingClock(RECORDING_LIMIT_MS)}`}
+      </span>
+      Stop
+    </button>
   );
 }
 

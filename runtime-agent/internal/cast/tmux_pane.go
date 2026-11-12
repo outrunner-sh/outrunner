@@ -15,7 +15,7 @@ type tmuxPane struct{ session string }
 
 func (p *tmuxPane) size(ctx context.Context) (cols, rows int, err error) {
 	out, err := tmux.Command(ctx,
-		"display-message", "-p", "-t", p.session, "#{pane_width} #{pane_height}",
+		"display-message", "-p", "-t", tmux.Pane(p.session), "#{pane_width} #{pane_height}",
 	).Output()
 	if err != nil {
 		return 0, 0, err
@@ -40,7 +40,7 @@ func (p *tmuxPane) size(ctx context.Context) (cols, rows int, err error) {
 func (p *tmuxPane) arm(ctx context.Context, fifoPath string) error {
 	cmd := fmt.Sprintf("cat >> '%s'", strings.ReplaceAll(fifoPath, "'", `'\''`))
 	if out, err := tmux.Command(ctx,
-		"pipe-pane", "-O", "-t", p.session, cmd,
+		"pipe-pane", "-O", "-t", tmux.Pane(p.session), cmd,
 	).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux pipe-pane arm: %v: %s", err, out)
 	}
@@ -50,7 +50,7 @@ func (p *tmuxPane) arm(ctx context.Context, fifoPath string) error {
 // disarm closes the pane's pipe (pipe-pane with no command).
 func (p *tmuxPane) disarm(ctx context.Context) error {
 	if out, err := tmux.Command(ctx,
-		"pipe-pane", "-t", p.session,
+		"pipe-pane", "-t", tmux.Pane(p.session),
 	).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux pipe-pane disarm: %v: %s", err, out)
 	}

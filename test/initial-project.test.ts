@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { initialProjectId, lastSessionProjectId } from "@/lib/session/initial-project";
+import { homeProjectId, initialProjectId, lastSessionProjectId } from "@/lib/session/initial-project";
 
 const projects = [{ id: "a" }, { id: "b" }];
 
@@ -50,4 +50,12 @@ test("a most-recent session whose repository is not listed falls back, never pic
   const workspaces = [at("a", "2026-03-01T00:00:00Z"), at("hidden", "2026-03-09T00:00:00Z")];
   assert.equal(lastSessionProjectId(projects, workspaces), undefined);
   assert.equal(lastSessionProjectId([], [at("a", "2026-03-01T00:00:00Z")]), undefined);
+});
+
+test("home starts on the repository a session was just refused in, while it is listed", () => {
+  const workspaces = [at("a", "2026-03-01T00:00:00Z")];
+  assert.equal(homeProjectId(projects, workspaces, "b"), "b");
+  // Gone from the list since: the most recent session's, as without one.
+  assert.equal(homeProjectId(projects, workspaces, "gone"), "a");
+  assert.equal(homeProjectId(projects, workspaces, undefined), "a");
 });

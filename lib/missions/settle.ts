@@ -101,6 +101,27 @@ export function isRunnerBranch(runnerBranch: string, headRef: string): boolean {
   return headRef === runnerBranch || (headRef.startsWith(`${runnerBranch}-`) && headRef.length > runnerBranch.length + 1);
 }
 
+/**
+ * The Runners a branch is of: those whose branch is the longest it's named
+ * after (several only when they're on that same branch, in different orgs'
+ * sessions of one repository). A branch that is exactly a session's own
+ * (`sessionBranches`: any session of the repository, any status, Mission or
+ * not) is only ever its own Runners', never stacked work of a Runner it's
+ * named after: `add-dark-mode-2` is the plain session's on it, not the
+ * Runner's on `add-dark-mode`, now that a taken branch name gets `-2` and
+ * names are a few readable words (lib/session/branch-name.ts).
+ */
+export function runnersOwning<T extends { branch: string }>(
+  runners: readonly T[],
+  headRef: string,
+  sessionBranches: ReadonlySet<string>,
+): T[] {
+  if (sessionBranches.has(headRef)) return runners.filter((runner) => runner.branch === headRef);
+  const named = runners.filter((runner) => isRunnerBranch(runner.branch, headRef));
+  const longest = Math.max(0, ...named.map((runner) => runner.branch.length));
+  return named.filter((runner) => runner.branch.length === longest);
+}
+
 /** Whether every one of a Runner's pull requests is done with, so the Runner
  *  is too: at least one, and none still open. */
 export function allPullRequestsDone(states: readonly ("open" | "merged" | "closed")[]): boolean {

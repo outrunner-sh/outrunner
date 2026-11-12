@@ -9,8 +9,8 @@ const IDENTITIES: readonly GitHubIdentity[] = ["personal", "app"];
 
 /**
  * Who the user's sessions clone, push and open pull requests as
- * (Settings → Account; lib/github/identity.ts): `{ identity: "personal" }`,
- * their own GitHub sign-in, or `"app"`, the Outrunner GitHub App of each
+ * (Settings → Connections; lib/github/identity.ts): `{ identity: "personal" }`,
+ * their own GitHub connection, or `"app"`, the Outrunner GitHub App of each
  * session's org. New sessions take it at once; running ones as their box next
  * asks for a token.
  */

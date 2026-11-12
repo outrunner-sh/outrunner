@@ -10,6 +10,7 @@
 import { toWorkspace } from "@/lib/db/mappers";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { activityNews, errorNews, missionsQuiet, pullRequestNews, type NotificationDraft } from "@/lib/notifications/events";
+import type { PullRequestChange } from "@/lib/session/pull-request-recording";
 import type { ActivityChange } from "@/lib/session/watch";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -70,9 +71,7 @@ export async function notifyActivity(change: ActivityChange, now: number = Date.
 }
 
 /** Pull requests that opened or merged: their news, recorded. */
-export async function notifyPullRequests(
-  changes: Array<{ workspaceId: string; ownerId: string; from: "open" | "closed" | "merged" | null; to: "open" | "closed" | "merged"; number: number }>,
-): Promise<void> {
+export async function notifyPullRequests(changes: PullRequestChange[]): Promise<void> {
   if (changes.length === 0) return;
   const named = await titles(changes.map((c) => c.workspaceId));
   await recordNotifications(

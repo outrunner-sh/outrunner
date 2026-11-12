@@ -188,7 +188,7 @@ export function ReviewChat({ repo, number, canChange }: { repo: string; number: 
   };
 
   const primary = intent === "change" && canChange ? requestChange : () => ask(draft);
-
+  const promptLabel = intent === "change" && canChange ? "What should change?" : "Ask about this PR";
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
@@ -242,7 +242,8 @@ export function ReviewChat({ repo, number, canChange }: { repo: string; number: 
               void primary();
             }
           }}
-          placeholder={intent === "change" && canChange ? "What should change?" : "Ask about this PR"}
+          aria-label={promptLabel}
+          placeholder={promptLabel}
           className="min-h-16 text-[13px]"
           disabled={busy !== null}
         />

@@ -7,7 +7,7 @@
  */
 
 import { closeIntervalOf, isMetered, markStoppedIfReady } from "@/lib/billing/metering-store";
-import { deleteOwnBox, releaseBoxIfUnused } from "@/lib/billing/release-box";
+import { deleteOwnBox, ownBoxDeleted, releaseBoxIfUnused } from "@/lib/billing/release-box";
 import { ownSandboxKeys } from "@/lib/db/credentials";
 import { getRuntimeComputerByProject, getWorkspaceComputer, listWorkspaces, updateRuntimeComputer } from "@/lib/db/repositories";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
@@ -28,6 +28,9 @@ export async function releaseWorkspaceBox(
   provider: ComputerRuntimeProvider,
   workspace: Pick<Workspace, "id" | "ownerId" | "projectId" | "computerId">,
   ended: boolean,
+  /** Delete its own box though the session was only archived: its Snapshot
+   *  is saved, and Restore rebuilds from it. */
+  options: { dropBox?: boolean } = {},
 ): Promise<void> {
   try {
     const computer = await getWorkspaceComputer(workspace);
@@ -47,7 +50,7 @@ export async function releaseWorkspaceBox(
         delete: (sandboxId) => maker.destroyComputerOrThrow(sandboxId),
         closeInterval: closeIntervalOf,
         markDeleted: (computerId) =>
-          updateRuntimeComputer(computerId, {
+          updateRuntimeComputer(computerId, workspace.ownerId, {
             status: "stopped",
             daytonaSandboxId: null,
             agentBaseUrl: null,
@@ -55,7 +58,7 @@ export async function releaseWorkspaceBox(
           }),
         now: () => new Date(),
       });
-    if (ended || !maker.pausesBoxes) {
+    if (ownBoxDeleted({ ended, dropBox: options.dropBox, pausesBoxes: maker.pausesBoxes })) {
       await remove();
       return;
     }

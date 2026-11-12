@@ -7,7 +7,7 @@ import WebSocket, { WebSocketServer } from "ws";
 
 import { EventEmitter } from "node:events";
 
-import { bridge, createSandboxRelay, sendable, type RelayUpstream } from "@/lib/runtime/sandbox/relay";
+import { bridge, createSandboxRelay, sendable, SERVICE_RESTART, type RelayUpstream } from "@/lib/runtime/sandbox/relay";
 import {
   mintRelayTicket,
   NEEV_RELAY_PREFIX,
@@ -255,3 +255,35 @@ test("the relay sends the provider's routing headers upstream, and a browser can
   assert.equal((await nextMessage(ws)).data, `${SANDBOX} 8080`);
   ws.close();
 });
+
+test("closeAll closes every relayed connection with the code given, its agent side too", async () => {
+  const agentClosed: number[] = [];
+  const agentServer = createServer();
+  const agentWss = new WebSocketServer({ noServer: true });
+  agentServer.on("upgrade", (req, socket, head) =>
+    agentWss.handleUpgrade(req, socket, head, (ws) => {
+      ws.on("close", (code) => agentClosed.push(code));
+      ws.send("hello");
+    }),
+  );
+  const agent = `http://127.0.0.1:${await listen(agentServer)}`;
+  const relay = createSandboxRelay({ key: () => KEY, tunnel: async () => ({ base: agent, headers: {} }) }, NEEV_RELAY_PREFIX);
+  const server = createServer((_req, res) => res.writeHead(404).end());
+  server.on("upgrade", (req, socket, head) => {
+    if (!relay(req, socket, head)) socket.end("HTTP/1.1 418 Not Relayed\r\n\r\n");
+  });
+  const port = await listen(server);
+
+  const ws = new WebSocket(relayUrl(port, "events-ws"));
+  await nextMessage(ws);
+  const closed = new Promise<[number, string]>((resolve) => ws.once("close", (code, reason) => resolve([code, reason.toString()])));
+  assert.equal(relay.closeAll(SERVICE_RESTART, "Server restarting"), 1);
+  assert.deepEqual(await closed, [1012, "Server restarting"]);
+  await waitUntil(() => agentClosed.length > 0);
+  assert.deepEqual(agentClosed, [1012]);
+  assert.equal(relay.closeAll(SERVICE_RESTART, "again"), 0);
+});
+
+async function waitUntil(done: () => boolean): Promise<void> {
+  for (let i = 0; i < 100 && !done(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+}
