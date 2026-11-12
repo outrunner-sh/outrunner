@@ -28,7 +28,7 @@ reference unique to the call across every Mission:
 | A Codex call (a Ship on Codex) | `codex:<record uuid>`: the record its token count is put on | `estimated` where `MISSION_COST_BASIS` prices the model, else `unavailable` |
 | A classifier call through OpenRouter | `openrouter:<generation id>` | `reported` when OpenRouter states the call's cost; else `estimated` from its tokens; else `unavailable` |
 | A reply from an agent before usage, or before `callId` | `unattributed:<session>:<record uuid>` | always `unavailable`: its records can't be told apart into calls |
-| A turn cut off unread (box down, paused or archived mid-turn) | `gap:<session>:<box>:<cursor>:from` (and `:to`) | `unavailable`: the stretch since the last read may never be read |
+| A turn cut off unread (box down, paused or archived mid-turn) | `gap:<session>:<box>:<cursor>:<UTC day>` | `unavailable` until the same box's log is read on from that cursor |
 | A call the database refuses for its data | `refused:<reference>` | `unavailable` stand-in: a call too odd to store still isn't $0 |
 | Compute (the family's boxes) | `compute_intervals` | hours, apart; `estimated` dollars only with `MISSION_COMPUTE_RATE` |
 
@@ -57,8 +57,13 @@ recording is skipped with a log rather than stopping Missions' reads.
 **Cut off mid-turn.** When `readSession` finds a family session's turn
 still running but its box down (or the session paused or archived), what it
 did since the last read may never be read. It records a `gap:` entry,
-`unavailable`, at the last read, and at now as well when that's another UTC
-day, so each day the stretch touches says it isn't covered.
+`unavailable`, on each UTC day from the last read to when the box stopped
+(its latest `compute_intervals` end or sighting; now for a box that isn't
+metered), at most 31 days. So each day the stretch touches, and none after,
+says it isn't covered. When the box comes back with its log (the same box,
+started again) and a read goes on from that cursor, the stretch is being
+read after all: the gap's entries are removed and its calls counted as
+usual. A box that's really gone keeps its gap.
 
 **Classifier calls.** `oneShot` (`lib/slack/agent-model.ts`) takes an
 `onAnswer` that hears OpenRouter's answer; pass
@@ -206,8 +211,8 @@ nothing granted to `anon` or `authenticated`), as the other Missions tables.
   doesn't carry: its calls aren't counted yet, so a session's estimate is a
   lower bound where it used subagents.
 - A box lost mid-turn takes its unread calls with it; the period shows a
-  gap (`unavailable`). If its log is later read in full on another box, the
-  calls are counted, but the gap stays: the period stays `unavailable`
+  gap (`unavailable`). If its log is later read on another box (a restore),
+  the calls are counted, but the gap stays: the period stays `unavailable`
   rather than claim coverage it can't prove.
 
 ## Tests

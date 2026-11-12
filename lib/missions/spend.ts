@@ -209,33 +209,56 @@ export function classifierCall(
   };
 }
 
+/** The most UTC days one unread stretch marks: past that, its box was lost
+ *  long ago and the first month says enough. */
+export const MAX_GAP_DAYS = 31;
+
+/** What every gap entry of one cut-off read starts with: its session, box
+ *  and cursor. A later read from that cursor on that box closes them. */
+export function gapPrefix(workspaceId: string, box: string | null, cursor: number): string {
+  return `gap:${workspaceId}:${box ?? "none"}:${cursor}:`;
+}
+
+/** A LIKE pattern for every gap entry under gapPrefix: its `%`, `_` and `\`
+ *  taken literally. */
+export function gapLikePattern(workspaceId: string, box: string | null, cursor: number): string {
+  return `${gapPrefix(workspaceId, box, cursor).replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
+
 /**
  * A family session whose box went down (or that was paused or archived)
- * mid-turn: what it did after its log was last read may never be read, so
- * the calls in between are unknown. Recorded as unavailable entries, at the
- * last read and, when that's another UTC day, now, so every day the unread
- * stretch touches says it isn't covered. Each once per box and cursor.
+ * mid-turn: what it did after its log was last read may not be read, so the
+ * calls in between are unknown until it is. One unavailable entry on each
+ * UTC day from the last read to when its box stopped (`until`), so every day
+ * the unread stretch touches, and none after it, says it isn't covered.
+ * Each once per box, cursor and day; closed (removed) once a read on the
+ * same box goes on from that cursor (spend.deps.ts closeSessionGap).
  */
 export function gapCalls(
   session: { workspaceId: string; missionId: string },
   lastRead: { box: string | null; cursor: number; at: string | null },
-  now: Date = new Date(),
+  until: Date,
 ): UsageCall[] {
-  const from = validTime(lastRead.at ?? undefined) ?? now.toISOString();
-  const ends = spendPeriod("day", new Date(from)).start.getTime() === spendPeriod("day", now).start.getTime() ? [from] : [from, now.toISOString()];
-  return ends.map((at, i) => ({
-    usageRef: fitRef(`gap:${session.workspaceId}:${lastRead.box ?? "none"}:${lastRead.cursor}:${i === 0 ? "from" : "to"}`),
-    missionId: session.missionId,
-    workspaceId: session.workspaceId,
-    source: "session",
-    occurredAt: at,
-    model: null,
-    ...NO_TOKENS,
-    coverage: "unavailable",
-    usdReported: null,
-    usdEstimated: null,
-    costBasis: null,
-  }));
+  const from = new Date(validTime(lastRead.at ?? undefined) ?? until.toISOString());
+  const end = until > from ? until : from;
+  const prefix = gapPrefix(session.workspaceId, lastRead.box, lastRead.cursor);
+  const calls: UsageCall[] = [];
+  for (let day = spendPeriod("day", from).start; day <= end && calls.length < MAX_GAP_DAYS; day = new Date(day.getTime() + DAY_MS)) {
+    calls.push({
+      usageRef: `${prefix}${day.toISOString().slice(0, 10)}`,
+      missionId: session.missionId,
+      workspaceId: session.workspaceId,
+      source: "session",
+      occurredAt: (day > from ? day : from).toISOString(),
+      model: null,
+      ...NO_TOKENS,
+      coverage: "unavailable",
+      usdReported: null,
+      usdEstimated: null,
+      costBasis: null,
+    });
+  }
+  return calls;
 }
 
 /** Postgres refused the data itself (classes 22 and 23: a bad value, a

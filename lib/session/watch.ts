@@ -19,7 +19,7 @@ import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { resolveProvider } from "@/lib/runtime/resolve";
 import { toRuntimeComputer, toWorkspace } from "@/lib/db/mappers";
 import { notifyActivity } from "@/lib/notifications/record";
-import { recordSessionCalls, recordSessionGap } from "@/lib/missions/spend.deps";
+import { closeSessionGap, recordSessionCalls, recordSessionGap } from "@/lib/missions/spend.deps";
 import { readStream } from "@/lib/session/event-stream";
 import { foldEvents, IDLE, type TurnState } from "@/lib/session/turn-state";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -116,6 +116,9 @@ export async function readSession(workspaceId: string): Promise<ActivityChange |
   // failure leaves them to be read again, and each call counts once however
   // often it's read (docs/mission-spend.md).
   await recordSessionCalls(workspace, read.events);
+  // Read on from where a turn cut off (settled idle) left it, on the same
+  // box: that stretch is being read after all.
+  if (sameBox && activity?.stream_box && before?.turn === "idle") await closeSessionGap(workspace, activity.stream_box, cursor);
   // From the start of a log, the state starts over, but a reply already
   // known stays known (its unread mark mustn't come back on a new box).
   const from = sameBox && before ? before : { ...IDLE, repliedAt: before?.repliedAt ?? null, replyPreview: before?.replyPreview ?? null };

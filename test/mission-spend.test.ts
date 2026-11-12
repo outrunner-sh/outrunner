@@ -12,6 +12,8 @@ import {
   callsFromEvents,
   classifierCall,
   gapCalls,
+  gapLikePattern,
+  gapPrefix,
   isDataError,
   missionOf,
   spendPeriod,
@@ -395,17 +397,34 @@ test("what doesn't fit the table is fitted: a long call id hashed (still one per
   assert.equal(call.model?.length, 200);
 });
 
-test("a turn cut off unread is an unknown stretch, on each day it touches, once per box and cursor", () => {
-  const same = gapCalls(session, { box: "sb-1", cursor: 42, at: "2026-11-12T09:00:00Z" }, NOW);
+test("a turn cut off unread is unknown on each UTC day from the last read to when its box stopped, and no later", () => {
+  const sameDay = gapCalls(session, { box: "sb-1", cursor: 42, at: "2026-11-12T09:00:00Z" }, new Date("2026-11-12T09:30:00Z"));
   assert.deepEqual(
-    same.map((c) => [c.usageRef, c.occurredAt, c.coverage, c.usdEstimated]),
-    [[`gap:${SHIP}:sb-1:42:from`, "2026-11-12T09:00:00.000Z", "unavailable", null]],
+    sameDay.map((c) => [c.usageRef, c.occurredAt, c.coverage, c.usdEstimated]),
+    [[`gap:${SHIP}:sb-1:42:2026-11-12`, "2026-11-12T09:00:00.000Z", "unavailable", null]],
   );
-  const across = gapCalls(session, { box: "sb-1", cursor: 42, at: "2026-11-11T23:50:00Z" }, NOW);
-  assert.deepEqual(across.map((c) => c.occurredAt), ["2026-11-11T23:50:00.000Z", NOW.toISOString()]);
-  // Never read at all: from now.
-  assert.deepEqual(gapCalls(session, { box: null, cursor: 0, at: null }, NOW).map((c) => c.usageRef), [`gap:${SHIP}:none:0:from`]);
+  // Read on Tuesday night, stopped on Friday: Tuesday to Friday, a day in between included.
+  const across = gapCalls(session, { box: "sb-1", cursor: 7, at: "2026-11-10T23:50:00Z" }, new Date("2026-11-13T02:00:00Z"));
+  assert.deepEqual(across.map((c) => c.occurredAt), [
+    "2026-11-10T23:50:00.000Z",
+    "2026-11-11T00:00:00.000Z",
+    "2026-11-12T00:00:00.000Z",
+    "2026-11-13T00:00:00.000Z",
+  ]);
+  // Never read: from when it stopped. A stop clock behind the read: the read's day alone.
+  assert.deepEqual(gapCalls(session, { box: null, cursor: 0, at: null }, NOW).map((c) => c.usageRef), [`gap:${SHIP}:none:0:2026-11-12`]);
+  assert.equal(gapCalls(session, { box: "b", cursor: 1, at: "2026-11-12T10:00:00Z" }, new Date("2026-11-12T09:00:00Z")).length, 1);
+  // A box lost for months marks the first month, no more.
+  assert.equal(gapCalls(session, { box: "b", cursor: 1, at: "2026-01-01T00:00:00Z" }, NOW).length, 31);
   // It makes the day unavailable.
-  const day = summary({ totals: { ...noTotals, reportedUsd: 1, reportedCalls: 1, unavailableCalls: same.length } });
+  const day = summary({ totals: { ...noTotals, reportedUsd: 1, reportedCalls: 1, unavailableCalls: sameDay.length } });
   assert.deepEqual([day.models.coverage, day.models.usd, day.models.knownUsd], ["unavailable", null, 1]);
+});
+
+test("a gap is found again by its session, box and cursor, whatever its box id holds", () => {
+  assert.equal(gapPrefix(SHIP, "sb-1", 42), `gap:${SHIP}:sb-1:42:`);
+  assert.equal(gapLikePattern(SHIP, "sb_1%", 4), `gap:${SHIP}:sb\\_1\\%:4:%`);
+  for (const c of gapCalls(session, { box: "sb-1", cursor: 42, at: "2026-11-10T00:00:00Z" }, NOW)) {
+    assert.ok(c.usageRef.startsWith(gapPrefix(SHIP, "sb-1", 42)));
+  }
 });

@@ -44,6 +44,10 @@ create table if not exists mission_usage (
 );
 
 create index if not exists mission_usage_mission_time_idx on mission_usage (mission_id, occurred_at);
+-- A session's open gaps (lib/missions/spend.ts gapCalls), looked for on each
+-- read that could close one.
+create index if not exists mission_usage_gaps_idx on mission_usage (workspace_id)
+  where coverage = 'unavailable' and usage_ref like 'gap:%';
 
 -- Record calls (a JSON array of them), each once. A call seen again keeps its
 -- Mission and session, and takes the newer reading only if it says more:

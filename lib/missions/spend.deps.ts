@@ -11,6 +11,7 @@ import {
   callsFromEvents,
   classifierCall,
   gapCalls,
+  gapLikePattern,
   missionOf,
   type MissionSpend,
   type OpenRouterAnswer,
@@ -92,8 +93,9 @@ export async function recordSessionCalls(
 /**
  * A family session's turn was cut off unread (lib/session/watch.ts settle: its
  * box went down, or it was paused or archived, mid-turn): mark the stretch
- * since its last read as unknown (gapCalls). Never throws: the session's own
- * state is settled already, and a failure here is logged.
+ * from its last read to when its box stopped as unknown (gapCalls). Never
+ * throws: the session's own state is settled already, and a failure here is
+ * logged.
  */
 export async function recordSessionGap(
   workspace: { id: string; kind?: string | null; parentMissionId?: string | null },
@@ -101,9 +103,50 @@ export async function recordSessionGap(
 ): Promise<void> {
   const missionId = missionOf(workspace);
   if (!missionId) return;
-  await recordCalls(gapCalls({ workspaceId: workspace.id, missionId }, lastRead)).catch((error: unknown) => {
+  try {
+    const until = (lastRead.box && (await boxStoppedAt(lastRead.box))) || new Date();
+    await recordCalls(gapCalls({ workspaceId: workspace.id, missionId }, lastRead, until));
+  } catch (error) {
     if (!isMissingFunction(error)) console.error(`Mission spend: couldn't mark ${workspace.id}'s unread stretch`, error);
-  });
+  }
+}
+
+/** When a box last ran, as metering saw it: its latest interval's end, or
+ *  last sighting while open. Null for a box not metered (a user's own). */
+async function boxStoppedAt(sandboxId: string): Promise<Date | null> {
+  const { data, error } = await db()
+    .from("compute_intervals")
+    .select("ended_at, last_seen_at")
+    .eq("sandbox_id", sandboxId)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? new Date(data.ended_at ?? data.last_seen_at) : null;
+}
+
+/**
+ * A read of a family session went on from where a cut-off one stopped, on the
+ * same box (its log still there): the stretch it marked unknown is being read
+ * after all, so its gap entries go. A read cut off again marks a new gap from
+ * its own cursor. Never throws: a gap left is only too cautious.
+ */
+export async function closeSessionGap(
+  workspace: { id: string; kind?: string | null; parentMissionId?: string | null },
+  box: string,
+  cursor: number,
+): Promise<void> {
+  const missionId = missionOf(workspace);
+  if (!missionId) return;
+  const pattern = gapLikePattern(workspace.id, box, cursor);
+  const { error } = await db()
+    .from("mission_usage")
+    .delete()
+    .eq("workspace_id", workspace.id)
+    .eq("mission_id", missionId)
+    .eq("coverage", "unavailable")
+    .like("usage_ref", pattern);
+  if (error && !isMissingFunction(error)) console.error(`Mission spend: couldn't close ${workspace.id}'s gap`, error);
 }
 
 /** PostgREST's "no such function" (PGRST202), or Postgres' (42883). */

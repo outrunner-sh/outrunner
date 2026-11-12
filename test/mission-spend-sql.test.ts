@@ -14,6 +14,8 @@ import { readdirSync } from "node:fs";
 import { after, before, test } from "node:test";
 import { promisify } from "node:util";
 
+import { gapLikePattern, gapPrefix } from "@/lib/missions/spend";
+
 const server = process.env.MISSIONS_PG;
 const skip = server ? false : "MISSIONS_PG isn't set";
 const run = promisify(execFile);
@@ -187,6 +189,19 @@ test("totals keep coverages apart, and count what's unknown", { skip }, () => {
   ]);
   assert.deepEqual(totals(m, "2026-11-12", "2026-11-13"), { reported: 0.5, reportedCalls: 1, estimated: 0.5, estimatedCalls: 2, unavailable: 1 });
   assert.equal(psql(`select cost_bases from mission_usage_totals('${m}', '2026-11-12', '2026-11-13')`), "{b1,b2}");
+});
+
+test("closing a gap removes that read's entries only, its box id taken literally", { skip }, () => {
+  const m = mission();
+  const s = ship(m);
+  const gap = (box: string, cursor: number, day: string) => ({ usage_ref: `${gapPrefix(s, box, cursor)}${day}`, mission_id: m, workspace_id: s, coverage: "unavailable" as const });
+  record([gap("sb_1", 4, "2026-11-11"), gap("sb_1", 4, "2026-11-12"), gap("sbX1", 4, "2026-11-12"), gap("sb_1", 40, "2026-11-12")]);
+  psql(`delete from mission_usage where workspace_id = '${s}' and coverage = 'unavailable' and usage_ref like '${gapLikePattern(s, "sb_1", 4)}'`);
+  assert.deepEqual(
+    psql(`select usage_ref from mission_usage where workspace_id = '${s}'`).split("\n").sort(),
+    [`${gapPrefix(s, "sb_1", 40)}2026-11-12`, `${gapPrefix(s, "sbX1", 4)}2026-11-12`].sort(),
+  );
+  assert.equal(psql(`select count(*) from pg_indexes where indexname = 'mission_usage_gaps_idx'`), "1");
 });
 
 // ---------------------------------------------------------------------------
