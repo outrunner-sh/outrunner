@@ -195,3 +195,18 @@ test("the relay sends the provider's routing headers upstream, and a browser can
   assert.equal((await nextMessage(ws)).data, `${SANDBOX} 8080`);
   ws.close();
 });
+
+test("a host the user named is connected to through the resolver the tunnel gives, which can refuse it", async () => {
+  const port = await relayServer(async () => ({
+    base: "http://rebinds.example",
+    headers: {},
+    lookup: (_host, _options, callback) => callback(new Error("The URL's host points at a private address."), "", 0),
+  }));
+  const logged = console.error;
+  console.error = () => {};
+  try {
+    assert.equal(await upgradeStatus(relayUrl(port, "pty")), 502);
+  } finally {
+    console.error = logged;
+  }
+});

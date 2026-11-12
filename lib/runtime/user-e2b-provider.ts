@@ -63,7 +63,11 @@ export function userE2bTemplate(stored: StoredE2b): string {
 /** The Runtime Computer in a user's own E2B, on their key (Settings →
  *  Sandbox). `e2b` reads it when a box is first reached, once per provider;
  *  a self-hosted E2B's hosts are checked to be public then, as they were
- *  when saved, since a name can point anywhere later. */
+ *  when saved, since a name can point anywhere later. Best effort for the
+ *  calls made from here (the SDK's, control calls, previews): each resolves
+ *  the name again as it connects, so DNS that answers public for the check
+ *  and private after (rebinding) gets past it. The browser relay, a long-
+ *  lived connection, resolves public-only as it connects (server.ts). */
 export class UserE2bRuntimeProvider extends ComputerRuntimeProvider {
   constructor(e2b: () => Promise<StoredE2b | null>) {
     let read: Promise<StoredE2b> | null = null;

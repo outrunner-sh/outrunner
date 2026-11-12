@@ -20,6 +20,7 @@ import { GATE_PATH, GATE_SECRET_ENV, GATE_SECRET_HEADER } from "./lib/previews/w
 import { createSandboxRelay, neevRelayDeps } from "./lib/runtime/sandbox/relay.ts";
 import { E2B_RELAY_PREFIX, NEEV_RELAY_PREFIX, relayKey, USER_E2B_RELAY_PREFIX } from "./lib/runtime/sandbox/relay-ticket.ts";
 import { e2bRoute } from "./lib/runtime/sandbox/e2b-route.ts";
+import { publicOnlyLookup } from "./lib/api/webhook-lookup.ts";
 import { GCP_RELAY_PREFIX, gcpRelayKey } from "./lib/runtime/gcp/relay-ticket.ts";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -71,7 +72,8 @@ const userE2bRelay = createSandboxRelay({
     if (!response.ok) throw new Error("The E2B relay could not reach its sandbox.");
     const route = await response.json() as { base: string; headers: Record<string, string> };
     if (new URL(route.base).protocol !== "https:") throw new Error("Invalid E2B relay target.");
-    return route;
+    // The user named this host: its connection resolves it public-only.
+    return { ...route, lookup: publicOnlyLookup };
   },
 }, USER_E2B_RELAY_PREFIX);
 const relays = [neevRelay, gcpRelay, e2bRelay, userE2bRelay];
