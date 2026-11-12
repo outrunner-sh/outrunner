@@ -22,7 +22,9 @@
 -- The new parameter changes every signature, and `create or replace` on a
 -- changed signature adds an overload rather than replacing, so the old ones
 -- are dropped first: otherwise they'd stay granted to authenticated.
--- Otherwise the bodies are 20261106100000's, auth.uid() -> acting_user.
+-- Otherwise the bodies are 20261106100000's, auth.uid() -> acting_user, with
+-- 20261112100000_claim_keeps_ended_box's change kept: taking over an ended box
+-- leaves daytona_sandbox_id as it is.
 -- ---------------------------------------------------------------------------
 
 drop function if exists claim_workspace_computer(uuid, text, text, integer);
@@ -110,7 +112,6 @@ begin
       update runtime_computers
       set status = 'provisioning',
           agent_secret = requested_agent_secret,
-          daytona_sandbox_id = null,
           agent_base_url = null,
           provision_timings = null,
           error_message = null
@@ -191,7 +192,6 @@ begin
       update runtime_computers
       set status = 'provisioning',
           agent_secret = requested_agent_secret,
-          daytona_sandbox_id = null,
           agent_base_url = null,
           provision_timings = null,
           error_message = null

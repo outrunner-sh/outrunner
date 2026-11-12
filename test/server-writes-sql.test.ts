@@ -119,6 +119,10 @@ before(() => {
       constraint pull_requests_owner_workspace_fkey foreign key (owner_id, workspace_id)
         references workspaces (owner_id, id) on delete cascade
     );
+    -- 20261112100000 indexes it.
+    create table compute_intervals (
+      id uuid primary key default gen_random_uuid(), computer_id uuid, sandbox_id text, started_at timestamptz not null default now()
+    );
     alter table pull_requests enable row level security;
     create policy pull_requests_owner_all on pull_requests
       for all using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
@@ -140,9 +144,10 @@ before(() => {
     insert into pull_requests (id, owner_id, workspace_id, project_id, github_number, head_branch)
       values ('${PULL}', '${OWNER}', '${WORKSPACE}', '${PROJECT}', 7, 'feature');
   `);
-  // As production has them: the claims of 20261106100000, then these two.
+  // As production has them: the claims of 20261106100000 and 20261112100000, then these two.
   for (const file of [
     "20261106100000_workspaces_server_writes.sql",
+    "20261112100000_claim_keeps_ended_box.sql",
     "20261112110000_pull_requests_server_writes.sql",
     "20261112120000_server_box_claims.sql",
   ]) {
@@ -245,4 +250,16 @@ test("SQL: the server's claim is for the user it names, in an org they're still 
     /concurrent cloud sessions/,
   );
   as("service_role", OWNER, `select check_org_box_cap('${ORG}', '${OWNER}', 2)`);
+});
+
+test("SQL: the server's claim on an ended box still names that box (20261112100000 kept)", { skip }, () => {
+  for (const status of ["stopped", "error"]) {
+    sql(`update runtime_computers set status = '${status}', daytona_sandbox_id = 'box-kept' where workspace_id = '${WORKSPACE}'`);
+    assert.equal(
+      as("service_role", OWNER, `select should_provision from claim_workspace_computer('${OWNER}', '${WORKSPACE}', 's', 'v1', null)`),
+      "t",
+    );
+    assert.equal(sql(`select status || ':' || coalesce(daytona_sandbox_id, '-') from runtime_computers where workspace_id = '${WORKSPACE}'`), "provisioning:box-kept");
+  }
+  sql(`update runtime_computers set status = 'ready' where workspace_id = '${WORKSPACE}'`);
 });
