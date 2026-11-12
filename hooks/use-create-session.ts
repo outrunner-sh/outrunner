@@ -199,9 +199,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       refusePendingSession(id, error);
       forgetFirstPrompt(tabStorage(), id);
       FAILED_CREATE.set({ projectId: selected.id, prompt, attachmentIds, message: error, action, unsent });
-      // Still on its page: back to this screen, which says why. Elsewhere,
-      // the screen says so when next opened.
-      // On the repository it was refused in, where the screen says why.
+      // Still on its page: back to this screen, on the repository it was
+      // refused in, which says why. Elsewhere, home opens on that repository
+      // while the refusal stands (homeProjectId) and says so there.
       if (window.location.pathname === href) router.replace(`/new?project=${encodeURIComponent(selected.id)}`);
     };
     return (async () => {
