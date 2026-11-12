@@ -55,17 +55,35 @@ export async function userE2bSdkOptions(
  *  One per proxy URL, kept. */
 export async function proxiedFetch(proxyUrl: string): Promise<typeof fetch> {
   let made = PROXIED.get(proxyUrl);
-  if (!made) {
+  if (made) {
+    // Most recently used last, so the oldest is the one let go.
+    PROXIED.delete(proxyUrl);
+  } else {
     made = import("undici").then(({ fetch: undiciFetch, ProxyAgent }) => {
       const dispatcher = new ProxyAgent({ uri: proxyUrl, proxyTunnel: true });
-      return ((input: RequestInfo | URL, init?: RequestInit) =>
+      const fetchVia = ((input: RequestInfo | URL, init?: RequestInit) =>
         undiciFetch(input as never, { ...(init as object), dispatcher } as never)) as unknown as typeof fetch;
+      return { fetch: fetchVia, close: () => dispatcher.close() };
     });
-    PROXIED.set(proxyUrl, made);
   }
-  return made;
+  PROXIED.set(proxyUrl, made);
+  // Bounded: each user's hosts make their own, and one saved over is never asked for again.
+  while (PROXIED.size > MAX_PROXIED) {
+    const [oldest, entry] = PROXIED.entries().next().value!;
+    PROXIED.delete(oldest);
+    void entry.then((e) => e.close()).catch(() => {});
+  }
+  return (await made).fetch;
 }
-const PROXIED = new Map<string, Promise<typeof fetch>>();
+const MAX_PROXIED = 32;
+const PROXIED = new Map<string, Promise<{ fetch: typeof fetch; close: () => Promise<void> }>>();
+
+/** Close every proxied fetch's connections: when the egress proxy stops
+ *  (e2b-egress.ts stopE2bEgress), whose port they all point at. */
+export function closeProxiedFetches(): void {
+  for (const entry of PROXIED.values()) void entry.then((e) => e.close()).catch(() => {});
+  PROXIED.clear();
+}
 
 /** The egress proxy for a user's self-hosted E2B; none for E2B's cloud. */
 export async function userE2bProxy(target: { apiUrl?: string; sandboxUrl?: string }): Promise<string | undefined> {
