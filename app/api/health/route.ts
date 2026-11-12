@@ -8,6 +8,7 @@ import { checkDaytona, checkOpenRouter } from "@/lib/health/dependencies";
 import { isDraining } from "@/lib/observability/drain";
 import { optionalEnv, providerName } from "@/lib/env";
 import { platformComputerProviders } from "@/lib/runtime/provider";
+import { countUnrecordedComputers } from "@/lib/runtime/unrecorded-computers";
 import { keySource } from "@/lib/openrouter/keys";
 import { codexCliVersion, probeCodexSchema } from "@/lib/codex/rollout";
 import {
@@ -145,6 +146,9 @@ export async function GET(request: Request) {
       // Every backend of Outrunner's this deployment still manages boxes on:
       // its own, and the one it moved from while that one's key is set.
       managedProviders: managedProviders(),
+      // Rows naming a box with no provider recorded: read as the deployment's,
+      // so 0 before RUNTIME_PROVIDER changes (scripts/assign-computer-providers.ts).
+      unrecordedProviderComputers: configured.supabaseServiceRole ? await countUnrecordedComputers() : "not configured",
       configured,
       database,
       codex,

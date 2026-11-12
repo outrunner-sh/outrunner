@@ -121,7 +121,7 @@ test("a box setup that never finishes times out", async () => {
  *  to it in `log`. `storageReset`: the box comes back without its user. */
 function backendWithBox(
   phase: string,
-  opts: { readyFails?: boolean; gone?: boolean; storageReset?: boolean; backstopped?: boolean } = {},
+  opts: { readyFails?: boolean; gone?: boolean; storageReset?: boolean; crashReset?: boolean; backstopped?: boolean } = {},
 ) {
   const log: string[] = [];
   const sandbox = {
@@ -129,7 +129,7 @@ function backendWithBox(
     phase,
     connectUrl: "https://sb-1.example.test",
     resources: { cpu: 4, memory_gb: 8 },
-    lastCrash: null,
+    lastCrash: opts.crashReset ? { reason: "OOMKilled", at: "2026-11-12T10:00:00Z", storage_reset: true } : null,
     data: opts.backstopped ? { idle_timeout_seconds: IDLE_BACKSTOP_SECONDS, on_idle: "pause" } : { idle_timeout_seconds: 0 },
     resume: async () => void log.push("resume"),
     refresh: async () => sandbox,
@@ -197,17 +197,25 @@ test("a box restarting after a crash is waited for and kept, with the session's 
     const crashed = backendWithBox("NotReady", { backstopped: true });
     assert.equal((await crashed.backend.restore("sb-1"))?.id, "sb-1");
     assert.deepEqual(crashed.log, ["ready"], "not resumed, paused or replaced");
-    // One that doesn't come back in time is replaced, and isn't paused.
+    // One that doesn't come back in time is replaced, and paused: never left
+    // to come back later running with no row naming it.
     const stuck = backendWithBox("NotReady", { readyFails: true });
     assert.equal(await stuck.backend.restore("sb-1"), null);
-    assert.deepEqual(stuck.log, []);
+    assert.deepEqual(stuck.log, ["pause"]);
   }));
 
-test("a box that came back with its storage reset is deleted and replaced", () =>
+test("a box Neev says came back with its storage reset is deleted and replaced", () =>
+  withKey(async () => {
+    const { backend, log } = backendWithBox("Paused", { storageReset: true, crashReset: true });
+    assert.equal(await backend.restore("sb-1"), null);
+    assert.deepEqual(log, ["resume", "ready", "delete"]);
+  }));
+
+test("a box whose user can't be found, without Neev saying its storage was reset, is only paused", () =>
   withKey(async () => {
     const { backend, log } = backendWithBox("Paused", { storageReset: true });
     assert.equal(await backend.restore("sb-1"), null);
-    assert.deepEqual(log, ["resume", "ready", "delete"]);
+    assert.deepEqual(log, ["resume", "ready", "pause"], "its disk is kept: never deleted on one probe");
   }));
 
 test("a box still pausing is a failure to retry, never a new box that leaves its files behind", async () => {

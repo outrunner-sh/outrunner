@@ -182,12 +182,18 @@ conversation WebSockets through `/relay/neev/` on this domain. That is why
    All steps should pass. Pause and resume must keep the file.
 3. **Rows from before providers were recorded.** A `runtime_computers` row
    with a null `provider` is read as the deployment's. After the switch it
-   would be taken for a Neev box. Check, and if there are any, mark them
-   Daytona's *before* switching (SQL editor, service role):
-   ```sql
-   select status, count(*) from runtime_computers where provider is null group by 1;
-   update runtime_computers set provider = 'daytona' where provider is null;
+   would be taken for a Neev box even when it's Daytona's: asked of Neev,
+   read as gone, and left running unmetered. Production ran Neev, then
+   Daytona, before providers were recorded, so they can't all be assumed to
+   be Daytona's. Ask both which has each box, then write it:
+   ```bash
+   node --experimental-strip-types --import ./scripts/test-loader.mjs scripts/assign-computer-providers.ts          # dry run
+   node --experimental-strip-types --import ./scripts/test-loader.mjs scripts/assign-computer-providers.ts --apply
    ```
+   (with the prod Supabase service role, `DAYTONA_API_KEY` and the `NEEV_*`
+   keys in the environment). The authenticated `/api/health` reports
+   `unrecordedProviderComputers`. Go on only when it is 0, or the rows left
+   name boxes neither provider has.
 4. **Secrets** (`cd outrunner/cloudflare`):
    ```bash
    pnpm dlx wrangler secret put NEEV_API_KEY       # sk-nc-…, Resource Type "Sandboxes"
@@ -203,7 +209,8 @@ conversation WebSockets through `/relay/neev/` on this domain. That is why
 6. **Verify.**
    - `curl -H "authorization: Bearer $BILLING_CRON_SECRET" https://app.outrunner.sh/api/health`
      reports `provider: "neev"`, `configured.neev: true`,
-     `configured.daytona: true` and `managedProviders: ["neev", "daytona"]`.
+     `configured.daytona: true`, `managedProviders: ["neev", "daytona"]` and
+     `unrecordedProviderComputers: 0`.
    - A new session starts. Its `runtime_computers` row has `provider = 'neev'`,
      and Neev's console shows `outrunner-claude-<tag>-<id>`.
    - An existing session still opens. Its box resumes on Daytona.

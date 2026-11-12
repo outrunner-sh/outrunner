@@ -193,8 +193,9 @@ export class NeevBackend implements SandboxBackend {
     if (sandbox.phase === "Pausing") throw new Error(`Neev box ${id} is still pausing; try again in a minute`);
     const recovering = sandbox.phase === "NotReady" || sandbox.phase === "Unknown";
     if (sandbox.phase !== "Paused" && sandbox.phase !== "Ready" && sandbox.phase !== "Pending" && !recovering) {
-      // Not one Outrunner paused: its state lost (RestoreFailed). A new box, as before pausing existed, rather than retrying
-      // one that won't come back.
+      // Not one Outrunner paused: its state lost (RestoreFailed). A new box,
+      // as before pausing existed, rather than retrying one that won't come
+      // back.
       console.error(`Neev box ${id} is ${sandbox.phase}, not paused; starting a new one`);
       return null;
     }
@@ -206,16 +207,29 @@ export class NeevBackend implements SandboxBackend {
       } catch (error) {
         if (!recovering) throw error;
         console.error(`Neev box ${id} did not recover from ${sandbox.phase}; starting a new one`, error);
+        // Paused, not left: no row will name it once the new box is up, so
+        // should Neev bring it back later, nothing would meter or pause it
+        // (and one made before the backstop has no idle limit). Its disk is
+        // kept for the orphan sweep or an operator.
+        await this.setAside(id);
         return null;
       }
       const conn = this.connection(sandbox);
       const runtime = new SandboxRuntime(conn);
       if (!(await prepared(runtime))) {
-        // Restarted with an empty disk (Neev's last_crash.storage_reset): the
-        // tools, the box user and the sessions' files are gone, so it can't
-        // host them. Deleted, and a new box made in its place.
-        console.error(`Neev box ${id} lost its storage (last crash: ${JSON.stringify(sandbox.lastCrash)}); starting a new one`);
-        await this.delete(id).catch((error: unknown) => console.error(`Could not delete Neev box ${id}`, error));
+        // No box user: it can't host the sessions, so a new box is made in
+        // its place. Deleted only when Neev itself says its storage was reset
+        // (the files are gone either way); a probe that failed for another
+        // reason, maybe a hiccup just after the resume, must never cost a
+        // session its files, so that box is only paused, its disk kept for
+        // the orphan sweep or an operator.
+        const reset = sandbox.lastCrash?.storage_reset === true;
+        console.error(
+          `Neev box ${id} has no ${BOX_USER} user (last crash: ${JSON.stringify(sandbox.lastCrash)}); ` +
+            `${reset ? "deleting it" : "pausing it"} and starting a new one`,
+        );
+        if (reset) await this.delete(id).catch((error: unknown) => console.error(`Could not delete Neev box ${id}`, error));
+        else await this.setAside(id);
         return null;
       }
       // A box made before the backstop gets it as it comes back.
@@ -227,6 +241,12 @@ export class NeevBackend implements SandboxBackend {
       if (resumed) await this.pause(id).catch((pauseError: unknown) => console.error(`Could not pause box ${id} again`, pauseError));
       throw error;
     }
+  }
+
+  /** Pause a box restore gave up on, best effort: never left running with
+   *  no row naming it. */
+  private async setAside(id: string): Promise<void> {
+    await this.pause(id).catch((error: unknown) => console.error(`Could not pause Neev box ${id}, given up on`, error));
   }
 
   async delete(id: string): Promise<void> {

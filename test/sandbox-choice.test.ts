@@ -188,3 +188,11 @@ test("only a stopped computer the same provider made is a box to restore from", 
   assert.equal(endedBoxOf({ ...stopped, provider: "neev" }, "user-modal"), undefined);
   assert.equal(endedBoxOf(null, "user-modal"), undefined);
 });
+
+test("a box with no provider recorded is assigned only where exactly one provider has it", async () => {
+  const { providerOfBox } = await import("@/lib/runtime/unrecorded-computers");
+  assert.equal(providerOfBox({ daytona: true, neev: false }), "daytona");
+  assert.equal(providerOfBox({ daytona: false, neev: true }), "neev");
+  assert.equal(providerOfBox({ daytona: false, neev: false }), null, "gone everywhere: left as is");
+  assert.equal(providerOfBox({ daytona: true, neev: true }), null, "both claim it: an operator decides");
+});
