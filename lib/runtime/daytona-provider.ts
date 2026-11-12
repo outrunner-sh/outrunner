@@ -1,5 +1,6 @@
 import { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { DaytonaBackend } from "@/lib/runtime/sandbox/daytona";
+import { SandboxSetupError } from "@/lib/runtime/sandbox-setup-error";
 
 /** The Runtime Computer on Daytona sandboxes (RUNTIME_PROVIDER=daytona). */
 export class DaytonaRuntimeProvider extends ComputerRuntimeProvider {
@@ -9,7 +10,7 @@ export class DaytonaRuntimeProvider extends ComputerRuntimeProvider {
 }
 
 /** The key a user's own Daytona is reached on is missing or unreadable. */
-export class NoDaytonaKeyError extends Error {
+export class NoDaytonaKeyError extends SandboxSetupError {
   constructor() {
     super("The stored Daytona credential is unavailable. Ask your deployment administrator to check runtime configuration.");
     this.name = "NoDaytonaKeyError";

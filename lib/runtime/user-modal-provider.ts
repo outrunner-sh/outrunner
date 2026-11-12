@@ -1,8 +1,9 @@
 import { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { ModalBackend, type ModalToken } from "@/lib/runtime/sandbox/modal";
+import { SandboxSetupError } from "@/lib/runtime/sandbox-setup-error";
 
 /** The token a user's own Modal is reached on is missing or unreadable. */
-export class NoModalTokenError extends Error {
+export class NoModalTokenError extends SandboxSetupError {
   constructor() {
     super("The stored Modal credential is unavailable. Ask your deployment administrator to check runtime configuration.");
     this.name = "NoModalTokenError";

@@ -95,7 +95,7 @@ export type MeteredComputerRow = Pick<
  *  supabase/migrations/20261019140000_plan_box_limits.sql; keep them
  *  together. */
 export function isLiveMeteredComputer(computer: MeteredComputerRow, now: Date): boolean {
-  if (computer.provider === "user-daytona" || computer.provider === "user-modal" || computer.provider === "user-gcp") return false;
+  if (computer.provider === "user-daytona" || computer.provider === "user-modal" || computer.provider === "user-gcp" || computer.provider === "user-e2b") return false;
   // Made ahead and stopped: running no one's session. An intent-warmed pool
   // box has a short lease and consumes the slot the imminent session will
   // inherit (20261103200000_intent_warm_pool.sql).

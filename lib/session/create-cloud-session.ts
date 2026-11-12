@@ -1,4 +1,3 @@
-import { NoGcpConnectionError } from "@/lib/runtime/user-gcp-provider";
 /**
  * Making a cloud session and setting up its box: what the new-session screen
  * asks for (app/api/projects/[id]/workspaces/route.ts), and what the server
@@ -22,7 +21,6 @@ import { sessionPlan } from "@/lib/billing/entitlements";
 import { cloudBoxStartGate, isPlanLimitError } from "@/lib/billing/limits";
 import {
   agentAuthStore,
-  getSandboxSettings,
   modelKey,
   modelMenu,
   offersModels,
@@ -64,7 +62,6 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { AGENT_FEATURE_CODEX_GATEWAY, AGENT_FEATURE_MULTI_REPO } from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
-import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { isValidBranchName } from "@/lib/runtime/git";
 import { provisionFailureMessage } from "@/lib/runtime/provision-failure";
 import { setUpSession } from "@/lib/runtime/session-setup.deps";
@@ -96,7 +93,8 @@ import {
   providerForNewSessions,
   retireComputer,
 } from "@/lib/runtime/sandbox-choice";
-import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
+import { SandboxSetupError } from "@/lib/runtime/sandbox-setup-error";
+import { currentSandboxSettings } from "@/lib/runtime/user-e2b-template";
 import { boxUpgrade, runtimeSessionEnvironment, withoutGitHubToken } from "@/lib/runtime/session-environment";
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { projectCheckouts } from "@/lib/runtime/warm-pool";
@@ -283,10 +281,10 @@ async function createOnce(
   let provider: RuntimeProvider;
   try {
     // Outrunner's sandboxes, or the user's own Daytona or Modal (Settings → Sandbox).
-    sandboxSettings = await getSandboxSettings(owner.id);
+    sandboxSettings = await currentSandboxSettings(owner.id);
     provider = providerForNewSessions(sandboxSettings, keys);
   } catch (error) {
-    if (error instanceof NoDaytonaKeyError || error instanceof NoModalTokenError || error instanceof NoGcpConnectionError) return needsSandbox(error.message);
+    if (error instanceof SandboxSetupError) return needsSandbox(error.message);
     console.error("Runtime provider is unavailable", error);
     return NextResponse.json(
       { error: "The configured provider is not available." },

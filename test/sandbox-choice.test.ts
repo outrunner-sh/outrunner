@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 
 import { PLANS } from "@/lib/billing/plans";
-import type { SandboxChoice, SandboxSettings } from "@/lib/db/credentials";
+import type { E2bTemplateState, SandboxChoice, SandboxSettings } from "@/lib/db/credentials";
 import type { BoxSizeId } from "@/lib/runtime/box-sizes";
 import { NoDaytonaKeyError, UserDaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { resetRuntimeProvider } from "@/lib/runtime/provider";
@@ -15,6 +15,7 @@ import {
   sandboxOf,
 } from "@/lib/runtime/sandbox-choice";
 import { NoModalTokenError, UserModalRuntimeProvider } from "@/lib/runtime/user-modal-provider";
+import { E2bTemplateNotReadyError, NoE2bKeyError, UserE2bRuntimeProvider } from "@/lib/runtime/user-e2b-provider";
 
 const noKey = { daytona: async () => null, modal: async () => null };
 const settings = (sandbox: SandboxChoice, connected: boolean, boxSize: BoxSizeId = "small"): SandboxSettings => ({
@@ -128,4 +129,24 @@ test("only a stopped computer the same provider made is a box to restore from", 
   // Another provider's box: the owner moved, and that one is retired, not restored.
   assert.equal(endedBoxOf({ ...stopped, provider: "neev" }, "user-modal"), undefined);
   assert.equal(endedBoxOf(null, "user-modal"), undefined);
+});
+
+test("new sessions go to the user's own E2B only with a key and a template ready there", () => {
+  const withE2b = (template: E2bTemplateState, connected = true): SandboxSettings => ({
+    ...settings("e2b", false),
+    e2b: { connected, hint: connected ? "ef56" : null, updatedAt: null, apiUrl: null, sandboxUrl: null, template, templateError: null },
+  });
+  const keys = { ...noKey, e2b: async () => null };
+  assert.throws(() => providerForNewSessions(withE2b("ready", false), keys), NoE2bKeyError);
+  assert.throws(() => providerForNewSessions(withE2b("ready"), noKey), NoE2bKeyError);
+  for (const template of ["none", "building", "failed", "outdated"] as const) {
+    assert.throws(() => providerForNewSessions(withE2b(template), keys), E2bTemplateNotReadyError);
+  }
+  const provider = providerForNewSessions(withE2b("ready"), keys);
+  assert.ok(provider instanceof UserE2bRuntimeProvider);
+  assert.equal(provider.name, "user-e2b");
+  assert.equal(sandboxOf("user-e2b"), "e2b");
+  assert.equal(providerNamed("user-e2b", keys)?.name, "user-e2b");
+  // Its box is the template's size, whatever the setting says.
+  assert.equal(boxSizeOn("e2b", "large", PLANS.free), undefined);
 });

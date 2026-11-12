@@ -1,3 +1,4 @@
+import { E2bTemplateNotReadyError } from "@/lib/runtime/user-e2b-provider";
 import { codexModelsFor } from "@/lib/codex/model-catalog.deps";
 import { NextResponse } from "next/server";
 
@@ -85,6 +86,15 @@ async function newSessionHarnesses(user: string, workspace: Workspace | null): P
     const existing = workspace ? resolveProvider(workspace) : null;
     if (existing && !existing.ok) return [];
     const provider = existing?.ok ? existing.provider : providerForNewSessions(await getSandboxSettings(user), ownSandboxKeys(user));
-    return isComputerProvider(provider) && optionalEnv("RUNTIME_ENGINE") !== "jcode" ? ["claude", "codex"] : ["claude"];
-  } catch { return []; }
+    return isComputerProvider(provider) ? computerHarnesses() : ["claude"];
+  } catch (error) {
+    // Their E2B is a Runtime Computer whose template is still building: what
+    // it will run doesn't wait on that.
+    return error instanceof E2bTemplateNotReadyError ? computerHarnesses() : [];
+  }
+}
+
+/** What a Runtime Computer runs: both agents, but Claude alone on jcode. */
+function computerHarnesses(): AgentId[] {
+  return optionalEnv("RUNTIME_ENGINE") !== "jcode" ? ["claude", "codex"] : ["claude"];
 }
