@@ -37,7 +37,7 @@ export async function POST(request: Request, context: RouteContext) {
     try {
       const skill = await enableEnvironmentSkill(c.owner.id, id, catalogSkill(body ?? {}));
       // Ready boxes were made without it: made again.
-      after(() => refillAfterChange(c.owner.id, id), { where: "refill-pool", userId: c.owner.id });
+      after(() => refillAfterChange(c.owner, id), { where: "refill-pool", userId: c.owner.id });
       return NextResponse.json({ skill }, { status: 201 });
     } catch (error) {
       if (error instanceof EnvironmentRuleError) return NextResponse.json({ error: error.message }, { status: 400 });
