@@ -134,7 +134,7 @@ export class NeevBackend implements SandboxBackend {
     });
     try {
       await sandbox.waitUntilReady();
-      const conn = await this.connection(sandbox.id);
+      const conn = this.connection(sandbox);
       const runtime = new SandboxRuntime(conn);
       await prepare(runtime);
       return this.box(sandbox, runtime, conn);
@@ -146,7 +146,7 @@ export class NeevBackend implements SandboxBackend {
 
   async get(id: string): Promise<SandboxBox> {
     const sandbox = await this.neev().sandboxes.get(id);
-    const conn = await this.connection(id);
+    const conn = this.connection(sandbox);
     return this.box(sandbox, new SandboxRuntime(conn), conn);
   }
 
@@ -208,7 +208,7 @@ export class NeevBackend implements SandboxBackend {
         console.error(`Neev box ${id} did not recover from ${sandbox.phase}; starting a new one`, error);
         return null;
       }
-      const conn = await this.connection(id);
+      const conn = this.connection(sandbox);
       const runtime = new SandboxRuntime(conn);
       if (!(await prepared(runtime))) {
         // Restarted with an empty disk (Neev's last_crash.storage_reset): the
@@ -260,9 +260,11 @@ export class NeevBackend implements SandboxBackend {
     }
   }
 
-  /** How to reach one sandbox's runtime: its URL, on the project's API key. */
-  private async connection(id: string): Promise<Connection> {
-    const sandbox = await this.neev().sandboxes.get(id);
+  /** How to reach one sandbox's runtime: its URL, on the project's API key.
+   *  From the sandbox as just read, not read again: each Neev API call is
+   *  about a second. */
+  private connection(sandbox: Sandbox): Connection {
+    const id = sandbox.id;
     const connectUrl = sandbox.connectUrl;
     if (!connectUrl) throw new Error(`Neev sandbox ${id} has no connect URL (phase ${sandbox.phase})`);
     return { connectUrl: connectUrl.replace(/\/$/, ""), apiKey: requireEnv("NEEV_API_KEY") };
