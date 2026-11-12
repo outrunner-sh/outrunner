@@ -46,19 +46,39 @@ test("an event stream set by setHeader, then an implicit header, is let go of an
   s.close();
 });
 
-test("an event stream named in writeHead's headers, object or array, counts too; destroying it ends it", async () => {
+test("an event stream named in writeHead's headers, object or array, counts too", async () => {
   for (const headers of [{ "content-type": "text/event-stream" }, ["Content-Type", "text/event-stream"]]) {
-    let stream: ServerResponse | null = null;
     const s = await serve((res) => {
       res.writeHead(200, "OK", headers as never);
       res.write("data: x\n\n");
-      stream = res;
     });
     await get(s.port);
     assert.equal(s.released(), 1);
-    assert.ok(stream);
     s.close();
   }
+});
+
+test("destroying an open event stream, as shutdown() does, ends it for the client and drops it from the set", async () => {
+  const s = await serve((res) => {
+    res.setHeader("content-type", "text/event-stream");
+    res.write("data: x\n\n");
+  });
+  // A client that stays connected until the server ends the stream.
+  const ended = new Promise<void>((resolve) => {
+    const req = request({ port: s.port, host: "127.0.0.1", path: "/" }, (res) => {
+      res.resume();
+      res.once("close", () => resolve());
+    });
+    req.on("error", () => resolve());
+    req.end();
+  });
+  for (let i = 0; i < 100 && s.open.size === 0; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(s.open.size, 1);
+  for (const stream of s.open) stream.destroy();
+  await ended;
+  for (let i = 0; i < 100 && s.open.size; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(s.open.size, 0);
+  s.close();
 });
 
 test("any other response keeps its hold until it ends", async () => {
