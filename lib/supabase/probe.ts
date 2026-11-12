@@ -1,5 +1,5 @@
 /** Every application table required for Runtime's initial control plane. */
-export const RUNTIME_TABLES = ["projects", "workspaces", "jobs", "pull_requests"] as const;
+export const RUNTIME_TABLES = ["projects", "workspaces", "pull_requests"] as const;
 
 export type RuntimeTable = (typeof RUNTIME_TABLES)[number];
 /** `outdated`: the table is there, but a later migration that adds a column
@@ -16,7 +16,6 @@ export type DatabaseProbe = Record<RuntimeTable, TableProbeStatus>;
 export const RUNTIME_COLUMNS: Record<RuntimeTable, readonly string[]> = {
   projects: ["id"],
   workspaces: ["id", "computer_id", "tmux_session", "agent_workspace_id", "title", "agent", "main_chat_name"],
-  jobs: ["id", "result_path", "execution_handle", "agent"],
   pull_requests: ["id"],
 };
 

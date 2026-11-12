@@ -49,11 +49,6 @@ export function archiveOffer(workspace: Pick<Workspace, "status" | "provider">):
   return null;
 }
 
-/** What the archive confirmation says will happen. */
-export const ARCHIVE_CONSEQUENCE =
-  "Its work is saved, uncommitted changes included, and its space on the cloud computer is freed. " +
-  "Opening the session again restores it where it left off.";
-
 /**
  * Archive the cloud session `id` (the lifecycle route's archive). Throws with
  * a sentence to show when it could not; answers what to say once it is, when

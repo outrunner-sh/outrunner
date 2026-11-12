@@ -11,7 +11,6 @@ import {
   cloneRepo,
   commitAll,
   listChangedFiles as gitListChangedFiles,
-  pushBranch,
   readFileDiff,
   sanitizeBranch,
   type GitExec,
@@ -20,11 +19,8 @@ import type {
   ChangedFile,
   CommitWorkspaceInput,
   CommitWorkspaceResult,
-  CreatePullRequestInput,
-  CreatePullRequestResult,
   CreateWorkspaceInput,
   CreateWorkspaceResult,
-  PushWorkspaceBranchInput,
   RuntimeProvider,
 } from "@/lib/runtime/types";
 
@@ -226,17 +222,6 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     });
   }
 
-  async pushWorkspaceBranch(input: PushWorkspaceBranchInput): Promise<void> {
-    const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
-    const worktree = await this.worktreePath(sandbox);
-    await pushBranch(this.gitExec(sandbox), {
-      worktree,
-      repoFullName: input.repoFullName,
-      branch: input.branch,
-      token: input.githubToken,
-    });
-  }
-
   async suspendWorkspace(input: {
     workspaceId: string;
     sandboxId: string;
@@ -268,15 +253,6 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     if (input.volumeName) {
       await this.client.volumes.delete(input.volumeName, { allowMissing: true });
     }
-  }
-
-  async createPullRequest(
-    input: CreatePullRequestInput,
-  ): Promise<CreatePullRequestResult> {
-    void input;
-    throw new Error(
-      "Pull requests are created through Runtime's GitHub API path.",
-    );
   }
 
   /** The single worktree directory under the Volume, located at call time. */

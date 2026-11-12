@@ -4,7 +4,6 @@ import { isUuid } from "@/lib/ids";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import {
-  toJob,
   toProject,
   toRuntimeComputer,
   toWorkspace,
@@ -21,9 +20,6 @@ import type {
   WorkspaceSnapshot,
 } from "@/lib/runtime/snapshot/types";
 import type {
-  Job,
-  JobAgent,
-  JobStatus,
   Project,
   ProviderName,
   ProvisionPhase,
@@ -681,36 +677,6 @@ export async function orgConnectorIds(orgId: string): Promise<Set<string>> {
 }
 
 /**
- * Claim the single Runtime Computer slot for a project. The
- * `unique (project_id)` constraint makes this the concurrency gate for lazy
- * provisioning: two "New Workspace" clicks race here and exactly one insert
- * wins. The loser gets a unique-violation, catches it, and reads the existing
- * row via {@link getRuntimeComputerByProject}.
- */
-export async function createRuntimeComputer(input: {
-  ownerId: string;
-  projectId: string;
-  agentSecret: string;
-  imageVersion?: string;
-}): Promise<RuntimeComputer> {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("runtime_computers")
-    .insert({
-      owner_id: input.ownerId,
-      project_id: input.projectId,
-      agent_secret: storeAgentSecret(input.agentSecret),
-      status: "provisioning",
-      ...(input.imageVersion && { image_version: input.imageVersion }),
-    })
-    .select("*")
-    .single();
-
-  if (error) throw error;
-  return toRuntimeComputer(data);
-}
-
-/**
  * Atomically claim the box of `scope`: a workspace's own
  * (claim_workspace_computer), or a project's shared one from before
  * (claim_runtime_computer). Each SQL function takes a transaction-scoped
@@ -1031,137 +997,6 @@ export async function readRuntimeComputerSecret(
 
   if (error) throw error;
   return openAgentSecretOrNull(data?.agent_secret, id);
-}
-
-// --- jobs ------------------------------------------------------------------
-
-export async function listJobs(workspaceId: string): Promise<Job[]> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .select("*")
-    .eq("workspace_id", workspaceId)
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
-  return (data ?? []).map(toJob);
-}
-
-export async function getJob(id: string): Promise<Job | null> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data ? toJob(data) : null;
-}
-
-export async function createJobRow(input: {
-  ownerId: string;
-  workspaceId: string;
-  agent: JobAgent;
-  prompt: string;
-  linearIssueId?: string | null;
-}): Promise<Job> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .insert({
-      owner_id: input.ownerId,
-      workspace_id: input.workspaceId,
-      agent: input.agent,
-      prompt: input.prompt,
-      linear_issue_id: input.linearIssueId ?? null,
-      status: "queued",
-    })
-    .select("*")
-    .single();
-
-  if (error) throw error;
-  return toJob(data);
-}
-
-export async function updateJob(
-  id: string,
-  patch: {
-    status?: JobStatus;
-    logPath?: string | null;
-    resultPath?: string | null;
-    executionHandle?: string | null;
-    logBytes?: number;
-    exitCode?: number | null;
-    sessionId?: string | null;
-    costUsd?: number | null;
-    startedAt?: string | null;
-    finishedAt?: string | null;
-  },
-): Promise<void> {
-  const supabase = await createSupabaseServerClient();
-  const { error } = await supabase
-    .from("jobs")
-    .update({
-      ...(patch.status !== undefined && { status: patch.status }),
-      ...(patch.logPath !== undefined && { log_path: patch.logPath }),
-      ...(patch.resultPath !== undefined && { result_path: patch.resultPath }),
-      ...(patch.executionHandle !== undefined && {
-        execution_handle: patch.executionHandle,
-      }),
-      ...(patch.logBytes !== undefined && { log_bytes: patch.logBytes }),
-      ...(patch.exitCode !== undefined && { exit_code: patch.exitCode }),
-      ...(patch.sessionId !== undefined && { session_id: patch.sessionId }),
-      ...(patch.costUsd !== undefined && { cost_usd: patch.costUsd }),
-      ...(patch.startedAt !== undefined && { started_at: patch.startedAt }),
-      ...(patch.finishedAt !== undefined && { finished_at: patch.finishedAt }),
-    })
-    .eq("id", id);
-
-  if (error) throw error;
-}
-
-/** Atomically claim or complete a job only while it is in an expected state. */
-export async function transitionJob(input: {
-  id: string;
-  from: JobStatus[];
-  patch: {
-    status: JobStatus;
-    logPath?: string | null;
-    resultPath?: string | null;
-    executionHandle?: string | null;
-    logBytes?: number;
-    exitCode?: number | null;
-    sessionId?: string | null;
-    costUsd?: number | null;
-    startedAt?: string | null;
-    finishedAt?: string | null;
-  };
-}): Promise<Job | null> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .update({
-      status: input.patch.status,
-      ...(input.patch.logPath !== undefined && { log_path: input.patch.logPath }),
-      ...(input.patch.resultPath !== undefined && { result_path: input.patch.resultPath }),
-      ...(input.patch.executionHandle !== undefined && {
-        execution_handle: input.patch.executionHandle,
-      }),
-      ...(input.patch.logBytes !== undefined && { log_bytes: input.patch.logBytes }),
-      ...(input.patch.exitCode !== undefined && { exit_code: input.patch.exitCode }),
-      ...(input.patch.sessionId !== undefined && { session_id: input.patch.sessionId }),
-      ...(input.patch.costUsd !== undefined && { cost_usd: input.patch.costUsd }),
-      ...(input.patch.startedAt !== undefined && { started_at: input.patch.startedAt }),
-      ...(input.patch.finishedAt !== undefined && { finished_at: input.patch.finishedAt }),
-    })
-    .eq("id", input.id)
-    .in("status", input.from)
-    .select("*")
-    .maybeSingle();
-
-  if (error) throw error;
-  return data ? toJob(data) : null;
 }
 
 /** The session's pull request in `projectId`, a repository of it (a session
