@@ -11,7 +11,7 @@ import type { RecordedModel } from "@/lib/runtime/session-models";
 import type { SessionMode } from "@/lib/runtime/agent-protocol";
 
 // ---------------------------------------------------------------------------
-// Domain model (mirrors the `projects`, `workspaces`, `jobs` tables)
+// Domain model (mirrors the `projects`, `workspaces` tables)
 // ---------------------------------------------------------------------------
 
 export type Project = {
@@ -271,40 +271,6 @@ export type RuntimeComputer = {
   updatedAt: string;
 };
 
-export type JobStatus =
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "cancelled";
-
-export type JobAgent = "claude" | "codex";
-
-/**
- * Historical job record. The batch execution mechanism that produced these was
- * retired in M2 pt3; the table + type are kept as the seed for the interactive
- * session record (M3), so the log/result/handle fields are now vestigial.
- */
-export type Job = {
-  id: string;
-  workspaceId: string;
-  agent: JobAgent;
-  status: JobStatus;
-  prompt: string;
-  logPath: string;
-  /** Provider-owned completion record; never supplied by the browser. */
-  resultPath: string;
-  executionHandle: string | null;
-  logBytes: number;
-  exitCode: number | null;
-  /** Claude Code session id, so follow-up jobs can `--resume`. */
-  sessionId: string | null;
-  costUsd: number | null;
-  startedAt: string | null;
-  finishedAt: string | null;
-  createdAt: string;
-};
-
 export type WorkspacePullRequest = {
   id: string;
   workspaceId: string;
@@ -353,21 +319,6 @@ export type CreateWorkspaceResult = {
   warnings: string[];
 };
 
-export type CreatePullRequestInput = {
-  workspaceId: string;
-  sandboxId: string;
-  repoFullName: string;
-  branch: string;
-  baseBranch: string;
-  title: string;
-  body: string;
-};
-
-export type CreatePullRequestResult = {
-  url: string;
-  number: number;
-};
-
 export type CommitWorkspaceInput = {
   workspaceId: string;
   sandboxId: string;
@@ -376,14 +327,6 @@ export type CommitWorkspaceInput = {
 };
 
 export type CommitWorkspaceResult = { sha: string };
-
-export type PushWorkspaceBranchInput = {
-  workspaceId: string;
-  sandboxId: string;
-  repoFullName: string;
-  branch: string;
-  githubToken: string;
-};
 
 /**
  * Every execution backend implements this. Swapping `RUNTIME_PROVIDER`
@@ -430,9 +373,6 @@ export interface RuntimeProvider {
 
   commitWorkspace(input: CommitWorkspaceInput): Promise<CommitWorkspaceResult>;
 
-  /** Push only the persisted project branch using an operation-scoped token. */
-  pushWorkspaceBranch(input: PushWorkspaceBranchInput): Promise<void>;
-
   /** Stop compute, keep durable storage. */
   suspendWorkspace(input: {
     workspaceId: string;
@@ -445,8 +385,4 @@ export interface RuntimeProvider {
     sandboxId: string | null;
     volumeName: string | null;
   }): Promise<void>;
-
-  createPullRequest(
-    input: CreatePullRequestInput,
-  ): Promise<CreatePullRequestResult>;
 }

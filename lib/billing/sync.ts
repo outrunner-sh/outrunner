@@ -28,19 +28,6 @@ export type SyncDeps = {
   changed?(orgId: string): Promise<void>;
 };
 
-/** The events whose subscription is synced; the rest are acknowledged and
- *  left. */
-export const SYNCED_EVENTS = [
-  "checkout.session.completed",
-  "customer.subscription.created",
-  "customer.subscription.updated",
-  "customer.subscription.deleted",
-  "customer.subscription.paused",
-  "customer.subscription.resumed",
-  "invoice.paid",
-  "invoice.payment_failed",
-] as const;
-
 /** The subscription an event concerns, or null for one that concerns none. */
 export function subscriptionIdOf(event: Stripe.Event): string | null {
   const object = event.data.object as unknown as Record<string, unknown>;

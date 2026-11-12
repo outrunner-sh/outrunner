@@ -51,7 +51,7 @@ export async function linkOwnInstallation(
   }
   if (!holder || holder.orgIds.includes(orgId)) return { next: "done", installation: own };
   try {
-    await claimInstallation({ orgId, installation: own, githubId: github.id, userId: user.id });
+    await claimInstallation({ orgId, installation: own, githubIds: [github.id], userId: user.id });
   } catch (error) {
     if (!(error instanceof ClaimError)) throw error;
     console.warn(`Not linking installation ${own.id} to user ${user.id}'s personal org: ${error.reason}`);

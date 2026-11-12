@@ -405,11 +405,6 @@ export function parseSchedule(value: unknown, now: number): Parsed<Schedule> {
   return { ok: true, value: schedule };
 }
 
-/** The same schedule, field for field: saving it unchanged changes nothing. */
-export function sameSchedule(a: Schedule, b: Schedule): boolean {
-  return a.kind === b.kind && a.timezone === b.timezone && JSON.stringify(scheduleSpec(a)) === JSON.stringify(scheduleSpec(b));
-}
-
 /** What's stored of a schedule beside its kind and zone (automation_schedules.spec). */
 export function scheduleSpec(schedule: Schedule): { [key: string]: string | number | number[] } {
   switch (schedule.kind) {

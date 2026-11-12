@@ -66,6 +66,11 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
   }
 }
 
+/** How long a box alive() fetched is reused by keepAlive rather than
+ *  fetched again: one reconcile look's span. Older ones are evicted as
+ *  alive() adds more. */
+const SEEN_REUSE_MS = 60_000;
+
 /** Monotonic suffix so each detached launch gets its own Daytona session. */
 let launchSeq = 0;
 
@@ -76,6 +81,8 @@ let launchSeq = 0;
  */
 export class DaytonaBackend implements SandboxBackend {
   private client: Promise<Daytona> | null = null;
+  /** The box alive() last fetched, for keepAlive to reuse (SEEN_REUSE_MS). */
+  private readonly lastSeen = new Map<string, { sandbox: Sandbox; at: number }>();
   private readonly apiKey: (() => Promise<string>) | undefined;
 
   constructor(options: { apiKey?: () => Promise<string> } = {}) {
@@ -132,12 +139,25 @@ export class DaytonaBackend implements SandboxBackend {
 
   async alive(id: string): Promise<boolean> {
     try {
-      const state = (await (await this.daytona()).get(id)).state;
+      const sandbox = await (await this.daytona()).get(id);
+      const state = sandbox.state;
+      // Kept for keepAlive, which the reconciler calls just after: one get a
+      // box a run, not two. Only what it can use (Outrunner's account, a
+      // running box), with stale ones dropped as it goes, so the map stays
+      // small however often alive() is asked.
+      if (!this.apiKey && (state === "started" || state === "resizing")) {
+        const now = Date.now();
+        for (const [seenId, seen] of this.lastSeen) if (now - seen.at >= SEEN_REUSE_MS) this.lastSeen.delete(seenId);
+        this.lastSeen.set(id, { sandbox, at: now });
+      } else this.lastSeen.delete(id);
       // A hot resize preserves processes; the reconciler must not mark the
       // computer lost while Daytona applies its new allocation.
       return state === "started" || state === "resizing";
     } catch (error) {
-      if (error instanceof DaytonaNotFoundError) return false;
+      if (error instanceof DaytonaNotFoundError) {
+        this.lastSeen.delete(id);
+        return false;
+      }
       throw error;
     }
   }
@@ -198,8 +218,30 @@ export class DaytonaBackend implements SandboxBackend {
       return null;
     }
     await relabel(sandbox, labels);
+    // A box made before the backstop gets it as it comes back.
+    if (!this.apiKey) await backstop(sandbox);
     return box(sandbox);
   }
+
+  /** The reconciler's heartbeat: resets Daytona's auto-stop timer. Only on
+   *  Outrunner's account, whose boxes have one (AUTO_STOP_MINUTES). */
+  async keepAlive(id: string): Promise<void> {
+    if (this.apiKey) return;
+    const seen = this.lastSeen.get(id);
+    this.lastSeen.delete(id);
+    const sandbox = seen && Date.now() - seen.at < SEEN_REUSE_MS ? seen.sandbox : await (await this.daytona()).get(id);
+    await sandbox.refreshActivity();
+  }
+}
+
+/** Put Daytona's auto-stop backstop (AUTO_STOP_MINUTES) on a box of
+ *  Outrunner's made before it. Best effort: the box is up either way, and the
+ *  reconciler still looks after it. Exported for tests. */
+export async function backstop(sandbox: Sandbox): Promise<void> {
+  if (sandbox.autoStopInterval === AUTO_STOP_MINUTES) return;
+  await Promise.resolve()
+    .then(() => sandbox.setAutostopInterval(AUTO_STOP_MINUTES))
+    .catch((error: unknown) => console.warn(`Could not set Daytona box ${sandbox.id}'s auto-stop`, error));
 }
 
 /** Put `labels` on a box made before them (the deployment's, which the
@@ -242,6 +284,23 @@ export function daytonaSnapshotFor(size: BoxResources): string | undefined {
  */
 export const AUTO_ARCHIVE_MINUTES = 24 * 60;
 
+/**
+ * Minutes without an event before Daytona stops one of Outrunner's boxes on
+ * its own: the provider-side backstop should Outrunner stop looking after
+ * its boxes (the reconciler's cron down, a deploy that broke it), so no box
+ * bills for ever. Daytona counts SDK calls and state changes as events, not
+ * preview traffic (the agent's API, the browser's socket), so a session in
+ * use doesn't keep its box up by itself: the reconciler calls keepAlive on
+ * every box it looks at and keeps running (lib/billing/reconcile.ts), every
+ * couple of minutes. A long turn on a box the reconciler is watching is never
+ * stopped by this; one on a box nothing watches is stopped within 4 hours.
+ * Generous on purpose: well past any cron outage worth riding out, and the
+ * reconciler's own limits (3h unreachable, 6h stuck in a turn, 12h a run)
+ * are what normally stop a box. A user's own Daytona keeps it off: their
+ * account, their bill, and nothing of Outrunner's heartbeats it.
+ */
+export const AUTO_STOP_MINUTES = 4 * 60;
+
 /** Without a size keep the account's default (including user-owned Daytona).
  * Outrunner's selected default size already arrives via boxSizeOn. */
 export function createParams(
@@ -252,8 +311,10 @@ export function createParams(
 ): CreateSandboxFromSnapshotParams {
   const snapshot = size && daytonaSnapshotFor(size);
   return {
-    // Outrunner owns idle stopping; Daytona must not auto-stop/delete it.
-    autoStopInterval: 0,
+    // Outrunner owns idle stopping (the reconciler); Daytona's auto-stop is
+    // only the backstop on Outrunner's own account (AUTO_STOP_MINUTES), and
+    // it never deletes a box.
+    autoStopInterval: platform ? AUTO_STOP_MINUTES : 0,
     autoDeleteInterval: -1,
     ...(platform && { autoArchiveInterval: AUTO_ARCHIVE_MINUTES }),
     labels,
@@ -395,11 +456,14 @@ export function box(sandbox: Sandbox): SandboxBox {
   };
 }
 
+/** How long a key check waits on Daytona: a page of sandboxes, at most. */
+const KEY_CHECK_TIMEOUT_MS = 15_000;
+
 /** Whether Daytona accepts `apiKey` (Settings → Sandbox checks one before
  *  saving it): false when it refuses it, a throw when it can't be asked. */
 export async function daytonaAcceptsKey(apiKey: string): Promise<boolean> {
   try {
-    await new Daytona({ apiKey }).list().next();
+    await withTimeout(new Daytona({ apiKey, requestTimeoutMs: KEY_CHECK_TIMEOUT_MS }).list().next(), KEY_CHECK_TIMEOUT_MS, "Daytona didn't answer a key check");
     return true;
   } catch (error) {
     const status = (error as { statusCode?: number }).statusCode;

@@ -191,11 +191,13 @@ export type Installation = {
   repositorySelection: "all" | "selected";
   /** When GitHub suspended it, if it's suspended. */
   suspendedAt: string | null;
+  /** The account's GitHub id, when GitHub said it (never renamed or reused). */
+  accountId?: number | null;
 };
 
 type ApiInstallation = {
   id: number;
-  account: { login: string; type: string } | null;
+  account: { login: string; type: string; id?: number } | null;
   repository_selection: string;
   suspended_at: string | null;
 };
@@ -210,6 +212,7 @@ export function toInstallation(i: Partial<ApiInstallation> & { id?: number }): I
     accountType: i.account.type === "Organization" ? "Organization" : "User",
     repositorySelection: i.repository_selection === "selected" ? "selected" : "all",
     suspendedAt: i.suspended_at ?? null,
+    accountId: typeof i.account.id === "number" ? i.account.id : null,
   };
 }
 

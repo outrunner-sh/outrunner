@@ -330,21 +330,6 @@ export async function addWorktree(
   ]);
 }
 
-/** Remove a worktree (and prune its administrative files). */
-export async function removeWorktree(
-  exec: GitExec,
-  input: { repoDir: string; worktreePath: string },
-): Promise<void> {
-  await git(exec, [
-    "-C",
-    input.repoDir,
-    "worktree",
-    "remove",
-    "--force",
-    input.worktreePath,
-  ]);
-}
-
 /**
  * Where a change set is measured from: the commit the branch left its base at
  * (its merge-base with `origin/<base>`, else with a local `<base>`), so work

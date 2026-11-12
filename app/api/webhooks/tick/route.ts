@@ -1,8 +1,9 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
+import { after } from "@/lib/observability/after";
+import { cronAuth } from "@/lib/cron/auth";
+import { runCronJob } from "@/lib/cron/heartbeat.deps";
 import { runWebhookTick } from "@/lib/api/webhooks.deps";
-import { optionalEnv } from "@/lib/env";
-import { bearerMatches } from "@/lib/http/bearer";
 
 /**
  * The API webhooks' clock: the Cloudflare cron calls it with the
@@ -12,17 +13,13 @@ import { bearerMatches } from "@/lib/http/bearer";
  * at once; the work runs after.
  */
 export async function POST(request: Request) {
-  const secret = optionalEnv("BILLING_CRON_SECRET");
-  if (!secret) return NextResponse.json({ error: "BILLING_CRON_SECRET is not set on this server." }, { status: 503 });
-  if (!bearerMatches(request.headers.get("authorization"), secret)) {
-    return NextResponse.json({ error: "Not allowed." }, { status: 401 });
-  }
-  after(async () => {
-    const done = await runWebhookTick().catch((error: unknown) => {
-      console.error("Webhooks tick failed", error);
-      return null;
-    });
-    if (done && (done.watched || done.delivered)) console.log("Webhooks tick", done);
-  });
+  const refused = cronAuth(request);
+  if (refused) return refused;
+  after(() =>
+    runCronJob("webhooks", async () => {
+      const done = await runWebhookTick();
+      if (done.watched || done.delivered) console.log("Webhooks tick", done);
+    }),
+  );
   return NextResponse.json({ ticking: true });
 }

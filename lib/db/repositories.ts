@@ -4,7 +4,6 @@ import { isUuid } from "@/lib/ids";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import {
-  toJob,
   toProject,
   toRuntimeComputer,
   toWorkspace,
@@ -21,9 +20,6 @@ import type {
   WorkspaceSnapshot,
 } from "@/lib/runtime/snapshot/types";
 import type {
-  Job,
-  JobAgent,
-  JobStatus,
   Project,
   ProviderName,
   ProvisionPhase,
@@ -681,33 +677,26 @@ export async function orgConnectorIds(orgId: string): Promise<Set<string>> {
 }
 
 /**
- * Claim the single Runtime Computer slot for a project. The
- * `unique (project_id)` constraint makes this the concurrency gate for lazy
- * provisioning: two "New Workspace" clicks race here and exactly one insert
- * wins. The loser gets a unique-violation, catches it, and reads the existing
- * row via {@link getRuntimeComputerByProject}.
+ * The signed-in user the box claims act for, as Supabase Auth vouches for
+ * them (getUser(), not the cookie's own say-so): the browser's session, or
+ * the user being acted as (lib/supabase/acting-user.ts). The claims are the
+ * service role's alone (20261112120000) and take this id in place of
+ * auth.uid(), so it must never come from a request.
  */
-export async function createRuntimeComputer(input: {
-  ownerId: string;
-  projectId: string;
-  agentSecret: string;
-  imageVersion?: string;
-}): Promise<RuntimeComputer> {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("runtime_computers")
-    .insert({
-      owner_id: input.ownerId,
-      project_id: input.projectId,
-      agent_secret: storeAgentSecret(input.agentSecret),
-      status: "provisioning",
-      ...(input.imageVersion && { image_version: input.imageVersion }),
-    })
-    .select("*")
-    .single();
+async function claimingUserId(): Promise<string> {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+  if (error || !user) throw new Error("authentication required");
+  return user.id;
+}
 
-  if (error) throw error;
-  return toRuntimeComputer(data);
+/** The claim isn't there in this form: a database from before
+ *  20261112120000, whose claims were the signed-in user's own. */
+function claimBeforeServerOnly(error: { code?: string } | null): boolean {
+  return error?.code === "PGRST202" || error?.code === "42883";
 }
 
 /**
@@ -715,11 +704,11 @@ export async function createRuntimeComputer(input: {
  * (claim_workspace_computer), or a project's shared one from before
  * (claim_runtime_computer). Each SQL function takes a transaction-scoped
  * advisory lock before reading/inserting, while a unique index remains the
- * durable backstop. Deliberately the user's client, not the admin one: the
- * claims count the caller's own boxes toward their plan, which they scope
- * by auth.uid() — the signed-in user they run as. They are SECURITY DEFINER
- * (20261106100000), so they write despite the tables' writes being the
- * service role's alone.
+ * durable backstop. The claims count the user's boxes toward their org's
+ * plan, and check they're still a member of its org whatever the cap. They
+ * are the service role's alone (20261112120000): a user calling one
+ * themselves could pass no cap and an agent secret of their choosing. So the
+ * admin client calls them, naming the user Supabase Auth says is signed in.
  */
 export async function claimRuntimeComputer(input: {
   scope: ComputerScope;
@@ -729,27 +718,43 @@ export async function claimRuntimeComputer(input: {
    *  none applies. */
   maxLiveComputers?: number | null;
 }): Promise<{ computer: RuntimeComputer; shouldProvision: boolean }> {
-  const supabase = await createSupabaseServerClient();
+  const actingUser = await claimingUserId();
+  const admin = createSupabaseAdminClient();
   const { scope } = input;
-  const call = (withCap: boolean) =>
+  const secret = storeAgentSecret(input.agentSecret);
+  const cap = input.maxLiveComputers ?? null;
+  let { data, error } =
     "workspaceId" in scope
-      ? supabase.rpc("claim_workspace_computer", {
+      ? await admin.rpc("claim_workspace_computer", {
+          acting_user: actingUser,
           requested_workspace_id: scope.workspaceId,
-          requested_agent_secret: storeAgentSecret(input.agentSecret),
-          max_live_computers: input.maxLiveComputers ?? null,
+          requested_agent_secret: secret,
+          max_live_computers: cap,
         })
-      : supabase.rpc("claim_runtime_computer", {
+      : await admin.rpc("claim_runtime_computer", {
+          acting_user: actingUser,
           requested_project_id: scope.projectId,
-          requested_agent_secret: storeAgentSecret(input.agentSecret),
-          ...(withCap && { max_live_computers: input.maxLiveComputers ?? null }),
+          requested_agent_secret: secret,
+          max_live_computers: cap,
         });
-
-  let { data, error } = await call(input.maxLiveComputers !== undefined);
-  // Before 20261019140000 takes the argument, the project's claim still
-  // works, uncapped, until the migration is run.
-  if (error && !("workspaceId" in scope) && input.maxLiveComputers !== undefined && error.code === "PGRST202") {
-    console.warn("claim_runtime_computer without the plan's box cap: run the migrations");
-    ({ data, error } = await call(false));
+  // Deployed before the migration ran: the claims are still the user's own,
+  // by auth.uid(). TODO: drop this once 20261112120000 is everywhere.
+  if (claimBeforeServerOnly(error)) {
+    // 42883 can also come from inside the new claim (a helper it calls is missing): keep its
+    // own error here, as the legacy call's would hide it.
+    console.warn("Box claims from before 20261112120000: run the migrations", error?.message);
+    const supabase = await createSupabaseServerClient();
+    const legacy = supabase.rpc as unknown as (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => Promise<{ data: { runtime_computer_id: string; should_provision: boolean }[] | null; error: typeof error }>;
+    ({ data, error } = await legacy.call(
+      supabase,
+      "workspaceId" in scope ? "claim_workspace_computer" : "claim_runtime_computer",
+      "workspaceId" in scope
+        ? { requested_workspace_id: scope.workspaceId, requested_agent_secret: secret, max_live_computers: cap }
+        : { requested_project_id: scope.projectId, requested_agent_secret: secret, max_live_computers: cap },
+    ));
   }
 
   if (error) throw error;
@@ -768,7 +773,8 @@ export async function claimRuntimeComputer(input: {
  * Hand the project's pooled box (lib/runtime/warm-pool.ts), made by
  * `provider`, to a session with no box yet: it becomes the session's own,
  * still stopped, for its setup to start again. The box's id, or null when
- * there's none to take, or before the warm pool's migration.
+ * there's none to take, or before the warm pool's migration. The service
+ * role's claim (20261112120000), for the signed-in user.
  */
 export async function claimPooledComputer(
   workspaceId: string,
@@ -776,15 +782,17 @@ export async function claimPooledComputer(
   /** Only a box made from this generation of the project's setup; null: any. */
   generation: number | null = null,
 ): Promise<string | null> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.rpc("claim_pooled_computer", {
+  const actingUser = await claimingUserId();
+  const { data, error } = await createSupabaseAdminClient().rpc("claim_pooled_computer", {
+    acting_user: actingUser,
     requested_workspace_id: workspaceId,
     requested_provider: provider,
     ...(generation !== null && { requested_generation: generation }),
   });
-  // Before the migration: no function to call, or no column. No pool, then.
-  if (error && (error.code === "PGRST202" || error.code === "42883" || probeStatus(error) === "outdated")) {
-    console.warn("No warm pool yet: run the migrations", error.message);
+  // Before the migrations: no claim in this form, or no column. No pool,
+  // then: the session makes its own box.
+  if (error && (claimBeforeServerOnly(error) || probeStatus(error) === "outdated")) {
+    console.warn("No warm pool claim yet: run the migrations", error.message);
     return null;
   }
   if (error) throw error;
@@ -793,24 +801,27 @@ export async function claimPooledComputer(
 
 /** Start or extend a short wake-up lease on one of the project's pooled
  * boxes. Null means there is no ready pooled box to warm. The database owns
- * the plan-cap check and stopped -> provisioning transition atomically. */
+ * the membership and plan-cap checks and the stopped -> provisioning
+ * transition atomically: the service role's claim (20261112120000), for the
+ * signed-in user. */
 export async function claimPooledWarmup(input: {
   projectId: string;
   provider: ProviderName;
   generation: number | null;
   maxLiveComputers: number | null;
 }): Promise<{ computerId: string; shouldWake: boolean } | null> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.rpc("claim_pooled_warmup", {
+  const actingUser = await claimingUserId();
+  const { data, error } = await createSupabaseAdminClient().rpc("claim_pooled_warmup", {
+    acting_user: actingUser,
     requested_project_id: input.projectId,
     requested_provider: input.provider,
     ...(input.generation !== null && { requested_generation: input.generation }),
     max_live_computers: input.maxLiveComputers,
   });
-  // A deploy before the migration simply cannot intent-warm; Send retains
+  // A deploy before the migrations simply cannot intent-warm; Send retains
   // the existing stopped-pool/cold provisioning path.
-  if (error && (error.code === "PGRST202" || error.code === "42883" || probeStatus(error) === "outdated")) {
-    console.warn("No intent warm pool yet: run the migrations", error.message);
+  if (error && (claimBeforeServerOnly(error) || probeStatus(error) === "outdated")) {
+    console.warn("No intent warm pool claim yet: run the migrations", error.message);
     return null;
   }
   if (error) throw error;
@@ -1033,137 +1044,6 @@ export async function readRuntimeComputerSecret(
   return openAgentSecretOrNull(data?.agent_secret, id);
 }
 
-// --- jobs ------------------------------------------------------------------
-
-export async function listJobs(workspaceId: string): Promise<Job[]> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .select("*")
-    .eq("workspace_id", workspaceId)
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
-  return (data ?? []).map(toJob);
-}
-
-export async function getJob(id: string): Promise<Job | null> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data ? toJob(data) : null;
-}
-
-export async function createJobRow(input: {
-  ownerId: string;
-  workspaceId: string;
-  agent: JobAgent;
-  prompt: string;
-  linearIssueId?: string | null;
-}): Promise<Job> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .insert({
-      owner_id: input.ownerId,
-      workspace_id: input.workspaceId,
-      agent: input.agent,
-      prompt: input.prompt,
-      linear_issue_id: input.linearIssueId ?? null,
-      status: "queued",
-    })
-    .select("*")
-    .single();
-
-  if (error) throw error;
-  return toJob(data);
-}
-
-export async function updateJob(
-  id: string,
-  patch: {
-    status?: JobStatus;
-    logPath?: string | null;
-    resultPath?: string | null;
-    executionHandle?: string | null;
-    logBytes?: number;
-    exitCode?: number | null;
-    sessionId?: string | null;
-    costUsd?: number | null;
-    startedAt?: string | null;
-    finishedAt?: string | null;
-  },
-): Promise<void> {
-  const supabase = await createSupabaseServerClient();
-  const { error } = await supabase
-    .from("jobs")
-    .update({
-      ...(patch.status !== undefined && { status: patch.status }),
-      ...(patch.logPath !== undefined && { log_path: patch.logPath }),
-      ...(patch.resultPath !== undefined && { result_path: patch.resultPath }),
-      ...(patch.executionHandle !== undefined && {
-        execution_handle: patch.executionHandle,
-      }),
-      ...(patch.logBytes !== undefined && { log_bytes: patch.logBytes }),
-      ...(patch.exitCode !== undefined && { exit_code: patch.exitCode }),
-      ...(patch.sessionId !== undefined && { session_id: patch.sessionId }),
-      ...(patch.costUsd !== undefined && { cost_usd: patch.costUsd }),
-      ...(patch.startedAt !== undefined && { started_at: patch.startedAt }),
-      ...(patch.finishedAt !== undefined && { finished_at: patch.finishedAt }),
-    })
-    .eq("id", id);
-
-  if (error) throw error;
-}
-
-/** Atomically claim or complete a job only while it is in an expected state. */
-export async function transitionJob(input: {
-  id: string;
-  from: JobStatus[];
-  patch: {
-    status: JobStatus;
-    logPath?: string | null;
-    resultPath?: string | null;
-    executionHandle?: string | null;
-    logBytes?: number;
-    exitCode?: number | null;
-    sessionId?: string | null;
-    costUsd?: number | null;
-    startedAt?: string | null;
-    finishedAt?: string | null;
-  };
-}): Promise<Job | null> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .update({
-      status: input.patch.status,
-      ...(input.patch.logPath !== undefined && { log_path: input.patch.logPath }),
-      ...(input.patch.resultPath !== undefined && { result_path: input.patch.resultPath }),
-      ...(input.patch.executionHandle !== undefined && {
-        execution_handle: input.patch.executionHandle,
-      }),
-      ...(input.patch.logBytes !== undefined && { log_bytes: input.patch.logBytes }),
-      ...(input.patch.exitCode !== undefined && { exit_code: input.patch.exitCode }),
-      ...(input.patch.sessionId !== undefined && { session_id: input.patch.sessionId }),
-      ...(input.patch.costUsd !== undefined && { cost_usd: input.patch.costUsd }),
-      ...(input.patch.startedAt !== undefined && { started_at: input.patch.startedAt }),
-      ...(input.patch.finishedAt !== undefined && { finished_at: input.patch.finishedAt }),
-    })
-    .eq("id", input.id)
-    .in("status", input.from)
-    .select("*")
-    .maybeSingle();
-
-  if (error) throw error;
-  return data ? toJob(data) : null;
-}
-
 /** The session's pull request in `projectId`, a repository of it (a session
  *  of several has one in each). */
 export async function getWorkspacePullRequest(
@@ -1205,7 +1085,10 @@ export async function createWorkspacePullRequest(input: {
   baseBranch: string;
   headBranch: string;
 }): Promise<WorkspacePullRequest> {
-  const supabase = await createSupabaseServerClient();
+  // The server's write (20261112110000): pull_requests isn't writable by
+  // signed-in users. The caller has checked the session is ownerId's, and the
+  // owner/workspace foreign key and project_id's refuse anything else.
+  const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("pull_requests")
     .insert({
@@ -1228,13 +1111,17 @@ export async function createWorkspacePullRequest(input: {
  *  (one that took over from it), and return it as recorded now. */
 export async function relinkWorkspacePullRequest(
   id: string,
+  owner: { workspaceId: string; ownerId: string },
   ref: { number: number; url: string; title: string; baseBranch: string },
 ): Promise<WorkspacePullRequest> {
-  const supabase = await createSupabaseServerClient();
+  // The server's write, scoped to the session and its owner the caller checked.
+  const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("pull_requests")
     .update({ github_number: ref.number, url: ref.url, title: ref.title, base_branch: ref.baseBranch })
     .eq("id", id)
+    .eq("workspace_id", owner.workspaceId)
+    .eq("owner_id", owner.ownerId)
     .select("*")
     .single();
   if (error) throw error;
