@@ -153,7 +153,7 @@ async function lostOf(ids: string[]): Promise<Set<string>> {
     status: row.status,
     daytonaSandboxId: row.daytona_sandbox_id,
     lastBox: await lastMeteredBox(row.id),
-    }));
+  }));
   return lostBoxes(withBoxes, new Set(ids));
 }
 
