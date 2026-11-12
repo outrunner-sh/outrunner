@@ -207,6 +207,17 @@ test("the Integrations card shows Linear's mark, and says when its connection is
   await shot(page, info, "card-connected");
 });
 
+test("on a deployment with no Linear app, the card tells an admin why there's nothing to do", async ({ page }, info) => {
+  await stub(page);
+  await page.goto("/settings/org/integrations?view=linear-card&state=unset");
+  await expect(page.getByText(/Not set up on this deployment yet/)).toBeVisible();
+  await expect(page.getByText(/docs\/linear-app\.md/)).toBeVisible();
+  await expect(page.getByRole("link", { name: /Linear/ })).toHaveCount(0);
+  await expect(page.getByText("Connected", { exact: true })).toHaveCount(0);
+  await fitsTheWidth(page);
+  await shot(page, info, "card-unset");
+});
+
 test("a member sees everything, and can change nothing", async ({ page }, info) => {
   // Their browser never asks for the team list, which is an admin's.
   const asked: string[] = [];

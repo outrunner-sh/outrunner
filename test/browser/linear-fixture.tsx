@@ -1,5 +1,6 @@
 "use client";
 
+import { deploymentCard } from "@/lib/integrations/card";
 import { LinearIcon } from "@/components/brand-icons";
 import { IntegrationCard } from "@/components/integration-card";
 import { SettingsFrame } from "@/components/settings-frame";
@@ -124,9 +125,10 @@ export function LinearCardFixture({ state }: { state: string }) {
             icon={<LinearIcon />}
             name="Linear"
             description="File issues to Triage by rules, and keep them in step."
-            connected={state === "none" ? null : "Acme"}
+            connected={state === "none" || state === "unset" ? null : "Acme"}
             problem={state === "disconnected" ? "Disconnected: rules have stopped. Reconnect it." : null}
-            action={state === "none" ? { kind: "install", href: "/settings/org/linear" } : { kind: "configure", href: "/settings/org/linear" }}
+            note={state === "unset" ? deploymentCard({ connected: false, admin: true, configureHref: "/settings/org/linear", installHref: null, setupDoc: "docs/linear-app.md" }).note : null}
+            action={state === "unset" ? null : state === "none" ? { kind: "install", href: "/settings/org/linear" } : { kind: "configure", href: "/settings/org/linear" }}
           />
         </div>
       </section>

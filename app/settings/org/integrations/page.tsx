@@ -7,6 +7,7 @@ import { Suspense } from "react";
 
 import { GitHubIcon, JiraIcon, LinearIcon, SlackIcon } from "@/components/brand-icons";
 import { IntegrationCard } from "@/components/integration-card";
+import { deploymentCard } from "@/lib/integrations/card";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { listOrgInstallations } from "@/lib/db/github-installations";
@@ -62,6 +63,11 @@ async function IntegrationsSection() {
   const github = installations.filter((i) => !i.suspended).map((i) => i.accountLogin);
   const slackTeams = (slack?.workspaces ?? []).filter((w) => w.installed).map((w) => w.teamName ?? w.teamId);
   const install = slackInstallUrl();
+  // Each needs an app registered for this deployment before anyone can install it.
+  const githubCard = deploymentCard({ connected: github.length > 0, admin, configureHref: "/settings/org/github", installHref: githubAppConfig() ? "/api/github/app/install" : null, external: true, setupDoc: "docs/github-app.md" });
+  const slackCard = deploymentCard({ connected: slackTeams.length > 0, admin, configureHref: "/settings/org/slack", installHref: install, external: true, installableByMembers: true, setupDoc: "docs/slack-app.md" });
+  const linearCard = deploymentCard({ connected: linear.length > 0, admin, configureHref: "/settings/org/linear", installHref: linearConfig() ? "/settings/org/linear" : null, setupDoc: "docs/linear-app.md" });
+  const jiraCard = deploymentCard({ connected: jira.length > 0, admin, configureHref: "/settings/org/jira", installHref: jiraConfig() ? "/settings/org/jira" : null, setupDoc: "docs/jira-app.md" });
 
   return (
     <section className="@container space-y-6">
@@ -81,26 +87,16 @@ async function IntegrationsSection() {
           name="GitHub"
           description="Push branches, open pull requests, run automations."
           connected={github.length ? github.join(", ") : null}
-          action={
-            github.length
-              ? { kind: "configure", href: "/settings/org/github" }
-              : admin && githubAppConfig()
-                ? { kind: "install", href: "/api/github/app/install", external: true }
-                : null
-          }
+          note={githubCard.note}
+          action={githubCard.action}
         />
         <IntegrationCard
           icon={<SlackIcon />}
           name="Slack"
           description="Mention @Outrunner in any channel."
           connected={slackTeams.length ? slackTeams.join(", ") : null}
-          action={
-            slackTeams.length
-              ? { kind: "configure", href: "/settings/org/slack" }
-              : install
-                ? { kind: "install", href: install, external: true }
-                : null
-          }
+          note={slackCard.note}
+          action={slackCard.action}
         />
         <IntegrationCard
           icon={<LinearIcon />}
@@ -108,13 +104,8 @@ async function IntegrationsSection() {
           description="File issues to Triage by rules, and keep them in step."
           connected={linear.length ? linear.map((l) => l.name ?? l.externalId).join(", ") : null}
           problem={linear.some((l) => l.disconnected) ? "Disconnected: rules have stopped. Reconnect it." : null}
-          action={
-            linear.length
-              ? { kind: "configure", href: "/settings/org/linear" }
-              : admin && linearConfig()
-                ? { kind: "install", href: "/settings/org/linear" }
-                : null
-          }
+          note={linearCard.note}
+          action={linearCard.action}
         />
         <IntegrationCard
           icon={<JiraIcon />}
@@ -122,13 +113,8 @@ async function IntegrationsSection() {
           description="File issues to Triage by rules, and keep them in step."
           connected={jira.length ? jira.map((j) => j.name ?? j.externalId).join(", ") : null}
           problem={jira.some((j) => j.disconnected) ? "Disconnected: rules have stopped. Reconnect it." : null}
-          action={
-            jira.length
-              ? { kind: "configure", href: "/settings/org/jira" }
-              : admin && jiraConfig()
-                ? { kind: "install", href: "/settings/org/jira" }
-                : null
-          }
+          note={jiraCard.note}
+          action={jiraCard.action}
         />
         <IntegrationCard
           icon={<KeyRound />}

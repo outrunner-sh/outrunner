@@ -15,6 +15,7 @@ export function IntegrationCard({
   description,
   connected,
   problem,
+  note,
   action,
 }: {
   icon: React.ReactNode;
@@ -24,6 +25,8 @@ export function IntegrationCard({
   connected: string | null;
   /** What's wrong with that connection, when something is: shown in its place. */
   problem?: string | null;
+  /** Why there's nothing to do here yet, for whoever could otherwise act on it. */
+  note?: string | null;
   /** Configure (connected), or Install or Connect; none for someone who can't. */
   action: { kind: "configure" | "install" | "connect"; href: string; external?: boolean } | null;
 }) {
@@ -50,6 +53,7 @@ export function IntegrationCard({
         <span className="block text-xs leading-relaxed text-muted-foreground">{description}</span>
         {connected && <span className="block break-words text-xs text-muted-foreground">{connected}</span>}
         {problem && <span className="block break-words text-xs text-destructive">{problem}</span>}
+        {note && <span className="block break-words text-xs text-muted-foreground">{note}</span>}
       </span>
       {action && (
         <span className="mt-auto flex items-center gap-1.5 pt-4 text-xs text-muted-foreground group-hover:text-foreground">
