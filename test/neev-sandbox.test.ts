@@ -268,7 +268,7 @@ test("new boxes are made with Neev's idle pause as a backstop, never deleted whi
   assert.equal(NEEV_LIFECYCLE.max_lifetime_seconds, 0);
 });
 
-test("a personal access token is refused before any box is made", async () => {
+test("a personal access token is refused before any box is made, and still manages boxes running", async () => {
   const { isNeevPersonalToken } = await import("@/lib/runtime/sandbox/neev");
   assert.equal(isNeevPersonalToken("pat-nc-abc"), true);
   assert.equal(isNeevPersonalToken("sk-nc-abc"), false);
@@ -283,6 +283,20 @@ test("a personal access token is refused before any box is made", async () => {
   try {
     await assert.rejects(new NeevBackend().create({}), /personal access token[\s\S]*sk-nc-/);
     assert.equal(fetched, false, "Neev was never called: no box to make and delete");
+    // Managing boxes already running still works on it.
+    const backend = new NeevBackend();
+    const done: string[] = [];
+    (backend as unknown as { client: unknown }).client = {
+      sandboxes: {
+        pause: async () => void done.push("pause"),
+        keepalive: async () => void done.push("keepalive"),
+        delete: async () => void done.push("delete"),
+      },
+    };
+    await backend.pause("sb-1");
+    await backend.keepAlive("sb-1");
+    await backend.delete("sb-1");
+    assert.deepEqual(done, ["pause", "keepalive", "delete"]);
   } finally {
     for (const [name, value] of [["NEEV_API_KEY", saved.key], ["NEEV_ORG_ID", saved.org], ["NEEV_PROJECT_ID", saved.project]] as const) {
       if (value === undefined) delete process.env[name];

@@ -160,7 +160,10 @@ after moving to Neev, and keep the `NEEV_*` keys after rolling back.
 (`sk-nc-…`). A personal access token (`pat-nc-…`) won't do: Neev's API
 takes it (boxes are created and listed), but every command inside a box gets
 HTTP 401, so no session can start. The app refuses one before making a box,
-and `/api/health` reports `configured.neev: false` with one set. `NEEV_SANDBOX_TEMPLATE` (default
+and `/api/health` reports `configured.neev: false` with one set. Boxes
+already running stay managed (paused, heartbeated, deleted, swept), so
+`managedProviders` still lists `neev`: `configured.neev` says whether new
+sessions can start. `NEEV_SANDBOX_TEMPLATE` (default
 `sb-ubuntu-26-04-dev`) and `NEEV_BASE_URL` (the SDK's own API URL) are
 optional. Nothing uses a Neev preview URL. The app reaches each sandbox
 through its runtime on that key, and relays the browser's terminal and

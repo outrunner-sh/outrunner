@@ -108,7 +108,11 @@ export class NeevBackend implements SandboxBackend {
   private neev(): Neev {
     if (!this.client) {
       this.client = new Neev({
-        apiKey: neevApiKey(),
+        // Any key Neev's API takes: a personal access token still pauses,
+        // heartbeats, lists and deletes boxes, so boxes already running stay
+        // managed if one is set by mistake. Only reaching a box's runtime
+        // needs a project key (runtimeKey).
+        apiKey: requireEnv("NEEV_API_KEY"),
         orgId: requireEnv("NEEV_ORG_ID"),
         projectId: requireEnv("NEEV_PROJECT_ID"),
         baseURL: optionalEnv("NEEV_BASE_URL"),
@@ -118,6 +122,8 @@ export class NeevBackend implements SandboxBackend {
   }
 
   async create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox> {
+    // Before Neev is asked: a box nothing can run on is never made.
+    runtimeKey();
     const sandbox = await this.neev().sandboxes.create({
       name: neevBoxName(labels),
       sandbox_template_id: optionalEnv("NEEV_SANDBOX_TEMPLATE") ?? DEFAULT_TEMPLATE,
@@ -287,7 +293,7 @@ export class NeevBackend implements SandboxBackend {
     const id = sandbox.id;
     const connectUrl = sandbox.connectUrl;
     if (!connectUrl) throw new Error(`Neev sandbox ${id} has no connect URL (phase ${sandbox.phase})`);
-    return { connectUrl: connectUrl.replace(/\/$/, ""), apiKey: neevApiKey() };
+    return { connectUrl: connectUrl.replace(/\/$/, ""), apiKey: runtimeKey() };
   }
 
   private box(sandbox: Sandbox, runtime: SandboxRuntime, conn: Connection): SandboxBox {
@@ -358,9 +364,11 @@ export function isNeevPersonalToken(key: string | undefined): boolean {
   return !!key && key.startsWith("pat-");
 }
 
-/** NEEV_API_KEY, refused up front when it's a personal access token, rather
- *  than after a box is made (and deleted) on every session. */
-function neevApiKey(): string {
+/** NEEV_API_KEY for a box's runtime (commands, uploads, the tunnel): refused
+ *  up front when it's a personal access token, which the runtime answers
+ *  with a 401, rather than after a box is made (and deleted) on every
+ *  session. Neev's own API takes either. */
+function runtimeKey(): string {
   const key = requireEnv("NEEV_API_KEY");
   if (isNeevPersonalToken(key)) {
     throw new Error(

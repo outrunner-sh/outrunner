@@ -51,7 +51,10 @@ export async function GET(request: Request) {
     // otherwise looks healthy cannot actually run a workspace.
     credentialEncryption: Boolean(optionalEnv("CREDENTIALS_ENCRYPTION_KEY")),
     daytona: Boolean(optionalEnv("DAYTONA_API_KEY")),
-    // A personal access token passes Neev's API but not a sandbox's runtime.
+    // Whether new Neev sessions can start. A personal access token passes
+    // Neev's API but not a sandbox's runtime: false with one, though boxes
+    // already running stay managed (paused, heartbeated, deleted, swept), so
+    // managedProviders still lists "neev".
     neev:
       Boolean(optionalEnv("NEEV_API_KEY")) &&
       !isNeevPersonalToken(optionalEnv("NEEV_API_KEY")) &&
