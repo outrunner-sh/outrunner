@@ -565,6 +565,20 @@ begin
     raise exception 'FAIL: a user-owned Modal box was counted';
   end if;
 
+  update runtime_computers
+  set provider = 'user-gcp'
+  where daytona_sandbox_id = 'box-cap-a';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
+    raise exception 'FAIL: a user-owned GCP box was counted';
+  end if;
+
+  update runtime_computers
+  set provider = 'user-e2b'
+  where daytona_sandbox_id = 'box-cap-a';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
+    raise exception 'FAIL: a box in the user''s own E2B was counted';
+  end if;
+
   raise notice 'ok: the plan''s box cap holds in the claim, where a box would start';
 end $$;
 
