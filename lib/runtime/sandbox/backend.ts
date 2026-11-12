@@ -8,6 +8,7 @@
 
 import type { BoxIO } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
+import type { ListedBox } from "@/lib/runtime/orphan-boxes";
 
 /** Where the control plane and the browser reach the agent on a box. */
 export type AgentEndpoint = {
@@ -109,6 +110,11 @@ export interface SandboxBackend {
    *  looked at and kept running. Only where the provider stops idle boxes on
    *  its own. */
   keepAlive?(id: string): Promise<void>;
+  /** The account's boxes carrying `labels`, at least those made and last
+   *  active before `quietSince` (a provider that can't filter lists more;
+   *  the sweep checks each): for the orphaned-box sweep
+   *  (lib/runtime/orphan-boxes.deps.ts). Only on Outrunner's own accounts. */
+  list?(labels: Record<string, string>, quietSince: Date): AsyncIterable<ListedBox>;
 }
 
 /** `$HOME` from the box's login shell, or `fallback` if it says nothing. */

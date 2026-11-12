@@ -12,6 +12,7 @@ import { ownSandboxKeys } from "@/lib/db/credentials";
 import { getRuntimeComputerByProject, getWorkspaceComputer, listWorkspaces, updateRuntimeComputer } from "@/lib/db/repositories";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { ownBox } from "@/lib/runtime/computer-scope";
+import { platformProvider } from "@/lib/runtime/provider";
 import { computerMadeBy, providerNamed } from "@/lib/runtime/sandbox-choice";
 import type { Workspace } from "@/lib/runtime/types";
 
@@ -82,18 +83,19 @@ export async function releaseWorkspaceBox(
  *  it never throws; a box left running is the reconciler's to pause. */
 export async function releaseProjectBox(provider: ComputerRuntimeProvider, projectId: string): Promise<void> {
   try {
+    const computer = await getRuntimeComputerByProject(projectId);
+    // Only Outrunner's boxes, as the reconciler: the user's own Daytona or
+    // Modal is theirs to stop. Paused with the provider that made it, which
+    // is the one the deployment moved from for a box made before the move.
+    const madeBy = computer && computerMadeBy(computer);
+    const found = madeBy && isMetered(madeBy) ? (madeBy === provider.name ? provider : platformProvider(madeBy)) : null;
+    const maker = found && isComputerProvider(found) ? found : null;
+    if (!maker) return;
     await releaseBoxIfUnused({
-      pausesBoxes: provider.pausesBoxes,
-      computer: async () => {
-        const computer = await getRuntimeComputerByProject(projectId);
-        // Only Outrunner's boxes, as the reconciler: the user's own Daytona or
-        // Modal is theirs to stop. And only one this provider can pause.
-        return computer && computerMadeBy(computer) === provider.name && isMetered(computer.provider)
-          ? computer
-          : null;
-      },
+      pausesBoxes: maker.pausesBoxes,
+      computer: async () => computer,
       sessions: () => listWorkspaces({ projectId }),
-      pause: (sandboxId) => provider.pauseComputer(sandboxId),
+      pause: (sandboxId) => maker.pauseComputer(sandboxId),
       closeInterval: closeIntervalOf,
       markStopped: (computerId, sandboxId) =>
         markStoppedIfReady(computerId, sandboxId, "Paused with no sessions left; it resumes with the next session."),

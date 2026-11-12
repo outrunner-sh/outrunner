@@ -7,6 +7,7 @@ import { readHeartbeats } from "@/lib/cron/heartbeat.deps";
 import { checkDaytona, checkOpenRouter } from "@/lib/health/dependencies";
 import { isDraining } from "@/lib/observability/drain";
 import { optionalEnv, providerName } from "@/lib/env";
+import { platformComputerProviders } from "@/lib/runtime/provider";
 import { keySource } from "@/lib/openrouter/keys";
 import { codexCliVersion, probeCodexSchema } from "@/lib/codex/rollout";
 import {
@@ -141,6 +142,9 @@ export async function GET(request: Request) {
     {
       ok,
       provider: providerName(),
+      // Every backend of Outrunner's this deployment still manages boxes on:
+      // its own, and the one it moved from while that one's key is set.
+      managedProviders: managedProviders(),
       configured,
       database,
       codex,
@@ -159,6 +163,16 @@ export async function GET(request: Request) {
 function billingModeOrInvalid(): ReturnType<typeof billingMode> | "invalid" {
   try {
     return billingMode();
+  } catch {
+    return "invalid";
+  }
+}
+
+/** The platform backends this deployment manages, or what kept them from
+ *  being read (an invalid RUNTIME_PROVIDER). */
+function managedProviders(): string[] | "invalid" {
+  try {
+    return platformComputerProviders().map((provider) => provider.name);
   } catch {
     return "invalid";
   }

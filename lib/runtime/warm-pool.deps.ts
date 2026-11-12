@@ -38,6 +38,7 @@ import {
 import { AgentClient, AgentRequestError } from "@/lib/runtime/agent-client";
 import { LISTING_WORKSPACE_ID, type WarmRequest } from "@/lib/runtime/agent-protocol";
 import { type ComputerRuntimeProvider, isComputerProvider } from "@/lib/runtime/computer-provider";
+import { platformProvider } from "@/lib/runtime/provider";
 import { providerForNewSessions, providerNamed } from "@/lib/runtime/sandbox-choice";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import type { Project, ProviderName } from "@/lib/runtime/types";
@@ -424,9 +425,9 @@ async function warmBox(
 }
 
 /** Delete a pooled box with the provider that made it. Pooled boxes are only
- *  ever the deployment's, so another maker means the deployment's provider
- *  changed: that one can't be reached from here, and its row can't help
- *  delete it, so the box is logged (to delete by hand) and let go. */
+ *  ever Outrunner's, so another maker means the deployment's provider
+ *  changed: the box goes with the old one while its credentials are set
+ *  (providerNamed), else it is logged (to delete by hand) and let go. */
 async function discardBox(
   provider: ComputerRuntimeProvider,
   madeBy: ProviderName | null,
@@ -463,12 +464,16 @@ export async function sweepAbandonedPools(provider: ComputerRuntimeProvider): Pr
   let swept = 0;
   for (const row of data ?? []) {
     try {
-      // Pooled boxes are only ever this deployment's provider's: another's
-      // means the deployment moved, and its box can't be reached from here.
-      if (row.daytona_sandbox_id && row.provider && row.provider !== provider.name) {
+      // Pooled boxes are only ever Outrunner's: another provider's means the
+      // deployment moved, and the box goes with the one it moved from while
+      // that one's credentials are set.
+      const madeBy = row.provider as ProviderName | null;
+      const found = !madeBy || madeBy === provider.name ? provider : platformProvider(madeBy);
+      const maker = found && isComputerProvider(found) ? found : null;
+      if (row.daytona_sandbox_id && !maker) {
         console.warn(`Pooled box ${row.daytona_sandbox_id} on ${row.provider} can't be reached to delete it: delete it there by hand`);
-      } else if (row.daytona_sandbox_id) {
-        await provider.destroyComputerOrThrow(row.daytona_sandbox_id);
+      } else if (row.daytona_sandbox_id && maker) {
+        await maker.destroyComputerOrThrow(row.daytona_sandbox_id);
       }
       const { error: writeError } =
         row.status === "error"

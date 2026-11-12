@@ -11,6 +11,7 @@ import {
   transitionsInterruptedBefore,
 } from "@/lib/session/provisioning";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import type { ProviderName } from "@/lib/runtime/types";
 
 /**
  * Fail the sessions whose setup a restart or a deploy cut off
@@ -97,17 +98,19 @@ export async function sweepInterruptedTransitions(now = new Date()): Promise<num
  * over. How many, and the boxes stopped as their rows now say, for the caller
  * to pause: one brought back part way may be running.
  */
-export async function sweepAbandonedBoxClaims(now = new Date()): Promise<{ released: number; stopped: string[] }> {
+export async function sweepAbandonedBoxClaims(
+  now = new Date(),
+): Promise<{ released: number; stopped: { sandboxId: string; provider: ProviderName | null; ownerId: string }[] }> {
   const db = createSupabaseAdminClient();
   const before = new Date(now.getTime() - BOX_CLAIM_ABANDONED_AFTER_MS).toISOString();
   const { data: claims, error } = await db
     .from("runtime_computers")
-    .select("id, daytona_sandbox_id, updated_at")
+    .select("id, daytona_sandbox_id, updated_at, provider, owner_id")
     .eq("status", "provisioning")
     .eq("pooled", false)
     .lt("updated_at", before);
   if (error) throw error;
-  const stopped: string[] = [];
+  const stopped: { sandboxId: string; provider: ProviderName | null; ownerId: string }[] = [];
   let released = 0;
   for (const claim of claims ?? []) {
     const { status, errorMessage } = abandonedBoxClaim(claim.daytona_sandbox_id);
@@ -121,7 +124,9 @@ export async function sweepAbandonedBoxClaims(now = new Date()): Promise<{ relea
     if (updateError) throw updateError;
     if (!data?.length) continue;
     released++;
-    if (status === "stopped" && claim.daytona_sandbox_id) stopped.push(claim.daytona_sandbox_id);
+    if (status === "stopped" && claim.daytona_sandbox_id) {
+      stopped.push({ sandboxId: claim.daytona_sandbox_id, provider: claim.provider as ProviderName | null, ownerId: claim.owner_id });
+    }
     console.warn(`Let go of box claim ${claim.id}, cut off mid-provision (now ${status})`);
   }
   return { released, stopped };

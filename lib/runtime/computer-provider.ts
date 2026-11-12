@@ -34,7 +34,7 @@ import {
   pushBranch,
   readFileDiff,
 } from "@/lib/runtime/git";
-import { boxLabels, deploymentName } from "@/lib/runtime/orphan-boxes";
+import { boxLabels, deploymentName, type ListedBox } from "@/lib/runtime/orphan-boxes";
 import type { BoxResources, PreviewTarget, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
 import type {
   ChangedFile,
@@ -620,6 +620,12 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       // Already gone is success from the caller's perspective.
       console.error(`Could not delete ${this.name} computer ${sandboxId}`, error);
     }
+  }
+
+  /** The account's boxes for the orphaned-box sweep (SandboxBackend.list);
+   *  null where the backend can't list them. */
+  listBoxes(labels: Record<string, string>, quietSince: Date): AsyncIterable<ListedBox> | null {
+    return this.backend.list ? this.backend.list(labels, quietSince) : null;
   }
 
   /** Tear the box down, or throw: for a caller that must know the box is gone

@@ -5,7 +5,7 @@ import type { SandboxChoice, SandboxSettings } from "@/lib/db/credentials";
 import { boxSize, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError, UserDaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
-import { getRuntimeProvider } from "@/lib/runtime/provider";
+import { getRuntimeProvider, platformProvider } from "@/lib/runtime/provider";
 import type { BoxResources } from "@/lib/runtime/sandbox/backend";
 import type { ModalToken } from "@/lib/runtime/sandbox/modal";
 import type { ProviderName, RuntimeComputer, RuntimeProvider } from "@/lib/runtime/types";
@@ -26,15 +26,15 @@ export type OwnSandboxKeys = {
 
 /**
  * The provider that made a workspace or computer, to manage it with: the
- * deployment's own, or its owner's Daytona or Modal. Null for one this
- * deployment no longer runs (its provider was switched).
+ * deployment's own, another of Outrunner's backends it still has credentials
+ * for (the one it moved from: lib/runtime/provider.ts), or its owner's
+ * Daytona, GCP or Modal. Null for one this deployment can't reach any more.
  */
 export function providerNamed(name: ProviderName, keys: OwnSandboxKeys): RuntimeProvider | null {
   if (name === "user-daytona") return new UserDaytonaRuntimeProvider(keys.daytona);
   if (name === "user-gcp") return new UserGcpRuntimeProvider(keys.ownerId ?? "", keys.gcp ?? (async () => null));
   if (name === "user-modal") return new UserModalRuntimeProvider(keys.modal);
-  const deployment = getRuntimeProvider();
-  return deployment.name === name ? deployment : null;
+  return platformProvider(name);
 }
 
 /** Where a user's new cloud sessions go, by their settings. Throws

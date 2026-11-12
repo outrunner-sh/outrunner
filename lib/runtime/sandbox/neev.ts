@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { Neev, NotFoundError, type Sandbox } from "@neevcloud/sdk";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
+import { COMPUTER_ROLE, DEPLOYMENT_LABEL, deploymentName, type ListedBox, ROLE_LABEL } from "@/lib/runtime/orphan-boxes";
 import { claudeInstallCommand } from "@/lib/runtime/claude-cli";
 import { codexInstallCommand } from "@/lib/runtime/codex-cli";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
@@ -75,6 +76,28 @@ export function neevPrepareScript(): string {
 /** How long Neev keeps a paused box before deleting it, with any work on it
  *  that wasn't pushed. */
 const PAUSED_RETENTION_SECONDS = 30 * 24 * 60 * 60;
+/**
+ * Seconds without activity before Neev pauses one of Outrunner's boxes on its
+ * own (on_idle "pause": its disk is kept, and the next session resumes it):
+ * the provider-side backstop should Outrunner stop looking after its boxes
+ * (the reconciler's cron down, a deploy that broke it), so no box bills for
+ * ever. As Daytona's (lib/runtime/sandbox/daytona.ts AUTO_STOP_MINUTES): the
+ * reconciler heartbeats every box it looks at and keeps running
+ * ({@link NeevBackend.keepAlive}), so a box in use is never paused by this
+ * while the cron runs, whatever Neev counts as activity.
+ */
+export const IDLE_BACKSTOP_SECONDS = 4 * 60 * 60;
+/** The lifecycle every box is made with, and a box made before it is given
+ *  as it comes back (restore). */
+export const NEEV_LIFECYCLE = {
+  idle_timeout_seconds: IDLE_BACKSTOP_SECONDS,
+  on_idle: "pause",
+  max_lifetime_seconds: 0,
+  paused_retention_seconds: PAUSED_RETENTION_SECONDS,
+} as const;
+/** How long a box Neev is bringing back (Pending, or restarting after a
+ *  crash: NotReady) may take to be ready before it's given up on. */
+const READY_TIMEOUT_MS = 180_000;
 const PAUSING_WAIT_MS = 60_000;
 const PAUSING_POLL_MS = 1_000;
 
@@ -96,19 +119,16 @@ export class NeevBackend implements SandboxBackend {
 
   async create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox> {
     const sandbox = await this.neev().sandboxes.create({
-      name: `outrunner-${labels["runtime.engine"] ?? "box"}-${randomUUID().slice(0, 8)}`,
+      name: neevBoxName(labels),
       sandbox_template_id: optionalEnv("NEEV_SANDBOX_TEMPLATE") ?? DEFAULT_TEMPLATE,
       // Deny-all by default; the box clones from GitHub and Claude reaches its
       // model provider.
       allowInternet: true,
-      // Never paused or deleted by Neev for being idle: Outrunner pauses an
-      // idle box itself (lib/billing/reconcile.ts), by what its sessions are
-      // doing. A paused one is kept PAUSED_RETENTION_SECONDS, then deleted.
-      lifecycle: {
-        idle_timeout_seconds: 0,
-        max_lifetime_seconds: 0,
-        paused_retention_seconds: PAUSED_RETENTION_SECONDS,
-      },
+      // Outrunner pauses an idle box itself (lib/billing/reconcile.ts), by
+      // what its sessions are doing; Neev's idle pause is only the backstop
+      // (IDLE_BACKSTOP_SECONDS), and never deletes a box that isn't paused.
+      // A paused one is kept PAUSED_RETENTION_SECONDS, then deleted.
+      lifecycle: { ...NEEV_LIFECYCLE },
       // Otherwise the template's own (2 vCPU, 2 GB for the default).
       ...(size && { resources: neevResources(size) }),
     });
@@ -144,8 +164,14 @@ export class NeevBackend implements SandboxBackend {
     closeNeevTunnels(id);
   }
 
+  /** The reconciler's heartbeat: resets Neev's idle timer (IDLE_BACKSTOP_SECONDS). */
+  async keepAlive(id: string): Promise<void> {
+    await this.neev().sandboxes.keepalive(id);
+  }
+
   /** The paused box `id`, running again on the disk it kept. Null when Neev
-   *  has deleted it, or it isn't paused but broken. */
+   *  has deleted it, or it is broken: its state lost (RestoreFailed), a crash
+   *  it didn't come back from in time, or a restart that reset its storage. */
   async restore(id: string): Promise<SandboxBox | null> {
     let sandbox: Sandbox;
     try {
@@ -159,19 +185,42 @@ export class NeevBackend implements SandboxBackend {
       await new Promise((r) => setTimeout(r, PAUSING_POLL_MS));
       await sandbox.refresh();
     }
-    if (sandbox.phase !== "Paused" && sandbox.phase !== "Ready" && sandbox.phase !== "Pending") {
-      // Not one Outrunner paused: crashed (NotReady), its state lost
-      // (RestoreFailed), or unreadable. A new box, as before pausing existed,
-      // rather than retrying one that won't come back.
+    // Restarting after a crash (an OOM kill, a node lost): Neev brings it
+    // back on its own, usually with its files, so it is waited for rather
+    // than replaced, which left the session's work behind on it.
+    // Still pausing past the wait: its disk is being saved, so a retry
+    // resumes it; a new box now would leave the session's files behind.
+    if (sandbox.phase === "Pausing") throw new Error(`Neev box ${id} is still pausing; try again in a minute`);
+    const recovering = sandbox.phase === "NotReady" || sandbox.phase === "Unknown";
+    if (sandbox.phase !== "Paused" && sandbox.phase !== "Ready" && sandbox.phase !== "Pending" && !recovering) {
+      // Not one Outrunner paused: its state lost (RestoreFailed). A new box, as before pausing existed, rather than retrying
+      // one that won't come back.
       console.error(`Neev box ${id} is ${sandbox.phase}, not paused; starting a new one`);
       return null;
     }
     const resumed = sandbox.phase === "Paused";
     if (resumed) await sandbox.resume();
     try {
-      await sandbox.waitUntilReady();
+      try {
+        await sandbox.waitUntilReady({ timeoutMs: READY_TIMEOUT_MS });
+      } catch (error) {
+        if (!recovering) throw error;
+        console.error(`Neev box ${id} did not recover from ${sandbox.phase}; starting a new one`, error);
+        return null;
+      }
       const conn = await this.connection(id);
-      return this.box(sandbox, new SandboxRuntime(conn), conn);
+      const runtime = new SandboxRuntime(conn);
+      if (!(await prepared(runtime))) {
+        // Restarted with an empty disk (Neev's last_crash.storage_reset): the
+        // tools, the box user and the sessions' files are gone, so it can't
+        // host them. Deleted, and a new box made in its place.
+        console.error(`Neev box ${id} lost its storage (last crash: ${JSON.stringify(sandbox.lastCrash)}); starting a new one`);
+        await this.delete(id).catch((error: unknown) => console.error(`Could not delete Neev box ${id}`, error));
+        return null;
+      }
+      // A box made before the backstop gets it as it comes back.
+      await backstop(sandbox);
+      return this.box(sandbox, runtime, conn);
     } catch (error) {
       // Paused again rather than left running where nothing meters or pauses
       // it: its computer is saved stopped, which the reconciler doesn't check.
@@ -183,6 +232,32 @@ export class NeevBackend implements SandboxBackend {
   async delete(id: string): Promise<void> {
     await this.neev().sandboxes.delete(id);
     closeNeevTunnels(id);
+  }
+
+  /**
+   * The project's Outrunner boxes, as the orphaned-box sweep reads them
+   * (lib/runtime/orphan-boxes.deps.ts): Neev has no labels, so a box's role,
+   * engine and deployment are read off its name ({@link neevBoxName}). Neev
+   * can't filter by age either; the sweep's own rules (sweepable) do. Its
+   * last activity is when Neev last changed it (created, paused, resumed).
+   */
+  async *list(): AsyncIterable<ListedBox> {
+    const deployment = deploymentName(optionalEnv("RUNTIME_BASE_URL"));
+    for (let page = 1; ; page += 1) {
+      const result = await this.neev().sandboxes.list({ page, limit: LIST_PAGE });
+      for (const sandbox of result.items) {
+        const labels = neevBoxLabels(sandbox.name, deployment);
+        if (!labels) continue;
+        yield {
+          id: sandbox.id,
+          labels,
+          state: listedState(sandbox.phase),
+          createdAt: sandbox.data.created_at,
+          lastActivityAt: sandbox.data.updated_at,
+        };
+      }
+      if (result.items.length < LIST_PAGE || page * LIST_PAGE >= result.total) return;
+    }
   }
 
   /** How to reach one sandbox's runtime: its URL, on the project's API key. */
@@ -232,6 +307,7 @@ export class NeevBackend implements SandboxBackend {
     return {
       id: sandbox.id,
       cpu: sandbox.resources?.cpu,
+      memoryGb: sandbox.resources?.memory_gb,
       io,
       gitExec,
       home: async () => BOX_HOME,
@@ -251,6 +327,79 @@ export class NeevBackend implements SandboxBackend {
       }),
     };
   }
+}
+
+/** Sandboxes per page when listing. */
+const LIST_PAGE = 100;
+
+/** Prefix of every box Outrunner makes on Neev: its role, as a label is on Daytona. */
+const NAME_PREFIX = "outrunner-";
+
+/** The deployment's tag in a box's name: its name hashed, short, as a DNS
+ *  name allows (no dots, at most 63 characters in all). */
+export function deploymentTag(deployment: string): string {
+  return createHash("sha256").update(deployment).digest("hex").slice(0, 8);
+}
+
+/**
+ * A new box's name, carrying what its labels would on Daytona: Outrunner's
+ * prefix, its engine, the deployment that made it (tagged), and a random
+ * part. `outrunner-claude-1a2b3c4d-9f8e7d6c`; one with no deployment, as
+ * boxes were named before, `outrunner-claude-9f8e7d6c`.
+ */
+export function neevBoxName(labels: Record<string, string>): string {
+  const engine = (labels["runtime.engine"] ?? "box").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20) || "box";
+  const deployment = labels[DEPLOYMENT_LABEL];
+  return `${NAME_PREFIX}${engine}-${deployment ? `${deploymentTag(deployment)}-` : ""}${randomUUID().slice(0, 8)}`;
+}
+
+/**
+ * A listed box's labels, read off its name: null for one that isn't
+ * Outrunner's. One tagged with this deployment's name gets it as its
+ * deployment label; another deployment's, a label that can't match; one from
+ * before tags, none (unlabelled, which the sweep only ever holds on Neev).
+ */
+export function neevBoxLabels(name: string, deployment: string | null): Record<string, string> | null {
+  const match = /^outrunner-([a-z0-9]+)-(?:([0-9a-f]{8})-)?([0-9a-f]{8})$/.exec(name);
+  if (!match) return null;
+  const [, engine, tag] = match;
+  const labels: Record<string, string> = { [ROLE_LABEL]: COMPUTER_ROLE, "runtime.engine": engine };
+  if (tag) labels[DEPLOYMENT_LABEL] = deployment && deploymentTag(deployment) === tag ? deployment : `neev-tag:${tag}`;
+  return labels;
+}
+
+/** A Neev phase in the words the sweep's rules use (Daytona's states). */
+function listedState(phase: string): string {
+  switch (phase) {
+    case "Ready":
+      return "started";
+    case "Paused":
+      return "stopped";
+    case "Pausing":
+      return "pausing";
+    case "Pending":
+      return "starting";
+    case "NotReady":
+    case "RestoreFailed":
+      return "error";
+    default:
+      return "unknown";
+  }
+}
+
+/** Whether a box still has what prepare() gave it (its user): false after a
+ *  restart that reset its storage. */
+async function prepared(runtime: Pick<SandboxRuntime, "exec">): Promise<boolean> {
+  return (await runtime.exec("id", ["-u", BOX_USER])).exitCode === 0;
+}
+
+/** Give a box made before it the idle backstop (NEEV_LIFECYCLE). Best
+ *  effort: the box is up either way, and the reconciler still looks after it. */
+export async function backstop(sandbox: Pick<Sandbox, "id" | "data" | "updateTimeout">): Promise<void> {
+  if (sandbox.data.idle_timeout_seconds === IDLE_BACKSTOP_SECONDS && sandbox.data.on_idle === "pause") return;
+  await Promise.resolve()
+    .then(() => sandbox.updateTimeout({ idle_timeout_seconds: IDLE_BACKSTOP_SECONDS, on_idle: "pause" }))
+    .catch((error: unknown) => console.warn(`Could not set Neev box ${sandbox.id}'s idle backstop`, error));
 }
 
 /** A size as Neev takes it. */

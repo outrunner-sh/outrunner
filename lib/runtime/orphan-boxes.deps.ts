@@ -1,12 +1,12 @@
 /**
  * Real wiring for the orphaned-box sweep (lib/runtime/orphan-boxes.ts). Kept
- * apart so the rules stay free of Daytona and the database, and tested.
+ * apart so the rules stay free of the providers and the database, and tested.
  */
 
 import { allRows, lastMeteredBox } from "@/lib/billing/metering-store";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { optionalEnv } from "@/lib/env";
-import { boxGone } from "@/lib/runtime/computer-provider";
+import { boxGone, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import {
   atRest,
   boxStatuses,
@@ -20,7 +20,7 @@ import {
   sweepable,
 } from "@/lib/runtime/orphan-boxes";
 import { LEFT_BY_CUT_OFF_CLAIM, lostBoxes } from "@/lib/runtime/lost-box";
-import { DaytonaBackend } from "@/lib/runtime/sandbox/daytona";
+import { platformComputerProviders } from "@/lib/runtime/provider";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** The most boxes one run reads off the account, so a run's work is bounded
@@ -28,8 +28,9 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
  *  paused boxes rows still name. */
 const LIST_MAX = 5_000;
 
-/** The held boxes last logged, so an unchanged list isn't logged again. */
-let lastHeld = "";
+/** The held boxes last logged, per backend, so an unchanged list isn't
+ *  logged again. */
+const lastHeld = new Map<string, string>();
 
 /** Ids asked about per query: a long `in` list makes a long URL. */
 const LOOKUP_CHUNK = 100;
@@ -38,32 +39,60 @@ const LOOKUP_CHUNK = 100;
  *  `limit 1` read. */
 const LOST_LOOKUP_CONCURRENCY = 4;
 
+/** What one sweep did, on one backend or all. */
+export type OrphanSweepReport = { deleted: number; held: number; paused: number };
+
 /**
- * Delete the deployment's Daytona boxes that no runtime_computers row names
- * (lib/runtime/orphan-boxes.ts has the rules): a box something dropped
- * without deleting otherwise runs, and costs, for good. Only ever the
- * deployment's own account (DAYTONA_API_KEY): a user's own Daytona (Settings
- * → Sandbox) is theirs, and never listed. For the reconciler's cron. How
- * many went, each one's id logged, and how many were held (orphanedBoxes).
+ * Delete the deployment's boxes that no runtime_computers row names
+ * (lib/runtime/orphan-boxes.ts has the rules), on each of Outrunner's own
+ * backends it reaches: its own provider's account, and the one it moved from
+ * while that one's credentials are set (lib/runtime/provider.ts). A box
+ * something dropped without deleting otherwise runs, and costs, for good.
+ * Rows of every provider, in every state, are what name a box, so a box an
+ * old session still has (a Daytona one, once the deployment runs Neev) is
+ * never deleted. Never a user's own Daytona (Settings → Sandbox): theirs,
+ * and never listed. For the reconciler's cron. How many went, each one's id
+ * logged, and how many were held (orphanedBoxes). One backend failing is
+ * logged; the others are still swept.
  */
-export async function sweepOrphanedBoxes(now = Date.now()): Promise<{ deleted: number; held: number; paused: number }> {
+export async function sweepOrphanedBoxes(now = Date.now()): Promise<OrphanSweepReport> {
+  const total: OrphanSweepReport = { deleted: 0, held: 0, paused: 0 };
   // Without a name, this deployment's boxes can't be told from another's.
   const deployment = deploymentName(optionalEnv("RUNTIME_BASE_URL"));
-  if (!optionalEnv("DAYTONA_API_KEY") || !deployment) return { deleted: 0, held: 0, paused: 0 };
-  const backend = new DaytonaBackend();
+  if (!deployment) return total;
+  let failed: unknown = null;
+  for (const provider of platformComputerProviders()) {
+    try {
+      const report = await sweepOrphanedBoxesOf(provider, deployment, now);
+      total.deleted += report.deleted;
+      total.held += report.held;
+      total.paused += report.paused;
+    } catch (error) {
+      console.error(`Sweeping orphaned ${provider.name} boxes failed`, error);
+      failed = error;
+    }
+  }
+  if (failed && total.deleted + total.held + total.paused === 0) throw failed;
+  return total;
+}
 
-  // Daytona lists only the quiet ones; each is checked again here, and only
-  // those that could be swept are asked about, so the lookup is as small as
-  // the backlog.
+/** The sweep on one backend's account (sweepOrphanedBoxes). */
+async function sweepOrphanedBoxesOf(provider: ComputerRuntimeProvider, deployment: string, now: number): Promise<OrphanSweepReport> {
+  const what = `${provider.name} box`;
+  // Listed quiet ones where the backend can filter; each is checked again
+  // here, and only those that could be swept are asked about, so the lookup
+  // is as small as the backlog.
+  const listing = provider.listBoxes({ [ROLE_LABEL]: COMPUTER_ROLE }, new Date(now - ORPHAN_GRACE_MS));
+  if (!listing) return { deleted: 0, held: 0, paused: 0 };
   const candidates: ListedBox[] = [];
   let listed = 0;
-  for await (const box of backend.list({ [ROLE_LABEL]: COMPUTER_ROLE }, new Date(now - ORPHAN_GRACE_MS))) {
+  for await (const box of listing) {
     if (sweepable(box, now, deployment)) candidates.push(box);
     if (++listed >= LIST_MAX) break;
   }
   if (candidates.length === 0) {
     // None held now: the same ones coming back are logged again.
-    lastHeld = "";
+    lastHeld.delete(provider.name);
     return { deleted: 0, held: 0, paused: 0 };
   }
 
@@ -72,25 +101,29 @@ export async function sweepOrphanedBoxes(now = Date.now()): Promise<{ deleted: n
   // the next open of its session brings that box back, its files on it.
   const unnamed = candidates.map((box) => box.id).filter((id) => !statusOf.has(id));
   const named = new Set([...statusOf.keys(), ...(await lostOf(unnamed))]);
-  const unlabelled = optionalEnv("ORPHAN_SWEEP_UNLABELLED") === "1";
+  // Unlabelled boxes are deleted only on Daytona, and only where the
+  // deployment says the account is its alone. A Neev project's untagged
+  // boxes (from before tags) are always only held: an operator deletes them.
+  const unlabelled = provider.name === "daytona" && optionalEnv("ORPHAN_SWEEP_UNLABELLED") === "1";
   const { remove, held } = orphanedBoxes(candidates, named, { now, deployment, unlabelled });
   // Every one, but only when they change: the cron runs every 2 minutes.
   const heldNow = held.join(", ");
-  if (held.length > 0 && heldNow !== lastHeld) {
+  if (held.length > 0 && heldNow !== lastHeld.get(provider.name)) {
     console.warn(
-      `${held.length} orphaned Daytona box(es) from before deployment labels, kept (set ORPHAN_SWEEP_UNLABELLED=1 to delete them): ${heldNow}`,
+      `${held.length} orphaned ${what}(es) from before deployment labels, kept` +
+        `${provider.name === "daytona" ? " (set ORPHAN_SWEEP_UNLABELLED=1 to delete them)" : ""}: ${heldNow}`,
     );
   }
-  lastHeld = heldNow;
+  lastHeld.set(provider.name, heldNow);
   let swept = 0;
   for (const id of remove) {
     try {
-      await backend.delete(id);
-      console.warn(`Deleted orphaned Daytona box ${id}: no runtime computer names it`);
+      await provider.destroyComputerOrThrow(id);
+      console.warn(`Deleted orphaned ${what} ${id}: no runtime computer names it`);
       swept += 1;
     } catch (error) {
       if (boxGone(error)) continue;
-      console.error(`Could not delete orphaned Daytona box ${id}`, error);
+      console.error(`Could not delete orphaned ${what} ${id}`, error);
     }
   }
   // Running under a row that says it isn't: paused, as the row says.
@@ -100,12 +133,12 @@ export async function sweepOrphanedBoxes(now = Date.now()): Promise<{ deleted: n
       // Read again just before: a session reopened since the lookup may be
       // bringing this very box back (restore() takes a started box as is).
       if (!(await stillAtRest(id))) continue;
-      await backend.pause(id);
-      console.warn(`Paused Daytona box ${id}: running while its runtime computer says it is at rest`);
+      await provider.pauseComputer(id);
+      console.warn(`Paused ${what} ${id}: running while its runtime computer says it is at rest`);
       paused += 1;
     } catch (error) {
       if (boxGone(error)) continue;
-      console.error(`Could not pause stray running Daytona box ${id}`, error);
+      console.error(`Could not pause stray running ${what} ${id}`, error);
     }
   }
   return { deleted: swept, held: held.length, paused };
@@ -165,7 +198,7 @@ async function stillAtRest(sandboxId: string): Promise<boolean> {
     .select("status")
     .eq("daytona_sandbox_id", sandboxId);
   // Said, so a lookup failing every run doesn't read as "no strays".
-  if (error) console.error(`Could not re-read runtime_computers for Daytona box ${sandboxId}`, error);
+  if (error) console.error(`Could not re-read runtime_computers for box ${sandboxId}`, error);
   if (error || !data?.length) return false;
   return data.every((row) => atRest(row.status));
 }

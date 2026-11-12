@@ -149,25 +149,113 @@ pnpm dlx wrangler secret put EMAIL_FROM       # Outrunner <hello@outrunner.sh>
 members page; it gets a new link, the old one stops working, and it works for
 7 more days.
 
-**Neev sandboxes** (optional; cloud sessions run on Daytona otherwise): set
-the provider and Neev's three keys, then deploy.
+**Neev sandboxes.** `RUNTIME_PROVIDER` picks where *new* cloud sessions run:
+`daytona` (the default) or `neev`. Boxes the other backend made stay managed
+(resumed, paused when idle, metered, archived, deleted, and swept for
+orphans) for as long as that backend's credentials stay set
+(`lib/runtime/provider.ts` `platformProvider`). So keep `DAYTONA_API_KEY`
+after moving to Neev, and keep the `NEEV_*` keys after rolling back.
+
+`NEEV_API_KEY` is a project API key with Resource Type "Sandboxes"
+(`sk-nc-…`). A personal access token (`pat-nc-…`) won't do, because the
+sandbox itself refuses it. `NEEV_SANDBOX_TEMPLATE` (default
+`sb-ubuntu-26-04-dev`) and `NEEV_BASE_URL` (the SDK's own API URL) are
+optional. Nothing uses a Neev preview URL. The app reaches each sandbox
+through its runtime on that key, and relays the browser's terminal and
+conversation WebSockets through `/relay/neev/` on this domain. That is why
+`RUNTIME_BASE_URL` must be the live domain.
+
+### Cutover: Daytona → Neev
+
+1. **Neev account.** Neev is prepaid. A create is refused with "Your available
+   credits are too low to run this deployment for 1 hour" when the balance
+   can't cover an hour. Customers see "Outrunner's cloud has no room for
+   another sandbox" (`lib/runtime/provision-failure.ts`). Top up first, and
+   set up a low-balance alert or auto top-up.
+2. **Live check from a laptop** (it makes one `outrunner-smoketest-…` box and
+   deletes it):
+   ```bash
+   bash scripts/build-agent.sh
+   NEEV_API_KEY=… NEEV_ORG_ID=… NEEV_PROJECT_ID=… \
+     node --experimental-strip-types --import ./scripts/test-loader.mjs scripts/verify-neev-lifecycle.ts
+   ```
+   All steps should pass. Pause and resume must keep the file.
+3. **Rows from before providers were recorded.** A `runtime_computers` row
+   with a null `provider` is read as the deployment's. After the switch it
+   would be taken for a Neev box. Check, and if there are any, mark them
+   Daytona's *before* switching (SQL editor, service role):
+   ```sql
+   select status, count(*) from runtime_computers where provider is null group by 1;
+   update runtime_computers set provider = 'daytona' where provider is null;
+   ```
+4. **Secrets** (`cd outrunner/cloudflare`):
+   ```bash
+   pnpm dlx wrangler secret put NEEV_API_KEY       # sk-nc-…, Resource Type "Sandboxes"
+   pnpm dlx wrangler secret put NEEV_ORG_ID
+   pnpm dlx wrangler secret put NEEV_PROJECT_ID
+   pnpm dlx wrangler secret put RUNTIME_PROVIDER   # neev
+   # Keep DAYTONA_API_KEY as it is: existing sessions' boxes are on Daytona.
+   ```
+5. **Deploy.** The container reads its environment when it starts. Run
+   Actions → *Deploy to Cloudflare Containers* → *Run workflow* on `main`
+   (empty `ref`), or merge anything to main. Either restarts it and drops
+   live sessions.
+6. **Verify.**
+   - `curl -H "authorization: Bearer $BILLING_CRON_SECRET" https://app.outrunner.sh/api/health`
+     reports `provider: "neev"`, `configured.neev: true`,
+     `configured.daytona: true` and `managedProviders: ["neev", "daytona"]`.
+   - A new session starts. Its `runtime_computers` row has `provider = 'neev'`,
+     and Neev's console shows `outrunner-claude-<tag>-<id>`.
+   - An existing session still opens. Its box resumes on Daytona.
+   - The reconcile cron logs no `has no credentials for` errors. Its
+     response's `failed` stays 0.
+
+**What happens to existing Daytona sessions.** They stay on Daytona. Opening
+one resumes its stopped Daytona box (or makes a new Daytona box if that one is
+gone). The reconciler meters them and pauses them when idle. Archive, delete,
+member removal and the usage limit stop or delete them on Daytona. Daytona's
+orphan sweep keeps running, and never touches a box any row names. Pooled
+(warm) Daytona boxes are deleted on Daytona by the next refill or sweep. New
+sessions, including new sessions in old projects, get Neev boxes. Daytona's
+footprint shrinks as old sessions are archived or deleted.
+
+### Rollback: Neev → Daytona
 
 ```bash
-pnpm dlx wrangler secret put RUNTIME_PROVIDER   # neev
-pnpm dlx wrangler secret put NEEV_API_KEY       # project API key, Resource Type "Sandboxes" (sk-nc-…)
-pnpm dlx wrangler secret put NEEV_ORG_ID
-pnpm dlx wrangler secret put NEEV_PROJECT_ID
+pnpm dlx wrangler secret put RUNTIME_PROVIDER   # daytona (or: wrangler secret delete RUNTIME_PROVIDER)
+# Keep the NEEV_* secrets: sessions started on Neev keep their boxes there.
 ```
 
-`/api/health` then reports `provider: "neev"` and `configured.neev: true`.
-`NEEV_SANDBOX_TEMPLATE` is optional (default `sb-ubuntu-26-04-dev`). A personal
-access token (`pat-nc-…`) won't do: the sandbox itself refuses it. Nothing
-uses a preview URL: the app reaches each sandbox through its own runtime on
-that key, and relays the browser's terminal and conversation WebSockets
-through `/relay/neev/` on this domain, which is why `RUNTIME_BASE_URL` must be
-the live domain. Switching from Daytona gives each project a new Neev computer
-on its next session; its Daytona box is left running, so delete it in Daytona.
-Set `RUNTIME_PROVIDER` back to `daytona` (or delete it) to roll back.
+Then deploy (step 5) and check `/api/health` reports `provider: "daytona"`
+and `managedProviders: ["daytona", "neev"]`. New sessions go to Daytona.
+Sessions started on Neev keep running on Neev. Deleting the `NEEV_*` secrets
+strands those: they can't be opened, paused or deleted from Outrunner, and
+their boxes run on until Neev's idle backstop pauses them (4 h). So delete them
+only once no row has `provider = 'neev'` in a non-stopped state, after
+removing the boxes in Neev's console. The same applies to `DAYTONA_API_KEY`
+after the cutover.
+
+### What Neev can't do that Daytona can
+
+- **No desktop.** The Desktop tab (computer use) is Daytona-only.
+- **No in-browser editor.** Open editor answers 409 ("This session's sandbox
+  can't open the editor in a browser"): it needs a signed URL to the box's
+  port, which only Daytona gives. Previews work (proxied through the tunnel).
+- **No live memory growth.** Memory autoscaling is off on Neev boxes, though
+  Neev can resize in place (`sandboxes.update`). Not wired yet.
+- **Slower cold starts.** Each new box installs tmux, Claude Code, Codex and
+  `gh` (~1 min, `neevPrepareScript`), where Daytona starts from a prebuilt
+  snapshot in seconds. The warm pool hides this for pooled projects.
+- **A paused box is kept 30 days, then Neev deletes it.** Daytona archives it
+  after a day and keeps it. An archived session restores from its Snapshot
+  either way. Unpushed work on a box paused over 30 days is lost.
+- **No labels.** A box's role, engine and deployment ride in its name. Boxes
+  from before deployment tags (`outrunner-claude-<id>`) are only ever held by
+  the orphan sweep, never deleted. `ORPHAN_SWEEP_UNLABELLED` applies to
+  Daytona only.
+- **Auto-stop is a backstop on both.** Neev pauses a box idle for 4 h
+  (`on_idle: pause`, its disk kept). The reconciler heartbeats every running
+  box it watches (`keepalive`), so this only fires when the cron is down.
 
 There is deliberately **no** `GITHUB_PAT`, `ANTHROPIC_API_KEY` or
 `CLAUDE_CODE_OAUTH_TOKEN`. The app stopped reading them when it went

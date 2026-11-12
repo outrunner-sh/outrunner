@@ -6,7 +6,12 @@ import { NotFoundError } from "@neevcloud/sdk";
 import { CLAUDE_CODE_VERSION } from "@/lib/runtime/claude-cli";
 import { asUserArgs } from "@/lib/runtime/sandbox/backend";
 import {
+  deploymentTag,
+  IDLE_BACKSTOP_SECONDS,
+  NEEV_LIFECYCLE,
   NeevBackend,
+  neevBoxLabels,
+  neevBoxName,
   neevPrepareScript,
   parseExecStream,
   SandboxRuntime,
@@ -113,20 +118,26 @@ test("a box setup that never finishes times out", async () => {
 });
 
 /** A Neev backend on a fake client: one box in `phase`, noting what's done
- *  to it in `log`. */
-function backendWithBox(phase: string, opts: { readyFails?: boolean; gone?: boolean } = {}) {
+ *  to it in `log`. `storageReset`: the box comes back without its user. */
+function backendWithBox(
+  phase: string,
+  opts: { readyFails?: boolean; gone?: boolean; storageReset?: boolean; backstopped?: boolean } = {},
+) {
   const log: string[] = [];
   const sandbox = {
     id: "sb-1",
     phase,
     connectUrl: "https://sb-1.example.test",
-    resources: { cpu: 4 },
+    resources: { cpu: 4, memory_gb: 8 },
+    lastCrash: null,
+    data: opts.backstopped ? { idle_timeout_seconds: IDLE_BACKSTOP_SECONDS, on_idle: "pause" } : { idle_timeout_seconds: 0 },
     resume: async () => void log.push("resume"),
     refresh: async () => sandbox,
     waitUntilReady: async () => {
       if (opts.readyFails) throw new Error("never ready");
       log.push("ready");
     },
+    updateTimeout: async (windows: unknown) => void log.push(`backstop ${JSON.stringify(windows)}`),
   };
   const client = {
     sandboxes: {
@@ -135,27 +146,40 @@ function backendWithBox(phase: string, opts: { readyFails?: boolean; gone?: bool
         return sandbox;
       },
       pause: async () => void log.push("pause"),
+      delete: async () => void log.push("delete"),
     },
   };
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ type: "exit", exit_code: opts.storageReset ? 1 : 0 }) + "\n")) as unknown as typeof fetch;
   const backend = new NeevBackend();
   (backend as unknown as { client: unknown }).client = client;
   return { backend, log };
 }
 
-test("a paused Neev box is resumed in place, at the size it was made", async () => {
+/** `fn` with NEEV_API_KEY set, as restore reads it to reach the box. */
+async function withKey<T>(fn: () => Promise<T>): Promise<T> {
   const savedKey = process.env.NEEV_API_KEY;
   process.env.NEEV_API_KEY = "sk-nc-test";
   try {
-    const { backend, log } = backendWithBox("Paused");
-    const box = await backend.restore("sb-1");
-    assert.equal(box?.id, "sb-1");
-    assert.equal(box?.cpu, 4);
-    assert.deepEqual(log, ["resume", "ready"]);
+    return await fn();
   } finally {
     if (savedKey === undefined) delete process.env.NEEV_API_KEY;
     else process.env.NEEV_API_KEY = savedKey;
   }
-});
+}
+
+test("a paused Neev box is resumed in place, at the size it was made, and given the idle backstop", () =>
+  withKey(async () => {
+    const { backend, log } = backendWithBox("Paused");
+    const box = await backend.restore("sb-1");
+    assert.equal(box?.id, "sb-1");
+    assert.equal(box?.cpu, 4);
+    assert.equal(box?.memoryGb, 8);
+    assert.deepEqual(log, ["resume", "ready", `backstop {"idle_timeout_seconds":${IDLE_BACKSTOP_SECONDS},"on_idle":"pause"}`]);
+    const already = backendWithBox("Paused", { backstopped: true });
+    await already.backend.restore("sb-1");
+    assert.deepEqual(already.log, ["resume", "ready"], "a box that has it isn't updated");
+  }));
 
 test("a resume that fails partway pauses the box again, rather than leave it running", async () => {
   const { backend, log } = backendWithBox("Paused", { readyFails: true });
@@ -163,10 +187,75 @@ test("a resume that fails partway pauses the box again, rather than leave it run
   assert.deepEqual(log, ["resume", "pause"]);
 });
 
-test("a box that's gone or broken, not paused, is replaced: restore gives null", async () => {
+test("a box that's gone or lost its state is replaced: restore gives null", async () => {
   assert.equal(await backendWithBox("Paused", { gone: true }).backend.restore("sb-1"), null);
-  const crashed = backendWithBox("NotReady");
-  assert.equal(await crashed.backend.restore("sb-1"), null);
-  assert.deepEqual(crashed.log, [], "a crashed box isn't resumed or paused");
   assert.equal(await backendWithBox("RestoreFailed").backend.restore("sb-1"), null);
+});
+
+test("a box restarting after a crash is waited for and kept, with the session's files on it", () =>
+  withKey(async () => {
+    const crashed = backendWithBox("NotReady", { backstopped: true });
+    assert.equal((await crashed.backend.restore("sb-1"))?.id, "sb-1");
+    assert.deepEqual(crashed.log, ["ready"], "not resumed, paused or replaced");
+    // One that doesn't come back in time is replaced, and isn't paused.
+    const stuck = backendWithBox("NotReady", { readyFails: true });
+    assert.equal(await stuck.backend.restore("sb-1"), null);
+    assert.deepEqual(stuck.log, []);
+  }));
+
+test("a box that came back with its storage reset is deleted and replaced", () =>
+  withKey(async () => {
+    const { backend, log } = backendWithBox("Paused", { storageReset: true });
+    assert.equal(await backend.restore("sb-1"), null);
+    assert.deepEqual(log, ["resume", "ready", "delete"]);
+  }));
+
+test("a box still pausing is a failure to retry, never a new box that leaves its files behind", async () => {
+  const realTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = ((fn: () => void) => realTimeout(fn, 0)) as typeof setTimeout;
+  try {
+    const { backend, log } = backendWithBox("Pausing");
+    await assert.rejects(backend.restore("sb-1"), /still pausing/);
+    assert.deepEqual(log, []);
+  } finally {
+    globalThis.setTimeout = realTimeout;
+  }
+});
+
+test("the reconciler's heartbeat resets Neev's idle timer", async () => {
+  const seen: string[] = [];
+  const backend = new NeevBackend();
+  (backend as unknown as { client: unknown }).client = { sandboxes: { keepalive: async (id: string) => void seen.push(id) } };
+  await backend.keepAlive("sb-9");
+  assert.deepEqual(seen, ["sb-9"]);
+});
+
+test("a box's name carries its role, engine and deployment, which the orphan sweep reads back", () => {
+  const name = neevBoxName({ "runtime.role": "computer", "runtime.engine": "claude", "runtime.deployment": "app.example.com" });
+  assert.match(name, /^outrunner-claude-[0-9a-f]{8}-[0-9a-f]{8}$/);
+  assert.ok(name.length <= 63, "a DNS name");
+  assert.ok(name.includes(deploymentTag("app.example.com")));
+  assert.deepEqual(neevBoxLabels(name, "app.example.com"), {
+    "runtime.role": "computer",
+    "runtime.engine": "claude",
+    "runtime.deployment": "app.example.com",
+  });
+  // Another deployment's box (staging on the same project) never reads as ours.
+  assert.notEqual(neevBoxLabels(name, "staging.example.com")?.["runtime.deployment"], "staging.example.com");
+  // One from before tags has no deployment: only ever held by the sweep.
+  assert.deepEqual(neevBoxLabels("outrunner-claude-1a2b3c4d", "app.example.com"), {
+    "runtime.role": "computer",
+    "runtime.engine": "claude",
+  });
+  // Anything not Outrunner's isn't listed at all.
+  assert.equal(neevBoxLabels("my-sandbox", "app.example.com"), null);
+  assert.equal(neevBoxLabels("sandbox-x1y2z3", "app.example.com"), null);
+  // No deployment name: the old shape.
+  assert.match(neevBoxName({ "runtime.engine": "claude" }), /^outrunner-claude-[0-9a-f]{8}$/);
+});
+
+test("new boxes are made with Neev's idle pause as a backstop, never deleted while running", () => {
+  assert.equal(NEEV_LIFECYCLE.on_idle, "pause");
+  assert.equal(NEEV_LIFECYCLE.idle_timeout_seconds, 4 * 60 * 60);
+  assert.equal(NEEV_LIFECYCLE.max_lifetime_seconds, 0);
 });

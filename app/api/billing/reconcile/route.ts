@@ -5,14 +5,16 @@ import { retireOldSlackKeys } from "@/lib/db/slack-agent";
 import { billingMode } from "@/lib/billing/mode";
 import { runUsageSweep } from "@/lib/billing/usage-sweep.deps";
 import { runReconcile } from "@/lib/billing/reconcile-run";
-import { renewDueModelAllowances } from "@/lib/db/credentials";
+import { ownSandboxKeys, renewDueModelAllowances } from "@/lib/db/credentials";
 import { cronAuth } from "@/lib/cron/auth";
 import { recordHeartbeat } from "@/lib/cron/heartbeat.deps";
 import { errorText } from "@/lib/cron/heartbeats";
 import { reportError } from "@/lib/observability/report";
+import { optionalEnv } from "@/lib/env";
 import { sweepFollowUps } from "@/lib/github/followups.deps";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
-import { getRuntimeProvider } from "@/lib/runtime/provider";
+import { getRuntimeProvider, platformComputerProviders } from "@/lib/runtime/provider";
+import { providerNamed } from "@/lib/runtime/sandbox-choice";
 import { sweepOrphanedBoxes } from "@/lib/runtime/orphan-boxes.deps";
 import { sweepAbandonedPools, sweepExpiredIntentWarmups } from "@/lib/runtime/warm-pool.deps";
 import { sweepRemovals } from "@/lib/orgs/removal.deps";
@@ -63,8 +65,10 @@ export async function POST(request: Request) {
     const poolsSwept = isComputerProvider(provider)
       ? await sweepAbandonedPools(provider).catch(failure("pools", "Sweeping abandoned pooled boxes failed", null))
       : 0;
+    // Each of Outrunner's backends' pre-warms, the one the deployment moved
+    // from too: a row names the provider that made its box.
     const intentWarmsPaused = isComputerProvider(provider)
-      ? await sweepExpiredIntentWarmups(provider).catch(failure("intentWarmups", "Pausing expired session pre-warms failed", null))
+      ? await sumEach(platformComputerProviders(), (each) => sweepExpiredIntentWarmups(each)).catch(failure("intentWarmups", "Pausing expired session pre-warms failed", null))
       : 0;
     // And the boxes and sessions of members who left an org: stopped, and
     // 30 days on deleted (lib/orgs/removal.ts).
@@ -86,8 +90,16 @@ export async function POST(request: Request) {
     const boxClaimsReleased = isComputerProvider(provider)
       ? await sweepAbandonedBoxClaims()
           .then(async ({ released, stopped }) => {
-            for (const sandboxId of stopped) {
-              await provider.pauseComputer(sandboxId).catch((error: unknown) =>
+            for (const { sandboxId, provider: madeBy, ownerId } of stopped) {
+              // With the provider that made it: the deployment's, the one it
+              // moved from, or the owner's own.
+              const name = madeBy ?? provider.name;
+              const maker = name === provider.name ? provider : providerNamed(name, ownSandboxKeys(ownerId));
+              if (!maker || !isComputerProvider(maker)) {
+                console.error(`Could not pause box ${sandboxId}, let go of mid-provision: ${name} can't be reached`);
+                continue;
+              }
+              await maker.pauseComputer(sandboxId).catch((error: unknown) =>
                 console.error(`Could not pause box ${sandboxId}, let go of mid-provision`, error),
               );
             }
@@ -98,7 +110,7 @@ export async function POST(request: Request) {
     // And the deployment's boxes something dropped without deleting: no row
     // names them, so nothing above would ever stop them.
     const gcpResourcesDeleted = await sweepGcpResources().catch(failure("gcpResources", "Could not reconcile recorded GCP resources.", null));
-    const orphans = await sweepOrphanedBoxes().catch(failure("orphans", "Deleting orphaned Daytona boxes failed", null));
+    const orphans = await sweepOrphanedBoxes().catch(failure("orphans", "Deleting orphaned boxes failed", null));
     // And the GitHub loop's follow-ups (CI failing, reviews) that no
     // webhook's own wait sent: a restart cut it short (lib/github/followups.ts).
     const githubFollowUps = await sweepFollowUps().catch(failure("githubFollowUps", "Sending GitHub follow-ups failed", null));
@@ -140,4 +152,17 @@ export async function POST(request: Request) {
     await recordHeartbeat("reconcile", error);
     return NextResponse.json({ error: "Reconcile failed." }, { status: 500 });
   }
+}
+
+/** `sweep` over each provider in turn, its counts added up. One failing
+ *  doesn't stop the others; it is logged, and the total is what the rest did. */
+async function sumEach<T>(items: readonly T[], sweep: (item: T) => Promise<number>): Promise<number> {
+  let total = 0;
+  for (const item of items) {
+    total += await sweep(item).catch((error: unknown) => {
+      console.error("A provider's sweep failed", error);
+      return 0;
+    });
+  }
+  return total;
 }
