@@ -139,11 +139,11 @@ test("a viewer says who the token is, and sends the token as a bearer", async ()
 test("an issue's standing is its team, and open unless closed or in the trash", async () => {
   const standing = (issue: unknown) => linearIssueStanding("t", "i", fakeFetch({ data: { issue } }).fetcher);
   const team = { id: "team" };
-  assert.deepEqual(await standing({ trashed: false, team, state: { type: "started" } }), { teamId: "team", open: true, stateType: "started", delegateId: null });
-  assert.deepEqual(await standing({ trashed: false, team, state: { type: "completed" } }), { teamId: "team", open: false, stateType: "completed", delegateId: null });
-  assert.deepEqual(await standing({ trashed: false, team, state: { type: "canceled" } }), { teamId: "team", open: false, stateType: "canceled", delegateId: null });
-  assert.deepEqual(await standing({ trashed: false, team, state: { type: "duplicate" } }), { teamId: "team", open: false, stateType: "duplicate", delegateId: null });
-  assert.deepEqual(await standing({ trashed: true, team, state: { type: "started" } }), { teamId: "team", open: false, stateType: "started", delegateId: null });
+  assert.deepEqual(await standing({ trashed: false, team, state: { type: "started" } }), { teamId: "team", open: true, stateType: "started", stateId: null, delegateId: null });
+  assert.deepEqual(await standing({ trashed: false, team, state: { type: "completed" } }), { teamId: "team", open: false, stateType: "completed", stateId: null, delegateId: null });
+  assert.deepEqual(await standing({ trashed: false, team, state: { type: "canceled" } }), { teamId: "team", open: false, stateType: "canceled", stateId: null, delegateId: null });
+  assert.deepEqual(await standing({ trashed: false, team, state: { type: "duplicate" } }), { teamId: "team", open: false, stateType: "duplicate", stateId: null, delegateId: null });
+  assert.deepEqual(await standing({ trashed: true, team, state: { type: "started" } }), { teamId: "team", open: false, stateType: "started", stateId: null, delegateId: null });
   assert.equal((await standing({ trashed: false, team, state: { type: "started" }, delegate: { id: "app" } }))?.delegateId, "app");
   assert.equal(await standing(null), null);
 });

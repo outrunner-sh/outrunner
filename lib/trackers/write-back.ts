@@ -8,8 +8,9 @@
  *                  issue when not (Jira has only a remote link, either way).
  *                  Delegated, the issue also moves to the team's In Review, if it
  *                  has one.
- *   PR merged      the item is done, if it's still open. The tracker's own GitHub
- *                  integration moves the issue; we don't set it to Done.
+ *   PR merged      the item is done, if it's still open. Delegated, the issue also
+ *                  moves to the team's Done, if it has one, and only from the states
+ *                  a session put it in: a person's own move since stands.
  *   PR closed      a note on the item, and nothing back.
  *
  * All of it after the fact, best effort: the change here already happened.
@@ -17,6 +18,7 @@
 
 import type { TrackerScope } from "@/lib/db/trackers";
 import type { TrackerNote } from "@/lib/db/work-items";
+import { doneTarget } from "@/lib/trackers/rules";
 import { isOpen, type WorkItem } from "@/lib/triage/work-items";
 
 /** An item following a tracker's issue, and the install it's through. */
@@ -37,7 +39,7 @@ export type WriteBackDeps = {
   attach(installationId: string, issueId: string, url: string, title: string): Promise<void>;
   addUrl(installationId: string, agentSessionId: string, url: { label: string; url: string }): Promise<void>;
   setIssueState(installationId: string, issueId: string, stateId: string): Promise<void>;
-  standing(installationId: string, issueId: string): Promise<{ teamId: string; stateType: string | null } | null>;
+  standing(installationId: string, issueId: string): Promise<{ teamId: string; stateId: string | null; stateType: string | null } | null>;
   scopeForTeam(installationId: string, teamId: string): Promise<TrackerScope | null>;
   close(orgId: string, item: WorkItem, close: { status: "done" }): Promise<void>;
   addNote(orgId: string, itemId: string, note: TrackerNote): Promise<void>;
@@ -77,6 +79,16 @@ async function moveToInReview(following: FollowingItem, deps: WriteBackDeps): Pr
   if (state) await deps.setIssueState(following.installationId, following.issueId, state);
 }
 
+async function moveToDone(following: FollowingItem, deps: WriteBackDeps): Promise<void> {
+  const standing = await deps.standing(following.installationId, following.issueId);
+  if (!standing) return;
+  const scope = await deps.scopeForTeam(following.installationId, standing.teamId);
+  // Not this org's team any more: nothing more goes there from here.
+  if (scope?.orgId !== following.orgId) return;
+  const state = doneTarget(scope.stateMap, standing);
+  if (state) await deps.setIssueState(following.installationId, following.issueId, state);
+}
+
 async function oneChange(change: PullRequestChange, following: FollowingItem, rows: readonly DelegatedRow[], deps: WriteBackDeps): Promise<void> {
   // Stopped or un-delegated, it isn't: nothing moves the issue, and its link goes on the
   // issue, as for a session no one delegated.
@@ -94,6 +106,7 @@ async function oneChange(change: PullRequestChange, following: FollowingItem, ro
   }
   if (change.to === "merged") {
     if (isOpen(following.item.status)) await deps.close(following.orgId, following.item, { status: "done" });
+    if (delegated) await moveToDone(following, deps);
     return;
   }
   if (change.to === "closed") {

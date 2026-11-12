@@ -9,7 +9,7 @@ import { open, seal } from "@/lib/crypto/secret-box";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import type { LinearTokens } from "@/lib/trackers/linear";
-import type { RuleInput, ScopeSettings, TrackerProvider, TrackerRule } from "@/lib/trackers/rules";
+import { type RuleInput, type ScopeSettings, stateMapOf, type TrackerProvider, type TrackerRule } from "@/lib/trackers/rules";
 import type { TokenRow } from "@/lib/trackers/tokens";
 
 type Tables = Database["public"]["Tables"];
@@ -68,7 +68,7 @@ function toScope(row: ScopeRow): TrackerScope {
     externalTeamId: row.external_team_id,
     name: row.name,
     setBy: row.set_by,
-    stateMap: row.state_map as ScopeSettings["stateMap"],
+    stateMap: stateMapOf(row.state_map),
     defaultProjectId: row.default_project_id,
     acceptRuleSessions: row.accept_rule_sessions,
     ruleSessionsPerDay: row.rule_sessions_per_day,

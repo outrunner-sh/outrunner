@@ -43,7 +43,7 @@ function scope(over: Partial<TrackerScope> = {}): TrackerScope {
     externalTeamId: TEAM,
     name: "Eng",
     setBy: "admin",
-    stateMap: { started: "st-progress", inReview: "st-review" },
+    stateMap: { started: "st-progress", inReview: "st-review", done: null, blocked: null },
     defaultProjectId: null,
     acceptRuleSessions: false,
     ruleSessionsPerDay: 20,
@@ -494,7 +494,7 @@ test("an issue already past started isn't moved back", async () => {
 });
 
 test("a team with the state map off, or no started state, isn't moved", async () => {
-  for (const stateMap of [null, { started: null, inReview: "x" }]) {
+  for (const stateMap of [null, { started: null, inReview: "x", done: null, blocked: null }]) {
     const h = harness({}, { scope: scope({ defaultProjectId: WEB.id, stateMap }) });
     await send(created(), h);
     assert.deepEqual(h.log.states, []);

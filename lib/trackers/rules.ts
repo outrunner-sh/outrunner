@@ -147,9 +147,49 @@ export type ScopeSettings = {
   defaultProjectId: string | null;
   acceptRuleSessions: boolean;
   ruleSessionsPerDay: number;
-  /** The tracker's states; null is off. */
-  stateMap: { started: string | null; inReview: string | null } | null;
+  /** The tracker's states; null is off, for each and for all. */
+  stateMap: StateMap | null;
 };
+
+/** Where a delegated session moves its issue: when it starts or resumes, while it's blocked
+ *  (waiting on someone, or its setup or turn failed), when its PR opens, and when it merges. */
+export type StateMap = { started: string | null; inReview: string | null; done: string | null; blocked: string | null };
+
+const STATE_KEYS = ["started", "inReview", "done", "blocked"] as const;
+
+/** A map as stored: one saved before Done and Blocked has neither. */
+export function stateMapOf(raw: unknown): StateMap | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const id = (v: unknown) => (typeof v === "string" && v ? v : null);
+  return { started: id(r.started), inReview: id(r.inReview), done: id(r.done), blocked: id(r.blocked) };
+}
+
+/** Where an issue is, as far as moving it goes. */
+export type IssueState = { stateId?: string | null; stateType: string | null };
+
+const CLOSED_TYPES = ["completed", "canceled", "duplicate"];
+
+/** Started, from not started yet, or from Blocked: it's being worked on again. Not from where
+ *  a person moved it, nor once it's past started. */
+export function startedTarget(map: StateMap | null, issue: IssueState): string | null {
+  if (!map?.started || issue.stateId === map.started) return null;
+  if (map.blocked && issue.stateId === map.blocked) return map.started;
+  return ["started", ...CLOSED_TYPES].includes(issue.stateType ?? "") ? null : map.started;
+}
+
+/** Blocked, unless it's closed or there already. */
+export function blockedTarget(map: StateMap | null, issue: IssueState): string | null {
+  if (!map?.blocked || issue.stateId === map.blocked || CLOSED_TYPES.includes(issue.stateType ?? "")) return null;
+  return map.blocked;
+}
+
+/** Done, when its PR merges: only from the states a session put it in, so a person's own
+ *  move since wins. */
+export function doneTarget(map: StateMap | null, issue: IssueState): string | null {
+  if (!map?.done || !issue.stateId) return null;
+  return issue.stateId === map.started || issue.stateId === map.inReview ? map.done : null;
+}
 
 /** A connected team's settings as the page sends them; what's left out stays. */
 export function parseScopeSettings(body: unknown): Parsed<Partial<ScopeSettings>> {
@@ -179,23 +219,32 @@ export function parseScopeSettings(body: unknown): Parsed<Partial<ScopeSettings>
     } else {
       const map = b.stateMap as Record<string, unknown>;
       const state = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.length > 0 && v.length <= 200);
-      if (typeof map !== "object" || !state(map.started) || !state(map.inReview)) {
+      if (typeof map !== "object" || !STATE_KEYS.every((key) => state(map[key]))) {
         return { ok: false, error: "Those aren't the team's states." };
       }
-      value.stateMap = { started: (map.started as string | null) ?? null, inReview: (map.inReview as string | null) ?? null };
+      value.stateMap = {
+        started: (map.started as string | null) ?? null,
+        inReview: (map.inReview as string | null) ?? null,
+        done: (map.done as string | null) ?? null,
+        blocked: (map.blocked as string | null) ?? null,
+      };
     }
   }
   return { ok: true, value };
 }
 
 /**
- * The state map a team starts with: its states named In Progress and In Review,
- * the first of each by type when a team renamed them. A team with neither has
- * no map to start with: an admin picks, or leaves it off.
+ * The state map a team starts with, by name: In Progress (else the first started one),
+ * In Review, Done (else the first completed one) and Blocked. A team without one leaves it
+ * off, and one with none has no map to start with: an admin picks, or leaves it off.
  */
 export function defaultStateMap(states: readonly { id: string; name: string; type: string }[]): ScopeSettings["stateMap"] {
   const named = (name: string) => states.find((s) => s.name.toLowerCase() === name);
-  const started = named("in progress") ?? states.find((s) => s.type === "started");
-  const inReview = named("in review") ?? null;
-  return started || inReview ? { started: started?.id ?? null, inReview: inReview?.id ?? null } : null;
+  const map: StateMap = {
+    started: (named("in progress") ?? states.find((s) => s.type === "started"))?.id ?? null,
+    inReview: named("in review")?.id ?? null,
+    done: (named("done") ?? states.find((s) => s.type === "completed"))?.id ?? null,
+    blocked: named("blocked")?.id ?? null,
+  };
+  return Object.values(map).some(Boolean) ? map : null;
 }

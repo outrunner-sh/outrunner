@@ -277,10 +277,10 @@ export async function linearIssueStanding(
   token: string,
   issueId: string,
   fetcher: Fetcher = fetch,
-): Promise<{ teamId: string; open: boolean; stateType: string | null; delegateId: string | null } | null> {
-  const data = await lookup<{ issue: { trashed: boolean | null; team: { id: string } | null; state: { type: string } | null; delegate: { id: string } | null } | null }>(
+): Promise<{ teamId: string; open: boolean; stateId: string | null; stateType: string | null; delegateId: string | null } | null> {
+  const data = await lookup<{ issue: { trashed: boolean | null; team: { id: string } | null; state: { id: string; type: string } | null; delegate: { id: string } | null } | null }>(
     token,
-    "query($id: String!) { issue(id: $id) { trashed team { id } state { type } delegate { id } } }",
+    "query($id: String!) { issue(id: $id) { trashed team { id } state { id type } delegate { id } } }",
     { id: issueId },
     fetcher,
   );
@@ -289,6 +289,7 @@ export async function linearIssueStanding(
   return {
     teamId: issue.team.id,
     open: Boolean(!issue.trashed && issue.state && !isClosedStateType(issue.state.type)),
+    stateId: issue.state?.id ?? null,
     stateType: issue.state?.type ?? null,
     delegateId: issue.delegate?.id ?? null,
   };

@@ -34,7 +34,7 @@ const following = (over: Partial<WorkItem> = {}): FollowingItem => ({ orgId: "or
 
 const row: AgentRow = { agentSessionId: "agent-1", installationId: "install", orgId: "org", issueId: "issue-1", itemId: "item-1", workspaceId: "w", ownerId: "u", stage: "working", prompt: null, ruleStarted: false, ask: null, askedUser: null };
 
-function harness(setup: { items?: FollowingItem[]; rows?: AgentRow[]; inReview?: string | null; stateType?: string; scopeOrg?: string } = {}, over: Partial<WriteBackDeps> = {}) {
+function harness(setup: { items?: FollowingItem[]; rows?: AgentRow[]; inReview?: string | null; stateType?: string; scopeOrg?: string; stateId?: string; done?: string | null } = {}, over: Partial<WriteBackDeps> = {}) {
   const log = { comments: [] as string[], attached: [] as string[], urls: [] as { label: string; url: string }[], states: [] as string[], closed: [] as unknown[], notes: [] as TrackerNote[] };
   const deps: WriteBackDeps = {
     itemById: async () => setup.items?.[0] ?? null,
@@ -45,8 +45,8 @@ function harness(setup: { items?: FollowingItem[]; rows?: AgentRow[]; inReview?:
     attach: async (_i, _issue, url) => void log.attached.push(url),
     addUrl: async (_i, _a, url) => void log.urls.push(url),
     setIssueState: async (_i, _issue, state) => void log.states.push(state),
-    standing: async () => ({ teamId: "team", stateType: setup.stateType ?? "started" }),
-    scopeForTeam: async () => ({ orgId: setup.scopeOrg === undefined ? "org" : setup.scopeOrg, stateMap: { started: "st", inReview: setup.inReview === undefined ? "st-review" : setup.inReview } }) as TrackerScope,
+    standing: async () => ({ teamId: "team", stateId: setup.stateId ?? "st", stateType: setup.stateType ?? "started" }),
+    scopeForTeam: async () => ({ orgId: setup.scopeOrg === undefined ? "org" : setup.scopeOrg, stateMap: { started: "st", inReview: setup.inReview === undefined ? "st-review" : setup.inReview, done: setup.done ?? null, blocked: null } }) as TrackerScope,
     close: async (_o, _i, close) => void log.closed.push(close),
     addNote: async (_o, _i, note) => void log.notes.push(note),
     sessionUrl: (id) => `https://app/workspaces/${id}`,
@@ -207,8 +207,8 @@ test("Jira: a delegated issue's PR is a link on the issue and moves it, and a cl
     attach: async () => assert.fail("delegated: on the row"),
     addUrl: async (_i, _a, url) => void links.push(url),
     setIssueState: async (_i, _issue, state) => void states.push(state),
-    standing: async () => ({ teamId: "10000", stateType: "started" }),
-    scopeForTeam: async () => ({ id: "s", installationId: "i", orgId: "o", externalTeamId: "10000", name: null, setBy: null, stateMap: { started: "3", inReview: "4" }, defaultProjectId: null, acceptRuleSessions: false, ruleSessionsPerDay: 20 }),
+    standing: async () => ({ teamId: "10000", stateId: "3", stateType: "started" }),
+    scopeForTeam: async () => ({ id: "s", installationId: "i", orgId: "o", externalTeamId: "10000", name: null, setBy: null, stateMap: { started: "3", inReview: "4", done: null, blocked: null }, defaultProjectId: null, acceptRuleSessions: false, ruleSessionsPerDay: 20 }),
     close: async () => undefined,
     addNote: async (_o, _i, note) => void notes.push(note),
     sessionUrl: (id) => `https://app.test/workspaces/${id}`,
@@ -237,4 +237,25 @@ test("an org no longer connected to the issue's team tells it nothing: decline, 
   const merged = gone();
   await pullRequestsChanged([change("merged")], merged.deps);
   assert.equal(merged.log.closed.length, 1);
+});
+
+test("a delegated session's PR merging moves the issue to Done, only from where a session put it", async () => {
+  const delegated = [row];
+  for (const [stateId, moved] of [["st", true], ["st-review", true], ["someone-elses", false]] as const) {
+    const { deps, log } = harness({ rows: delegated, done: "st-done", stateId });
+    await pullRequestsChanged([change("merged")], deps);
+    assert.deepEqual(log.states, moved ? ["st-done"] : [], stateId);
+    assert.equal(log.closed.length, 1, "the item closes either way");
+  }
+  // Not delegated, or no Done state: the issue stays where it is.
+  const undelegated = harness({ rows: [], done: "st-done", stateId: "st-review" });
+  await pullRequestsChanged([change("merged")], undelegated.deps);
+  assert.deepEqual(undelegated.log.states, []);
+  const off = harness({ rows: delegated, done: null, stateId: "st-review" });
+  await pullRequestsChanged([change("merged")], off.deps);
+  assert.deepEqual(off.log.states, []);
+  // Its team now another org's: nothing goes there.
+  const moved = harness({ rows: delegated, done: "st-done", stateId: "st-review", scopeOrg: "another" });
+  await pullRequestsChanged([change("merged")], moved.deps);
+  assert.deepEqual(moved.log.states, []);
 });

@@ -335,6 +335,7 @@ export type JiraIssueStanding = {
   open: boolean;
   /** As {@link jiraStateType}. */
   stateType: string;
+  stateId: string | null;
   /** Only a person: a bot's issue has no one to run its session as. */
   creatorId: string | null;
   creatorName: string | null;
@@ -369,6 +370,7 @@ export async function jiraIssueStanding(token: string, cloudId: string, issueId:
     description: fromAdf(fields.description),
     open: stateType !== "completed",
     stateType,
+    stateId: fields.status?.id ?? null,
     creatorId: person ? (fields.creator?.accountId ?? null) : null,
     creatorName: person ? (fields.creator?.displayName ?? null) : null,
     assigneeId: fields.assignee?.accountId ?? null,

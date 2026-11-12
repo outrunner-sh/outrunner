@@ -18,10 +18,10 @@ const ISSUE = "1";
 const WEB = { id: "11111111-1111-4111-8111-111111111111", fullName: "acme/web" };
 const API = { id: "22222222-2222-4222-8222-222222222222", fullName: "acme/api" };
 const INSTALL: TrackerInstallation = { id: "install", provider: "jira", externalId: "cloud-1", siteUrl: "https://acme.atlassian.net", name: "Acme", appUserId: "app", disconnected: false };
-const STANDING: JiraIssueStanding = { teamId: PROJECT, key: "ENG-1", title: "Fix it", description: "Steps", open: true, stateType: "unstarted", creatorId: "ana", creatorName: "Ana", duplicateOf: null, assigneeId: "app" };
+const STANDING: JiraIssueStanding = { teamId: PROJECT, key: "ENG-1", title: "Fix it", description: "Steps", open: true, stateType: "unstarted", stateId: "1", creatorId: "ana", creatorName: "Ana", duplicateOf: null, assigneeId: "app" };
 
 function scope(over: Partial<TrackerScope> = {}): TrackerScope {
-  return { id: "scope-1", installationId: "install", orgId: ORG, externalTeamId: PROJECT, name: "Eng", setBy: "admin", stateMap: { started: "3", inReview: "4" }, defaultProjectId: WEB.id, acceptRuleSessions: false, ruleSessionsPerDay: 20, ...over };
+  return { id: "scope-1", installationId: "install", orgId: ORG, externalTeamId: PROJECT, name: "Eng", setBy: "admin", stateMap: { started: "3", inReview: "4", done: null, blocked: null }, defaultProjectId: WEB.id, acceptRuleSessions: false, ruleSessionsPerDay: 20, ...over };
 }
 
 function actor(userId: string, projects = [WEB.id, API.id]): TriageActor {

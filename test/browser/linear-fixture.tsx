@@ -53,7 +53,7 @@ function tracker(state: string): SettingsTracker {
         externalTeamId: "team-eng",
         name: "Engineering",
         setBy: "admin",
-        stateMap: { started: "s-progress", inReview: "s-review" },
+        stateMap: { started: "s-progress", inReview: "s-review", done: null, blocked: null },
         defaultProjectId: PROJECTS[0].id,
         acceptRuleSessions: false,
         ruleSessionsPerDay: 20,
@@ -95,7 +95,7 @@ function jiraTracker(state: string): SettingsTracker {
       {
         ...scope,
         externalTeamId: "10000",
-        stateMap: { started: "3", inReview: "4" },
+        stateMap: { started: "3", inReview: "4", done: null, blocked: null },
         rules: [rule({ id: "rule-1", labels: ["bug"], priorities: ["1"], issueTypes: ["10001"], assignees: ["unassigned"], stopped: false })],
       },
     ],
