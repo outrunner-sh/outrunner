@@ -20,9 +20,13 @@ export type AnnounceDeps = {
 };
 
 /** The thread, if the system may still post in it. */
-async function postable(thread: MissionThread | null, deps: AnnounceDeps): Promise<{ binding: MissionChannel; thread: MissionThread } | null> {
+async function postable(
+  thread: MissionThread | null,
+  deps: AnnounceDeps,
+  known?: MissionChannel,
+): Promise<{ binding: MissionChannel; thread: MissionThread } | null> {
   if (!thread || thread.muted) return null;
-  const binding = await deps.binding(thread.missionId);
+  const binding = known ?? (await deps.binding(thread.missionId));
   if (!binding || binding.teamId !== thread.teamId || binding.channelId !== thread.channelId) return null;
   return { binding, thread };
 }
@@ -46,7 +50,7 @@ export async function announceShipEvent(
 export async function announceWaiting(missionId: string, url: string | null, deps: AnnounceDeps): Promise<boolean> {
   const binding = await deps.binding(missionId);
   if (!binding) return false;
-  const where = await postable(await deps.latestThread(binding), deps);
+  const where = await postable(await deps.latestThread(binding), deps, binding);
   if (!where) return false;
   await deps.post(
     where.binding,

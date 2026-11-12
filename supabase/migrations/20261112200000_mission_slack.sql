@@ -136,6 +136,9 @@ create index if not exists mission_slack_asks_mission_idx on mission_slack_asks 
 -- place. Every row counts, its Ship started, failed or deleted alike; a
 -- start that never made a Ship gives its place back
 -- (release_mission_slack_ship).
+-- Dropped first: a database that ran an earlier draft of this file had
+-- another return table, which create or replace can't change.
+drop function if exists reserve_mission_slack_ship(uuid, uuid, uuid, text);
 create or replace function reserve_mission_slack_ship(target uuid, thread uuid, requester uuid, slack_user text)
   returns table (ship_id uuid, refusal text, refused_at_limit integer)
   language plpgsql
