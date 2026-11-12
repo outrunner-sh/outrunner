@@ -12,8 +12,8 @@ import {
   callsFromEvents,
   classifierCall,
   gapCalls,
-  gapLikePattern,
   gapPrefix,
+  gapRefs,
   isDataError,
   missionOf,
   spendPeriod,
@@ -421,10 +421,25 @@ test("a turn cut off unread is unknown on each UTC day from the last read to whe
   assert.deepEqual([day.models.coverage, day.models.usd, day.models.knownUsd], ["unavailable", null, 1]);
 });
 
-test("a gap is found again by its session, box and cursor, whatever its box id holds", () => {
+test("a gap's entries are found again by key from its session, box, cursor and last read", () => {
   assert.equal(gapPrefix(SHIP, "sb-1", 42), `gap:${SHIP}:sb-1:42:`);
-  assert.equal(gapLikePattern(SHIP, "sb_1%", 4), `gap:${SHIP}:sb\\_1\\%:4:%`);
-  for (const c of gapCalls(session, { box: "sb-1", cursor: 42, at: "2026-11-10T00:00:00Z" }, NOW)) {
-    assert.ok(c.usageRef.startsWith(gapPrefix(SHIP, "sb-1", 42)));
+  const cases: { at: string | null; until: string; now: string }[] = [
+    { at: "2026-11-12T09:00:00Z", until: "2026-11-12T09:30:00Z", now: "2026-11-12T10:00:00Z" },
+    // Days apart, and read again days later still.
+    { at: "2026-11-10T23:50:00Z", until: "2026-11-13T02:00:00Z", now: "2026-11-15T08:00:00Z" },
+    // Never read before.
+    { at: null, until: "2026-11-01T02:00:00Z", now: "2026-11-12T08:00:00Z" },
+    // A box lost for months.
+    { at: "2026-01-01T00:00:00Z", until: "2026-11-12T00:00:00Z", now: "2026-11-12T08:00:00Z" },
+  ];
+  for (const { at, until, now } of cases) {
+    const lastRead = { box: "sb-1", cursor: 42, at };
+    const made = gapCalls(session, lastRead, new Date(until)).map((c) => c.usageRef);
+    const keys = new Set(gapRefs(SHIP, lastRead, new Date(now)));
+    assert.ok(keys.size <= 31);
+    for (const ref of made) assert.ok(keys.has(ref), `${ref} found again (${at} → ${until}, read ${now})`);
   }
+  // Another box or cursor: none of them.
+  const other = new Set(gapRefs(SHIP, { box: "sb-1", cursor: 43, at: "2026-11-12T09:00:00Z" }, NOW));
+  assert.ok(gapCalls(session, { box: "sb-1", cursor: 42, at: "2026-11-12T09:00:00Z" }, NOW).every((c) => !other.has(c.usageRef)));
 });

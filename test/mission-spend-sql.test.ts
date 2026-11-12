@@ -14,7 +14,7 @@ import { readdirSync } from "node:fs";
 import { after, before, test } from "node:test";
 import { promisify } from "node:util";
 
-import { gapLikePattern, gapPrefix } from "@/lib/missions/spend";
+import { gapCalls, gapPrefix, gapRefs } from "@/lib/missions/spend";
 
 const server = process.env.MISSIONS_PG;
 const skip = server ? false : "MISSIONS_PG isn't set";
@@ -191,17 +191,22 @@ test("totals keep coverages apart, and count what's unknown", { skip }, () => {
   assert.equal(psql(`select cost_bases from mission_usage_totals('${m}', '2026-11-12', '2026-11-13')`), "{b1,b2}");
 });
 
-test("closing a gap removes that read's entries only, its box id taken literally", { skip }, () => {
+test("closing a gap by key removes that read's entries only", { skip }, () => {
   const m = mission();
   const s = ship(m);
-  const gap = (box: string, cursor: number, day: string) => ({ usage_ref: `${gapPrefix(s, box, cursor)}${day}`, mission_id: m, workspace_id: s, coverage: "unavailable" as const });
-  record([gap("sb_1", 4, "2026-11-11"), gap("sb_1", 4, "2026-11-12"), gap("sbX1", 4, "2026-11-12"), gap("sb_1", 40, "2026-11-12")]);
-  psql(`delete from mission_usage where workspace_id = '${s}' and coverage = 'unavailable' and usage_ref like '${gapLikePattern(s, "sb_1", 4)}'`);
+  const read = (box: string, cursor: number) => ({ box, cursor, at: "2026-11-11T22:00:00Z" });
+  const until = new Date("2026-11-12T03:00:00Z");
+  const gaps = [read("sb_1", 4), read("sbX1", 4), read("sb_1", 40)].flatMap((r) =>
+    gapCalls({ workspaceId: s, missionId: m }, r, until).map((c) => ({ usage_ref: c.usageRef, mission_id: m, workspace_id: s, occurred_at: c.occurredAt, coverage: "unavailable" as const })),
+  );
+  record(gaps);
+  const keys = gapRefs(s, read("sb_1", 4), new Date("2026-11-12T08:00:00Z")).map((r) => `'${r}'`).join(",");
+  psql(`delete from mission_usage where mission_id = '${m}' and usage_ref in (${keys})`);
   assert.deepEqual(
     psql(`select usage_ref from mission_usage where workspace_id = '${s}'`).split("\n").sort(),
-    [`${gapPrefix(s, "sb_1", 40)}2026-11-12`, `${gapPrefix(s, "sbX1", 4)}2026-11-12`].sort(),
+    gaps.map((g) => g.usage_ref).filter((r) => !r.startsWith(gapPrefix(s, "sb_1", 4))).sort(),
   );
-  assert.equal(psql(`select count(*) from pg_indexes where indexname = 'mission_usage_gaps_idx'`), "1");
+  assert.equal(psql(`select count(*) from mission_usage where workspace_id = '${s}'`), "4");
 });
 
 // ---------------------------------------------------------------------------

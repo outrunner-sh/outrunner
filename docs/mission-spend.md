@@ -62,8 +62,8 @@ did since the last read may never be read. It records a `gap:` entry,
 metered), at most 31 days. So each day the stretch touches, and none after,
 says it isn't covered. When the box comes back with its log (the same box,
 started again) and a read goes on from that cursor, the stretch is being
-read after all: the gap's entries are removed and its calls counted as
-usual. A box that's really gone keeps its gap.
+read after all: the gap's entries are removed, by key, and its calls
+counted as usual. A box that's really gone keeps its gap.
 
 **Classifier calls.** `oneShot` (`lib/slack/agent-model.ts`) takes an
 `onAnswer` that hears OpenRouter's answer; pass

@@ -118,9 +118,11 @@ export async function readSession(workspaceId: string): Promise<ActivityChange |
   await recordSessionCalls(workspace, read.events);
   // Read on from where a cut-off turn left it, on the same box (whatever
   // the turn shows now: a send that woke the box marks it working first):
-  // that stretch is being read after all. Box and cursor name the gap
-  // exactly, and the partial index keeps the look cheap.
-  if (sameBox && activity?.stream_box) await closeSessionGap(workspace, activity.stream_box, cursor);
+  // that stretch is being read after all. Box, cursor and last read name the
+  // gap's entries exactly, so they're deleted by key.
+  if (sameBox && activity?.stream_box) {
+    await closeSessionGap(workspace, { box: activity.stream_box, cursor, at: activity.read_at });
+  }
   // From the start of a log, the state starts over, but a reply already
   // known stays known (its unread mark mustn't come back on a new box).
   const from = sameBox && before ? before : { ...IDLE, repliedAt: before?.repliedAt ?? null, replyPreview: before?.replyPreview ?? null };

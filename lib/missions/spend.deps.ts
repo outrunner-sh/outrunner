@@ -11,7 +11,7 @@ import {
   callsFromEvents,
   classifierCall,
   gapCalls,
-  gapLikePattern,
+  gapRefs,
   missionOf,
   type MissionSpend,
   type OpenRouterAnswer,
@@ -82,7 +82,7 @@ export async function recordSessionCalls(
   } catch (error) {
     // Deployed before its migration: reading the session matters more than
     // counting it, so its turns are still watched; said once a read.
-    if (isMissingFunction(error)) {
+    if (isNotMigrated(error)) {
       console.error("Mission spend: record_mission_usage isn't in the database yet (run pnpm db:migrate); calls not counted.");
       return 0;
     }
@@ -115,7 +115,7 @@ export async function recordSessionGap(
     const until = stopped ?? new Date();
     await recordCalls(gapCalls({ workspaceId: workspace.id, missionId }, lastRead, until));
   } catch (error) {
-    if (!isMissingFunction(error)) console.error(`Mission spend: couldn't mark ${workspace.id}'s unread stretch`, error);
+    if (!isNotMigrated(error)) console.error(`Mission spend: couldn't mark ${workspace.id}'s unread stretch`, error);
   }
 }
 
@@ -136,31 +136,30 @@ async function boxStoppedAt(sandboxId: string): Promise<Date | null> {
 /**
  * A read of a family session went on from where a cut-off one stopped, on the
  * same box (its log still there): the stretch it marked unknown is being read
- * after all, so its gap entries go. A read cut off again marks a new gap from
- * its own cursor. Never throws: a gap left is only too cautious.
+ * after all, so its gap entries go, by key (gapRefs). A read cut off again
+ * marks a new gap from its own cursor. Never throws: a gap left is only too
+ * cautious.
  */
 export async function closeSessionGap(
   workspace: { id: string; kind?: string | null; parentMissionId?: string | null },
-  box: string,
-  cursor: number,
+  lastRead: { box: string; cursor: number; at: string | null },
 ): Promise<void> {
   const missionId = missionOf(workspace);
   if (!missionId) return;
-  const pattern = gapLikePattern(workspace.id, box, cursor);
   const { error } = await db()
     .from("mission_usage")
     .delete()
-    .eq("workspace_id", workspace.id)
     .eq("mission_id", missionId)
-    .eq("coverage", "unavailable")
-    .like("usage_ref", pattern);
-  if (error && !isMissingFunction(error)) console.error(`Mission spend: couldn't close ${workspace.id}'s gap`, error);
+    .in("usage_ref", gapRefs(workspace.id, lastRead, new Date()));
+  if (error && !isNotMigrated(error)) console.error(`Mission spend: couldn't close ${workspace.id}'s gap`, error);
 }
 
-/** PostgREST's "no such function" (PGRST202), or Postgres' (42883). */
-function isMissingFunction(error: unknown): boolean {
+/** Deployed before its migration: no such function (PostgREST's PGRST202,
+ *  Postgres' 42883) or table (PGRST205, 42P01), as lib/supabase/probe.ts
+ *  tells them. */
+function isNotMigrated(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
-  return code === "PGRST202" || code === "42883";
+  return code === "PGRST202" || code === "42883" || code === "PGRST205" || code === "42P01";
 }
 
 /** Record a classifier call made for a Mission, from OpenRouter's answer. */

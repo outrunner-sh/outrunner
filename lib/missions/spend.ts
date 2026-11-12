@@ -219,10 +219,22 @@ export function gapPrefix(workspaceId: string, box: string | null, cursor: numbe
   return `gap:${workspaceId}:${box ?? "none"}:${cursor}:`;
 }
 
-/** A LIKE pattern for every gap entry under gapPrefix: its `%`, `_` and `\`
- *  taken literally. */
-export function gapLikePattern(workspaceId: string, box: string | null, cursor: number): string {
-  return `${gapPrefix(workspaceId, box, cursor).replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+/**
+ * The references a cut-off read's gap can have (gapCalls), to close it by
+ * key: one per UTC day from its last read, as many as a gap marks, and no
+ * further than today. Never read before (no last read): the gap started
+ * when its box stopped, some day in the last MAX_GAP_DAYS.
+ */
+export function gapRefs(workspaceId: string, lastRead: { box: string | null; cursor: number; at: string | null }, now: Date): string[] {
+  const prefix = gapPrefix(workspaceId, lastRead.box, lastRead.cursor);
+  const at = validTime(lastRead.at ?? undefined);
+  const today = spendPeriod("day", now).start.getTime();
+  const first = at ? spendPeriod("day", new Date(at)).start.getTime() : today - (MAX_GAP_DAYS - 1) * DAY_MS;
+  const refs: string[] = [];
+  for (let day = first; day <= today && refs.length < MAX_GAP_DAYS; day += DAY_MS) {
+    refs.push(`${prefix}${new Date(day).toISOString().slice(0, 10)}`);
+  }
+  return refs;
 }
 
 /**
