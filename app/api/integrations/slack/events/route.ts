@@ -18,6 +18,7 @@ type SlackEvent = {
   thread_ts?: string;
   channel?: string;
   channel_type?: string;
+  files?: { name?: string }[];
 };
 
 /**
@@ -54,7 +55,7 @@ export async function POST(request: Request) {
     return new NextResponse(null, { status: 200 });
   }
 
-  const message = agentMessage(envelope.team_id, envelope.event);
+  const message = agentMessage(envelope.team_id, envelope.event, envelope.event_id);
   if (message && (await firstSighting(envelope.event_id))) {
     after(() => handleAgentMessage(message));
   }
@@ -63,16 +64,27 @@ export async function POST(request: Request) {
 
 /**
  * What the agent hears: a person's message, mentioning it (app_mention), in
- * a thread or DM, or new in a channel it watches (message). Edits, joins and bots' messages aren't heard. A
- * message that mentions the bot comes as both; the handler leaves the message
- * event of it to the app_mention.
+ * a thread or DM, or new in a channel it watches (message). Edits and joins
+ * aren't heard. A bot's message is passed on only when it mentions the bot,
+ * marked as a bot's: only a Mission on call that takes bots' messages hears
+ * it (lib/missions/slack-route.ts). A message that
+ * mentions the bot comes as both; the handler leaves the message event of it
+ * to the app_mention.
  */
-function agentMessage(teamId: string, event: SlackEvent): AgentMessage | null {
-  if (event.bot_id || !event.user || !event.channel || !event.ts || typeof event.text !== "string") return null;
-  if (event.type === "app_mention") {
-    return { teamId, channel: event.channel, user: event.user, text: event.text, ts: event.ts, threadTs: event.thread_ts, mention: true };
+function agentMessage(teamId: string, event: SlackEvent, eventId: string): AgentMessage | null {
+  if (!event.channel || !event.ts || typeof event.text !== "string") return null;
+  const files = (event.files ?? []).flatMap((f) => (typeof f.name === "string" ? [f.name.slice(0, 200)] : [])).slice(0, 20);
+  const extra = { eventId, ...(files.length > 0 && { files }) };
+  if (event.bot_id) {
+    if (event.type !== "app_mention") return null;
+    const user = event.user ?? event.bot_id;
+    return { teamId, channel: event.channel, user, text: event.text, ts: event.ts, threadTs: event.thread_ts, mention: true, botId: event.bot_id, ...extra };
   }
-  if (event.type !== "message" || event.subtype) return null;
+  if (!event.user) return null;
+  if (event.type === "app_mention") {
+    return { teamId, channel: event.channel, user: event.user, text: event.text, ts: event.ts, threadTs: event.thread_ts, mention: true, ...extra };
+  }
+  if (event.type !== "message" || (event.subtype && event.subtype !== "file_share")) return null;
   // A new message in a channel (not in a thread) is heard only where the
   // channel is watched: the handler checks.
   const topLevel = event.channel_type !== "im" && !event.thread_ts;
@@ -86,5 +98,6 @@ function agentMessage(teamId: string, event: SlackEvent): AgentMessage | null {
     ts: event.ts,
     threadTs: event.thread_ts,
     mention: false,
+    ...extra,
   };
 }

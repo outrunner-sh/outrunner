@@ -160,3 +160,39 @@ export async function senderIdentity(token: string, user: string) {
   );
   return answer.user;
 }
+
+/** A message's link, as Slack makes it (chat.getPermalink: no scope needed
+ *  beyond the bot being in the channel). */
+export async function messagePermalink(token: string, channel: string, ts: string): Promise<string | null> {
+  const answer = await call<{ permalink?: string }>(token, "chat.getPermalink", { channel, message_ts: ts }, "form");
+  return typeof answer.permalink === "string" && answer.permalink.startsWith("https://") ? answer.permalink : null;
+}
+
+/** The channels the bot is in, public and private (channels:read,
+ *  groups:read): what a Mission can be put on call in from the app. */
+export async function botChannels(token: string, max = 400): Promise<{ id: string; name: string; shared: boolean }[]> {
+  const found: { id: string; name: string; shared: boolean }[] = [];
+  let cursor: string | undefined;
+  do {
+    const answer = await call<{
+      channels?: { id: string; name?: string; is_member?: boolean; is_ext_shared?: boolean; is_org_shared?: boolean; is_shared?: boolean }[];
+      response_metadata?: { next_cursor?: string };
+    }>(
+      token,
+      "conversations.list",
+      { types: "public_channel,private_channel", exclude_archived: true, limit: 200, ...(cursor && { cursor }) },
+      "form",
+    );
+    for (const c of answer.channels ?? []) {
+      if (c.is_member) found.push({ id: c.id, name: c.name ?? c.id, shared: !!(c.is_ext_shared || c.is_org_shared || c.is_shared) });
+    }
+    cursor = answer.response_metadata?.next_cursor || undefined;
+  } while (cursor && found.length < max);
+  return found;
+}
+
+/** A channel's name, or null when Slack won't say. */
+export async function channelName(token: string, channel: string): Promise<string | null> {
+  const answer = await call<{ channel?: { name?: string } }>(token, "conversations.info", { channel }, "form").catch(() => null);
+  return answer?.channel?.name ?? null;
+}

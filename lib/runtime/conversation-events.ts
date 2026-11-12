@@ -248,7 +248,7 @@ export function runnerContinuations(events: AgentEvent[]): Set<number> {
     if (event.t !== "message") return;
     if (working && event.role === "user") {
       const text = messageText(event);
-      if (text.includes("<runner_event") && parseRunnerEvents(text).events.length > 0) indices.add(i);
+      if (/<(runner_event|slack_)/.test(text) && parseRunnerEvents(text).events.length > 0) indices.add(i);
     }
     // A compaction in the middle of a turn doesn't finish it; a typed
     // /compact's local-command output says when that command is done.

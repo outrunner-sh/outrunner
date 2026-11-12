@@ -5,6 +5,7 @@
  */
 
 import { missionMcpUrl, type MissionBoxSetup } from "@/lib/missions/setup";
+import { missionBinding } from "@/lib/missions/slack-store";
 import { missionTokens, readNotes, sessionById } from "@/lib/missions/store";
 import { mintMissionToken } from "@/lib/missions/token";
 
@@ -22,6 +23,12 @@ export async function missionBoxSetup(workspaceId: string): Promise<MissionBoxSe
     console.error(`Mission ${workspaceId}: RUNTIME_BASE_URL isn't set, so its box can't reach its tools`);
     return null;
   }
-  const [token, notes] = await Promise.all([mintMissionToken(workspaceId, missionTokens), readNotes(workspaceId)]);
-  return { token, notes: notes.body, url };
+  const [token, notes, binding] = await Promise.all([
+    mintMissionToken(workspaceId, missionTokens),
+    readNotes(workspaceId),
+    // Not knowing whether it's on call mustn't fail its setup: it hears it
+    // was bound through its outbox too.
+    missionBinding(workspaceId).catch(() => null),
+  ]);
+  return { token, notes: notes.body, url, onCall: binding !== null };
 }

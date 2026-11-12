@@ -67,6 +67,68 @@ This replaces the earlier Mission Engine design
 - Missions run on Claude Code. Ships use the Mission's model, agent and
   effort unless it asks for others.
 
+## On call in Slack
+
+A Mission can be bound to one Slack channel, where it acts as the on-call
+engineer: anyone mentions `@Outrunner` there with a task, the Mission reads
+it, answers or starts Ships, and reports back in that thread. One Mission a
+channel, one channel a Mission.
+
+- **Binding.** From the Mission's header (**Connect Slack channel**, a
+  channel Outrunner is in, of a Slack workspace you've linked into the
+  Mission's org), or in Slack: `@Outrunner be on call here for <project>`,
+  where the project is named by its name or a repository of it
+  (`owner/name`). That binds the sender's newest Mission on the project that
+  isn't on call elsewhere, or starts one for them. Either way it needs write
+  on the project, and a local channel (not Slack Connect or shared). The
+  Mission is told it's on call (a `slack_channel` event carrying its on-call
+  instructions), the channel gets its intro, and the org's audit log has it.
+  `@Outrunner stop being on call here`, or **Disconnect** in the header,
+  takes it off.
+- **What it hears.** A mention of Outrunner in the channel, and any reply in
+  a thread it took a request in (no mention needed there). Nothing else: a
+  channel's other messages, and replies in other threads, go to the Slack
+  agent as before. In a channel with no Mission, the Slack agent's spec-card
+  flow is unchanged. `listen` (mentions or everything) is a column for later;
+  only mentions is used.
+- **Before it hears anything,** by rule, not by a model:
+  - the sender needs a linked Slack→Outrunner account in the Mission's org
+    with read on its project; anyone else gets the Connect prompt, or is told
+    no. Unlinked people in shared channels can't task it;
+  - `!aside` keeps a message from it; `!mute` / `!unmute` silences a thread
+    (nothing in or out, the system's posts included);
+  - `@Outrunner stop` stops its turn; `@Outrunner pause` / `resume` (write on
+    the project), or the header's **Pause**: paused, it says so and takes
+    nothing;
+  - bots' messages are never taken, the bot's own never, unless the
+    channel's `allow_bot_messages` is on (off, with no switch, in v1); then
+    only a bot's mention of Outrunner is, never a reply in a thread (so the
+    bot's own posts can't loop back), vouched for by whoever bound it.
+- **A request** becomes a `slack_request` event in the Mission's outbox, keyed
+  by Slack's event id (so Slack's retries are one), with its thread, link,
+  author (Slack name and linked account), text and file names. It's
+  delivered as any event is: it wakes the Mission, or folds into the turn it's
+  in. Nothing runs all the time.
+- **Its Slack tools** (below) post, ask and react only in threads it took
+  in the channel it's on call in now, never a muted one; no other channel,
+  no DMs. Question cards' answers come back as `slack_answer` events (the
+  first only; **Other** asks for a reply in the thread).
+- **Ships for a request** run as the Mission's owner, as all Ships do. The
+  requester (Slack user and linked account) is recorded with the Ship
+  (`mission_slack_ships`) and named in its brief, which asks for it in the
+  pull request's description. Each is in the org's audit log. A Ship's pull
+  request ready, merged or closed is posted in its thread by the system. The
+  Ships pane links each Ship's thread.
+- **Limits.** While on call, a Mission starts at most 6 Ships an hour and 30
+  a day (`mission_limits`; every Ship it starts while bound counts, as
+  nothing proves one wasn't asked for in Slack). One past them starts
+  nothing, and the thread is told. The 20-Ship cap and the plan's box limits
+  apply too.
+- **Its owner's decision.** When the Mission's `ask_user` card waits on its
+  owner, its latest thread is told, with a link to answer in Outrunner.
+- **It can't** merge or close pull requests, deploy, post elsewhere, touch
+  other projects or orgs, or act on bots' messages; Ships can't spawn Ships.
+
 ## How it works
 
 | Piece | Where |
@@ -83,6 +145,10 @@ This replaces the earlier Mission Engine design
 | Outbox delivery | `lib/missions/outbox.ts` |
 | Tick | `lib/missions/tick.ts`, after the sessions tick's reads (`/api/sessions/tick`) |
 | Archiving a Mission with its Ships | `lib/missions/archive.ts`, `POST /api/missions/[id]/archive` |
+| On call in Slack: schema (bindings, threads, Ships' ledger and limits, question cards) | `supabase/migrations/20261112200000_mission_slack.sql` |
+| Slack → Mission routing, commands and keywords | `lib/missions/slack-route.ts`, `lib/missions/slack-text.ts`, first in `lib/slack/agent-run.ts` |
+| The Slack tools, limits and thread posts | `lib/missions/slack-tools.ts`, `lib/missions/slack-announce.ts`, `lib/missions/slack-ask.ts` |
+| Binding from the app | `lib/missions/slack-binding.ts`, `/api/missions/[id]/slack`, `components/missions/mission-slack-chip.tsx` |
 | UI | `components/missions/*`, `hooks/use-missions.ts`, `GET /api/missions` |
 
 ### Tools
@@ -101,6 +167,11 @@ alone.
 | `read_runner` | One Ship's settings, pull requests and latest response. |
 | `archive_runner` | Archive a finished Ship. Refuses one that's working or has an open pull request, unless `force`. |
 | `read_notes` / `write_notes` | The Mission's notes. |
+| `slack_reply` | On call: post in a request's thread (Markdown made mrkdwn, chunked). |
+| `slack_ask` | On call: a question card in a thread, 1 to 5 options and Other. |
+| `slack_react` | On call: 👀, ✅ or ❌ on the thread's latest request. |
+
+`spawn_runner` takes a `thread` on call: the Ship is linked to that thread.
 
 They're plain functions over injected dependencies
 (`callMissionTool(scope, name, args, deps)`), so the org-wide MCP server can
@@ -137,6 +208,10 @@ A Ship's events for its Mission go through an outbox (`mission_events`):
   can't go on (its setup failed, its agent exited, its box stopped answering
   for five minutes, it never started on a message).
 - **merged / closed:** one of its pull requests.
+- **slack_request / slack_answer / slack_channel:** on call in Slack, with
+  no Ship: a request, a question card's answer, the binding changing. They're
+  delivered as `<slack_request>`, `<slack_answer>` and `<slack_channel>`
+  blocks, which the session page shows as cards.
 - **archived:** all its pull requests are merged or closed, so it was
   archived (unless it was mid-turn or had messages queued; the next look
   does it).
@@ -203,6 +278,11 @@ twice records it once. Events are delivered in batches:
 
 ## Configuration
 
+- **Migrations:** `pnpm db:migrate`, including
+  `20261112200000_mission_slack.sql` for Missions on call in Slack. Until it's
+  applied, the Slack agent behaves as before (it can't tell a channel has a
+  Mission, so it treats none as having one).
+
 - **Cron:** nothing new. The Missions tick rides the sessions tick
   (`POST /api/sessions/tick`, every 2 minutes from Cloudflare's `scheduled`),
   after its reads.
@@ -238,3 +318,13 @@ twice records it once. Events are delivered in batches:
   the cap's trigger under racing inserts, and the outbox's claims, leases and
   backoff. It needs `MISSIONS_PG`; CI provides one.
 - `runtime-agent/internal/workspace/message_keys_test.go`: send-once keys.
+- `test/mission-slack-route.test.ts`: on call in Slack, what a bound channel's
+  Mission takes and what goes on to the agent, Slack's retries, the gate,
+  keywords, pause, bots and the commands.
+- `test/mission-slack-tools.test.ts`: the Slack tools' scoping across
+  Missions and channels, the limits, and the thread posts.
+- `test/mission-slack-events.test.ts`: Slack's blocks, a request folded into
+  a running turn, and question cards answered once.
+- `test/mission-slack-sql.test.ts` runs the on-call migration on a real
+  Postgres (`MISSIONS_PG`): events with no Ship, one Mission a channel, the
+  limits under racing spawns.

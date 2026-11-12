@@ -11,6 +11,12 @@ export type OpenedPullRequest = {
   title: string;
 };
 
+/** A pull request as Slack links it: `#7 Its title`, safe in mrkdwn. Shared
+ *  with a Mission's thread cards (lib/missions/slack-text.ts). */
+export function pullRequestLink(pr: { url: string; number: number; title: string }): string {
+  return `<${pr.url}|#${pr.number} ${pr.title.replace(/[<>|]/g, "")}>`;
+}
+
 /** What announcing a pull request reads and writes (announce-pull-request.deps.ts). */
 export type AnnounceDeps = {
   /** The sessions on `headRef` that work in the repository: as their own,
@@ -50,7 +56,7 @@ export async function announcePullRequestWith(pr: OpenedPullRequest, deps: Annou
     await deps
       .post(
         conversation,
-        `Pull request for OR-${item.number}: <${pr.url}|#${pr.number} ${pr.title.replace(/[<>|]/g, "")}>. If the repository has the validation automation on, I'll post its verdict here, and when it's merged.`,
+        `Pull request for OR-${item.number}: ${pullRequestLink(pr)}. If the repository has the validation automation on, I'll post its verdict here, and when it's merged.`,
       )
       .catch((error: unknown) =>
         console.error(`Slack agent: couldn't announce ${pr.repoFullName}#${pr.number} in ${conversation.id}`, error),

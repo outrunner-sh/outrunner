@@ -27,7 +27,8 @@ export type WatchRow = {
 
 export type RecordedEvent = {
   missionId: string;
-  runnerId: string;
+  /** Null for Slack's kinds only. */
+  runnerId: string | null;
   kind: MissionEventKind;
   payload: MissionEventPayload;
   key: string;

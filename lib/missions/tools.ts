@@ -21,6 +21,7 @@ import {
   runnerState,
   textArg,
 } from "@/lib/missions/rules";
+import { callSlackTool, type MissionSlackDeps, SLACK_TOOL_NAMES, SLACK_TOOLS, slackSpawn } from "@/lib/missions/slack-tools";
 import type { Workspace } from "@/lib/runtime/types";
 
 /** The Mission a call is for: the one its token names. */
@@ -60,6 +61,9 @@ export type MissionToolDeps = {
   archive(runner: Workspace): Promise<boolean>;
   readNotes(missionId: string): Promise<{ body: string; updatedAt: string | null }>;
   writeNotes(missionId: string, body: string): Promise<void>;
+  /** Slack, for a Mission on call in a channel (lib/missions/slack-tools.ts);
+   *  without it, its Slack tools are off. */
+  slack?: MissionSlackDeps;
 };
 
 export type ToolResult = { text: string; isError?: boolean };
@@ -86,6 +90,11 @@ export const MISSION_TOOLS: ToolDefinition[] = [
         agent: { type: "string", enum: ["claude", "codex"], description: "The coding agent to run." },
         effort: { type: "string", enum: ["low", "medium", "high", "xhigh", "max"], description: "Thinking effort." },
         plan_mode: { type: "boolean", description: "Have it reply with a plan first and change nothing until told to go ahead." },
+        thread: {
+          type: "string",
+          description:
+            "On call in Slack: the thread of the <slack_request> it's for. The Ship is linked to it, the requester named in its brief, and its pull requests are posted there.",
+        },
       },
       required: ["prompt"],
       additionalProperties: false,
@@ -150,6 +159,7 @@ export const MISSION_TOOLS: ToolDefinition[] = [
       additionalProperties: false,
     },
   },
+  ...SLACK_TOOLS.map((tool) => ({ ...tool, inputSchema: tool.inputSchema as Record<string, unknown> })),
 ];
 
 const NO_SUCH_RUNNER: ToolResult = { text: "This Mission has no Ship with that id. list_runners shows its Ships.", isError: true };
@@ -245,6 +255,7 @@ export async function callMissionTool(
       return { text: "Notes saved." };
     }
     default:
+      if (SLACK_TOOL_NAMES.includes(name)) return callSlackTool(mission, name, args, deps.slack);
       return refuse(`No tool is called ${name}.`);
   }
 }
@@ -258,15 +269,27 @@ async function spawnRunner(mission: Workspace, args: Record<string, unknown>, de
   if (places === 0) {
     return refuse(`This Mission already has ${MAX_RUNNERS} Ships that aren't archived. Archive a finished one (archive_runner) first.`);
   }
+  // On call in Slack: under its limits, and for its thread.
+  const slack = await slackSpawn(mission, args.thread, deps.slack);
+  if (slack && "error" in slack) return refuse(slack.error);
   const started = await deps.startRunner(mission, {
-    brief: prompt,
+    brief: slack?.briefNote ? `${prompt}${slack.briefNote}` : prompt,
     planMode: boolArg(args, "plan_mode"),
     name: textArg(args, "name")?.slice(0, 120),
     model: textArg(args, "model"),
     agent: textArg(args, "agent"),
     effort: textArg(args, "effort"),
   });
-  if ("error" in started) return refuse(`The Ship didn't start: ${started.error}`);
+  if ("error" in started) {
+    if (slack) await deps.slack?.releaseShip(slack.reservation).catch(() => undefined);
+    return refuse(`The Ship didn't start: ${started.error}`);
+  }
+  if (slack && deps.slack) {
+    await deps.slack.linkShip(slack.reservation, started.runnerId).catch((error: unknown) =>
+      console.error(`Mission ${mission.id}: Ship ${started.runnerId} isn't linked to its thread`, error),
+    );
+    await deps.slack.auditShip(mission, slack.binding, slack.thread, started.runnerId).catch(() => undefined);
+  }
   return json({
     runner_id: started.runnerId,
     note: "It's setting up its box and starts on the brief once ready. You hear when its turn ends; there is no need to poll.",
