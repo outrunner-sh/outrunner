@@ -3,7 +3,6 @@
 A **provider swap** of the control plane onto Cloudflare Containers — the app is
 unchanged. Containers runs the same `pnpm start` container, so the filesystem,
 Node runtime, and the on-disk `runtime-agent` binary all work as on Railway.
-**Railway stays intact** as rollback.
 
 In this monorepo the control-plane app lives under **`outrunner/`**, and the
 cross-compiled agent binary is a **gitignored build artifact** (not committed).
@@ -241,13 +240,39 @@ previews stay off).
 
 ## Deploy
 
-```bash
-cd outrunner/cloudflare
-pnpm dlx wrangler deploy
-```
+Production deploys go through GitHub Actions (`.github/workflows/deploy.yml`);
+see [Deploying and rolling back](#deploying-and-rolling-back). Each deploy
+restarts the single prod container and drops live sessions, so each one needs
+a person's approval.
 
-Builds `../Dockerfile` (context = `outrunner/`), pushes the image, and wires the
-Worker + Durable Object + `app.outrunner.sh` (and the old domain's redirect).
+The workflow builds `../Dockerfile` (context = `outrunner/`), pushes the image,
+and wires the Worker + Durable Object + `app.outrunner.sh` (and the old domain's
+redirect). The first-time equivalent from a laptop with a working Docker is
+`cd outrunner/cloudflare && pnpm dlx wrangler deploy`.
+
+## Deploying and rolling back
+
+1. **Merge to main.** CI runs on the merge commit.
+2. **CI passes → the deploy waits.** The *Deploy to Cloudflare Containers* run
+   starts; its `plan` job writes a summary (the SHA, the commits since the
+   live build, and a migration warning) and the `deploy` job waits for review
+   on the `production` environment.
+3. **Run migrations first.** If the summary says the deploy touches
+   `supabase/migrations/`, run `pnpm db:migrate` before you approve.
+4. **Approve.** Open the run in Actions → *Review deployments* → tick
+   `production` → *Approve and deploy* (or *Reject* to skip it). Only one
+   deploy runs at a time; a newer one waiting replaces an older one waiting.
+5. **Health check.** The job waits until `/api/health` reports the new SHA and
+   the configuration report is all true; a red job means users don't have it.
+
+**Rollback:** Actions → *Deploy to Cloudflare Containers* → *Run workflow* on
+`main`, with `ref` set to the previous good SHA (the summary of the last good
+deploy shows it). It must be on main and have passed CI, and it still needs
+approval. If the rollback removes migrations, the database keeps them; tick
+`migrations-applied` only after `pnpm db:migrate` when it adds some. For the
+fastest rollback, without a rebuild:
+`cd outrunner/cloudflare && pnpm dlx wrangler rollback` (then check `/api/health`
+reports the old build). A later approved deploy replaces it.
 
 ## Pre-deploy checklist
 
@@ -255,7 +280,7 @@ Worker + Durable Object + `app.outrunner.sh` (and the old domain's redirect).
       on both the outrunner.sh and neev.ai zones.
 - [ ] All secrets set via `wrangler secret put`.
 - [ ] `https://app.outrunner.sh` as the Supabase Site URL and in its redirect allowlist.
-- [ ] Supabase migrations applied.
+- [ ] Supabase migrations applied (`pnpm db:migrate`) before approving.
 
 ## Smoke test
 
@@ -274,8 +299,3 @@ Worker + Durable Object + `app.outrunner.sh` (and the old domain's redirect).
 - **Verify the fast-moving bits** — the `containers` wrangler schema and the
   `@cloudflare/containers` API change; confirm against current docs before the
   first deploy. `worker.ts`/`wrangler.jsonc` are scaffolding.
-
-## Rollback
-
-Railway is untouched: point the domain back at the Railway service and set its
-`RUNTIME_BASE_URL` accordingly.
