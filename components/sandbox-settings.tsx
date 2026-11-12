@@ -164,7 +164,7 @@ export function SandboxSettingsForm({
   const inUse = settings.sandbox;
   // E2B is ready once Outrunner's template is built in the user's account.
   const ready = (sandbox: SandboxChoice) =>
-    sandbox === "outrunner" || (sandbox === "e2b" ? settings.e2b?.connected && settings.e2b.template === "ready" : settings[sandbox]?.connected);
+    sandbox === "outrunner" || (sandbox === "e2b" ? settings.e2b?.connected && settings.e2b.canStart : settings[sandbox]?.connected);
   // The size a box really gets on the sandbox in use: on Outrunner's, a saved
   // size beyond the plan is shown as the size new boxes get instead.
   const size = inUse === "outrunner" ? boxSizeWithin(plan, settings.boxSize).id : settings.boxSize;
@@ -458,7 +458,7 @@ const E2B_TEMPLATE_LINE: Record<E2bSettings["template"], string> = {
   building: "Building Outrunner's template in your E2B. This takes a few minutes; you can leave this page.",
   ready: "Outrunner's template is ready in your E2B.",
   failed: "Outrunner's template failed to build in your E2B.",
-  outdated: "Outrunner's tools were updated; rebuilding its template in your E2B.",
+  outdated: "Outrunner's tools were updated; rebuilding its template in your E2B. Sessions keep starting on the previous one meanwhile.",
 };
 
 /**

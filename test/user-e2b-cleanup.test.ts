@@ -23,6 +23,7 @@ const STORED = {
   templateId: "tmpl-now",
   templateBuildId: "build-1",
   templateError: null,
+  servingTemplateId: "tmpl-now",
 };
 
 test("disconnecting a user's E2B deletes this deployment's boxes and every Outrunner template there", async () => {

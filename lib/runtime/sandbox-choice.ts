@@ -59,7 +59,9 @@ export function providerForNewSessions(settings: SandboxSettings, keys: OwnSandb
       // Read through currentSandboxSettings, which moves a template that
       // isn't ready along first.
       if (!settings.e2b?.connected || !keys.e2b) throw new NoE2bKeyError();
-      if (settings.e2b.template !== "ready") throw new E2bTemplateNotReadyError(settings.e2b.template, settings.e2b.templateError);
+      if (!settings.e2b.canStart) {
+        throw new E2bTemplateNotReadyError(settings.e2b.template === "ready" ? "none" : settings.e2b.template, settings.e2b.templateError);
+      }
       return new UserE2bRuntimeProvider(keys.e2b);
     default:
       return getRuntimeProvider();

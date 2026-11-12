@@ -132,15 +132,17 @@ test("only a stopped computer the same provider made is a box to restore from", 
 });
 
 test("new sessions go to the user's own E2B only with a key and a template ready there", () => {
-  const withE2b = (template: E2bTemplateState, connected = true): SandboxSettings => ({
+  const withE2b = (template: E2bTemplateState, connected = true, canStart = template === "ready"): SandboxSettings => ({
     ...settings("e2b", false),
-    e2b: { connected, hint: connected ? "ef56" : null, updatedAt: null, apiUrl: null, sandboxUrl: null, template, templateError: null },
+    e2b: { connected, hint: connected ? "ef56" : null, updatedAt: null, apiUrl: null, sandboxUrl: null, template, templateError: null, canStart },
   });
   const keys = { ...noKey, e2b: async () => null };
   assert.throws(() => providerForNewSessions(withE2b("ready", false), keys), NoE2bKeyError);
   assert.throws(() => providerForNewSessions(withE2b("ready"), noKey), NoE2bKeyError);
   for (const template of ["none", "building", "failed", "outdated"] as const) {
     assert.throws(() => providerForNewSessions(withE2b(template), keys), E2bTemplateNotReadyError);
+    // An earlier template still served: sessions keep starting while it's rebuilt.
+    assert.ok(providerForNewSessions(withE2b(template, true, true), keys) instanceof UserE2bRuntimeProvider);
   }
   const provider = providerForNewSessions(withE2b("ready"), keys);
   assert.ok(provider instanceof UserE2bRuntimeProvider);

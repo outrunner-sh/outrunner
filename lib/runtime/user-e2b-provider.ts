@@ -56,10 +56,14 @@ export function userE2bConnection(stored: StoredE2b): E2bConnection {
 /** The template a new box in the user's E2B starts from: Outrunner's, built
  *  in their account. Throws until it's ready. */
 export function userE2bTemplate(stored: StoredE2b): string {
-  if (stored.template !== "ready" || !stored.templateId) {
-    throw new E2bTemplateNotReadyError(stored.template === "ready" ? "none" : stored.template, stored.templateError);
-  }
-  return stored.templateId;
+  if (stored.template === "ready" && stored.templateId) return stored.templateId;
+  // A newer one building (a box image bump), or its build failed: the last
+  // one that was ready is served meanwhile, so sessions don't stop for it.
+  // Its tools are at the older pins, as on any box made before an image bump
+  // (boxUpgrade and the per-feature checks cover those); the agent is
+  // deployed fresh onto every box either way.
+  if (stored.template !== "ready" && stored.servingTemplateId) return stored.servingTemplateId;
+  throw new E2bTemplateNotReadyError(stored.template === "ready" ? "none" : stored.template, stored.templateError);
 }
 
 /** The Runtime Computer in a user's own E2B, on their key (Settings →

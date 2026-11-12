@@ -26,7 +26,12 @@ alter table user_credentials
   add column if not exists e2b_template_error text,
   -- When a build was claimed: one caller at a time starts a build (the
   -- conditional claim), and a claim whose build never started goes stale.
-  add column if not exists e2b_template_started_at timestamptz;
+  add column if not exists e2b_template_started_at timestamptz,
+  -- The last template that built ready in their account: new boxes keep
+  -- starting from it while a newer one (a box image bump) builds, so
+  -- sessions don't stop for the rebuild. Deleted from their E2B once the
+  -- newer one is ready.
+  add column if not exists e2b_serving_template_id text;
 
 alter table user_credentials
   drop constraint if exists user_credentials_sandbox_check;

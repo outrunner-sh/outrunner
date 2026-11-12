@@ -104,6 +104,7 @@ const STORED = {
   templateId: "tmpl-user",
   templateBuildId: "build-1",
   templateError: null,
+  servingTemplateId: "tmpl-user",
 };
 
 test("a box in a user's E2B cloud is reached at its own host, browsers included", async () => {
@@ -169,10 +170,18 @@ test("a user's box waits for their template, and is made on their key at E2B's c
 
   const backendOf = (provider: UserE2bRuntimeProvider) => (provider as unknown as { backend: E2bBackend }).backend;
   for (const template of ["building", "failed", "outdated", "none"] as const) {
-    const backend = backendOf(new UserE2bRuntimeProvider(async () => ({ ...STORED, template })));
+    const backend = backendOf(new UserE2bRuntimeProvider(async () => ({ ...STORED, template, servingTemplateId: null })));
     await assert.rejects(backend.create({}), E2bTemplateNotReadyError);
   }
   assert.deepEqual(calls, []);
+
+  // A newer template building (or failed) while the last ready one is
+  // served: new boxes start from that one, not the one still building.
+  for (const template of ["building", "failed", "outdated"] as const) {
+    const backend = backendOf(new UserE2bRuntimeProvider(async () => ({ ...STORED, template, templateId: "tmpl-next", servingTemplateId: "tmpl-prev" })));
+    await backend.create({});
+    assert.equal(created.template, "tmpl-prev", template);
+  }
 
   const backend = backendOf(new UserE2bRuntimeProvider(async () => STORED));
   await backend.create({});

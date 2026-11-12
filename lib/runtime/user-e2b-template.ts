@@ -73,7 +73,12 @@ export async function refreshUserE2bTemplate(userId: string): Promise<void> {
   try {
     const status = await e2bTemplateBuildStatus(targetOf(stored), build);
     if (status.state === "building") return;
-    const landed = await setE2bTemplate(userId, { ...status, buildId: build.buildId });
+    const landed = await setE2bTemplate(
+      userId,
+      status.state === "ready"
+        ? { state: "ready", buildId: build.buildId, templateId: build.templateId }
+        : { ...status, buildId: build.buildId },
+    );
     if (landed && status.state === "ready") await deleteOtherUserE2bTemplates(targetOf(stored), userId, build.templateId);
   } catch (error) {
     console.warn(`Could not check user ${userId}'s E2B template build`, error);
@@ -86,6 +91,8 @@ export async function refreshUserE2bTemplate(userId: string): Promise<void> {
 export async function currentSandboxSettings(userId: string): Promise<SandboxSettings> {
   const settings = await getSandboxSettings(userId);
   if (settings.sandbox !== "e2b" || !settings.e2b?.connected || settings.e2b.template === "ready") return settings;
+  // A rebuild under way (or failed) while an earlier template is served is
+  // still moved along: the build is checked on, and an image bump started.
   await refreshUserE2bTemplate(userId);
   return getSandboxSettings(userId);
 }
