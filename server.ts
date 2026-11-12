@@ -54,10 +54,11 @@ const gcpRelay = createSandboxRelay({
     return { base: url.origin, headers: {} };
   },
 }, GCP_RELAY_PREFIX);
-// E2B's proxy routes by headers, which the relay sets on its own connection.
+// E2B's proxy routes by headers, which the relay sets on its own connection,
+// with the box's traffic token from the ticket (sealed; the browser can't read it).
 const e2bRelay = createSandboxRelay({
   key: () => process.env.CREDENTIALS_ENCRYPTION_KEY ? relayKey(process.env.CREDENTIALS_ENCRYPTION_KEY, "e2b") : undefined,
-  tunnel: async (id, agentPort) => e2bRoute(id, agentPort),
+  tunnel: async (id, agentPort, trafficToken) => e2bRoute(id, agentPort, undefined, trafficToken),
 }, E2B_RELAY_PREFIX);
 const relays = [neevRelay, gcpRelay, e2bRelay];
 const previews = createPreviewProxy({

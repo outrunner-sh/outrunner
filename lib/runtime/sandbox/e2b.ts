@@ -124,6 +124,10 @@ export class E2bBackend implements SandboxBackend {
       metadata: labels,
       timeoutMs: BOX_TIMEOUT_MS,
       lifecycle: { onTimeout: "pause" },
+      // Its ports answer only requests with its traffic token, which only
+      // this server holds: the agent, previews (behind our login gate) and
+      // the desktop aren't open to anyone who learns the box id.
+      network: { allowPublicTraffic: false },
     });
     try {
       const info = await Sandbox.getInfo(sandbox.sandboxId, connection());
@@ -273,6 +277,9 @@ async function run(
 /** A box's commands, files and ways in, from its sandbox. Exported for tests. */
 export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memoryMB">): SandboxBox {
   const id = sandbox.sandboxId;
+  // Every way into the box's ports carries it (a box from before
+  // allowPublicTraffic: false has none, and needs none).
+  const trafficToken = sandbox.trafficAccessToken;
   const io: BoxIO = {
     exec: async (command) => {
       const { stdout, exitCode } = await run(sandbox, command);
@@ -302,8 +309,9 @@ export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memo
     // Control calls go straight to E2B's proxy with its routing headers; the
     // browser can't send those, so its WebSockets come through our relay.
     agentEndpoint: async (port): Promise<AgentEndpoint> => {
-      const route = e2bRoute(id, port, requireEnv("E2B_SANDBOX_URL"));
-      const ticket = mintRelayTicket(id, port, relayKey(requireEnv("CREDENTIALS_ENCRYPTION_KEY"), "e2b"));
+      const route = e2bRoute(id, port, requireEnv("E2B_SANDBOX_URL"), trafficToken);
+      // The relay needs the token too; sealed in the ticket, out of the browser's reach.
+      const ticket = mintRelayTicket(id, port, relayKey(requireEnv("CREDENTIALS_ENCRYPTION_KEY"), "e2b"), Date.now(), trafficToken);
       return {
         controlBaseUrl: route.base,
         controlHeaders: route.headers,
@@ -313,7 +321,7 @@ export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memo
     // E2B's proxy routes by the headers, and sends the box's server the
     // Host it was asked on.
     previewTarget: async (port) => {
-      const route = e2bRoute(id, port, requireEnv("E2B_SANDBOX_URL"));
+      const route = e2bRoute(id, port, requireEnv("E2B_SANDBOX_URL"), trafficToken);
       return { baseUrl: route.base, headers: route.headers, hostHeader: "upstream" };
     },
   };
