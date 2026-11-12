@@ -205,6 +205,8 @@ export class NeevBackend implements SandboxBackend {
       console.error(`Neev box ${id} is ${sandbox.phase}, not paused; starting a new one`);
       return null;
     }
+    // Before a paused box is woken (and billed) only to fail at connection().
+    runtimeKey();
     const resumed = sandbox.phase === "Paused";
     if (resumed) await sandbox.resume();
     try {

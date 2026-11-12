@@ -181,11 +181,12 @@ test("a paused Neev box is resumed in place, at the size it was made, and given 
     assert.deepEqual(already.log, ["resume", "ready"], "a box that has it isn't updated");
   }));
 
-test("a resume that fails partway pauses the box again, rather than leave it running", async () => {
-  const { backend, log } = backendWithBox("Paused", { readyFails: true });
-  await assert.rejects(backend.restore("sb-1"), /never ready/);
-  assert.deepEqual(log, ["resume", "pause"]);
-});
+test("a resume that fails partway pauses the box again, rather than leave it running", () =>
+  withKey(async () => {
+    const { backend, log } = backendWithBox("Paused", { readyFails: true });
+    await assert.rejects(backend.restore("sb-1"), /never ready/);
+    assert.deepEqual(log, ["resume", "pause"]);
+  }));
 
 test("a box that's gone or lost its state is replaced: restore gives null", async () => {
   assert.equal(await backendWithBox("Paused", { gone: true }).backend.restore("sb-1"), null);
@@ -283,20 +284,21 @@ test("a personal access token is refused before any box is made, and still manag
   try {
     await assert.rejects(new NeevBackend().create({}), /personal access token[\s\S]*sk-nc-/);
     assert.equal(fetched, false, "Neev was never called: no box to make and delete");
-    // Managing boxes already running still works on it.
-    const backend = new NeevBackend();
-    const done: string[] = [];
-    (backend as unknown as { client: unknown }).client = {
-      sandboxes: {
-        pause: async () => void done.push("pause"),
-        keepalive: async () => void done.push("keepalive"),
-        delete: async () => void done.push("delete"),
-      },
-    };
-    await backend.pause("sb-1");
-    await backend.keepAlive("sb-1");
-    await backend.delete("sb-1");
-    assert.deepEqual(done, ["pause", "keepalive", "delete"]);
+    // Managing boxes already running still works on it, through the real SDK
+    // client built on that key (not a stub swapped in).
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      calls.push(`${request.method} ${new URL(request.url).pathname} ${request.headers.get("authorization")}`);
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    await new NeevBackend().delete("sb-1");
+    assert.equal(calls.length, 1);
+    assert.match(calls[0], /^DELETE \S*\/sandboxes\/sb-1 Bearer pat-nc-personal$/);
+    // And a paused box isn't woken only to fail on it.
+    const { backend, log } = backendWithBox("Paused");
+    await assert.rejects(backend.restore("sb-1"), /personal access token/);
+    assert.deepEqual(log, [], "never resumed");
   } finally {
     for (const [name, value] of [["NEEV_API_KEY", saved.key], ["NEEV_ORG_ID", saved.org], ["NEEV_PROJECT_ID", saved.project]] as const) {
       if (value === undefined) delete process.env[name];
