@@ -31,7 +31,7 @@ deployed commit (`OUTRUNNER_BUILD`).
 ## Cron heartbeats (dead-man's switch)
 
 Each tick route records its job's last success and last error in
-`cron_heartbeats` (migration `20261112130000_cron_heartbeats.sql`) when its
+`cron_heartbeats` (migration `20261112150000_cron_heartbeats.sql`) when its
 work ends. `/api/health` with the `BILLING_CRON_SECRET` bearer reports them:
 
 ```sh

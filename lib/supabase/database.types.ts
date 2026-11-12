@@ -1350,7 +1350,7 @@ type TrackerIssueClaimRow = {
 };
 
 // supabase/migrations/20261110100000_jira_delegation.sql
-// supabase/migrations/20261112130000_cron_heartbeats.sql
+// supabase/migrations/20261112150000_cron_heartbeats.sql
 type CronHeartbeatRow = {
   job: string;
   last_run_at: string | null;
