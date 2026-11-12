@@ -373,6 +373,12 @@ test("an E2B box's desktop starts as root, and each link has a new password and 
 test("a desktop that gives no proper password, or won't start, says so", async () => {
   const bad = fakeSandbox(() => ({ stdout: "oops\n", stderr: "", exitCode: 0 }));
   await assert.rejects(box(bad.sandbox, INFO, deploymentE2bConnection()).desktop!.viewer(120), /didn't give a password/);
+  // A TTL the box couldn't expire it after is refused before anything runs.
+  const untouched = fakeSandbox();
+  for (const ttl of [0, -5, 1.5, Number.NaN]) {
+    await assert.rejects(box(untouched.sandbox, INFO, deploymentE2bConnection()).desktop!.viewer(ttl), /whole seconds/);
+  }
+  assert.deepEqual(untouched.runs, []);
   const failing = fakeSandbox(() => new CommandExitError({ stdout: "", stderr: "the display didn't start\n", exitCode: 1, error: "exit status 1" }));
   await assert.rejects(box(failing.sandbox, INFO, deploymentE2bConnection()).desktop!.start(), /Couldn't start the desktop: the display didn't start/);
 });

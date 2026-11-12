@@ -76,7 +76,7 @@ export function e2bTemplateTag(boxTag: string, desktopScript: string): string {
 /** {@link e2bTemplateTag} of BOX_IMAGE_TAG and box/e2b-desktop.sh as
  *  committed. Written out, so the app reads neither to know it; its test
  *  fails when they part. */
-export const E2B_TEMPLATE_TAG = "d6f2298e514b";
+export const E2B_TEMPLATE_TAG = "e17bde80820b";
 
 /** The template's name in a user's own E2B: the template tag it's built at
  *  (as `E2B_TEMPLATE_TAG` is now), and the user, in case E2B's names are shared

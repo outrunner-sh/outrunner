@@ -87,12 +87,18 @@ password() {
   [ -z "$ttl" ] && return
   case "$ttl" in *[!0-9]*) echo "TTL must be whole seconds" >&2; exit 2 ;; esac
   # Detached, so it outlives this call, and without the lock (fd 9), which
-  # it would otherwise hold through its sleep.
-  setsid sh -c "sleep $ttl; exec \"$0\" expire $password" </dev/null >/dev/null 2>&1 9>&- &
+  # it would otherwise hold through its sleep. It's given the password's
+  # digest, never the password: a process's arguments are anyone's to read
+  # in the box (ps), where the password file is root's alone.
+  setsid sh -c "sleep $ttl; exec \"$0\" expire $(digest "$password")" </dev/null >/dev/null 2>&1 9>&- &
 }
 
+# A password's digest, enough to tell it from another.
+digest() { printf '%s' "$1" | sha256sum | cut -c1-16; }
+
+# Replace the password if it's still the one with digest $1.
 expire() {
-  [ "$(cat "$PASSWORD_FILE" 2>/dev/null)" = "$1" ] && new_password >/dev/null
+  [ "$(digest "$(head -n1 "$PASSWORD_FILE" 2>/dev/null)")" = "$1" ] && new_password >/dev/null
   return 0
 }
 
