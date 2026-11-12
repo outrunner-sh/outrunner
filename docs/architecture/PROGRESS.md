@@ -39,7 +39,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started
   - ✅ Removed `executeJob`/`streamLogs`/`getJobResult`/`getJobPaths` from the interface + all providers
   - ✅ Deleted `settleRunningJobs`/`reconcileWorkspaceJobs` (batch reconciliation); kept `ensureLiveSandbox` for M3 (since removed, #408)
   - ✅ Trimmed the job-driven UI (studio composer/JobMessage/terminal + `workspace-job-panel`); studio shell kept
-  - ✅ Kept the `jobs` table + `Job` type (decision 1A) as the seed for the M3 session record
+  - ✅ Kept the `jobs` table + `Job` type (decision 1A) as the seed for the M3 session record (`Job` type since removed, #408; table drop pending)
   - 🟡 Deferred to M3: move git/session ops off the `RuntimeProvider` interface; interactive session routes
 
 ## Milestone 3 — Workspace Session Experience — 🟡 IN PROGRESS
