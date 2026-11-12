@@ -3,6 +3,8 @@
  * apart so the rules stay free of Daytona and the database, and tested.
  */
 
+import { allRows, lastMeteredBox } from "@/lib/billing/metering-store";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { optionalEnv } from "@/lib/env";
 import { boxGone } from "@/lib/runtime/computer-provider";
 import {
@@ -17,6 +19,7 @@ import {
   strayRunningBoxes,
   sweepable,
 } from "@/lib/runtime/orphan-boxes";
+import { LEFT_BY_CUT_OFF_CLAIM, lostBoxes } from "@/lib/runtime/lost-box";
 import { DaytonaBackend } from "@/lib/runtime/sandbox/daytona";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -30,6 +33,10 @@ let lastHeld = "";
 
 /** Ids asked about per query: a long `in` list makes a long URL. */
 const LOOKUP_CHUNK = 100;
+
+/** Newest-interval lookups in flight at once (lostOf): each an indexed
+ *  `limit 1` read. */
+const LOST_LOOKUP_CONCURRENCY = 4;
 
 /**
  * Delete the deployment's Daytona boxes that no runtime_computers row names
@@ -61,7 +68,10 @@ export async function sweepOrphanedBoxes(now = Date.now()): Promise<{ deleted: n
   }
 
   const statusOf = await namedBoxes(candidates.map((box) => box.id));
-  const named = new Set(statusOf.keys());
+  // And boxes a row lost track of (a claim cut off mid-way, lib/runtime/lost-box.ts):
+  // the next open of its session brings that box back, its files on it.
+  const unnamed = candidates.map((box) => box.id).filter((id) => !statusOf.has(id));
+  const named = new Set([...statusOf.keys(), ...(await lostOf(unnamed))]);
   const unlabelled = optionalEnv("ORPHAN_SWEEP_UNLABELLED") === "1";
   const { remove, held } = orphanedBoxes(candidates, named, { now, deployment, unlabelled });
   // Every one, but only when they change: the cron runs every 2 minutes.
@@ -117,6 +127,34 @@ async function namedBoxes(ids: string[]): Promise<Map<string, string>> {
     rows.push(...(data ?? []).map((row) => ({ sandboxId: row.daytona_sandbox_id, status: row.status })));
   }
   return boxStatuses(rows);
+}
+
+/** Which of `ids` is the box a row lost (lostBoxes): the newest a computer
+ *  ran on, by its intervals, whose row names none while claimed or failed.
+ *  From those rows rather than from the boxes' intervals, which grow with
+ *  every resume: each row's newest interval alone, so no page cap can cut
+ *  off the one that matters. A lookup that fails throws, so nothing is
+ *  deleted on a guess. */
+async function lostOf(ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const supabase = createSupabaseAdminClient();
+  const rows = await allRows((from, to) =>
+    supabase
+      .from("runtime_computers")
+      .select("id, status, daytona_sandbox_id")
+      .is("daytona_sandbox_id", null)
+      .in("status", [...LEFT_BY_CUT_OFF_CLAIM])
+      .order("id")
+      .range(from, to),
+  );
+  // Failed fresh provisions and pool refills leave such rows too, and they
+  // stay until reopened: a few at a time, not a burst of one per row.
+  const withBoxes = await mapWithConcurrency(rows, LOST_LOOKUP_CONCURRENCY, async (row) => ({
+    status: row.status,
+    daytonaSandboxId: row.daytona_sandbox_id,
+    lastBox: await lastMeteredBox(row.id),
+  }));
+  return lostBoxes(withBoxes, new Set(ids));
 }
 
 /** Whether every row naming `sandboxId` still says it's at rest. A lookup
