@@ -12,7 +12,7 @@ import {
   type SandboxBackend,
   type SandboxBox,
 } from "@/lib/runtime/sandbox/backend";
-import { e2bRoute } from "@/lib/runtime/sandbox/e2b-route";
+import { E2B_TRAFFIC_TOKEN_HEADER, e2bRoute, sealableE2bRelaySecret } from "@/lib/runtime/sandbox/e2b-route";
 import { e2bSdkOptions } from "@/lib/runtime/sandbox/e2b-sdk";
 import { E2B_RELAY_PREFIX, mintRelayTicket, relayKey } from "@/lib/runtime/sandbox/relay-ticket";
 
@@ -71,9 +71,10 @@ export type E2bConnection = {
   /** How long a box runs before E2B pauses it on its own: the backstop
    *  behind Outrunner's own idle pause, pushed back out while it's in use. */
   timeoutMs: number;
-  /** This server's relay for browsers' WebSockets to a header-routed box: its
-   *  path prefix and the key its tickets are signed with. */
-  relay: { prefix: string; key: string };
+  /** This server's relay for browsers' WebSockets to a box: its path prefix,
+   *  the key its tickets are signed with, and for a user's E2B, the user, bound
+   *  into each ticket so the relay reaches only their box. */
+  relay: { prefix: string; key: string; owner?: string };
 };
 
 /** The deployment's own E2B, from the environment. Both URLs are required:
@@ -170,6 +171,10 @@ export class E2bBackend implements SandboxBackend {
       metadata: labels,
       timeoutMs: c.timeoutMs,
       lifecycle: { onTimeout: "pause" },
+      // Its ports answer only requests with its traffic token, which only
+      // this server holds: the agent, previews (behind our login gate) and
+      // the desktop aren't open to anyone who learns the box id.
+      network: { allowPublicTraffic: false },
     });
     try {
       const info = await Sandbox.getInfo(sandbox.sandboxId, sdk(c));
@@ -320,10 +325,18 @@ async function run(
 /** A box's commands, files and ways in, from its sandbox. Exported for tests. */
 export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memoryMB">, c: E2bConnection): SandboxBox {
   const id = sandbox.sandboxId;
+  // Every way into the box's ports carries its traffic token (a box from
+  // before allowPublicTraffic: false has none, and needs none).
+  const trafficToken = sandbox.trafficAccessToken;
   // How this server reaches the box's `port`: by header through a self-hosted
   // client-proxy, or at the box's own host on E2B's cloud.
   const route = (port: number) =>
-    c.sandboxUrl ? e2bRoute(id, port, c.sandboxUrl) : { base: `https://${sandbox.getHost(port)}`, headers: {} };
+    c.sandboxUrl
+      ? e2bRoute(id, port, c.sandboxUrl, trafficToken)
+      : {
+          base: `https://${sandbox.getHost(port)}`,
+          headers: trafficToken ? { [E2B_TRAFFIC_TOKEN_HEADER]: trafficToken } : ({} as Record<string, string>),
+        };
   const io: BoxIO = {
     exec: async (command) => {
       const { stdout, exitCode } = await run(sandbox, command);
@@ -350,14 +363,18 @@ export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memo
     io,
     gitExec,
     home: () => homeOf(io, `/home/${BOX_USER}`),
-    // Control calls go to the box's port with whatever routing E2B needs. A
-    // browser can't send routing headers, so for a header-routed box its
-    // WebSockets come through our relay; a host-routed one it opens direct.
+    // Control calls go to the box's port with whatever routing E2B needs.
     agentEndpoint: async (port): Promise<AgentEndpoint> => {
       const { base, headers } = route(port);
-      const wsBaseUrl = c.sandboxUrl
-        ? `${requireEnv("RUNTIME_BASE_URL")}${c.relay.prefix}${id}/${port}/${mintRelayTicket(id, port, c.relay.key)}`
-        : base;
+      // A browser can send neither routing headers nor the traffic token, so
+      // its WebSockets come through our relay, the token sealed in the ticket
+      // (with the box's owner, for a user's E2B) out of the browser's reach.
+      // Only a host-routed box from before traffic tokens is opened direct.
+      const secret = sealableE2bRelaySecret({ token: trafficToken, owner: c.relay.owner });
+      const wsBaseUrl =
+        c.sandboxUrl || trafficToken
+          ? `${requireEnv("RUNTIME_BASE_URL")}${c.relay.prefix}${id}/${port}/${mintRelayTicket(id, port, c.relay.key, Date.now(), secret)}`
+          : base;
       return { controlBaseUrl: base, controlHeaders: headers, wsBaseUrl };
     },
     // Through E2B's proxy, which sends the box's server the Host it was asked on.

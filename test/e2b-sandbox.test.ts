@@ -5,7 +5,7 @@ import { CommandExitError, NotFoundError, Sandbox } from "e2b";
 
 import { shellQuote } from "@/lib/runtime/daytona/deploy";
 import { box, BOX_TIMEOUT_MS, deploymentE2bConnection, E2bBackend, EXEC_TIMEOUT_MS, forgetE2bHandles, guestMtu } from "@/lib/runtime/sandbox/e2b";
-import { E2B_RELAY_PREFIX, relayKey, relayTicketValid } from "@/lib/runtime/sandbox/relay-ticket";
+import { E2B_RELAY_PREFIX, openRelayTicket, relayKey, relayTicketValid } from "@/lib/runtime/sandbox/relay-ticket";
 import { e2bSdkOptions } from "@/lib/runtime/sandbox/e2b-sdk";
 
 const ENV = {
@@ -154,6 +154,24 @@ test("the agent is reached through E2B's proxy by header, and the browser throug
     headers: { "E2b-Sandbox-Id": "sbx-1", "E2b-Sandbox-Port": "3000" },
     hostHeader: "upstream",
   });
+});
+
+test("a box's traffic token goes with every way in: control calls, previews, and sealed in the relay's ticket", async () => {
+  const sandbox = Object.assign(fakeSandbox().sandbox, { trafficAccessToken: "tat-1" }) as Sandbox;
+  const b = box(sandbox, INFO, deploymentE2bConnection());
+  const endpoint = await b.agentEndpoint(8080);
+  assert.deepEqual(endpoint.controlHeaders, {
+    "E2b-Sandbox-Id": "sbx-1",
+    "E2b-Sandbox-Port": "8080",
+    "e2b-traffic-access-token": "tat-1",
+  });
+  const prefix = `https://app.example${E2B_RELAY_PREFIX}sbx-1/8080/`;
+  const ticket = endpoint.wsBaseUrl.slice(prefix.length);
+  // The browser has the ticket, never the token in the clear.
+  assert.ok(!endpoint.wsBaseUrl.includes("tat-1"));
+  assert.deepEqual(openRelayTicket(ticket, "sbx-1", 8080, relayKey("credentials-key", "e2b")), { secret: JSON.stringify({ t: "tat-1" }) });
+  assert.equal(openRelayTicket(ticket, "sbx-1", 8080, relayKey("credentials-key", "gcp")), null);
+  assert.equal((await b.previewTarget!(3000)).headers["e2b-traffic-access-token"], "tat-1");
 });
 
 test("get never resumes a paused box, and reuses its handle while the box keeps its start", async () => {
@@ -320,6 +338,8 @@ test("a new box gets the guest MTU as root, and is killed if it can't be set up"
   assert.deepEqual(created.metadata, { role: "computer" });
   assert.deepEqual(created.lifecycle, { onTimeout: "pause" });
   assert.equal(created.timeoutMs, BOX_TIMEOUT_MS);
+  // Its ports aren't open to anyone who learns its id.
+  assert.deepEqual(created.network, { allowPublicTraffic: false });
   assert.equal(fake.runs[0].command, "ip link set eth0 mtu 1460");
   assert.equal(fake.runs[0].opts.user, "root");
   assert.ok(!calls.includes("kill"));

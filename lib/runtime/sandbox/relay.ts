@@ -4,7 +4,7 @@ import type { Duplex } from "node:stream";
 
 import WebSocket, { WebSocketServer, type RawData } from "ws";
 
-import { relayTicketValid } from "./relay-ticket.ts";
+import { openRelayTicket } from "./relay-ticket.ts";
 import { neevTunnel } from "./neev-tunnel.ts";
 
 /**
@@ -24,8 +24,9 @@ import { neevTunnel } from "./neev-tunnel.ts";
 
 /** Agent WebSockets the browser may reach. */
 const RELAYED = new Set(["pty", "events-ws"]);
-/** Keeps an idle terminal's connection open through proxies in front of us. */
-const PING_MS = 25_000;
+/** Keeps an idle terminal's connection open through proxies on both legs:
+ *  in front of us (Cloudflare), and between us and the box. */
+export const PING_MS = 25_000;
 
 /** Where the relay opens the agent's WebSocket: a base URL, any headers the
  *  provider's way in needs (E2B's routing headers), never a browser's, and,
@@ -38,8 +39,9 @@ export type RelayDeps = {
   /** The key this provider's tickets are signed with; unset when it isn't
    *  configured, and every upgrade is refused. */
   key: () => string | undefined;
-  /** The way to `port` in the sandbox. */
-  tunnel: (sandboxId: string, port: number) => Promise<RelayUpstream>;
+  /** The way to `port` in the sandbox; `secret` is what the ticket carried
+   *  sealed for the relay (E2B's traffic token), if anything. */
+  tunnel: (sandboxId: string, port: number, secret?: string) => Promise<RelayUpstream>;
 };
 
 /** Neev's: tickets under the project's Neev API key, through the sandbox's
@@ -67,9 +69,10 @@ export function createSandboxRelay(deps: RelayDeps, prefix: string) {
     if (rest.length > 0 || !RELAYED.has(target) || !Number.isInteger(port) || port <= 0 || port > 65535) {
       return refuse(socket, 404);
     }
-    if (!relayTicketValid(ticket, sandboxId, port, key)) return refuse(socket, 403);
+    const opened = openRelayTicket(ticket, sandboxId, port, key);
+    if (!opened) return refuse(socket, 403);
 
-    void connect(deps, wss, { req, socket, head, sandboxId, port, path: `/${target}${url.search}` });
+    void connect(deps, wss, { req, socket, head, sandboxId, port, secret: opened.secret, path: `/${target}${url.search}` });
     return true;
   };
 }
@@ -77,11 +80,11 @@ export function createSandboxRelay(deps: RelayDeps, prefix: string) {
 async function connect(
   deps: RelayDeps,
   wss: WebSocketServer,
-  c: { req: IncomingMessage; socket: Duplex; head: Buffer; sandboxId: string; port: number; path: string },
+  c: { req: IncomingMessage; socket: Duplex; head: Buffer; sandboxId: string; port: number; secret?: string; path: string },
 ): Promise<void> {
   let upstreamAt: RelayUpstream;
   try {
-    upstreamAt = await deps.tunnel(c.sandboxId, c.port);
+    upstreamAt = await deps.tunnel(c.sandboxId, c.port, c.secret);
   } catch (error) {
     console.error(`Relay: no way into sandbox ${c.sandboxId}`, error);
     refuse(c.socket, 502);
@@ -121,15 +124,20 @@ async function connect(
   });
 }
 
-/** Pass frames both ways, as text or binary as they came, and a close on. */
-function bridge(client: WebSocket, upstream: WebSocket): void {
+/** Pass frames both ways, as text or binary as they came, and a close on.
+ *  Both legs are pinged, so neither idles out behind a proxy. Exported for
+ *  tests. */
+export function bridge(client: WebSocket, upstream: WebSocket, pingMs = PING_MS): void {
   const send = (to: WebSocket) => (data: RawData, isBinary: boolean) => {
     if (to.readyState === WebSocket.OPEN) to.send(data, { binary: isBinary });
   };
   client.on("message", send(upstream));
   upstream.on("message", send(client));
 
-  const ping = setInterval(() => client.ping(), PING_MS);
+  const ping = setInterval(() => {
+    if (client.readyState === WebSocket.OPEN) client.ping();
+    if (upstream.readyState === WebSocket.OPEN) upstream.ping();
+  }, pingMs);
   ping.unref();
   client.on("close", (code, reason) => {
     clearInterval(ping);
