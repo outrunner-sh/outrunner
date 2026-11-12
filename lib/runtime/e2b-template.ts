@@ -19,13 +19,20 @@ const ARG_GUARD = /^RUN test -n "\$NODE_MAJOR"[^\n]*\\\n[^\n]*\n/m;
  */
 export function e2bDockerfile(dockerfile: string, args: Record<string, string>, mtu: number | null = null): string {
   let text = dockerfile.replace(ARG_GUARD, "");
+  // Every ARG is dropped, so every one, with a default or not, must be given
+  // a value here: one left would expand to nothing in E2B's build, silently.
+  const declared = new Set(Object.keys(args));
   text = text
     .split("\n")
-    .filter((line) => !line.startsWith("# syntax=") && !line.startsWith("ARG "))
+    .filter((line) => {
+      const arg = /^ARG\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(line);
+      if (arg) declared.add(arg[1]);
+      return !line.startsWith("# syntax=") && !arg;
+    })
     .join("\n");
   for (const [name, value] of Object.entries(args)) text = text.replaceAll(`\${${name}}`, value);
 
-  const left = Object.keys(args).filter((name) => text.includes(`$${name}`) || text.includes(`\${${name}}`));
+  const left = [...declared].filter((name) => new RegExp(`\\$(\\{${name}\\}|${name}\\b)`).test(text));
   if (left.length > 0) throw new Error(`box/Dockerfile still refers to ${left.join(", ")} after substitution`);
   if (/^RUN test -n/m.test(text)) throw new Error("box/Dockerfile's build-arg guard changed; update e2bDockerfile");
 
