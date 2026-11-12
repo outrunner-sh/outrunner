@@ -52,7 +52,17 @@ export async function probeRuntimeDatabase(client?: ProbeClient): Promise<Databa
   try {
     // Loaded here, not imported at the top: it needs Next's request scope
     // (next/headers), which tests that pass their own client do not have.
-    supabase = client ?? (await (await import("@/lib/supabase/server")).createSupabaseServerClient());
+    // The service role when there is one: this checks the schema is there,
+    // and a table only the server reads (pull_requests, since
+    // 20261112110000) is denied to the anonymous caller /api/health has.
+    if (client) {
+      supabase = client;
+    } else {
+      const server = await import("@/lib/supabase/server");
+      supabase = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()
+        ? server.createSupabaseAdminClient()
+        : await server.createSupabaseServerClient();
+    }
   } catch (error) {
     console.error("Runtime database probe could not create a Supabase client", error);
     return result;
