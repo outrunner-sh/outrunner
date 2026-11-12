@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { recordAudit } from "@/lib/audit/record";
 import { closeRuns, planIssueRuns, planRuns, startRun } from "@/lib/automations/runs";

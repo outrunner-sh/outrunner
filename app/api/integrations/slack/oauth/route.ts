@@ -9,6 +9,9 @@ import { saveSlackLink } from "@/lib/db/slack-links";
 import { slackSignInMatches, verifyLinkToken, verifySignInState } from "@/lib/slack/slack";
 import { SLACK_SIGNIN_COOKIE, SLACK_SIGNIN_PATH, slackSignInConfig } from "@/lib/slack/sign-in";
 
+/** How long each code trade with Slack waits: the user is on the page. */
+const SLACK_TIMEOUT_MS = 15_000;
+
 /**
  * Where Sign in with Slack comes back to, to finish linking a Slack user
  * (and where the app's install link lands, to finish installing it)
@@ -53,6 +56,7 @@ export async function GET(request: Request) {
   const response = await fetch("https://slack.com/api/openid.connect.token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
     body: new URLSearchParams({
       client_id: config.clientId,
       client_secret: config.clientSecret,
@@ -77,6 +81,7 @@ async function finishInstall(
   const response = await fetch("https://slack.com/api/oauth.v2.access", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
     body: new URLSearchParams({
       client_id: config.clientId,
       client_secret: config.clientSecret,

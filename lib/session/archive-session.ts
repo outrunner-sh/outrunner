@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import type { Owner } from "@/lib/auth/owner";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
@@ -250,7 +250,7 @@ export async function archiveCloudSession(
     // The last session off its box frees it: paused now, not when idle.
     // dropBox deletes it only when its agent's Snapshot is known complete.
     const dropBox = boxDroppableAfterArchive(options.dropBox, captureFeatures);
-    after(() => releaseWorkspaceBox(provider, workspace, false, { dropBox }));
+    after(() => releaseWorkspaceBox(provider, workspace, false, { dropBox }), { where: "release-box", workspaceId: workspace.id });
     return { ok: true };
   }
   // Out of reach: its own box is paused, its disk kept, unless bringBack had

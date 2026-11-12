@@ -50,9 +50,16 @@ RUN test -n "$NEXT_PUBLIC_SUPABASE_URL" -a -n "$NEXT_PUBLIC_SUPABASE_ANON_KEY" \
   || (echo "ERROR: NEXT_PUBLIC_SUPABASE_* build args are empty; the client bundle would ship without them" && exit 1)
 RUN pnpm build
 
-# ---- runtime: `pnpm start` + the built agent binary --------------------------
+# ---- runtime: server.ts under tini + the built agent binary -------------------
 FROM base AS runtime
 ENV NODE_ENV=production
+# tini as PID 1: it passes SIGTERM on to node, which drains (server.ts) before
+# it exits, and reaps any child left behind. Node as PID 1 would get no
+# default signal handling, and `pnpm start` under it didn't pass SIGTERM on.
+# The static release binary, checked against its published sha256
+# (tini-static-amd64.sha256sum on the release), like every other download.
+ADD --checksum=sha256:c5b0666b4cb676901f90dfcb37106783c5fe2077b04590973b885950611b30ee --chmod=0755 \
+  https://github.com/krallin/tini/releases/download/v0.19.0/tini-static-amd64 /usr/bin/tini
 # Cloudflare Containers routes to the port the process listens on; `pnpm start`
 # runs server.ts (Next plus the Neev WebSocket relay) on ${PORT}. Keep in sync
 # with defaultPort in cloudflare/worker.ts.
@@ -70,4 +77,7 @@ EXPOSE 8080
 # running container is the latest deploy's). Last, so it costs no cache.
 ARG OUTRUNNER_BUILD=""
 ENV OUTRUNNER_BUILD=$OUTRUNNER_BUILD
-CMD ["pnpm", "start"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
+# What `pnpm start` runs, without pnpm and a shell in between to swallow the
+# signal (NODE_ENV is set above).
+CMD ["node", "--experimental-strip-types", "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON", "server.ts"]

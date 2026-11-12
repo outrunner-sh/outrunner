@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { getOwner } from "@/lib/auth/owner";
 import { attachmentImageBytes, cacheBoxImage, cachedBoxImage } from "@/lib/db/chat-images";

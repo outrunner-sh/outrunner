@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { EnvironmentAccessError } from "@/lib/db/environments";
 import { removeSkillRegistry } from "@/lib/db/environment-skills";
@@ -23,7 +25,7 @@ export async function DELETE(request: Request, context: RouteContext) {
       if (error instanceof EnvironmentAccessError) return NextResponse.json({ error: error.message }, { status: 403 });
       throw error;
     }
-    after(() => refillAfterChange(c.owner.id, id));
+    after(() => refillAfterChange(c.owner.id, id), { where: "refill-pool", userId: c.owner.id });
     return NextResponse.json({ ok: true });
   });
 }
