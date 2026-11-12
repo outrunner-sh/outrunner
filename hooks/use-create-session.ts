@@ -34,6 +34,7 @@ import {
 } from "@/lib/session/first-prompt";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
 import {
+  failureFor,
   FAILED_CREATE,
   type FailedCreate,
   forgetRefusedSessions,
@@ -197,7 +198,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     const failed = (error: string, action: FailedCreate["action"] = null, unsent: FailedCreate["unsent"] = null) => {
       refusePendingSession(id, error);
       forgetFirstPrompt(tabStorage(), id);
-      FAILED_CREATE.set({ prompt, attachmentIds, message: error, action, unsent });
+      FAILED_CREATE.set({ projectId: selected.id, prompt, attachmentIds, message: error, action, unsent });
       // Still on its page: back to this screen, which says why. Elsewhere,
       // the screen says so when next opened.
       if (window.location.pathname === href) router.replace("/new");
@@ -359,8 +360,10 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     selectProject,
     selected,
     isCreating,
-    message: message ?? failedCreate?.message ?? null,
-    messageAction: message ? messageAction : (failedCreate?.action ?? null),
+    // A refusal is said only under the repository it was refused in; its
+    // prompt is given back whichever is picked.
+    message: message ?? failureFor(failedCreate, projectId)?.message ?? null,
+    messageAction: message ? messageAction : (failureFor(failedCreate, projectId)?.action ?? null),
     /** The prompt of a session the server refused, and its files, for the
      *  composer to give back. */
     refusedPrompt: failedCreate?.prompt ?? null,
