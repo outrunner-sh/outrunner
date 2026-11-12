@@ -326,7 +326,7 @@ test("a quiet box past 12 hours is paused", async () => {
     open: [interval("i-a", "sb-a", 2, { startedMinutesAgo: 12 * 60, agentSeenMinutesAgo: 2 })],
   });
   assert.equal((await reconcile(deps)).forced, 1);
-  assert.match(logs.notices[0], /after 12 hours running/);
+  assert.match(logs.notices[0], /after 12 hours running with no recent activity/);
 });
 
 test("an agent from before /activity is reachable: recorded as answering, and not paused as unreachable", async () => {

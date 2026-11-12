@@ -182,6 +182,25 @@ test("keepAlive reuses the box alive() just fetched: one Daytona get a box a run
   assert.deepEqual({ gets, refreshed }, { gets: 2, refreshed: 2 });
 });
 
+test("alive() keeps only running boxes of Outrunner's account for keepAlive, and evicts stale ones", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 0 });
+  const states: Record<string, string> = { up: "started", down: "stopped", old: "started" };
+  const get = async (id: string) => ({ id, state: states[id], refreshActivity: async () => {} }) as unknown as Sandbox;
+  const backend = new DaytonaBackend();
+  (backend as unknown as { client: Promise<Pick<Daytona, "get">> }).client = Promise.resolve({ get } as unknown as Pick<Daytona, "get">);
+  const seen = () => [...(backend as unknown as { lastSeen: Map<string, unknown> }).lastSeen.keys()].sort();
+  await backend.alive("old");
+  t.mock.timers.tick(61_000);
+  await backend.alive("down");
+  await backend.alive("up");
+  assert.deepEqual(seen(), ["up"]);
+  // A user's own key: nothing kept, keepAlive does nothing for it.
+  const theirs = new DaytonaBackend({ apiKey: async () => "their-key" });
+  (theirs as unknown as { client: Promise<Pick<Daytona, "get">> }).client = Promise.resolve({ get } as unknown as Pick<Daytona, "get">);
+  await theirs.alive("up");
+  assert.equal((theirs as unknown as { lastSeen: Map<string, unknown> }).lastSeen.size, 0);
+});
+
 test("a box on a user's own Daytona key keeps their account's archive default", async () => {
   let sent: unknown;
   const backend = new DaytonaBackend({ apiKey: async () => "their-key" });

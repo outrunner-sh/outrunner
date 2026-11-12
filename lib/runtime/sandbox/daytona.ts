@@ -67,8 +67,8 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
 }
 
 /** How long a box alive() fetched is reused by keepAlive rather than
- *  fetched again: one reconcile look's span. Only its id is used, so a stale
- *  one is no harm, only bounded so the map holds no box for long. */
+ *  fetched again: one reconcile look's span. Older ones are evicted as
+ *  alive() adds more. */
 const SEEN_REUSE_MS = 60_000;
 
 /** Monotonic suffix so each detached launch gets its own Daytona session. */
@@ -142,8 +142,14 @@ export class DaytonaBackend implements SandboxBackend {
       const sandbox = await (await this.daytona()).get(id);
       const state = sandbox.state;
       // Kept for keepAlive, which the reconciler calls just after: one get a
-      // box a run, not two.
-      this.lastSeen.set(id, { sandbox, at: Date.now() });
+      // box a run, not two. Only what it can use (Outrunner's account, a
+      // running box), with stale ones dropped as it goes, so the map stays
+      // small however often alive() is asked.
+      if (!this.apiKey && (state === "started" || state === "resizing")) {
+        const now = Date.now();
+        for (const [seenId, seen] of this.lastSeen) if (now - seen.at >= SEEN_REUSE_MS) this.lastSeen.delete(seenId);
+        this.lastSeen.set(id, { sandbox, at: now });
+      } else this.lastSeen.delete(id);
       // A hot resize preserves processes; the reconciler must not mark the
       // computer lost while Daytona applies its new allocation.
       return state === "started" || state === "resizing";

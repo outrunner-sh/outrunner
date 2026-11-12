@@ -17,7 +17,8 @@
  * paused anyway ({@link forcedPause}) when its agent hasn't answered for
  * {@link UNREACHABLE_PAUSE_MS}, when it has been "in a turn" with no activity
  * for {@link STUCK_TURN_PAUSE_MS}, or when it has run {@link MAX_BOX_RUN_MS}
- * at a stretch with no recent activity ({@link MAX_BOX_RUN_HARD_MS} with). Each is logged with its workspace and why, and its session
+ * at a stretch with no recent activity, or {@link MAX_BOX_RUN_HARD_MS} even
+ * with it. Each is logged with its workspace and why, and its session
  * says why (a notice on the workspace, cleared once its box runs again). And
  * every box kept running is heartbeated to the provider (keepAlive), whose
  * own idle stop (Daytona's, lib/runtime/sandbox/daytona.ts AUTO_STOP_MINUTES)
@@ -166,7 +167,10 @@ export function forcedPause(
   if (ran >= MAX_BOX_RUN_HARD_MS || (ran >= MAX_BOX_RUN_MS && !inUse)) {
     return {
       reason: "max-run",
-      notice: `${FORCED_PAUSE_NOTICE_PREFIX} after ${hours(ran >= MAX_BOX_RUN_HARD_MS ? MAX_BOX_RUN_HARD_MS : MAX_BOX_RUN_MS)} hours running, the longest one runs at a stretch. Its files are kept; send a message to start it again.`,
+      notice:
+        ran >= MAX_BOX_RUN_HARD_MS
+          ? `${FORCED_PAUSE_NOTICE_PREFIX} after ${hours(MAX_BOX_RUN_HARD_MS)} hours running, the longest one runs at a stretch. Its files are kept; send a message to start it again.`
+          : `${FORCED_PAUSE_NOTICE_PREFIX} after ${hours(MAX_BOX_RUN_MS)} hours running with no recent activity. Its files are kept; send a message to start it again.`,
     };
   }
   // An agent that answers without a reading (from before /activity) can't
