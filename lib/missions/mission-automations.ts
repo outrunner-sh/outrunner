@@ -60,7 +60,22 @@ export async function checkMissionTarget(
 /** Whether a change alters what an automation sends its Mission (anything
  *  but its name, or switching it on, off or archiving it): a change the
  *  Mission's owner must approve again, unless it's theirs. */
-export function changesWhatItSends(change: Partial<AutomationInput>): boolean {
+export function changesWhatItSends(change: Partial<AutomationInput>, saved?: AutomationInput["target"] | { kind: "session" } | null): boolean {
   const harmless = new Set(["name", "enabled", "archived"]);
-  return Object.entries(change).some(([key, value]) => value !== undefined && !harmless.has(key));
+  return Object.entries(change).some(([key, value]) => {
+    if (value === undefined || harmless.has(key)) return false;
+    // The target sent again as it's saved (the editor sends it whole) is no change.
+    if (key === "target") return !sameTarget(value as AutomationInput["target"], saved ?? null);
+    return true;
+  });
+}
+
+/** Whether two Mission targets send the same: the same Mission, watch
+ *  (workspace, channel, filter, allowed apps) and Linear teams. */
+function sameTarget(a: AutomationInput["target"], b: AutomationInput["target"] | { kind: "session" } | null): boolean {
+  if (!a || !b || a.kind !== b.kind) return false;
+  if (a.kind !== "mission" || b.kind !== "mission") return true;
+  const sorted = (list: readonly string[]) => [...list].sort().join("\u0000");
+  const watch = (w: typeof a.watch) => (w ? [w.teamId, w.channelId, w.filterPrompt, sorted(w.allowedAppIds)].join("\u0001") : "");
+  return a.missionId === b.missionId && watch(a.watch) === watch(b.watch) && sorted(a.linearTeamIds) === sorted(b.linearTeamIds);
 }

@@ -53,7 +53,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: checked.status });
     // Someone else changing what it sends: the owner approves it again.
     // Withdrawn first, so no run goes under the old approval with the new config.
-    if (!caller.isOwner && changesWhatItSends(checked.input)) await resetDelegation(automationId);
+    if (!caller.isOwner && changesWhatItSends(checked.input, automation.target)) await resetDelegation(automationId);
     if (!(await updateAutomation(caller.mission.orgId, automationId, caller.userId, checked.input))) return NextResponse.json(NOT_FOUND, { status: 404 });
     return NextResponse.json({ id: automationId });
   });

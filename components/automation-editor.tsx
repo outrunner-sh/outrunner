@@ -221,17 +221,28 @@ export function AutomationEditor({
       // A Mission's: its destination and inputs, its one repository its
       // project's (the server sets it the same).
       const list = (text: string) => text.split(/[\s,]+/).filter(Boolean);
+      const target = toMission && missionChoice
+        ? {
+            kind: "mission" as const,
+            missionId: missionChoice.id,
+            watch: triggers.includes("slack.message")
+              ? { teamId: watchTeam.trim(), channelId: watchChannel.trim(), filterPrompt: filterPrompt.trim(), allowedAppIds: list(appIds) }
+              : null,
+            linearTeamIds: triggers.includes("linear.issue") ? list(linearTeams) : [],
+          }
+        : null;
+      // Sent when it changed (or it's new), like the other fields: a save
+      // that doesn't change what it sends doesn't ask the owner again.
+      const saved = draft.target?.kind === "mission" ? draft.target : null;
+      const targetChanged =
+        creating ||
+        !saved ||
+        JSON.stringify([saved.watch && { ...saved.watch, allowedAppIds: [...saved.watch.allowedAppIds].sort() }, [...saved.linearTeamIds].sort()]) !==
+          JSON.stringify([target?.watch && { ...target.watch, allowedAppIds: [...target.watch.allowedAppIds].sort() }, [...(target?.linearTeamIds ?? [])].sort()]);
       const missionBody =
-        toMission && missionChoice
+        target && missionChoice
           ? {
-              target: {
-                kind: "mission",
-                missionId: missionChoice.id,
-                watch: triggers.includes("slack.message")
-                  ? { teamId: watchTeam.trim(), channelId: watchChannel.trim(), filterPrompt: filterPrompt.trim(), allowedAppIds: list(appIds) }
-                  : null,
-                linearTeamIds: triggers.includes("linear.issue") ? list(linearTeams) : [],
-              },
+              ...(targetChanged && { target }),
               ...(creating && { projectIds: [missionChoice.projectId] }),
               ...(webhookSecret.trim() ? { webhookSecret: webhookSecret.trim() } : {}),
             }

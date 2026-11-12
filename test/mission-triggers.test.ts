@@ -355,3 +355,16 @@ test("a change by someone other than the owner to what a trigger sends needs the
     assert.equal(changesWhatItSends(change), false, JSON.stringify(change));
   }
 });
+
+test("the target sent again as saved isn't a change: a non-owner's rename keeps the owner's approval", async () => {
+  const { changesWhatItSends } = await import("@/lib/missions/mission-automations");
+  const watch = { teamId: "T1", channelId: "C900", filterPrompt: "bugs", allowedAppIds: ["A1", "A2"] };
+  const saved = { kind: "mission" as const, missionId: MISSION, watch, linearTeamIds: ["t1", "t2"] };
+  const same = { ...saved, watch: { ...watch, allowedAppIds: ["A2", "A1"] }, linearTeamIds: ["t2", "t1"] };
+  assert.equal(changesWhatItSends({ name: "renamed", target: same }, saved), false);
+  assert.equal(changesWhatItSends({ name: "renamed", target: { ...same, watch: { ...watch, filterPrompt: "everything" } } }, saved), true);
+  assert.equal(changesWhatItSends({ target: { ...same, watch: { ...watch, channelId: "C901" } } }, saved), true);
+  assert.equal(changesWhatItSends({ target: { ...same, watch: { ...watch, allowedAppIds: ["A1", "A2", "A3"] } } }, saved), true);
+  assert.equal(changesWhatItSends({ target: { ...same, linearTeamIds: ["t1"] } }, saved), true);
+  assert.equal(changesWhatItSends({ target: same }, null), true, "nothing saved to compare: a change");
+});

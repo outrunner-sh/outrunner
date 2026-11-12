@@ -30,7 +30,7 @@ export async function PATCH(request: Request, { params }: Params) {
     if (!target.ok) return NextResponse.json({ error: target.error }, { status: target.status });
     // Someone other than the Mission's owner changing what it sends: the
     // owner approves it again (withdrawn before the change goes in).
-    if (target.mission && target.mission.ownerId !== caller.owner.id && changesWhatItSends(target.input)) {
+    if (target.mission && target.mission.ownerId !== caller.owner.id && changesWhatItSends(target.input, saved.target)) {
       await resetDelegation(automationId);
     }
     if (!(await updateAutomation(id, automationId, caller.owner.id, target.input))) {
