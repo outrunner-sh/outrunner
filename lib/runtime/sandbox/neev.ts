@@ -179,6 +179,9 @@ export class NeevBackend implements SandboxBackend {
    *  has deleted it, or it is broken: its state lost (RestoreFailed), a crash
    *  it didn't come back from in time, or a restart that reset its storage. */
   async restore(id: string): Promise<SandboxBox | null> {
+    // Before Neev is asked, as create() does: a paused box is never woken (and
+    // billed), nor a pause waited out, only to fail at connection().
+    runtimeKey();
     let sandbox: Sandbox;
     try {
       sandbox = await this.neev().sandboxes.get(id);
@@ -205,8 +208,6 @@ export class NeevBackend implements SandboxBackend {
       console.error(`Neev box ${id} is ${sandbox.phase}, not paused; starting a new one`);
       return null;
     }
-    // Before a paused box is woken (and billed) only to fail at connection().
-    runtimeKey();
     const resumed = sandbox.phase === "Paused";
     if (resumed) await sandbox.resume();
     try {
