@@ -14,6 +14,10 @@
  * any paused box is. Run for one removal as it happens, and for all of them on
  * the reconciler's cron. The I/O is behind {@link RemovalDeps}, so the rules
  * test on their own.
+ *
+ * Their GitHub App links go at once, in the database, as their membership
+ * does (20261112130000_github_installation_sharing.sql): every link they made
+ * of the org's installations into another org, their personal org included.
  */
 
 export const REMOVED_KEEP_DAYS = 30;

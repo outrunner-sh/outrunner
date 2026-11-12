@@ -268,6 +268,10 @@ export function FixturePage() {
               id: 42, accountLogin: "neevai-labs", accountType: "Organization", repositorySelection: "all",
               suspendedAt: null, suspended: false, installedBy: "preview-owner", createdAt: "2026-10-30T00:00:00Z",
               repositories: ["neevai-labs/outrunner"], total: 1, reachable: true,
+              shares: params.get("shared") === "1" ? [{
+                orgId: "00000000-0000-4000-a000-000000000077", orgName: "Personal", personal: true,
+                linkedAt: "2026-11-01T00:00:00Z", linkedBy: "u-alan", linkedByEmail: "alan@neev.ai", authority: null,
+              }] : [],
             }] : []}
             available={state !== "connected" ? [{
               id: 42, accountLogin: "neevai-labs", accountType: "Organization", repositorySelection: "all",
