@@ -4,10 +4,11 @@
  */
 
 import type { DomainOrg } from "@/lib/db/orgs";
-import { INVITE_DAYS, orgAdmins } from "@/lib/db/org-members";
+import { orgAdmins } from "@/lib/db/org-members";
 import { sendEmail } from "@/lib/email/send";
 import { optionalEnv } from "@/lib/env";
 import { inviteMessage, joinRequestMessage } from "@/lib/orgs/emails";
+import { INVITE_DAYS } from "@/lib/orgs/invite-token";
 
 /** Where links in an email point: the deployment's own origin. */
 export function appUrl(path: string, requestOrigin?: string): string {

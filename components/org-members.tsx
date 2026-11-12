@@ -318,7 +318,7 @@ function Invites({
   const [made, setMade] = useState<{ email: string; link: string; emailed: boolean; resent: boolean } | null>(null);
   const [resending, setResending] = useState<string | null>(null);
   /** When the page was shown, to say how long each invite has left. */
-  const [shownAt] = useState(() => Date.now());
+  const [shownAt, setShownAt] = useState(() => Date.now());
   const [copied, setCopied] = useState(false);
 
   const invite = async () => {
@@ -334,6 +334,7 @@ function Invites({
       setMade({ email: email.trim().toLowerCase(), link: data.link, emailed: data.emailed, resent: false });
       setCopied(false);
       setEmail("");
+      setShownAt(() => Date.now());
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Couldn't invite them. Try again.");
@@ -353,6 +354,7 @@ function Invites({
       );
       setMade({ email: invite.email, link: data.link, emailed: data.emailed, resent: true });
       setCopied(false);
+      setShownAt(() => Date.now());
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Couldn't resend that invite. Try again.");

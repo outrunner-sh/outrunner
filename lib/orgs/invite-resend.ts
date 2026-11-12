@@ -12,30 +12,15 @@
  */
 
 import type { AuditAction, AuditActor } from "@/lib/audit/actions";
-import { hashSecret, randomSecret } from "@/lib/auth/cli-login";
+import { hashSecret } from "@/lib/auth/cli-login";
+import type { OpenInvite } from "@/lib/db/org-members";
 import { RateLimiter, type Taken } from "@/lib/http/rate-limit";
 import { isUuid } from "@/lib/ids";
 import type { OrgRole } from "@/lib/orgs/active";
-
-/** How long an invite link works. */
-export const INVITE_DAYS = 7;
-
-/** A new invite link's token. The prefix says what it is wherever one turns
- *  up; only its hash (hashSecret) is kept. */
-export function newInviteToken(): string {
-  return `or_inv_${randomSecret()}`;
-}
+import { INVITE_DAYS } from "@/lib/orgs/invite-token";
 
 /** An open invite, as rotating it answers it. */
-export type ResentInvite = {
-  id: string;
-  email: string;
-  role: OrgRole;
-  invitedBy: string | null;
-  createdAt: string;
-  expiresAt: string;
-  expired: boolean;
-};
+export type ResentInvite = OpenInvite;
 
 export type ResendCaller = { owner: Exclude<AuditActor, "system">; role: OrgRole };
 

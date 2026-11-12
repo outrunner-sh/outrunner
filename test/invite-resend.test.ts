@@ -5,9 +5,8 @@ import { test } from "node:test";
 
 import { hashSecret } from "@/lib/auth/cli-login";
 import { inviteExpiry } from "@/lib/orgs/invite-expiry";
+import { INVITE_DAYS, newInviteToken } from "@/lib/orgs/invite-token";
 import {
-  INVITE_DAYS,
-  newInviteToken,
   resendInvite,
   resendLimiter,
   type ResendCaller,

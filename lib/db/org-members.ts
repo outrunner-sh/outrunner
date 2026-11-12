@@ -12,11 +12,9 @@ import { ADMITTED_KEY, githubLogin, isAdmitted, onAllowlist } from "@/lib/auth/a
 import { hashSecret } from "@/lib/auth/cli-login";
 import { connectorsAmong } from "@/lib/automations/connector";
 import type { OrgRole } from "@/lib/orgs/active";
-import { INVITE_DAYS, newInviteToken } from "@/lib/orgs/invite-resend";
+import { INVITE_DAYS, newInviteToken } from "@/lib/orgs/invite-token";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
-/** How long an invite link works. */
-export { INVITE_DAYS };
 /** How long after a declined request its asker may ask again. */
 export const REQUEST_AGAIN_DAYS = 7;
 

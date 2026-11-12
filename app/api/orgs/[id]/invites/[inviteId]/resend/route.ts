@@ -4,7 +4,8 @@ import { recordAudit } from "@/lib/audit/record";
 import { rotateInvite } from "@/lib/db/org-members";
 import { getOrg } from "@/lib/db/orgs";
 import { canSendEmail } from "@/lib/email/send";
-import { resendInvite, resendLimiter, newInviteToken } from "@/lib/orgs/invite-resend";
+import { resendInvite, resendLimiter } from "@/lib/orgs/invite-resend";
+import { newInviteToken } from "@/lib/orgs/invite-token";
 import { emailInvite, inviteLink } from "@/lib/orgs/notify";
 import { changingMembers, orgCaller } from "@/lib/orgs/routes";
 
