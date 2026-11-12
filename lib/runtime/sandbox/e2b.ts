@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { CommandExitError, NotFoundError, Sandbox, type SandboxInfo } from "e2b";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
@@ -13,7 +15,7 @@ import {
   type SandboxBox,
 } from "@/lib/runtime/sandbox/backend";
 import { NOVNC_PORT } from "@/lib/runtime/box-ports";
-import { e2bRoute } from "@/lib/runtime/sandbox/e2b-route";
+import { E2B_TRAFFIC_TOKEN_HEADER, e2bRoute, sealableE2bRelaySecret } from "@/lib/runtime/sandbox/e2b-route";
 import { e2bSdkOptions } from "@/lib/runtime/sandbox/e2b-sdk";
 import { E2B_RELAY_PREFIX, mintRelayTicket, relayKey } from "@/lib/runtime/sandbox/relay-ticket";
 
@@ -73,9 +75,13 @@ export type E2bConnection = {
   /** How long a box runs before E2B pauses it on its own: the backstop
    *  behind Outrunner's own idle pause, pushed back out while it's in use. */
   timeoutMs: number;
-  /** This server's relay for browsers' WebSockets to a header-routed box: its
-   *  path prefix and the key its tickets are signed with. */
-  relay: { prefix: string; key: string };
+  /** The proxy the SDK's calls go through: for a user's self-hosted E2B, the
+   *  egress proxy that reaches only their hosts (e2b-sdk.ts userE2bProxy). */
+  proxy?: string;
+  /** This server's relay for browsers' WebSockets to a box: its path prefix,
+   *  the key its tickets are signed with, and for a user's E2B, the user, bound
+   *  into each ticket so the relay reaches only their box. */
+  relay: { prefix: string; key: string; owner?: string };
 };
 
 /** The deployment's own E2B, from the environment. Both URLs are required:
@@ -126,6 +132,17 @@ const RESTORES_RUNNING = new Map<string, number>();
  *  get caused from someone's restore just before it. */
 const CLOCK_SKEW_MS = 2_000;
 
+/**
+ * The key a box's handle and restore counts are kept under: its id within
+ * the E2B account it's in. A user's E2B picks its own box ids, so an id alone
+ * could name another account's box (the deployment's, or another user's),
+ * and a handle kept for one must never be handed out for the other.
+ */
+export function handleKey(c: Pick<E2bConnection, "apiKey" | "apiUrl">, id: string): string {
+  const account = createHash("sha256").update(`${c.apiUrl ?? ""}\n${c.apiKey}`).digest("base64url").slice(0, 22);
+  return `${account}:${id}`;
+}
+
 /** Forget every handle: a test seam. */
 export function forgetE2bHandles(): void {
   HANDLES.clear();
@@ -172,6 +189,10 @@ export class E2bBackend implements SandboxBackend {
       metadata: labels,
       timeoutMs: c.timeoutMs,
       lifecycle: { onTimeout: "pause" },
+      // Its ports answer only requests with its traffic token, which only
+      // this server holds: the agent, previews (behind our login gate) and
+      // the desktop aren't open to anyone who learns the box id.
+      network: { allowPublicTraffic: false },
     });
     try {
       const info = await Sandbox.getInfo(sandbox.sandboxId, sdk(c));
@@ -182,7 +203,7 @@ export class E2bBackend implements SandboxBackend {
         );
       }
       await setGuestMtu(c, sandbox);
-      HANDLES.set(sandbox.sandboxId, { sandbox, startedAt: info.startedAt.getTime() });
+      HANDLES.set(handleKey(c, sandbox.sandboxId), { sandbox, startedAt: info.startedAt.getTime() });
       return box(sandbox, info, c);
     } catch (error) {
       // Not left running where nothing records it.
@@ -195,18 +216,19 @@ export class E2bBackend implements SandboxBackend {
    *  never resumes a paused box (alive/get must not start one). */
   async get(id: string): Promise<SandboxBox> {
     const c = await this.connection();
+    const k = handleKey(c, id);
     const info = await Sandbox.getInfo(id, sdk(c)).catch((error: unknown) => {
       // Deleted elsewhere (another server, the console): its handle goes too.
-      if (notFound(error)) HANDLES.delete(id);
+      if (notFound(error)) HANDLES.delete(k);
       throw error;
     });
     if (info.state !== "running") {
-      HANDLES.delete(id);
+      HANDLES.delete(k);
       throw new Error(`E2B box ${id} is ${info.state}, not running`);
     }
     await keepAlive(c, info);
     const startedAt = info.startedAt.getTime();
-    const held = HANDLES.get(id);
+    const held = HANDLES.get(k);
     if (held?.startedAt === startedAt) return box(held.sandbox, info, c);
 
     // A handle means connect, which resumes a box paused since the look
@@ -217,20 +239,20 @@ export class E2bBackend implements SandboxBackend {
     // running. The clocks are E2B's and ours, so a restore within
     // CLOCK_SKEW_MS before the connect is taken for this call's resume, and
     // a restore in this server is never paused under itself.
-    const restoresBefore = RESTORES_BEGUN.get(id) ?? 0;
+    const restoresBefore = RESTORES_BEGUN.get(k) ?? 0;
     const connectedAt = Date.now();
     const sandbox = await Sandbox.connect(id, sdk(c));
     const after = await Sandbox.getInfo(id, sdk(c));
     const restarted = after.startedAt.getTime();
-    const restoredHere = (RESTORES_BEGUN.get(id) ?? 0) !== restoresBefore || (RESTORES_RUNNING.get(id) ?? 0) > 0;
+    const restoredHere = (RESTORES_BEGUN.get(k) ?? 0) !== restoresBefore || (RESTORES_RUNNING.get(k) ?? 0) > 0;
     if (restarted !== startedAt && restarted >= connectedAt - CLOCK_SKEW_MS && !restoredHere) {
-      HANDLES.delete(id);
+      HANDLES.delete(k);
       await Sandbox.pause(id, sdk(c)).catch((error: unknown) =>
         console.error(`E2B box ${id} was resumed while being reached and could not be paused again`, error),
       );
       throw new Error(`E2B box ${id} was paused while being reached; it's left paused`);
     }
-    HANDLES.set(id, { sandbox, startedAt: restarted });
+    HANDLES.set(k, { sandbox, startedAt: restarted });
     return box(sandbox, after, c);
   }
 
@@ -244,33 +266,37 @@ export class E2bBackend implements SandboxBackend {
   }
 
   async delete(id: string): Promise<void> {
-    HANDLES.delete(id);
-    await Sandbox.kill(id, sdk(await this.connection()));
+    const c = await this.connection();
+    HANDLES.delete(handleKey(c, id));
+    await Sandbox.kill(id, sdk(c));
   }
 
   /** Pause with its memory: the next {@link restore} has it as it was. */
   async pause(id: string): Promise<void> {
-    HANDLES.delete(id);
-    await Sandbox.pause(id, sdk(await this.connection()));
+    const c = await this.connection();
+    HANDLES.delete(handleKey(c, id));
+    await Sandbox.pause(id, sdk(c));
   }
 
   /** The paused (or still running) box `id`, running. Null when it's gone,
    *  so a new box is the only way on. E2B's metadata can't be changed after
    *  create, so `labels` stay as the box was made with. */
   async restore(id: string): Promise<SandboxBox | null> {
-    RESTORES_BEGUN.set(id, (RESTORES_BEGUN.get(id) ?? 0) + 1);
-    RESTORES_RUNNING.set(id, (RESTORES_RUNNING.get(id) ?? 0) + 1);
+    const c = await this.connection();
+    const k = handleKey(c, id);
+    RESTORES_BEGUN.set(k, (RESTORES_BEGUN.get(k) ?? 0) + 1);
+    RESTORES_RUNNING.set(k, (RESTORES_RUNNING.get(k) ?? 0) + 1);
     try {
-      return await this.resume(id);
+      return await this.resume(c, id);
     } finally {
-      const running = (RESTORES_RUNNING.get(id) ?? 1) - 1;
-      if (running > 0) RESTORES_RUNNING.set(id, running);
-      else RESTORES_RUNNING.delete(id);
+      const running = (RESTORES_RUNNING.get(k) ?? 1) - 1;
+      if (running > 0) RESTORES_RUNNING.set(k, running);
+      else RESTORES_RUNNING.delete(k);
     }
   }
 
-  private async resume(id: string): Promise<SandboxBox | null> {
-    const c = await this.connection();
+  private async resume(c: E2bConnection, id: string): Promise<SandboxBox | null> {
+    const k = handleKey(c, id);
     let sandbox: Sandbox;
     try {
       sandbox = await Sandbox.connect(id, { ...sdk(c), timeoutMs: c.timeoutMs });
@@ -281,7 +307,7 @@ export class E2bBackend implements SandboxBackend {
     try {
       await setGuestMtu(c, sandbox);
       const info = await Sandbox.getInfo(id, sdk(c));
-      HANDLES.set(id, { sandbox, startedAt: info.startedAt.getTime() });
+      HANDLES.set(k, { sandbox, startedAt: info.startedAt.getTime() });
       return box(sandbox, info, c);
     } catch (error) {
       // Resumed but not usable: paused again, keeping its sessions (this is
@@ -322,10 +348,20 @@ async function run(
 /** A box's commands, files and ways in, from its sandbox. Exported for tests. */
 export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memoryMB">, c: E2bConnection): SandboxBox {
   const id = sandbox.sandboxId;
+  // Every way into the box's ports carries its traffic token (a box from
+  // before allowPublicTraffic: false has none, and needs none).
+  const trafficToken = sandbox.trafficAccessToken;
   // How this server reaches the box's `port`: by header through a self-hosted
   // client-proxy, or at the box's own host on E2B's cloud.
+  // What the relay's ticket carries sealed: the token, and a user's box's owner.
+  const secret = sealableE2bRelaySecret({ token: trafficToken, owner: c.relay.owner });
   const route = (port: number) =>
-    c.sandboxUrl ? e2bRoute(id, port, c.sandboxUrl) : { base: `https://${sandbox.getHost(port)}`, headers: {} };
+    c.sandboxUrl
+      ? e2bRoute(id, port, c.sandboxUrl, trafficToken)
+      : {
+          base: `https://${sandbox.getHost(port)}`,
+          headers: trafficToken ? { [E2B_TRAFFIC_TOKEN_HEADER]: trafficToken } : ({} as Record<string, string>),
+        };
   const io: BoxIO = {
     exec: async (command) => {
       const { stdout, exitCode } = await run(sandbox, command);
@@ -352,14 +388,17 @@ export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memo
     io,
     gitExec,
     home: () => homeOf(io, `/home/${BOX_USER}`),
-    // Control calls go to the box's port with whatever routing E2B needs. A
-    // browser can't send routing headers, so for a header-routed box its
-    // WebSockets come through our relay; a host-routed one it opens direct.
+    // Control calls go to the box's port with whatever routing E2B needs.
     agentEndpoint: async (port): Promise<AgentEndpoint> => {
       const { base, headers } = route(port);
-      const wsBaseUrl = c.sandboxUrl
-        ? `${requireEnv("RUNTIME_BASE_URL")}${c.relay.prefix}${id}/${port}/${mintRelayTicket(id, port, c.relay.key)}`
-        : base;
+      // A browser can send neither routing headers nor the traffic token, so
+      // its WebSockets come through our relay, the token sealed in the ticket
+      // (with the box's owner, for a user's E2B) out of the browser's reach.
+      // Only a host-routed box from before traffic tokens is opened direct.
+      const wsBaseUrl =
+        c.sandboxUrl || trafficToken
+          ? `${requireEnv("RUNTIME_BASE_URL")}${c.relay.prefix}${id}/${port}/${mintRelayTicket(id, port, c.relay.key, Date.now(), { secret })}`
+          : base;
       return { controlBaseUrl: base, controlHeaders: headers, wsBaseUrl };
     },
     // Through E2B's proxy, which sends the box's server the Host it was asked on.
@@ -367,12 +406,12 @@ export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memo
       const { base, headers } = route(port);
       return { baseUrl: base, headers, hostHeader: "upstream" };
     },
-    // The template's desktop (box/e2b-desktop.sh), started on first use. Its
-    // noVNC port is reachable from outside the box, so each link comes with a
-    // new VNC password, which the box replaces once the link's `ttlSeconds`
-    // are up: on E2B's cloud, whose link is the box's own host, that's the
-    // link's only expiry. A header-routed box's link also goes through our
-    // relay, on a ticket for that port alone, lasting as long.
+    // The template's desktop (box/e2b-desktop.sh), started on first use. Each
+    // link comes with a new VNC password, which the box replaces once the
+    // link's `ttlSeconds` are up. The link goes through our relay, on a
+    // ticket for that port alone lasting as long, which carries the box's
+    // traffic token sealed: the noVNC port answers nothing else. Only a box
+    // on E2B's cloud from before traffic tokens is opened at its own host.
     desktop: {
       start: async () => {
         await rootCommand(sandbox, "outrunner-desktop start", "start the desktop");
@@ -383,9 +422,9 @@ export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memo
           await rootCommand(sandbox, `outrunner-desktop password ${ttlSeconds}`, "set the desktop's password")
         ).trim();
         if (!/^[A-Za-z0-9]{8}$/.test(password)) throw new Error("The desktop didn't give a password");
-        const url = c.sandboxUrl
+        const url = c.sandboxUrl || trafficToken
           ? `${requireEnv("RUNTIME_BASE_URL").replace(/^http/, "ws")}${c.relay.prefix}${id}/${NOVNC_PORT}/` +
-            `${mintRelayTicket(id, NOVNC_PORT, c.relay.key, Date.now(), ttlSeconds)}/websockify`
+            `${mintRelayTicket(id, NOVNC_PORT, c.relay.key, Date.now(), { secret, ttlSeconds })}/websockify`
           : `wss://${sandbox.getHost(NOVNC_PORT)}/websockify`;
         return { url, password };
       },

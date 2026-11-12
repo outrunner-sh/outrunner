@@ -19,7 +19,7 @@ import { edgeHostSigned, previewSigningKey, sessionUser } from "./lib/previews/t
 import { GATE_PATH, GATE_SECRET_ENV, GATE_SECRET_HEADER } from "./lib/previews/wire.ts";
 import { createSandboxRelay, neevRelayDeps } from "./lib/runtime/sandbox/relay.ts";
 import { E2B_RELAY_PREFIX, NEEV_RELAY_PREFIX, relayKey, USER_E2B_RELAY_PREFIX } from "./lib/runtime/sandbox/relay-ticket.ts";
-import { e2bRoute } from "./lib/runtime/sandbox/e2b-route.ts";
+import { e2bRoute, readE2bRelaySecret } from "./lib/runtime/sandbox/e2b-route.ts";
 import { publicOnlyLookup } from "./lib/api/webhook-lookup.ts";
 import { GCP_RELAY_PREFIX, gcpRelayKey } from "./lib/runtime/gcp/relay-ticket.ts";
 
@@ -55,19 +55,20 @@ const gcpRelay = createSandboxRelay({
     return { base: url.origin, headers: {} };
   },
 }, GCP_RELAY_PREFIX);
-// E2B's proxy routes by headers, which the relay sets on its own connection.
+// E2B's proxy routes by headers, which the relay sets on its own connection,
+// with the box's traffic token from the ticket (sealed; the browser can't read it).
 const e2bRelay = createSandboxRelay({
   key: () => process.env.CREDENTIALS_ENCRYPTION_KEY ? relayKey(process.env.CREDENTIALS_ENCRYPTION_KEY, "e2b") : undefined,
-  tunnel: async (id, agentPort) => e2bRoute(id, agentPort),
+  tunnel: async (id, agentPort, secret) => e2bRoute(id, agentPort, undefined, readE2bRelaySecret(secret).token),
 }, E2B_RELAY_PREFIX);
-// A user's self-hosted E2B: the app looks up where their client-proxy is,
-// from the box's owner, never the request.
+// A user's E2B: the app looks up where their box is, from the owner and
+// traffic token sealed in the ticket, never the request.
 const userE2bRelay = createSandboxRelay({
   key: () => process.env.CREDENTIALS_ENCRYPTION_KEY ? relayKey(process.env.CREDENTIALS_ENCRYPTION_KEY, "user-e2b") : undefined,
-  tunnel: async (id, agentPort) => {
+  tunnel: async (id, agentPort, secret) => {
     const response = await fetch(`http://127.0.0.1:${port}/api/runtime/e2b-relay`, {
       method: "POST", headers: { "content-type": "application/json", [GATE_SECRET_HEADER]: gateSecret },
-      body: JSON.stringify({ id, port: agentPort }), signal: AbortSignal.timeout(30_000),
+      body: JSON.stringify({ id, port: agentPort, secret }), signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) throw new Error("The E2B relay could not reach its sandbox.");
     const route = await response.json() as { base: string; headers: Record<string, string> };

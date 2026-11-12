@@ -164,7 +164,7 @@ export function SandboxSettingsForm({
   const inUse = settings.sandbox;
   // E2B is ready once Outrunner's template is built in the user's account.
   const ready = (sandbox: SandboxChoice) =>
-    sandbox === "outrunner" || (sandbox === "e2b" ? settings.e2b?.connected && settings.e2b.template === "ready" : settings[sandbox]?.connected);
+    sandbox === "outrunner" || (sandbox === "e2b" ? settings.e2b?.connected && settings.e2b.canStart : settings[sandbox]?.connected);
   // The size a box really gets on the sandbox in use: on Outrunner's, a saved
   // size beyond the plan is shown as the size new boxes get instead.
   const size = inUse === "outrunner" ? boxSizeWithin(plan, settings.boxSize).id : settings.boxSize;
@@ -211,7 +211,11 @@ export function SandboxSettingsForm({
           busy={busy}
           onSave={(connection) => send("the E2B API key", "PUT", () => ({ sandbox: inUseNow.current, ...connection }))}
           onRebuild={() => void send("the E2B template", "PUT", () => ({ sandbox: inUseNow.current, e2bRebuild: true }))}
-          onRemove={() => void send("the E2B API key", "DELETE", undefined, "?key=e2b")}
+          onRemove={() => {
+            // It ends every session there: their boxes, and the template
+            // built for them, are deleted from the user's E2B as it goes.
+            if (window.confirm(E2B_DISCONNECT_WARNING)) void send("the E2B API key", "DELETE", undefined, "?key=e2b");
+          }}
         />
       ) : shown !== "outrunner" ? (
         <SandboxCredential
@@ -438,6 +442,12 @@ function SandboxCredential({
   );
 }
 
+/** What disconnecting E2B does, said before it's done. */
+export const E2B_DISCONNECT_WARNING =
+  "Disconnect your E2B? Outrunner deletes the sandboxes it made in your E2B account, running or paused, " +
+  "and the box template it built there, so nothing keeps billing you. Sessions on them end, and their " +
+  "unpushed work is lost. Nothing else in your account is touched.";
+
 /** What an E2B save sends: the key, and a self-hosted E2B's URLs (empty for
  *  E2B's cloud). */
 type E2bBody = { e2bKey: string; e2bApiUrl: string; e2bSandboxUrl: string };
@@ -448,7 +458,7 @@ const E2B_TEMPLATE_LINE: Record<E2bSettings["template"], string> = {
   building: "Building Outrunner's template in your E2B. This takes a few minutes; you can leave this page.",
   ready: "Outrunner's template is ready in your E2B.",
   failed: "Outrunner's template failed to build in your E2B.",
-  outdated: "Outrunner's tools were updated; rebuilding its template in your E2B.",
+  outdated: "Outrunner's tools were updated; rebuilding its template in your E2B. Sessions keep starting on the previous one meanwhile.",
 };
 
 /**
@@ -574,7 +584,7 @@ function E2bConnectionCard({
               variant="ghost"
               size="icon"
               aria-label="Remove API key"
-              title={inUse ? "Remove API key: new sessions go back to Outrunner's sandboxes" : "Remove API key"}
+              title={inUse ? "Disconnect E2B: deletes Outrunner's sandboxes there; new sessions go back to Outrunner's" : "Disconnect E2B: deletes Outrunner's sandboxes there"}
               disabled={busy}
               onClick={onRemove}
             >

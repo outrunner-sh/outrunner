@@ -14,6 +14,7 @@ import {
 } from "./host.ts";
 import { PAGE_HEADERS, renderPreviewPage } from "./proxy-pages.ts";
 import type { GateDecision, GateRequest, PreviewUpstream, RedeemAnswer, WakeAnswer } from "./wire.ts";
+import { keepPreviewSocketAlive } from "./ws-keepalive.ts";
 
 /**
  * Previews' front door, in the custom server (server.ts) ahead of Next: a
@@ -341,6 +342,8 @@ export function createPreviewProxy(deps: PreviewProxyDeps) {
       upstreamSocket.setNoDelay(true);
       upstreamSocket.setTimeout(0);
       upstreamSocket.pipe(socket).pipe(upstreamSocket);
+      // Neither leg idles out behind a proxy while the preview is quiet.
+      keepPreviewSocketAlive(socket, upstreamSocket, upstreamHead);
       upstreamSocket.on("error", () => socket.destroy());
       socket.on("error", () => upstreamSocket.destroy());
       upstreamSocket.on("close", () => socket.destroy());

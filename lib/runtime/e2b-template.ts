@@ -10,12 +10,13 @@ import { BOX_IMAGE_TAG } from "@/lib/runtime/box-image";
  * with nothing left to pass in.
  */
 
-/** The guard box/Dockerfile opens with, refusing a build without its args;
- *  it runs on two lines. */
+/** The older guard box/Dockerfile opened with, refusing a build without its
+ *  args; it runs on two lines. A guard in another form (a `for` over the
+ *  args) is kept: with the values written in, it passes. */
 const ARG_GUARD = /^RUN test -n "\$NODE_MAJOR"[^\n]*\\\n[^\n]*\n/m;
 
 /**
- * `dockerfile` with every `${NAME}` of `args` replaced by its value, its
+ * `dockerfile` with every `${NAME}` and `$NAME` of `args` replaced by its value, its
  * `# syntax`, `ARG` lines and arg guard removed, and, with `mtu`, the build
  * VM's interface set to it before anything is downloaded (where the host's
  * network carries smaller packets, large downloads otherwise break off).
@@ -39,7 +40,10 @@ export function e2bDockerfile(
       return !line.startsWith("# syntax=") && !arg;
     })
     .join("\n");
-  for (const [name, value] of Object.entries(args)) text = text.replaceAll(`\${${name}}`, value);
+  // Both `${NAME}` and `$NAME`, as Docker expands an ARG in either form.
+  for (const [name, value] of Object.entries(args)) {
+    text = text.replace(new RegExp(`\\$(\\{${name}\\}|${name}(?![A-Za-z0-9_]))`, "g"), () => value);
+  }
 
   const left = [...declared].filter((name) => new RegExp(`\\$(\\{${name}\\}|${name}\\b)`).test(text));
   if (left.length > 0) throw new Error(`box/Dockerfile still refers to ${left.join(", ")} after substitution`);
@@ -108,8 +112,16 @@ export async function boxSources(cwd = process.cwd()): Promise<{ dockerfile: str
   return { dockerfile, desktopScript };
 }
 
-/** Where a template is built: an E2B's API, on a key. */
-export type E2bBuildTarget = { apiKey: string; apiUrl?: string };
+/** Where a template is built: an E2B's API, on a key. `user`: a user's E2B,
+ *  reached through the egress proxy when self-hosted (e2b-sdk.ts). */
+export type E2bBuildTarget = { apiKey: string; apiUrl?: string; user?: boolean };
+
+/** The SDK's options for `target`. */
+async function sdkOptionsFor(target: E2bBuildTarget) {
+  const { e2bSdkOptions, userE2bSdkOptions } = await import("@/lib/runtime/sandbox/e2b-sdk");
+  const { apiKey, apiUrl } = target;
+  return target.user ? userE2bSdkOptions({ apiKey, apiUrl }) : e2bSdkOptions({ apiKey, apiUrl });
+}
 
 /** A template build under way, to ask after with {@link e2bTemplateBuildStatus}. */
 export type E2bTemplateBuild = { templateId: string; buildId: string; tag: string };
@@ -131,10 +143,10 @@ export async function startE2bTemplateBuild(
     import("@/lib/runtime/box-sizes"),
   ]);
   const size = boxSize("small");
-  const { e2bSdkOptions } = await import("@/lib/runtime/sandbox/e2b-sdk");
+  const options = await sdkOptionsFor(target);
   const { dockerfile, desktopScript } = await boxSources();
   const info = await Template.buildInBackground(Template().fromDockerfile(e2bDockerfile(dockerfile, boxBuildArgs(), mtu, desktopScript)), name, {
-    ...e2bSdkOptions(target),
+    ...options,
     cpuCount: size.cpu,
     memoryMB: size.memoryGb * 1024,
   });
@@ -145,8 +157,8 @@ export async function startE2bTemplateBuild(
 export type E2bBuildState = { state: "building" } | { state: "ready" } | { state: "failed"; error: string };
 
 export async function e2bTemplateBuildStatus(target: E2bBuildTarget, build: E2bTemplateBuild): Promise<E2bBuildState> {
-  const [{ Template }, { e2bSdkOptions }] = await Promise.all([import("e2b"), import("@/lib/runtime/sandbox/e2b-sdk")]);
-  const status = await Template.getBuildStatus({ templateId: build.templateId, buildId: build.buildId }, e2bSdkOptions(target));
+  const { Template } = await import("e2b");
+  const status = await Template.getBuildStatus({ templateId: build.templateId, buildId: build.buildId }, await sdkOptionsFor(target));
   if (status.status === "ready") return { state: "ready" };
   if (status.status === "error") return { state: "failed", error: status.reason?.message ?? "The template build failed." };
   return { state: "building" };
@@ -172,8 +184,14 @@ export async function deleteOtherUserE2bTemplates(target: E2bBuildTarget, userId
   const { e2bSdkOptions } = await import("@/lib/runtime/sandbox/e2b-sdk");
   const { apiUrl, apiKey } = e2bSdkOptions(target);
   const headers = { "X-API-Key": apiKey };
+  // The SDK has no call for these, so they're plain fetches: never following
+  // a redirect (with the key on) anywhere, and to a host checked public.
   try {
-    const response = await fetch(`${apiUrl}/templates`, { headers, signal: AbortSignal.timeout(20_000) });
+    if (target.user && target.apiUrl) {
+      const { assertPublicHost } = await import("@/lib/runtime/user-e2b-checks");
+      await assertPublicHost(target.apiUrl);
+    }
+    const response = await fetch(`${apiUrl}/templates`, { headers, redirect: "error", signal: AbortSignal.timeout(20_000) });
     if (!response.ok) throw new Error(`E2B answered ${response.status} listing templates`);
     const templates = (await response.json()) as Array<{ templateID: string; names?: string[]; aliases?: string[] }>;
     const old = templates.filter(
@@ -183,6 +201,7 @@ export async function deleteOtherUserE2bTemplates(target: E2bBuildTarget, userId
       const deleted = await fetch(`${apiUrl}/templates/${encodeURIComponent(t.templateID)}`, {
         method: "DELETE",
         headers,
+        redirect: "error",
         signal: AbortSignal.timeout(20_000),
       });
       if (!deleted.ok && deleted.status !== 404) console.warn(`Could not delete old E2B template ${t.templateID}: ${deleted.status}`);

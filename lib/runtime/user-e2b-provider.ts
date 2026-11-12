@@ -38,8 +38,8 @@ export class E2bTemplateNotReadyError extends SandboxSetupError {
 }
 
 /** How a user's E2B is reached: E2B's cloud (no URLs), routed by host, or
- *  their self-hosted E2B, routed by header with browsers through this
- *  server's user-E2B relay. Their network is theirs, so no guest MTU is set. */
+ *  their self-hosted E2B, routed by header; browsers through this server's
+ *  user-E2B relay either way, which holds the box's traffic token. Their network is theirs, so no guest MTU is set. */
 export function userE2bConnection(stored: StoredE2b): E2bConnection {
   return {
     apiKey: stored.apiKey,
@@ -47,17 +47,23 @@ export function userE2bConnection(stored: StoredE2b): E2bConnection {
     sandboxUrl: stored.sandboxUrl ?? undefined,
     guestMtu: null,
     timeoutMs: USER_BOX_TIMEOUT_MS,
-    relay: { prefix: USER_E2B_RELAY_PREFIX, key: relayKey(requireEnv("CREDENTIALS_ENCRYPTION_KEY"), "user-e2b") },
+    // Each ticket names the owner, so the relay reaches this user's box and
+    // no one else's: a user's E2B picks its own box ids.
+    relay: { prefix: USER_E2B_RELAY_PREFIX, key: relayKey(requireEnv("CREDENTIALS_ENCRYPTION_KEY"), "user-e2b"), owner: stored.ownerId },
   };
 }
 
 /** The template a new box in the user's E2B starts from: Outrunner's, built
  *  in their account. Throws until it's ready. */
 export function userE2bTemplate(stored: StoredE2b): string {
-  if (stored.template !== "ready" || !stored.templateId) {
-    throw new E2bTemplateNotReadyError(stored.template === "ready" ? "none" : stored.template, stored.templateError);
-  }
-  return stored.templateId;
+  if (stored.template === "ready" && stored.templateId) return stored.templateId;
+  // A newer one building (a box image bump), or its build failed: the last
+  // one that was ready is served meanwhile, so sessions don't stop for it.
+  // Its tools are at the older pins, as on any box made before an image bump
+  // (boxUpgrade and the per-feature checks cover those); the agent is
+  // deployed fresh onto every box either way.
+  if (stored.template !== "ready" && stored.servingTemplateId) return stored.servingTemplateId;
+  throw new E2bTemplateNotReadyError(stored.template === "ready" ? "none" : stored.template, stored.templateError);
 }
 
 /** The Runtime Computer in a user's own E2B, on their key (Settings →
@@ -87,7 +93,11 @@ export class UserE2bRuntimeProvider extends ComputerRuntimeProvider {
     super(
       "user-e2b",
       new E2bBackend({
-        connection: async () => userE2bConnection(await stored()),
+        connection: async () => {
+          const found = await stored();
+          const { userE2bProxy } = await import("@/lib/runtime/sandbox/e2b-sdk");
+          return { ...userE2bConnection(found), proxy: await userE2bProxy({ apiUrl: found.apiUrl ?? undefined, sandboxUrl: found.sandboxUrl ?? undefined }) };
+        },
         template: async () => userE2bTemplate(await stored()),
       }),
     );

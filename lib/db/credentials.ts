@@ -269,6 +269,9 @@ export type E2bSettings = StoredKey & {
   sandboxUrl: string | null;
   template: E2bTemplateState;
   templateError: string | null;
+  /** Whether new sessions can start: the template is ready, or an earlier
+   *  one that was is still served while it's rebuilt. */
+  canStart: boolean;
 };
 
 export type SandboxSettings = {
@@ -395,7 +398,7 @@ export async function clearDaytonaKey(userId: string): Promise<void> {
 const E2B_COLUMNS =
   "e2b_key_ciphertext, e2b_key_hint, e2b_key_updated_at, e2b_api_url, e2b_sandbox_url, " +
   "e2b_template_id, e2b_template_build_id, e2b_template_tag, e2b_template_state, e2b_template_error, " +
-  "e2b_template_started_at";
+  "e2b_template_started_at, e2b_serving_template_id";
 
 type E2bRow = Pick<
   Database["public"]["Tables"]["user_credentials"]["Row"],
@@ -410,6 +413,7 @@ type E2bRow = Pick<
   | "e2b_template_state"
   | "e2b_template_error"
   | "e2b_template_started_at"
+  | "e2b_serving_template_id"
 >;
 
 /** The user's E2B columns: null for no row, undefined before
@@ -440,11 +444,14 @@ function e2bSettingsOf(row: E2bRow | null): E2bSettings {
     sandboxUrl: row?.e2b_sandbox_url ?? null,
     template,
     templateError: template === "failed" ? (row?.e2b_template_error ?? null) : null,
+    canStart: template === "ready" ? Boolean(row?.e2b_template_id) : Boolean(row?.e2b_serving_template_id),
   };
 }
 
 /** The user's own E2B, opened: what their boxes are made and reached with. */
 export type StoredE2b = {
+  /** Whose E2B it is. */
+  ownerId: string;
   apiKey: string;
   apiUrl: string | null;
   sandboxUrl: string | null;
@@ -452,6 +459,8 @@ export type StoredE2b = {
   templateId: string | null;
   templateBuildId: string | null;
   templateError: string | null;
+  /** The last template that built ready, served while a newer one builds. */
+  servingTemplateId: string | null;
 };
 
 /** The user's E2B with its key opened, or null when unset or unreadable. */
@@ -461,6 +470,7 @@ export async function getStoredE2b(userId: string): Promise<StoredE2b | null> {
   if (!row || !apiKey) return null;
   const view = e2bSettingsOf(row);
   return {
+    ownerId: userId,
     apiKey,
     apiUrl: view.apiUrl,
     sandboxUrl: view.sandboxUrl,
@@ -468,6 +478,7 @@ export async function getStoredE2b(userId: string): Promise<StoredE2b | null> {
     templateId: row.e2b_template_id,
     templateBuildId: row.e2b_template_build_id,
     templateError: view.templateError,
+    servingTemplateId: row.e2b_serving_template_id ?? null,
   };
 }
 
@@ -494,7 +505,8 @@ export async function setE2bConnection(
   if (error) throw error;
 }
 
-const NO_E2B_TEMPLATE = {
+/** A new build's template columns: the one served meanwhile is kept. */
+const NEW_E2B_BUILD = {
   e2b_template_id: null,
   e2b_template_build_id: null,
   e2b_template_tag: null,
@@ -502,6 +514,9 @@ const NO_E2B_TEMPLATE = {
   e2b_template_error: null,
   e2b_template_started_at: null,
 } as const;
+
+/** No template at all: a new key or account, or none. */
+const NO_E2B_TEMPLATE = { ...NEW_E2B_BUILD, e2b_serving_template_id: null } as const;
 
 /** How long a claimed build may go without E2B's build id before another
  *  caller may claim it again: the caller that claimed it died starting it. */
@@ -530,7 +545,7 @@ export async function claimE2bTemplateBuild(
   ].join(",");
   const { data, error } = await createSupabaseAdminClient()
     .from("user_credentials")
-    .update({ ...NO_E2B_TEMPLATE, e2b_template_state: "building", e2b_template_tag: tag, e2b_template_started_at: claimedAt })
+    .update({ ...NEW_E2B_BUILD, e2b_template_state: "building", e2b_template_tag: tag, e2b_template_started_at: claimedAt })
     .eq("user_id", userId)
     .not("e2b_key_ciphertext", "is", null)
     .or(claimable)
@@ -551,14 +566,14 @@ export async function setE2bTemplate(
   template:
     | { state: "building"; claimedAt: string; templateId: string; buildId: string }
     | { state: "failed"; claimedAt: string; error: string }
-    | { state: "ready"; buildId: string }
+    | { state: "ready"; buildId: string; templateId: string }
     | { state: "failed"; buildId: string; error: string },
 ): Promise<boolean> {
   const update =
     template.state === "building"
       ? { e2b_template_id: template.templateId, e2b_template_build_id: template.buildId }
       : template.state === "ready"
-        ? { e2b_template_state: "ready" as const, e2b_template_error: null }
+        ? { e2b_template_state: "ready" as const, e2b_template_error: null, e2b_serving_template_id: template.templateId }
         : { e2b_template_state: "failed" as const, e2b_template_error: template.error.slice(0, 500) };
   let query = createSupabaseAdminClient().from("user_credentials").update(update).eq("user_id", userId);
   query =
