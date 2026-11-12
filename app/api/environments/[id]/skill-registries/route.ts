@@ -105,7 +105,7 @@ export async function POST(request: Request, context: RouteContext) {
       const registry = await addSkillRegistry(c.owner.id, id, repo);
       const skills = await registrySkills(token, registry.fullName, registry.defaultBranch);
       // Ready boxes were made without its skills: made again.
-      after(() => refillAfterChange(c.owner.id, id), { where: "refill-pool", userId: c.owner.id });
+      after(() => refillAfterChange(c.owner, id), { where: "refill-pool", userId: c.owner.id });
       return NextResponse.json({ registry, skills: skills ?? [] }, { status: 201 });
     } catch (error) {
       if (error instanceof EnvironmentRuleError) return NextResponse.json({ error: error.message }, { status: 400 });

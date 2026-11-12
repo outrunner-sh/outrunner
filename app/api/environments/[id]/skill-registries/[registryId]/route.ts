@@ -25,7 +25,7 @@ export async function DELETE(request: Request, context: RouteContext) {
       if (error instanceof EnvironmentAccessError) return NextResponse.json({ error: error.message }, { status: 403 });
       throw error;
     }
-    after(() => refillAfterChange(c.owner.id, id), { where: "refill-pool", userId: c.owner.id });
+    after(() => refillAfterChange(c.owner, id), { where: "refill-pool", userId: c.owner.id });
     return NextResponse.json({ ok: true });
   });
 }

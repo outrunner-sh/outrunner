@@ -40,7 +40,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     try {
       const server = await updateEnvironmentMcpServer(c.owner.id, id, serverId, mcpServerEdit(body));
       if (!server) return gone();
-      after(() => refillAfterChange(c.owner.id, id), { where: "refill-pool", userId: c.owner.id });
+      after(() => refillAfterChange(c.owner, id), { where: "refill-pool", userId: c.owner.id });
       return NextResponse.json({ server });
     } catch (error) {
       if (error instanceof EnvironmentRuleError) return NextResponse.json({ error: error.message }, { status: 400 });
@@ -64,7 +64,7 @@ export async function DELETE(request: Request, context: RouteContext) {
       if (error instanceof EnvironmentAccessError) return NextResponse.json({ error: error.message }, { status: 403 });
       throw error;
     }
-    after(() => refillAfterChange(c.owner.id, id), { where: "refill-pool", userId: c.owner.id });
+    after(() => refillAfterChange(c.owner, id), { where: "refill-pool", userId: c.owner.id });
     return NextResponse.json({ ok: true });
   });
 }

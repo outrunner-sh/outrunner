@@ -19,7 +19,7 @@ import type { TrackerInstallation, TrackerScope } from "@/lib/db/trackers";
 import type { TrackerFiling, TrackerNote } from "@/lib/db/work-items";
 import { archiveClosedSession, type ArchiveClosedDeps, type ClosedSession } from "@/lib/session/archive-closed";
 import { type FilingDeps, filingActor } from "@/lib/trackers/filing";
-import { fromAdf, type JiraIssueStanding, jiraMentions } from "@/lib/trackers/jira";
+import { fromAdf, type JiraIssueStanding, jiraMentions, type JiraTokenSite } from "@/lib/trackers/jira";
 import { type JiraActor, jiraIssueRef, jiraIssueUrl, type JiraTrigger } from "@/lib/trackers/jira-agent";
 import { firstMatch, type IssueFacts, type TrackerRule } from "@/lib/trackers/rules";
 import { canSee, type TriageActor } from "@/lib/triage/access";
@@ -80,6 +80,9 @@ export type JiraEventInput = {
   /** The X-Atlassian-Webhook-Identifier header: the same across retries. */
   identifier: string | null;
   payload: unknown;
+  /** The site (cloud id) its verified token was issued for, and which claim said so
+   *  (jiraTokenSite). */
+  site: JiraTokenSite;
 };
 
 const ignored = (reason: string): JiraEventResult => ({ handled: false, reason });
@@ -157,6 +160,16 @@ export async function handleJiraEvent(input: JiraEventInput, deps: JiraEventDeps
     return ignored("not installed");
   }
   if (installation.disconnected) return ignored("not installed");
+  // The body says which site; the signed token must say the same one, or a token from one
+  // site the app is on could carry an event made up for another's.
+  if (installation.externalId !== input.site.site) {
+    // Cloud ids aren't secrets: both, and where the token's came from, so a token that names
+    // its site some other way than we read it shows as that, not as a forgery.
+    console.warn(
+      `Jira: a signed event's token is for site ${input.site.site} (from its ${input.site.from} claim; claims: ${input.site.keys.join(", ")}), but its body names ${installation.externalId}, so it was ignored`,
+    );
+    return ignored("wrong site");
+  }
 
   // Before dedupe: what we wrote there must never come back and reopen an item.
   const author = payload.comment ? (payload.comment.updateAuthor ?? payload.comment.author) : payload.user;

@@ -102,7 +102,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       throw error;
     }
     // A new warm hook: the project's ready boxes are made again with it.
-    if (patch.hooks?.warm !== undefined) after(() => refillAfterChange(owner.id, id), { where: "refill-pool", userId: owner.id });
+    if (patch.hooks?.warm !== undefined) after(() => refillAfterChange(owner, id), { where: "refill-pool", userId: owner.id });
     return NextResponse.json(await getEnvironment(owner.id, id));
   });
 }

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { DaytonaNotFoundError, type Daytona, type Sandbox } from "@daytonaio/sdk";
 
 import { boxSize, DEFAULT_BOX_SIZE } from "@/lib/runtime/box-sizes";
-import { AUTO_ARCHIVE_MINUTES, box, createParams, DaytonaBackend, DESKTOP_RESOLUTION, daytonaSnapshotFor, EXEC_TIMEOUT_SECONDS, relabel, settled, SETTLE_TIMEOUT_SECONDS } from "@/lib/runtime/sandbox/daytona";
+import { AUTO_ARCHIVE_MINUTES, AUTO_STOP_MINUTES, backstop, box, createParams, DaytonaBackend, DESKTOP_RESOLUTION, daytonaSnapshotFor, EXEC_TIMEOUT_SECONDS, relabel, settled, SETTLE_TIMEOUT_SECONDS } from "@/lib/runtime/sandbox/daytona";
 
 /** A sandbox whose executeCommand records the timeout it was given. */
 function recording(): { sandbox: Sandbox; timeouts: (number | undefined)[] } {
@@ -101,7 +101,7 @@ test("backend sends the selected Small default to the SDK, preserving labels, de
   const labels = { "runtime.role": "computer", "runtime.deployment": "test" };
   const backend = creating(async (params, options) => {
     assert.deepEqual(params, {
-      snapshot: "daytona-medium", labels, autoStopInterval: 0, autoDeleteInterval: -1, autoArchiveInterval: AUTO_ARCHIVE_MINUTES,
+      snapshot: "daytona-medium", labels, autoStopInterval: AUTO_STOP_MINUTES, autoDeleteInterval: -1, autoArchiveInterval: AUTO_ARCHIVE_MINUTES,
       envVars: { VNC_RESOLUTION: DESKTOP_RESOLUTION },
     });
     assert.deepEqual(options, { timeout: 180 });
@@ -121,6 +121,95 @@ test("a stopped box is archived within a day, freeing its disk from the account'
   assert.equal(createParams({}, undefined, true).autoArchiveInterval, AUTO_ARCHIVE_MINUTES);
   // A user's own Daytona key: their quota, their account's default.
   assert.equal("autoArchiveInterval" in createParams({}), false);
+});
+
+test("Outrunner's boxes stop on Daytona's side after hours unheartbeaten; a user's own never do", () => {
+  // The backstop if the reconciler stops looking: generous enough to ride
+  // out a cron outage, and longer than the reconciler's own limits, which
+  // normally stop a box first.
+  assert.ok(AUTO_STOP_MINUTES >= 3 * 60 && AUTO_STOP_MINUTES <= 12 * 60);
+  assert.equal(createParams({}, undefined, true).autoStopInterval, AUTO_STOP_MINUTES);
+  assert.equal(createParams({}).autoStopInterval, 0);
+  // Never deleted on Daytona's side: a stopped box keeps the session's files.
+  assert.equal(createParams({}, undefined, true).autoDeleteInterval, -1);
+});
+
+test("a box made before the backstop gets it as it comes back; one that has it isn't touched", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const set: number[] = [];
+  const sandbox = (autoStopInterval: number, fail = false) =>
+    ({
+      id: "old",
+      autoStopInterval,
+      setAutostopInterval: async (minutes: number) => {
+        if (fail) throw new Error("daytona down");
+        set.push(minutes);
+      },
+    }) as unknown as Sandbox;
+  await backstop(sandbox(0));
+  await backstop(sandbox(AUTO_STOP_MINUTES));
+  // Best effort: a failure leaves the box up.
+  await backstop(sandbox(0, true));
+  assert.deepEqual(set, [AUTO_STOP_MINUTES]);
+});
+
+test("keepAlive refreshes the box's Daytona activity on Outrunner's account only", async () => {
+  const refreshed: string[] = [];
+  const get = async (id: string) => ({ refreshActivity: async () => void refreshed.push(id) }) as unknown as Sandbox;
+  const platform = new DaytonaBackend();
+  (platform as unknown as { client: Promise<Pick<Daytona, "get">> }).client = Promise.resolve({ get } as Pick<Daytona, "get">);
+  await platform.keepAlive("box-1");
+  const theirs = new DaytonaBackend({ apiKey: async () => "their-key" });
+  (theirs as unknown as { client: Promise<Pick<Daytona, "get">> }).client = Promise.resolve({ get } as Pick<Daytona, "get">);
+  await theirs.keepAlive("box-2");
+  assert.deepEqual(refreshed, ["box-1"]);
+});
+
+test("keepAlive reuses the box alive() just fetched: one Daytona get a box a run", async () => {
+  let gets = 0;
+  let refreshed = 0;
+  const get = async () => {
+    gets += 1;
+    return { state: "started", refreshActivity: async () => void (refreshed += 1) } as unknown as Sandbox;
+  };
+  const backend = new DaytonaBackend();
+  (backend as unknown as { client: Promise<Pick<Daytona, "get">> }).client = Promise.resolve({ get } as unknown as Pick<Daytona, "get">);
+  assert.equal(await backend.alive("box-1"), true);
+  await backend.keepAlive("box-1");
+  assert.deepEqual({ gets, refreshed }, { gets: 1, refreshed: 1 });
+  // Used once: the next heartbeat without a look fetches it again.
+  await backend.keepAlive("box-1");
+  assert.deepEqual({ gets, refreshed }, { gets: 2, refreshed: 2 });
+});
+
+test("alive() keeps only running boxes of Outrunner's account for keepAlive, and evicts stale ones", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 0 });
+  const states: Record<string, string> = { up: "started", down: "stopped", old: "started" };
+  const get = async (id: string) => ({ id, state: states[id], refreshActivity: async () => {} }) as unknown as Sandbox;
+  const backend = new DaytonaBackend();
+  (backend as unknown as { client: Promise<Pick<Daytona, "get">> }).client = Promise.resolve({ get } as unknown as Pick<Daytona, "get">);
+  const seen = () => [...(backend as unknown as { lastSeen: Map<string, unknown> }).lastSeen.keys()].sort();
+  await backend.alive("old");
+  t.mock.timers.tick(61_000);
+  await backend.alive("down");
+  await backend.alive("up");
+  assert.deepEqual(seen(), ["up"]);
+  // One gone from Daytona is dropped at once, not left to age out.
+  states.up = "gone";
+  const gone = backend as unknown as { client: Promise<Pick<Daytona, "get">> };
+  gone.client = Promise.resolve({
+    get: async (id: string) => {
+      if (id === "up") throw new DaytonaNotFoundError("Sandbox up not found");
+      return get(id);
+    },
+  } as unknown as Pick<Daytona, "get">);
+  assert.equal(await backend.alive("up"), false);
+  assert.deepEqual(seen(), []);
+  // A user's own key: nothing kept, keepAlive does nothing for it.
+  const theirs = new DaytonaBackend({ apiKey: async () => "their-key" });
+  (theirs as unknown as { client: Promise<Pick<Daytona, "get">> }).client = Promise.resolve({ get } as unknown as Pick<Daytona, "get">);
+  await theirs.alive("up");
+  assert.equal((theirs as unknown as { lastSeen: Map<string, unknown> }).lastSeen.size, 0);
 });
 
 test("a box on a user's own Daytona key keeps their account's archive default", async () => {
