@@ -78,8 +78,9 @@ begin
 end;
 $$;
 
--- Every share that goes is logged, with why: a revocation's reason, set for
--- the transaction by the function revoking it; else what went with it (the
+-- Every share that goes is logged, with why: a revocation's reason, for the
+-- rows that revocation targets (set by the function revoking them, with
+-- which rows those are: shares cascading from them aren't); else what went with it (the
 -- App uninstalled on GitHub, its own org deleted, its source org deleted, or
 -- its source's link disconnected); else `disconnected`, its own link removed.
 create function log_github_share_removal() returns trigger
@@ -87,7 +88,10 @@ language plpgsql security definer set search_path = public as $$
 begin
   insert into github_installation_link_revocations (org_id, installation_id, installed_by, shared_from_org, link_created_at, reason)
   values (old.org_id, old.installation_id, old.installed_by, old.shared_from_org, old.created_at,
-          coalesce(nullif(current_setting('outrunner.github_share_revocation', true), ''),
+          coalesce(case when current_setting('outrunner.github_share_revocation_target', true)
+                              in ('share:' || old.shared_from_org || ':' || old.installed_by,
+                                  'link:' || old.org_id || ':' || old.installation_id)
+                         then nullif(current_setting('outrunner.github_share_revocation', true), '') end,
                    case
                      when not exists (select 1 from github_installations where installation_id = old.installation_id) then 'uninstalled'
                      when not exists (select 1 from organizations where id = old.org_id) then 'org_deleted'
@@ -111,8 +115,10 @@ create function revoke_github_installation_shares(source_org uuid, sharer uuid, 
 language plpgsql security definer set search_path = public as $$
 begin
   perform set_config('outrunner.github_share_revocation', why, true);
+  perform set_config('outrunner.github_share_revocation_target', 'share:' || source_org || ':' || sharer, true);
   delete from org_github_installations where shared_from_org = source_org and installed_by = sharer;
   perform set_config('outrunner.github_share_revocation', '', true);
+  perform set_config('outrunner.github_share_revocation_target', '', true);
 end;
 $$;
 revoke all on function revoke_github_installation_shares(uuid, uuid, text) from public, anon, authenticated;
@@ -142,8 +148,10 @@ create function revoke_orphaned_github_share() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   perform set_config('outrunner.github_share_revocation', 'sharer_deleted', true);
+  perform set_config('outrunner.github_share_revocation_target', 'link:' || new.org_id || ':' || new.installation_id, true);
   delete from org_github_installations where org_id = new.org_id and installation_id = new.installation_id;
   perform set_config('outrunner.github_share_revocation', '', true);
+  perform set_config('outrunner.github_share_revocation_target', '', true);
   return null;
 end;
 $$;

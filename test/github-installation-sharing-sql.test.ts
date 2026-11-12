@@ -135,7 +135,8 @@ test("SQL: a share lasts while its sharer administers the source org, transitive
   remove(X, A);
   assert.deepEqual(linked(CUSTOMER), [X]);
   assert.equal(revoked(Y, CUSTOMER), "sharer_removed");
-  assert.equal(revoked(W, CUSTOMER), "sharer_removed");
+  // C is still Y's admin: W went because its source did.
+  assert.equal(revoked(W, CUSTOMER), "source_disconnected");
   // Nor can either of them put it back.
   assert.equal(link(Y, CUSTOMER, A), "not_admin");
   assert.equal(link(W, CUSTOMER, C), "not_admin");
