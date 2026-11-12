@@ -63,8 +63,10 @@ Each figure says how it's known:
 - `estimated`: some were priced on a cost basis, whose versions are listed
   (`costBases`).
 - `unavailable`: some cost isn't known: a call that couldn't be counted or
-  priced, or a family session sent something more than ten minutes ago and
-  not read since (its box stopped unread). Its dollars are **null, never
+  priced, or a family session whose box came up (made, woken, restored)
+  more than ten minutes ago and whose log hasn't been read since (its box
+  stopped unread). Sessions that never ran an agent (still being made, or
+  failed) don't count. Its dollars are **null, never
   0**; `knownUsd` is what is known, a lower bound.
 
 A period with nothing in it and every session read is a known `reported` $0.

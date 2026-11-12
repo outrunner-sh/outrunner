@@ -134,13 +134,18 @@ async function familyIntervals(ids: string[], period: { start: Date; end: Date }
   }));
 }
 
-/** Family sessions sent something in the period (from its start) whose log
- *  hasn't been read since, for longer than the tick takes to read it. */
+/** Sessions that never ran an agent: made but not set up, or failed. */
+const NEVER_RAN = ["creating", "provisioning", "failed"] as const;
+
+/** Family sessions brought up in the period (made, woken, restored: their
+ *  last_active_at) whose log hasn't been read since, for longer than the
+ *  tick takes to read it. One that never ran an agent made no calls. */
 async function unreadSessions(ids: string[], period: { start: Date; end: Date }, now: Date): Promise<number> {
   const { data: sessions, error } = await db()
     .from("workspaces")
     .select("id, last_active_at")
     .in("id", ids)
+    .not("status", "in", `(${NEVER_RAN.join(",")})`)
     .gte("last_active_at", period.start.toISOString())
     .lt("last_active_at", new Date(Math.min(period.end.getTime(), now.getTime() - UNREAD_GRACE_MS)).toISOString());
   if (error) throw error;

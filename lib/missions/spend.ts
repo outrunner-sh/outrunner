@@ -226,8 +226,8 @@ export type MissionSpend = {
     /** The cost bases estimates were made on, by version. */
     costBases: string[];
     tokens: CallTokens;
-    /** Family sessions active in the period whose log hasn't been read since
-     *  (a box that stopped unread): their calls aren't known yet. */
+    /** Family sessions brought up in the period whose log hasn't been read
+     *  since (a box that stopped unread): their calls aren't known yet. */
     unreadSessions: number;
   };
   /** The family's boxes, in Small-box hours; dollars only on a configured,
@@ -290,7 +290,7 @@ export function summarizeSpend(input: {
   };
 }
 
-/** How long a family session's log may go unread after it was sent
- *  something before its calls count as unknown: the tick reads every box
- *  that's up every two minutes, so longer is a box that stopped unread. */
+/** How long a family session's log may go unread after its box came up
+ *  before its calls count as unknown: the tick reads every box that's up
+ *  every two minutes, so longer is a box that stopped unread. */
 export const UNREAD_GRACE_MS = 10 * 60_000;
