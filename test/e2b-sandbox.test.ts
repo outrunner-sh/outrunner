@@ -201,12 +201,17 @@ test("a restore in this server is never paused by a get running alongside it", a
   const calls = fakeE2b({
     getInfo: () => info("running", started),
     connect: (...args: never[]) => {
-      started = Date.now();
-      // The restore's connect waits until the get has looked and connected.
       const opts = args[1] as { timeoutMs?: number };
-      return opts.timeoutMs === BOX_TIMEOUT_MS
-        ? new Promise((resolve) => { releaseRestore = () => resolve(fakeSandbox().sandbox); })
-        : fakeSandbox().sandbox;
+      if (opts.timeoutMs === BOX_TIMEOUT_MS) {
+        // The restore's connect: it resumed the box, and waits until the get
+        // has looked and connected.
+        started = Date.now();
+        return new Promise((resolve) => { releaseRestore = () => resolve(fakeSandbox().sandbox); });
+      }
+      // The get's connect lands strictly after this get began: on its own,
+      // a new start like that would be taken for the get's resume.
+      started = Date.now() + 1_000;
+      return fakeSandbox().sandbox;
     },
   });
   const backend = new E2bBackend();
