@@ -114,7 +114,6 @@ export function JiraFixture({ state, member }: { state: string; member: boolean 
   );
 }
 
-/** Org → Integrations' Linear card, connected and with its connection lost. */
 /** Each card state, as the Integrations page would ask `deploymentCard` for it. */
 const CARD_STATES: Record<string, { connected: boolean; admin: boolean; installHref: string | null }> = {
   connected: { connected: true, admin: true, installHref: "/settings/org/linear" },
@@ -125,6 +124,7 @@ const CARD_STATES: Record<string, { connected: boolean; admin: boolean; installH
   "unset-member": { connected: false, admin: false, installHref: null },
 };
 
+/** Org → Integrations' Linear card. state: connected | disconnected | none | member | unset | unset-member. */
 export function LinearCardFixture({ state }: { state: string }) {
   const card = CARD_STATES[state] ?? CARD_STATES.connected;
   const shown = deploymentCard({ ...card, configureHref: "/settings/org/linear" });

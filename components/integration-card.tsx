@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Check, ChevronRight } from "lucide-react";
 
 import { DashedFrame } from "@/components/ui/dashed-frame";
+import type { IntegrationAction } from "@/lib/integrations/card";
 import { cn } from "@/lib/utils";
 
 /**
@@ -28,7 +29,7 @@ export function IntegrationCard({
   /** Why there's nothing to do here yet, for whoever could otherwise act on it. */
   note?: string | null;
   /** Configure (connected), or Install or Connect; none for someone who can't. */
-  action: { kind: "configure" | "install" | "connect"; href: string; external?: boolean } | null;
+  action: IntegrationAction;
 }) {
   const label = action?.kind === "configure" ? "Configure" : action?.kind === "connect" ? "Connect" : "Install";
   const className = cn(

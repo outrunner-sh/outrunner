@@ -19,7 +19,8 @@ export function deploymentCard(input: {
   installableByMembers?: boolean;
 }): { action: IntegrationAction; note: string | null } {
   if (input.connected) return { action: { kind: "configure", href: input.configureHref }, note: null };
-  // The settings pages say how to add one, for whoever runs the deployment.
+  // Nothing an org's admin can do: whoever runs the deployment adds the app. The card says so
+  // and leads nowhere; for them, each tracker's settings page names its setup doc.
   if (!input.installHref) return { action: null, note: "Not available on this deployment yet." };
   if (input.admin || input.installableByMembers === true) {
     return { action: { kind: "install", href: input.installHref, ...(input.external && { external: true }) }, note: null };
