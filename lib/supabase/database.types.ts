@@ -266,7 +266,7 @@ type MissionUsageRow = {
 type MissionSpendReservationRow = {
   mission_id: string;
   operation_id: string;
-  state: "held" | "uncertain" | "settled";
+  state: "held" | "lapsed" | "uncertain" | "settled";
   amount_usd: number;
   settled_usd: number | null;
   expires_at: string;
@@ -277,7 +277,7 @@ type MissionSpendReservationRow = {
 
 /** What reserve, renew and settle_mission_spend answer. */
 type MissionSpendReservationResult = {
-  state: "held" | "uncertain" | "settled";
+  state: "held" | "lapsed" | "uncertain" | "settled";
   amount_usd: number;
   settled_usd: number | null;
   expires_at: string;

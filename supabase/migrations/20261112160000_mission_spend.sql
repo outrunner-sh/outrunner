@@ -160,16 +160,18 @@ $$;
 -- Policy reservations: an amount a caller holds against a Mission's spend
 -- before work whose cost isn't known yet, then settles once it is. One per
 -- (Mission, operation id), so a retried reserve, renew or settle is the same
--- one. A hold is never dropped by time: one that expires unsettled, or is
+-- one. A hold is never dropped by time: one that lapses unsettled, or is
 -- settled without a known cost, stays as uncertain liability until settled
 -- with a cost. Policy only: no invoice, no payer, no key.
 create table if not exists mission_spend_reservations (
   mission_id uuid not null references workspaces (id) on delete cascade,
   operation_id text not null check (char_length(operation_id) between 1 and 200),
   -- held       live, until expires_at;
-  -- uncertain  expired unsettled, or settled with no known cost: still owed;
+  -- lapsed     expired unsettled: still owed, and a renew holds it again;
+  -- uncertain  settled with no known cost: the operation is over, its cost
+  --            still owed until settled with one (a renew leaves it);
   -- settled    its cost is known (settled_usd), and is in mission_usage.
-  state text not null default 'held' check (state in ('held', 'uncertain', 'settled')),
+  state text not null default 'held' check (state in ('held', 'lapsed', 'uncertain', 'settled')),
   amount_usd numeric(16, 8) not null check (amount_usd >= 0),
   settled_usd numeric(16, 8) check (settled_usd >= 0),
   expires_at timestamptz not null,
@@ -196,14 +198,15 @@ begin
   if not found then
     raise exception 'mission_not_found: no Mission %', target using errcode = 'P0002';
   end if;
-  -- Expired holds become uncertain, never dropped.
+  -- Expired holds lapse, never dropped.
   update mission_spend_reservations r
-    set state = 'uncertain', updated_at = now()
+    set state = 'lapsed', updated_at = now()
     where r.mission_id = target and r.state = 'held' and r.expires_at <= now();
 end;
 $$;
 
--- What the Mission holds after a change: live holds and uncertain liability.
+-- What the Mission holds: live holds, and uncertain liability (lapsed, or
+-- settled with no known cost).
 create or replace function mission_spend_liability(target uuid)
   returns table (held_usd numeric, uncertain_usd numeric, open_reservations bigint)
   language sql
@@ -213,7 +216,7 @@ create or replace function mission_spend_liability(target uuid)
 as $$
   select
     coalesce(sum(r.amount_usd) filter (where r.state = 'held' and r.expires_at > now()), 0),
-    coalesce(sum(r.amount_usd) filter (where r.state = 'uncertain' or (r.state = 'held' and r.expires_at <= now())), 0),
+    coalesce(sum(r.amount_usd) filter (where r.state in ('lapsed', 'uncertain') or (r.state = 'held' and r.expires_at <= now())), 0),
     count(*) filter (where r.state <> 'settled')
   from mission_spend_reservations r
   where r.mission_id = target;
@@ -231,7 +234,7 @@ create or replace function reserve_mission_spend(target uuid, operation text, am
 as $$
 #variable_conflict use_column
 declare
-  made boolean := false;
+  inserted integer := 0;
 begin
   if amount is null or amount < 0 then
     raise exception 'A reservation is a non-negative amount.' using errcode = '22023';
@@ -243,9 +246,9 @@ begin
   insert into mission_spend_reservations (mission_id, operation_id, amount_usd, expires_at)
     values (target, operation, amount, now() + make_interval(secs => hold_seconds))
     on conflict (mission_id, operation_id) do nothing;
-  get diagnostics made = row_count;
+  get diagnostics inserted = row_count;
   return query
-    select r.state, r.amount_usd, r.settled_usd, r.expires_at, not made, l.held_usd, l.uncertain_usd
+    select r.state, r.amount_usd, r.settled_usd, r.expires_at, inserted = 0, l.held_usd, l.uncertain_usd
     from mission_spend_reservations r, mission_spend_liability(target) l
     where r.mission_id = target and r.operation_id = operation;
 end;
@@ -253,8 +256,8 @@ $$;
 
 -- Hold `operation` longer, and at least `amount` (null: as it is). Never
 -- lowers a hold or shortens it, so a renewal retried or overtaken is
--- harmless. A hold that lapsed into uncertain is held again; a settled one
--- is left as it is.
+-- harmless. A lapsed hold is held again. One settled, with a cost or
+-- without (uncertain), is over: left as it is, and the renew replayed.
 create or replace function renew_mission_spend(target uuid, operation text, amount numeric, hold_seconds integer)
   returns table (state text, amount_usd numeric, settled_usd numeric, expires_at timestamptz, replayed boolean,
                  held_usd numeric, uncertain_usd numeric)
@@ -276,12 +279,12 @@ begin
         amount_usd = greatest(r.amount_usd, coalesce(amount, r.amount_usd)),
         expires_at = greatest(r.expires_at, now() + make_interval(secs => hold_seconds)),
         updated_at = now()
-    where r.mission_id = target and r.operation_id = operation and r.state <> 'settled';
+    where r.mission_id = target and r.operation_id = operation and r.state in ('held', 'lapsed');
   if not exists (select 1 from mission_spend_reservations r where r.mission_id = target and r.operation_id = operation) then
     raise exception 'reservation_not_found: no reservation % on Mission %', operation, target using errcode = 'P0002';
   end if;
   return query
-    select r.state, r.amount_usd, r.settled_usd, r.expires_at, r.state = 'settled', l.held_usd, l.uncertain_usd
+    select r.state, r.amount_usd, r.settled_usd, r.expires_at, r.state in ('uncertain', 'settled'), l.held_usd, l.uncertain_usd
     from mission_spend_reservations r, mission_spend_liability(target) l
     where r.mission_id = target and r.operation_id = operation;
 end;
@@ -290,7 +293,8 @@ $$;
 -- Settle `operation`: with its cost known (`actual`), the hold is released
 -- (the cost itself is the usage recorded for the call); with it unknown
 -- (null), the hold stays as uncertain liability, to be settled again once it
--- is known. Settled once with a cost, it stays so: a repeat is replayed.
+-- is known. Settled once with a cost, it stays so: a repeat is replayed, as
+-- is a second settle without one.
 create or replace function settle_mission_spend(target uuid, operation text, actual numeric)
   returns table (state text, amount_usd numeric, settled_usd numeric, expires_at timestamptz, replayed boolean,
                  held_usd numeric, uncertain_usd numeric)
@@ -319,7 +323,8 @@ begin
       where r.mission_id = target and r.operation_id = operation;
   end if;
   return query
-    select r.state, r.amount_usd, r.settled_usd, r.expires_at, existing.state = 'settled', l.held_usd, l.uncertain_usd
+    select r.state, r.amount_usd, r.settled_usd, r.expires_at,
+      existing.state = 'settled' or (existing.state = 'uncertain' and actual is null), l.held_usd, l.uncertain_usd
     from mission_spend_reservations r, mission_spend_liability(target) l
     where r.mission_id = target and r.operation_id = operation;
 end;

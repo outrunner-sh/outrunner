@@ -28,6 +28,8 @@ reference unique to the call across every Mission:
 | A Codex call (a Ship on Codex) | `codex:<record uuid>`: the record its token count is put on | `estimated` where `MISSION_COST_BASIS` prices the model, else `unavailable` |
 | A classifier call through OpenRouter | `openrouter:<generation id>` | `reported` when OpenRouter states the call's cost; else `estimated` from its tokens; else `unavailable` |
 | A reply from an agent before usage, or before `callId` | `unattributed:<session>:<record uuid>` | always `unavailable`: its records can't be told apart into calls |
+| A turn cut off unread (box down, paused or archived mid-turn) | `gap:<session>:<box>:<cursor>:from` (and `:to`) | `unavailable`: the stretch since the last read may never be read |
+| A call the database refuses for its data | `refused:<reference>` | `unavailable` stand-in: a call too odd to store still isn't $0 |
 | Compute (the family's boxes) | `compute_intervals` | hours, apart; `estimated` dollars only with `MISSION_COMPUTE_RATE` |
 
 So sessions' model spend is **estimated** today: Claude Code's log says each
@@ -46,8 +48,17 @@ it: another Mission's reading changes nothing.
 sessions tick runs every two minutes for every session whose box is up, and
 the watches run after each send, records the family's calls in what it read
 before its cursor moves on. A failure there fails the read, so the same
-events are read again. Deployed before its migration, recording is skipped
-with a log rather than stopping Missions' reads.
+events are read again. A call refused for its own data (a value no retry
+changes) can't hold the session's reads back: its batch is retried a call
+at a time and that call goes in as an `unavailable` stand-in, or, if even
+that is refused, is logged and left out. Deployed before its migration,
+recording is skipped with a log rather than stopping Missions' reads.
+
+**Cut off mid-turn.** When `readSession` finds a family session's turn
+still running but its box down (or the session paused or archived), what it
+did since the last read may never be read. It records a `gap:` entry,
+`unavailable`, at the last read, and at now as well when that's another UTC
+day, so each day the stretch touches says it isn't covered.
 
 **Classifier calls.** `oneShot` (`lib/slack/agent-model.ts`) takes an
 `onAnswer` that hears OpenRouter's answer; pass
@@ -68,6 +79,9 @@ Each figure says how it's known:
   stopped unread). Sessions that never ran an agent (still being made, or
   failed) don't count. Its dollars are **null, never
   0**; `knownUsd` is what is known, a lower bound.
+
+`calls.unavailable` counts entries, not strictly calls: each block of an old
+agent's reply, and each gap, is one.
 
 A period with nothing in it and every session read is a known `reported` $0.
 
@@ -119,13 +133,18 @@ for a budget to check against. `lib/missions/spend.deps.ts`:
 | Call | What it does |
 | --- | --- |
 | `reserveMissionSpend(mission, operationId, usd, holdSeconds)` | Hold `usd`. The same operation again is the same reservation (`replayed`), whatever it asks. |
-| `renewMissionSpend(mission, operationId, usd \| null, holdSeconds)` | Hold longer, and at least `usd`. Never lowers or shortens a hold; holds a lapsed one again; a settled one stays settled. |
+| `renewMissionSpend(mission, operationId, usd \| null, holdSeconds)` | Hold longer, and at least `usd`. Never lowers or shortens a hold; holds a **lapsed** one again. One settled, with a cost or without, is over: left as it is (`replayed`). |
 | `settleMissionSpend(mission, operationId, actualUsd \| null)` | With the cost known, the hold is released (the cost itself is the usage recorded for the call). With it unknown, the hold stays as **uncertain** liability, to be settled again once known. Settled with a cost, a repeat is replayed. |
+
+A reservation's state is `held` (live until it expires), `lapsed` (expired
+unsettled), `uncertain` (settled without a cost) or `settled`. Lapsed and
+uncertain both count as uncertain liability; only a renew tells them apart,
+holding a lapsed one again but not an operation that's over.
 
 Each runs in one SQL function under a lock on the Mission's row, so racing
 callers see each other's holds; each answers with the Mission's live holds
 (`heldUsd`) and uncertain liability (`uncertainUsd`) after it. A hold that
-lapses unsettled becomes uncertain: liability is never dropped by time,
+lapses unsettled counts as uncertain: liability is never dropped by time,
 only by a settle with a cost. The spend read shows both as `reservations`,
 as they stand now, whatever the period.
 
@@ -186,8 +205,10 @@ nothing granted to `anon` or `authenticated`), as the other Missions tables.
 - A Claude Code subagent writes its own log, which the session's stream
   doesn't carry: its calls aren't counted yet, so a session's estimate is a
   lower bound where it used subagents.
-- A box lost before its log was read takes its calls with it; the session
-  then shows as unread, `unavailable`, for that period.
+- A box lost mid-turn takes its unread calls with it; the period shows a
+  gap (`unavailable`). If its log is later read in full on another box, the
+  calls are counted, but the gap stays: the period stays `unavailable`
+  rather than claim coverage it can't prove.
 
 ## Tests
 

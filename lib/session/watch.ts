@@ -19,7 +19,7 @@ import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { resolveProvider } from "@/lib/runtime/resolve";
 import { toRuntimeComputer, toWorkspace } from "@/lib/db/mappers";
 import { notifyActivity } from "@/lib/notifications/record";
-import { recordSessionCalls } from "@/lib/missions/spend.deps";
+import { recordSessionCalls, recordSessionGap } from "@/lib/missions/spend.deps";
 import { readStream } from "@/lib/session/event-stream";
 import { foldEvents, IDLE, type TurnState } from "@/lib/session/turn-state";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -159,6 +159,15 @@ async function settle(
     .select("workspace_id");
   if (error) throw error;
   if (!settled?.length) return null;
+  // Cut off mid-turn: what it did since the last read may never be read, so
+  // a Mission's spend says that stretch is unknown (docs/mission-spend.md).
+  if (before.turn === "working") {
+    await recordSessionGap(workspace, {
+      box: activity.stream_box,
+      cursor: Number(activity.stream_cursor ?? 0),
+      at: activity.read_at,
+    });
+  }
   return { workspaceId: workspace.id, ownerId: workspace.ownerId, before, after };
 }
 

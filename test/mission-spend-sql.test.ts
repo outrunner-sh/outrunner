@@ -225,7 +225,7 @@ test("racing reserves: one reservation per operation, and every hold counted", {
   assert.equal(psql(`select count(*) from mission_spend_reservations where mission_id = '${m}'`), "11");
 });
 
-test("a hold that lapses becomes uncertain liability, never dropped; a renew holds it again, never lower", { skip }, () => {
+test("a hold that lapses is uncertain liability, never dropped; a renew holds it again, never lower", { skip }, () => {
   const m = mission();
   reservation(`select * from reserve_mission_spend('${m}', 'op', 2, 600)`);
   psql(`update mission_spend_reservations set expires_at = now() - interval '1 second' where mission_id = '${m}'`);
@@ -233,7 +233,7 @@ test("a hold that lapses becomes uncertain liability, never dropped; a renew hol
   assert.equal(psql(`select held_usd || '|' || uncertain_usd from mission_spend_liability('${m}')`), "0|2.00000000");
   const other = reservation(`select * from reserve_mission_spend('${m}', 'other', 1, 600)`);
   assert.deepEqual([other.held, other.uncertain], [1, 2]);
-  assert.equal(psql(`select state from mission_spend_reservations where mission_id = '${m}' and operation_id = 'op'`), "uncertain");
+  assert.equal(psql(`select state from mission_spend_reservations where mission_id = '${m}' and operation_id = 'op'`), "lapsed");
   // Renewed: held again, at the larger of the two amounts.
   const renewed = reservation(`select * from renew_mission_spend('${m}', 'op', 1, 600)`);
   assert.deepEqual([renewed.state, renewed.amount, renewed.held, renewed.uncertain], ["held", 2, 3, 0]);
@@ -242,13 +242,17 @@ test("a hold that lapses becomes uncertain liability, never dropped; a renew hol
   fails(`select * from renew_mission_spend('${m}', 'nope', 1, 60)`, /reservation_not_found/);
 });
 
-test("settling without a cost keeps the hold as uncertain; with one, releases it, once", { skip }, () => {
+test("settling without a cost keeps the hold as uncertain (a late renew leaves it); with one, releases it, once", { skip }, () => {
   const m = mission();
   reservation(`select * from reserve_mission_spend('${m}', 'op', 3, 600)`);
   const unknown = reservation(`select * from settle_mission_spend('${m}', 'op', null)`);
   assert.deepEqual([unknown.state, unknown.held, unknown.uncertain, unknown.replayed], ["uncertain", 0, 3, false]);
-  // Asked again, still owed.
-  assert.equal(reservation(`select * from settle_mission_spend('${m}', 'op', null)`).uncertain, 3);
+  // Asked again, still owed, and replayed.
+  const twice = reservation(`select * from settle_mission_spend('${m}', 'op', null)`);
+  assert.deepEqual([twice.uncertain, twice.replayed], [3, true]);
+  // A retried renew landing after it: the operation is over, not held again.
+  const lateRenew = reservation(`select * from renew_mission_spend('${m}', 'op', 5, 600)`);
+  assert.deepEqual([lateRenew.state, lateRenew.amount, lateRenew.held, lateRenew.uncertain, lateRenew.replayed], ["uncertain", 3, 0, 3, true]);
   const known = reservation(`select * from settle_mission_spend('${m}', 'op', 1.25)`);
   assert.deepEqual([known.state, known.settled, known.held, known.uncertain, known.replayed], ["settled", 1.25, 0, 0, false]);
   // Settled stays settled: a retry, a late renew or a different cost changes nothing.

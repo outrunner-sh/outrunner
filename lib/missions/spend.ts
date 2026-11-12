@@ -11,6 +11,8 @@
  *     0; what is known shows as a lower bound (`knownUsd`).
  */
 
+import { createHash } from "node:crypto";
+
 import { type CallTokens, type ComputeRate, type CostBasis, estimateCall, roundUsd } from "@/lib/missions/cost-basis";
 import { hoursUsed, type Interval, type Period } from "@/lib/billing/hours";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
@@ -110,12 +112,12 @@ export function callsFromEvents(
     const countable = Boolean(event.usage && (codex || event.callId));
     const estimate = countable ? estimateCall(event.model, tokens, extension) : null;
     const call: UsageCall = {
-      usageRef,
+      usageRef: fitRef(usageRef),
       missionId: session.missionId,
       workspaceId: session.workspaceId,
       source: "session",
       occurredAt: validTime(event.timestamp) ?? now.toISOString(),
-      model: event.model ?? null,
+      model: fitModel(event.model),
       ...tokens,
       coverage: estimate ? "estimated" : "unavailable",
       usdReported: null,
@@ -127,6 +129,21 @@ export function callsFromEvents(
     if (!seen || totalTokens(call) >= totalTokens(seen)) calls.set(usageRef, seen ? { ...call, occurredAt: seen.occurredAt } : call);
   }
   return [...calls.values()];
+}
+
+/** mission_usage's bounds: a reference of up to 300 characters (a longer one
+ *  is its kind and a hash, still one per call), a model name of up to 200. */
+const MAX_REF = 300;
+const MAX_MODEL = 200;
+
+function fitRef(ref: string): string {
+  if (ref.length <= MAX_REF) return ref;
+  const kind = ref.slice(0, ref.indexOf(":") + 1).slice(0, 40);
+  return `${kind}sha256:${createHash("sha256").update(ref).digest("hex")}`;
+}
+
+function fitModel(model: string | null | undefined): string | null {
+  return model ? model.slice(0, MAX_MODEL) : null;
 }
 
 function totalTokens(t: CallTokens): number {
@@ -173,12 +190,12 @@ export function classifierCall(
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: cached,
   };
-  const model = typeof answer.model === "string" ? answer.model : null;
+  const model = fitModel(typeof answer.model === "string" ? answer.model : null);
   const cost = answer.usage?.cost;
   const reported = typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? roundUsd(cost) : null;
   const estimate = reported === null && answer.usage ? estimateCall(model, tokens, extension) : null;
   return {
-    usageRef: `openrouter:${answer.id}`,
+    usageRef: fitRef(`openrouter:${answer.id}`),
     missionId,
     workspaceId: null,
     source: "classifier",
@@ -190,6 +207,93 @@ export function classifierCall(
     usdEstimated: estimate?.usd ?? null,
     costBasis: estimate?.basis ?? null,
   };
+}
+
+/**
+ * A family session whose box went down (or that was paused or archived)
+ * mid-turn: what it did after its log was last read may never be read, so
+ * the calls in between are unknown. Recorded as unavailable entries, at the
+ * last read and, when that's another UTC day, now, so every day the unread
+ * stretch touches says it isn't covered. Each once per box and cursor.
+ */
+export function gapCalls(
+  session: { workspaceId: string; missionId: string },
+  lastRead: { box: string | null; cursor: number; at: string | null },
+  now: Date = new Date(),
+): UsageCall[] {
+  const from = validTime(lastRead.at ?? undefined) ?? now.toISOString();
+  const ends = spendPeriod("day", new Date(from)).start.getTime() === spendPeriod("day", now).start.getTime() ? [from] : [from, now.toISOString()];
+  return ends.map((at, i) => ({
+    usageRef: fitRef(`gap:${session.workspaceId}:${lastRead.box ?? "none"}:${lastRead.cursor}:${i === 0 ? "from" : "to"}`),
+    missionId: session.missionId,
+    workspaceId: session.workspaceId,
+    source: "session",
+    occurredAt: at,
+    model: null,
+    ...NO_TOKENS,
+    coverage: "unavailable",
+    usdReported: null,
+    usdEstimated: null,
+    costBasis: null,
+  }));
+}
+
+/** Postgres refused the data itself (classes 22 and 23: a bad value, a
+ *  check), which no retry changes. */
+export function isDataError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && /^2[23]/.test(code);
+}
+
+/**
+ * Write calls in batches. A batch refused for its data is written a call at a
+ * time, so one bad call can't hold back the rest; a call refused for its own
+ * data is put in as an unavailable stand-in (its cost is unknown, never
+ * dropped as $0), and if even that is refused, logged and left out. Left in,
+ * it would be refused on every read and hold the session's reads back for
+ * good. Anything else (the database unreachable) is thrown: the read is
+ * tried again. How many rows were new.
+ */
+export async function writeCallsIsolating(
+  calls: readonly UsageCall[],
+  write: (batch: readonly UsageCall[]) => Promise<number>,
+  batchSize = 200,
+): Promise<number> {
+  let made = 0;
+  for (let i = 0; i < calls.length; i += batchSize) {
+    const batch = calls.slice(i, i + batchSize);
+    try {
+      made += await write(batch);
+      continue;
+    } catch (error) {
+      if (!isDataError(error)) throw error;
+    }
+    for (const call of batch) {
+      try {
+        made += await write([call]);
+      } catch (error) {
+        if (!isDataError(error)) throw error;
+        console.error(`Mission spend: ${call.usageRef} refused (${String((error as { message?: unknown }).message)}); counted as unknown.`);
+        const standIn: UsageCall = {
+          ...call,
+          ...NO_TOKENS,
+          usageRef: fitRef(`refused:${call.usageRef}`),
+          model: null,
+          coverage: "unavailable",
+          usdReported: null,
+          usdEstimated: null,
+          costBasis: null,
+        };
+        try {
+          made += await write([standIn]);
+        } catch (standInError) {
+          if (!isDataError(standInError)) throw standInError;
+          console.error(`Mission spend: ${call.usageRef} can't be recorded at all; left out.`, standInError);
+        }
+      }
+    }
+  }
+  return made;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +326,9 @@ export type MissionSpend = {
     knownUsd: number;
     reportedUsd: number;
     estimatedUsd: number;
+    /** Entries by coverage. `unavailable` counts entries whose cost is
+     *  unknown, which can be more than the calls: each block of a reply from
+     *  an agent before `callId`, and each unread stretch (gapCalls), is one. */
     calls: { reported: number; estimated: number; unavailable: number };
     /** The cost bases estimates were made on, by version. */
     costBases: string[];

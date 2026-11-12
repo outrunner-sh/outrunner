@@ -11,12 +11,15 @@ import {
 import {
   callsFromEvents,
   classifierCall,
+  gapCalls,
+  isDataError,
   missionOf,
   spendPeriod,
   summarizeSpend,
   type UsageCall,
   type UsageTotals,
   weakest,
+  writeCallsIsolating,
 } from "@/lib/missions/spend";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 
@@ -338,4 +341,71 @@ test("the deployment's cost basis prices what the built-in one doesn't, under it
   assert.equal(costBasisExtension(""), null);
   assert.deepEqual(computeRate(JSON.stringify({ version: "r", usdPerHour: 0.1 })), { version: "r", usdPerHour: 0.1 });
   assert.equal(computeRate(undefined), null);
+});
+
+// ---------------------------------------------------------------------------
+// Writing: a bad call can't hold reads back; an unread stretch is unknown
+// ---------------------------------------------------------------------------
+
+const refusal = (code: string) => Object.assign(new Error(`refused ${code}`), { code });
+const quietly = async <T>(work: () => Promise<T>): Promise<T> => {
+  const quiet = console.error;
+  console.error = () => {};
+  try {
+    return await work();
+  } finally {
+    console.error = quiet;
+  }
+};
+
+test("a call the database refuses for its data is counted as unknown, and the rest are written", async () => {
+  const calls = callsFromEvents(session, ["a", "bad", "c"].map((id) => reply({ callId: id, usage: tokens(1, 2) })), null, NOW);
+  const written: string[] = [];
+  const write = async (batch: readonly UsageCall[]) => {
+    if (batch.some((c) => c.usageRef === "claude:bad")) throw refusal("23514");
+    written.push(...batch.map((c) => `${c.usageRef}:${c.coverage}:${c.usdEstimated}`));
+    return batch.length;
+  };
+  assert.equal(await quietly(() => writeCallsIsolating(calls, write, 10)), 3);
+  assert.deepEqual(written, [
+    `claude:a:estimated:${calls[0].usdEstimated}`,
+    "refused:claude:bad:unavailable:null",
+    `claude:c:estimated:${calls[2].usdEstimated}`,
+  ]);
+});
+
+test("a call whose stand-in is refused too is left out, never holding the read back", async () => {
+  const calls = callsFromEvents(session, [reply({ callId: "x", usage: tokens(1, 2) })], null, NOW);
+  assert.equal(await quietly(() => writeCallsIsolating(calls, async () => Promise.reject(refusal("22023")))), 0);
+});
+
+test("the database unreachable is thrown, so the read is tried again", async () => {
+  const calls = callsFromEvents(session, [reply({ callId: "x", usage: tokens(1, 2) })], null, NOW);
+  await assert.rejects(writeCallsIsolating(calls, async () => Promise.reject(new Error("fetch failed"))), /fetch failed/);
+  await assert.rejects(writeCallsIsolating(calls, async () => Promise.reject(refusal("57P01"))), /57P01/);
+  assert.equal(isDataError(refusal("23505")), true);
+  assert.equal(isDataError(refusal("PGRST202")), false);
+});
+
+test("what doesn't fit the table is fitted: a long call id hashed (still one per call), a long model cut", () => {
+  const long = "msg_" + "x".repeat(400);
+  const [call] = callsFromEvents(session, [reply({ callId: long, usage: tokens(1, 1), model: "m".repeat(300) })], null, NOW);
+  assert.match(call.usageRef, /^claude:sha256:[0-9a-f]{64}$/);
+  assert.equal(callsFromEvents(session, [reply({ callId: long, usage: tokens(1, 1) })], null, NOW)[0].usageRef, call.usageRef);
+  assert.equal(call.model?.length, 200);
+});
+
+test("a turn cut off unread is an unknown stretch, on each day it touches, once per box and cursor", () => {
+  const same = gapCalls(session, { box: "sb-1", cursor: 42, at: "2026-11-12T09:00:00Z" }, NOW);
+  assert.deepEqual(
+    same.map((c) => [c.usageRef, c.occurredAt, c.coverage, c.usdEstimated]),
+    [[`gap:${SHIP}:sb-1:42:from`, "2026-11-12T09:00:00.000Z", "unavailable", null]],
+  );
+  const across = gapCalls(session, { box: "sb-1", cursor: 42, at: "2026-11-11T23:50:00Z" }, NOW);
+  assert.deepEqual(across.map((c) => c.occurredAt), ["2026-11-11T23:50:00.000Z", NOW.toISOString()]);
+  // Never read at all: from now.
+  assert.deepEqual(gapCalls(session, { box: null, cursor: 0, at: null }, NOW).map((c) => c.usageRef), [`gap:${SHIP}:none:0:from`]);
+  // It makes the day unavailable.
+  const day = summary({ totals: { ...noTotals, reportedUsd: 1, reportedCalls: 1, unavailableCalls: same.length } });
+  assert.deepEqual([day.models.coverage, day.models.usd, day.models.knownUsd], ["unavailable", null, 1]);
 });

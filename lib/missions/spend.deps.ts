@@ -10,6 +10,7 @@ import { computeRate, costBasisExtension } from "@/lib/missions/cost-basis";
 import {
   callsFromEvents,
   classifierCall,
+  gapCalls,
   missionOf,
   type MissionSpend,
   type OpenRouterAnswer,
@@ -18,8 +19,11 @@ import {
   summarizeSpend,
   UNREAD_GRACE_MS,
   type UsageCall,
+  writeCallsIsolating,
 } from "@/lib/missions/spend";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
+import type { WorkspaceStatus } from "@/lib/runtime/types";
+import { SETTING_UP } from "@/lib/session/provisioning";
 import type { Json } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -27,35 +31,35 @@ function db() {
   return createSupabaseAdminClient();
 }
 
-/** Calls per write: one statement, kept small. */
-const RECORD_BATCH = 200;
-
 /** Record calls, each once (record_mission_usage): new ones, and a known one
- *  read again with more tokens or a better-known cost. How many were new. */
+ *  read again with more tokens or a better-known cost. A call refused for its
+ *  data doesn't hold back the others (writeCallsIsolating). How many were
+ *  new. */
 export async function recordCalls(calls: readonly UsageCall[]): Promise<number> {
-  let made = 0;
-  for (let i = 0; i < calls.length; i += RECORD_BATCH) {
-    const batch = calls.slice(i, i + RECORD_BATCH).map((c) => ({
-      usage_ref: c.usageRef,
-      mission_id: c.missionId,
-      workspace_id: c.workspaceId,
-      source: c.source,
-      occurred_at: c.occurredAt,
-      model: c.model,
-      input_tokens: c.input_tokens,
-      output_tokens: c.output_tokens,
-      cache_creation_input_tokens: c.cache_creation_input_tokens,
-      cache_read_input_tokens: c.cache_read_input_tokens,
-      coverage: c.coverage,
-      usd_reported: c.usdReported,
-      usd_estimated: c.usdEstimated,
-      cost_basis: c.costBasis,
-    }));
-    const { data, error } = await db().rpc("record_mission_usage", { calls: batch as unknown as Json });
-    if (error) throw error;
-    made += Number(data ?? 0);
-  }
-  return made;
+  return writeCallsIsolating(calls, writeCalls);
+}
+
+/** One record_mission_usage statement. */
+async function writeCalls(calls: readonly UsageCall[]): Promise<number> {
+  const rows = calls.map((c) => ({
+    usage_ref: c.usageRef,
+    mission_id: c.missionId,
+    workspace_id: c.workspaceId,
+    source: c.source,
+    occurred_at: c.occurredAt,
+    model: c.model,
+    input_tokens: c.input_tokens,
+    output_tokens: c.output_tokens,
+    cache_creation_input_tokens: c.cache_creation_input_tokens,
+    cache_read_input_tokens: c.cache_read_input_tokens,
+    coverage: c.coverage,
+    usd_reported: c.usdReported,
+    usd_estimated: c.usdEstimated,
+    cost_basis: c.costBasis,
+  }));
+  const { data, error } = await db().rpc("record_mission_usage", { calls: rows as unknown as Json });
+  if (error) throw error;
+  return Number(data ?? 0);
 }
 
 /**
@@ -83,6 +87,23 @@ export async function recordSessionCalls(
     }
     throw error;
   }
+}
+
+/**
+ * A family session's turn was cut off unread (lib/session/watch.ts settle: its
+ * box went down, or it was paused or archived, mid-turn): mark the stretch
+ * since its last read as unknown (gapCalls). Never throws: the session's own
+ * state is settled already, and a failure here is logged.
+ */
+export async function recordSessionGap(
+  workspace: { id: string; kind?: string | null; parentMissionId?: string | null },
+  lastRead: { box: string | null; cursor: number; at: string | null },
+): Promise<void> {
+  const missionId = missionOf(workspace);
+  if (!missionId) return;
+  await recordCalls(gapCalls({ workspaceId: workspace.id, missionId }, lastRead)).catch((error: unknown) => {
+    if (!isMissingFunction(error)) console.error(`Mission spend: couldn't mark ${workspace.id}'s unread stretch`, error);
+  });
 }
 
 /** PostgREST's "no such function" (PGRST202), or Postgres' (42883). */
@@ -134,8 +155,9 @@ async function familyIntervals(ids: string[], period: { start: Date; end: Date }
   }));
 }
 
-/** Sessions that never ran an agent: made but not set up, or failed. */
-const NEVER_RAN = ["creating", "provisioning", "failed"] as const;
+/** Sessions that never ran an agent: still being set up, or failed (only
+ *  setup fails a session). */
+const NEVER_RAN: readonly WorkspaceStatus[] = [...SETTING_UP, "failed"];
 
 /** Family sessions brought up in the period (made, woken, restored: their
  *  last_active_at) whose log hasn't been read since, for longer than the
@@ -211,7 +233,7 @@ export async function readMissionSpend(missionId: string, kind: SpendPeriodKind,
 // ---------------------------------------------------------------------------
 
 export type Reservation = {
-  state: "held" | "uncertain" | "settled";
+  state: "held" | "lapsed" | "uncertain" | "settled";
   amountUsd: number;
   settledUsd: number | null;
   expiresAt: string;
