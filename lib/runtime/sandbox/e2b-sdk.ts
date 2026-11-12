@@ -67,11 +67,14 @@ export async function proxiedFetch(proxyUrl: string): Promise<typeof fetch> {
     });
   }
   PROXIED.set(proxyUrl, made);
-  // Bounded: each user's hosts make their own, and one saved over is never asked for again.
+  // Bounded: each user's hosts make their own, and one saved over is never
+  // asked for again.
   while (PROXIED.size > MAX_PROXIED) {
-    const [oldest, entry] = PROXIED.entries().next().value!;
-    PROXIED.delete(oldest);
-    void entry.then((e) => e.close()).catch(() => {});
+    const [oldest] = PROXIED.keys();
+    // Not closed: an endpoint cached in AGENT_ENDPOINTS may still hold this
+    // fetch. Its idle sockets time out on their own, and it's collected
+    // once nothing references it.
+    PROXIED.delete(oldest!);
   }
   return (await made).fetch;
 }
