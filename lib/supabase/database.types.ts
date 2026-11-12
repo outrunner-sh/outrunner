@@ -203,6 +203,8 @@ type MissionChannelRow = {
   listen: "mentions" | "all";
   allow_bot_messages: boolean;
   paused: boolean;
+  /** 20261112210000: new each time it's bound. */
+  revision: string;
   created_at: string;
   updated_at: string;
 };
@@ -227,7 +229,57 @@ type MissionSlackShipRow = {
   runner_id: string | null;
   requested_by: string | null;
   requested_by_slack: string | null;
+  request_key: string | null;
+  spawn_key: string | null;
+  planned_runner_id: string;
+  binding_revision: string | null;
   created_at: string;
+};
+// supabase/migrations/20261112210000_mission_slack_reliability.sql
+type MissionSlackInboundRow = {
+  event_id: string;
+  team_id: string;
+  channel_id: string;
+  message: Json;
+  status: "pending" | "done" | "failed";
+  attempts: number;
+  lease_until: string | null;
+  next_attempt_at: string;
+  last_error: string | null;
+  created_at: string;
+  processed_at: string | null;
+};
+type MissionSlackRequestRow = {
+  mission_id: string;
+  request_key: string;
+  thread_id: string | null;
+  binding_revision: string | null;
+  message_ts: string | null;
+  requested_by: string | null;
+  requested_by_slack: string | null;
+  created_at: string;
+};
+export type MissionSlackPostRow = {
+  id: string;
+  op_key: string;
+  mission_id: string;
+  binding_revision: string;
+  team_id: string;
+  channel_id: string;
+  thread_ts: string;
+  kind: "reply" | "ask" | "reaction" | "card";
+  payload: Json;
+  requester: string | null;
+  status: "pending" | "sent" | "ambiguous" | "failed" | "dropped";
+  progress: number;
+  posted_ts: string[];
+  in_doubt: boolean;
+  attempts: number;
+  lease_until: string | null;
+  next_attempt_at: string;
+  last_error: string | null;
+  created_at: string;
+  finished_at: string | null;
 };
 type MissionLimitsRow = { mission_id: string; slack_ships_per_hour: number; slack_ships_per_day: number; updated_at: string };
 type MissionSlackAskRow = {
@@ -241,6 +293,7 @@ type MissionSlackAskRow = {
   answered_by: string | null;
   answered_by_slack: string | null;
   answered_at: string | null;
+  op_key: string | null;
   created_at: string;
 };
 // supabase/migrations/20261102250000_mission_events.sql
@@ -1987,6 +2040,24 @@ export type Database = {
         Update: Partial<MissionLimitsRow>;
         Relationships: [];
       };
+      mission_slack_inbound: {
+        Row: MissionSlackInboundRow;
+        Insert: Insert<MissionSlackInboundRow, "event_id" | "team_id" | "channel_id" | "message">;
+        Update: Partial<MissionSlackInboundRow>;
+        Relationships: [];
+      };
+      mission_slack_requests: {
+        Row: MissionSlackRequestRow;
+        Insert: Insert<MissionSlackRequestRow, "mission_id" | "request_key">;
+        Update: Partial<MissionSlackRequestRow>;
+        Relationships: [];
+      };
+      mission_slack_posts: {
+        Row: MissionSlackPostRow;
+        Insert: Insert<MissionSlackPostRow, "op_key" | "mission_id" | "binding_revision" | "team_id" | "channel_id" | "thread_ts" | "kind" | "payload">;
+        Update: Partial<MissionSlackPostRow>;
+        Relationships: [];
+      };
       mission_slack_asks: {
         Row: MissionSlackAskRow;
         Insert: Insert<MissionSlackAskRow, "mission_id" | "thread_id" | "question" | "options">;
@@ -2289,6 +2360,45 @@ export type Database = {
       codex_connection_use: { Args: { k: string; actor: string; requested_org: string | null; gen: string }; Returns: boolean };
       codex_connection_change: { Args: { k: string; op: string; a?: Json }; Returns: Json };
       // supabase/migrations/20261102200000_missions.sql
+      claim_mission_slack_inbound: {
+        Args: { target: string; lease_seconds: number };
+        Returns: { message: Json; attempt: number }[];
+      };
+      complete_mission_slack_inbound: {
+        Args: { target: string; attempt: number };
+        Returns: boolean;
+      };
+      fail_mission_slack_inbound: {
+        Args: { target: string; attempt: number; failure: string; max_attempts: number };
+        Returns: undefined;
+      };
+      due_mission_slack_inbound: {
+        Args: { max_events: number; grace_seconds: number };
+        Returns: { event_id: string }[];
+      };
+      reserve_mission_slack_spawn: {
+        Args: {
+          target: string;
+          request: string | null;
+          spawn: string;
+          thread: string | null;
+          requester: string | null;
+          slack_user: string | null;
+          revision: string | null;
+        };
+        Returns: {
+          ship_id: string | null;
+          planned_runner_id: string | null;
+          runner_id: string | null;
+          existing: boolean;
+          refusal: "hour" | "day" | null;
+          refused_at_limit: number | null;
+        }[];
+      };
+      claim_mission_slack_posts: {
+        Args: { target: string | null; max_posts: number; lease_seconds: number };
+        Returns: MissionSlackPostRow[];
+      };
       reserve_mission_slack_ship: {
         Args: { target: string; thread: string | null; requester: string | null; slack_user: string | null };
         Returns: { ship_id: string | null; refusal: "hour" | "day" | null; refused_at_limit: number | null }[];

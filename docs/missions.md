@@ -114,12 +114,16 @@ channel, one channel a Mission.
   in the channel it's on call in now, never a muted one; no other channel,
   no DMs. Question cards' answers come back as `slack_answer` events (the
   first only; **Other** asks for a reply in the thread).
-- **Ships for a request** run as the Mission's owner, as all Ships do. The
-  requester (Slack user and linked account) is recorded with the Ship
-  (`mission_slack_ships`) and named in its brief, which asks for it in the
-  pull request's description. Each is in the org's audit log. A Ship's pull
-  request ready, merged or closed is posted in its thread by the system. The
-  Ships pane links each Ship's thread.
+- **Ships for a request** run as the Mission's owner, as all Ships do. Each
+  request is recorded (`mission_slack_requests`), and each Ship with the
+  request it's for (`mission_slack_ships`), so a thread can hold several
+  requests, each with several Ships. The requester (Slack user and linked
+  account) is named in the Ship's brief, which asks for it in the pull
+  request's description. Each is in the org's audit log. Each of a Ship's
+  pull requests is posted in its thread by the system when it opens, is
+  ready, merges or closes: one card each, keyed by the Ship, the pull
+  request and the event, never assuming one pull request a thread. The Ships
+  pane links each Ship's thread.
 - **Limits.** While on call, a Mission starts at most 6 Ships an hour and 30
   in any 24 hours by default (`mission_limits`; every Ship it starts while bound counts, as
   nothing proves one wasn't asked for in Slack). One past them starts
@@ -129,6 +133,58 @@ channel, one channel a Mission.
   owner, its latest thread is told, with a link to answer in Outrunner.
 - **It can't** merge or close pull requests, deploy, post elsewhere, touch
   other projects or orgs, or act on bots' messages; Ships can't spawn Ships.
+
+### Reliability
+
+Nothing said in Slack is lost, and nothing is done twice, through crashes,
+Slack's retries, timeouts and rebinds
+(`20261112210000_mission_slack_reliability.sql`):
+
+- **Saved before Slack hears back.** A message a Mission may take (a mention
+  in a channel with a Mission on call, or a reply in a thread it took) is
+  saved in `mission_slack_inbound`, keyed by its Slack event id, before the
+  events endpoint answers 200. A retry of the event is the same row, and is
+  answered 200 too. If it can't be saved (or it can't be told whether it's a
+  Mission's), the endpoint answers 503, and Slack sends it again. It's then
+  processed under a lease, right after the answer and by the tick for any
+  never processed (a crash between the two) or whose processor died; a
+  failure is tried again with backoff, and the last of 8 tries says sorry in
+  the thread. Other Slack traffic goes the agent's way as before, and a
+  mention's duplicate `message` event is still dropped in favour of its
+  `app_mention`.
+- **A Ship start has a stable key.** On call, `spawn_runner` takes the
+  request's `request_id` and a `spawn_key` the Mission picks, unique per
+  request: the same pair is the same Ship. The key, its place under the
+  limits, and the session id the Ship will have are reserved
+  (`reserve_mission_slack_spawn`) before the session is made, so a retry
+  (after a timeout, a crash, a lost answer) finds that session, or makes it,
+  and never starts a second. The place is given back only when no Ship can
+  have been made: the start was refused, by this call, and no session has
+  that id. A timeout is no proof, so its place stays for the retry.
+- **Posts go through a queue.** Every reply, question card, reaction and
+  system card is queued in `mission_slack_posts` under a stable key (a
+  retried tool call is one post; the tools answer "queued"), and sent in
+  order within its thread, right after it's queued and by the tick. Slack's
+  rate limit waits its Retry-After; other failures back off (15 seconds,
+  doubling, to ten minutes, 8 tries); refusals no retry changes fail at once.
+  A long reply's chunks are recorded as they go, so a crash resumes at the
+  next. Each post carries a marker in its message metadata: a send Slack
+  never answered is looked for in the thread before it's posted again, and
+  if the thread can't settle it (it can't be read, or is too long), the post
+  is marked `ambiguous`, never posted again blindly.
+- **Checked again right before acting.**
+  - Each post: the binding is the one it was queued under (same revision,
+    as a rebind is a new one), the thread isn't muted, and whoever's request
+    it answers can still read the project. After an unbind or a rebind,
+    queued posts are dropped, never moved to the new channel. A paused
+    Mission still posts about work it had started (pause stops new requests).
+  - Each Ship start: the same binding, not paused, the thread not muted, the
+    requester still able to read the project. A request from before a rebind
+    can't start a Ship.
+  - Each message to a Ship started for a request: the binding it started
+    under still stands, and its requester can still read the project.
+    Otherwise its owner carries on with it in Outrunner. Pause and mute
+    don't stop these: they're about Slack, and work already started goes on.
 
 ## How it works
 
@@ -150,6 +206,9 @@ channel, one channel a Mission.
 | Slack → Mission routing, commands and keywords | `lib/missions/slack-route.ts`, `lib/missions/slack-text.ts`, first in `lib/slack/agent-run.ts` |
 | The Slack tools, limits and thread posts | `lib/missions/slack-tools.ts`, `lib/missions/slack-announce.ts`, `lib/missions/slack-ask.ts` |
 | Binding from the app | `lib/missions/slack-binding.ts`, `/api/missions/[id]/slack`, `components/missions/mission-slack-chip.tsx` |
+| Reliability: saved events, spawn keys, the post queue, revisions | `supabase/migrations/20261112210000_mission_slack_reliability.sql` |
+| Saving and processing Slack's events | `lib/missions/slack-inbound.ts`, `app/api/integrations/slack/events` |
+| The post queue | `lib/missions/slack-outbox.ts` |
 | UI | `components/missions/*`, `hooks/use-missions.ts`, `GET /api/missions` |
 
 ### Tools
@@ -168,11 +227,13 @@ alone.
 | `read_runner` | One Ship's settings, pull requests and latest response. |
 | `archive_runner` | Archive a finished Ship. Refuses one that's working or has an open pull request, unless `force`. |
 | `read_notes` / `write_notes` | The Mission's notes. |
-| `slack_reply` | On call: post in a request's thread (Markdown made mrkdwn, chunked). |
-| `slack_ask` | On call: a question card in a thread, 1 to 5 options and Other. |
-| `slack_react` | On call: 👀, ✅ or ❌ on the thread's latest request. |
+| `slack_reply` | On call: queue a post in a request's thread (Markdown made mrkdwn, chunked). `post_key` for a deliberate repeat. |
+| `slack_ask` | On call: queue a question card in a thread, 1 to 5 options and Other. |
+| `slack_react` | On call: queue 👀, ✅ or ❌ on a request's message (`request_id`, or the thread's latest). |
 
-`spawn_runner` takes a `thread` on call: the Ship is linked to that thread.
+On call, `spawn_runner` takes `request_id` (the request it's for; the older
+`thread` names that thread's latest) and needs a `spawn_key`: see
+[Reliability](#reliability).
 
 They're plain functions over injected dependencies
 (`callMissionTool(scope, name, args, deps)`), so the org-wide MCP server can
@@ -280,9 +341,11 @@ twice records it once. Events are delivered in batches:
 ## Configuration
 
 - **Migrations:** `pnpm db:migrate`, including
-  `20261112200000_mission_slack.sql` for Missions on call in Slack. Until it's
-  applied, the Slack agent behaves as before (it can't tell a channel has a
-  Mission, so it treats none as having one).
+  `20261112200000_mission_slack.sql` and
+  `20261112210000_mission_slack_reliability.sql` for Missions on call in
+  Slack. Until the first is applied, the Slack agent behaves as before (it
+  can't tell a channel has a Mission, so it treats none as having one). Apply
+  both before the code that uses them is deployed.
 
 - **Cron:** nothing new. The Missions tick rides the sessions tick
   (`POST /api/sessions/tick`, every 2 minutes from Cloudflare's `scheduled`),
@@ -326,6 +389,20 @@ twice records it once. Events are delivered in batches:
   Missions and channels, the limits, and the thread posts.
 - `test/mission-slack-events.test.ts`: Slack's blocks, a request folded into
   a running turn, and question cards answered once.
-- `test/mission-slack-sql.test.ts` runs the on-call migration on a real
+- `test/mission-slack-sql.test.ts` runs the on-call migrations on a real
   Postgres (`MISSIONS_PG`): events with no Ship, one Mission a channel, the
-  limits under racing spawns.
+  limits under racing spawns; saved events' leases (a dead processor taken
+  over, its stale finish refused, backoff, giving up); spawn keys (once, the
+  same planned session, racing itself); the post queue (once a key, a
+  thread's oldest first, leases, an ambiguous post not holding its thread up).
+- `test/mission-slack-inbound.test.ts`: saved before the answer, Slack's
+  retries one row, a database that's down a 503, a crash after the answer
+  finished by the tick, the last try saying sorry.
+- `test/mission-slack-outbox.test.ts`: the post queue's rechecks (unbind,
+  rebind, mute, access), a crash resumed at the next chunk, a lost send found
+  in the thread, ambiguous when the thread can't settle it, Retry-After.
+- `test/mission-slack-cards.test.ts`: 2 Ships and 3 pull requests in one
+  thread, each card its own, once.
+- `test/mission-slack-e2e.test.ts`: a mention through a crash, the outbox,
+  the Mission's tools (a lost spawn retried), the queue (a lost send) and the
+  Ship's cards, each message once and in order.

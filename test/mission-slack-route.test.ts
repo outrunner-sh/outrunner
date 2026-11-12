@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { MissionChannel, MissionThread } from "@/lib/missions/slack-store";
+import type { MissionChannel, MissionRequest, MissionThread } from "@/lib/missions/slack-store";
 import { routeToMission, type SlackRouteDeps, type SlackRouteMessage } from "@/lib/missions/slack-route";
 import { onCallCommand, threadKeyword } from "@/lib/missions/slack-text";
 import type { RecordedEvent } from "@/lib/missions/watch";
@@ -26,11 +26,12 @@ function mission(id: string, patch: Partial<Workspace> = {}): Workspace {
  *  Una isn't linked. */
 function world(patch: { binding?: Partial<MissionChannel>; mission?: Partial<Workspace> } = {}) {
   const bindings: MissionChannel[] = [
-    { missionId: "m1", orgId: "o1", teamId: "T1", channelId: "C1", boundBy: "wes", listen: "mentions", allowBotMessages: false, paused: false, ...patch.binding },
+    { missionId: "m1", orgId: "o1", teamId: "T1", channelId: "C1", boundBy: "wes", listen: "mentions", allowBotMessages: false, paused: false, revision: "rev1", ...patch.binding },
   ];
   const threads: MissionThread[] = [];
   const missions = new Map<string, Workspace>([["m1", { ...mission("m1"), ...patch.mission } as Workspace], ["m2", mission("m2")]]);
   const events: RecordedEvent[] = [];
+  const requests: MissionRequest[] = [];
   const said: string[] = [];
   const linkedUsers: Record<string, { userId: string; orgId: string }> = {
     UALICE: { userId: "alice", orgId: "o1" },
@@ -69,6 +70,9 @@ function world(patch: { binding?: Partial<MissionChannel>; mission?: Partial<Wor
         threads.push(thread);
       }
       return thread;
+    },
+    recordRequest: async (request) => {
+      if (!requests.some((r) => r.missionId === request.missionId && r.requestKey === request.requestKey)) requests.push(request);
     },
     setMuted: async (id, muted) => {
       threads.find((t) => t.id === id)!.muted = muted;
@@ -111,14 +115,14 @@ function world(patch: { binding?: Partial<MissionChannel>; mission?: Partial<Wor
     },
     bind: async (input) => {
       state.bound.push(input.missionId);
-      bindings.push({ missionId: input.missionId, orgId: input.orgId, teamId: "T1", channelId: "C2", boundBy: input.boundBy, listen: "mentions", allowBotMessages: false, paused: false });
+      bindings.push({ missionId: input.missionId, orgId: input.orgId, teamId: "T1", channelId: "C2", boundBy: input.boundBy, listen: "mentions", allowBotMessages: false, paused: false, revision: "rev1" });
       return "bound";
     },
     announce: async () => {
       said.push("announced");
     },
   };
-  return { deps, events, said, threads, bindings, state };
+  return { deps, events, said, threads, bindings, state, requests };
 }
 
 function msg(patch: Partial<SlackRouteMessage> = {}): SlackRouteMessage {
@@ -137,6 +141,7 @@ test("a mention in a bound channel goes to its Mission as a slack_request, not t
   assert.deepEqual(event.payload.slack, {
     channel: "C1",
     thread: "1731400000.000100",
+    request: "Ev1",
     ts: "1731400000.000100",
     permalink: "https://acme.slack.com/archives/C1/p1731400000000100",
     author: "name-of-UALICE",
@@ -147,9 +152,16 @@ test("a mention in a bound channel goes to its Mission as a slack_request, not t
   });
   // The thread is the Mission's now: a reply there needs no mention.
   assert.equal(w.threads[0].missionId, "m1");
+  // The request is recorded before the Mission hears of it: who asked, under
+  // which binding.
+  assert.deepEqual(w.requests, [
+    { missionId: "m1", requestKey: "Ev1", threadId: "t1", bindingRevision: "rev1", messageTs: "1731400000.000100", requestedBy: "alice", requestedBySlack: "UALICE" },
+  ]);
   assert.equal(await routeToMission(msg({ mention: false, text: "also the signup page", ts: "1731400001.000100", threadTs: "1731400000.000100", eventId: "Ev2" }), w.deps), true);
   assert.equal(w.events.length, 2);
   assert.equal(w.events[1].payload.slack?.thread, "1731400000.000100");
+  // Two requests in one thread, each its own.
+  assert.deepEqual(w.requests.map((r) => [r.requestKey, r.threadId]), [["Ev1", "t1"], ["Ev2", "t1"]]);
 });
 
 test("an unbound channel, DMs, and others' threads go on to the Slack agent", async () => {
@@ -172,6 +184,7 @@ test("Slack's retries of an event are one request", async () => {
   await routeToMission(msg(), w.deps);
   await routeToMission(msg(), w.deps);
   assert.equal(w.events.length, 1);
+  assert.equal(w.requests.length, 1);
   // With no event id, the message's own place is its key: still once.
   const v = world();
   await routeToMission(msg({ eventId: null }), v.deps);

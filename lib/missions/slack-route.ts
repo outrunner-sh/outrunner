@@ -23,7 +23,7 @@
  */
 
 import { eventKey, type SlackEventPayload } from "@/lib/missions/events";
-import type { MissionChannel, MissionThread, BindOutcome } from "@/lib/missions/slack-store";
+import type { MissionChannel, MissionRequest, MissionThread, BindOutcome } from "@/lib/missions/slack-store";
 import { ON_CALL_HELP, onCallCommand, threadKeyword, withoutMention, type OnCallCommand } from "@/lib/missions/slack-text";
 import type { RecordedEvent } from "@/lib/missions/watch";
 import { allows, type AccessLevel } from "@/lib/orgs/access";
@@ -72,6 +72,8 @@ export type SlackRouteDeps = {
     startedBy: string | null;
     startedBySlack: string | null;
   }): Promise<MissionThread>;
+  /** Record the request, once (its key is the Slack event's). */
+  recordRequest(request: MissionRequest): Promise<void>;
   setMuted(threadId: string, muted: boolean): Promise<void>;
   setPaused(missionId: string, paused: boolean): Promise<void>;
   /** Take the Mission off call here, and tell it. */
@@ -218,7 +220,8 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
   }
 
   const permalink = await deps.permalink(message.ts).catch(() => null);
-  await deps.acceptThread({
+  const requestKey = message.eventId ?? `${message.teamId}:${message.channel}:${message.ts}`;
+  const accepted = await deps.acceptThread({
     missionId: mission.id,
     threadTs,
     requestTs: message.ts,
@@ -226,9 +229,21 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
     startedBy: requester.userId,
     startedBySlack: message.botId ? null : message.user,
   });
+  // Saved before the Mission hears of it: its Ships and their pull requests
+  // are tracked by it, and who asked is rechecked by it before acting.
+  await deps.recordRequest({
+    missionId: mission.id,
+    requestKey,
+    threadId: accepted.id,
+    bindingRevision: binding.revision,
+    messageTs: message.ts,
+    requestedBy: requester.userId,
+    requestedBySlack: message.botId ? null : message.user,
+  });
   const slack: SlackEventPayload = {
     channel: message.channel,
     thread: threadTs,
+    request: requestKey,
     ts: message.ts,
     permalink,
     author: message.botId ? `a bot (${message.botId})` : await deps.name(message.user),
@@ -242,7 +257,7 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
     runnerId: null,
     kind: "slack_request",
     payload: { slack },
-    key: eventKey.slackRequest(message.eventId ?? `${message.teamId}:${message.channel}:${message.ts}`),
+    key: eventKey.slackRequest(requestKey),
   });
   return true;
 }

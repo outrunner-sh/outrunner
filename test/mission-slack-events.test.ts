@@ -33,6 +33,7 @@ const request: MissionEvent = {
     slack: {
       channel: "C1",
       thread: "1731400000.000100",
+      request: "Ev1",
       ts: "1731400000.000100",
       permalink: "https://acme.slack.com/archives/C1/p1731400000000100",
       author: "Ana",
@@ -48,7 +49,7 @@ test("a slack_request reads as its own block, naming its thread", () => {
   const text = formatDelivery([request]);
   assert.equal(
     text,
-    `<slack_request thread="1731400000.000100" from="Ana" permalink="https://acme.slack.com/archives/C1/p1731400000000100" at="${at(20)}">\nThe login page 500s on Safari.\nFiles: trace.txt\n</slack_request>`,
+    `<slack_request thread="1731400000.000100" request_id="Ev1" from="Ana" permalink="https://acme.slack.com/archives/C1/p1731400000000100" at="${at(20)}">\nThe login page 500s on Safari.\nFiles: trace.txt\n</slack_request>`,
   );
   const { events, rest } = parseRunnerEvents(text);
   assert.equal(rest, "");
@@ -183,7 +184,7 @@ test("a slack_request while the Mission works is folded into its turn: one turn,
 // A question card's click.
 
 function askWorld(patch: { answered?: boolean } = {}) {
-  const binding: MissionChannel = { missionId: "m1", orgId: "o1", teamId: "T1", channelId: "C1", boundBy: "wes", listen: "mentions", allowBotMessages: false, paused: false };
+  const binding: MissionChannel = { missionId: "m1", orgId: "o1", teamId: "T1", channelId: "C1", boundBy: "wes", listen: "mentions", allowBotMessages: false, paused: false, revision: "rev1" };
   const thread: MissionThread = {
     id: "t1",
     missionId: "m1",

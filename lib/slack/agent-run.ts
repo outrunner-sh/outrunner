@@ -151,7 +151,13 @@ async function askToConnect(install: SlackInstallation, message: { channel: stri
  * reply in a thread it's in, or a DM, continues it. Once the thread's work is
  * filed, what's said there becomes notes on the item.
  */
-export async function handleAgentMessage(message: AgentMessage): Promise<void> {
+export async function handleAgentMessage(
+  message: AgentMessage,
+  /** A message saved before Slack was answered (lib/missions/slack-inbound.ts):
+   *  a failure routing it to a Mission is thrown, so it's tried again, until
+   *  its last try (`final`), which says sorry as before. */
+  options: { retryable?: boolean; final?: boolean } = {},
+): Promise<void> {
   const install = await getInstallation(message.teamId);
   if (!install) {
     console.error(`Slack agent: no bot token for team ${message.teamId}; install the app again through its install link.`);
@@ -169,6 +175,7 @@ export async function handleAgentMessage(message: AgentMessage): Promise<void> {
     const connect = (at: string) => askToConnect(install, { channel: message.channel, user: message.user, threadTs: at });
     if (await routeToMission(message, slackRouteDeps(install, message, connect))) return;
   } catch (error) {
+    if (options.retryable && !options.final) throw error;
     console.error("Slack: the Mission on call couldn't take a message", error);
     // Only to someone who asked: a blip mustn't answer every reply, or a bot.
     if (message.mention && !message.botId) await reply("Sorry, something went wrong on my side. Mention me again to retry.").catch(() => undefined);

@@ -110,10 +110,12 @@ export function reactionName(emoji: string): string | null {
 }
 
 /** A Ship's pull request ready, merged or closed, as its thread is told. */
-export function pullRequestCard(kind: "ready" | "merged" | "closed", pr: PullRequestRef, ship: string): string {
+export function pullRequestCard(kind: "opened" | "ready" | "merged" | "closed", pr: PullRequestRef, ship: string): string {
   const link = pullRequestLink(pr);
   const who = ship.replace(/[<>|*]/g, "");
   switch (kind) {
+    case "opened":
+      return `:arrow_heading_up: Opened: ${link} (Ship ${who})`;
     case "ready":
       return `:white_check_mark: Ready for review: ${link} (Ship ${who})`;
     case "merged":

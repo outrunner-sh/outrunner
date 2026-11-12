@@ -38,6 +38,9 @@ export type SlackEventPayload = {
   /** slack_request / slack_answer: the thread's ts, which the Mission's
    *  slack_* tools name it by. */
   thread?: string;
+  /** slack_request: its key, which spawn_runner and slack_react take as
+   *  request_id. */
+  request?: string;
   /** slack_request: the message's own ts. */
   ts?: string;
   permalink?: string | null;
@@ -161,6 +164,7 @@ function formatSlackEvent(event: MissionEvent): string {
   const s = event.payload.slack;
   const attrs = [
     s?.thread && `thread="${attr(s.thread)}"`,
+    s?.request && `request_id="${attr(s.request)}"`,
     s?.author && `from="${attr(s.author)}"`,
     s?.permalink && `permalink="${attr(s.permalink)}"`,
     `at="${event.createdAt}"`,

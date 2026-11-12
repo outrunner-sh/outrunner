@@ -21,6 +21,7 @@ import {
   bindChannel,
   channelBinding,
   channelThread,
+  recordRequest,
   setChannelPaused,
   setThreadMuted,
 } from "@/lib/missions/slack-store";
@@ -191,6 +192,7 @@ export function slackRouteDeps(
     level: missionLevel,
     projectName: projectNameOf,
     acceptThread: (input) => acceptThread({ ...input, teamId, channelId: channel }),
+    recordRequest,
     setMuted: setThreadMuted,
     setPaused: async (missionId, paused) => {
       await setChannelPaused(missionId, paused);

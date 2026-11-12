@@ -31,6 +31,13 @@ function db() {
   return createSupabaseAdminClient();
 }
 
+/** A Ship's pull request seen open, told in its Slack thread if it has one
+ *  (lib/missions/slack-announce.ts); never fails the recording. */
+async function openedInSlack(runner: Workspace, pr: PullRequestRef): Promise<void> {
+  const { tellPullRequestOpened } = await import("@/lib/missions/slack-announce.deps");
+  await tellPullRequestOpened(runner, pr);
+}
+
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");
 }
@@ -65,6 +72,8 @@ export async function notePullRequestActivity(activity: PullRequestActivity): Pr
           { onConflict: "runner_id,repo,number", ignoreDuplicates: false },
         );
       if (error) throw error;
+      // On call in Slack: its thread hears it opened (once, by its key).
+      if (pr.state === "open") await openedInSlack(runner, { repo: activity.repo, number: pr.number, url: pr.url, title: pr.title });
     }
     const { data: rows, error } = await db()
       .from("runner_pull_requests")
@@ -186,7 +195,12 @@ export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<
           )
           .select("number");
         if (error) throw error;
-        if (made?.length) found.add(runner.id);
+        if (made?.length) {
+          found.add(runner.id);
+          if (pull.state === "open") {
+            await openedInSlack(runner, { repo, number: pull.number, url: pull.html_url ?? `https://github.com/${repo}/pull/${pull.number}`, title: pull.title ?? "" });
+          }
+        }
         // A closed one GitHub shows open again is followed again here too:
         // no webhook tells this path, and DO NOTHING can't reopen a row.
         if (pull.state === "open") {

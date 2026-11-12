@@ -28,18 +28,24 @@ import { ActAsUserError, actAsUser } from "@/lib/supabase/acting-user";
  * is set up after, while the Mission goes on. A refusal (no model, the cap,
  * the plan's box limit) is answered with why.
  */
-export async function startRunner(mission: Workspace, start: RunnerStart): Promise<{ runnerId: string } | { error: string }> {
+export async function startRunner(
+  mission: Workspace,
+  start: RunnerStart,
+): Promise<{ runnerId: string } | { error: string; definite: boolean }> {
   let made: (id: string) => void = () => undefined;
   const created = new Promise<{ runnerId: string }>((resolve) => {
     made = (runnerId) => resolve({ runnerId });
   });
-  const run = (async (): Promise<{ runnerId: string } | { error: string }> => {
+  const run = (async (): Promise<{ runnerId: string } | { error: string; definite: boolean }> => {
     try {
       return await actAsUser(mission.ownerId, async () => {
         const owner = await getOwner();
-        if (!owner) return { error: "The Runner's owner can't use Outrunner any more." };
+        if (!owner) return { error: "The Runner's owner can't use Outrunner any more.", definite: true };
         let runnerId: string | null = null;
-        const response = await createCloudSession(owner, mission.projectId, runnerRequest(mission, start), {
+        // A start with its id chosen (a Ship start's reservation) asks for
+        // that id: tried again, the session made the first time is found.
+        const request = { ...runnerRequest(mission, start), ...(start.id && { id: start.id }) };
+        const response = await createCloudSession(owner, mission.projectId, request, {
           title: start.name ?? start.brief.replace(/\s+/g, " ").slice(0, 80),
           // Plan mode as the API asks it of a session (lib/api/create-request.ts).
           firstMessage: firstPrompt({ prompt: start.brief, planMode: start.planMode }),
@@ -62,13 +68,17 @@ export async function startRunner(mission: Workspace, start: RunnerStart): Promi
         });
         if (runnerId) watchSoon(runnerId);
         if (response.status === 202 && runnerId) return { runnerId };
-        const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
-        return { error: typeof body?.error === "string" ? body.error : `it was refused (${response.status})` };
+        const body = (await response.json().catch(() => null)) as { error?: unknown; workspace?: { id?: unknown } } | null;
+        // Made by an earlier try with the same id: that's this Runner.
+        if (response.status === 202 && typeof body?.workspace?.id === "string") return { runnerId: body.workspace.id };
+        // An answer, not a failure to hear one: no session came of this call.
+        return { error: typeof body?.error === "string" ? body.error : `it was refused (${response.status})`, definite: response.status < 500 };
       });
     } catch (error) {
-      if (error instanceof ActAsUserError) return { error: error.message };
+      if (error instanceof ActAsUserError) return { error: error.message, definite: true };
       console.error(`Mission ${mission.id}: a Runner didn't start`, error);
-      return { error: "Outrunner couldn't start it, and logged why." };
+      // Thrown partway: whether its session was made is unknown.
+      return { error: "Outrunner couldn't start it, and logged why.", definite: false };
     }
   })();
   // The setup outlives the tool's answer: held open for it.

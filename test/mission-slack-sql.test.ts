@@ -181,3 +181,144 @@ test("a question is answered once", { skip }, () => {
   assert.equal(claim(), "");
   fails(`insert into mission_slack_asks (mission_id, thread_id, question, options) values ('${m}', '${t}', 'Which?', '{}')`, /options_check/);
 });
+
+// ---------------------------------------------------------------------------
+// 20261112210000_mission_slack_reliability.sql
+// ---------------------------------------------------------------------------
+
+test("a binding made again is a new revision", { skip }, () => {
+  const o = org();
+  const m = mission();
+  bind(m, o, "C500");
+  const first = psql(`select revision from mission_channels where mission_id = '${m}'`);
+  psql(`delete from mission_channels where mission_id = '${m}'`);
+  bind(m, o, "C500");
+  assert.notEqual(psql(`select revision from mission_channels where mission_id = '${m}'`), first);
+});
+
+function inbound(id: string): void {
+  psql(`insert into mission_slack_inbound (event_id, team_id, channel_id, message) values ('${id}', 'T1', 'C1', '{"text":"hi"}') on conflict (event_id) do nothing`);
+}
+
+function claimInbound(id: string): string {
+  return psql(`select attempt from claim_mission_slack_inbound('${id}', 120)`);
+}
+
+test("a saved event is one row however often Slack sends it, and taken under a lease", { skip }, () => {
+  inbound("EvA");
+  inbound("EvA");
+  assert.equal(psql(`select count(*) from mission_slack_inbound where event_id = 'EvA'`), "1");
+  assert.equal(claimInbound("EvA"), "1");
+  assert.equal(claimInbound("EvA"), "", "held by the first");
+  // Not due to the tick while leased.
+  assert.equal(psql(`select count(*) from due_mission_slack_inbound(100, 0) where event_id = 'EvA'`), "0");
+});
+
+test("a processor that dies: its lease runs out, the tick takes it over, and the dead one can't finish it", { skip }, () => {
+  inbound("EvB");
+  assert.equal(claimInbound("EvB"), "1");
+  psql(`update mission_slack_inbound set lease_until = now() - interval '1 second' where event_id = 'EvB'`);
+  assert.equal(psql(`select count(*) from due_mission_slack_inbound(100, 0) where event_id = 'EvB'`), "1");
+  assert.equal(claimInbound("EvB"), "2");
+  assert.equal(psql(`select complete_mission_slack_inbound('EvB', 1)`), "f", "the first claim's finish is stale");
+  assert.equal(psql(`select complete_mission_slack_inbound('EvB', 2)`), "t");
+  assert.equal(psql(`select status from mission_slack_inbound where event_id = 'EvB'`), "done");
+  assert.equal(claimInbound("EvB"), "", "done is done");
+});
+
+test("a failure backs off, and is given up after its tries; the tick's grace lets the first processor go first", { skip }, () => {
+  inbound("EvC");
+  assert.equal(psql(`select count(*) from due_mission_slack_inbound(100, 60) where event_id = 'EvC'`), "0", "too new for the tick");
+  claimInbound("EvC");
+  psql(`select fail_mission_slack_inbound('EvC', 1, 'blip', 2)`);
+  assert.equal(psql(`select status || ',' || (next_attempt_at > now()) || ',' || (lease_until is null) from mission_slack_inbound where event_id = 'EvC'`), "pending,true,true");
+  assert.equal(claimInbound("EvC"), "", "backing off");
+  psql(`update mission_slack_inbound set next_attempt_at = now() where event_id = 'EvC'`);
+  assert.equal(claimInbound("EvC"), "2");
+  psql(`select fail_mission_slack_inbound('EvC', 2, 'blip', 2)`);
+  assert.equal(psql(`select status from mission_slack_inbound where event_id = 'EvC'`), "failed");
+});
+
+function spawnKey(m: string, request: string | null, key: string): string[] {
+  return psql(
+    `select coalesce(ship_id::text, '-') || ',' || coalesce(planned_runner_id::text, '-') || ',' || coalesce(runner_id::text, '-') || ',' || existing || ',' || coalesce(refusal, '-') from reserve_mission_slack_spawn('${m}', ${request ? `'${request}'` : "null"}, '${key}', null, null, 'U1', null)`,
+  ).split(",");
+}
+
+test("a Ship start's key: reserved once, the same planned session id on a retry, its Ship once linked", { skip }, () => {
+  const m = mission();
+  const [ship, planned, runnerId, existing] = spawnKey(m, "Ev1", "fix-login");
+  assert.equal(runnerId, "-");
+  assert.equal(existing, "false");
+  const again = spawnKey(m, "Ev1", "fix-login");
+  assert.deepEqual(again.slice(0, 4), [ship, planned, "-", "true"]);
+  // Another key, or the same key for another request: another start.
+  assert.notEqual(spawnKey(m, "Ev1", "fix-tests")[1], planned);
+  assert.notEqual(spawnKey(m, "Ev2", "fix-login")[1], planned);
+  // No request: keyed all the same.
+  assert.equal(spawnKey(m, null, "chore")[3], "false");
+  assert.equal(spawnKey(m, null, "chore")[3], "true");
+  // Its Ship made: the retry returns it.
+  const r = runner(m);
+  psql(`update mission_slack_ships set runner_id = '${r}' where id = '${ship}'`);
+  assert.equal(spawnKey(m, "Ev1", "fix-login")[2], r);
+  fails(`select * from reserve_mission_slack_spawn('${m}', 'Ev1', 'has space', null, null, null, null)`, /spawn_key_check/);
+});
+
+test("spawn keys and the limits count together; a key already reserved still answers at the limit", { skip }, () => {
+  const m = mission();
+  for (let i = 0; i < 3; i++) reserve(m);
+  for (let i = 0; i < 3; i++) assert.equal(spawnKey(m, "Ev1", `k${i}`)[3], "false");
+  assert.equal(spawnKey(m, "Ev1", "k9")[4], "hour");
+  assert.equal(reserve(m), "hour");
+  assert.equal(spawnKey(m, "Ev1", "k0")[3], "true");
+});
+
+test("the same key racing itself: one reservation, one planned session", { skip }, async () => {
+  const m = mission();
+  const sql = `select planned_runner_id from reserve_mission_slack_spawn('${m}', 'Ev1', 'race', null, null, null, null)`;
+  const results = await Promise.all([psqlAsync(sql), psqlAsync(sql), psqlAsync(sql), psqlAsync(sql)]);
+  assert.equal(new Set(results).size, 1);
+  assert.equal(psql(`select count(*) from mission_slack_ships where mission_id = '${m}'`), "1");
+});
+
+function post(m: string, key: string, channel: string, thread: string, age: string): string {
+  return psql(
+    `insert into mission_slack_posts (op_key, mission_id, binding_revision, team_id, channel_id, thread_ts, kind, payload, created_at) values ('${key}', '${m}', gen_random_uuid(), 'T1', '${channel}', '${thread}', 'reply', '{"chunks":["x"]}', now() - interval '${age}') on conflict (op_key) do nothing returning id`,
+  );
+}
+
+function claimPosts(target: string | null = null): string[] {
+  const out = psql(`select op_key from claim_mission_slack_posts(${target ? `'${target}'` : "null"}, 10, 120) order by op_key`);
+  return out ? out.split("\n") : [];
+}
+
+test("posts: once a key; a thread's oldest goes first; a claimed one is held by its lease", { skip }, () => {
+  const m = mission();
+  const first = post(m, `a1:${m}`, "C100", "1731400000.000100", "3 minutes");
+  assert.equal(post(m, `a1:${m}`, "C100", "1731400000.000100", "1 minute"), "", "queued once");
+  post(m, `a2:${m}`, "C100", "1731400000.000100", "2 minutes");
+  post(m, `b1:${m}`, "C100", "1731400000.000900", "1 minute");
+  // The second of thread a waits behind the first.
+  assert.deepEqual(claimPosts(), [`a1:${m}`, `b1:${m}`]);
+  assert.deepEqual(claimPosts(), [], "all held, or waiting their turn");
+  psql(`update mission_slack_posts set status = 'sent', lease_until = null where id = '${first}'`);
+  assert.deepEqual(claimPosts(), [`a2:${m}`]);
+  // A lease run out: taken again, as attempt 2.
+  psql(`update mission_slack_posts set lease_until = now() - interval '1 second' where op_key = 'b1:${m}'`);
+  assert.deepEqual(claimPosts(), [`b1:${m}`]);
+  assert.equal(psql(`select attempts from mission_slack_posts where op_key = 'b1:${m}'`), "2");
+  // A post can't be retargeted: its channel is its own.
+  fails(`update mission_slack_posts set channel_id = 'D1' where op_key = 'b1:${m}'`, /channel_id_check/);
+});
+
+test("an ambiguous or failed post doesn't hold its thread up; a question card is asked once", { skip }, () => {
+  const m = mission();
+  const stuck = post(m, `s1:${m}`, "C200", "1731400000.000100", "2 minutes");
+  post(m, `s2:${m}`, "C200", "1731400000.000100", "1 minute");
+  psql(`update mission_slack_posts set status = 'ambiguous' where id = '${stuck}'`);
+  assert.deepEqual(claimPosts(), [`s2:${m}`]);
+  const t = psql(`insert into mission_threads (mission_id, slack_team_id, channel_id, thread_ts) values ('${m}', 'T1', 'C200', '1731400000.000100') returning id`);
+  psql(`insert into mission_slack_asks (mission_id, thread_id, question, options, op_key) values ('${m}', '${t}', 'q', '{a}', 'ask:${m}')`);
+  fails(`insert into mission_slack_asks (mission_id, thread_id, question, options, op_key) values ('${m}', '${t}', 'q', '{a}', 'ask:${m}')`, /op_key_key/);
+});

@@ -4,6 +4,8 @@ import { firstSighting } from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";
 import { type AgentMessage, handleAgentMessage } from "@/lib/slack/agent-run";
 import { verifySlackSignature } from "@/lib/slack/slack";
+import { acceptInbound } from "@/lib/missions/slack-inbound";
+import { inboundDeps, processInboundNow } from "@/lib/missions/slack-inbound.deps";
 
 /** Slack sends nothing larger; anything that is, isn't Slack. */
 const MAX_BODY_BYTES = 256 * 1024;
@@ -56,7 +58,22 @@ export async function POST(request: Request) {
   }
 
   const message = agentMessage(envelope.team_id, envelope.event, envelope.event_id);
-  if (message && (await firstSighting(envelope.event_id))) {
+  if (!message) return new NextResponse(null, { status: 200 });
+  // A Mission's: saved before Slack hears back (lib/missions/slack-inbound.ts).
+  const eventId = envelope.event_id;
+  let accepted: Awaited<ReturnType<typeof acceptInbound>>;
+  try {
+    accepted = await acceptInbound(eventId, message, inboundDeps());
+  } catch (error) {
+    // Not saved, so not acknowledged: Slack sends it again.
+    console.error(`Slack: event ${eventId} couldn't be saved for a Mission`, error);
+    return NextResponse.json({ error: "Try again shortly." }, { status: 503 });
+  }
+  if (accepted !== "not_mission") {
+    after(() => processInboundNow(eventId));
+    return new NextResponse(null, { status: 200 });
+  }
+  if (await firstSighting(eventId)) {
     after(() => handleAgentMessage(message));
   }
   return new NextResponse(null, { status: 200 });

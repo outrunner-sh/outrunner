@@ -22,6 +22,9 @@ export type MissionChannel = {
   listen: "mentions" | "all";
   allowBotMessages: boolean;
   paused: boolean;
+  /** New each time it's bound: what's queued under one never goes under
+   *  another. */
+  revision: string;
 };
 
 /** A thread the Mission took a request in. */
@@ -47,6 +50,7 @@ type ChannelRow = {
   listen: "mentions" | "all";
   allow_bot_messages: boolean;
   paused: boolean;
+  revision?: string;
 };
 
 type ThreadRow = {
@@ -72,6 +76,8 @@ function toChannel(row: ChannelRow): MissionChannel {
     listen: row.listen,
     allowBotMessages: row.allow_bot_messages,
     paused: row.paused,
+    // Before the reliability migration, one revision for the binding's life.
+    revision: row.revision ?? `${row.mission_id}:${row.slack_team_id}:${row.channel_id}`,
   };
 }
 
@@ -241,25 +247,6 @@ export async function setThreadMuted(threadId: string, muted: boolean): Promise<
   if (error) throw error;
 }
 
-/** A place for a Ship under the Mission's limits, or which limit said no. */
-export async function reserveSlackShip(
-  missionId: string,
-  threadId: string | null,
-  requester: { userId: string | null; slackUserId: string | null },
-): Promise<{ id: string } | { refused: "hour" | "day"; limit: number }> {
-  const { data, error } = await db().rpc("reserve_mission_slack_ship", {
-    target: missionId,
-    thread: threadId,
-    requester: requester.userId,
-    slack_user: requester.slackUserId,
-  });
-  if (error) throw error;
-  const row = data?.[0];
-  if (row?.ship_id) return { id: row.ship_id };
-  const refused = row?.refusal === "day" ? "day" : "hour";
-  return { refused, limit: row?.refused_at_limit ?? (refused === "day" ? 30 : 6) };
-}
-
 export async function linkSlackShip(id: string, runnerId: string): Promise<void> {
   const { error } = await db().from("mission_slack_ships").update({ runner_id: runnerId }).eq("id", id);
   if (error) throw error;
@@ -268,13 +255,6 @@ export async function linkSlackShip(id: string, runnerId: string): Promise<void>
 export async function releaseSlackShip(id: string): Promise<void> {
   const { error } = await db().rpc("release_mission_slack_ship", { target: id });
   if (error) throw error;
-}
-
-/** The thread a Ship was started for, if any. */
-export async function shipThread(runnerId: string): Promise<MissionThread | null> {
-  const { data, error } = await db().from("mission_slack_ships").select("thread_id").eq("runner_id", runnerId).maybeSingle();
-  if (error) throw error;
-  return data?.thread_id ? threadById(data.thread_id) : null;
 }
 
 /** Each of these Ships' thread links, for the Ships pane. */
@@ -293,17 +273,6 @@ export async function shipThreadLinks(runnerIds: string[]): Promise<Map<string, 
     if (row.runner_id && link) links.set(row.runner_id, link);
   }
   return links;
-}
-
-/** A question card, before it's posted. */
-export async function saveAsk(input: { missionId: string; threadId: string; question: string; options: string[] }): Promise<string> {
-  const { data, error } = await db()
-    .from("mission_slack_asks")
-    .insert({ mission_id: input.missionId, thread_id: input.threadId, question: input.question, options: input.options })
-    .select("id")
-    .single();
-  if (error) throw error;
-  return data.id;
 }
 
 export async function setAskMessage(id: string, messageTs: string): Promise<void> {
@@ -347,4 +316,155 @@ export async function claimAnswer(id: string, answer: { text: string; userId: st
     .select("id");
   if (error) throw error;
   return (data?.length ?? 0) > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Requests, spawn keys, the post queue (20261112210000_mission_slack_reliability.sql)
+// ---------------------------------------------------------------------------
+
+/** A Slack request a Mission took: its key, thread, who asked, and the
+ *  binding it came in under. */
+export type MissionRequest = {
+  missionId: string;
+  requestKey: string;
+  threadId: string | null;
+  bindingRevision: string | null;
+  messageTs: string | null;
+  requestedBy: string | null;
+  requestedBySlack: string | null;
+};
+
+function toRequest(row: {
+  mission_id: string;
+  request_key: string;
+  thread_id: string | null;
+  binding_revision: string | null;
+  message_ts: string | null;
+  requested_by: string | null;
+  requested_by_slack: string | null;
+}): MissionRequest {
+  return {
+    missionId: row.mission_id,
+    requestKey: row.request_key,
+    threadId: row.thread_id,
+    bindingRevision: row.binding_revision,
+    messageTs: row.message_ts,
+    requestedBy: row.requested_by,
+    requestedBySlack: row.requested_by_slack,
+  };
+}
+
+/** Record a request, once: a retry of it changes nothing. */
+export async function recordRequest(request: MissionRequest): Promise<void> {
+  const { error } = await db()
+    .from("mission_slack_requests")
+    .upsert(
+      {
+        mission_id: request.missionId,
+        request_key: request.requestKey,
+        thread_id: request.threadId,
+        binding_revision: request.bindingRevision,
+        message_ts: request.messageTs,
+        requested_by: request.requestedBy,
+        requested_by_slack: request.requestedBySlack,
+      },
+      { onConflict: "mission_id,request_key", ignoreDuplicates: true },
+    );
+  if (error) throw error;
+}
+
+export async function requestByKey(missionId: string, requestKey: string): Promise<MissionRequest | null> {
+  const { data, error } = await db().from("mission_slack_requests").select("*").eq("mission_id", missionId).eq("request_key", requestKey).maybeSingle();
+  if (error) throw error;
+  return data ? toRequest(data) : null;
+}
+
+/** A thread's newest request. */
+export async function latestRequest(threadId: string): Promise<MissionRequest | null> {
+  const { data, error } = await db()
+    .from("mission_slack_requests")
+    .select("*")
+    .eq("thread_id", threadId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toRequest(data) : null;
+}
+
+export type SpawnReservation =
+  | { refused: "hour" | "day"; limit: number }
+  | { id: string; plannedRunnerId: string; runnerId: string | null; existing: boolean };
+
+/** Reserve a Ship start under its key (reserve_mission_slack_spawn). */
+export async function reserveSpawn(input: {
+  missionId: string;
+  requestKey: string | null;
+  spawnKey: string;
+  threadId: string | null;
+  requester: string | null;
+  requesterSlack: string | null;
+  revision: string;
+}): Promise<SpawnReservation> {
+  const { data, error } = await db().rpc("reserve_mission_slack_spawn", {
+    target: input.missionId,
+    request: input.requestKey,
+    spawn: input.spawnKey,
+    thread: input.threadId,
+    requester: input.requester,
+    slack_user: input.requesterSlack,
+    revision: input.revision,
+  });
+  if (error) throw error;
+  const row = data?.[0];
+  if (row?.ship_id && row.planned_runner_id) {
+    return { id: row.ship_id, plannedRunnerId: row.planned_runner_id, runnerId: row.runner_id, existing: row.existing };
+  }
+  const refused = row?.refusal === "day" ? "day" : "hour";
+  return { refused, limit: row?.refused_at_limit ?? (refused === "day" ? 30 : 6) };
+}
+
+/** A Ship's place in the ledger: its request, who asked, the binding. */
+export type ShipLedger = {
+  requestKey: string | null;
+  requestedBy: string | null;
+  bindingRevision: string | null;
+  thread: MissionThread | null;
+};
+
+export async function shipLedger(runnerId: string): Promise<ShipLedger | null> {
+  const { data, error } = await db()
+    .from("mission_slack_ships")
+    .select("request_key, requested_by, binding_revision, thread_id")
+    .eq("runner_id", runnerId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    requestKey: data.request_key,
+    requestedBy: data.requested_by,
+    bindingRevision: data.binding_revision,
+    thread: data.thread_id ? await threadById(data.thread_id) : null,
+  };
+}
+
+/** Whether a thread is muted (a thread no Mission took isn't). */
+export async function threadMuted(teamId: string, channelId: string, threadTs: string): Promise<boolean> {
+  return (await channelThread(teamId, channelId, threadTs))?.muted ?? false;
+}
+
+/** A question card under its key: the one there already, if it was asked. */
+export async function saveAskOnce(input: { missionId: string; threadId: string; question: string; options: string[]; opKey: string }): Promise<string> {
+  const { data, error } = await db()
+    .from("mission_slack_asks")
+    .upsert(
+      { mission_id: input.missionId, thread_id: input.threadId, question: input.question, options: input.options, op_key: input.opKey },
+      { onConflict: "op_key", ignoreDuplicates: true },
+    )
+    .select("id");
+  if (error) throw error;
+  if (data?.[0]) return data[0].id;
+  const { data: found, error: findError } = await db().from("mission_slack_asks").select("id").eq("op_key", input.opKey).single();
+  if (findError) throw findError;
+  return found.id;
 }
