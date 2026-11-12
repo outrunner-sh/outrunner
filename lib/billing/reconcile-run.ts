@@ -40,6 +40,9 @@ export async function runReconcile(): Promise<ReconcileReport> {
     observe: async (computer) => {
       const provider = makerOf(computer);
       if (!(await provider.computerRunning(computer.sandboxId))) return { running: false };
+      // A backend that can't bring a paused box back has its boxes metered,
+      // never paused as idle: their activity goes unread, so none reads idle.
+      if (!provider.pausesBoxes) return { running: true, activity: null };
       return { running: true, activity: await activityOf(provider, computer) };
     },
     pause: (computer) => makerOf(computer).pauseComputer(computer.sandboxId),

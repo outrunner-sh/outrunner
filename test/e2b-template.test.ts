@@ -32,6 +32,9 @@ test("an arg left unset fails the build rather than ship an image without it", (
 test("an ARG box/Dockerfile adds later can't silently expand to nothing", () => {
   assert.throws(() => e2bDockerfile("FROM ubuntu\nARG FOO=bar\nRUN echo ${FOO}\n", { X: "1" }), /refers to FOO/);
   assert.throws(() => e2bDockerfile("FROM ubuntu\nARG FOO\nRUN echo $FOO\n", {}), /refers to FOO/);
+  // Docker's default and alternate forms too, which would quietly take the default.
+  assert.throws(() => e2bDockerfile("FROM ubuntu\nARG FOO\nRUN echo ${FOO:-latest}\n", {}), /refers to FOO/);
+  assert.throws(() => e2bDockerfile("FROM ubuntu\nARG FOO\nRUN echo ${FOO:+set}\n", {}), /refers to FOO/);
   // Declared but unused is fine: nothing would expand to nothing.
   assert.equal(e2bDockerfile("FROM ubuntu\nARG FOO\nRUN echo hi\n", {}), "FROM ubuntu\nRUN echo hi\n");
 });
