@@ -6,7 +6,9 @@
 import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import type { LookupFunction } from "node:net";
 
-import { isPrivateAddress } from "@/lib/api/webhooks";
+// Relative, not "@/": the custom server (server.ts) loads this as is, for
+// the relay to a user's self-hosted E2B.
+import { isPrivateAddress } from "./webhooks.ts";
 
 /**
  * The resolver a delivery's connection uses: the host's address is checked

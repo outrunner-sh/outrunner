@@ -28,8 +28,18 @@ const byProvider: Record<string, Record<string, z.ZodType>> = {
   daytona: { DAYTONA_API_KEY: present },
   neev: { NEEV_API_KEY: present, NEEV_ORG_ID: present, NEEV_PROJECT_ID: present },
   modal: { MODAL_TOKEN_ID: present, MODAL_TOKEN_SECRET: present },
-  // Both URLs too: unset, the SDK would quietly use E2B's cloud.
-  e2b: { E2B_API_KEY: present, E2B_API_URL: present, E2B_SANDBOX_URL: present },
+  // The deployment's own E2B is self-hosted and routed by header
+  // (e2b-route.ts), so both URLs are needed with the key.
+  e2b: { OUTRUNNER_E2B_API_KEY: present, OUTRUNNER_E2B_API_URL: present, OUTRUNNER_E2B_SANDBOX_URL: present },
+};
+
+/** The E2B SDK's own environment fallbacks, which lib/runtime/sandbox/
+ *  e2b-sdk.ts refuses on every E2B call (users' own E2B included, whatever
+ *  RUNTIME_PROVIDER is), so they're refused here first, at boot. */
+const E2B_SDK_FALLBACKS: Record<string, string> = {
+  E2B_API_URL: "rename it to OUTRUNNER_E2B_API_URL",
+  E2B_SANDBOX_URL: "rename it to OUTRUNNER_E2B_SANDBOX_URL",
+  E2B_DOMAIN: "unset it",
 };
 
 /** Each problem with `env`, as "NAME is not set"; empty when it's fine. */
@@ -39,12 +49,17 @@ export function startupEnvProblems(env: Record<string, string | undefined>): str
   const provider = typeof given.RUNTIME_PROVIDER === "string" ? given.RUNTIME_PROVIDER : "local";
   const schema = base.extend(byProvider[provider] ?? {});
   const parsed = schema.safeParse(given);
-  if (parsed.success) return [];
-  return parsed.error.issues.map((issue) => {
-    const name = issue.path.join(".");
-    const message = issue.code === "invalid_type" ? "is not set" : issue.message;
-    return `${name} ${message}`;
-  });
+  const problems = parsed.success
+    ? []
+    : parsed.error.issues.map((issue) => {
+        const name = issue.path.join(".");
+        const message = issue.code === "invalid_type" ? "is not set" : issue.message;
+        return `${name} ${message}`;
+      });
+  for (const [name, fix] of Object.entries(E2B_SDK_FALLBACKS)) {
+    if (given[name]) problems.push(`${name} is set, which the E2B SDK would use for every E2B: ${fix}`);
+  }
+  return problems;
 }
 
 /**

@@ -143,9 +143,9 @@ export class AgentClient {
   private readonly target: AgentTarget;
   private readonly fetchFn: FetchFn;
 
-  constructor(target: AgentTarget, fetchFn: FetchFn = fetch) {
+  constructor(target: AgentTarget, fetchFn?: FetchFn) {
     this.target = target;
-    this.fetchFn = fetchFn;
+    this.fetchFn = fetchFn ?? target.controlFetch ?? fetch;
   }
 
   async createWorkspace(
@@ -533,6 +533,9 @@ export class AgentClient {
           authorization: `Bearer ${token}`,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
+        // The agent never redirects; a proxy that does (a user's own E2B)
+        // doesn't get our token, or the provider's headers, sent elsewhere.
+        redirect: "error",
         signal: AbortSignal.timeout(timeoutMs),
       },
     );

@@ -8,6 +8,8 @@ import { NoDaytonaKeyError, UserDaytonaRuntimeProvider } from "@/lib/runtime/day
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import type { BoxResources } from "@/lib/runtime/sandbox/backend";
 import type { ModalToken } from "@/lib/runtime/sandbox/modal";
+import type { StoredE2b } from "@/lib/db/credentials";
+import { E2bTemplateNotReadyError, NoE2bKeyError, UserE2bRuntimeProvider } from "@/lib/runtime/user-e2b-provider";
 import type { ProviderName, RuntimeComputer, RuntimeProvider } from "@/lib/runtime/types";
 import { NoModalTokenError, UserModalRuntimeProvider } from "@/lib/runtime/user-modal-provider";
 
@@ -22,6 +24,7 @@ export type OwnSandboxKeys = {
   gcp?: () => Promise<GcpConnection | null>;
   daytona: () => Promise<string | null>;
   modal: () => Promise<ModalToken | null>;
+  e2b?: () => Promise<StoredE2b | null>;
 };
 
 /**
@@ -33,6 +36,7 @@ export function providerNamed(name: ProviderName, keys: OwnSandboxKeys): Runtime
   if (name === "user-daytona") return new UserDaytonaRuntimeProvider(keys.daytona);
   if (name === "user-gcp") return new UserGcpRuntimeProvider(keys.ownerId ?? "", keys.gcp ?? (async () => null));
   if (name === "user-modal") return new UserModalRuntimeProvider(keys.modal);
+  if (name === "user-e2b") return new UserE2bRuntimeProvider(keys.e2b ?? (async () => null));
   const deployment = getRuntimeProvider();
   return deployment.name === name ? deployment : null;
 }
@@ -51,6 +55,14 @@ export function providerForNewSessions(settings: SandboxSettings, keys: OwnSandb
     case "modal":
       if (!settings.modal.connected) throw new NoModalTokenError();
       return new UserModalRuntimeProvider(keys.modal);
+    case "e2b":
+      // Read through currentSandboxSettings, which moves a template that
+      // isn't ready along first.
+      if (!settings.e2b?.connected || !keys.e2b) throw new NoE2bKeyError();
+      if (!settings.e2b.canStart) {
+        throw new E2bTemplateNotReadyError(settings.e2b.template === "ready" ? "none" : settings.e2b.template, settings.e2b.templateError);
+      }
+      return new UserE2bRuntimeProvider(keys.e2b);
     default:
       return getRuntimeProvider();
   }
@@ -75,6 +87,7 @@ export function sandboxOf(name: ProviderName): SandboxChoice {
   if (name === "user-daytona") return "daytona";
   if (name === "user-modal") return "modal";
   if (name === "user-gcp") return "gcp";
+  if (name === "user-e2b") return "e2b";
   return "outrunner";
 }
 

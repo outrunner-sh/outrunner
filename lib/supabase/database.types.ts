@@ -646,7 +646,7 @@ type UserCredentialsRow = {
   neev_allowance_baseline_usd: number | null;
   neev_allowance_limit_usd: number | null;
   // Settings → Sandbox (supabase/migrations/20261013120000_user_sandbox.sql).
-  sandbox: "outrunner" | "daytona" | "modal" | "gcp";
+  sandbox: "outrunner" | "daytona" | "modal" | "gcp" | "e2b";
   daytona_key_ciphertext: string | null;
   daytona_key_hint: string | null;
   daytona_key_updated_at: string | null;
@@ -654,6 +654,19 @@ type UserCredentialsRow = {
   modal_token_ciphertext: string | null;
   modal_token_hint: string | null;
   modal_token_updated_at: string | null;
+  // supabase/migrations/20261112170000_user_e2b.sql.
+  e2b_key_ciphertext: string | null;
+  e2b_key_hint: string | null;
+  e2b_key_updated_at: string | null;
+  e2b_api_url: string | null;
+  e2b_sandbox_url: string | null;
+  e2b_template_id: string | null;
+  e2b_template_build_id: string | null;
+  e2b_template_tag: string | null;
+  e2b_template_state: "building" | "ready" | "failed" | null;
+  e2b_template_error: string | null;
+  e2b_template_started_at: string | null;
+  e2b_serving_template_id: string | null;
   // supabase/migrations/20261013130000_user_box_size.sql.
   box_size: "x-small" | "small" | "medium" | "large";
   // supabase/migrations/20261030150000_org_defaults.sql.

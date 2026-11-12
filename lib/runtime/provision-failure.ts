@@ -31,6 +31,8 @@ const CREDENTIAL_SHAPES: readonly RegExp[] = [
   /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
   /\bsk-[A-Za-z0-9_-]{20,}/g,
+  // E2B API keys, a user's own among them.
+  /\be2b_[A-Za-z0-9]{20,}/g,
   /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
 ];
 

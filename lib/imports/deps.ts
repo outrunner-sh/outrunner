@@ -1,4 +1,3 @@
-import { NoGcpConnectionError } from "@/lib/runtime/user-gcp-provider";
 /**
  * The real collaborators of an import's plan and commit: the database through
  * the user's own client (RLS confines every read and write to them), Snapshot
@@ -6,16 +5,16 @@ import { NoGcpConnectionError } from "@/lib/runtime/user-gcp-provider";
  */
 
 import { mapWithConcurrency } from "@/lib/concurrency";
-import { getSandboxSettings, ownSandboxKeys } from "@/lib/db/credentials";
+import { ownSandboxKeys } from "@/lib/db/credentials";
 import { createWorkspaceSnapshot, getProject, getWorkspace, listProjects, upsertProjects } from "@/lib/db/repositories";
 import { connectRepositories, type ConnectDeps } from "@/lib/github/connect";
 import { ImportError, type CommitDeps } from "@/lib/imports/commit";
 import type { PlanDeps } from "@/lib/imports/plan";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
-import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { providerForNewSessions } from "@/lib/runtime/sandbox-choice";
 import { SNAPSHOT_BUCKET } from "@/lib/runtime/storage/snapshots";
-import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
+import { SandboxSetupError } from "@/lib/runtime/sandbox-setup-error";
+import { currentSandboxSettings } from "@/lib/runtime/user-e2b-template";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 
 /** Upload URLs minted at once. */
@@ -38,9 +37,9 @@ async function branchesInUse(projectId: string): Promise<Set<string>> {
 export async function importProvider(ownerId: string): Promise<string> {
   let provider;
   try {
-    provider = providerForNewSessions(await getSandboxSettings(ownerId), ownSandboxKeys(ownerId));
+    provider = providerForNewSessions(await currentSandboxSettings(ownerId), ownSandboxKeys(ownerId));
   } catch (error) {
-    if (error instanceof NoDaytonaKeyError || error instanceof NoModalTokenError || error instanceof NoGcpConnectionError) throw new ImportError(error.message, 409);
+    if (error instanceof SandboxSetupError) throw new ImportError(error.message, 409);
     throw error;
   }
   if (!isComputerProvider(provider)) {

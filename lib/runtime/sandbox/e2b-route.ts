@@ -1,6 +1,6 @@
 /**
  * How this server reaches a port in an E2B sandbox: E2B's client-proxy (the
- * deployment's E2B_SANDBOX_URL) routes a request by two headers naming the
+ * deployment's OUTRUNNER_E2B_SANDBOX_URL) routes a request by two headers naming the
  * sandbox and the port, so one base URL serves every box. A browser can't set
  * them, so its WebSockets come through this server's relay (relay.ts).
  *
@@ -19,10 +19,10 @@ export const E2B_TRAFFIC_TOKEN_HEADER = "e2b-traffic-access-token";
 export function e2bRoute(
   sandboxId: string,
   port: number,
-  sandboxUrl = process.env.E2B_SANDBOX_URL,
+  sandboxUrl = process.env.OUTRUNNER_E2B_SANDBOX_URL,
   trafficToken?: string,
 ): { base: string; headers: Record<string, string> } {
-  if (!sandboxUrl) throw new Error("E2B_SANDBOX_URL is not set.");
+  if (!sandboxUrl) throw new Error("OUTRUNNER_E2B_SANDBOX_URL is not set.");
   return {
     base: sandboxUrl.replace(/\/+$/, ""),
     headers: {
@@ -31,4 +31,30 @@ export function e2bRoute(
       ...(trafficToken ? { [E2B_TRAFFIC_TOKEN_HEADER]: trafficToken } : {}),
     },
   };
+}
+
+/**
+ * What a relay ticket to an E2B box carries sealed (relay-ticket.ts): the
+ * box's traffic token, and for a box in a user's E2B, whose it is, so the
+ * relay asks for that user's box and no one else's that shares its id.
+ */
+export type E2bRelaySecret = { token?: string; owner?: string };
+
+export function sealableE2bRelaySecret(secret: E2bRelaySecret): string | undefined {
+  if (!secret.token && !secret.owner) return undefined;
+  return JSON.stringify({ t: secret.token, o: secret.owner });
+}
+
+/** The secret a ticket carried; empty for one with none, or a bad one. */
+export function readE2bRelaySecret(sealed: string | undefined): E2bRelaySecret {
+  if (!sealed) return {};
+  try {
+    const parsed = JSON.parse(sealed) as { t?: unknown; o?: unknown };
+    return {
+      ...(typeof parsed.t === "string" && parsed.t ? { token: parsed.t } : {}),
+      ...(typeof parsed.o === "string" && parsed.o ? { owner: parsed.o } : {}),
+    };
+  } catch {
+    return {};
+  }
 }

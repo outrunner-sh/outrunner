@@ -1,4 +1,5 @@
 import { STATUS_CODES, type IncomingMessage } from "node:http";
+import type { LookupFunction } from "node:net";
 import type { Duplex } from "node:stream";
 
 import WebSocket, { WebSocketServer, type RawData } from "ws";
@@ -27,9 +28,12 @@ const RELAYED = new Set(["pty", "events-ws"]);
  *  in front of us (Cloudflare), and between us and the box. */
 export const PING_MS = 25_000;
 
-/** Where the relay opens the agent's WebSocket: a base URL and any headers
- *  the provider's way in needs (E2B's routing headers), never a browser's. */
-export type RelayUpstream = { base: string; headers: Record<string, string> };
+/** Where the relay opens the agent's WebSocket: a base URL, any headers the
+ *  provider's way in needs (E2B's routing headers), never a browser's, and,
+ *  for a host a user named, the resolver its connection must use (one that
+ *  refuses private addresses as it connects, so DNS can't be changed between
+ *  a check and the connection). */
+export type RelayUpstream = { base: string; headers: Record<string, string>; lookup?: LookupFunction };
 
 export type RelayDeps = {
   /** The key this provider's tickets are signed with; unset when it isn't
@@ -105,6 +109,7 @@ async function connect(
   const upstream = new WebSocket(`${upstreamAt.base.replace(/^http/, "ws")}${c.path}`, {
     perMessageDeflate: false,
     headers: upstreamAt.headers,
+    ...(upstreamAt.lookup && { lookup: upstreamAt.lookup }),
   });
   let settled = false;
   // The browser gave up while the agent was still answering.

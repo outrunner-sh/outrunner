@@ -8,6 +8,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { createServer, type Server, type ServerResponse } from "node:http";
+import { isIP } from "node:net";
 
 import next from "next";
 
@@ -22,8 +23,10 @@ import { onForgetPreview } from "./lib/previews/forget.ts";
 import { edgeHostSigned, previewSigningKey, sessionUser } from "./lib/previews/tokens.ts";
 import { GATE_PATH, GATE_SECRET_ENV, GATE_SECRET_HEADER } from "./lib/previews/wire.ts";
 import { createSandboxRelay, neevRelayDeps, SERVICE_RESTART } from "./lib/runtime/sandbox/relay.ts";
-import { E2B_RELAY_PREFIX, NEEV_RELAY_PREFIX, relayKey } from "./lib/runtime/sandbox/relay-ticket.ts";
-import { e2bRoute } from "./lib/runtime/sandbox/e2b-route.ts";
+import { E2B_RELAY_PREFIX, NEEV_RELAY_PREFIX, relayKey, USER_E2B_RELAY_PREFIX } from "./lib/runtime/sandbox/relay-ticket.ts";
+import { e2bRoute, readE2bRelaySecret } from "./lib/runtime/sandbox/e2b-route.ts";
+import { publicOnlyLookup } from "./lib/api/webhook-lookup.ts";
+import { isPrivateAddress } from "./lib/api/webhooks.ts";
 import { GCP_RELAY_PREFIX, gcpRelayKey } from "./lib/runtime/gcp/relay-ticket.ts";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -87,9 +90,31 @@ const gcpRelay = createSandboxRelay({
 // with the box's traffic token from the ticket (sealed; the browser can't read it).
 const e2bRelay = createSandboxRelay({
   key: () => process.env.CREDENTIALS_ENCRYPTION_KEY ? relayKey(process.env.CREDENTIALS_ENCRYPTION_KEY, "e2b") : undefined,
-  tunnel: async (id, agentPort, trafficToken) => e2bRoute(id, agentPort, undefined, trafficToken),
+  tunnel: async (id, agentPort, secret) => e2bRoute(id, agentPort, undefined, readE2bRelaySecret(secret).token),
 }, E2B_RELAY_PREFIX);
-const relays = [neevRelay, gcpRelay, e2bRelay];
+// A user's E2B: the app looks up where their box is, from the owner and
+// traffic token sealed in the ticket, never the request.
+const userE2bRelay = createSandboxRelay({
+  key: () => process.env.CREDENTIALS_ENCRYPTION_KEY ? relayKey(process.env.CREDENTIALS_ENCRYPTION_KEY, "user-e2b") : undefined,
+  tunnel: async (id, agentPort, secret) => {
+    const response = await fetch(`http://127.0.0.1:${port}/api/runtime/e2b-relay`, {
+      method: "POST", headers: { "content-type": "application/json", [GATE_SECRET_HEADER]: gateSecret },
+      body: JSON.stringify({ id, port: agentPort, secret }), signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error("The E2B relay could not reach its sandbox.");
+    const route = await response.json() as { base: string; headers: Record<string, string> };
+    // https, a bare origin, and no private address written out as one: Node
+    // skips the lookup (and so the public-only check) for an IP literal.
+    const target = new URL(route.base);
+    const host = target.hostname.replace(/^\[|\]$/g, "");
+    if (target.protocol !== "https:" || target.username || target.password || target.pathname !== "/" || (isIP(host) && isPrivateAddress(host))) {
+      throw new Error("Invalid E2B relay target.");
+    }
+    // The user named this host: its connection resolves it public-only.
+    return { ...route, lookup: publicOnlyLookup };
+  },
+}, USER_E2B_RELAY_PREFIX);
+const relays = [neevRelay, gcpRelay, e2bRelay, userE2bRelay];
 const previews = createPreviewProxy({
   domain: () => previewDomain(),
   appHost: () => (process.env.RUNTIME_BASE_URL ? new URL(process.env.RUNTIME_BASE_URL).host : null),

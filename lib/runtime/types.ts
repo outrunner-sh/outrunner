@@ -75,12 +75,12 @@ export type ProvisionPhase =
  * Daytona or Modal account, on their key (Settings → Sandbox); the others are
  * the deployment's.
  */
-export type ProviderName = "local" | "modal" | "daytona" | "neev" | "e2b" | "user-daytona" | "user-modal" | "user-gcp";
+export type ProviderName = "local" | "modal" | "daytona" | "neev" | "e2b" | "user-daytona" | "user-modal" | "user-gcp" | "user-e2b";
 
 /** Whether the provider runs sessions on a project's Runtime Computer, which
  *  is what live sessions attach to. */
 export function onRuntimeComputer(provider: ProviderName): boolean {
-  return provider === "daytona" || provider === "neev" || provider === "e2b" || provider === "user-daytona" || provider === "user-modal" || provider === "user-gcp";
+  return provider === "daytona" || provider === "neev" || provider === "e2b" || provider === "user-daytona" || provider === "user-modal" || provider === "user-gcp" || provider === "user-e2b";
 }
 
 /** Whether a session on `provider` can open a box's port in the browser (the

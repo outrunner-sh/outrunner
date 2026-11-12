@@ -55,7 +55,7 @@ export function getRuntimeProvider(): RuntimeProvider {
 const PLATFORM_BACKENDS: Partial<Record<ProviderName, { env: readonly EnvKey[]; make: () => ComputerRuntimeProvider }>> = {
   daytona: { env: ["DAYTONA_API_KEY"], make: () => new DaytonaRuntimeProvider() },
   neev: { env: ["NEEV_API_KEY", "NEEV_ORG_ID", "NEEV_PROJECT_ID"], make: () => new NeevRuntimeProvider() },
-  e2b: { env: ["E2B_API_KEY", "E2B_API_URL", "E2B_SANDBOX_URL"], make: () => new E2bRuntimeProvider() },
+  e2b: { env: ["OUTRUNNER_E2B_API_KEY", "OUTRUNNER_E2B_API_URL", "OUTRUNNER_E2B_SANDBOX_URL"], make: () => new E2bRuntimeProvider() },
 };
 
 /**

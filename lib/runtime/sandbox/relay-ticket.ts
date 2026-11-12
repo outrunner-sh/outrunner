@@ -3,7 +3,7 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, 
 /**
  * The browser's pass through this server's relay (relay.ts) to one port of
  * one sandbox, on any provider whose boxes a browser can't reach directly
- * (Neev, a user's GCP, E2B). The relay serves `<prefix><sandbox>/<port>/<ticket>/`,
+ * (Neev, a user's GCP, E2B: the deployment's or a user's own). The relay serves `<prefix><sandbox>/<port>/<ticket>/`,
  * and the ticket is `<exp>.<sig>`: an HMAC of the sandbox, the port and the
  * expiry under a key only this server holds (the project's Neev API key, or
  * {@link relayKey} of the credentials key). The agent still checks its own
@@ -20,6 +20,7 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, 
 
 export const NEEV_RELAY_PREFIX = "/relay/neev/";
 export const E2B_RELAY_PREFIX = "/relay/e2b/";
+export const USER_E2B_RELAY_PREFIX = "/relay/user-e2b/";
 
 /** Longer than a Runtime token's 5 minutes, which a reconnect needs anyway. */
 export const RELAY_TICKET_TTL_SECONDS = 60 * 60;
@@ -27,7 +28,7 @@ export const RELAY_TICKET_TTL_SECONDS = 60 * 60;
 /** A provider's own relay key, derived from `secret` (the credentials key),
  *  so a ticket for one provider's relay opens nothing on another's. The
  *  label is fixed per provider: changing it voids tickets already handed out. */
-export function relayKey(secret: string, provider: "gcp" | "e2b"): string {
+export function relayKey(secret: string, provider: "gcp" | "e2b" | "user-e2b"): string {
   return createHmac("sha256", secret).update(`outrunner:${provider}-relay:v1`).digest("base64url");
 }
 

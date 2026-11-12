@@ -3,7 +3,7 @@ import { afterEach, test } from "node:test";
 
 import { getRuntimeProvider, platformComputerProviders, platformProvider, resetRuntimeProvider } from "@/lib/runtime/provider";
 
-const KEYS = ["RUNTIME_PROVIDER", "DAYTONA_API_KEY", "NEEV_API_KEY", "NEEV_ORG_ID", "NEEV_PROJECT_ID", "E2B_API_KEY", "E2B_API_URL", "E2B_SANDBOX_URL"];
+const KEYS = ["RUNTIME_PROVIDER", "DAYTONA_API_KEY", "NEEV_API_KEY", "NEEV_ORG_ID", "NEEV_PROJECT_ID", "OUTRUNNER_E2B_API_KEY", "OUTRUNNER_E2B_API_URL", "OUTRUNNER_E2B_SANDBOX_URL"];
 const saved = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]));
 
 function withEnv(env: Record<string, string>): void {
@@ -33,8 +33,8 @@ test("a box is reached with the backend that made it, not the deployment's", () 
 });
 
 test("a deployment that moved from E2B still reaches E2B's boxes while its keys are set", () => {
-  withEnv({ RUNTIME_PROVIDER: "daytona", DAYTONA_API_KEY: "dtn_test", E2B_API_KEY: "e2b_test", E2B_API_URL: "https://api.e2b.test", E2B_SANDBOX_URL: "https://sandbox.e2b.test" });
+  withEnv({ RUNTIME_PROVIDER: "daytona", DAYTONA_API_KEY: "dtn_test", OUTRUNNER_E2B_API_KEY: "e2b_test", OUTRUNNER_E2B_API_URL: "https://api.e2b.test", OUTRUNNER_E2B_SANDBOX_URL: "https://sandbox.e2b.test" });
   assert.equal(platformProvider("e2b")?.name, "e2b");
-  withEnv({ RUNTIME_PROVIDER: "daytona", DAYTONA_API_KEY: "dtn_test", E2B_API_KEY: "e2b_test" });
+  withEnv({ RUNTIME_PROVIDER: "daytona", DAYTONA_API_KEY: "dtn_test", OUTRUNNER_E2B_API_KEY: "e2b_test" });
   assert.equal(platformProvider("e2b"), null, "not without both URLs");
 });

@@ -63,6 +63,7 @@ import {
   usableProviders,
 } from "@/lib/providers/registry";
 import type { KeyHolder, ModelMenu } from "@/lib/runtime/session-models";
+import { BOX_IMAGE_TAG } from "@/lib/runtime/box-image";
 import { DEFAULT_BOX_SIZE, isBoxSizeId, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import type { ModalToken } from "@/lib/runtime/sandbox/modal";
 import type { VerifiedEmail } from "@/lib/orgs/domains";
@@ -294,14 +295,32 @@ export async function clearAnthropicKey(userId: string): Promise<void> {
 
 /**
  * Where the user's cloud sessions run (Settings → Sandbox): Outrunner's own
- * sandboxes, the deployment's provider and the default, or their own Daytona
- * or Modal account on a key they supply.
+ * sandboxes, the deployment's provider and the default, or their own Daytona,
+ * Modal or E2B account on a key they supply.
  */
-export type SandboxChoice = "outrunner" | "daytona" | "modal" | "gcp";
+export type SandboxChoice = "outrunner" | "daytona" | "modal" | "gcp" | "e2b";
 
 /** A stored key, as the page sees it: whether there is one, and its last 4
  *  characters. */
 export type StoredKey = { connected: boolean; hint: string | null; updatedAt: string | null };
+
+/**
+ * Where Outrunner's box template is in a user's E2B: none built yet, being
+ * built, ready, failed, or built at an older box image (rebuilt on next use).
+ */
+export type E2bTemplateState = "none" | "building" | "ready" | "failed" | "outdated";
+
+/** The user's own E2B, as the page sees it: the key's hint, the self-hosted
+ *  URLs (null for E2B's cloud), and their box template. */
+export type E2bSettings = StoredKey & {
+  apiUrl: string | null;
+  sandboxUrl: string | null;
+  template: E2bTemplateState;
+  templateError: string | null;
+  /** Whether new sessions can start: the template is ready, or an earlier
+   *  one that was is still served while it's rebuilt. */
+  canStart: boolean;
+};
 
 export type SandboxSettings = {
   sandbox: SandboxChoice;
@@ -309,6 +328,8 @@ export type SandboxSettings = {
   daytona: StoredKey;
   /** The Modal token; its hint is the token id's last 4. */
   modal: StoredKey;
+  /** Absent before supabase/migrations/20261112170000_user_e2b.sql. */
+  e2b?: E2bSettings;
   /** How big a new sandbox is, on Outrunner's or the user's own Modal
    *  (lib/runtime/box-sizes.ts). */
   boxSize: BoxSizeId;
@@ -337,9 +358,10 @@ export async function getSandboxSettings(userId: string): Promise<SandboxSetting
   if (error && probeStatus(error) === "outdated") ({ data, error } = { data: null, error: null });
   if (error) throw error;
   const row = data as Partial<Database["public"]["Tables"]["user_credentials"]["Row"]> | null;
-  const gcp = await gcpConnection(userId);
+  const [gcp, e2b] = await Promise.all([gcpConnection(userId), storedE2bRow(userId)]);
   return {
     gcp: { connected: gcp?.state === "connected", hint: gcp?.project_id ?? null, updatedAt: gcp?.verified_at ?? null },
+    ...(e2b !== undefined && { e2b: e2bSettingsOf(e2b) }),
     sandbox: row?.sandbox ?? "outrunner",
     daytona: {
       connected: Boolean(row?.daytona_key_ciphertext),
@@ -421,6 +443,208 @@ export async function clearDaytonaKey(userId: string): Promise<void> {
   });
 }
 
+const E2B_COLUMNS =
+  "e2b_key_ciphertext, e2b_key_hint, e2b_key_updated_at, e2b_api_url, e2b_sandbox_url, " +
+  "e2b_template_id, e2b_template_build_id, e2b_template_tag, e2b_template_state, e2b_template_error, " +
+  "e2b_template_started_at, e2b_serving_template_id";
+
+type E2bRow = Pick<
+  Database["public"]["Tables"]["user_credentials"]["Row"],
+  | "e2b_key_ciphertext"
+  | "e2b_key_hint"
+  | "e2b_key_updated_at"
+  | "e2b_api_url"
+  | "e2b_sandbox_url"
+  | "e2b_template_id"
+  | "e2b_template_build_id"
+  | "e2b_template_tag"
+  | "e2b_template_state"
+  | "e2b_template_error"
+  | "e2b_template_started_at"
+  | "e2b_serving_template_id"
+>;
+
+/** The user's E2B columns: null for no row, undefined before
+ *  20261112170000_user_e2b.sql, which reads as no E2B at all. */
+async function storedE2bRow(userId: string): Promise<E2bRow | null | undefined> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("user_credentials")
+    .select(E2B_COLUMNS)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error && probeStatus(error) === "outdated") return undefined;
+  if (error) throw error;
+  return (data as E2bRow | null) ?? null;
+}
+
+/** The page's view of the user's E2B: never the key. A template built at
+ *  another box image than this server's is outdated. */
+function e2bSettingsOf(row: E2bRow | null): E2bSettings {
+  const state = row?.e2b_template_state ?? null;
+  const template: E2bTemplateState =
+    state === null ? "none" : state === "ready" && row?.e2b_template_tag !== BOX_IMAGE_TAG ? "outdated" : state;
+  return {
+    connected: Boolean(row?.e2b_key_ciphertext),
+    hint: row?.e2b_key_hint ?? null,
+    updatedAt: row?.e2b_key_updated_at ?? null,
+    apiUrl: row?.e2b_api_url ?? null,
+    sandboxUrl: row?.e2b_sandbox_url ?? null,
+    template,
+    templateError: template === "failed" ? (row?.e2b_template_error ?? null) : null,
+    canStart: template === "ready" ? Boolean(row?.e2b_template_id) : Boolean(row?.e2b_serving_template_id),
+  };
+}
+
+/** The user's own E2B, opened: what their boxes are made and reached with. */
+export type StoredE2b = {
+  /** Whose E2B it is. */
+  ownerId: string;
+  apiKey: string;
+  apiUrl: string | null;
+  sandboxUrl: string | null;
+  template: E2bTemplateState;
+  templateId: string | null;
+  templateBuildId: string | null;
+  templateError: string | null;
+  /** The last template that built ready, served while a newer one builds. */
+  servingTemplateId: string | null;
+};
+
+/** The user's E2B with its key opened, or null when unset or unreadable. */
+export async function getStoredE2b(userId: string): Promise<StoredE2b | null> {
+  const row = await storedE2bRow(userId);
+  const apiKey = openOrNull(row?.e2b_key_ciphertext, userId, "e2b");
+  if (!row || !apiKey) return null;
+  const view = e2bSettingsOf(row);
+  return {
+    ownerId: userId,
+    apiKey,
+    apiUrl: view.apiUrl,
+    sandboxUrl: view.sandboxUrl,
+    template: view.template,
+    templateId: row.e2b_template_id,
+    templateBuildId: row.e2b_template_build_id,
+    templateError: view.templateError,
+    servingTemplateId: row.e2b_serving_template_id ?? null,
+  };
+}
+
+/** Store the user's E2B key and, for a self-hosted E2B, its URLs. Its
+ *  template goes with the old account: one is built in this one next. */
+export async function setE2bConnection(
+  userId: string,
+  connection: { apiKey: string; apiUrl: string | null; sandboxUrl: string | null },
+): Promise<void> {
+  const apiKey = connection.apiKey.trim();
+  if (!apiKey) throw new Error("E2B API key cannot be empty");
+  const { error } = await createSupabaseAdminClient().from("user_credentials").upsert(
+    {
+      user_id: userId,
+      e2b_key_ciphertext: seal(apiKey),
+      e2b_key_hint: apiKey.slice(-4),
+      e2b_key_updated_at: new Date().toISOString(),
+      e2b_api_url: connection.apiUrl,
+      e2b_sandbox_url: connection.sandboxUrl,
+      ...NO_E2B_TEMPLATE,
+    },
+    { onConflict: "user_id" },
+  );
+  if (error) throw error;
+}
+
+/** A new build's template columns: the one served meanwhile is kept. */
+const NEW_E2B_BUILD = {
+  e2b_template_id: null,
+  e2b_template_build_id: null,
+  e2b_template_tag: null,
+  e2b_template_state: null,
+  e2b_template_error: null,
+  e2b_template_started_at: null,
+} as const;
+
+/** No template at all: a new key or account, or none. */
+const NO_E2B_TEMPLATE = { ...NEW_E2B_BUILD, e2b_serving_template_id: null } as const;
+
+/** How long a claimed build may go without E2B's build id before another
+ *  caller may claim it again: the caller that claimed it died starting it. */
+export const E2B_CLAIM_STALE_MS = 5 * 60 * 1000;
+
+/**
+ * Claim the next build of the user's template at image `tag`, so that one
+ * caller starts it: the page's polls, session starts and an explicit rebuild
+ * can all ask at once, and each build runs in the user's paid account. Taken
+ * only when there's none, the one there is at another image, or a claim went
+ * stale; and, with `retryFailed`, after a failure. Returns the claim's time,
+ * which the build's start is recorded under, or null when it wasn't taken.
+ */
+export async function claimE2bTemplateBuild(
+  userId: string,
+  tag: string,
+  { retryFailed = false, now = Date.now() }: { retryFailed?: boolean; now?: number } = {},
+): Promise<string | null> {
+  const claimedAt = new Date(now).toISOString();
+  const stale = new Date(now - E2B_CLAIM_STALE_MS).toISOString();
+  const claimable = [
+    "e2b_template_state.is.null",
+    `and(e2b_template_state.eq.ready,e2b_template_tag.neq.${tag})`,
+    `and(e2b_template_state.eq.building,e2b_template_build_id.is.null,e2b_template_started_at.lt.${stale})`,
+    ...(retryFailed ? ["e2b_template_state.eq.failed"] : []),
+  ].join(",");
+  const { data, error } = await createSupabaseAdminClient()
+    .from("user_credentials")
+    .update({ ...NEW_E2B_BUILD, e2b_template_state: "building", e2b_template_tag: tag, e2b_template_started_at: claimedAt })
+    .eq("user_id", userId)
+    .not("e2b_key_ciphertext", "is", null)
+    .or(claimable)
+    .select("user_id")
+    .maybeSingle();
+  if (error) throw error;
+  return data ? claimedAt : null;
+}
+
+/**
+ * Record where the user's template build is, only on the build it's about:
+ * its start on the claim it was made under, and its end on its own build id.
+ * A write about a build that's since been replaced (a newer claim, a new key)
+ * lands on nothing. Returns whether it landed.
+ */
+export async function setE2bTemplate(
+  userId: string,
+  template:
+    | { state: "building"; claimedAt: string; templateId: string; buildId: string }
+    | { state: "failed"; claimedAt: string; error: string }
+    | { state: "ready"; buildId: string; templateId: string }
+    | { state: "failed"; buildId: string; error: string },
+): Promise<boolean> {
+  const update =
+    template.state === "building"
+      ? { e2b_template_id: template.templateId, e2b_template_build_id: template.buildId }
+      : template.state === "ready"
+        ? { e2b_template_state: "ready" as const, e2b_template_error: null, e2b_serving_template_id: template.templateId }
+        : { e2b_template_state: "failed" as const, e2b_template_error: template.error.slice(0, 500) };
+  let query = createSupabaseAdminClient().from("user_credentials").update(update).eq("user_id", userId);
+  query =
+    "claimedAt" in template
+      ? query.eq("e2b_template_started_at", template.claimedAt).is("e2b_template_build_id", null)
+      : query.eq("e2b_template_build_id", template.buildId);
+  const { data, error } = await query.select("user_id").maybeSingle();
+  if (error) throw error;
+  return data !== null;
+}
+
+/** Forget the user's E2B, and move new sessions back to Outrunner's
+ *  sandboxes if they ran there. */
+export async function clearE2bConnection(userId: string): Promise<void> {
+  await forgetSandboxKey(userId, "e2b", {
+    e2b_key_ciphertext: null,
+    e2b_key_hint: null,
+    e2b_key_updated_at: null,
+    e2b_api_url: null,
+    e2b_sandbox_url: null,
+    ...NO_E2B_TEMPLATE,
+  });
+}
+
 /** The user's own sandbox keys (lib/runtime/sandbox-choice.ts), each read
  *  only when a box of theirs is reached. */
 export function ownSandboxKeys(userId: string): {
@@ -428,8 +652,15 @@ export function ownSandboxKeys(userId: string): {
   gcp: () => ReturnType<typeof gcpConnection>;
   daytona: () => Promise<string | null>;
   modal: () => Promise<ModalToken | null>;
+  e2b: () => Promise<StoredE2b | null>;
 } {
-  return { ownerId: userId, gcp: () => gcpConnection(userId), daytona: () => getDaytonaKey(userId), modal: () => getModalToken(userId) };
+  return {
+    ownerId: userId,
+    gcp: () => gcpConnection(userId),
+    daytona: () => getDaytonaKey(userId),
+    modal: () => getModalToken(userId),
+    e2b: () => getStoredE2b(userId),
+  };
 }
 
 /** The user's Modal token, or null when unset or unreadable. */
@@ -509,7 +740,7 @@ async function forgetSandboxKey(
 function openOrNull(
   ciphertext: string | null | undefined,
   userId: string,
-  which: "github" | "anthropic" | "daytona" | "modal" | KeyProviderId,
+  which: "github" | "anthropic" | "daytona" | "modal" | "e2b" | KeyProviderId,
 ): string | null {
   if (!ciphertext) return null;
   try {
