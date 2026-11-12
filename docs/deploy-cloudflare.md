@@ -191,9 +191,11 @@ conversation WebSockets through `/relay/neev/` on this domain. That is why
    node --experimental-strip-types --import ./scripts/test-loader.mjs scripts/assign-computer-providers.ts --apply
    ```
    (with the prod Supabase service role, `DAYTONA_API_KEY` and the `NEEV_*`
-   keys in the environment). The authenticated `/api/health` reports
-   `unrecordedProviderComputers`. Go on only when it is 0, or the rows left
-   name boxes neither provider has.
+   keys in the environment). A row whose box neither backend has is recorded
+   as `daytona` (the box is gone, and either backend reads it as gone). A box
+   both claim, or one whose lookup failed, is left and listed: rerun, or set
+   it by hand. The authenticated `/api/health` reports
+   `unrecordedProviderComputers`. Go on only when it is 0.
 4. **Secrets** (`cd outrunner/cloudflare`):
    ```bash
    pnpm dlx wrangler secret put NEEV_API_KEY       # sk-nc-…, Resource Type "Sandboxes"
