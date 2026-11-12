@@ -58,9 +58,8 @@ ENV NODE_ENV=production
 # default signal handling, and `pnpm start` under it didn't pass SIGTERM on.
 # The static release binary, checked against its published sha256
 # (tini-static-amd64.sha256sum on the release), like every other download.
-ADD --checksum=sha256:c5b0666b4cb676901f90dfcb37106783c5fe2077b04590973b885950611b30ee \
+ADD --checksum=sha256:c5b0666b4cb676901f90dfcb37106783c5fe2077b04590973b885950611b30ee --chmod=0755 \
   https://github.com/krallin/tini/releases/download/v0.19.0/tini-static-amd64 /usr/bin/tini
-RUN chmod 0755 /usr/bin/tini
 # Cloudflare Containers routes to the port the process listens on; `pnpm start`
 # runs server.ts (Next plus the Neev WebSocket relay) on ${PORT}. Keep in sync
 # with defaultPort in cloudflare/worker.ts.
