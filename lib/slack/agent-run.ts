@@ -170,7 +170,8 @@ export async function handleAgentMessage(message: AgentMessage): Promise<void> {
     if (await routeToMission(message, slackRouteDeps(install, message, connect))) return;
   } catch (error) {
     console.error("Slack: the Mission on call couldn't take a message", error);
-    await reply("Sorry, something went wrong on my side. Mention me again to retry.").catch(() => undefined);
+    // Only to someone who asked: a blip mustn't answer every reply, or a bot.
+    if (message.mention && !message.botId) await reply("Sorry, something went wrong on my side. Mention me again to retry.").catch(() => undefined);
     return;
   }
   // Bots are heard only by a Mission that takes them.

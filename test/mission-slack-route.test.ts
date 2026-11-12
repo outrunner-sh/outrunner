@@ -195,6 +195,25 @@ test("the gate: linked, in the Mission's org, with read on its project", async (
   assert.equal(w.threads.length, 0);
 });
 
+test("in its own threads, plain replies that don't pass the gate are dropped quietly", async () => {
+  const w = world();
+  await routeToMission(msg(), w.deps);
+  const reply = (user: string, n: number, mention = false) =>
+    routeToMission(msg({ user, mention, text: mention ? `<@${BOT}> hi` : "hi", threadTs: "1731400000.000100", ts: `173140002${n}.000100`, eventId: `Eq${n}` }), w.deps);
+  assert.equal(await reply("UUNA", 1), true);
+  assert.equal(await reply("UBOB", 2), true);
+  assert.equal(await reply("UNORA", 3), true);
+  assert.deepEqual(w.said, [], "nobody nagged on a plain reply");
+  assert.equal(w.events.length, 1);
+  // A mention still tells them why.
+  await reply("UUNA", 4, true);
+  assert.deepEqual(w.said, ["connect"]);
+  // !aside and a muted thread need nobody's identity.
+  w.threads[0].muted = true;
+  assert.equal(await reply("UUNA", 5), true);
+  assert.deepEqual(w.said, ["connect"]);
+});
+
 test("keywords: !aside is ignored, !mute and !unmute a thread", async () => {
   const w = world();
   await routeToMission(msg(), w.deps);
@@ -261,7 +280,11 @@ test("an archived Mission says so and takes nothing", async () => {
   const w = world({ mission: { status: "archived" } });
   assert.equal(await routeToMission(msg(), w.deps), true);
   assert.equal(w.events.length, 0);
-  assert.ok(w.said[0].includes("archived"));
+  assert.ok(w.said[0].startsWith("reply: ") && w.said[0].includes("archived"));
+  // A plain reply in its thread is told only to its sender.
+  w.threads.push({ id: "tx", missionId: "m1", teamId: "T1", channelId: "C1", threadTs: "1731400000.000100", permalink: null, startedBy: "alice", startedBySlack: "UALICE", lastRequestTs: null, muted: false });
+  await routeToMission(msg({ mention: false, text: "any news?", threadTs: "1731400000.000100", ts: "1731400003.000100", eventId: "Ea2" }), w.deps);
+  assert.ok(w.said[1].startsWith("tell: ") && w.said[1].includes("archived"));
 });
 
 test("be on call here: needs write on the project; binds a Mission, or starts one", async () => {

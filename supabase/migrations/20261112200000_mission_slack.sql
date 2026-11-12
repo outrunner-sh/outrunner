@@ -130,13 +130,14 @@ create table if not exists mission_slack_asks (
 create index if not exists mission_slack_asks_mission_idx on mission_slack_asks (mission_id, created_at desc);
 
 -- Take a place for a Ship of a bound Mission, under its limits: a row
--- reserved, or why not ('hour' or 'day'). One Mission's reservations are
+-- reserved, or why not ('hour': the last hour, or 'day': the last 24
+-- hours, rolling) with the limit that said no. One Mission's reservations are
 -- counted one at a time, so two spawns at once can't both take the last
 -- place. Every row counts, its Ship started, failed or deleted alike; a
 -- start that never made a Ship gives its place back
 -- (release_mission_slack_ship).
 create or replace function reserve_mission_slack_ship(target uuid, thread uuid, requester uuid, slack_user text)
-  returns table (ship_id uuid, refusal text)
+  returns table (ship_id uuid, refusal text, refused_at_limit integer)
   language plpgsql
   security definer
   set search_path = public
@@ -156,12 +157,14 @@ begin
   if (select count(*) from mission_slack_ships s where s.mission_id = target and s.created_at > now() - interval '1 hour') >= per_hour then
     ship_id := null;
     refusal := 'hour';
+    refused_at_limit := per_hour;
     return next;
     return;
   end if;
   if (select count(*) from mission_slack_ships s where s.mission_id = target and s.created_at > now() - interval '1 day') >= per_day then
     ship_id := null;
     refusal := 'day';
+    refused_at_limit := per_day;
     return next;
     return;
   end if;
@@ -170,6 +173,7 @@ begin
     returning id into made;
   ship_id := made;
   refusal := null;
+  refused_at_limit := null;
   return next;
 end;
 $$;

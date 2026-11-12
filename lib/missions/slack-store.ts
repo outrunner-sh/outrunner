@@ -170,12 +170,15 @@ export async function threadById(id: string): Promise<MissionThread | null> {
   return data ? toThread(data) : null;
 }
 
-/** The Mission's thread most lately asked in that isn't muted. */
-export async function latestThread(missionId: string): Promise<MissionThread | null> {
+/** The Mission's thread most lately asked in, in the channel it's on call
+ *  in now, that isn't muted. */
+export async function latestThread(binding: { missionId: string; teamId: string; channelId: string }): Promise<MissionThread | null> {
   const { data, error } = await db()
     .from("mission_threads")
     .select("*")
-    .eq("mission_id", missionId)
+    .eq("mission_id", binding.missionId)
+    .eq("slack_team_id", binding.teamId)
+    .eq("channel_id", binding.channelId)
     .eq("muted", false)
     .order("updated_at", { ascending: false })
     .limit(1)
@@ -243,7 +246,7 @@ export async function reserveSlackShip(
   missionId: string,
   threadId: string | null,
   requester: { userId: string | null; slackUserId: string | null },
-): Promise<{ id: string } | { refused: "hour" | "day" }> {
+): Promise<{ id: string } | { refused: "hour" | "day"; limit: number }> {
   const { data, error } = await db().rpc("reserve_mission_slack_ship", {
     target: missionId,
     thread: threadId,
@@ -253,7 +256,8 @@ export async function reserveSlackShip(
   if (error) throw error;
   const row = data?.[0];
   if (row?.ship_id) return { id: row.ship_id };
-  return { refused: row?.refusal === "day" ? "day" : "hour" };
+  const refused = row?.refusal === "day" ? "day" : "hour";
+  return { refused, limit: row?.refused_at_limit ?? (refused === "day" ? 30 : 6) };
 }
 
 export async function linkSlackShip(id: string, runnerId: string): Promise<void> {

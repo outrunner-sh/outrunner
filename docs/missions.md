@@ -93,8 +93,9 @@ channel, one channel a Mission.
   only mentions is used.
 - **Before it hears anything,** by rule, not by a model:
   - the sender needs a linked Slack→Outrunner account in the Mission's org
-    with read on its project; anyone else gets the Connect prompt, or is told
-    no. Unlinked people in shared channels can't task it;
+    with read on its project; anyone else who mentions Outrunner gets the
+    Connect prompt, or is told no (a plain reply in its thread is dropped
+    quietly). Unlinked people in shared channels can't task it;
   - `!aside` keeps a message from it; `!mute` / `!unmute` silences a thread
     (nothing in or out, the system's posts included);
   - `@Outrunner stop` stops its turn; `@Outrunner pause` / `resume` (write on
@@ -120,9 +121,9 @@ channel, one channel a Mission.
   request ready, merged or closed is posted in its thread by the system. The
   Ships pane links each Ship's thread.
 - **Limits.** While on call, a Mission starts at most 6 Ships an hour and 30
-  a day (`mission_limits`; every Ship it starts while bound counts, as
+  in any 24 hours by default (`mission_limits`; every Ship it starts while bound counts, as
   nothing proves one wasn't asked for in Slack). One past them starts
-  nothing, and the thread is told. The 20-Ship cap and the plan's box limits
+  nothing, and the thread is told the limit it hit. The 20-Ship cap and the plan's box limits
   apply too.
 - **Its owner's decision.** When the Mission's `ask_user` card waits on its
   owner, its latest thread is told, with a link to answer in Outrunner.

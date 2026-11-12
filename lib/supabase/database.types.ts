@@ -2291,7 +2291,7 @@ export type Database = {
       // supabase/migrations/20261102200000_missions.sql
       reserve_mission_slack_ship: {
         Args: { target: string; thread: string | null; requester: string | null; slack_user: string | null };
-        Returns: { ship_id: string | null; refusal: "hour" | "day" | null }[];
+        Returns: { ship_id: string | null; refusal: "hour" | "day" | null; refused_at_limit: number | null }[];
       };
       release_mission_slack_ship: {
         Args: { target: string };

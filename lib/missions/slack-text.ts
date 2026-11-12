@@ -9,10 +9,6 @@
 import type { PullRequestRef } from "@/lib/missions/events";
 import { pullRequestLink } from "@/lib/slack/announce-pull-request";
 
-/** Ships a bound Mission may start, by default (mission_limits). */
-export const SLACK_SHIPS_PER_HOUR = 6;
-export const SLACK_SHIPS_PER_DAY = 30;
-
 export type OnCallCommand =
   | { action: "bind"; project: string }
   | { action: "unbind" }
@@ -128,10 +124,11 @@ export function pullRequestCard(kind: "ready" | "merged" | "closed", pr: PullReq
 }
 
 /** A limit on Ships reached, as the thread is told. */
-export function limitText(refused: "hour" | "day"): string {
+export function limitText(refused: "hour" | "day", limit: number): string {
+  const ships = `${limit} Ship${limit === 1 ? "" : "s"}`;
   return refused === "hour"
-    ? `I've started ${SLACK_SHIPS_PER_HOUR} Ships for this channel in the last hour, which is my limit, so I didn't start one for this. Ask again in a while.`
-    : `I've started ${SLACK_SHIPS_PER_DAY} Ships for this channel today, which is my limit, so I didn't start one for this. Ask again tomorrow.`;
+    ? `I've started ${ships} for this channel in the last hour, which is my limit, so I didn't start one for this. Ask again in a while.`
+    : `I've started ${ships} for this channel in the last 24 hours, which is my limit, so I didn't start one for this. Ask again later.`;
 }
 
 /** A Mission's Slack channel as its header shows it (GET /api/missions/[id]/slack). */

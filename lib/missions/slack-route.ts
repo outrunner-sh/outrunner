@@ -141,18 +141,30 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
   // posts there can't come back as requests, whatever Slack says of them.
   if (message.botId && (!binding.allowBotMessages || !message.mention)) return true;
 
+  // Neither needs who's speaking: dropped quietly, before the gate, so
+  // someone unlinked isn't told off on every reply in a busy thread.
+  const text = withoutMention(message.text, deps.botUserId);
+  const keyword = threadKeyword(text);
+  if (keyword === "aside") return true;
+  if (owned && thread.muted && !message.mention && keyword !== "unmute") return true;
+
   // A bot is vouched for by whoever put the Mission on call here.
   const requester = message.botId
     ? binding.boundBy
       ? { userId: binding.boundBy, orgId: binding.orgId }
       : null
     : await deps.linked(message.user);
+  // Refusals go to someone who asked (a mention); a plain thread reply that
+  // doesn't pass is dropped quietly.
+  const refuse = async (said: string) => {
+    if (message.mention && !message.botId) await deps.tell(threadTs, said);
+  };
   if (!requester) {
-    if (!message.botId) await deps.askToConnect(threadTs);
+    if (message.mention && !message.botId) await deps.askToConnect(threadTs);
     return true;
   }
   if (requester.orgId !== binding.orgId) {
-    await deps.tell(threadTs, "Your Slack account is connected to a different Outrunner org than the Mission on call here.");
+    await refuse("Your Slack account is connected to a different Outrunner org than the Mission on call here.");
     return true;
   }
   const mission = await deps.mission(binding.missionId);
@@ -163,13 +175,10 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
   const level = await deps.level(requester.userId, mission);
   const project = await deps.projectName(mission);
   if (!allows(level, "read")) {
-    await deps.tell(threadTs, `Only people who can read ${project} in Outrunner can give the Mission on call here work.`);
+    await refuse(`Only people who can read ${project} in Outrunner can give the Mission on call here work.`);
     return true;
   }
 
-  const text = withoutMention(message.text, deps.botUserId);
-  const keyword = threadKeyword(text);
-  if (keyword === "aside") return true;
   if (keyword === "mute" || keyword === "unmute") {
     if (!thread || !owned) {
       await deps.tell(threadTs, `\`!${keyword}\` works in a thread the Mission is in.`);
@@ -199,7 +208,8 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
     return true;
   }
   if (PUT_AWAY.includes(mission.status)) {
-    await deps.reply(threadTs, "The Mission on call here is archived, so it didn't take that. Its owner can open it in Outrunner to bring it back.");
+    const said = "The Mission on call here is archived, so it didn't take that. Its owner can open it in Outrunner to bring it back.";
+    await (message.mention ? deps.reply(threadTs, said) : deps.tell(threadTs, said));
     return true;
   }
   if (!text && !message.files?.length) {

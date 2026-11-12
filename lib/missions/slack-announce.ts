@@ -15,7 +15,7 @@ import { pullRequestCard } from "@/lib/missions/slack-text";
 export type AnnounceDeps = {
   shipThread(runnerId: string): Promise<MissionThread | null>;
   binding(missionId: string): Promise<MissionChannel | null>;
-  latestThread(missionId: string): Promise<MissionThread | null>;
+  latestThread(binding: MissionChannel): Promise<MissionThread | null>;
   post(binding: MissionChannel, threadTs: string, text: string): Promise<void>;
 };
 
@@ -44,7 +44,9 @@ export async function announceShipEvent(
 /** The Mission waits on its owner's decision (its ask_user card): its
  *  latest thread hears so, with where to answer. True when it was posted. */
 export async function announceWaiting(missionId: string, url: string | null, deps: AnnounceDeps): Promise<boolean> {
-  const where = await postable(await deps.latestThread(missionId), deps);
+  const binding = await deps.binding(missionId);
+  if (!binding) return false;
+  const where = await postable(await deps.latestThread(binding), deps);
   if (!where) return false;
   await deps.post(
     where.binding,

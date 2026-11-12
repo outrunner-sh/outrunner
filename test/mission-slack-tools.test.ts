@@ -58,7 +58,7 @@ function world() {
     setAskMessage: async () => undefined,
     askBlocks,
     reserveShip: async (missionId, t) => {
-      if (ledger.filter((l) => l.missionId === missionId).length >= state.perHour) return { refused: "hour" };
+      if (ledger.filter((l) => l.missionId === missionId).length >= state.perHour) return { refused: "hour", limit: state.perHour };
       const id = `s${ledger.length + 1}`;
       ledger.push({ id, missionId, threadId: t?.id ?? null, runnerId: null });
       return { id };
@@ -187,11 +187,11 @@ test("on call, every Ship counts against the limits; one reached is told in the 
   assert.equal((await call(deps, "m1", "spawn_runner", { prompt: "b" })).isError, undefined);
   const third = await call(deps, "m1", "spawn_runner", { prompt: "c", thread: "1731400000.000100" });
   assert.equal(third.isError, true);
-  assert.match(third.text, /limit/);
+  assert.match(third.text, /limit on Ships started while on call \(2 in an hour\)/);
   assert.equal(started.length, 2);
   assert.equal(ledger.length, 2);
   assert.equal(posts.length, 1);
-  assert.match(posts[0], /^C1\/1731400000\.000100: I've started 6 Ships for this channel in the last hour/);
+  assert.match(posts[0], /^C1\/1731400000\.000100: I've started 2 Ships for this channel in the last hour, which is my limit/);
   // m2's limit is its own.
   assert.equal((await call(deps, "m2", "spawn_runner", { prompt: "d" })).isError, undefined);
 });

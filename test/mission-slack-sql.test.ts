@@ -128,6 +128,10 @@ function reserve(m: string): string {
   return psql(`select coalesce(ship_id::text, refusal) from reserve_mission_slack_ship('${m}', null, null, 'U1')`);
 }
 
+function limitApplied(m: string): string {
+  return psql(`select refused_at_limit from reserve_mission_slack_ship('${m}', null, null, 'U1')`);
+}
+
 test("6 Ships an hour, then 30 a day; a failed start gives its place back", { skip }, () => {
   const m = mission();
   const taken = Array.from({ length: 6 }, () => reserve(m));
@@ -155,6 +159,8 @@ test("6 Ships an hour, then 30 a day; a failed start gives its place back", { sk
   psql(`insert into mission_limits (mission_id, slack_ships_per_hour, slack_ships_per_day) values ('${n}', 1, 1)`);
   assert.match(reserve(n), /^[0-9a-f-]{36}$/);
   assert.equal(reserve(n), "hour");
+  // The refusal names the limit it applied: the Mission's own.
+  assert.equal(limitApplied(n), "1");
 });
 
 test("spawns racing for the hour's last place: one wins", { skip }, async () => {

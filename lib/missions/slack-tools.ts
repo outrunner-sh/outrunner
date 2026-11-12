@@ -25,7 +25,7 @@ export type MissionSlackDeps = {
   setAskMessage(askId: string, ts: string): Promise<void>;
   askBlocks(askId: string, question: string, options: string[]): Record<string, unknown>[];
   /** A place under the Mission's limits, or which said no. */
-  reserveShip(missionId: string, thread: MissionThread | null): Promise<{ id: string } | { refused: "hour" | "day" }>;
+  reserveShip(missionId: string, thread: MissionThread | null): Promise<{ id: string } | { refused: "hour" | "day"; limit: number }>;
   linkShip(id: string, runnerId: string): Promise<void>;
   releaseShip(id: string): Promise<void>;
   /** The org's audit log: a Ship started from Slack. */
@@ -172,10 +172,10 @@ export async function slackSpawn(
   }
   const reserved = await deps.reserveShip(mission.id, thread);
   if ("refused" in reserved) {
-    if (thread) await deps.post(binding, thread.threadTs, { markdown: limitText(reserved.refused) }).catch(() => null);
+    if (thread) await deps.post(binding, thread.threadTs, { markdown: limitText(reserved.refused, reserved.limit) }).catch(() => null);
     return {
-      error: `The Ship didn't start: this Mission reached its limit on Ships started while on call (${
-        reserved.refused === "hour" ? "per hour" : "per day"
+      error: `The Ship didn't start: this Mission reached its limit on Ships started while on call (${reserved.limit} ${
+        reserved.refused === "hour" ? "in an hour" : "in 24 hours"
       }).${thread ? " The thread was told; start nothing more for it." : " Tell the requester in their thread, and start nothing."}`,
     };
   }
