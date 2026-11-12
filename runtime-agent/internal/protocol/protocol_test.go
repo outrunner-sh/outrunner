@@ -44,7 +44,7 @@ func TestTheNewestHealthFixtureNamesEveryFeature(t *testing.T) {
 		t.Fatal(err)
 	}
 	newest := groups.AgentHealth[len(groups.AgentHealth)-1].Features
-	for _, feature := range []string{FeatureImports, FeatureEnvironment, FeatureAgentConfig, FeatureRestoreModel, FeatureEditor, FeaturePorts, FeatureCodexGateway, FeatureWarmHooks, FeatureMultiRepo, FeatureMultiRepoSnapshots, FeatureGitCredential, FeatureMultiRepoWarm, FeaturePlanMode, FeatureCompact, FeatureFiles, FeatureSkills, FeatureCodexMCP, FeatureCanvas, FeatureAgentContext, FeatureMessageKeys, FeatureChats, FeatureChatSnapshots, FeatureRewind, FeatureCodexAccessToken, FeatureCodexAccount, FeatureSnapshotPatchIntegrity} {
+	for _, feature := range []string{FeatureImports, FeatureEnvironment, FeatureAgentConfig, FeatureRestoreModel, FeatureEditor, FeaturePorts, FeatureCodexGateway, FeatureWarmHooks, FeatureMultiRepo, FeatureMultiRepoSnapshots, FeatureGitCredential, FeatureMultiRepoWarm, FeaturePlanMode, FeatureCompact, FeatureFiles, FeatureSkills, FeatureCodexMCP, FeatureCanvas, FeatureAgentContext, FeatureMessageKeys, FeatureChats, FeatureChatSnapshots, FeatureRewind, FeatureCodexAccessToken, FeatureCodexAccount, FeatureSnapshotPatchIntegrity, FeatureAskCallIdentity} {
 		if !slices.Contains(newest, feature) {
 			t.Errorf("the newest AgentHealth fixture lacks %s: %q", feature, newest)
 		}
@@ -107,6 +107,12 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &WarmStatus{})
 	case "ProvideSecretsRequest":
 		return json.Unmarshal(raw, &ProvideSecretsRequest{})
+	case "AnswerRequest":
+		return json.Unmarshal(raw, &AnswerRequest{})
+	case "AnswerResponse":
+		return json.Unmarshal(raw, &AnswerResponse{})
+	case "PendingQuestionsResponse":
+		return json.Unmarshal(raw, &PendingQuestionsResponse{})
 	case "ProviderPorts", "DesktopPorts":
 		return json.Unmarshal(raw, &[]int{})
 	case "ReservedEnv":

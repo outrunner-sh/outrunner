@@ -14,7 +14,11 @@ import { cn } from "@/lib/utils";
  * ←/→ move between questions, Enter sends and Escape dismisses (from Other,
  * it steps back to the options first).
  *
- * Mount it keyed by the call's id: its answers are that call's.
+ * Mount it keyed by the call's id: its answers are that call's. They go to
+ * that call alone: sent with its transcript id (question.toolUseId), which
+ * an agent that names its calls resolves to the exact call it holds
+ * (lib/runtime/answer-question.ts), refusing the answer if that call is over
+ * rather than giving it to a later one asking the same.
  */
 export function QuestionCard({
   question,

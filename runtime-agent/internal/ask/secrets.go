@@ -159,7 +159,7 @@ func quoteShellPath(path string) string {
 // ErrNotWaiting). keep, under the lock, keeps the values and makes the
 // reply: it runs once, and only for a request still waiting.
 func (b *SecretsBroker) Answer(workspaceID string, names []string, keep func(SecretRequest) (SecretReply, error)) error {
-	return b.held.answer(workspaceID, func(req SecretRequest) (SecretReply, error) {
+	return b.held.answer(workspaceID, func(_ string, req SecretRequest) (SecretReply, error) {
 		if !slices.Equal(req.Names(), names) {
 			return SecretReply{}, ErrNotWaiting
 		}

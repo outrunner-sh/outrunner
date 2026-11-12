@@ -2,8 +2,8 @@ import { after, NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { AgentRequestError } from "@/lib/runtime/agent-client";
-import { AnswerRequest } from "@/lib/runtime/agent-protocol";
+import { deliverAnswer } from "@/lib/runtime/answer-question";
+import { CardAnswer } from "@/lib/runtime/pending-question";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 import { agentChat, requestedChat } from "@/lib/session/chat-target";
 import { watchSent } from "@/lib/session/watch";
@@ -14,6 +14,13 @@ type RouteContext = { params: Promise<{ id: string }> };
  * Answer the questions a cloud session's agent is waiting on: the question
  * card that stands in for the composer. The agent hands the answer to the
  * agent's ask_user call as its result.
+ *
+ * An agent that names its calls (AGENT_FEATURE_ASK_CALL_IDENTITY) gets the
+ * answer for the exact call: the one a caller names (callId, launchEpoch),
+ * or the one the agent verified is the card's transcript call (toolUseId).
+ * Anything else, an older agent, a call not yet verified, is answered by
+ * its questions' text, as before. A caller naming a call of an agent that
+ * can't take one is refused: that agent would answer by text alone.
  */
 export async function POST(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) {
@@ -23,7 +30,7 @@ export async function POST(request: Request, context: RouteContext) {
   if (!owner) {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
-  const parsed = AnswerRequest.safeParse(await request.json().catch(() => null));
+  const parsed = CardAnswer.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "That answer isn't one the question takes." }, { status: 400 });
   }
@@ -39,22 +46,19 @@ export async function POST(request: Request, context: RouteContext) {
   if (!named.ok) return named.response;
   const chat = agentChat(named.chat);
 
-  try {
-    await agent.answer(identity, parsed.data, chat);
-  } catch (error) {
-    // The question is over (answered, given up, or from before a restart), or
-    // the answer doesn't fit it: the agent's message says which.
-    if (error instanceof AgentRequestError && error.error?.code === "CONFLICT") {
-      return NextResponse.json({ error: error.error.message }, { status: 409 });
-    }
-    if (error instanceof AgentRequestError && error.error?.code === "INVALID_REQUEST") {
-      return NextResponse.json({ error: error.error.message }, { status: 400 });
-    }
-    console.error(`Answer: failed for ${workspace.id}`, error);
-    return NextResponse.json({ error: "Couldn't send your answer. Please try again." }, { status: 502 });
+  const outcome = await deliverAnswer(
+    {
+      health: () => agent.health(identity),
+      pendingQuestions: () => agent.pendingQuestions(identity, chat),
+      answer: (req) => agent.answer(identity, req, chat),
+    },
+    parsed.data,
+  );
+  if (!outcome.ok) {
+    return NextResponse.json({ error: outcome.error }, { status: outcome.status });
   }
   // No longer waiting on the user: working again, and watched.
   // The sidebar follows the main chat's turn: a chat's own is its page's.
   if (!chat) after(() => watchSent(workspace.id, workspace.ownerId));
-  return NextResponse.json({ result: "answered" });
+  return NextResponse.json({ result: "answered", ...(outcome.replayed && { replayed: true }) });
 }

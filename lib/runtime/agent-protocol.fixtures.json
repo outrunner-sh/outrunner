@@ -717,7 +717,8 @@
         "rewind",
         "environment-skills",
         "codex-mcp",
-        "canvas", "codex-access-token", "codex-account", "codex-request-secrets", "snapshot-patch-integrity"
+        "canvas", "codex-access-token", "codex-account", "codex-request-secrets", "snapshot-patch-integrity",
+        "ask-call-identity"
       ]
     }
   ],
@@ -815,6 +816,52 @@
     },
     {
       "state": ""
+    }
+  ],
+  "AnswerRequest": [
+    {
+      "questions": [{ "question": "Where?", "options": [{ "label": "DB" }, "Facts"] }],
+      "answers": [{ "selected": ["DB"], "other": "" }]
+    },
+    {
+      "callId": "9f2c",
+      "launchEpoch": "e71a",
+      "answerOperationId": "6a1e2b6e-1c1a-4d4a-9a55-0d6b7f1b2c3d",
+      "answers": [{ "selected": ["DB"], "other": "" }]
+    },
+    {
+      "questions": [{ "question": "Where?", "options": [{ "label": "DB" }, { "label": "Facts" }] }],
+      "dismissed": true,
+      "callId": "9f2c",
+      "launchEpoch": "e71a",
+      "answerOperationId": "op-2"
+    }
+  ],
+  "AnswerResponse": [{ "result": "answered" }, { "result": "answered", "replayed": true }],
+  "PendingQuestionsResponse": [
+    { "questions": [] },
+    {
+      "questions": [
+        {
+          "callId": "9f2c",
+          "launchEpoch": "e71a",
+          "workspaceId": "ws-1",
+          "chat": "main",
+          "toolUseId": "toolu_01",
+          "questions": [{ "question": "Where?", "options": [{ "label": "DB" }, { "label": "Facts" }] }]
+        }
+      ]
+    },
+    {
+      "questions": [
+        {
+          "callId": "9f2c",
+          "launchEpoch": "e71a",
+          "workspaceId": "ws-1",
+          "chat": "c-1",
+          "questions": [{ "question": "Where?", "options": [{ "label": "DB" }, { "label": "Facts" }] }]
+        }
+      ]
     }
   ],
   "ProvideSecretsRequest": [

@@ -19,6 +19,7 @@ import {
   AGENT_FEATURE_EDITOR,
   AGENT_FEATURE_ENVIRONMENT,
   AGENT_FEATURE_FILES,
+  AGENT_FEATURE_ASK_CALL_IDENTITY,
   AGENT_FEATURE_GIT_CREDENTIAL,
   AGENT_FEATURE_IMPORTS,
   AGENT_FEATURE_MESSAGE_KEYS,
@@ -197,6 +198,7 @@ test("the newest health fixture names every feature the agent and the control pl
     AGENT_FEATURE_CODEX_ACCESS_TOKEN,
     AGENT_FEATURE_CODEX_ACCOUNT,
     AGENT_FEATURE_SNAPSHOT_PATCH_INTEGRITY,
+    AGENT_FEATURE_ASK_CALL_IDENTITY,
   ]) {
     assert.ok(newest.includes(feature), `the newest AgentHealth fixture lacks ${feature}`);
   }
