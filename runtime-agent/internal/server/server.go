@@ -969,8 +969,8 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if len(req.AnswerOperationID) > 200 {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "answerOperationId is at most 200 characters")
+	if len(req.CallID) > ask.MaxIdentityField || len(req.LaunchEpoch) > ask.MaxIdentityField || len(req.AnswerOperationID) > ask.MaxIdentityField {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("callId, launchEpoch and answerOperationId are at most %d characters", ask.MaxIdentityField))
 		return
 	}
 	result, err := s.ws.AnswerCall(key, ask.CallIdentity{CallID: req.CallID, LaunchEpoch: req.LaunchEpoch}, req.AnswerOperationID, req.Questions, req.Reply)

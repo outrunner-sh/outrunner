@@ -461,6 +461,11 @@ const toolUseHintKey = "claudecode/toolUseId"
 // MaxToolUseHint bounds the hint: a transcript id is far shorter.
 const MaxToolUseHint = 200
 
+// MaxIdentityField bounds an answer's callId, launchEpoch and
+// answerOperationId, as lib/runtime/agent-protocol.ts does (CallIdentity,
+// AnswerOperationId: .max(200)).
+const MaxIdentityField = 200
+
 func toolUseHint(meta map[string]json.RawMessage) string {
 	var id string
 	if raw, ok := meta[toolUseHintKey]; !ok || json.Unmarshal(raw, &id) != nil || len(id) > MaxToolUseHint {

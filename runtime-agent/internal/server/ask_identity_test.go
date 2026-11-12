@@ -98,6 +98,9 @@ func TestAnAnswerNamesTheCallItAnswers(t *testing.T) {
 	if code, _ := call("ws-i", "POST", "/workspaces/ws-i/answer", map[string]any{"callId": ask2["callId"], "answers": []any{}}); code != http.StatusBadRequest {
 		t.Fatalf("partial identity = %d, want 400", code)
 	}
+	if code, _ := answer(map[string]any{"callId": strings.Repeat("c", ask.MaxIdentityField+1), "launchEpoch": ask2["launchEpoch"]}, "op4", "Facts"); code != http.StatusBadRequest {
+		t.Fatalf("overlong callId = %d, want 400", code)
+	}
 	// An old client, naming no call, answers by text as before.
 	legacy := map[string]any{"questions": []any{map[string]any{"question": "Where?", "options": []any{map[string]string{"label": "DB"}, map[string]string{"label": "Facts"}}}}, "answers": []any{map[string]any{"selected": []string{"Facts"}}}}
 	if code, out := call("ws-i", "POST", "/workspaces/ws-i/answer", legacy); code != http.StatusOK {

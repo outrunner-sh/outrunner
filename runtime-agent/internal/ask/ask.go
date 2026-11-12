@@ -293,7 +293,7 @@ func (b *Broker) AskCall(ctx context.Context, workspaceID, requestID, toolUseHin
 func (b *Broker) Pending(workspaceID string) (PendingCall, bool) {
 	b.held.mu.Lock()
 	defer b.held.mu.Unlock()
-	w := b.held.waiting[workspaceID]
+	w := b.held.waitingLocked(workspaceID)
 	if w == nil {
 		return PendingCall{}, false
 	}
@@ -347,7 +347,7 @@ func (b *Broker) AnswerCall(workspaceID string, id CallIdentity, operationID str
 	if id.LaunchEpoch != b.epoch {
 		return AnswerResult{}, ErrStaleCall
 	}
-	w := h.waiting[workspaceID]
+	w := h.waitingLocked(workspaceID)
 	if w == nil {
 		return AnswerResult{}, ErrNotWaiting
 	}
@@ -361,8 +361,7 @@ func (b *Broker) AnswerCall(workspaceID string, id CallIdentity, operationID str
 		return AnswerResult{}, err
 	}
 	b.remember(operationID, receipt{workspaceID: workspaceID, call: id, digest: digest})
-	delete(h.waiting, workspaceID)
-	w.replies <- reply
+	h.deliverLocked(workspaceID, w, reply)
 	return AnswerResult{}, nil
 }
 
@@ -459,7 +458,7 @@ func (h *holder[Q, R]) waitHinted(ctx context.Context, workspaceID, requestID, h
 func (h *holder[Q, R]) answer(workspaceID string, respond func(requestID string, request Q) (R, error)) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	w := h.waiting[workspaceID]
+	w := h.waitingLocked(workspaceID)
 	if w == nil {
 		return ErrNotWaiting
 	}
@@ -467,9 +466,21 @@ func (h *holder[Q, R]) answer(workspaceID string, respond func(requestID string,
 	if err != nil {
 		return err
 	}
+	h.deliverLocked(workspaceID, w, reply)
+	return nil
+}
+
+// waitingLocked is the session's waiting request, or nil. Under h.mu.
+func (h *holder[Q, R]) waitingLocked(workspaceID string) *waiter[Q, R] {
+	return h.waiting[workspaceID]
+}
+
+// deliverLocked gives w its reply and takes it from waiting, in one step
+// under h.mu: what makes a reply delivered at most once. Every answer path
+// (holder.answer, Broker.AnswerCall) delivers through it.
+func (h *holder[Q, R]) deliverLocked(workspaceID string, w *waiter[Q, R], reply R) {
 	delete(h.waiting, workspaceID)
 	w.replies <- reply
-	return nil
 }
 
 // has reports whether the session has a request waiting.

@@ -34,6 +34,9 @@ export type AnswerOutcome =
 export const CANT_NAME_CALLS_MESSAGE =
   "This session's box can't take an answer for a particular question yet. Answer it in Outrunner.";
 
+/** Refused: the box didn't say what it can do (its health check failed). */
+export const UNREACHABLE_MESSAGE = "Couldn't reach the session's box. Please try again.";
+
 /**
  * Deliver `answer`. A caller naming the call (callId, launchEpoch) gets that
  * call or a 409, never another; a card naming its transcript call
@@ -57,9 +60,12 @@ export async function deliverAnswer(
     return { ok: false, status: 400, error: "That answer isn't one the question takes." };
   }
   try {
-    const canName = (await agent.health().catch(() => null))?.features?.includes(AGENT_FEATURE_ASK_CALL_IDENTITY) === true;
+    const health = await agent.health().catch(() => null);
+    const canName = health?.features?.includes(AGENT_FEATURE_ASK_CALL_IDENTITY) === true;
     let call: CallIdentity | null = null;
     if (named) {
+      // A box that didn't answer isn't one that can't name calls: try again.
+      if (!health) return { ok: false, status: 502, error: UNREACHABLE_MESSAGE };
       if (!canName) return { ok: false, status: 409, error: CANT_NAME_CALLS_MESSAGE };
       call = { callId: answer.callId!, launchEpoch: answer.launchEpoch! };
     } else if (canName && answer.toolUseId) {

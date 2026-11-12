@@ -10,7 +10,7 @@ import {
   type AnswerRequest as AnswerRequestType,
   type PendingQuestionSummary,
 } from "@/lib/runtime/agent-protocol";
-import { CANT_NAME_CALLS_MESSAGE, deliverAnswer, type AnswerAgent } from "@/lib/runtime/answer-question";
+import { CANT_NAME_CALLS_MESSAGE, deliverAnswer, UNREACHABLE_MESSAGE, type AnswerAgent } from "@/lib/runtime/answer-question";
 import { agentAnswer, answerTarget, CardAnswer, QUESTION_EXPIRED_MESSAGE } from "@/lib/runtime/pending-question";
 
 const questions = [{ question: "Where?", options: ["DB", { label: "Facts" }] }];
@@ -163,4 +163,16 @@ test("half an identity, or no questions and no call, is refused", async () => {
   assert.equal((await deliverAnswer(agent, { answers, callId: "c1" })).ok, false);
   assert.equal((await deliverAnswer(agent, { answers })).ok, false);
   assert.equal(agent.sent.length, 0);
+});
+
+test("a named call whose box doesn't answer its health check is a retryable 502, not a capability refusal", async () => {
+  const agent = fakeAgent({ features: NAMES });
+  agent.health = async () => {
+    throw new TypeError("fetch failed");
+  };
+  const out = await deliverAnswer(agent, { answers, callId: "c1", launchEpoch: "e1", answerOperationId: "op" });
+  assert.deepEqual(out, { ok: false, status: 502, error: UNREACHABLE_MESSAGE });
+  assert.equal(agent.sent.length, 0);
+  // Unnamed, it falls back to the text-matched answer, as before.
+  assert.deepEqual(await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1" }), { ok: true, replayed: false, named: false });
 });
