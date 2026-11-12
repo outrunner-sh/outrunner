@@ -152,11 +152,13 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
 
   /**
    * Provision the always-on box and deploy the agent: on the backend's base
-   * image, which ships node, deployClaude adds tmux and an up-to-date Claude
-   * Code, then boots the agent rooted at $HOME, seeding CLAUDE_CODE_OAUTH_TOKEN
-   * so each Claude session authenticates; meanwhile it seeds the bare mirror
-   * when given a repository. Times its stages and deletes the half-built sandbox
-   * on failure so a retry starts clean.
+   * image, which ships node, deployClaude installs tmux and the Claude Code,
+   * Codex and gh CLIs, then boots the agent rooted at $HOME, seeding
+   * CLAUDE_CODE_OAUTH_TOKEN so each Claude session authenticates. A new box
+   * clones the bare mirror alongside the boot when given a repository; a
+   * restored box boots first, then fetches its existing mirror (best-effort).
+   * Times its stages and deletes the half-built sandbox on failure so a retry
+   * starts clean.
    */
   async provisionComputer(
     input: ProvisionComputerInput,
