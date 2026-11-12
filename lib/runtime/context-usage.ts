@@ -68,21 +68,26 @@ export type ContextUsage = {
  *  yet, or a reply from an agent before usage). Compacted since, what the
  *  summary left, where the log says; else nothing until the next reply. */
 export function contextUsage(events: AgentEvent[], model?: string): ContextUsage | null {
-  for (let i = events.length - 1; i >= 0; i--) {
+  return usageBefore(events, events.length, model);
+}
+
+/** contextUsage of the events before `end`: walked by index, not sliced, as
+ *  it runs on every render of a session. */
+function usageBefore(events: AgentEvent[], end: number, model: string | undefined): ContextUsage | null {
+  for (let i = end - 1; i >= 0; i--) {
     const event = events[i];
     if (event.t !== "message") continue;
     if (event.compact) {
       const left = event.compact.postTokens;
       if (!left) return null;
       // Out of the window the replies before it ran in.
-      const before = contextUsage(events.slice(0, i), model);
+      const before = usageBefore(events, i, model);
       const window = before?.window ?? contextWindowFor(model);
-      const compactAt =
-        before?.compactAt === null ? null : (autoCompactedAt(event) ?? before?.compactAt ?? claudeCompactAt(window));
+      const compactAt = before?.compactAt === null ? null : compactPoint(events, i + 1, window, model);
       return { used: left, window, compactAt };
     }
     // A failed turn's stand-in reply counts no tokens: the call before it says.
-    if (event.role !== "assistant" || !event.usage || isErrorReply(event)) continue;
+    if (!counts(event) || !event.usage) continue;
     const u = event.usage;
     // What the call read, as Claude Code counts it: what it wrote is in the
     // next call's input. Or the call's own, where the log says it apart from
@@ -90,28 +95,37 @@ export function contextUsage(events: AgentEvent[], model?: string): ContextUsage
     const used = event.contextTokens ?? u.input_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens;
     if (event.contextWindow) return { used, window: event.contextWindow, compactAt: null };
     const window = contextWindowFor(event.model ?? model);
-    return { used, window, compactAt: lastAutoCompaction(events.slice(0, i)) ?? claudeCompactAt(window) };
+    return { used, window, compactAt: compactPoint(events, i, window, model) };
   }
   return null;
 }
 
-function claudeCompactAt(window: number): number {
+/** A reply whose usage says how full the context was. */
+function counts(event: Extract<AgentEvent, { t: "message" }>): boolean {
+  return event.role === "assistant" && !!event.usage && !isErrorReply(event);
+}
+
+/** Where Claude compacts, for a context of `window` as of `end`: where it
+ *  last did on its own, whatever its settings, if it ran in that window then
+ *  (a switch from GLM's 200k to Opus's 1M makes GLM's point no guide); else
+ *  its buffer short of the window. A /compact's is wherever it was run, so
+ *  says nothing. */
+function compactPoint(events: AgentEvent[], end: number, window: number, model: string | undefined): number {
+  for (let i = end - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.t !== "message" || event.compact?.trigger !== "auto" || !event.compact.preTokens) continue;
+    return windowBefore(events, i, model) === window ? event.compact.preTokens : window - AUTOCOMPACT_BUFFER;
+  }
   return window - AUTOCOMPACT_BUFFER;
 }
 
-/** How full the context was when Claude compacted it on its own: where this
- *  session really compacts, whatever its settings. A /compact's is wherever
- *  it was run, so says nothing. */
-function autoCompactedAt(event: AgentEvent): number | undefined {
-  return event.t === "message" && event.compact?.trigger === "auto" ? event.compact.preTokens || undefined : undefined;
-}
-
-function lastAutoCompaction(events: AgentEvent[]): number | undefined {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const at = autoCompactedAt(events[i]);
-    if (at) return at;
+/** The window the newest reply before `end` ran in. */
+function windowBefore(events: AgentEvent[], end: number, model: string | undefined): number {
+  for (let i = end - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.t === "message" && !event.compact && counts(event)) return event.contextWindow ?? contextWindowFor(event.model ?? model);
   }
-  return undefined;
+  return contextWindowFor(model);
 }
 
 /** How near compaction (or the window, where there's none) the context is:
@@ -125,6 +139,36 @@ export function contextLevel(usage: ContextUsage): ContextLevel {
   if (usage.used >= limit * 0.95) return "now";
   if (usage.used >= limit * 0.8) return "near";
   return "ok";
+}
+
+/** What the session is at, as far as running /context goes. */
+export type ContextReportState = {
+  agent: "claude" | "codex";
+  /** Starting, or what it had queued not yet sent. */
+  starting: boolean;
+  working: boolean;
+  /** A question, secrets, or a plan waits on the user's answer. */
+  waitingOnUser: boolean;
+  /** A sent message is being edited: the next send rewinds the chat. */
+  editing: boolean;
+  /** A harness switch waits to go with the next send. */
+  switchingHarness: boolean;
+  queued: number;
+};
+
+/** Whether the ring may run /context: Claude Code's command, sent as itself
+ *  only while nothing else would take the send over (an edit rewinds, a plan
+ *  takes it as feedback, a switch hands over with it, a queue holds it). */
+export function contextReportOffered(state: ContextReportState): boolean {
+  return (
+    state.agent === "claude" &&
+    !state.starting &&
+    !state.working &&
+    !state.waitingOnUser &&
+    !state.editing &&
+    !state.switchingHarness &&
+    state.queued === 0
+  );
 }
 
 /** A count of tokens as the ring says it: 812, 45.2k, 1.2M. */

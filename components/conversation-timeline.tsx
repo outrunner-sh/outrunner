@@ -446,7 +446,7 @@ function NodeRow({
         </div>
       );
     case "meta":
-      return <Meta label={node.label} text={node.text} />;
+      return <Meta label={node.label} text={node.text} open={node.open} />;
     case "interrupted":
       return <div className="timeline-thought">Interrupted</div>;
     case "prose":
@@ -601,11 +601,11 @@ function Prompt({
 /** An internal record Claude injected (a skill's instructions, a reminder):
  *  folded behind a quiet one-line disclosure, so the conversation keeps its
  *  flow but the text is a click away, like Conductor. */
-function Meta({ label, text }: { label: string; text: string }) {
-  // /context's report was asked for, and is Claude Code's own Markdown.
+function Meta({ label, text, open }: { label: string; text: string; open?: boolean }) {
+  // /context's report is Claude Code's own Markdown.
   const report = label === CONTEXT_USAGE;
   return (
-    <details className="timeline-meta" open={report || undefined}>
+    <details className="timeline-meta" open={open || undefined}>
       <summary>
         <ChevronRight aria-hidden />
         <span className="font-medium">{label}</span>

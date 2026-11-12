@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
-import { compactTokens, contextLevel, contextUsage, contextWindowFor } from "@/lib/runtime/context-usage";
+import { compactTokens, contextLevel, contextReportOffered, contextUsage, contextWindowFor } from "@/lib/runtime/context-usage";
 import { parseConversation } from "@/lib/runtime/replay/conversation";
 
 const usage = { input_tokens: 3, output_tokens: 40, cache_creation_input_tokens: 500, cache_read_input_tokens: 18000 };
@@ -180,4 +180,28 @@ test("an API error's stand-in reply counts no tokens: the reply before it says",
     window: 1_000_000,
     compactAt: 967_000,
   });
+});
+
+test("a compaction in another window is no guide to where this one compacts", () => {
+  const auto = (preTokens: number) => ({ ...reply(), content: [], compact: { trigger: "auto", preTokens, postTokens: 30_000 } }) as AgentEvent;
+  const glm = reply({ usage, model: "z-ai/glm-5.3" });
+  const opus = reply({ usage, model: "claude-opus-5-5" });
+  // GLM compacted at 167k; switched to Opus, the ring measures toward 967k.
+  assert.deepEqual(contextUsage([glm, auto(167_100), opus]), { used: 18503, window: 1_000_000, compactAt: 967_000 });
+  // And back: Opus's 967k is no point on a 200k window.
+  assert.deepEqual(contextUsage([opus, auto(967_400), glm]), { used: 18503, window: 200_000, compactAt: 167_000 });
+  // In the same window, the session's own point holds.
+  assert.equal(contextUsage([glm, auto(160_000), glm])?.compactAt, 160_000);
+});
+
+test("the ring runs /context only for Claude Code, and only when nothing else would take the send", () => {
+  const idle = { agent: "claude", starting: false, working: false, waitingOnUser: false, editing: false, switchingHarness: false, queued: 0 } as const;
+  assert.equal(contextReportOffered(idle), true);
+  assert.equal(contextReportOffered({ ...idle, agent: "codex" }), false);
+  assert.equal(contextReportOffered({ ...idle, starting: true }), false);
+  assert.equal(contextReportOffered({ ...idle, working: true }), false);
+  assert.equal(contextReportOffered({ ...idle, waitingOnUser: true }), false, "a plan or question would take it as an answer");
+  assert.equal(contextReportOffered({ ...idle, editing: true }), false, "an edit would rewind the chat for it");
+  assert.equal(contextReportOffered({ ...idle, switchingHarness: true }), false);
+  assert.equal(contextReportOffered({ ...idle, queued: 1 }), false);
 });

@@ -131,6 +131,7 @@ export function SessionComposer({
   onCompact,
   onSideChat,
   context = null,
+  onContextReport,
   canSend,
   sendDisabledReason,
   placeholder = "Ask anything, @ for context…",
@@ -171,6 +172,9 @@ export function SessionComposer({
   onSideChat?: (question: string) => Promise<boolean>;
   /** How full the session's context is, for the footer's ring; null hides it. */
   context?: ContextUsage | null;
+  /** Runs Claude Code's /context, from a click on the ring; absent, the ring
+   *  is only a reading (Codex's, or a session busy with something). */
+  onContextReport?: () => void;
   canSend: boolean;
   /** Keep typing and uploads available while selection capabilities load. */
   sendDisabledReason?: string;
@@ -835,13 +839,7 @@ export function SessionComposer({
           {context && (
             <ContextRing
               usage={context}
-              // Claude Code's breakdown, between turns: a Claude Code session
-              // is one that compacts (Codex's says no compactAt).
-              onBreakdown={
-                context.compactAt !== null && !stop && canSend && !sendDisabledReason && !sending
-                  ? () => void onSend("/context", [], modeChoice?.mode)
-                  : undefined
-              }
+              onBreakdown={onContextReport && canSend && !sendDisabledReason && !sending ? onContextReport : undefined}
             />
           )}
           {stop && (

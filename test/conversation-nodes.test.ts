@@ -219,4 +219,7 @@ test("/context's report shows as its own row, not an internal record", () => {
   };
   const nodes = conversationNodes([report]);
   assert.deepEqual(nodes.map((node) => node.kind === "meta" && node.label), ["Context usage"]);
+  // The newest is open; the ones before it fold away.
+  const twice = conversationNodes([report, { ...report, uuid: "m2" }]);
+  assert.deepEqual(twice.map((node) => node.kind === "meta" && node.open === true), [false, true]);
 });

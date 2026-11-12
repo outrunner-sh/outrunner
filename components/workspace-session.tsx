@@ -31,7 +31,7 @@ import {
   runnerDidNotStartDetail,
 } from "@/lib/desktop/local-runtime";
 import { claudeIsWorking, firstUserPrompt, replyModel, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
-import { contextUsage } from "@/lib/runtime/context-usage";
+import { contextReportOffered, contextUsage } from "@/lib/runtime/context-usage";
 import { pendingPlan } from "@/lib/runtime/pending-plan";
 import { rememberedMode, rememberMode, type SessionMode } from "@/lib/session/session-mode";
 import {
@@ -1476,6 +1476,21 @@ export function WorkspaceSession({
           onCompact={startup ? undefined : compact}
           onSideChat={onSideChat}
           context={contextUsage(conversation.events, shownModel)}
+          // Sent as itself, without the diff's comments, and only while no
+          // edit, plan, switch or queue would take the send over.
+          onContextReport={
+            contextReportOffered({
+              agent,
+              starting: Boolean(startup) || !initialDeliveryComplete || queuedEditing !== null,
+              working,
+              waitingOnUser: waitingOnUser || waitingOnPlan,
+              editing: editing !== null,
+              switchingHarness: pendingHarness !== null,
+              queued: queue.length,
+            })
+              ? () => void send("/context")
+              : undefined
+          }
           focusSignal={reviseSignal}
           editing={editing && { key: editing.uuid, text: editing.text, onCancel: () => setEditing(null) }}
           placeholder={

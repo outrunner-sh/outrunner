@@ -43,7 +43,7 @@ export type ConversationNode =
     }
   /** Claude's own injected record (a skill's instructions, a reminder): folded
    *  behind a disclosure rather than shown inline. `label` names it in a word. */
-  | { kind: "meta"; key: string; label: string; text: string }
+  | { kind: "meta"; key: string; label: string; text: string; open?: boolean }
   /** A slash command Claude ran itself ("/model opus"), as typed. */
   | { kind: "command"; key: string; text: string }
   /** The conversation compacted here. */
@@ -230,6 +230,10 @@ export function conversationNodes(
     previousAt = event.timestamp;
   });
   if (!working) endTurn();
+  // The newest /context report shows open, as it was just asked for; the
+  // ones before it fold away with the rest.
+  const report = nodes.findLastIndex((node) => node.kind === "meta" && node.label === CONTEXT_USAGE);
+  if (report !== -1) nodes[report] = { ...(nodes[report] as Extract<ConversationNode, { kind: "meta" }>), open: true };
   return nodes;
 }
 
@@ -242,7 +246,7 @@ export function conversationNodes(
  * attached-file prompt leads with that wrapper and the user's words follow, so
  * hiding it would hide the prompt.
  */
-/** /context's report (isContextReport): shown open, as Markdown. */
+/** /context's report (isContextReport): shown as Markdown, the newest open. */
 export const CONTEXT_USAGE = "Context usage";
 
 export function metaLabel(meta: boolean, text: string): string | null {
