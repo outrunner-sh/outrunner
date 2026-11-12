@@ -2,13 +2,12 @@
  * Record the provider of each Runtime Computer whose row doesn't say
  * (lib/runtime/unrecorded-computers.ts), by asking Daytona and Neev which has
  * its box. Run before changing RUNTIME_PROVIDER (docs/deploy-cloudflare.md).
- * Prints what it finds; writes only with --apply. A row exactly one
- * provider has gets that one. A row whose box neither has gets "daytona",
- * the provider being moved off: the box is gone, and every provider reads a
- * box it doesn't have as gone, so the row is only recorded, for
- * /api/health's count to reach 0. A box both claim, or one a lookup failed
- * for, is left as is and printed for an operator (run it again; the rest
- * is unaffected).
+ * Prints what it finds; writes only with --apply (and both providers' keys).
+ * The rules are providerOfBox's: a row exactly one provider has gets that
+ * one; a row whose box both say a real not-found for gets "daytona" (gone),
+ * so /api/health's count can reach 0. A box both claim, one a provider only
+ * refused the id of, or one a lookup failed for, is left as is and printed
+ * for an operator (run it again; the rest is unaffected).
  *
  *   node --experimental-strip-types --import ./scripts/test-loader.mjs scripts/assign-computer-providers.ts [--apply]
  *
@@ -22,6 +21,7 @@ import { Neev, NotFoundError } from "@neevcloud/sdk";
 import { createClient } from "@supabase/supabase-js";
 
 const { providerOfBox } = await import("@/lib/runtime/unrecorded-computers");
+type BoxAnswer = import("@/lib/runtime/unrecorded-computers").BoxAnswer;
 
 const apply = process.argv.includes("--apply");
 const daytona = process.env.DAYTONA_API_KEY
@@ -37,19 +37,17 @@ const neev =
       })
     : null;
 
-/** Not there: a 404, or a refusal of the id itself (400/422, as asking one
- *  provider about the other's id may get). */
-function absent(error: unknown, notFound: (error: unknown) => boolean): boolean {
-  const { status, statusCode } = (error ?? {}) as { status?: unknown; statusCode?: unknown };
-  return notFound(error) || [400, 404, 422].includes(Number(status ?? statusCode));
-}
-
-async function has(get: () => Promise<unknown>, notFound: (error: unknown) => boolean): Promise<boolean> {
+/** What a provider says about a box: it has it, a real not-found, or a
+ *  refusal of the id (400/422, as asking one provider about the other's id
+ *  may get). Anything else throws. */
+async function ask(get: () => Promise<unknown>, notFound: (error: unknown) => boolean): Promise<BoxAnswer> {
   try {
     await get();
-    return true;
+    return "yes";
   } catch (error) {
-    if (absent(error, notFound)) return false;
+    if (notFound(error)) return "no";
+    const { status, statusCode } = (error ?? {}) as { status?: unknown; statusCode?: unknown };
+    if ([400, 422].includes(Number(status ?? statusCode))) return "refused";
     throw error;
   }
 }
@@ -66,28 +64,24 @@ if (error) throw error;
 console.log(`${rows.length} row(s) naming a box with no provider recorded`);
 if (!daytona || !neev) console.log(`Missing ${!daytona ? "Daytona" : "Neev"} keys: reporting only, nothing is written.`);
 
-/** What a row whose box no provider has is recorded as (see above). */
-const GONE_PROVIDER = "daytona";
 let written = 0;
 let unresolved = 0;
 for (const row of rows) {
   const box = row.daytona_sandbox_id as string;
-  const found: Record<string, boolean> = {};
+  const answers: Record<string, BoxAnswer> = {};
   try {
-    if (daytona) found.daytona = await has(() => daytona.get(box), (e) => e instanceof DaytonaNotFoundError);
-    if (neev) found.neev = await has(() => neev.sandboxes.get(box), (e) => e instanceof NotFoundError);
+    if (daytona) answers.daytona = await ask(() => daytona.get(box), (e) => e instanceof DaytonaNotFoundError);
+    if (neev) answers.neev = await ask(() => neev.sandboxes.get(box), (e) => e instanceof NotFoundError);
   } catch (lookupError) {
-    // A malformed-id refusal, a rate limit, a network blip: this row only.
+    // A rate limit, a network blip, an auth error: this row only.
     console.error(`${row.id} (${row.status}) box ${box}: lookup failed, left as is`, lookupError);
     unresolved += 1;
     continue;
   }
-  const gone = Object.values(found).length > 0 && Object.values(found).every((has) => !has);
-  const provider = providerOfBox(found) ?? (gone ? GONE_PROVIDER : null);
+  // Gone only once both were asked and both said a real not-found.
+  const provider = providerOfBox(answers, daytona !== null && neev !== null);
   if (!provider) unresolved += 1;
-  console.log(
-    `${row.id} (${row.status}) box ${box}: ${JSON.stringify(found)} -> ${provider ?? "left as is: an operator decides"}${gone ? " (gone)" : ""}`,
-  );
+  console.log(`${row.id} (${row.status}) box ${box}: ${JSON.stringify(answers)} -> ${provider ?? "left as is: an operator decides"}`);
   if (!apply || !provider || !daytona || !neev) continue;
   const { error: writeError } = await db
     .from("runtime_computers")

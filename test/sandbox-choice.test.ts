@@ -190,9 +190,12 @@ test("only a stopped computer the same provider made is a box to restore from", 
 });
 
 test("a box with no provider recorded is assigned only where exactly one provider has it", async () => {
-  const { providerOfBox } = await import("@/lib/runtime/unrecorded-computers");
-  assert.equal(providerOfBox({ daytona: true, neev: false }), "daytona");
-  assert.equal(providerOfBox({ daytona: false, neev: true }), "neev");
-  assert.equal(providerOfBox({ daytona: false, neev: false }), null, "gone everywhere: left as is");
-  assert.equal(providerOfBox({ daytona: true, neev: true }), null, "both claim it: an operator decides");
+  const { providerOfBox, GONE_PROVIDER } = await import("@/lib/runtime/unrecorded-computers");
+  assert.equal(providerOfBox({ daytona: "yes", neev: "no" }, true), "daytona");
+  assert.equal(providerOfBox({ daytona: "refused", neev: "yes" }, true), "neev", "the other only refusing its id");
+  assert.equal(providerOfBox({ daytona: "yes", neev: "yes" }, true), null, "both claim it: an operator decides");
+  // Gone only on two real not-founds, both asked.
+  assert.equal(providerOfBox({ daytona: "no", neev: "no" }, true), GONE_PROVIDER);
+  assert.equal(providerOfBox({ daytona: "no", neev: "refused" }, true), null, "a refusal may hide a live box");
+  assert.equal(providerOfBox({ daytona: "no" }, false), null, "one backend's keys only: never gone");
 });

@@ -28,9 +28,27 @@ export async function countUnrecordedComputers(): Promise<number | "unreachable"
   }
 }
 
-/** Which provider a box is on, by which of them has it: the one, or null
- *  when none or both say so (left for an operator). */
-export function providerOfBox(found: Record<string, boolean>): string | null {
-  const having = Object.entries(found).filter(([, has]) => has).map(([name]) => name);
-  return having.length === 1 ? having[0] : null;
+/** What one provider said when asked about a box: it has it, a real
+ *  not-found, or a refusal of the id (400/422), which says only that the id
+ *  isn't one it takes, never that a box is gone. */
+export type BoxAnswer = "yes" | "no" | "refused";
+
+/** What a row whose box no provider has is recorded as: the provider being
+ *  moved off. The box is gone, and every provider reads a box it doesn't
+ *  have as gone, so this only records the row. */
+export const GONE_PROVIDER = "daytona";
+
+/**
+ * The provider to record for a box, from every provider's answer: the one
+ * that has it; {@link GONE_PROVIDER} only when every provider was asked
+ * (`allAsked`) and each said a real not-found; otherwise null, for an
+ * operator (both claim it, or one only refused: a refused box may be live,
+ * and recorded as another's it would be read as gone while it billed).
+ */
+export function providerOfBox(answers: Record<string, BoxAnswer>, allAsked: boolean): string | null {
+  const having = Object.entries(answers).filter(([, answer]) => answer === "yes").map(([name]) => name);
+  if (having.length === 1) return having[0];
+  if (having.length > 1) return null;
+  const values = Object.values(answers);
+  return allAsked && values.length > 0 && values.every((answer) => answer === "no") ? GONE_PROVIDER : null;
 }
