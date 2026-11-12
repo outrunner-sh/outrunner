@@ -39,7 +39,10 @@ curl -s -H "Authorization: Bearer $BILLING_CRON_SECRET" https://app.outrunner.sh
 ```
 
 A job is `stale: true` when it hasn't succeeded in 10 minutes (the cron runs
-every 2). `cronsStale` lists them. They don't affect `ok`.
+every 2). `cronsStale` lists them; it is `null`, not `[]`, when the
+heartbeats can't be read (`crons` is then `"not migrated"`, `"unreachable"`
+or `"not configured"`), so alert on `cronsStale` being non-empty **or** null.
+They don't affect `ok`.
 
 ## Health
 
@@ -59,8 +62,8 @@ unreachable.
 
 The image runs `node server.ts` under `tini`, so SIGTERM reaches the server.
 On SIGTERM it stops accepting connections, closes the terminal/conversation
-relays with code 1012 (the browser reconnects), waits up to 30s for requests
-and `after()` work under way, flushes Sentry and exits. When a new version is
+relays with code 1012 and ends event streams (the browser reconnects to
+both), waits up to 30s for requests and `after()` work under way, flushes Sentry and exits. When a new version is
 deployed, the Worker (`cloudflare/worker.ts` `replaceContainer`) sends SIGTERM
 and waits up to 40s for the container to stop before killing it and starting
 the new one; requests meanwhile wait and go to the new container.

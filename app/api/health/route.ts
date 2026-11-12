@@ -123,7 +123,8 @@ export async function GET(request: Request) {
     checkDaytona(),
     checkOpenRouter(),
   ]);
-  const cronsStale = typeof crons === "object" ? Object.entries(crons).filter(([, job]) => job.stale).map(([name]) => name) : [];
+  // null when the heartbeats can't be read: unknown, never "none stale".
+  const cronsStale = typeof crons === "object" ? Object.entries(crons).filter(([, job]) => job.stale).map(([name]) => name) : null;
   const cliVersion = codexCliVersion();
   const codex = { ready: codexSchema === "ok" && cliVersion !== null, schema: codexSchema, cliVersion };
 
