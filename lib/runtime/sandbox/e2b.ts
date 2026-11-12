@@ -1,7 +1,7 @@
 import { CommandExitError, NotFoundError, Sandbox, type SandboxInfo } from "e2b";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
-import { BOX_IMAGE_TAG } from "@/lib/runtime/box-image";
+import { E2B_TEMPLATE_TAG } from "@/lib/runtime/e2b-template";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
 import {
@@ -12,6 +12,7 @@ import {
   type SandboxBackend,
   type SandboxBox,
 } from "@/lib/runtime/sandbox/backend";
+import { NOVNC_PORT } from "@/lib/runtime/box-ports";
 import { e2bRoute } from "@/lib/runtime/sandbox/e2b-route";
 import { e2bSdkOptions } from "@/lib/runtime/sandbox/e2b-sdk";
 import { E2B_RELAY_PREFIX, mintRelayTicket, relayKey } from "@/lib/runtime/sandbox/relay-ticket";
@@ -30,11 +31,12 @@ export const EXEC_TIMEOUT_MS = 10 * 60 * 1000;
 /** The SDK's deadline for its own calls (create, connect, info). */
 const REQUEST_TIMEOUT_MS = 2 * 60 * 1000;
 
-/** The template every box is made from: box/Dockerfile built for E2B by
- *  scripts/e2b-template.ts, named for the image tag so a box never runs tools
- *  at versions the agent wasn't built for. OUTRUNNER_E2B_TEMPLATE overrides it. */
+/** The template every box is made from: box/Dockerfile and the desktop built
+ *  for E2B by scripts/e2b-template.ts, named for the template tag so a box
+ *  never runs tools at versions the agent wasn't built for.
+ *  OUTRUNNER_E2B_TEMPLATE overrides it. */
 export function e2bTemplate(): string {
-  return optionalEnv("OUTRUNNER_E2B_TEMPLATE") ?? `outrunner-box-${BOX_IMAGE_TAG}`;
+  return optionalEnv("OUTRUNNER_E2B_TEMPLATE") ?? `outrunner-box-${E2B_TEMPLATE_TAG}`;
 }
 
 /**
@@ -365,5 +367,39 @@ export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memo
       const { base, headers } = route(port);
       return { baseUrl: base, headers, hostHeader: "upstream" };
     },
+    // The template's desktop (box/e2b-desktop.sh), started on first use. Its
+    // noVNC port is reachable from outside the box, so each link comes with a
+    // new VNC password; a header-routed box's is opened through our relay on a
+    // ticket for that port alone, lasting as long as the link.
+    desktop: {
+      start: async () => {
+        await rootCommand(sandbox, "outrunner-desktop start", "start the desktop");
+      },
+      viewer: async (ttlSeconds) => {
+        const password = (await rootCommand(sandbox, "outrunner-desktop password", "set the desktop's password")).trim();
+        if (!/^[A-Za-z0-9]{8}$/.test(password)) throw new Error("The desktop didn't give a password");
+        const url = c.sandboxUrl
+          ? `${requireEnv("RUNTIME_BASE_URL").replace(/^http/, "ws")}${c.relay.prefix}${id}/${NOVNC_PORT}/` +
+            `${mintRelayTicket(id, NOVNC_PORT, c.relay.key, Date.now(), ttlSeconds)}/websockify`
+          : `wss://${sandbox.getHost(NOVNC_PORT)}/websockify`;
+        return { url, password };
+      },
+    },
   };
+}
+
+/** How long starting the desktop may take: a cold start is a few seconds. */
+const DESKTOP_COMMAND_TIMEOUT_MS = 60_000;
+
+/** Run `command` on the box as root, for its stdout; a failure says what it
+ *  was doing and what the box said. */
+async function rootCommand(sandbox: Sandbox, command: string, doing: string): Promise<string> {
+  try {
+    return (await sandbox.commands.run(command, { user: "root", timeoutMs: DESKTOP_COMMAND_TIMEOUT_MS })).stdout;
+  } catch (error) {
+    if (error instanceof CommandExitError) {
+      throw new Error(`Couldn't ${doing}: ${(error.stderr || error.stdout).trim().slice(0, 300) || `exit ${error.exitCode}`}`);
+    }
+    throw error;
+  }
 }

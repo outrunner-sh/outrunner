@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { boxBuildArgs } from "@/lib/runtime/box-image";
-import { e2bDockerfile, isUserE2bTemplateName, userE2bTemplateName } from "@/lib/runtime/e2b-template";
+import { BOX_IMAGE_TAG, boxBuildArgs } from "@/lib/runtime/box-image";
+import { E2B_TEMPLATE_TAG, e2bDockerfile, e2bTemplateTag, isUserE2bTemplateName, userE2bTemplateName } from "@/lib/runtime/e2b-template";
 
 test("box/Dockerfile becomes one E2B can build: pins written in, args and their guard gone", () => {
   const dockerfile = readFileSync(new URL("../box/Dockerfile", import.meta.url), "utf8");
@@ -50,4 +50,20 @@ test("only the user's own Outrunner templates are taken for theirs to clean up",
   // A tag in another form than today's, hyphens included, still counts as theirs.
   assert.equal(isUserE2bTemplateName("outrunner-box-2026-11-12-0b8a3ded", user), true);
   assert.equal(isUserE2bTemplateName("outrunner-box-2026-11-12-11111111", user), false);
+});
+
+test("E2B_TEMPLATE_TAG is box/Dockerfile's image tag and box/e2b-desktop.sh, as committed", () => {
+  const script = readFileSync(new URL("../box/e2b-desktop.sh", import.meta.url), "utf8");
+  // Fails when either changes: set E2B_TEMPLATE_TAG to what this says.
+  assert.equal(E2B_TEMPLATE_TAG, e2bTemplateTag(BOX_IMAGE_TAG, script));
+});
+
+test("the template gets the desktop layer last, the script carried whole, as the box user", () => {
+  const text = e2bDockerfile("FROM ubuntu\nUSER runtime\n", {}, null, "#!/bin/bash\necho 'quoted' \"too\"\n");
+  const lines = text.trimEnd().split("\n");
+  assert.equal(lines.at(-1), "USER runtime");
+  const install = lines.find((line) => line.includes("outrunner-desktop"))!;
+  const encoded = /echo (\S+) \| base64 -d/.exec(install)![1];
+  assert.equal(Buffer.from(encoded, "base64").toString(), "#!/bin/bash\necho 'quoted' \"too\"\n");
+  assert.ok(lines.some((line) => /apt-get install .*x11vnc .*novnc/.test(line)));
 });

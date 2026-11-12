@@ -33,8 +33,16 @@ function signature(sandboxId: string, port: number, exp: number, key: string): s
   return createHmac("sha256", key).update(`neev-relay:${sandboxId}:${port}:${exp}`).digest("base64url");
 }
 
-export function mintRelayTicket(sandboxId: string, port: number, key: string, now = Date.now()): string {
-  const exp = Math.floor(now / 1000) + RELAY_TICKET_TTL_SECONDS;
+/** A ticket for `port` of `sandboxId`, good for `ttlSeconds`: the agent's
+ *  for an hour, a desktop link's for the minutes it takes to open its socket. */
+export function mintRelayTicket(
+  sandboxId: string,
+  port: number,
+  key: string,
+  now = Date.now(),
+  ttlSeconds = RELAY_TICKET_TTL_SECONDS,
+): string {
+  const exp = Math.floor(now / 1000) + ttlSeconds;
   return `${exp}.${signature(sandboxId, port, exp, key)}`;
 }
 

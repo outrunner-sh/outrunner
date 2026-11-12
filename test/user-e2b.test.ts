@@ -178,3 +178,14 @@ test("a self-hosted E2B's URLs must be https origins on public hosts", () => {
   }
 });
 
+
+test("a desktop in a user's E2B cloud is opened at its own host, with its password", async () => {
+  const fake = fakeSandbox((command) =>
+    command === "outrunner-desktop password" ? { stdout: "Ab3dEf7h\n", stderr: "", exitCode: 0 } : { stdout: "", stderr: "", exitCode: 0 },
+  );
+  const sandbox = { ...fake.sandbox, getHost: (port: number) => `${port}-sbx-1.e2b.app` } as unknown as Sandbox;
+  assert.deepEqual(await box(sandbox, INFO, userE2bConnection(STORED)).desktop!.viewer(120), {
+    url: "wss://6080-sbx-1.e2b.app/websockify",
+    password: "Ab3dEf7h",
+  });
+});

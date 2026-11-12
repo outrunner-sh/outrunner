@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getStoredE2b } from "@/lib/db/credentials";
 import { bearerMatches } from "@/lib/http/bearer";
 import { GATE_SECRET_ENV, GATE_SECRET_HEADER } from "@/lib/previews/wire";
+import { NOVNC_PORT } from "@/lib/runtime/box-ports";
 import { AGENT_PORT } from "@/lib/runtime/daytona/deploy";
 import { e2bRoute } from "@/lib/runtime/sandbox/e2b-route";
 import { assertPublicHost } from "@/lib/runtime/user-e2b-checks";
@@ -10,8 +11,8 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /**
  * Where the custom server's relay (relay.ts) opens a browser's WebSocket to a
- * box in a user's self-hosted E2B: their client-proxy and the routing headers
- * naming the box. Only that server, after checking the browser's ticket for
+ * box in a user's self-hosted E2B (its agent, or its desktop's noVNC proxy):
+ * their client-proxy and the routing headers naming the box and port. Only that server, after checking the browser's ticket for
  * this box and port, can ask (the gate secret); the destination comes from
  * the box's owner's stored E2B, never the request, and must still be public.
  */
@@ -26,7 +27,12 @@ export async function POST(request: Request) {
   } catch {
     return new Response(null, { status: 400 });
   }
-  if (typeof body.id !== "string" || !body.id || body.port !== AGENT_PORT) return new Response(null, { status: 400 });
+  // The agent, or the desktop's noVNC proxy: nothing else on a box is the
+  // browser's to reach through here.
+  if (typeof body.id !== "string" || !body.id || (body.port !== AGENT_PORT && body.port !== NOVNC_PORT)) {
+    return new Response(null, { status: 400 });
+  }
+  const port = body.port;
 
   const { data, error } = await createSupabaseAdminClient()
     .from("runtime_computers")
@@ -45,5 +51,5 @@ export async function POST(request: Request) {
   } catch {
     return new Response(null, { status: 403 });
   }
-  return NextResponse.json(e2bRoute(body.id, AGENT_PORT, stored.sandboxUrl));
+  return NextResponse.json(e2bRoute(body.id, port, stored.sandboxUrl));
 }

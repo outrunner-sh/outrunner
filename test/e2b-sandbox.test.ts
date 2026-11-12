@@ -7,6 +7,7 @@ import { shellQuote } from "@/lib/runtime/daytona/deploy";
 import { box, BOX_TIMEOUT_MS, deploymentE2bConnection, E2bBackend, EXEC_TIMEOUT_MS, forgetE2bHandles, guestMtu } from "@/lib/runtime/sandbox/e2b";
 import { E2B_RELAY_PREFIX, relayKey, relayTicketValid } from "@/lib/runtime/sandbox/relay-ticket";
 import { e2bSdkOptions } from "@/lib/runtime/sandbox/e2b-sdk";
+import { NOVNC_PORT } from "@/lib/runtime/box-ports";
 
 const ENV = {
   OUTRUNNER_E2B_API_KEY: "e2b_test",
@@ -343,4 +344,35 @@ test("the E2B SDK's own environment fallbacks are refused, not quietly used", ()
     domain: "e2b.app",
     requestTimeoutMs: 5,
   });
+});
+
+test("an E2B box's desktop starts as root, and each link has a new password and a short ticket", async () => {
+  let passwords = 0;
+  const fake = fakeSandbox((command) =>
+    command === "outrunner-desktop password" ? { stdout: `Pw${++passwords}xYz9a\n`, stderr: "", exitCode: 0 } : { stdout: "", stderr: "", exitCode: 0 },
+  );
+  const desktop = box(fake.sandbox, INFO, deploymentE2bConnection()).desktop!;
+  await desktop.start();
+  assert.deepEqual(fake.runs[0], { command: "outrunner-desktop start", opts: { user: "root", timeoutMs: 60_000 } });
+
+  const now = Date.now();
+  const first = await desktop.viewer(120);
+  const second = await desktop.viewer(120);
+  assert.equal(first.password, "Pw1xYz9a");
+  assert.equal(second.password, "Pw2xYz9a");
+  const prefix = `wss://app.example${E2B_RELAY_PREFIX}sbx-1/${NOVNC_PORT}/`;
+  assert.ok(first.url.startsWith(prefix) && first.url.endsWith("/websockify"), first.url);
+  const ticket = first.url.slice(prefix.length, -"/websockify".length);
+  const key = relayKey("credentials-key", "e2b");
+  assert.equal(relayTicketValid(ticket, "sbx-1", NOVNC_PORT, key, now), true);
+  // The agent's port doesn't take it, and it's gone once the link's two minutes are.
+  assert.equal(relayTicketValid(ticket, "sbx-1", 8080, key, now), false);
+  assert.equal(relayTicketValid(ticket, "sbx-1", NOVNC_PORT, key, now + 121_000), false);
+});
+
+test("a desktop that gives no proper password, or won't start, says so", async () => {
+  const bad = fakeSandbox(() => ({ stdout: "oops\n", stderr: "", exitCode: 0 }));
+  await assert.rejects(box(bad.sandbox, INFO, deploymentE2bConnection()).desktop!.viewer(120), /didn't give a password/);
+  const failing = fakeSandbox(() => new CommandExitError({ stdout: "", stderr: "the display didn't start\n", exitCode: 1, error: "exit status 1" }));
+  await assert.rejects(box(failing.sandbox, INFO, deploymentE2bConnection()).desktop!.start(), /Couldn't start the desktop: the display didn't start/);
 });

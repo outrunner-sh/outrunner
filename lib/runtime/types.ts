@@ -90,11 +90,13 @@ export function opensInBrowser(provider: ProviderName): boolean {
   return provider === "daytona" || provider === "user-daytona";
 }
 
-/** Whether a session on `provider` has a desktop (the Desktop tab, the
- *  agent's desktop tools): Daytona's computer use. Modal and Neev boxes have
- *  no display server, so neither is offered there. */
+/** Whether a session on `provider` has a desktop (the Desktop tab): Daytona's
+ *  computer use, or the one Outrunner's E2B template carries. Modal, Neev and
+ *  GCP boxes have no display server, so it isn't offered there. The agent's
+ *  desktop tools are Daytona's alone for now (runtime-agent/internal/desktop
+ *  drives Daytona's toolbox); on E2B the agent simply doesn't get them. */
 export function hasDesktop(provider: ProviderName): boolean {
-  return provider === "daytona" || provider === "user-daytona";
+  return provider === "daytona" || provider === "user-daytona" || provider === "e2b" || provider === "user-e2b";
 }
 
 /** One repository of a multi-repository session. */
