@@ -63,6 +63,25 @@ export async function freeIssueBranchOf(
   return nextFreeBranch(base, sessionBranches);
 }
 
+/**
+ * The issue branch a new session tries first, or null for none: none when a branch was asked
+ * for; else the tracker's issue it was started on; else the Triage item's it was started from.
+ * Never worth failing a session over, so anything that throws is none.
+ */
+export async function issueBranchFor(
+  input: { requestedBranch: string; issue: TrackerIssue | null; workItemId: string | null; title: string },
+  deps: { forIssue(issue: TrackerIssue, title: string): Promise<string>; forItem(workItemId: string): Promise<string | null> },
+): Promise<string | null> {
+  if (input.requestedBranch) return null;
+  try {
+    if (input.issue) return await deps.forIssue(input.issue, input.title);
+    if (input.workItemId) return await deps.forItem(input.workItemId);
+  } catch (error) {
+    console.warn("Couldn't name a session's branch for its issue", error);
+  }
+  return null;
+}
+
 /** The name itself if it's free; otherwise `-2`, `-3`… Git's names are case-sensitive, but a
  *  checkout on a Mac's disk isn't, so taken is taken in any case. */
 export function nextFreeBranch(base: string, taken: readonly string[]): string {

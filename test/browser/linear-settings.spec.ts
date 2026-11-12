@@ -106,6 +106,11 @@ test("a stored state that isn't on offer doesn't read as no change", async ({ pa
   await expect(page.getByLabel("State when a session starts").locator("option:checked")).toHaveText("Started: In Progress");
 });
 
+test("the rule-sessions setting reads as a sentence", async ({ page }) => {
+  await open(page, "state=connected");
+  await expect(page.getByText("A Linear rule that delegates to Outrunner starts a session as the issue's creator", { exact: false })).toBeVisible();
+});
+
 test("Blocked and Done: picked like the others, Done from the team's done states only", async ({ page }, info) => {
   await open(page, "state=connected");
   const blocked = page.getByLabel("State while it's blocked");

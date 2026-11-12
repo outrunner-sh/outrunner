@@ -54,7 +54,7 @@ import {
 import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
 import { getWorkItem, linkWorkItemToSession, projectOrgId, triageActor, trackerIssueOfItem } from "@/lib/db/work-items";
 import { freeIssueBranch } from "@/lib/session/issue-branch";
-import { issueFirstBranch, type TrackerIssue } from "@/lib/trackers/issue-key";
+import { issueBranchFor, issueFirstBranch, type TrackerIssue } from "@/lib/trackers/issue-key";
 import { tellTrackersSessionStarted } from "@/lib/trackers/write-back.deps";
 import { isUuid } from "@/lib/ids";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
@@ -503,13 +503,15 @@ async function createOnce(
     ).some(Boolean);
   // On a tracker's issue, it's named for that (lib/trackers/issue-key.ts): the one a tracker
   // started it on, else the item's it was started from. Not worth failing over.
-  const issueBranchOf = (): Promise<string | null> =>
-    options.issue
-      ? freeIssueBranch(project.id, options.issue, options.title ?? "", knownOnGitHub)
-      : typeof body.workItemId === "string" && body.workItemId
-        ? branchOfItem(owner.id, project.id, body.workItemId, knownOnGitHub)
-        : Promise.resolve(null);
-  const issueBranchName = requestedBranch ? null : await issueBranchOf().catch(() => null);
+  const issueBranchOf = () =>
+    issueBranchFor(
+      { requestedBranch, issue: options.issue ?? null, workItemId: typeof body.workItemId === "string" && body.workItemId ? body.workItemId : null, title: options.title ?? "" },
+      {
+        forIssue: (issue, title) => freeIssueBranch(project.id, issue, title, knownOnGitHub),
+        forItem: (workItemId) => branchOfItem(owner.id, project.id, workItemId, knownOnGitHub),
+      },
+    );
+  const issueBranchName = await issueBranchOf();
 
   try {
     const generation = { sessionBranches: (base: string) => projectBranchesLike(project.id, base), knownOnGitHub };
@@ -524,7 +526,7 @@ async function createOnce(
         issueFirstBranch({
           first: issueBranchName,
           lost,
-          next: () => issueBranchOf().catch(() => null),
+          next: issueBranchOf,
           generated: () => generatedBranch(about, generation, lost),
           issueNamed: issueBranches,
         }),

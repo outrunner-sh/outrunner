@@ -353,8 +353,7 @@ function Team({
           <span>
             Accept sessions started by {words.name} rules
             <span className="block text-xs text-muted-foreground">
-              {words.ruleLead} starts a session as the issue&apos;s creator, on their Outrunner
-              allowance. Off, it gets a reply and nothing starts.
+              {`${words.ruleLead} starts a session as the issue's creator, on their Outrunner allowance. Off, it gets a reply and nothing starts.`}
             </span>
           </span>
         </label>
