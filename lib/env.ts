@@ -146,6 +146,6 @@ export function providerName(): ProviderName {
     return provider as (typeof DEPLOYMENT_PROVIDERS)[number];
   }
   throw new Error(
-    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "modal", "daytona", "neev" or "e2b".`,
+    `Invalid RUNTIME_PROVIDER "${provider}". Expected one of: ${DEPLOYMENT_PROVIDERS.join(", ")}.`,
   );
 }
