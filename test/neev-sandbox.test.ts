@@ -327,3 +327,24 @@ test("a box's home is on its data disk, and boxes get room for a repository and 
   await withKey(() => assert.rejects(backend.create({}), /stop here/));
   assert.deepEqual(sent.resources, { disk_gb: NEEV_DISK_GB }, "the template's CPU and memory, with the disk");
 });
+
+test("a box's home is read from passwd, never from a login shell's output", () =>
+  withKey(async () => {
+    const { backend } = backendWithBox("Ready", { backstopped: true });
+    const out = (text: string, exitCode = 0) =>
+      [JSON.stringify({ type: "stdout", data: Buffer.from(text).toString("base64") }), JSON.stringify({ type: "exit", exit_code: exitCode })].join("\n");
+    let passwd = out("runtime:x:1000:1000::/home/runtime:/bin/bash\n");
+    const seen: string[] = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { command: string; args: string[] };
+      seen.push([body.command, ...body.args].join(" "));
+      return new Response(body.command === "getent" ? passwd : out(""));
+    }) as unknown as typeof fetch;
+    const box = (await backend.restore("sb-1"))!;
+    assert.equal(await box.home(), "/home/runtime", "a box made before homes moved keeps its own");
+    assert.ok(seen.includes("getent passwd runtime"), "asked as root, not through a login shell");
+    passwd = out("runtime:x:1000:1000::/workspace/runtime:/bin/bash\n");
+    assert.equal(await box.home(), "/workspace/runtime");
+    passwd = out("", 2);
+    assert.equal(await box.home(), "/workspace/runtime", "the new layout's when passwd can't say");
+  }));

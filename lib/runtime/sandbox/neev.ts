@@ -12,7 +12,6 @@ import type { GitExec } from "@/lib/runtime/git";
 import {
   asUserArgs,
   BOX_USER,
-  homeOf,
   type AgentEndpoint,
   type BoxResources,
   type SandboxBackend,
@@ -359,8 +358,12 @@ export class NeevBackend implements SandboxBackend {
       io,
       gitExec,
       // Its user's own: /workspace/runtime, or /home/runtime on a box made
-      // before homes moved to the data disk.
-      home: () => homeOf(io, BOX_HOME),
+      // before homes moved to the data disk. From passwd, stdout only, as
+      // root: io.exec mixes stderr in, and a login shell's profile can print.
+      home: async () => {
+        const res = await runtime.exec("getent", ["passwd", BOX_USER]);
+        return (res.exitCode === 0 && res.stdout.split(":")[5]?.trim()) || BOX_HOME;
+      },
       // Control calls go through the tunnel from this server; the browser's
       // WebSockets come to this server's relay, which uses the same tunnel.
       agentEndpoint: async (port): Promise<AgentEndpoint> => ({

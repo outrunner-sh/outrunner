@@ -186,9 +186,11 @@ conversation WebSockets through `/relay/neev/` on this domain. That is why
    ```
    All steps should pass. Pause and resume must keep the file.
    `HTTP 403 forbidden: api key not scoped to this org/project` means the key
-   was made in another Neev project than `NEEV_ORG_ID` / `NEEV_PROJECT_ID`
-   name: all three must come from the same project. `HTTP 401` on the first
-   command means a personal access token, not a project key.
+   was made in a different Neev project from the one `NEEV_ORG_ID` /
+   `NEEV_PROJECT_ID` name: all three must come from the same project.
+   "NEEV_API_KEY is a personal access token" means a `pat-nc-…` key was set;
+   an `HTTP 401` once the box exists means the key isn't a project key with
+   Resource Type "Sandboxes" (`sk-nc-…`).
 3. **Rows from before providers were recorded.** A `runtime_computers` row
    with a null `provider` is read as the deployment's. After the switch it
    would be taken for a Neev box even when it's Daytona's: asked of Neev,
