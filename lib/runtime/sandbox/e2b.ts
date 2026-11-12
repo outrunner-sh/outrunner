@@ -78,6 +78,14 @@ function notFound(error: unknown): boolean {
  */
 const HANDLES = new Map<string, { sandbox: Sandbox; startedAt: number }>();
 
+/** Boxes this server is restoring now, which a concurrent get must not
+ *  pause under it. */
+const RESTORING = new Set<string>();
+
+/** How far E2B's clock may be from ours when telling a resume this server's
+ *  get caused from someone's restore just before it. */
+const CLOCK_SKEW_MS = 2_000;
+
 /** Forget every handle: a test seam. */
 export function forgetE2bHandles(): void {
   HANDLES.clear();
@@ -131,7 +139,11 @@ export class E2bBackend implements SandboxBackend {
   /** The box, running. Throws for one that isn't: unlike E2B's connect, this
    *  never resumes a paused box (alive/get must not start one). */
   async get(id: string): Promise<SandboxBox> {
-    const info = await Sandbox.getInfo(id, connection());
+    const info = await Sandbox.getInfo(id, connection()).catch((error: unknown) => {
+      // Deleted elsewhere (another server, the console): its handle goes too.
+      if (notFound(error)) HANDLES.delete(id);
+      throw error;
+    });
     if (info.state !== "running") {
       HANDLES.delete(id);
       throw new Error(`E2B box ${id} is ${info.state}, not running`);
@@ -142,18 +154,25 @@ export class E2bBackend implements SandboxBackend {
     if (held?.startedAt === startedAt) return box(held.sandbox, info);
 
     // A handle means connect, which resumes a box paused since the look
-    // above. A resume gives it a new start, so one that has a new start now
-    // was resumed by this call, and is paused again rather than left running
-    // where nothing tracks it.
+    // above, and a resume is a new start. A new start that began once this
+    // connect was under way is this call's doing: the box is paused again
+    // rather than left running where nothing tracks it. One that began
+    // before is someone's restore (here or on another server), and is left
+    // running. The clocks are E2B's and ours, so a restore within
+    // CLOCK_SKEW_MS before the connect is taken for this call's resume, and
+    // a restore in this server is never paused under itself.
+    const connectedAt = Date.now();
     const sandbox = await Sandbox.connect(id, connection());
     const after = await Sandbox.getInfo(id, connection());
-    if (after.startedAt.getTime() !== startedAt) {
+    const restarted = after.startedAt.getTime();
+    if (restarted !== startedAt && restarted >= connectedAt - CLOCK_SKEW_MS && !RESTORING.has(id)) {
+      HANDLES.delete(id);
       await Sandbox.pause(id, connection()).catch((error: unknown) =>
         console.error(`E2B box ${id} was resumed while being reached and could not be paused again`, error),
       );
       throw new Error(`E2B box ${id} was paused while being reached; it's left paused`);
     }
-    HANDLES.set(id, { sandbox, startedAt });
+    HANDLES.set(id, { sandbox, startedAt: restarted });
     return box(sandbox, after);
   }
 
@@ -181,6 +200,15 @@ export class E2bBackend implements SandboxBackend {
    *  so a new box is the only way on. E2B's metadata can't be changed after
    *  create, so `labels` stay as the box was made with. */
   async restore(id: string): Promise<SandboxBox | null> {
+    RESTORING.add(id);
+    try {
+      return await this.resume(id);
+    } finally {
+      RESTORING.delete(id);
+    }
+  }
+
+  private async resume(id: string): Promise<SandboxBox | null> {
     let sandbox: Sandbox;
     try {
       sandbox = await Sandbox.connect(id, { ...connection(), timeoutMs: BOX_TIMEOUT_MS });

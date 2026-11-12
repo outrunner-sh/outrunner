@@ -176,14 +176,64 @@ test("a box paused between the look and the connect is paused again, not left ru
   let started = 1_000;
   const calls = fakeE2b({
     getInfo: () => info("running", started),
-    // connect resumed it: a resume is a new start.
+    // This connect resumed it: a resume is a new start, from now.
     connect: () => {
-      started = 2_000;
+      started = Date.now();
       return fakeSandbox().sandbox;
     },
   });
   await assert.rejects(new E2bBackend().get("sbx-1"), /paused while being reached/);
   assert.deepEqual(calls, ["getInfo", "connect", "getInfo", "pause"]);
+});
+
+test("a box someone else restored just before the connect is left running", async () => {
+  // Paused and restored by another server between the look and the
+  // connect: a new start, but from before this connect began.
+  const looks = [info("running", 1_000), info("running", Date.now() - 10_000)];
+  const calls = fakeE2b({ getInfo: () => looks.shift(), connect: () => fakeSandbox().sandbox });
+  await new E2bBackend().get("sbx-1");
+  assert.deepEqual(calls, ["getInfo", "connect", "getInfo"]);
+});
+
+test("a restore in this server is never paused by a get running alongside it", async () => {
+  let started = 1_000;
+  let releaseRestore = () => {};
+  const calls = fakeE2b({
+    getInfo: () => info("running", started),
+    connect: (...args: never[]) => {
+      started = Date.now();
+      // The restore's connect waits until the get has looked and connected.
+      const opts = args[1] as { timeoutMs?: number };
+      return opts.timeoutMs === BOX_TIMEOUT_MS
+        ? new Promise((resolve) => { releaseRestore = () => resolve(fakeSandbox().sandbox); })
+        : fakeSandbox().sandbox;
+    },
+  });
+  const backend = new E2bBackend();
+  const restoring = backend.restore("sbx-1");
+  await backend.get("sbx-1");
+  releaseRestore();
+  await restoring;
+  assert.ok(!calls.includes("pause"), calls.join(","));
+});
+
+test("a box deleted elsewhere drops its handle", async () => {
+  let gone = false;
+  const calls = fakeE2b({
+    getInfo: () => {
+      if (gone) throw new NotFoundError("sandbox not found");
+      return info("running");
+    },
+    connect: () => fakeSandbox().sandbox,
+  });
+  const backend = new E2bBackend();
+  await backend.get("sbx-1");
+  gone = true;
+  await assert.rejects(backend.get("sbx-1"), NotFoundError);
+  gone = false;
+  calls.length = 0;
+  await backend.get("sbx-1");
+  assert.deepEqual(calls, ["getInfo", "connect", "getInfo"]);
 });
 
 test("a box in use has its timeout pushed back out only once half of it is gone", async () => {
