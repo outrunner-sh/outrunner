@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { boxBuildArgs } from "@/lib/runtime/box-image";
-import { e2bDockerfile, userE2bTemplateName } from "@/lib/runtime/e2b-template";
+import { e2bDockerfile, isUserE2bTemplateName, userE2bTemplateName } from "@/lib/runtime/e2b-template";
 
 test("box/Dockerfile becomes one E2B can build: pins written in, args and their guard gone", () => {
   const dockerfile = readFileSync(new URL("../box/Dockerfile", import.meta.url), "utf8");
@@ -37,4 +37,14 @@ test("an ARG box/Dockerfile adds later can't silently expand to nothing", () => 
 
 test("a user's template is named for the image and the user", () => {
   assert.equal(userE2bTemplateName("0b8a3ded-4489-4722-afd1-1d82e64ec2d5", "2fe23c90ef49"), "outrunner-box-2fe23c90ef49-0b8a3ded");
+});
+
+test("only the user's own Outrunner templates are taken for theirs to clean up", () => {
+  const user = "0b8a3ded-4489-4722-afd1-1d82e64ec2d5";
+  assert.equal(isUserE2bTemplateName("outrunner-box-2fe23c90ef49-0b8a3ded", user), true);
+  assert.equal(isUserE2bTemplateName("team-slug/outrunner-box-aaaaaaaaaaaa-0b8a3ded", user), true);
+  assert.equal(isUserE2bTemplateName("team-slug/outrunner-box-aaaaaaaaaaaa-0b8a3ded:default", user), true);
+  assert.equal(isUserE2bTemplateName("outrunner-box-2fe23c90ef49-11111111", user), false);
+  assert.equal(isUserE2bTemplateName("my-outrunner-box-2fe23c90ef49-0b8a3ded", user), false);
+  assert.equal(isUserE2bTemplateName("base", user), false);
 });

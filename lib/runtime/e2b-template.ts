@@ -105,3 +105,40 @@ export async function e2bTemplateBuildStatus(target: E2bBuildTarget, build: E2bT
   if (status.status === "error") return { state: "failed", error: status.reason?.message ?? "The template build failed." };
   return { state: "building" };
 }
+
+/** Whether `name` (as E2B lists it: bare, or `<team>/<name>`) is one of
+ *  user `userId`'s templates, at any image. */
+export function isUserE2bTemplateName(name: string, userId: string): boolean {
+  const bare = name.slice(name.lastIndexOf("/") + 1).replace(/:.*$/, "");
+  return new RegExp(`^outrunner-box-[0-9a-f]{12}-${userId.replace(/-/g, "").slice(0, 8)}$`).test(bare);
+}
+
+/**
+ * Delete the user's templates other than `keep` from their E2B: the ones
+ * left by earlier images (each image bump builds a new one) and failed
+ * builds, whose stored artifacts they pay for. Best effort: one that can't
+ * be deleted now is tried again after the next build.
+ */
+export async function deleteOtherUserE2bTemplates(target: E2bBuildTarget, userId: string, keep: string): Promise<void> {
+  const { e2bSdkOptions } = await import("@/lib/runtime/sandbox/e2b-sdk");
+  const { apiUrl, apiKey } = e2bSdkOptions(target);
+  const headers = { "X-API-Key": apiKey };
+  try {
+    const response = await fetch(`${apiUrl}/templates`, { headers, signal: AbortSignal.timeout(20_000) });
+    if (!response.ok) throw new Error(`E2B answered ${response.status} listing templates`);
+    const templates = (await response.json()) as Array<{ templateID: string; names?: string[]; aliases?: string[] }>;
+    const old = templates.filter(
+      (t) => t.templateID !== keep && [...(t.names ?? []), ...(t.aliases ?? [])].some((name) => isUserE2bTemplateName(name, userId)),
+    );
+    for (const t of old) {
+      const deleted = await fetch(`${apiUrl}/templates/${encodeURIComponent(t.templateID)}`, {
+        method: "DELETE",
+        headers,
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!deleted.ok && deleted.status !== 404) console.warn(`Could not delete old E2B template ${t.templateID}: ${deleted.status}`);
+    }
+  } catch (error) {
+    console.warn(`Could not clean up user ${userId}'s old E2B templates`, error);
+  }
+}
