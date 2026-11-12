@@ -65,10 +65,17 @@ function unseal(sealed: string, aad: string, key: string): string | null {
   }
 }
 
-/** A ticket for `port` of `sandboxId`, good for {@link RELAY_TICKET_TTL_SECONDS};
+/** A ticket for `port` of `sandboxId`, good for `ttlSeconds`: the agent's
+ *  for an hour, a desktop link's for the minutes it takes to open its socket.
  *  `secret`, when given, rides along sealed for the relay alone. */
-export function mintRelayTicket(sandboxId: string, port: number, key: string, now = Date.now(), secret?: string): string {
-  const exp = Math.floor(now / 1000) + RELAY_TICKET_TTL_SECONDS;
+export function mintRelayTicket(
+  sandboxId: string,
+  port: number,
+  key: string,
+  now = Date.now(),
+  { secret, ttlSeconds = RELAY_TICKET_TTL_SECONDS }: { secret?: string; ttlSeconds?: number } = {},
+): string {
+  const exp = Math.floor(now / 1000) + ttlSeconds;
   if (!secret) return `${exp}.${signature(sandboxId, port, exp, key)}`;
   const sealed = seal(secret, `${sandboxId}:${port}:${exp}`, key);
   return `${exp}.${signature(sandboxId, port, exp, key, sealed)}.${sealed}`;

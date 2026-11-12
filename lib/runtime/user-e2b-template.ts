@@ -6,9 +6,9 @@ import {
   type SandboxSettings,
   type StoredE2b,
 } from "@/lib/db/credentials";
-import { BOX_IMAGE_TAG } from "@/lib/runtime/box-image";
 import {
   deleteOtherUserE2bTemplates,
+  E2B_TEMPLATE_TAG,
   e2bTemplateBuildStatus,
   startE2bTemplateBuild,
   userE2bTemplateName,
@@ -38,10 +38,10 @@ export async function buildUserE2bTemplate(
   stored: StoredE2b,
   { retryFailed = false }: { retryFailed?: boolean } = {},
 ): Promise<boolean> {
-  const claimedAt = await claimE2bTemplateBuild(userId, BOX_IMAGE_TAG, { retryFailed });
+  const claimedAt = await claimE2bTemplateBuild(userId, E2B_TEMPLATE_TAG, { retryFailed });
   if (!claimedAt) return false;
   try {
-    const build = await startE2bTemplateBuild(targetOf(stored), userE2bTemplateName(userId, BOX_IMAGE_TAG));
+    const build = await startE2bTemplateBuild(targetOf(stored), userE2bTemplateName(userId, E2B_TEMPLATE_TAG));
     await setE2bTemplate(userId, { state: "building", claimedAt, templateId: build.templateId, buildId: build.buildId });
   } catch (error) {
     console.error(`Could not start an E2B template build for user ${userId}`, error);
@@ -69,7 +69,7 @@ export async function refreshUserE2bTemplate(userId: string): Promise<void> {
     return;
   }
   if (stored.template !== "building" || !stored.templateId || !stored.templateBuildId) return;
-  const build = { templateId: stored.templateId, buildId: stored.templateBuildId, tag: BOX_IMAGE_TAG };
+  const build = { templateId: stored.templateId, buildId: stored.templateBuildId, tag: E2B_TEMPLATE_TAG };
   try {
     const status = await e2bTemplateBuildStatus(targetOf(stored), build);
     if (status.state === "building") return;

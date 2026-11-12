@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { CommandExitError, NotFoundError, Sandbox, type SandboxInfo } from "e2b";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
-import { BOX_IMAGE_TAG } from "@/lib/runtime/box-image";
+import { E2B_TEMPLATE_TAG } from "@/lib/runtime/e2b-template";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
 import {
@@ -14,6 +14,7 @@ import {
   type SandboxBackend,
   type SandboxBox,
 } from "@/lib/runtime/sandbox/backend";
+import { NOVNC_PORT } from "@/lib/runtime/box-ports";
 import { E2B_TRAFFIC_TOKEN_HEADER, e2bRoute, sealableE2bRelaySecret } from "@/lib/runtime/sandbox/e2b-route";
 import { e2bSdkOptions, proxiedFetch } from "@/lib/runtime/sandbox/e2b-sdk";
 import { E2B_RELAY_PREFIX, mintRelayTicket, relayKey } from "@/lib/runtime/sandbox/relay-ticket";
@@ -32,11 +33,12 @@ export const EXEC_TIMEOUT_MS = 10 * 60 * 1000;
 /** The SDK's deadline for its own calls (create, connect, info). */
 const REQUEST_TIMEOUT_MS = 2 * 60 * 1000;
 
-/** The template every box is made from: box/Dockerfile built for E2B by
- *  scripts/e2b-template.ts, named for the image tag so a box never runs tools
- *  at versions the agent wasn't built for. OUTRUNNER_E2B_TEMPLATE overrides it. */
+/** The template every box is made from: box/Dockerfile and the desktop built
+ *  for E2B by scripts/e2b-template.ts, named for the template tag so a box
+ *  never runs tools at versions the agent wasn't built for.
+ *  OUTRUNNER_E2B_TEMPLATE overrides it. */
 export function e2bTemplate(): string {
-  return optionalEnv("OUTRUNNER_E2B_TEMPLATE") ?? `outrunner-box-${BOX_IMAGE_TAG}`;
+  return optionalEnv("OUTRUNNER_E2B_TEMPLATE") ?? `outrunner-box-${E2B_TEMPLATE_TAG}`;
 }
 
 /**
@@ -351,6 +353,8 @@ export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memo
   const trafficToken = sandbox.trafficAccessToken;
   // How this server reaches the box's `port`: by header through a self-hosted
   // client-proxy, or at the box's own host on E2B's cloud.
+  // What the relay's ticket carries sealed: the token, and a user's box's owner.
+  const secret = sealableE2bRelaySecret({ token: trafficToken, owner: c.relay.owner });
   const route = (port: number) =>
     c.sandboxUrl
       ? e2bRoute(id, port, c.sandboxUrl, trafficToken)
@@ -391,10 +395,9 @@ export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memo
       // its WebSockets come through our relay, the token sealed in the ticket
       // (with the box's owner, for a user's E2B) out of the browser's reach.
       // Only a host-routed box from before traffic tokens is opened direct.
-      const secret = sealableE2bRelaySecret({ token: trafficToken, owner: c.relay.owner });
       const wsBaseUrl =
         c.sandboxUrl || trafficToken
-          ? `${requireEnv("RUNTIME_BASE_URL")}${c.relay.prefix}${id}/${port}/${mintRelayTicket(id, port, c.relay.key, Date.now(), secret)}`
+          ? `${requireEnv("RUNTIME_BASE_URL")}${c.relay.prefix}${id}/${port}/${mintRelayTicket(id, port, c.relay.key, Date.now(), { secret })}`
           : base;
       // A user's self-hosted E2B: through the egress proxy, as the SDK is.
       const controlFetch = c.proxy ? await proxiedFetch(c.proxy) : undefined;
@@ -405,5 +408,44 @@ export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memo
       const { base, headers } = route(port);
       return { baseUrl: base, headers, hostHeader: "upstream" };
     },
+    // The template's desktop (box/e2b-desktop.sh), started on first use. Each
+    // link comes with a new VNC password, which the box replaces once the
+    // link's `ttlSeconds` are up. The link goes through our relay, on a
+    // ticket for that port alone lasting as long, which carries the box's
+    // traffic token sealed: the noVNC port answers nothing else. Only a box
+    // on E2B's cloud from before traffic tokens is opened at its own host.
+    desktop: {
+      start: async () => {
+        await rootCommand(sandbox, "outrunner-desktop start", "start the desktop");
+      },
+      viewer: async (ttlSeconds) => {
+        if (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0) throw new Error(`A desktop link's TTL must be whole seconds, not ${ttlSeconds}`);
+        const password = (
+          await rootCommand(sandbox, `outrunner-desktop password ${ttlSeconds}`, "set the desktop's password")
+        ).trim();
+        if (!/^[A-Za-z0-9]{8}$/.test(password)) throw new Error("The desktop didn't give a password");
+        const url = c.sandboxUrl || trafficToken
+          ? `${requireEnv("RUNTIME_BASE_URL").replace(/^http/, "ws")}${c.relay.prefix}${id}/${NOVNC_PORT}/` +
+            `${mintRelayTicket(id, NOVNC_PORT, c.relay.key, Date.now(), { secret, ttlSeconds })}/websockify`
+          : `wss://${sandbox.getHost(NOVNC_PORT)}/websockify`;
+        return { url, password };
+      },
+    },
   };
+}
+
+/** How long starting the desktop may take: a cold start is a few seconds. */
+const DESKTOP_COMMAND_TIMEOUT_MS = 60_000;
+
+/** Run `command` on the box as root, for its stdout; a failure says what it
+ *  was doing and what the box said. */
+async function rootCommand(sandbox: Sandbox, command: string, doing: string): Promise<string> {
+  try {
+    return (await sandbox.commands.run(command, { user: "root", timeoutMs: DESKTOP_COMMAND_TIMEOUT_MS })).stdout;
+  } catch (error) {
+    if (error instanceof CommandExitError) {
+      throw new Error(`Couldn't ${doing}: ${(error.stderr || error.stdout).trim().slice(0, 300) || `exit ${error.exitCode}`}`);
+    }
+    throw error;
+  }
 }

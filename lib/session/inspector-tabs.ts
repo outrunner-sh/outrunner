@@ -1,4 +1,4 @@
-import { onRuntimeComputer, opensInBrowser, type Workspace } from "@/lib/runtime/types";
+import { hasDesktop, onRuntimeComputer, type Workspace } from "@/lib/runtime/types";
 
 /**
  * The tabs of a session's right pane, beside its chat. Environment is always
@@ -22,10 +22,9 @@ export function inspectorTabs(workspace: Pick<Workspace, "provider" | "kind">, l
     { id: "environment", label: "Environment" },
     { id: "changes", label: "Changes" },
   ];
-  // The box's desktop: a cloud session on Daytona, whose computer use runs
-  // it. opensInBrowser is that same check (Daytona's signed preview links,
-  // which the desktop is viewed through); a session on this Mac has none.
-  if (!local && opensInBrowser(workspace.provider)) tabs.push({ id: "desktop", label: "Desktop" });
+  // The box's desktop: a cloud session on a provider that has one (Daytona's
+  // computer use, Outrunner's E2B template); a session on this Mac has none.
+  if (!local && hasDesktop(workspace.provider)) tabs.push({ id: "desktop", label: "Desktop" });
   if (!local && onRuntimeComputer(workspace.provider)) tabs.push({ id: "canvas", label: "Canvas" });
   return tabs;
 }

@@ -63,7 +63,7 @@ import {
   usableProviders,
 } from "@/lib/providers/registry";
 import type { KeyHolder, ModelMenu } from "@/lib/runtime/session-models";
-import { BOX_IMAGE_TAG } from "@/lib/runtime/box-image";
+import { E2B_TEMPLATE_TAG } from "@/lib/runtime/e2b-template";
 import { DEFAULT_BOX_SIZE, isBoxSizeId, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import type { ModalToken } from "@/lib/runtime/sandbox/modal";
 import type { VerifiedEmail } from "@/lib/orgs/domains";
@@ -478,11 +478,12 @@ async function storedE2bRow(userId: string): Promise<E2bRow | null | undefined> 
 }
 
 /** The page's view of the user's E2B: never the key. A template built at
- *  another box image than this server's is outdated. */
+ *  another template tag than this server's (its box image, its desktop) is
+ *  outdated. */
 function e2bSettingsOf(row: E2bRow | null): E2bSettings {
   const state = row?.e2b_template_state ?? null;
   const template: E2bTemplateState =
-    state === null ? "none" : state === "ready" && row?.e2b_template_tag !== BOX_IMAGE_TAG ? "outdated" : state;
+    state === null ? "none" : state === "ready" && row?.e2b_template_tag !== E2B_TEMPLATE_TAG ? "outdated" : state;
   return {
     connected: Boolean(row?.e2b_key_ciphertext),
     hint: row?.e2b_key_hint ?? null,

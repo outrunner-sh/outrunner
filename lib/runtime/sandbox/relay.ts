@@ -22,8 +22,9 @@ import { neevTunnel } from "./neev-tunnel.ts";
  * server (server.ts) hands every upgrade to them first.
  */
 
-/** Agent WebSockets the browser may reach. */
-const RELAYED = new Set(["pty", "events-ws"]);
+/** WebSockets the browser may reach: the agent's terminal and conversation,
+ *  and a desktop's noVNC proxy (E2B's), each only on the port its ticket names. */
+const RELAYED = new Set(["pty", "events-ws", "websockify"]);
 /** Keeps an idle terminal's connection open through proxies on both legs:
  *  in front of us (Cloudflare), and between us and the box. */
 export const PING_MS = 25_000;

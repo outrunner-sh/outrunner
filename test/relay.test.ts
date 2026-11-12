@@ -42,7 +42,7 @@ test("a tampered or malformed ticket opens nothing", () => {
 
 test("a ticket can carry a secret for the relay, sealed and signed", () => {
   const now = Date.UTC(2026, 9, 13, 8, 0, 0);
-  const ticket = mintRelayTicket(SANDBOX, 8080, KEY, now, "traffic-token");
+  const ticket = mintRelayTicket(SANDBOX, 8080, KEY, now, { secret: "traffic-token" });
   assert.ok(!ticket.includes("traffic-token"));
   assert.deepEqual(openRelayTicket(ticket, SANDBOX, 8080, KEY, now), { secret: "traffic-token" });
   assert.equal(relayTicketValid(ticket, SANDBOX, 8080, KEY, now), true);
@@ -50,7 +50,7 @@ test("a ticket can carry a secret for the relay, sealed and signed", () => {
   assert.equal(openRelayTicket(ticket, SANDBOX, 8080, "another-key", now), null);
   const [exp, sig, sealed] = ticket.split(".");
   // Another sealed secret under the same signature, or none at all, opens nothing.
-  const other = mintRelayTicket(SANDBOX, 8080, KEY, now, "someone-else").split(".")[2];
+  const other = mintRelayTicket(SANDBOX, 8080, KEY, now, { secret: "someone-else" }).split(".")[2];
   assert.equal(openRelayTicket(`${exp}.${sig}.${other}`, SANDBOX, 8080, KEY, now), null);
   assert.equal(openRelayTicket(`${exp}.${sig}`, SANDBOX, 8080, KEY, now), null);
   assert.equal(openRelayTicket(`${exp}.${sig}.`, SANDBOX, 8080, KEY, now), null);
@@ -161,7 +161,7 @@ test("the relay hands its tunnel the secret sealed in the ticket", async () => {
     secrets.push(secret);
     return { base: agent, headers: {} };
   });
-  for (const ticket of [mintRelayTicket(SANDBOX, 8080, KEY, Date.now(), "tat-1"), mintRelayTicket(SANDBOX, 8080, KEY)]) {
+  for (const ticket of [mintRelayTicket(SANDBOX, 8080, KEY, Date.now(), { secret: "tat-1" }), mintRelayTicket(SANDBOX, 8080, KEY)]) {
     const ws = new WebSocket(relayUrl(port, "pty", ticket));
     await new Promise((resolve) => ws.once("open", resolve));
     ws.close();

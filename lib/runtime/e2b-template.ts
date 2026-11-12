@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+
+import { BOX_IMAGE_TAG } from "@/lib/runtime/box-image";
+
 /**
  * box/Dockerfile as E2B's template builder takes it. E2B builds from a
  * Dockerfile's text but has no build args, so the pinned versions
@@ -18,7 +22,12 @@ const ARG_GUARD = /^RUN test -n "\$NODE_MAJOR"[^\n]*\\\n[^\n]*\n/m;
  * network carries smaller packets, large downloads otherwise break off).
  * Throws when an arg is left unset, rather than build an image without it.
  */
-export function e2bDockerfile(dockerfile: string, args: Record<string, string>, mtu: number | null = null): string {
+export function e2bDockerfile(
+  dockerfile: string,
+  args: Record<string, string>,
+  mtu: number | null = null,
+  desktopScript: string | null = null,
+): string {
   let text = dockerfile.replace(ARG_GUARD, "");
   // Every ARG is dropped, so every one, with a default or not, must be given
   // a value here: one left would expand to nothing in E2B's build, silently.
@@ -42,30 +51,66 @@ export function e2bDockerfile(dockerfile: string, args: Record<string, string>, 
   if (/^RUN test -n/m.test(text)) throw new Error("box/Dockerfile's build-arg guard changed; update e2bDockerfile");
 
   if (mtu !== null) text = text.replace(/^(FROM [^\n]+\n)/m, `$1USER root\nRUN ip link set eth0 mtu ${mtu}\n`);
-  return text;
+  return desktopScript === null ? text : `${text.replace(/\n*$/, "\n")}${e2bDesktopLayer(desktopScript)}`;
 }
 
-/** The template's name in a user's own E2B: the image tag it's built at
- *  (as `BOX_IMAGE_TAG` is now), and the user, in case E2B's names are shared
+/** What a desktop needs on an E2B box, which has none of its own: a virtual
+ *  display, Xfce, x11vnc and noVNC's proxy (box/e2b-desktop.sh drives them). */
+const DESKTOP_PACKAGES = "xvfb xfce4 xfce4-terminal dbus-x11 x11vnc novnc websockify";
+
+/** The template's layer on top of box/Dockerfile for the Desktop tab:
+ *  the desktop's packages and `outrunner-desktop`, box/e2b-desktop.sh. Ends
+ *  as the box user, as box/Dockerfile does. */
+export function e2bDesktopLayer(desktopScript: string): string {
+  return [
+    "USER root",
+    `RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${DESKTOP_PACKAGES} && rm -rf /var/lib/apt/lists/*`,
+    // Base64: the script's quotes and newlines never meet the Dockerfile's.
+    `RUN echo ${Buffer.from(desktopScript).toString("base64")} | base64 -d > /usr/local/bin/outrunner-desktop && chmod 0755 /usr/local/bin/outrunner-desktop`,
+    "USER runtime",
+    "",
+  ].join("\n");
+}
+
+/** The tag an E2B template of box/Dockerfile at `boxTag`, with `desktopScript`
+ *  layered on, goes by: so a change to either builds a new one. */
+export function e2bTemplateTag(boxTag: string, desktopScript: string): string {
+  return createHash("sha256").update(boxTag).update("\0").update(e2bDesktopLayer(desktopScript)).digest("hex").slice(0, 12);
+}
+
+/** {@link e2bTemplateTag} of BOX_IMAGE_TAG and box/e2b-desktop.sh as
+ *  committed. Written out, so the app reads neither to know it; its test
+ *  fails when they part. */
+export const E2B_TEMPLATE_TAG = "84d43be950d3";
+
+/** The template's name in a user's own E2B: the template tag it's built at
+ *  (as `E2B_TEMPLATE_TAG` is now), and the user, in case E2B's names are shared
  *  across accounts. */
 export function userE2bTemplateName(userId: string, tag: string): string {
   return `outrunner-box-${tag}-${userId.replace(/-/g, "").slice(0, 8)}`;
 }
 
-/** box/Dockerfile as this server has it: in the repository and the app's
- *  image alike, at the working directory's root. Refused when it isn't the
- *  one BOX_IMAGE_TAG names, rather than build tools the agent wasn't built for. */
-export async function boxDockerfile(cwd = process.cwd()): Promise<string> {
-  const [{ readFile }, path, { BOX_IMAGE_TAG, boxImageTag }] = await Promise.all([
+/** box/Dockerfile and box/e2b-desktop.sh as this server has them: in the
+ *  repository and the app's image alike, at the working directory's root.
+ *  Refused when they aren't the ones the tags name, rather than build tools
+ *  the agent wasn't built for. */
+export async function boxSources(cwd = process.cwd()): Promise<{ dockerfile: string; desktopScript: string }> {
+  const [{ readFile }, path, { boxImageTag }] = await Promise.all([
     import("node:fs/promises"),
     import("node:path"),
     import("@/lib/runtime/box-image"),
   ]);
-  const text = await readFile(path.join(cwd, "box", "Dockerfile"), "utf8");
-  if (boxImageTag(text) !== BOX_IMAGE_TAG) {
+  const [dockerfile, desktopScript] = await Promise.all([
+    readFile(path.join(cwd, "box", "Dockerfile"), "utf8"),
+    readFile(path.join(cwd, "box", "e2b-desktop.sh"), "utf8"),
+  ]);
+  if (boxImageTag(dockerfile) !== BOX_IMAGE_TAG) {
     throw new Error("box/Dockerfile or BOX_TOOLS changed: update BOX_IMAGE_TAG in lib/runtime/box-image.ts first");
   }
-  return text;
+  if (e2bTemplateTag(BOX_IMAGE_TAG, desktopScript) !== E2B_TEMPLATE_TAG) {
+    throw new Error("box/e2b-desktop.sh or BOX_IMAGE_TAG changed: update E2B_TEMPLATE_TAG in lib/runtime/e2b-template.ts");
+  }
+  return { dockerfile, desktopScript };
 }
 
 /** Where a template is built: an E2B's API, on a key. `user`: a user's E2B,
@@ -93,19 +138,20 @@ export async function startE2bTemplateBuild(
   name: string,
   mtu: number | null = null,
 ): Promise<E2bTemplateBuild> {
-  const [{ Template }, { BOX_IMAGE_TAG, boxBuildArgs }, { boxSize }] = await Promise.all([
+  const [{ Template }, { boxBuildArgs }, { boxSize }] = await Promise.all([
     import("e2b"),
     import("@/lib/runtime/box-image"),
     import("@/lib/runtime/box-sizes"),
   ]);
   const size = boxSize("small");
   const options = await sdkOptionsFor(target);
-  const info = await Template.buildInBackground(Template().fromDockerfile(e2bDockerfile(await boxDockerfile(), boxBuildArgs(), mtu)), name, {
+  const { dockerfile, desktopScript } = await boxSources();
+  const info = await Template.buildInBackground(Template().fromDockerfile(e2bDockerfile(dockerfile, boxBuildArgs(), mtu, desktopScript)), name, {
     ...options,
     cpuCount: size.cpu,
     memoryMB: size.memoryGb * 1024,
   });
-  return { templateId: info.templateId, buildId: info.buildId, tag: BOX_IMAGE_TAG };
+  return { templateId: info.templateId, buildId: info.buildId, tag: E2B_TEMPLATE_TAG };
 }
 
 /** Where a template build is: still going, done, or failed and why. */

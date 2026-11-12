@@ -35,7 +35,7 @@ import {
   readFileDiff,
 } from "@/lib/runtime/git";
 import { boxLabels, deploymentName } from "@/lib/runtime/orphan-boxes";
-import type { BoxResources, PreviewTarget, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
+import type { BoxResources, DesktopLink, PreviewTarget, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
 import type {
   ChangedFile,
   CommitWorkspaceResult,
@@ -677,11 +677,11 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
   /** The WebSocket the owner's browser views the box's desktop through, for
    *  `ttlSeconds`, the desktop started first if it wasn't running; null where
    *  the provider has no desktop. */
-  async openDesktop(sandboxId: string, ttlSeconds: number): Promise<string | null> {
+  async openDesktop(sandboxId: string, ttlSeconds: number): Promise<DesktopLink | null> {
     const box = await this.backend.get(sandboxId);
     if (!box.desktop) return null;
     await box.desktop.start();
-    return box.desktop.viewerUrl(ttlSeconds);
+    return box.desktop.viewer(ttlSeconds);
   }
 
   /** How this server reaches the box's `port` for a preview it proxies;
