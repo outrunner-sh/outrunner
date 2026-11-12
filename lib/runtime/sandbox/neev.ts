@@ -55,6 +55,9 @@ export function neevTemplate(): string {
 
 /** How long a golden snapshot lookup (or its absence) is trusted. */
 const GOLDEN_CACHE_MS = 10 * 60_000;
+/** How long a size whose golden snapshot Neev refused to restore is made
+ *  from the template before the golden one is tried again. */
+const GOLDEN_RETRY_MS = 2 * 60_000;
 
 /** Prefix of Neev's golden boxes. It never matches neevBoxLabels' shape, so
  *  the orphaned-box sweep never lists, let alone deletes, one. */
@@ -105,7 +108,7 @@ export async function findGoldenSnapshot(neev: Neev, name: string): Promise<stri
  * box's memory (measured on real boxes, 2026-11-12). A box made before this
  * keeps its user's home in /home (home() reads it off the box).
  */
-const BOX_HOME = `/workspace/${BOX_USER}`;
+export const BOX_HOME = `/workspace/${BOX_USER}`;
 /**
  * The disk every box is made with, in GB (Neev: multiples of 10, 10-100):
  * 6 GB for the root, 24 GB for /workspace, the home. Daytona's boxes have
@@ -223,7 +226,7 @@ export class NeevBackend implements SandboxBackend {
 
   /**
    * A new box restored from this version's golden snapshot for `size`
-   * (lib/runtime/sandbox/neev-golden.ts), with the tools and the box user
+   * (scripts/neev-golden.ts), with the tools and the box user
    * already on it: about a third of the time of making one and setting it up.
    * Null when there's none (NEEV_BOX_SOURCE=create, no size, no golden box
    * for this version and size, or its snapshot isn't ready), or Neev
@@ -248,8 +251,10 @@ export class NeevBackend implements SandboxBackend {
       } as Parameters<Neev["sandboxes"]["create"]>[0]);
     } catch (error) {
       // Gone since it was looked up (its golden box deleted takes it along),
-      // or refused: forgotten, and the box made the slow way.
-      this.goldens.delete(goldenSizeKey(size));
+      // or refused: the box is made the slow way, and the size is taken as
+      // having none for a short while, so a snapshot Neev keeps refusing
+      // doesn't cost every box a failed create; a passing blip, not long.
+      this.goldens.set(goldenSizeKey(size), { snapshotId: null, until: Date.now() + GOLDEN_RETRY_MS });
       console.warn(`Neev wouldn't restore golden snapshot ${snapshotId}; making the box from the template`, error);
       return null;
     }
@@ -257,14 +262,14 @@ export class NeevBackend implements SandboxBackend {
 
   /** Golden snapshots by size, looked up at most every GOLDEN_CACHE_MS:
    *  each lookup is two Neev calls of about a second. */
-  private readonly goldens = new Map<string, { snapshotId: string | null; at: number }>();
+  private readonly goldens = new Map<string, { snapshotId: string | null; until: number }>();
 
   private async goldenSnapshot(size: BoxResources): Promise<string | null> {
     const key = goldenSizeKey(size);
     const cached = this.goldens.get(key);
-    if (cached && Date.now() - cached.at < GOLDEN_CACHE_MS) return cached.snapshotId;
+    if (cached && Date.now() < cached.until) return cached.snapshotId;
     const snapshotId = await findGoldenSnapshot(this.neev(), goldenName(size));
-    this.goldens.set(key, { snapshotId, at: Date.now() });
+    this.goldens.set(key, { snapshotId, until: Date.now() + GOLDEN_CACHE_MS });
     return snapshotId;
   }
 

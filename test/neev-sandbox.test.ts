@@ -450,13 +450,24 @@ test("with no golden box, NEEV_BOX_SOURCE=create, or no size, a box is made from
     }
   }));
 
-test("a golden snapshot Neev won't restore falls back to the template, and is looked up again next time", () =>
+test("a golden snapshot Neev won't restore falls back to the template, and isn't retried on every box", () =>
   withKey(async () => {
     const { backend, creates, lookups } = goldenBackend({ golden: "snap-gone", restoreFails: true });
     await backend.create(LABELS, SMALL);
     assert.deepEqual(creates.map((c) => c.restore ?? "template"), ["snap-gone", "template"]);
     await backend.create(LABELS, SMALL);
-    assert.equal(lookups(), 2, "the failed one was forgotten");
+    assert.deepEqual(creates.map((c) => c.restore ?? "template"), ["snap-gone", "template", "template"], "a miss for a while");
+    assert.equal(lookups(), 1);
+    // Tried again once the short miss is up.
+    const realNow = Date.now;
+    Date.now = () => realNow() + 3 * 60_000;
+    try {
+      await backend.create(LABELS, SMALL);
+    } finally {
+      Date.now = realNow;
+    }
+    assert.equal(lookups(), 2);
+    assert.equal(creates.at(-2)?.restore, "snap-gone");
   }));
 
 test("a golden lookup is kept a while: not two Neev calls per box", () =>

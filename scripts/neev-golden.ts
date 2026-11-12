@@ -43,7 +43,7 @@ import { Neev, type Sandbox } from "@neevcloud/sdk";
 
 const { BOX_SIZES } = await import("@/lib/runtime/box-sizes");
 const neevLib = await import("@/lib/runtime/sandbox/neev");
-const { prepare, hasTools, SandboxRuntime, NEEV_LIFECYCLE, NEEV_DISK_GB, GOLDEN_PREFIX, goldenName, goldenSizeKey, goldenVersion, findGoldenSnapshot, neevTemplate } =
+const { prepare, hasTools, SandboxRuntime, BOX_HOME, NEEV_LIFECYCLE, NEEV_DISK_GB, GOLDEN_PREFIX, goldenName, goldenSizeKey, goldenVersion, findGoldenSnapshot, neevTemplate } =
   neevLib;
 
 const args = process.argv.slice(2);
@@ -59,12 +59,10 @@ const neev = new Neev({
 const version = goldenVersion();
 const secs = (start: number) => `${Math.round((Date.now() - start) / 100) / 10}s`;
 
-/** Logins a CLI keeps, which must never be in a golden box. */
-const CREDENTIAL_PATHS = [
-  "/root/.claude.json", "/root/.claude/.credentials.json", "/root/.codex/auth.json", "/root/.config/gh/hosts.yml",
-  "/workspace/runtime/.claude.json", "/workspace/runtime/.claude/.credentials.json", "/workspace/runtime/.codex/auth.json",
-  "/workspace/runtime/.config/gh/hosts.yml", "/workspace/runtime/.git-credentials", "/root/.git-credentials",
-];
+/** Logins a CLI keeps, which must never be in a golden box: root's, and
+ *  the box user's in its home as the app has it (BOX_HOME). */
+const CREDENTIAL_FILES = [".claude.json", ".claude/.credentials.json", ".codex/auth.json", ".config/gh/hosts.yml", ".git-credentials"];
+const CREDENTIAL_PATHS = ["/root", BOX_HOME].flatMap((home) => CREDENTIAL_FILES.map((file) => `${home}/${file}`));
 
 async function waitPhase(id: string, phase: string): Promise<void> {
   for (let i = 0; i < 300; i++) {
