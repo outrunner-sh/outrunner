@@ -2441,11 +2441,12 @@ export type Database = {
         Returns: number;
       };
       claim_pooled_computer: {
-        Args: { requested_workspace_id: string; requested_provider: string; requested_generation?: number | null };
+        Args: { acting_user: string; requested_workspace_id: string; requested_provider: string; requested_generation?: number | null };
         Returns: string | null;
       };
       claim_pooled_warmup: {
         Args: {
+          acting_user: string;
           requested_project_id: string;
           requested_provider: string;
           requested_generation?: number | null;
@@ -2470,6 +2471,8 @@ export type Database = {
       };
       claim_workspace_computer: {
         Args: {
+          /** The signed-in user the server claims for (service role only). */
+          acting_user: string;
           requested_workspace_id: string;
           requested_agent_secret: string;
           requested_image_version?: string;
@@ -2483,6 +2486,8 @@ export type Database = {
       };
       claim_runtime_computer: {
         Args: {
+          /** The signed-in user the server claims for (service role only). */
+          acting_user: string;
           requested_project_id: string;
           requested_agent_secret: string;
           requested_image_version?: string;
