@@ -574,6 +574,7 @@ begin
   update runtime_computers
   set provider = 'user-gcp'
   where daytona_sandbox_id = 'box-cap-a';
+  if not found then raise exception 'FAIL: the user-gcp provider update matched no box'; end if;
   if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
     raise exception 'FAIL: a user-owned GCP box was counted';
   end if;
@@ -581,6 +582,7 @@ begin
   update runtime_computers
   set provider = 'user-e2b'
   where daytona_sandbox_id = 'box-cap-a';
+  if not found then raise exception 'FAIL: the user-e2b provider update matched no box'; end if;
   if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
     raise exception 'FAIL: a box in the user''s own E2B was counted';
   end if;
