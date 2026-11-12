@@ -444,6 +444,8 @@ function e2bSettingsOf(row: E2bRow | null): E2bSettings {
 
 /** The user's own E2B, opened: what their boxes are made and reached with. */
 export type StoredE2b = {
+  /** Whose E2B it is. */
+  ownerId: string;
   apiKey: string;
   apiUrl: string | null;
   sandboxUrl: string | null;
@@ -460,6 +462,7 @@ export async function getStoredE2b(userId: string): Promise<StoredE2b | null> {
   if (!row || !apiKey) return null;
   const view = e2bSettingsOf(row);
   return {
+    ownerId: userId,
     apiKey,
     apiUrl: view.apiUrl,
     sandboxUrl: view.sandboxUrl,

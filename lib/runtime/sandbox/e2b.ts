@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { CommandExitError, NotFoundError, Sandbox, type SandboxInfo } from "e2b";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
@@ -125,6 +127,17 @@ const RESTORES_RUNNING = new Map<string, number>();
  *  get caused from someone's restore just before it. */
 const CLOCK_SKEW_MS = 2_000;
 
+/**
+ * The key a box's handle and restore counts are kept under: its id within
+ * the E2B account it's in. A user's E2B picks its own box ids, so an id alone
+ * could name another account's box (the deployment's, or another user's),
+ * and a handle kept for one must never be handed out for the other.
+ */
+export function handleKey(c: Pick<E2bConnection, "apiKey" | "apiUrl">, id: string): string {
+  const account = createHash("sha256").update(`${c.apiUrl ?? ""}\n${c.apiKey}`).digest("base64url").slice(0, 22);
+  return `${account}:${id}`;
+}
+
 /** Forget every handle: a test seam. */
 export function forgetE2bHandles(): void {
   HANDLES.clear();
@@ -185,7 +198,7 @@ export class E2bBackend implements SandboxBackend {
         );
       }
       await setGuestMtu(c, sandbox);
-      HANDLES.set(sandbox.sandboxId, { sandbox, startedAt: info.startedAt.getTime() });
+      HANDLES.set(handleKey(c, sandbox.sandboxId), { sandbox, startedAt: info.startedAt.getTime() });
       return box(sandbox, info, c);
     } catch (error) {
       // Not left running where nothing records it.
@@ -198,18 +211,19 @@ export class E2bBackend implements SandboxBackend {
    *  never resumes a paused box (alive/get must not start one). */
   async get(id: string): Promise<SandboxBox> {
     const c = await this.connection();
+    const k = handleKey(c, id);
     const info = await Sandbox.getInfo(id, sdk(c)).catch((error: unknown) => {
       // Deleted elsewhere (another server, the console): its handle goes too.
-      if (notFound(error)) HANDLES.delete(id);
+      if (notFound(error)) HANDLES.delete(k);
       throw error;
     });
     if (info.state !== "running") {
-      HANDLES.delete(id);
+      HANDLES.delete(k);
       throw new Error(`E2B box ${id} is ${info.state}, not running`);
     }
     await keepAlive(c, info);
     const startedAt = info.startedAt.getTime();
-    const held = HANDLES.get(id);
+    const held = HANDLES.get(k);
     if (held?.startedAt === startedAt) return box(held.sandbox, info, c);
 
     // A handle means connect, which resumes a box paused since the look
@@ -220,20 +234,20 @@ export class E2bBackend implements SandboxBackend {
     // running. The clocks are E2B's and ours, so a restore within
     // CLOCK_SKEW_MS before the connect is taken for this call's resume, and
     // a restore in this server is never paused under itself.
-    const restoresBefore = RESTORES_BEGUN.get(id) ?? 0;
+    const restoresBefore = RESTORES_BEGUN.get(k) ?? 0;
     const connectedAt = Date.now();
     const sandbox = await Sandbox.connect(id, sdk(c));
     const after = await Sandbox.getInfo(id, sdk(c));
     const restarted = after.startedAt.getTime();
-    const restoredHere = (RESTORES_BEGUN.get(id) ?? 0) !== restoresBefore || (RESTORES_RUNNING.get(id) ?? 0) > 0;
+    const restoredHere = (RESTORES_BEGUN.get(k) ?? 0) !== restoresBefore || (RESTORES_RUNNING.get(k) ?? 0) > 0;
     if (restarted !== startedAt && restarted >= connectedAt - CLOCK_SKEW_MS && !restoredHere) {
-      HANDLES.delete(id);
+      HANDLES.delete(k);
       await Sandbox.pause(id, sdk(c)).catch((error: unknown) =>
         console.error(`E2B box ${id} was resumed while being reached and could not be paused again`, error),
       );
       throw new Error(`E2B box ${id} was paused while being reached; it's left paused`);
     }
-    HANDLES.set(id, { sandbox, startedAt: restarted });
+    HANDLES.set(k, { sandbox, startedAt: restarted });
     return box(sandbox, after, c);
   }
 
@@ -247,33 +261,37 @@ export class E2bBackend implements SandboxBackend {
   }
 
   async delete(id: string): Promise<void> {
-    HANDLES.delete(id);
-    await Sandbox.kill(id, sdk(await this.connection()));
+    const c = await this.connection();
+    HANDLES.delete(handleKey(c, id));
+    await Sandbox.kill(id, sdk(c));
   }
 
   /** Pause with its memory: the next {@link restore} has it as it was. */
   async pause(id: string): Promise<void> {
-    HANDLES.delete(id);
-    await Sandbox.pause(id, sdk(await this.connection()));
+    const c = await this.connection();
+    HANDLES.delete(handleKey(c, id));
+    await Sandbox.pause(id, sdk(c));
   }
 
   /** The paused (or still running) box `id`, running. Null when it's gone,
    *  so a new box is the only way on. E2B's metadata can't be changed after
    *  create, so `labels` stay as the box was made with. */
   async restore(id: string): Promise<SandboxBox | null> {
-    RESTORES_BEGUN.set(id, (RESTORES_BEGUN.get(id) ?? 0) + 1);
-    RESTORES_RUNNING.set(id, (RESTORES_RUNNING.get(id) ?? 0) + 1);
+    const c = await this.connection();
+    const k = handleKey(c, id);
+    RESTORES_BEGUN.set(k, (RESTORES_BEGUN.get(k) ?? 0) + 1);
+    RESTORES_RUNNING.set(k, (RESTORES_RUNNING.get(k) ?? 0) + 1);
     try {
-      return await this.resume(id);
+      return await this.resume(c, id);
     } finally {
-      const running = (RESTORES_RUNNING.get(id) ?? 1) - 1;
-      if (running > 0) RESTORES_RUNNING.set(id, running);
-      else RESTORES_RUNNING.delete(id);
+      const running = (RESTORES_RUNNING.get(k) ?? 1) - 1;
+      if (running > 0) RESTORES_RUNNING.set(k, running);
+      else RESTORES_RUNNING.delete(k);
     }
   }
 
-  private async resume(id: string): Promise<SandboxBox | null> {
-    const c = await this.connection();
+  private async resume(c: E2bConnection, id: string): Promise<SandboxBox | null> {
+    const k = handleKey(c, id);
     let sandbox: Sandbox;
     try {
       sandbox = await Sandbox.connect(id, { ...sdk(c), timeoutMs: c.timeoutMs });
@@ -284,7 +302,7 @@ export class E2bBackend implements SandboxBackend {
     try {
       await setGuestMtu(c, sandbox);
       const info = await Sandbox.getInfo(id, sdk(c));
-      HANDLES.set(id, { sandbox, startedAt: info.startedAt.getTime() });
+      HANDLES.set(k, { sandbox, startedAt: info.startedAt.getTime() });
       return box(sandbox, info, c);
     } catch (error) {
       // Resumed but not usable: paused again, keeping its sessions (this is

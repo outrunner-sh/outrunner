@@ -38,8 +38,8 @@ export class E2bTemplateNotReadyError extends SandboxSetupError {
 }
 
 /** How a user's E2B is reached: E2B's cloud (no URLs), routed by host, or
- *  their self-hosted E2B, routed by header with browsers through this
- *  server's user-E2B relay. Their network is theirs, so no guest MTU is set. */
+ *  their self-hosted E2B, routed by header; browsers through this server's
+ *  user-E2B relay either way, which holds the box's traffic token. Their network is theirs, so no guest MTU is set. */
 export function userE2bConnection(stored: StoredE2b): E2bConnection {
   return {
     apiKey: stored.apiKey,
@@ -47,7 +47,9 @@ export function userE2bConnection(stored: StoredE2b): E2bConnection {
     sandboxUrl: stored.sandboxUrl ?? undefined,
     guestMtu: null,
     timeoutMs: USER_BOX_TIMEOUT_MS,
-    relay: { prefix: USER_E2B_RELAY_PREFIX, key: relayKey(requireEnv("CREDENTIALS_ENCRYPTION_KEY"), "user-e2b") },
+    // Each ticket names the owner, so the relay reaches this user's box and
+    // no one else's: a user's E2B picks its own box ids.
+    relay: { prefix: USER_E2B_RELAY_PREFIX, key: relayKey(requireEnv("CREDENTIALS_ENCRYPTION_KEY"), "user-e2b"), owner: stored.ownerId },
   };
 }
 

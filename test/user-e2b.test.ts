@@ -3,8 +3,9 @@ import { afterEach, beforeEach, test } from "node:test";
 
 import { Sandbox } from "e2b";
 
-import { box, BOX_TIMEOUT_MS, E2bBackend, forgetE2bHandles } from "@/lib/runtime/sandbox/e2b";
-import { relayKey, relayTicketValid, USER_E2B_RELAY_PREFIX } from "@/lib/runtime/sandbox/relay-ticket";
+import { box, BOX_TIMEOUT_MS, E2bBackend, forgetE2bHandles, handleKey } from "@/lib/runtime/sandbox/e2b";
+import { openRelayTicket, relayKey, relayTicketValid, USER_E2B_RELAY_PREFIX } from "@/lib/runtime/sandbox/relay-ticket";
+import { readE2bRelaySecret } from "@/lib/runtime/sandbox/e2b-route";
 import { e2bUrl } from "@/lib/runtime/user-e2b-checks";
 import {
   E2bTemplateNotReadyError,
@@ -95,6 +96,7 @@ function fakeE2b(overrides: Partial<Record<keyof typeof statics, (...args: never
 }
 
 const STORED = {
+  ownerId: "user-1",
   apiKey: "e2b_user",
   apiUrl: null,
   sandboxUrl: null,
@@ -114,6 +116,32 @@ test("a box in a user's E2B cloud is reached at its own host, browsers included"
     wsBaseUrl: "https://8080-sbx-1.e2b.app",
   });
   assert.deepEqual(await b.previewTarget!(3000), { baseUrl: "https://3000-sbx-1.e2b.app", headers: {}, hostHeader: "upstream" });
+});
+
+test("a box with a traffic token on a user's E2B cloud: the token on every call, browsers through the relay", async () => {
+  const sandbox = {
+    ...fakeSandbox().sandbox,
+    trafficAccessToken: "tat-user",
+    getHost: (port: number) => `${port}-sbx-1.e2b.app`,
+  } as unknown as Sandbox;
+  const b = box(sandbox, INFO, userE2bConnection(STORED));
+  const endpoint = await b.agentEndpoint(8080);
+  assert.equal(endpoint.controlBaseUrl, "https://8080-sbx-1.e2b.app");
+  assert.deepEqual(endpoint.controlHeaders, { "e2b-traffic-access-token": "tat-user" });
+  const prefix = `https://app.example${USER_E2B_RELAY_PREFIX}sbx-1/8080/`;
+  assert.ok(endpoint.wsBaseUrl.startsWith(prefix), endpoint.wsBaseUrl);
+  // The ticket carries the owner and the token, sealed.
+  const opened = openRelayTicket(endpoint.wsBaseUrl.slice(prefix.length), "sbx-1", 8080, relayKey("credentials-key", "user-e2b"));
+  assert.deepEqual(readE2bRelaySecret(opened?.secret), { token: "tat-user", owner: "user-1" });
+  assert.deepEqual((await b.previewTarget!(3000)).headers, { "e2b-traffic-access-token": "tat-user" });
+});
+
+test("a box's handle is kept per E2B account, so another account's box with the same id never gets it", () => {
+  const mine = handleKey({ apiKey: "e2b_user", apiUrl: undefined }, "sbx-1");
+  assert.equal(mine, handleKey({ apiKey: "e2b_user", apiUrl: undefined }, "sbx-1"));
+  assert.notEqual(mine, handleKey({ apiKey: "e2b_other", apiUrl: undefined }, "sbx-1"));
+  assert.notEqual(mine, handleKey({ apiKey: "e2b_user", apiUrl: "https://e2b-api.example.com" }, "sbx-1"));
+  assert.ok(!mine.includes("e2b_user"), "the key isn't in it");
 });
 
 test("a box in a user's self-hosted E2B goes by header, browsers through the user-E2B relay", async () => {
