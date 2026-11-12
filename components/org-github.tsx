@@ -251,11 +251,9 @@ export function OrgGitHubSettings({
                       ) : null}
                       {i.shares.length > 0 ? (
                         <p className="text-[11px] text-muted-foreground">
-                          {`Removing ${i.accountLogin} from ${org.name} leaves ${
-                            i.shares.length === 1 ? "this org" : "these orgs"
-                          } connected, and no one can manage ${i.shares.length === 1 ? "it" : "them"} here until ${org.name} connects it again. Stop sharing first to cut ${
-                            i.shares.length === 1 ? "it" : "them"
-                          } off too.`}
+                          {i.shares.length === 1
+                            ? `Removing ${i.accountLogin} from ${org.name} leaves this org connected, and no one can manage that share here until ${org.name} connects ${i.accountLogin} again. Stop sharing first to cut it off too.`
+                            : `Removing ${i.accountLogin} from ${org.name} leaves these orgs connected, and no one can manage those shares here until ${org.name} connects ${i.accountLogin} again. Stop sharing first to cut them off too.`}
                         </p>
                       ) : null}
                     </div>
