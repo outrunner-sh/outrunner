@@ -248,7 +248,7 @@ export async function startJcodeBridge(
   throw new Error(`jcode bridge socket ${p.apiSocket} never appeared. log:\n${log.stdout.trim()}`);
 }
 
-/** Upload + unpack + launch the agent in jcode mode (mirrors bootAgent). */
+/** Upload + unpack + launch the agent in jcode mode. */
 export async function bootJcodeAgent(
   io: BoxIO,
   binary: Buffer,

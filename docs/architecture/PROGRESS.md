@@ -37,7 +37,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started
 - ✅ pt3 · Retired the SSE batch execution path
   - ✅ Deleted the job routes (`/api/workspaces/[id]/jobs` + SSE logs) and the `-p` agent runner (`agent.ts`)
   - ✅ Removed `executeJob`/`streamLogs`/`getJobResult`/`getJobPaths` from the interface + all providers
-  - ✅ Deleted `settleRunningJobs`/`reconcileWorkspaceJobs` (batch reconciliation); kept `ensureLiveSandbox` for M3
+  - ✅ Deleted `settleRunningJobs`/`reconcileWorkspaceJobs` (batch reconciliation); kept `ensureLiveSandbox` for M3 (since removed, #408)
   - ✅ Trimmed the job-driven UI (studio composer/JobMessage/terminal + `workspace-job-panel`); studio shell kept
   - ✅ Kept the `jobs` table + `Job` type (decision 1A) as the seed for the M3 session record
   - 🟡 Deferred to M3: move git/session ops off the `RuntimeProvider` interface; interactive session routes
