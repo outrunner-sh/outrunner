@@ -23,7 +23,10 @@ alter table user_credentials
   add column if not exists e2b_template_tag text,
   add column if not exists e2b_template_state text
     check (e2b_template_state in ('building', 'ready', 'failed')),
-  add column if not exists e2b_template_error text;
+  add column if not exists e2b_template_error text,
+  -- When a build was claimed: one caller at a time starts a build (the
+  -- conditional claim), and a claim whose build never started goes stale.
+  add column if not exists e2b_template_started_at timestamptz;
 
 alter table user_credentials
   drop constraint if exists user_credentials_sandbox_check;

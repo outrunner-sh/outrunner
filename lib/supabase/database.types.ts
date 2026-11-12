@@ -654,6 +654,7 @@ type UserCredentialsRow = {
   e2b_template_tag: string | null;
   e2b_template_state: "building" | "ready" | "failed" | null;
   e2b_template_error: string | null;
+  e2b_template_started_at: string | null;
   // supabase/migrations/20261013130000_user_box_size.sql.
   box_size: "x-small" | "small" | "medium" | "large";
   // supabase/migrations/20261030150000_org_defaults.sql.

@@ -164,9 +164,17 @@ export async function PUT(request: Request) {
       if ((apiUrl === null) !== (sandboxUrl === null)) {
         return invalid("Give both a self-hosted E2B's API URL and its sandbox URL, or neither for E2B's cloud.");
       }
+      // A host that resolves somewhere private is the user's to fix, not
+      // an outage to retry: refused as such, apart from E2B not answering.
+      if (apiUrl && sandboxUrl) {
+        try {
+          await Promise.all([assertPublicHost(apiUrl), assertPublicHost(sandboxUrl)]);
+        } catch (error) {
+          return invalid(error instanceof Error ? error.message : "That E2B's host isn't a public address.");
+        }
+      }
       let accepted: boolean;
       try {
-        if (apiUrl && sandboxUrl) await Promise.all([assertPublicHost(apiUrl), assertPublicHost(sandboxUrl)]);
         accepted = await e2bAcceptsKey(key, apiUrl ?? undefined);
       } catch (error) {
         console.error("Could not check an E2B key", error);
@@ -184,7 +192,12 @@ export async function PUT(request: Request) {
     } else if (body.e2bRebuild === true) {
       const stored = await getStoredE2b(owner.id);
       if (!stored) return invalid("Add your E2B API key first.");
-      await buildUserE2bTemplate(owner.id, stored);
+      // Only a failed or outdated template is rebuilt by hand; one building
+      // or ready stays, and a second build would only cost them.
+      if (stored.template !== "failed" && stored.template !== "outdated") {
+        return NextResponse.json({ error: `Your E2B template is ${stored.template}; there's nothing to rebuild.` }, { status: 409 });
+      }
+      await buildUserE2bTemplate(owner.id, stored, { retryFailed: true });
     } else if (sandbox === "e2b" && !(await getSandboxSettings(owner.id)).e2b?.connected) {
       return invalid("Add your E2B API key to run sessions on your own E2B.");
     }

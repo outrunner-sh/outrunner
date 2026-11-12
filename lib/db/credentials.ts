@@ -394,7 +394,8 @@ export async function clearDaytonaKey(userId: string): Promise<void> {
 
 const E2B_COLUMNS =
   "e2b_key_ciphertext, e2b_key_hint, e2b_key_updated_at, e2b_api_url, e2b_sandbox_url, " +
-  "e2b_template_id, e2b_template_build_id, e2b_template_tag, e2b_template_state, e2b_template_error";
+  "e2b_template_id, e2b_template_build_id, e2b_template_tag, e2b_template_state, e2b_template_error, " +
+  "e2b_template_started_at";
 
 type E2bRow = Pick<
   Database["public"]["Tables"]["user_credentials"]["Row"],
@@ -408,6 +409,7 @@ type E2bRow = Pick<
   | "e2b_template_tag"
   | "e2b_template_state"
   | "e2b_template_error"
+  | "e2b_template_started_at"
 >;
 
 /** The user's E2B columns: null for no row, undefined before
@@ -497,31 +499,74 @@ const NO_E2B_TEMPLATE = {
   e2b_template_tag: null,
   e2b_template_state: null,
   e2b_template_error: null,
+  e2b_template_started_at: null,
 } as const;
 
-/** Record where the user's box template is: a build started (its ids and
- *  the image tag it builds), finished, or failed and why. */
+/** How long a claimed build may go without E2B's build id before another
+ *  caller may claim it again: the caller that claimed it died starting it. */
+export const E2B_CLAIM_STALE_MS = 5 * 60 * 1000;
+
+/**
+ * Claim the next build of the user's template at image `tag`, so that one
+ * caller starts it: the page's polls, session starts and an explicit rebuild
+ * can all ask at once, and each build runs in the user's paid account. Taken
+ * only when there's none, the one there is at another image, or a claim went
+ * stale; and, with `retryFailed`, after a failure. Returns the claim's time,
+ * which the build's start is recorded under, or null when it wasn't taken.
+ */
+export async function claimE2bTemplateBuild(
+  userId: string,
+  tag: string,
+  { retryFailed = false, now = Date.now() }: { retryFailed?: boolean; now?: number } = {},
+): Promise<string | null> {
+  const claimedAt = new Date(now).toISOString();
+  const stale = new Date(now - E2B_CLAIM_STALE_MS).toISOString();
+  const claimable = [
+    "e2b_template_state.is.null",
+    `and(e2b_template_state.eq.ready,e2b_template_tag.neq.${tag})`,
+    `and(e2b_template_state.eq.building,e2b_template_build_id.is.null,e2b_template_started_at.lt.${stale})`,
+    ...(retryFailed ? ["e2b_template_state.eq.failed"] : []),
+  ].join(",");
+  const { data, error } = await createSupabaseAdminClient()
+    .from("user_credentials")
+    .update({ ...NO_E2B_TEMPLATE, e2b_template_state: "building", e2b_template_tag: tag, e2b_template_started_at: claimedAt })
+    .eq("user_id", userId)
+    .not("e2b_key_ciphertext", "is", null)
+    .or(claimable)
+    .select("user_id")
+    .maybeSingle();
+  if (error) throw error;
+  return data ? claimedAt : null;
+}
+
+/**
+ * Record where the user's template build is, only on the build it's about:
+ * its start on the claim it was made under, and its end on its own build id.
+ * A write about a build that's since been replaced (a newer claim, a new key)
+ * lands on nothing. Returns whether it landed.
+ */
 export async function setE2bTemplate(
   userId: string,
   template:
-    | { state: "building"; templateId: string; buildId: string; tag: string }
-    | { state: "ready" }
-    | { state: "failed"; error: string },
-): Promise<void> {
+    | { state: "building"; claimedAt: string; templateId: string; buildId: string }
+    | { state: "failed"; claimedAt: string; error: string }
+    | { state: "ready"; buildId: string }
+    | { state: "failed"; buildId: string; error: string },
+): Promise<boolean> {
   const update =
     template.state === "building"
-      ? {
-          e2b_template_state: "building" as const,
-          e2b_template_id: template.templateId,
-          e2b_template_build_id: template.buildId,
-          e2b_template_tag: template.tag,
-          e2b_template_error: null,
-        }
+      ? { e2b_template_id: template.templateId, e2b_template_build_id: template.buildId }
       : template.state === "ready"
         ? { e2b_template_state: "ready" as const, e2b_template_error: null }
         : { e2b_template_state: "failed" as const, e2b_template_error: template.error.slice(0, 500) };
-  const { error } = await createSupabaseAdminClient().from("user_credentials").update(update).eq("user_id", userId);
+  let query = createSupabaseAdminClient().from("user_credentials").update(update).eq("user_id", userId);
+  query =
+    "claimedAt" in template
+      ? query.eq("e2b_template_started_at", template.claimedAt).is("e2b_template_build_id", null)
+      : query.eq("e2b_template_build_id", template.buildId);
+  const { data, error } = await query.select("user_id").maybeSingle();
   if (error) throw error;
+  return data !== null;
 }
 
 /** Forget the user's E2B, and move new sessions back to Outrunner's

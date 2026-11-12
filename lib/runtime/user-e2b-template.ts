@@ -1,4 +1,5 @@
 import {
+  claimE2bTemplateBuild,
   getSandboxSettings,
   getStoredE2b,
   setE2bTemplate,
@@ -6,46 +7,74 @@ import {
   type StoredE2b,
 } from "@/lib/db/credentials";
 import { BOX_IMAGE_TAG } from "@/lib/runtime/box-image";
-import { e2bTemplateBuildStatus, startE2bTemplateBuild, userE2bTemplateName } from "@/lib/runtime/e2b-template";
+import {
+  deleteOtherUserE2bTemplates,
+  e2bTemplateBuildStatus,
+  startE2bTemplateBuild,
+  userE2bTemplateName,
+} from "@/lib/runtime/e2b-template";
 
 /**
  * Outrunner's box template in a user's own E2B (Settings → Sandbox): built in
  * their account when they connect, rebuilt when Outrunner's box image moves
- * on, and followed to ready or failed whenever their settings are read.
+ * on, and followed to ready or failed whenever their settings are read. Each
+ * build is claimed first, so only one runs at a time in their paid account.
  */
 
-/** Start building the template in the user's E2B and record it as building;
- *  a build E2B refuses is recorded as failed, with E2B's reason. */
-export async function buildUserE2bTemplate(userId: string, stored: StoredE2b): Promise<void> {
+/** E2B's API for the user's account. */
+function targetOf(stored: StoredE2b) {
+  return { apiKey: stored.apiKey, apiUrl: stored.apiUrl ?? undefined };
+}
+
+/**
+ * Build the template in the user's E2B, if this caller wins the claim: none
+ * there, one at an older image, a claim gone stale, or (`retryFailed`, an
+ * explicit rebuild) a failed one. Its start is recorded under the claim; a
+ * build E2B refuses is recorded as failed, with E2B's reason. Returns whether
+ * this caller started one.
+ */
+export async function buildUserE2bTemplate(
+  userId: string,
+  stored: StoredE2b,
+  { retryFailed = false }: { retryFailed?: boolean } = {},
+): Promise<boolean> {
+  const claimedAt = await claimE2bTemplateBuild(userId, BOX_IMAGE_TAG, { retryFailed });
+  if (!claimedAt) return false;
   try {
-    const build = await startE2bTemplateBuild(
-      { apiKey: stored.apiKey, apiUrl: stored.apiUrl ?? undefined },
-      userE2bTemplateName(userId, BOX_IMAGE_TAG),
-    );
-    await setE2bTemplate(userId, { state: "building", ...build });
+    const build = await startE2bTemplateBuild(targetOf(stored), userE2bTemplateName(userId, BOX_IMAGE_TAG));
+    await setE2bTemplate(userId, { state: "building", claimedAt, templateId: build.templateId, buildId: build.buildId });
   } catch (error) {
     console.error(`Could not start an E2B template build for user ${userId}`, error);
-    await setE2bTemplate(userId, { state: "failed", error: error instanceof Error ? error.message : "E2B refused the build." });
+    await setE2bTemplate(userId, {
+      state: "failed",
+      claimedAt,
+      error: error instanceof Error ? error.message : "E2B refused the build.",
+    });
   }
+  return true;
 }
 
 /**
  * Move the user's template along: a build under way is asked after (ready or
- * failed), and none, or one at an older box image, is built. Best effort: a
- * build E2B can't be asked about now is asked again on the next read. A
- * failed one waits for the user to rebuild it, rather than retry forever.
+ * failed, written only onto that build), and none, one at an older image, or
+ * a stale claim is built. Once ready, older templates are deleted from their
+ * account. Best effort: a build E2B can't be asked about now is asked again
+ * on the next read. A failed one waits for the user to rebuild it.
  */
 export async function refreshUserE2bTemplate(userId: string): Promise<void> {
   const stored = await getStoredE2b(userId);
   if (!stored) return;
-  if (stored.template === "none" || stored.template === "outdated") return buildUserE2bTemplate(userId, stored);
+  if (stored.template === "none" || stored.template === "outdated" || (stored.template === "building" && !stored.templateBuildId)) {
+    await buildUserE2bTemplate(userId, stored);
+    return;
+  }
   if (stored.template !== "building" || !stored.templateId || !stored.templateBuildId) return;
+  const build = { templateId: stored.templateId, buildId: stored.templateBuildId, tag: BOX_IMAGE_TAG };
   try {
-    const status = await e2bTemplateBuildStatus(
-      { apiKey: stored.apiKey, apiUrl: stored.apiUrl ?? undefined },
-      { templateId: stored.templateId, buildId: stored.templateBuildId, tag: BOX_IMAGE_TAG },
-    );
-    if (status.state !== "building") await setE2bTemplate(userId, status);
+    const status = await e2bTemplateBuildStatus(targetOf(stored), build);
+    if (status.state === "building") return;
+    const landed = await setE2bTemplate(userId, { ...status, buildId: build.buildId });
+    if (landed && status.state === "ready") await deleteOtherUserE2bTemplates(targetOf(stored), userId, build.templateId);
   } catch (error) {
     console.warn(`Could not check user ${userId}'s E2B template build`, error);
   }
