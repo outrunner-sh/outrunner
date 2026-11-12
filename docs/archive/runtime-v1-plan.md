@@ -3,8 +3,8 @@
 Canonical architecture for Runtime v1. Consolidated from the plan-mode review
 (Architecture → Code Quality → Tests → Performance). Decisions below are **locked**.
 
-Companion docs: [`runtime-agent.md`](./runtime-agent.md) (agent API/services/events),
-[`protocol.md`](./protocol.md) (language-agnostic wire contract).
+Companion docs: [`runtime-agent.md`](../architecture/runtime-agent.md) (agent API/services/events),
+[`protocol.md`](../architecture/protocol.md) (language-agnostic wire contract).
 
 ## Goal & scope
 
@@ -57,7 +57,7 @@ suspend/snapshot/idle-shutdown, hostile multi-tenancy hardening.
 
 **Runtime Agent v1 implementation: Go** — selected for deployment simplicity (a single static
 binary dropped onto the Daytona box, no Node runtime/`node_modules`). This is an implementation
-choice, **not** a rule that all agents must be Go. The [wire protocol](./protocol.md) is
+choice, **not** a rule that all agents must be Go. The [wire protocol](../architecture/protocol.md) is
 **language-agnostic**: any future agent that speaks the protocol can replace or complement the Go one.
 
 ## Reuse map (from code recon, file:line)
@@ -150,7 +150,7 @@ failure modes, and resource profiling — all on `runtime-computer-v1`.
 ## Phase 1+ build sequence (after Phase 0 passes)
 
 - **Phase 1 — Foundations (no user-visible change):** shared `lib/runtime/git/` module + bare-mirror/worktree; `runtime_computers` migration + enums + `'daytona'` value + workspace columns; `agent-protocol.ts` (zod) + golden fixtures.
-- **Phase 2 — Go runtime-agent core:** control API + PTY mgmt + WS streaming + JWT verify + Go tests (fake claude + real tmux). See [`runtime-agent.md`](./runtime-agent.md).
+- **Phase 2 — Go runtime-agent core:** control API + PTY mgmt + WS streaming + JWT verify + Go tests (fake claude + real tmux). See [`runtime-agent.md`](../architecture/runtime-agent.md).
 - **Phase 3 — Daytona provider + AgentClient (Next):** lazy provision box, install/boot agent, resume/destroy; TS `AgentClient`; Runtime-JWT minting endpoint.
 - **Phase 4 — Browser:** xterm.js terminal via signed-preview-URL WSS; conversation view from JSONL stream; workspace list + create wired to lazy provisioning; diff panel reuse.
 - **Phase 5 — Archive/resume:** PTY cast capture + upload to Supabase Storage; archive; resume (replay + `claude --continue`).

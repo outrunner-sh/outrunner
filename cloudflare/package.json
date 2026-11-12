@@ -10,8 +10,8 @@
     "check": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
-    "@cloudflare/containers": "latest",
-    "@cloudflare/workers-types": "latest",
+    "@cloudflare/containers": "0.3.7",
+    "@cloudflare/workers-types": "5.20260929.1",
     "typescript": "^5.9.3",
     "wrangler": "^4"
   }

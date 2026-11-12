@@ -578,7 +578,7 @@ type SessionUrls struct {
 
 // WorkspaceSummary is the canonical, cross-milestone summary of a Workspace
 // Session — the shape Mission Engine and the M4 Snapshot manifest consume.
-// M3 owns this type; other packages import it. See docs/architecture/m4-plan.md
+// M3 owns this type; other packages import it. See docs/archive/m4-plan.md
 // and docs/architecture/session-contract.md.
 type WorkspaceSummary struct {
 	State                string            `json:"state"`

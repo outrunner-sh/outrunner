@@ -214,12 +214,12 @@ Record it like the prior spikes (short report under `docs/architecture/`).
 ## Dependencies & downstream
 
 - **Depends on M3:** Workspace Session, conversation `/events`, Workspace Summary.
-- **Feeds:** [`mission-engine-v0.md`](./mission-engine-v0.md) (superseded by [Missions](../missions.md)) consumes the `archived`
+- **Feeds:** [`mission-engine-v0.md`](../architecture/mission-engine-v0.md) (superseded by [Missions](../missions.md)) consumes the `archived`
   state event + the Snapshot's Summary (via manifest). Also the foundation for future
   analytics, sharing, and Fork. Completes the full-loop DoD in
   [`PROGRESS.md`](./PROGRESS.md).
 
 ## Pointers
 - M3 surface + Session model: [`m3-handoff.md`](./m3-handoff.md)
-- Protocol / agent: [`protocol.md`](./protocol.md), [`runtime-agent.md`](./runtime-agent.md)
+- Protocol / agent: [`protocol.md`](../architecture/protocol.md), [`runtime-agent.md`](../architecture/runtime-agent.md)
 - Progress: [`PROGRESS.md`](./PROGRESS.md)

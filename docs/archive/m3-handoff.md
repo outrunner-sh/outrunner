@@ -1,9 +1,9 @@
 # M3 Handoff — the Workspace Session experience
 
 Handoff for the agent picking up **Milestone 3**. Read this, then
-[`session-contract.md`](./session-contract.md) (the immutable Session contract
+[`session-contract.md`](../architecture/session-contract.md) (the immutable Session contract
 and the M3 API Freeze rule), [`PROGRESS.md`](./PROGRESS.md),
-[`protocol.md`](./protocol.md), and [`runtime-agent.md`](./runtime-agent.md).
+[`protocol.md`](../architecture/protocol.md), and [`runtime-agent.md`](../architecture/runtime-agent.md).
 All file references are on `main`.
 
 ## Where we are
@@ -216,8 +216,8 @@ isn't just adding UI; it defines the live runtime abstraction every higher-level
 feature builds on.
 
 ## Pointers
-- Session contract + API freeze: [`session-contract.md`](./session-contract.md)
+- Session contract + API freeze: [`session-contract.md`](../architecture/session-contract.md)
 - Progress + full-loop DoD: [`PROGRESS.md`](./PROGRESS.md)
-- Protocol detail: [`protocol.md`](./protocol.md) · Agent detail: [`runtime-agent.md`](./runtime-agent.md)
+- Protocol detail: [`protocol.md`](../architecture/protocol.md) · Agent detail: [`runtime-agent.md`](../architecture/runtime-agent.md)
 - What M2 proved live: [`spike-m2pt2-report.md`](./spike-m2pt2-report.md), [`spike4-runtime-report.md`](./spike4-runtime-report.md)
-- The product this unblocks: [`mission-engine-v0.md`](./mission-engine-v0.md) (superseded by [Missions](../missions.md)) (consumes the Workspace Session + Summary; needs M3 + a completion event)
+- The product this unblocks: [`mission-engine-v0.md`](../architecture/mission-engine-v0.md) (superseded by [Missions](../missions.md)) (consumes the Workspace Session + Summary; needs M3 + a completion event)

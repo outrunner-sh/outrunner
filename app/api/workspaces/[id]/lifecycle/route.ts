@@ -63,7 +63,7 @@ import { resumeFailure, type ResumeStage } from "@/lib/session/resume-failure";
 
 // resume/restore ensure a Runtime Computer (provision + agent boot, ~15s+), and
 // archive/restore move snapshot artifacts; keep the same 60s cap as provisioning
-// (serverless hosts only; a no-op on a long-running server like Railway).
+// (serverless hosts only; a no-op in our long-running container).
 export const maxDuration = 60;
 
 type RouteContext = { params: Promise<{ id: string }> };

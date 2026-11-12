@@ -739,7 +739,7 @@ export type ErrorResponse = z.infer<typeof ErrorResponse>;
 
 // ---------------------------------------------------------------------------
 // Workspace Summary — the canonical, cross-milestone summary of a Workspace
-// Session. Frozen jointly with docs/architecture/m4-plan.md (the M4 Snapshot
+// Session. Frozen jointly with docs/archive/m4-plan.md (the M4 Snapshot
 // manifest embeds this same shape). Emitted live during a Session and
 // snapshotted into the archive manifest at teardown.
 //

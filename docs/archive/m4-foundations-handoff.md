@@ -105,5 +105,5 @@ per [`m4-plan.md`](./m4-plan.md). Not before.
 ## Pointers
 - Frozen M4 design: [`m4-plan.md`](./m4-plan.md)
 - M3 surface (what you must not touch / what you'll build on later): [`m3-handoff.md`](./m3-handoff.md)
-- Protocol / agent: [`protocol.md`](./protocol.md), [`runtime-agent.md`](./runtime-agent.md)
+- Protocol / agent: [`protocol.md`](../architecture/protocol.md), [`runtime-agent.md`](../architecture/runtime-agent.md)
 - Progress: [`PROGRESS.md`](./PROGRESS.md)
