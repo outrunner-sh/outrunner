@@ -8,6 +8,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { createServer, type Server, type ServerResponse } from "node:http";
+import { isIP } from "node:net";
 
 import next from "next";
 
@@ -25,6 +26,7 @@ import { createSandboxRelay, neevRelayDeps, SERVICE_RESTART } from "./lib/runtim
 import { E2B_RELAY_PREFIX, NEEV_RELAY_PREFIX, relayKey, USER_E2B_RELAY_PREFIX } from "./lib/runtime/sandbox/relay-ticket.ts";
 import { e2bRoute, readE2bRelaySecret } from "./lib/runtime/sandbox/e2b-route.ts";
 import { publicOnlyLookup } from "./lib/api/webhook-lookup.ts";
+import { isPrivateAddress } from "./lib/api/webhooks.ts";
 import { GCP_RELAY_PREFIX, gcpRelayKey } from "./lib/runtime/gcp/relay-ticket.ts";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -101,7 +103,13 @@ const userE2bRelay = createSandboxRelay({
     });
     if (!response.ok) throw new Error("The E2B relay could not reach its sandbox.");
     const route = await response.json() as { base: string; headers: Record<string, string> };
-    if (new URL(route.base).protocol !== "https:") throw new Error("Invalid E2B relay target.");
+    // https, a bare origin, and no private address written out as one: Node
+    // skips the lookup (and so the public-only check) for an IP literal.
+    const target = new URL(route.base);
+    const host = target.hostname.replace(/^\[|\]$/g, "");
+    if (target.protocol !== "https:" || target.username || target.password || target.pathname !== "/" || (isIP(host) && isPrivateAddress(host))) {
+      throw new Error("Invalid E2B relay target.");
+    }
     // The user named this host: its connection resolves it public-only.
     return { ...route, lookup: publicOnlyLookup };
   },

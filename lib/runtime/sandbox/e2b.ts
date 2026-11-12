@@ -16,7 +16,7 @@ import {
 } from "@/lib/runtime/sandbox/backend";
 import { NOVNC_PORT } from "@/lib/runtime/box-ports";
 import { E2B_TRAFFIC_TOKEN_HEADER, e2bRoute, sealableE2bRelaySecret } from "@/lib/runtime/sandbox/e2b-route";
-import { e2bSdkOptions } from "@/lib/runtime/sandbox/e2b-sdk";
+import { e2bSdkOptions, proxiedFetch } from "@/lib/runtime/sandbox/e2b-sdk";
 import { E2B_RELAY_PREFIX, mintRelayTicket, relayKey } from "@/lib/runtime/sandbox/relay-ticket";
 
 /**
@@ -399,7 +399,9 @@ export function box(sandbox: Sandbox, info: Pick<SandboxInfo, "cpuCount" | "memo
         c.sandboxUrl || trafficToken
           ? `${requireEnv("RUNTIME_BASE_URL")}${c.relay.prefix}${id}/${port}/${mintRelayTicket(id, port, c.relay.key, Date.now(), { secret })}`
           : base;
-      return { controlBaseUrl: base, controlHeaders: headers, wsBaseUrl };
+      // A user's self-hosted E2B: through the egress proxy, as the SDK is.
+      const controlFetch = c.proxy ? await proxiedFetch(c.proxy) : undefined;
+      return { controlBaseUrl: base, controlHeaders: headers, wsBaseUrl, ...(controlFetch ? { controlFetch } : {}) };
     },
     // Through E2B's proxy, which sends the box's server the Host it was asked on.
     previewTarget: async (port) => {

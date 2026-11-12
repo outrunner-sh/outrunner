@@ -49,6 +49,24 @@ export async function userE2bSdkOptions(
   return e2bSdkOptions({ ...target, proxy: await userE2bProxy(target) }, requestTimeoutMs);
 }
 
+/** A fetch whose every connection, redirects included, goes through the
+ *  egress proxy at `proxyUrl` (e2b-egress.ts): for our own calls to a user's
+ *  self-hosted E2B (control calls to its client-proxy, its template API).
+ *  One per proxy URL, kept. */
+export async function proxiedFetch(proxyUrl: string): Promise<typeof fetch> {
+  let made = PROXIED.get(proxyUrl);
+  if (!made) {
+    made = import("undici").then(({ fetch: undiciFetch, ProxyAgent }) => {
+      const dispatcher = new ProxyAgent({ uri: proxyUrl, proxyTunnel: true });
+      return ((input: RequestInfo | URL, init?: RequestInit) =>
+        undiciFetch(input as never, { ...(init as object), dispatcher } as never)) as unknown as typeof fetch;
+    });
+    PROXIED.set(proxyUrl, made);
+  }
+  return made;
+}
+const PROXIED = new Map<string, Promise<typeof fetch>>();
+
 /** The egress proxy for a user's self-hosted E2B; none for E2B's cloud. */
 export async function userE2bProxy(target: { apiUrl?: string; sandboxUrl?: string }): Promise<string | undefined> {
   if (!target.apiUrl && !target.sandboxUrl) return undefined;

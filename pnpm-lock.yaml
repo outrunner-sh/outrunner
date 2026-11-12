@@ -95,6 +95,9 @@ importers:
       tailwind-merge:
         specifier: ^3.3.1
         version: 3.6.0
+      undici:
+        specifier: 8.12.4
+        version: 8.12.4
       ws:
         specifier: ^8.21.2
         version: 8.21.2

@@ -45,7 +45,8 @@ export function e2bDockerfile(
     text = text.replace(new RegExp(`\\$(\\{${name}\\}|${name}(?![A-Za-z0-9_]))`, "g"), () => value);
   }
 
-  const left = [...declared].filter((name) => new RegExp(`\\$(\\{${name}\\}|${name}\\b)`).test(text));
+  // Any form Docker expands, `${NAME:-default}` and `${NAME:+x}` included.
+  const left = [...declared].filter((name) => new RegExp(`\\$\\{?${name}\\b`).test(text));
   if (left.length > 0) throw new Error(`box/Dockerfile still refers to ${left.join(", ")} after substitution`);
   if (/^RUN test -n/m.test(text)) throw new Error("box/Dockerfile's build-arg guard changed; update e2bDockerfile");
 
@@ -181,16 +182,16 @@ export function isUserE2bTemplateName(name: string, userId: string): boolean {
  * be deleted now is tried again after the next build.
  */
 export async function deleteOtherUserE2bTemplates(target: E2bBuildTarget, userId: string, keep: string): Promise<void> {
-  const { e2bSdkOptions } = await import("@/lib/runtime/sandbox/e2b-sdk");
+  const { e2bSdkOptions, proxiedFetch, userE2bProxy } = await import("@/lib/runtime/sandbox/e2b-sdk");
   const { apiUrl, apiKey } = e2bSdkOptions(target);
   const headers = { "X-API-Key": apiKey };
-  // The SDK has no call for these, so they're plain fetches: never following
-  // a redirect (with the key on) anywhere, and to a host checked public.
+  // The SDK has no call for these, so they're our own fetches: never
+  // following a redirect (with the key on), and to a user's self-hosted E2B
+  // through the egress proxy, like the SDK's calls: only their API's host,
+  // resolved public-only as it connects.
   try {
-    if (target.user && target.apiUrl) {
-      const { assertPublicHost } = await import("@/lib/runtime/user-e2b-checks");
-      await assertPublicHost(target.apiUrl);
-    }
+    const proxy = target.user ? await userE2bProxy({ apiUrl: target.apiUrl }) : undefined;
+    const fetch = proxy ? await proxiedFetch(proxy) : globalThis.fetch;
     const response = await fetch(`${apiUrl}/templates`, { headers, redirect: "error", signal: AbortSignal.timeout(20_000) });
     if (!response.ok) throw new Error(`E2B answered ${response.status} listing templates`);
     const templates = (await response.json()) as Array<{ templateID: string; names?: string[]; aliases?: string[] }>;

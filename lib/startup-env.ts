@@ -16,7 +16,9 @@ const base = z.object({
   // Seals every user's credentials (lib/crypto/secret-box.ts): without it no
   // session can start, while the app otherwise looks healthy.
   CREDENTIALS_ENCRYPTION_KEY: present,
-  RUNTIME_PROVIDER: z.enum(["local", "modal", "daytona", "neev"]).optional(),
+  // lib/env.ts's DEPLOYMENT_PROVIDERS, written out to keep this file's only
+  // import zod; test/startup-env.test.ts keeps them the same.
+  RUNTIME_PROVIDER: z.enum(["local", "modal", "daytona", "neev", "e2b"]).optional(),
   // Optional, but a malformed DSN would silently drop every error report.
   SENTRY_DSN: z.url("is not a URL").optional(),
 });
@@ -26,6 +28,8 @@ const byProvider: Record<string, Record<string, z.ZodType>> = {
   daytona: { DAYTONA_API_KEY: present },
   neev: { NEEV_API_KEY: present, NEEV_ORG_ID: present, NEEV_PROJECT_ID: present },
   modal: { MODAL_TOKEN_ID: present, MODAL_TOKEN_SECRET: present },
+  // Both URLs too: unset, the SDK would quietly use E2B's cloud.
+  e2b: { OUTRUNNER_E2B_API_KEY: present, OUTRUNNER_E2B_API_URL: present, OUTRUNNER_E2B_SANDBOX_URL: present },
 };
 
 /** Each problem with `env`, as "NAME is not set"; empty when it's fine. */
