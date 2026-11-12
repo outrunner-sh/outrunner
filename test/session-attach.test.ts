@@ -101,3 +101,22 @@ test("what the reconnect loop may try again: a failure on the way, never one tha
   assert.equal(retryableAttachFailure(new AttachError("x", null)), false);
   assert.equal(retryableAttachFailure(new Error("Malformed session response from server")), false);
 });
+
+test("a bare 500 or a Cloudflare 52x, no answer of the server's, is tried again: a deploy replacing the control plane", async () => {
+  for (const status of [500, 520, 524]) {
+    let calls = 0;
+    const result = await attachCloudSession("w", "main", false, new AbortController().signal, {
+      fetch: async () => (++calls === 1 ? new Response("upstream gone", { status }) : Response.json(urls)),
+      wait: async () => {},
+    });
+    assert.deepEqual(result, urls);
+    assert.equal(calls, 2);
+  }
+  // One the server answered, with what happened, is not.
+  let calls = 0;
+  await assert.rejects(attachCloudSession("w", "main", false, new AbortController().signal, {
+    fetch: async () => { calls++; return Response.json({ error: "Runtime Computer secret missing.", code: "box-gone" }, { status: 500 }); },
+    wait: async () => { assert.fail("an answered refusal must not be retried"); },
+  }));
+  assert.equal(calls, 1);
+});

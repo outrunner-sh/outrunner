@@ -17,7 +17,9 @@ import {
   strayRunningBoxes,
   sweepable,
 } from "@/lib/runtime/orphan-boxes";
+import { lostBoxes, type MeteredBox } from "@/lib/runtime/lost-box";
 import { DaytonaBackend } from "@/lib/runtime/sandbox/daytona";
+import type { RuntimeComputerStatus } from "@/lib/runtime/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** The most boxes one run reads off the account, so a run's work is bounded
@@ -61,7 +63,9 @@ export async function sweepOrphanedBoxes(now = Date.now()): Promise<{ deleted: n
   }
 
   const statusOf = await namedBoxes(candidates.map((box) => box.id));
-  const named = new Set(statusOf.keys());
+  // And boxes a row lost track of (a claim cut off mid-way, lib/runtime/lost-box.ts):
+  // the next open of its session brings that box back, its files on it.
+  const named = new Set([...statusOf.keys(), ...(await lostOf(candidates.map((box) => box.id)))]);
   const unlabelled = optionalEnv("ORPHAN_SWEEP_UNLABELLED") === "1";
   const { remove, held } = orphanedBoxes(candidates, named, { now, deployment, unlabelled });
   // Every one, but only when they change: the cron runs every 2 minutes.
@@ -117,6 +121,39 @@ async function namedBoxes(ids: string[]): Promise<Map<string, string>> {
     rows.push(...(data ?? []).map((row) => ({ sandboxId: row.daytona_sandbox_id, status: row.status })));
   }
   return boxStatuses(rows);
+}
+
+/** Which of `ids` is the box a row lost (lostBoxes): the newest a computer
+ *  ran on, by its intervals, whose row now names none while claimed or
+ *  failed. A lookup that fails throws, so nothing is deleted on a guess. */
+async function lostOf(ids: string[]): Promise<Set<string>> {
+  const supabase = createSupabaseAdminClient();
+  const computerIds = new Set<string>();
+  for (let i = 0; i < ids.length; i += LOOKUP_CHUNK) {
+    const { data, error } = await supabase
+      .from("compute_intervals")
+      .select("computer_id")
+      .in("sandbox_id", ids.slice(i, i + LOOKUP_CHUNK));
+    if (error) throw error;
+    for (const row of data ?? []) if (row.computer_id) computerIds.add(row.computer_id);
+  }
+  const computers = [...computerIds];
+  const intervals: MeteredBox[] = [];
+  const rows: { id: string; status: RuntimeComputerStatus; daytonaSandboxId: string | null }[] = [];
+  for (let i = 0; i < computers.length; i += LOOKUP_CHUNK) {
+    const chunk = computers.slice(i, i + LOOKUP_CHUNK);
+    const [ran, named] = await Promise.all([
+      supabase.from("compute_intervals").select("computer_id, sandbox_id, started_at").in("computer_id", chunk),
+      supabase.from("runtime_computers").select("id, status, daytona_sandbox_id").in("id", chunk),
+    ]);
+    if (ran.error) throw ran.error;
+    if (named.error) throw named.error;
+    for (const row of ran.data ?? []) {
+      if (row.computer_id) intervals.push({ computerId: row.computer_id, sandboxId: row.sandbox_id, startedAt: row.started_at });
+    }
+    rows.push(...(named.data ?? []).map((row) => ({ id: row.id, status: row.status, daytonaSandboxId: row.daytona_sandbox_id })));
+  }
+  return lostBoxes(intervals, rows);
 }
 
 /** Whether every row naming `sandboxId` still says it's at rest. A lookup

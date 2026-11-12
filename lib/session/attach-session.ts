@@ -4,6 +4,12 @@ import { BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
 
 const RETRY_DELAYS_MS = [1000, 2000];
 
+/** A failure with no code of Outrunner's, so the server never answered it: a
+ *  gateway's (502, 503, 504, Cloudflare's 520-524), or a 500 from the edge
+ *  while the control plane is replaced in a deploy. Worth trying again; a
+ *  refusal the server answered carries its code, or names what happened. */
+const UNANSWERED_STATUSES: ReadonlySet<number> = new Set([500, 502, 503, 504, 520, 521, 522, 523, 524]);
+
 export class AttachError extends Error {
   readonly code: string | null;
   readonly retryable: boolean;
@@ -44,7 +50,7 @@ export async function attachCloudSession(
         throw new AttachError(
           body?.error ?? "Couldn't reach this session's box.",
           code,
-          code === BOX_RESTORE_FAILED || (!code && [502, 503, 504].includes(response.status)),
+          code === BOX_RESTORE_FAILED || (!code && UNANSWERED_STATUSES.has(response.status)),
         );
       }
       const parsed = SessionUrls.safeParse(await response.json());

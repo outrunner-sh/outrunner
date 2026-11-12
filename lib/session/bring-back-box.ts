@@ -8,6 +8,7 @@
 
 import type { Owner } from "@/lib/auth/owner";
 import { sessionPlan } from "@/lib/billing/entitlements";
+import { lastMeteredBox } from "@/lib/billing/metering-store";
 import { cloudBoxStartGate, CloudLimitError } from "@/lib/billing/limits";
 import { getSandboxSettings } from "@/lib/db/credentials";
 import { orgDefaultsFor } from "@/lib/db/org-defaults";
@@ -16,6 +17,7 @@ import { optionalGitToken, sessionGitAs } from "@/lib/github/identity.deps";
 import { newBoxSize } from "@/lib/orgs/defaults";
 import type { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { scopeOf } from "@/lib/runtime/computer-scope";
+import { mayHaveLostBox } from "@/lib/runtime/lost-box";
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { boxSizeOn, computerMadeBy, endedBoxOf, sandboxOf } from "@/lib/runtime/sandbox-choice";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
@@ -43,6 +45,13 @@ export async function bringBack(
     if (await provider.computerRunning(computer.daytonaSandboxId)) return null;
     await markRuntimeComputerStoppedIfReady(computer.id, computer.ownerId, computer.daytonaSandboxId);
     ended = computer.daytonaSandboxId;
+  } else if (!ended && mayHaveLostBox(computer)) {
+    // A claim cut off mid-way left the row naming no box (lib/runtime/lost-box.ts):
+    // the box it was bringing back, paused with the session's files, is the
+    // one it last ran on. Brought back on it, as a box that ended is, rather
+    // than waiting on a claim nobody holds, or giving up on the session.
+    ended = (await lastMeteredBox(computer.id)) ?? undefined;
+    if (!ended && computer.status !== "provisioning") return null;
   } else if (!ended && computer.status !== "provisioning") {
     return null;
   }

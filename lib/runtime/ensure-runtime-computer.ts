@@ -110,10 +110,13 @@ export async function ensureRuntimeComputer(
     return { computer, provisioned: false, agentSecret: persistedSecret };
   }
 
-  // The claim cleared the row's box. The one that ended goes back on it while
-  // it's brought back: it holds the sessions, and a row that names it keeps it
-  // from the orphaned-box sweep (lib/runtime/orphan-boxes.ts), even if this
-  // server stops before the provision is done.
+  // The one that ended goes on the row while it's brought back: it holds the
+  // sessions, and a row that names it keeps it from the orphaned-box sweep
+  // (lib/runtime/orphan-boxes.ts), even if this server stops before the
+  // provision is done. The claim keeps it there already
+  // (20261112100000_claim_keeps_ended_box.sql); written again for a box found
+  // elsewhere (lib/runtime/lost-box.ts), and for a database before that
+  // migration, whose claim cleared it.
   let provisioned: ProvisionedComputer | null = null;
   // Whether the row names the box as ready: past that, a failure leaves the
   // box and the row as they are.
