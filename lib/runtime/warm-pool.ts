@@ -17,6 +17,7 @@
  * wiring is warm-pool.deps.ts.
  */
 
+import { PLANS } from "@/lib/billing/plans";
 import { AGENT_FEATURE_MULTI_REPO_WARM, AGENT_FEATURE_WARM_HOOKS } from "@/lib/runtime/agent-protocol";
 import type { RuntimeComputer, SessionCheckout } from "@/lib/runtime/types";
 
@@ -25,10 +26,10 @@ export const POOL_SIZE = 2;
 
 /** How long a pooled box may stay "provisioning" before its refill is taken
  *  for dead (a deploy or crash cut it off) and its box deleted: longer than a
- *  clone and the longest warm hook a plan allows (Plan.warmHookMinutes)
- *  together, and no longer, since a box no refill watches any more bills
+ *  clone (30 minutes, with the box's making) and the longest warm hook any
+ *  plan allows (Plan.warmHookMinutes) together, and no longer, since a box no refill watches any more bills
  *  until then. */
-export const STALE_REFILL_MS = 45 * 60_000;
+export const STALE_REFILL_MS = (Math.max(...Object.values(PLANS).map((plan) => plan.warmHookMinutes)) + 30) * 60_000;
 
 /** How long a project whose refill failed waits before the next try: a
  *  repository that can't be pooled (a clone that fails after minutes) isn't

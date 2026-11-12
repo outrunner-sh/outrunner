@@ -255,6 +255,8 @@ export async function refillProjectPool(input: {
       },
       meter: (computerId, sandboxId, cpu, from, to) =>
         recordInterval({
+          ownerId,
+          orgId: project.orgId,
           computerId,
           sandboxId,
           cpu: cpu ?? SMALL_BOX_CPU,

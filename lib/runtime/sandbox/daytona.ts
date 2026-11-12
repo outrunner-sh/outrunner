@@ -66,6 +66,11 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
   }
 }
 
+/** How long a box alive() fetched is reused by keepAlive rather than
+ *  fetched again: one reconcile look's span. Only its id is used, so a stale
+ *  one is no harm, only bounded so the map holds no box for long. */
+const SEEN_REUSE_MS = 60_000;
+
 /** Monotonic suffix so each detached launch gets its own Daytona session. */
 let launchSeq = 0;
 
@@ -76,6 +81,8 @@ let launchSeq = 0;
  */
 export class DaytonaBackend implements SandboxBackend {
   private client: Promise<Daytona> | null = null;
+  /** The box alive() last fetched, for keepAlive to reuse (SEEN_REUSE_MS). */
+  private readonly lastSeen = new Map<string, { sandbox: Sandbox; at: number }>();
   private readonly apiKey: (() => Promise<string>) | undefined;
 
   constructor(options: { apiKey?: () => Promise<string> } = {}) {
@@ -132,7 +139,11 @@ export class DaytonaBackend implements SandboxBackend {
 
   async alive(id: string): Promise<boolean> {
     try {
-      const state = (await (await this.daytona()).get(id)).state;
+      const sandbox = await (await this.daytona()).get(id);
+      const state = sandbox.state;
+      // Kept for keepAlive, which the reconciler calls just after: one get a
+      // box a run, not two.
+      this.lastSeen.set(id, { sandbox, at: Date.now() });
       // A hot resize preserves processes; the reconciler must not mark the
       // computer lost while Daytona applies its new allocation.
       return state === "started" || state === "resizing";
@@ -207,7 +218,10 @@ export class DaytonaBackend implements SandboxBackend {
    *  Outrunner's account, whose boxes have one (AUTO_STOP_MINUTES). */
   async keepAlive(id: string): Promise<void> {
     if (this.apiKey) return;
-    await (await (await this.daytona()).get(id)).refreshActivity();
+    const seen = this.lastSeen.get(id);
+    this.lastSeen.delete(id);
+    const sandbox = seen && Date.now() - seen.at < SEEN_REUSE_MS ? seen.sandbox : await (await this.daytona()).get(id);
+    await sandbox.refreshActivity();
   }
 }
 

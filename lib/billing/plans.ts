@@ -22,7 +22,9 @@ export type Plan = {
   /** The largest box size on Outrunner's sandboxes. */
   largestBoxSize: BoxSizeId;
   /** The longest a project's warm hook may run on a warm-pool box
-   *  (lib/runtime/warm-pool.deps.ts), whose time is on the plan's hours. */
+   *  (lib/runtime/warm-pool.deps.ts), whose time is on the plan's hours. The
+   *  sweep of abandoned refills waits past the largest of these
+   *  (STALE_REFILL_MS, lib/runtime/warm-pool.ts). */
   warmHookMinutes: number;
   /** Spend on Outrunner's models, in USD: once ever, or each month. */
   models: { usd: number; per: "once" | "month" };

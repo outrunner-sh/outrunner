@@ -17,7 +17,7 @@
  * paused anyway ({@link forcedPause}) when its agent hasn't answered for
  * {@link UNREACHABLE_PAUSE_MS}, when it has been "in a turn" with no activity
  * for {@link STUCK_TURN_PAUSE_MS}, or when it has run {@link MAX_BOX_RUN_MS}
- * at a stretch. Each is logged with its workspace and why, and its session
+ * at a stretch with no recent activity ({@link MAX_BOX_RUN_HARD_MS} with). Each is logged with its workspace and why, and its session
  * says why (a notice on the workspace, cleared once its box runs again). And
  * every box kept running is heartbeated to the provider (keepAlive), whose
  * own idle stop (Daytona's, lib/runtime/sandbox/daytona.ts AUTO_STOP_MINUTES)
@@ -46,9 +46,16 @@ export const UNREACHABLE_PAUSE_MS = 3 * 60 * 60_000;
  *  real turn's tools, output and messages are activity; a build or test run
  *  silent for 6 hours is not one to keep paying for. */
 export const STUCK_TURN_PAUSE_MS = 6 * 60 * 60_000;
-/** The longest a box runs at a stretch (since it last started), whatever it
- *  says: the hard cap on one run's cost. Its session resumes it. */
+/** The longest a box runs at a stretch (since it last started) unless it's
+ *  in active use: activity within {@link ACTIVE_WITHIN_MS}, which holds the
+ *  pause off so a long session isn't cut mid-turn. Its session resumes it. */
 export const MAX_BOX_RUN_MS = 12 * 60 * 60_000;
+/** The hard cap on one run, active or not: past it the box is paused even
+ *  mid-turn, and that turn is lost. The tradeoff is deliberate: a loop that
+ *  keeps producing activity would otherwise bill for ever. */
+export const MAX_BOX_RUN_HARD_MS = 16 * 60 * 60_000;
+/** Activity this recent counts as the box in use, for the run cap. */
+export const ACTIVE_WITHIN_MS = IDLE_AFTER_MS;
 
 /** Why a box that isn't idle is paused anyway, and what its session says. */
 export type ForcedPause = { reason: "unreachable" | "stuck-turn" | "max-run"; notice: string };
@@ -72,9 +79,11 @@ export const RUN_DEADLINE_MS = (LEASE_SECONDS - 30) * 1000;
 const CONCURRENCY = 5;
 
 /** What the reconciler found a box doing. `activity` is null when its agent
- *  couldn't say (one from before /activity, or unreachable): never paused as
- *  idle, only by the unreachable limit. */
-export type BoxState = { running: false } | { running: true; activity: Activity | null };
+ *  couldn't say: never paused as idle. `reachable` is whether its agent
+ *  answered at all: an agent from before /activity answers it 404, and is
+ *  reachable; one that didn't answer is not, and is paused only by the
+ *  unreachable limit. A reading implies reachable. */
+export type BoxState = { running: false } | { running: true; activity: Activity | null; reachable?: boolean };
 
 /** The box's run so far, from its open interval: when it started, and when
  *  its agent last answered (null: not this run; undefined: not recorded, a
@@ -143,15 +152,26 @@ function answered(activity: Activity | null): activity is Activity {
  * `run` is its open interval (none yet: a box seen for the first time, never
  * forced). Exported for tests.
  */
-export function forcedPause(activity: Activity | null, run: BoxRun | undefined, now: Date): ForcedPause | null {
+export function forcedPause(
+  activity: Activity | null,
+  run: BoxRun | undefined,
+  now: Date,
+  /** Its agent answered, if without a reading (one from before /activity). */
+  reachable = false,
+): ForcedPause | null {
   if (!run) return null;
   const at = now.getTime();
-  if (at - run.startedAt.getTime() >= MAX_BOX_RUN_MS) {
+  const ran = at - run.startedAt.getTime();
+  const inUse = answered(activity) && at - Date.parse(activity.lastActivity) < ACTIVE_WITHIN_MS;
+  if (ran >= MAX_BOX_RUN_HARD_MS || (ran >= MAX_BOX_RUN_MS && !inUse)) {
     return {
       reason: "max-run",
-      notice: `${FORCED_PAUSE_NOTICE_PREFIX} after ${hours(MAX_BOX_RUN_MS)} hours running, the longest one runs at a stretch. Its files are kept; send a message to start it again.`,
+      notice: `${FORCED_PAUSE_NOTICE_PREFIX} after ${hours(ran >= MAX_BOX_RUN_HARD_MS ? MAX_BOX_RUN_HARD_MS : MAX_BOX_RUN_MS)} hours running, the longest one runs at a stretch. Its files are kept; send a message to start it again.`,
     };
   }
+  // An agent that answers without a reading (from before /activity) can't
+  // say it's stuck: only the run cap stops it.
+  if (!answered(activity) && reachable) return null;
   if (!answered(activity)) {
     // Not recorded (undefined): off, rather than measured from the run's start.
     if (run.agentSeenAt === undefined) return null;
@@ -223,7 +243,7 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileReport> {
       }
       // Not idle, but past a limit: paused anyway, asked again first as an
       // idle one is (an agent back, a turn that moved on).
-      const forced = deps.pausesIdleBoxes ? forcedPause(state.activity, interval, now) : null;
+      const forced = deps.pausesIdleBoxes ? forcedPause(state.activity, interval, now, state.reachable) : null;
       if (forced && (await stillForced(deps, computer, interval))) {
         deps.log(
           `Reconcile: forced pause (${forced.reason}) of workspace ${computer.workspaceId ?? "none"}, computer ${computer.id} (box ${computer.sandboxId}, owner ${computer.ownerId})`,
@@ -240,7 +260,7 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileReport> {
       }
       if (interval) {
         seenIds.push(interval.id);
-        if (answered(state.activity)) answeredIds.push(interval.id);
+        if (answered(state.activity) || state.reachable) answeredIds.push(interval.id);
       } else await deps.openInterval(computer, now);
       running.push(computer);
       // The provider's own stop is only for boxes no one looks after: this
@@ -278,7 +298,7 @@ async function stillIdle(deps: ReconcileDeps, computer: MeteredComputer): Promis
 /** Whether the box is still to be paused by a limit, asked now. */
 async function stillForced(deps: ReconcileDeps, computer: MeteredComputer, run: BoxRun | undefined): Promise<boolean> {
   const state = await deps.observe(computer);
-  return state.running && forcedPause(state.activity, run, deps.now()) !== null;
+  return state.running && forcedPause(state.activity, run, deps.now(), state.reachable) !== null;
 }
 
 /** Run `work` over `items`, at most `limit` at a time. */

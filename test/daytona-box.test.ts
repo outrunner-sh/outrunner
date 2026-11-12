@@ -165,6 +165,23 @@ test("keepAlive refreshes the box's Daytona activity on Outrunner's account only
   assert.deepEqual(refreshed, ["box-1"]);
 });
 
+test("keepAlive reuses the box alive() just fetched: one Daytona get a box a run", async () => {
+  let gets = 0;
+  let refreshed = 0;
+  const get = async () => {
+    gets += 1;
+    return { state: "started", refreshActivity: async () => void (refreshed += 1) } as unknown as Sandbox;
+  };
+  const backend = new DaytonaBackend();
+  (backend as unknown as { client: Promise<Pick<Daytona, "get">> }).client = Promise.resolve({ get } as unknown as Pick<Daytona, "get">);
+  assert.equal(await backend.alive("box-1"), true);
+  await backend.keepAlive("box-1");
+  assert.deepEqual({ gets, refreshed }, { gets: 1, refreshed: 1 });
+  // Used once: the next heartbeat without a look fetches it again.
+  await backend.keepAlive("box-1");
+  assert.deepEqual({ gets, refreshed }, { gets: 2, refreshed: 2 });
+});
+
 test("a box on a user's own Daytona key keeps their account's archive default", async () => {
   let sent: unknown;
   const backend = new DaytonaBackend({ apiKey: async () => "their-key" });

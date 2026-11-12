@@ -112,6 +112,16 @@ test("an owner exempt from plan limits keeps their box; the org's others pause",
   assert.equal(report.paused, 1);
 });
 
+test("the plan's reason offers an upgrade only where there is one to buy", () => {
+  assert.match(planHoursReason(PLANS.free), /upgrade for more hours/);
+  assert.match(planHoursReason(PLANS.pro, "team"), /upgrade for more hours/);
+  for (const [plan, kind] of [[PLANS.max, "team"], [PLANS.enterprise, "personal"], [PLANS.pro, "connector"]] as const) {
+    const reason = planHoursReason(plan, kind);
+    assert.doesNotMatch(reason, /upgrade/);
+    assert.match(reason, /start again next period/);
+  }
+});
+
 test("the reason is the limit that stops it: the admins' below the plan's, the plan's past both", () => {
   const controls = { limitPercent: 50, alertThresholds: [] };
   assert.equal(pauseReason(PLANS.pro, controls, 40), null);

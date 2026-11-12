@@ -62,8 +62,12 @@ export type UsageSweepReport = { orgs: number; alerts: number; paused: number; f
 
 /** What a session paused at a limit says: why, and what to do. Starting
  *  FORCED_PAUSE_NOTICE_PREFIX, the session shows it until its box runs. */
-export function planHoursReason(plan: Plan): string {
-  return `${FORCED_PAUSE_NOTICE_PREFIX}: the plan's ${plan.cloudHoursPerMonth} cloud hours are used up for this period. Its files are kept; upgrade for more hours to start it again.`;
+export function planHoursReason(plan: Plan, account: Account["kind"] = "personal"): string {
+  // Only a member's org can upgrade, and only to a plan with more hours: a
+  // connector is on the deployment's plan, and Max and Enterprise top out.
+  const upgradable = account !== "connector" && (plan.id === "free" || plan.id === "pro");
+  const next = upgradable ? "upgrade for more hours, or it can start again next period" : "it can start again next period";
+  return `${FORCED_PAUSE_NOTICE_PREFIX}: the plan's ${plan.cloudHoursPerMonth} cloud hours are used up for this period. Its files are kept; ${next}.`;
 }
 export function orgLimitReason(plan: Plan, controls: UsageControls): string {
   return `${FORCED_PAUSE_NOTICE_PREFIX}: the org's usage limit (${controls.limitPercent}% of its plan's ${plan.cloudHoursPerMonth} cloud hours) is reached for this period. Its files are kept; an admin can raise the limit in Settings → Org → Usage.`;
@@ -71,8 +75,13 @@ export function orgLimitReason(plan: Plan, controls: UsageControls): string {
 
 /** Why the account's boxes pause now, or null while it's within its hours.
  *  Past both, the plan's: raising the admins' limit wouldn't help. */
-export function pauseReason(plan: Plan, controls: UsageControls | null, used: number): string | null {
-  if (used >= plan.cloudHoursPerMonth) return planHoursReason(plan);
+export function pauseReason(
+  plan: Plan,
+  controls: UsageControls | null,
+  used: number,
+  account: Account["kind"] = "personal",
+): string | null {
+  if (used >= plan.cloudHoursPerMonth) return planHoursReason(plan, account);
   if (controls && overLimit(plan, controls, used)) return orgLimitReason(plan, controls);
   return null;
 }
@@ -106,7 +115,7 @@ export async function sweepOrgUsage(deps: UsageSweepDeps): Promise<UsageSweepRep
           if (outcome === "failed") await deps.releaseAlert(account.orgId, period, threshold);
         }
       }
-      const reason = deps.canPause ? pauseReason(plan, controls, used) : null;
+      const reason = deps.canPause ? pauseReason(plan, controls, used, account.kind) : null;
       if (!reason) continue;
       for (const box of await deps.runningBoxes(account)) {
         try {

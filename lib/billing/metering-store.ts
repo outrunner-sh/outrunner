@@ -17,7 +17,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 /** An interval still open: its box is running, as far as anyone has seen.
  *  `agentSeenAt`: when the reconciler last had an answer from its agent
  *  (null: not in this run of the box); undefined on a database from before
- *  the column (20261112120000_box_backstops.sql). */
+ *  the column (20261112140000_box_backstops.sql). */
 export type OpenInterval = { id: string; sandboxId: string; startedAt: Date; lastSeenAt: Date; agentSeenAt?: Date | null };
 
 /** A ready computer on one of Outrunner's boxes, with what reaching its agent
@@ -93,22 +93,20 @@ type OpenIntervalRow = { id: string; sandbox_id: string; started_at: string; las
 /** Record a box's time running from `startedAt` to `endedAt`, already over:
  *  a warm-pool box's, made, warmed and stopped before any session had it. */
 export async function recordInterval(input: {
+  ownerId: string;
+  /** The org it ran for, whose hours they are. */
+  orgId: string;
   computerId: string;
   sandboxId: string;
   cpu: number;
   startedAt: Date;
   endedAt: Date;
 }): Promise<void> {
-  const supabase = createSupabaseAdminClient();
-  const { data: computer, error: readError } = await supabase
-    .from("runtime_computers")
-    .select("owner_id, org_id")
-    .eq("id", input.computerId)
-    .single();
-  if (readError) throw readError;
-  const { error } = await supabase.from("compute_intervals").insert({
-    owner_id: computer.owner_id,
-    org_id: computer.org_id,
+  // Owner and org given, not read off the computer: its row may be gone (a
+  // refill the sweep took for dead), and its time still counts.
+  const { error } = await createSupabaseAdminClient().from("compute_intervals").insert({
+    owner_id: input.ownerId,
+    org_id: input.orgId,
     computer_id: input.computerId,
     sandbox_id: input.sandboxId,
     cpu: input.cpu,

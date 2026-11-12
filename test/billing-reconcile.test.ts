@@ -8,6 +8,7 @@ import {
   forcedPause,
   IDLE_AFTER_MS,
   isIdle,
+  MAX_BOX_RUN_HARD_MS,
   MAX_BOX_RUN_MS,
   reconcile,
   RUN_DEADLINE_MS,
@@ -245,10 +246,20 @@ test("forcedPause: the run's hard cap, an agent silent for hours, a turn that ne
   const working = { lastActivity: ago(MIN), turnTrackingVersion: 1, turnInProgress: true };
   // A box seen for the first time has no run yet: never forced.
   assert.equal(forcedPause(null, undefined, NOW), null);
-  // The hard cap: whatever it says, even mid-turn and busy.
-  assert.equal(forcedPause(working, run(MAX_BOX_RUN_MS - MIN, 0), NOW), null);
-  assert.equal(forcedPause(working, run(MAX_BOX_RUN_MS, 0), NOW)?.reason, "max-run");
+  // The run cap: held off while the box is in use (activity in the last
+  // 15 minutes), up to the hard cap, past which even a busy turn is cut.
+  const quietTurn = { lastActivity: ago(IDLE_AFTER_MS), turnTrackingVersion: 1, turnInProgress: true };
+  assert.equal(forcedPause(quietTurn, run(MAX_BOX_RUN_MS - MIN, 0), NOW), null);
+  assert.equal(forcedPause(quietTurn, run(MAX_BOX_RUN_MS, 0), NOW)?.reason, "max-run");
   assert.equal(forcedPause(null, run(MAX_BOX_RUN_MS), NOW)?.reason, "max-run");
+  assert.equal(forcedPause(working, run(MAX_BOX_RUN_MS, 0), NOW), null);
+  assert.equal(forcedPause(working, run(MAX_BOX_RUN_HARD_MS - MIN, 0), NOW), null);
+  assert.equal(forcedPause(working, run(MAX_BOX_RUN_HARD_MS, 0), NOW)?.reason, "max-run");
+  assert.match(forcedPause(working, run(MAX_BOX_RUN_HARD_MS, 0), NOW)!.notice, /after 16 hours/);
+  // An agent from before /activity answers (404) without a reading: not
+  // unreachable, and only the run cap stops it.
+  assert.equal(forcedPause(null, run(5 * HOUR, null), NOW, true), null);
+  assert.equal(forcedPause(null, run(MAX_BOX_RUN_MS, null), NOW, true)?.reason, "max-run");
   // Unreachable: from its agent's last answer, or the run's start if none.
   assert.equal(forcedPause(null, run(5 * HOUR, UNREACHABLE_PAUSE_MS - MIN), NOW), null);
   assert.equal(forcedPause(null, run(5 * HOUR, UNREACHABLE_PAUSE_MS), NOW)?.reason, "unreachable");
@@ -267,7 +278,7 @@ test("forcedPause: the run's hard cap, an agent silent for hours, a turn that ne
   assert.equal(forcedPause(quiet(STUCK_TURN_PAUSE_MS, {}), run(7 * HOUR, 0), NOW)?.reason, "stuck-turn");
   // Every notice says why, and starts with the prefix the session shows.
   for (const forced of [
-    forcedPause(working, run(MAX_BOX_RUN_MS, 0), NOW),
+    forcedPause(quietTurn, run(MAX_BOX_RUN_MS, 0), NOW),
     forcedPause(null, run(5 * HOUR, null), NOW),
     forcedPause(quiet(STUCK_TURN_PAUSE_MS), run(7 * HOUR, 0), NOW),
   ]) {
@@ -293,16 +304,40 @@ test("a box whose agent hasn't answered for hours is paused, logged with its wor
   assert.deepEqual(logs.alive, []);
 });
 
-test("a box past its run's hard cap is paused mid-turn", async () => {
+test("a box in use past 12 hours runs on; past the 16-hour hard cap it's paused mid-turn", async () => {
+  const at = (hours: number) =>
+    world({
+      computers: [computer("a")],
+      states: { a: active },
+      open: [interval("i-a", "sb-a", 2, { startedMinutesAgo: hours * 60, agentSeenMinutesAgo: 2 })],
+    });
+  const inUse = at(12);
+  assert.equal((await reconcile(inUse.deps)).forced, 0);
+  const hard = at(16);
+  assert.equal((await reconcile(hard.deps)).forced, 1);
+  assert.match(hard.log.notices[0], /after 16 hours running/);
+  assert.ok(hard.log.logged.some((line) => line.includes("forced pause (max-run) of workspace w-a")));
+});
+
+test("a quiet box past 12 hours is paused", async () => {
   const { deps, log: logs } = world({
     computers: [computer("a")],
-    states: { a: active },
+    states: { a: { running: true, activity: { lastActivity: ago(30 * MIN), turnTrackingVersion: 1, turnInProgress: true } } },
     open: [interval("i-a", "sb-a", 2, { startedMinutesAgo: 12 * 60, agentSeenMinutesAgo: 2 })],
   });
-  const report = await reconcile(deps);
-  assert.equal(report.forced, 1);
+  assert.equal((await reconcile(deps)).forced, 1);
   assert.match(logs.notices[0], /after 12 hours running/);
-  assert.ok(logs.logged.some((line) => line.includes("forced pause (max-run) of workspace w-a")));
+});
+
+test("an agent from before /activity is reachable: recorded as answering, and not paused as unreachable", async () => {
+  const { deps, log: logs } = world({
+    computers: [computer("a")],
+    states: { a: { running: true, activity: null, reachable: true } },
+    open: [interval("i-a", "sb-a", 2, { startedMinutesAgo: 5 * 60, agentSeenMinutesAgo: null })],
+  });
+  const report = await reconcile(deps);
+  assert.equal(report.forced, 0);
+  assert.deepEqual(logs.answered, ["i-a"]);
 });
 
 test("an agent that answers again just before its forced pause keeps its box", async () => {
