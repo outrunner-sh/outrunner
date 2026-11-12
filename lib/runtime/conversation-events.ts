@@ -141,8 +141,18 @@ const LOCAL_COMMAND_OUTPUT = /^<local-command-(stdout|stderr|caveat)>/;
 /** Whether an event is the record of what a slash command Claude ran itself
  *  printed: the turn is over, nothing more comes. */
 export function isLocalCommandOutput(event: AgentEvent): boolean {
-  return event.t === "message" && event.role === "user" && LOCAL_COMMAND_OUTPUT.test(messageText(event));
+  return event.t === "message" && event.role === "user" && (LOCAL_COMMAND_OUTPUT.test(messageText(event)) || isContextReport(event));
 }
+
+/** /context's report, as Claude Code (2.1.304 on) logs it: the command and
+ *  its printout as system records, which aren't decoded, and the report as a
+ *  meta record in Markdown, for the model to read later. Printed, not
+ *  answered: the turn is over. */
+export function isContextReport(event: AgentEvent): boolean {
+  return event.t === "message" && event.role === "user" && event.meta === true && CONTEXT_REPORT.test(messageText(event));
+}
+
+const CONTEXT_REPORT = /^\s*## Context Usage\b/;
 
 /** The command a record of one names ("/compact"), with its arguments; null
  *  for a record of what it printed, or anything else. */

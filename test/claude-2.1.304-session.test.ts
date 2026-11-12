@@ -44,7 +44,8 @@ test("a real session's plans, stops and compaction show as the timeline means th
 test("after it, nothing waits: no plan, no turn, and the ring says what the summary left", () => {
   assert.equal(pendingPlan(events), null);
   assert.equal(claudeIsWorking(events), false);
-  assert.deepEqual(contextUsage(events, "claude-opus-4-7"), { used: 3956, window: 200_000 });
+  // Sonnet 5.5 throughout: a million tokens, compacting 33k short of it.
+  assert.deepEqual(contextUsage(events, "claude-opus-4-7"), { used: 3956, window: 1_000_000, compactAt: 967_000 });
 });
 
 test("cut at the first plan, it waits on the user, and the turn isn't read as at work", () => {

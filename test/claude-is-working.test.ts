@@ -57,3 +57,28 @@ test("Codex commentary remains working in the live stream and after replay", () 
   assert.equal(claudeIsWorking(parseConversation(lines.slice(0, commentary + 1).join("\n"))), true);
   assert.equal(claudeIsWorking(parseConversation(translated)), false, "final answer ends the turn");
 });
+
+test("/context's report ends the turn: Claude Code printed it, nothing answers it", () => {
+  // Claude Code 2.1.304 logs /context as two system records (not decoded) and
+  // the report as a meta record, for the model to read later.
+  const line = (rec: object) => JSON.stringify(rec);
+  const events = parseConversation(
+    [
+      line({ type: "system", subtype: "local_command", uuid: "s1", parentUuid: null, timestamp: at, content: "<command-name>/context</command-name>" }),
+      line({ type: "system", subtype: "local_command", uuid: "s2", parentUuid: "s1", timestamp: at, content: "<local-command-stdout> \u001b[1mContext Usage\u001b[22m</local-command-stdout>" }),
+      line({
+        type: "user",
+        uuid: "m1",
+        parentUuid: "s2",
+        timestamp: at,
+        isMeta: true,
+        message: { role: "user", content: "## Context Usage\n\n**Model:** claude-sonnet-5-5  \n**Tokens:** 29.1k / 1m (3%)\n" },
+      }),
+    ].join("\n"),
+  );
+  assert.equal(events.length, 1, "only the report reaches the timeline");
+  assert.equal(claudeIsWorking(events), false);
+  // A skill's instructions are meta too, and answered.
+  const skill: AgentEvent = { ...prompt, uuid: "m2", meta: true, content: [{ type: "text", text: "Base directory for this skill: /work/skill" }] };
+  assert.equal(claudeIsWorking([skill]), true);
+});

@@ -60,7 +60,7 @@ import {
 } from "@/lib/runtime/session-models";
 import { isImeKeydown } from "@/lib/session/composing";
 import { type DiffComment, lineRange } from "@/lib/session/diff-comments";
-import { compactTokens, type ContextUsage } from "@/lib/runtime/context-usage";
+import { compactTokens, contextLevel, type ContextUsage } from "@/lib/runtime/context-usage";
 import { composerCommand, otherMode, type SessionMode } from "@/lib/session/session-mode";
 import { HistorySearch, MentionMenu } from "@/components/composer-menus";
 import { usePromptHistory } from "@/hooks/use-prompt-history";
@@ -832,7 +832,18 @@ export function SessionComposer({
           )}
         </span>
         <span>
-          {context && <ContextRing usage={context} />}
+          {context && (
+            <ContextRing
+              usage={context}
+              // Claude Code's breakdown, between turns: a Claude Code session
+              // is one that compacts (Codex's says no compactAt).
+              onBreakdown={
+                context.compactAt !== null && !stop && canSend && !sendDisabledReason && !sending
+                  ? () => void onSend("/context", [], modeChoice?.mode)
+                  : undefined
+              }
+            />
+          )}
           {stop && (
             <button
               type="button"
@@ -903,20 +914,30 @@ function ModeToggle({ choice, disabled }: { choice: ModeChoice; disabled: boolea
   );
 }
 
-/** How full the session's context is: a ring, filling as its replies use the
- *  model's window, with the numbers beside it. */
-function ContextRing({ usage }: { usage: ContextUsage }) {
+/** How full the session's context is: a ring, filling toward the model's
+ *  window, with the numbers beside it. Amber as Claude Code's auto-compaction
+ *  nears (Codex's, the window), with a nudge to /compact first just before it;
+ *  red if it ever goes over. A Claude Code session's opens /context's
+ *  breakdown. */
+function ContextRing({ usage, onBreakdown }: { usage: ContextUsage; onBreakdown?: () => void }) {
   const share = Math.min(1, usage.used / usage.window);
   const r = 6;
   const length = 2 * Math.PI * r;
-  const percent = Math.round(share * 100);
-  return (
-    <span
-      className={cn("studio-composer-context", share >= 0.8 && "is-full")}
-      title={`Context: ${usage.used.toLocaleString("en-US")} of ${usage.window.toLocaleString("en-US")} tokens (${percent}%). /compact to summarize it.`}
-      aria-label={`Context ${percent}% full`}
-      role="img"
-    >
+  const percent = Math.round((usage.used / usage.window) * 100);
+  const level = contextLevel(usage);
+  const title = [
+    `Context: ${usage.used.toLocaleString("en-US")} of ${usage.window.toLocaleString("en-US")} tokens (${percent}%).`,
+    level === "over"
+      ? "Over the model's window."
+      : usage.compactAt !== null
+        ? `Claude compacts it at ~${compactTokens(usage.compactAt)}${level === "now" ? ": /compact now to choose what it keeps." : "."}`
+        : level === "now" && "/compact to summarize it.",
+    onBreakdown && "Click for /context's breakdown.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const body = (
+    <>
       <svg viewBox="0 0 16 16" aria-hidden>
         <circle className="ring-track" cx="8" cy="8" r={r} fill="none" strokeWidth="2" />
         <circle
@@ -931,6 +952,22 @@ function ContextRing({ usage }: { usage: ContextUsage }) {
         />
       </svg>
       {compactTokens(usage.used)} / {compactTokens(usage.window)}
+      {level === "now" && usage.compactAt !== null && <span className="context-nudge">· /compact now</span>}
+    </>
+  );
+  const className = cn(
+    "studio-composer-context",
+    (level === "near" || level === "now") && "is-full",
+    level === "over" && "is-over",
+  );
+  const label = `Context ${percent}% full${level === "over" ? ", over the window" : ""}`;
+  return onBreakdown ? (
+    <button type="button" className={className} title={title} aria-label={`${label}. Show breakdown`} onClick={onBreakdown}>
+      {body}
+    </button>
+  ) : (
+    <span className={className} title={title} aria-label={label} role="img">
+      {body}
     </span>
   );
 }

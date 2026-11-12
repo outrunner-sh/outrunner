@@ -242,12 +242,16 @@ export function conversationNodes(
  * attached-file prompt leads with that wrapper and the user's words follow, so
  * hiding it would hide the prompt.
  */
+/** /context's report (isContextReport): shown open, as Markdown. */
+export const CONTEXT_USAGE = "Context usage";
+
 export function metaLabel(meta: boolean, text: string): string | null {
   const t = text.trimStart();
   if (t.startsWith("Base directory for this skill")) return "Skill";
   if (t.startsWith("<command-name>") || t.startsWith("<command-message>")) return "Command";
   if (t.startsWith("<local-command-stdout>") || t.startsWith("<local-command-stderr>")) return "Command output";
   if (t.startsWith("<task-notification>")) return "Background task";
+  if (meta && t.startsWith("## Context Usage")) return CONTEXT_USAGE;
   if (t.startsWith("<system-reminder>")) return "System reminder";
   return meta ? "Internal" : null;
 }

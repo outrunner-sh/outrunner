@@ -44,6 +44,7 @@ import { promptAttachments } from "@/lib/runtime/attachments";
 import { claudeIsWorking, workingStep } from "@/lib/runtime/conversation-events";
 import { compactTokens } from "@/lib/runtime/context-usage";
 import {
+  CONTEXT_USAGE,
   type ConversationNode,
   conversationNodes,
   type PromptImage,
@@ -601,13 +602,21 @@ function Prompt({
  *  folded behind a quiet one-line disclosure, so the conversation keeps its
  *  flow but the text is a click away, like Conductor. */
 function Meta({ label, text }: { label: string; text: string }) {
+  // /context's report was asked for, and is Claude Code's own Markdown.
+  const report = label === CONTEXT_USAGE;
   return (
-    <details className="timeline-meta">
+    <details className="timeline-meta" open={report || undefined}>
       <summary>
         <ChevronRight aria-hidden />
         <span className="font-medium">{label}</span>
       </summary>
-      <pre>{text}</pre>
+      {report ? (
+        <div className="timeline-meta-report">
+          <Markdown>{text}</Markdown>
+        </div>
+      ) : (
+        <pre>{text}</pre>
+      )}
     </details>
   );
 }

@@ -780,6 +780,7 @@
 .timeline-meta > summary > svg { width: 13px; height: 13px; flex-shrink: 0; transition: transform .15s; }
 .timeline-meta[open] > summary > svg { transform: rotate(90deg); }
 .timeline-meta > pre { margin: 4px 8px 2px; padding: 8px 10px; max-height: 20rem; overflow: auto; border-radius: 3px; color: #b4b4b4; background: #0d0d0d; font: 11.5px/1.6 var(--font-geist-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.timeline-meta-report { margin: 4px 8px 2px; max-height: 24rem; overflow: auto; }
 .timeline-tool { min-width: 0; border: 1px solid var(--studio-border); border-radius: 3px; }
 .timeline-tool > summary { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 3px 9px; color: #a69996; font-size: 13.5px; line-height: 20px; list-style: none; cursor: pointer; transition: color .15s; }
 .timeline-tool > summary::-webkit-details-marker { display: none; }
@@ -823,6 +824,12 @@
 .studio-composer-context .ring-track { stroke: var(--studio-border); }
 .studio-composer-context .ring-fill { stroke: #8a8a8a; transition: stroke-dasharray .3s; }
 .studio-composer-context.is-full .ring-fill { stroke: var(--studio-amber); }
+.studio-composer-context.is-full, .studio-composer-context.is-full .context-nudge { color: var(--studio-amber); }
+.studio-composer-context.is-over { color: var(--studio-red); }
+.studio-composer-context.is-over .ring-fill { stroke: var(--studio-red); }
+button.studio-composer-context { border: 0; background: none; border-radius: 4px; cursor: pointer; transition: color .15s; }
+button.studio-composer-context:hover { color: var(--studio-text); }
+button.studio-composer-context:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
 /* When a prompt was sent, at its top right, and how long the agent worked on
    its turn, at the turn's end: quiet, out of the way of the words. */
 .timeline-prompt { position: relative; }

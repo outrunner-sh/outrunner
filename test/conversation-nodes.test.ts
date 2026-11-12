@@ -206,3 +206,17 @@ test("an image pasted into the agent's own prompt rides on the prompt's row", ()
   const prompt = nodes.find((n) => n.kind === "prompt");
   assert.deepEqual(prompt?.kind === "prompt" && prompt.images, [{ mediaType: "image/png", data: "iVBORw0KGgo=" }]);
 });
+
+test("/context's report shows as its own row, not an internal record", () => {
+  const report: AgentEvent = {
+    t: "message",
+    uuid: "m1",
+    parentUuid: null,
+    role: "user",
+    meta: true,
+    timestamp: "2026-11-12T10:00:00Z",
+    content: [{ type: "text", text: "## Context Usage\n\n**Tokens:** 29.1k / 1m (3%)" }],
+  };
+  const nodes = conversationNodes([report]);
+  assert.deepEqual(nodes.map((node) => node.kind === "meta" && node.label), ["Context usage"]);
+});
