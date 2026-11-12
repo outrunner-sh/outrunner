@@ -1,3 +1,5 @@
+import { optionalEnv } from "@/lib/env";
+
 /** Every application table required for Runtime's initial control plane. */
 export const RUNTIME_TABLES = ["projects", "workspaces", "jobs", "pull_requests"] as const;
 
@@ -55,11 +57,13 @@ export async function probeRuntimeDatabase(client?: ProbeClient): Promise<Databa
     // The service role when there is one: this checks the schema is there,
     // and a table only the server reads (pull_requests, since
     // 20261112110000) is denied to the anonymous caller /api/health has.
+    // Without the service role, pull_requests always reads as unreachable;
+    // startup-env requires the key, so that's only `next dev` or tests.
     if (client) {
       supabase = client;
     } else {
       const server = await import("@/lib/supabase/server");
-      supabase = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()
+      supabase = optionalEnv("SUPABASE_SERVICE_ROLE_KEY")
         ? server.createSupabaseAdminClient()
         : await server.createSupabaseServerClient();
     }
