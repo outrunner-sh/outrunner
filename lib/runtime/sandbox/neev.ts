@@ -16,7 +16,7 @@ import {
   type SandboxBackend,
   type SandboxBox,
 } from "@/lib/runtime/sandbox/backend";
-import { mintRelayTicket, NEEV_RELAY_PREFIX } from "@/lib/runtime/sandbox/neev-relay-ticket";
+import { mintRelayTicket, NEEV_RELAY_PREFIX } from "@/lib/runtime/sandbox/relay-ticket";
 import { closeNeevTunnels, neevTunnel } from "@/lib/runtime/sandbox/neev-tunnel";
 
 /**
@@ -42,7 +42,7 @@ import { closeNeevTunnels, neevTunnel } from "@/lib/runtime/sandbox/neev-tunnel"
  *  - No preview URLs: Neev asks us not to use them, and their edge refuses
  *    WebSocket upgrades. The agent is reached through the sandbox's runtime
  *    instead ({@link neevTunnel}), and the browser's WebSockets through this
- *    server's relay (neev-relay.ts).
+ *    server's relay (relay.ts).
  */
 
 const DEFAULT_TEMPLATE = "sb-ubuntu-26-04-dev";

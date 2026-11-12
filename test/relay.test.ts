@@ -5,13 +5,13 @@ import { after, test } from "node:test";
 
 import WebSocket, { WebSocketServer } from "ws";
 
-import { createNeevRelay, sendable } from "@/lib/runtime/sandbox/neev-relay";
+import { createSandboxRelay, sendable, type RelayUpstream } from "@/lib/runtime/sandbox/relay";
 import {
   mintRelayTicket,
   NEEV_RELAY_PREFIX,
   RELAY_TICKET_TTL_SECONDS,
   relayTicketValid,
-} from "@/lib/runtime/sandbox/neev-relay-ticket";
+} from "@/lib/runtime/sandbox/relay-ticket";
 
 const KEY = "sk-nc-test-key";
 const SANDBOX = "01a133a1-9738-7b65-89eb-96c1c2e9798b";
@@ -79,8 +79,8 @@ async function fakeAgent(): Promise<string> {
   return `http://127.0.0.1:${await listen(server)}`;
 }
 
-async function relayServer(tunnel: (sandboxId: string, port: number) => Promise<string>): Promise<number> {
-  const relay = createNeevRelay({ key: () => KEY, tunnel });
+async function relayServer(tunnel: (sandboxId: string, port: number) => Promise<RelayUpstream>): Promise<number> {
+  const relay = createSandboxRelay({ key: () => KEY, tunnel }, NEEV_RELAY_PREFIX);
   const server = createServer((_req, res) => res.writeHead(404).end());
   server.on("upgrade", (req, socket, head) => {
     if (!relay(req, socket, head)) socket.end("HTTP/1.1 418 Not Relayed\r\n\r\n");
@@ -114,7 +114,7 @@ test("the relay passes frames both ways, the token through, and the agent's clos
   const asked: Array<[string, number]> = [];
   const port = await relayServer(async (sandboxId, sandboxPort) => {
     asked.push([sandboxId, sandboxPort]);
-    return agent;
+    return { base: agent, headers: {} };
   });
 
   const ws = new WebSocket(`${relayUrl(port, "events-ws")}?token=t0k&lastEventId=42`);
@@ -140,7 +140,7 @@ test("the relay refuses a bad ticket, an unknown path, and passes the agent's re
   let tunnels = 0;
   const port = await relayServer(async () => {
     tunnels += 1;
-    return agent;
+    return { base: agent, headers: {} };
   });
 
   const expired = mintRelayTicket(SANDBOX, 8080, KEY, Date.now() - 2 * RELAY_TICKET_TTL_SECONDS * 1000);
@@ -170,9 +170,28 @@ test("the relay leaves other upgrades to the server, and answers 502 when there 
 });
 
 test("a plain request to the relay prefix is not an upgrade the relay sees", async () => {
-  const port = await relayServer(async () => "http://127.0.0.1:1");
+  const port = await relayServer(async () => ({ base: "http://127.0.0.1:1", headers: {} }));
   const status = await new Promise<number>((resolve) => {
     request(`http://127.0.0.1:${port}${NEEV_RELAY_PREFIX}x`, (res) => resolve(res.statusCode ?? 0)).end();
   });
   assert.equal(status, 404);
+});
+
+test("the relay sends the provider's routing headers upstream, and a browser can't set its own", async () => {
+  // E2B's proxy routes by headers naming the sandbox and port: the relay's,
+  // never ones a browser sent, which would otherwise pick another box.
+  const server = createServer();
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (req, socket, head) => {
+    wss.handleUpgrade(req, socket, head, (ws) => ws.send(`${req.headers["e2b-sandbox-id"]} ${req.headers["e2b-sandbox-port"]}`));
+  });
+  const agent = `http://127.0.0.1:${await listen(server)}`;
+  const port = await relayServer(async (sandboxId, sandboxPort) => ({
+    base: agent,
+    headers: { "E2b-Sandbox-Id": sandboxId, "E2b-Sandbox-Port": String(sandboxPort) },
+  }));
+
+  const ws = new WebSocket(relayUrl(port, "pty"), { headers: { "E2b-Sandbox-Id": "someone-elses", "E2b-Sandbox-Port": "22" } });
+  assert.equal((await nextMessage(ws)).data, `${SANDBOX} 8080`);
+  ws.close();
 });

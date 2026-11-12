@@ -3,21 +3,22 @@ import type { Duplex } from "node:stream";
 
 import WebSocket, { WebSocketServer, type RawData } from "ws";
 
-import { NEEV_RELAY_PREFIX, relayTicketValid } from "./neev-relay-ticket.ts";
+import { relayTicketValid } from "./relay-ticket.ts";
 import { neevTunnel } from "./neev-tunnel.ts";
 
 /**
- * The browser's live terminal and conversation for a Neev session. They are
- * WebSockets to the agent in the sandbox, which the browser can't open itself:
- * the only other way in is a preview URL, which Neev asks us not to use (and
- * whose edge refuses the upgrade). So the browser opens them here, at
- * `/relay/neev/<sandbox>/<port>/<ticket>/<pty|events-ws>?token=…`, and this
- * server opens the same WebSocket to the agent through the sandbox's runtime
- * (neev-tunnel.ts) and passes frames both ways. The Runtime token rides along
- * untouched for the agent to check.
+ * The browser's live terminal and conversation for a session on a provider
+ * whose boxes the browser can't open a WebSocket to itself: Neev (whose
+ * preview edge refuses the upgrade), a user's GCP (a private VM) and E2B
+ * (whose proxy routes by headers a browser can't set). So the browser opens
+ * them here, at `<prefix><sandbox>/<port>/<ticket>/<pty|events-ws>?token=…`,
+ * and this server opens the same WebSocket to the agent on the way the
+ * provider gives it ({@link RelayDeps.tunnel}) and passes frames both ways.
+ * The Runtime token rides along untouched for the agent to check.
  *
- * Next's route handlers can't take a WebSocket, so the custom server
- * (server.ts) hands every upgrade here first.
+ * One relay per provider, each on its own prefix and ticket key, all this
+ * same code. Next's route handlers can't take a WebSocket, so the custom
+ * server (server.ts) hands every upgrade to them first.
  */
 
 /** Agent WebSockets the browser may reach. */
@@ -25,21 +26,28 @@ const RELAYED = new Set(["pty", "events-ws"]);
 /** Keeps an idle terminal's connection open through proxies in front of us. */
 const PING_MS = 25_000;
 
-export type NeevRelayDeps = {
-  /** The key tickets are signed with: the project's Neev API key. */
+/** Where the relay opens the agent's WebSocket: a base URL and any headers
+ *  the provider's way in needs (E2B's routing headers), never a browser's. */
+export type RelayUpstream = { base: string; headers: Record<string, string> };
+
+export type RelayDeps = {
+  /** The key this provider's tickets are signed with; unset when it isn't
+   *  configured, and every upgrade is refused. */
   key: () => string | undefined;
-  /** The local base URL reaching `port` in the sandbox. */
-  tunnel: (sandboxId: string, port: number) => Promise<string>;
+  /** The way to `port` in the sandbox. */
+  tunnel: (sandboxId: string, port: number) => Promise<RelayUpstream>;
 };
 
-const defaultDeps: NeevRelayDeps = {
+/** Neev's: tickets under the project's Neev API key, through the sandbox's
+ *  local tunnel. */
+export const neevRelayDeps: RelayDeps = {
   key: () => process.env.NEEV_API_KEY,
-  tunnel: (sandboxId, port) => neevTunnel(sandboxId, port),
+  tunnel: async (sandboxId, port) => ({ base: await neevTunnel(sandboxId, port), headers: {} }),
 };
 
 /** An upgrade handler that takes the relay's own upgrades and returns false
  *  for anything else (such as Next's HMR). */
-export function createNeevRelay(deps: NeevRelayDeps = defaultDeps, prefix = NEEV_RELAY_PREFIX) {
+export function createSandboxRelay(deps: RelayDeps, prefix: string) {
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
   return function relay(req: IncomingMessage, socket: Duplex, head: Buffer): boolean {
@@ -63,21 +71,24 @@ export function createNeevRelay(deps: NeevRelayDeps = defaultDeps, prefix = NEEV
 }
 
 async function connect(
-  deps: NeevRelayDeps,
+  deps: RelayDeps,
   wss: WebSocketServer,
   c: { req: IncomingMessage; socket: Duplex; head: Buffer; sandboxId: string; port: number; path: string },
 ): Promise<void> {
-  let base: string;
+  let upstreamAt: RelayUpstream;
   try {
-    base = await deps.tunnel(c.sandboxId, c.port);
+    upstreamAt = await deps.tunnel(c.sandboxId, c.port);
   } catch (error) {
-    console.error(`Neev relay: no way into sandbox ${c.sandboxId}`, error);
+    console.error(`Relay: no way into sandbox ${c.sandboxId}`, error);
     refuse(c.socket, 502);
     return;
   }
   if (c.socket.destroyed) return;
 
-  const upstream = new WebSocket(`${base.replace(/^http/, "ws")}${c.path}`, { perMessageDeflate: false });
+  const upstream = new WebSocket(`${upstreamAt.base.replace(/^http/, "ws")}${c.path}`, {
+    perMessageDeflate: false,
+    headers: upstreamAt.headers,
+  });
   let settled = false;
   // The browser gave up while the agent was still answering.
   const abandon = () => {
@@ -95,7 +106,7 @@ async function connect(
   upstream.once("error", (error) => {
     if (settled) return;
     settled = true;
-    console.error(`Neev relay: agent WebSocket in sandbox ${c.sandboxId} failed`, error);
+    console.error(`Relay: agent WebSocket in sandbox ${c.sandboxId} failed`, error);
     refuse(c.socket, 502);
   });
   upstream.once("open", () => {
