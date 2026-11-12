@@ -78,11 +78,12 @@ begin
 end;
 $$;
 
--- Every share that goes is logged, with why: a revocation's reason, for the
--- rows that revocation targets (set by the function revoking them, with
--- which rows those are: shares cascading from them aren't); else what went with it (the
--- App uninstalled on GitHub, its own org deleted, its source org deleted, or
--- its source's link disconnected); else `disconnected`, its own link removed.
+-- Every share that goes is logged, with why. Rows a revocation targets
+-- directly (named in `outrunner.github_share_revocation_target`) get that
+-- revocation's reason; shares that cascade from them don't. Otherwise the
+-- reason is what went with it: the App uninstalled on GitHub, its own org
+-- deleted, its source org deleted, or its source's link disconnected; else
+-- `disconnected`, its own link removed.
 create function log_github_share_removal() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
