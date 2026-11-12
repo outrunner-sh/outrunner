@@ -27,7 +27,7 @@ import { sweepAbandonedBoxClaims, sweepInterruptedSetups, sweepInterruptedTransi
  * (lib/github/followups.deps.ts), and the deployment's
  * Daytona boxes no row names any more (lib/runtime/orphan-boxes.deps.ts), and
  * the Slack agent's old keys of its own (lib/db/slack-agent.ts), and each
- * busy team org's hours against its admins' controls
+ * busy account's hours against its plan and its admins' controls
  * (lib/billing/usage-sweep.ts), for
  * the Cloudflare cron (cloudflare/worker.ts, every 2 minutes). Not a user's
  * route: it takes only BILLING_CRON_SECRET, as a bearer token. Answers what
@@ -141,8 +141,9 @@ export async function POST(request: Request) {
       console.error("Retiring the Slack agent's old keys failed", error);
       return null;
     });
-    // And each busy team org's hours against its admins' controls: alerts
-    // emailed, and its boxes paused at its limit (lib/billing/usage-sweep.ts).
+    // And each busy account's hours against its plan and its admins'
+    // controls: alerts emailed, and its boxes paused at its plan's hours or
+    // its admins' limit (lib/billing/usage-sweep.ts).
     const usage = isComputerProvider(provider)
       ? await runUsageSweep(provider).catch((error: unknown) => {
           console.error("Sweeping org usage failed", error);

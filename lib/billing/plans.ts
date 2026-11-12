@@ -21,6 +21,9 @@ export type Plan = {
   concurrentCloudSessions: number;
   /** The largest box size on Outrunner's sandboxes. */
   largestBoxSize: BoxSizeId;
+  /** The longest a project's warm hook may run on a warm-pool box
+   *  (lib/runtime/warm-pool.deps.ts), whose time is on the plan's hours. */
+  warmHookMinutes: number;
   /** Spend on Outrunner's models, in USD: once ever, or each month. */
   models: { usd: number; per: "once" | "month" };
 };
@@ -32,6 +35,7 @@ export const PLANS: Readonly<Record<PlanId, Plan>> = {
     cloudHoursPerMonth: 10,
     concurrentCloudSessions: 10,
     largestBoxSize: "small",
+    warmHookMinutes: 15,
     models: { usd: 5, per: "once" },
   },
   pro: {
@@ -40,6 +44,7 @@ export const PLANS: Readonly<Record<PlanId, Plan>> = {
     cloudHoursPerMonth: 100,
     concurrentCloudSessions: 20,
     largestBoxSize: "medium",
+    warmHookMinutes: 15,
     models: { usd: 10, per: "month" },
   },
   max: {
@@ -48,6 +53,7 @@ export const PLANS: Readonly<Record<PlanId, Plan>> = {
     cloudHoursPerMonth: 500,
     concurrentCloudSessions: 50,
     largestBoxSize: "large",
+    warmHookMinutes: 15,
     models: { usd: 50, per: "month" },
   },
   // Contracts set their own terms; until one needs more, Max's limits.
@@ -57,6 +63,7 @@ export const PLANS: Readonly<Record<PlanId, Plan>> = {
     cloudHoursPerMonth: 500,
     concurrentCloudSessions: 50,
     largestBoxSize: "large",
+    warmHookMinutes: 15,
     models: { usd: 50, per: "month" },
   },
 };

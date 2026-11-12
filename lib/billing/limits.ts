@@ -12,10 +12,12 @@
  * in the database, inside claim_runtime_computer, so two requests that
  * start boxes at the same moment cannot both pass it. A session whose box is
  * already running starts no box, so the count doesn't refuse it.
- * At a limit the start is refused with the upgrade link; a box already
- * running is never paused for it (a box is paused when its last session is
- * archived or ended, lib/billing/release-box.ts, and the reconciler pauses
- * idle ones itself, after 15 minutes).
+ * At a limit the start is refused with the upgrade link. A box already
+ * running is not paused for the box cap, but is for hours: the reconciler's
+ * usage sweep pauses an account's running boxes once its plan's hours are
+ * used up (lib/billing/usage-sweep.ts). Otherwise a box is paused when its
+ * last session is archived or ended (lib/billing/release-box.ts), and the
+ * reconciler pauses idle ones itself, after 15 minutes.
  *
  * The deployment's named operators can be exempted with
  * RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN. That is separate from

@@ -288,6 +288,9 @@ type ComputeIntervalRow = {
   cpu: number;
   started_at: string;
   last_seen_at: string;
+  /** When the reconciler last had an answer from the box's agent
+   *  (20261112120000_box_backstops.sql); optional where read before it. */
+  agent_seen_at?: string | null;
   ended_at: string | null;
 };
 

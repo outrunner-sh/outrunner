@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { DaytonaNotFoundError, type Daytona, type Sandbox } from "@daytonaio/sdk";
 
 import { boxSize, DEFAULT_BOX_SIZE } from "@/lib/runtime/box-sizes";
-import { AUTO_ARCHIVE_MINUTES, box, createParams, DaytonaBackend, DESKTOP_RESOLUTION, daytonaSnapshotFor, EXEC_TIMEOUT_SECONDS, relabel, settled, SETTLE_TIMEOUT_SECONDS } from "@/lib/runtime/sandbox/daytona";
+import { AUTO_ARCHIVE_MINUTES, AUTO_STOP_MINUTES, backstop, box, createParams, DaytonaBackend, DESKTOP_RESOLUTION, daytonaSnapshotFor, EXEC_TIMEOUT_SECONDS, relabel, settled, SETTLE_TIMEOUT_SECONDS } from "@/lib/runtime/sandbox/daytona";
 
 /** A sandbox whose executeCommand records the timeout it was given. */
 function recording(): { sandbox: Sandbox; timeouts: (number | undefined)[] } {
@@ -101,7 +101,7 @@ test("backend sends the selected Small default to the SDK, preserving labels, de
   const labels = { "runtime.role": "computer", "runtime.deployment": "test" };
   const backend = creating(async (params, options) => {
     assert.deepEqual(params, {
-      snapshot: "daytona-medium", labels, autoStopInterval: 0, autoDeleteInterval: -1, autoArchiveInterval: AUTO_ARCHIVE_MINUTES,
+      snapshot: "daytona-medium", labels, autoStopInterval: AUTO_STOP_MINUTES, autoDeleteInterval: -1, autoArchiveInterval: AUTO_ARCHIVE_MINUTES,
       envVars: { VNC_RESOLUTION: DESKTOP_RESOLUTION },
     });
     assert.deepEqual(options, { timeout: 180 });
@@ -121,6 +121,48 @@ test("a stopped box is archived within a day, freeing its disk from the account'
   assert.equal(createParams({}, undefined, true).autoArchiveInterval, AUTO_ARCHIVE_MINUTES);
   // A user's own Daytona key: their quota, their account's default.
   assert.equal("autoArchiveInterval" in createParams({}), false);
+});
+
+test("Outrunner's boxes stop on Daytona's side after hours unheartbeaten; a user's own never do", () => {
+  // The backstop if the reconciler stops looking: generous enough to ride
+  // out a cron outage, and longer than the reconciler's own limits, which
+  // normally stop a box first.
+  assert.ok(AUTO_STOP_MINUTES >= 3 * 60 && AUTO_STOP_MINUTES <= 12 * 60);
+  assert.equal(createParams({}, undefined, true).autoStopInterval, AUTO_STOP_MINUTES);
+  assert.equal(createParams({}).autoStopInterval, 0);
+  // Never deleted on Daytona's side: a stopped box keeps the session's files.
+  assert.equal(createParams({}, undefined, true).autoDeleteInterval, -1);
+});
+
+test("a box made before the backstop gets it as it comes back; one that has it isn't touched", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const set: number[] = [];
+  const sandbox = (autoStopInterval: number, fail = false) =>
+    ({
+      id: "old",
+      autoStopInterval,
+      setAutostopInterval: async (minutes: number) => {
+        if (fail) throw new Error("daytona down");
+        set.push(minutes);
+      },
+    }) as unknown as Sandbox;
+  await backstop(sandbox(0));
+  await backstop(sandbox(AUTO_STOP_MINUTES));
+  // Best effort: a failure leaves the box up.
+  await backstop(sandbox(0, true));
+  assert.deepEqual(set, [AUTO_STOP_MINUTES]);
+});
+
+test("keepAlive refreshes the box's Daytona activity on Outrunner's account only", async () => {
+  const refreshed: string[] = [];
+  const get = async (id: string) => ({ refreshActivity: async () => void refreshed.push(id) }) as unknown as Sandbox;
+  const platform = new DaytonaBackend();
+  (platform as unknown as { client: Promise<Pick<Daytona, "get">> }).client = Promise.resolve({ get } as Pick<Daytona, "get">);
+  await platform.keepAlive("box-1");
+  const theirs = new DaytonaBackend({ apiKey: async () => "their-key" });
+  (theirs as unknown as { client: Promise<Pick<Daytona, "get">> }).client = Promise.resolve({ get } as Pick<Daytona, "get">);
+  await theirs.keepAlive("box-2");
+  assert.deepEqual(refreshed, ["box-1"]);
 });
 
 test("a box on a user's own Daytona key keeps their account's archive default", async () => {

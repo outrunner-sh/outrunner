@@ -1036,7 +1036,7 @@ async function provisionWorkspace({
       // A review took no pooled box, so has none to make again.
       if (as) return;
       const refill = () =>
-        refillProjectPool({ provider, ownerId: owner.id, project, environmentId: workspace.environmentId, githubToken, sessionEnv });
+        refillProjectPool({ provider, owner, project, environmentId: workspace.environmentId, githubToken, sessionEnv });
       if (inline) await refill();
       else after(refill);
       return;

@@ -50,7 +50,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     try {
       const kept = await editEnvironmentSecrets(owner.id, id, parsed.data);
       // Ready boxes were warmed with the old ones: made again.
-      after(() => refillAfterChange(owner.id, id));
+      after(() => refillAfterChange(owner, id));
       return NextResponse.json(kept);
     } catch (error) {
       if (error instanceof EnvironmentRuleError) return NextResponse.json({ error: error.message }, { status: 400 });

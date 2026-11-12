@@ -7,8 +7,9 @@ import { randomBytes } from "node:crypto";
 
 import type { Owner } from "@/lib/auth/owner";
 import { SMALL_BOX_CPU } from "@/lib/billing/hours";
+import { sessionPlan } from "@/lib/billing/entitlements";
 import { cloudBoxStartGate } from "@/lib/billing/limits";
-import { closeIntervalOf, isMetered, openInterval } from "@/lib/billing/metering-store";
+import { closeIntervalOf, isMetered, openInterval, recordInterval } from "@/lib/billing/metering-store";
 import { getSandboxSettings, ownSandboxKeys } from "@/lib/db/credentials";
 import {
   defaultEnvironmentId,
@@ -102,7 +103,7 @@ export async function intentWarmProject(owner: Owner, projectId: string): Promis
   if (!warm) {
     await refillProjectPool({
       provider,
-      ownerId: owner.id,
+      owner,
       project,
       environmentId,
       githubToken,
@@ -165,10 +166,13 @@ export async function takePooledBox(
   }
 }
 
-/** How often a warming box is asked how it's going, and how long it may
- *  take: the agent's own hour, and room for the box to answer. */
+/** How often a warming box is asked how it's going, and the room past the
+ *  plan's warm-hook limit (Plan.warmHookMinutes) for the box to answer. At
+ *  the limit the hook is failed and the box deleted, which ends it: the
+ *  agent's own limit (runtime-agent warm.go, an hour) is for a hook a session
+ *  runs, on its own metered box. */
 const WARM_POLL_MS = 5_000;
-const WARM_WAIT_MS = 65 * 60_000;
+const WARM_ANSWER_MS = 60_000;
 
 /** How many times a just-made box's health is checked before it's pooled
  *  unwarmed, and the pause between tries. */
@@ -182,11 +186,15 @@ const WARM_STATUS_MISSES = 3;
 const WARM_LOG_KEPT = 64 * 1024;
 
 /** Fill the project's pool, for its next sessions: each box made, warmed
- *  with the project's setup and stopped. Best effort, after a session's setup
- *  or a change to the project: it never throws. */
+ *  with the project's setup and stopped. Only past the start gate a session's
+ *  box is (the plan's hours, its admins' limit and its box cap): a pooled box
+ *  runs on Outrunner's bill while it's made and warmed, so that time is
+ *  metered as the owner's, and its warm hook may run only as long as the plan
+ *  allows. Best effort, after a session's setup or a change to the project:
+ *  it never throws. */
 export async function refillProjectPool(input: {
   provider: ComputerRuntimeProvider;
-  ownerId: string;
+  owner: Owner;
   project: Pick<Project, "id" | "orgId" | "fullName" | "defaultBranch">;
   /** The project (an `environments` row) whose setup the boxes are warmed
    *  with; null makes them unwarmed, as before projects. */
@@ -194,8 +202,16 @@ export async function refillProjectPool(input: {
   githubToken?: string;
   sessionEnv: Record<string, string>;
 }): Promise<void> {
-  const { provider, ownerId, project, environmentId } = input;
+  const { provider, owner, project, environmentId } = input;
+  const ownerId = owner.id;
+  if (!poolsBoxes(provider)) return;
   try {
+    const gate = await cloudBoxStartGate(owner, project.orgId, provider.name, null);
+    if ("denial" in gate) {
+      console.warn(`Not refilling ${project.fullName}'s ready boxes for ${ownerId}: ${gate.denial.error}`);
+      return;
+    }
+    const warmLimitMs = (await sessionPlan(ownerId, project.orgId)).warmHookMinutes * 60_000;
     const setup = environmentId ? await environmentSetup(ownerId, environmentId) : null;
     const generation = setup?.generation ?? null;
     await refillPool({
@@ -226,6 +242,7 @@ export async function refillProjectPool(input: {
         const repos = checkouts?.map((c) => ({ fullName: c.fullName, checkout: c.checkout, baseBranch: c.baseBranch }));
         const agent = new AgentClient(await provider.agentTarget(sandboxId, secret));
         await warmBox(agent, { projectId: project.id, computerId, userId: ownerId }, environmentId, {
+          limitMs: warmLimitMs,
           baseBranch: repos?.[0].baseBranch ?? project.defaultBranch,
           env: setup.env,
           files: setup.files,
@@ -236,6 +253,14 @@ export async function refillProjectPool(input: {
           }),
         });
       },
+      meter: (computerId, sandboxId, cpu, from, to) =>
+        recordInterval({
+          computerId,
+          sandboxId,
+          cpu: cpu ?? SMALL_BOX_CPU,
+          startedAt: new Date(from),
+          endedAt: new Date(to),
+        }),
       recordBox: (computerId, sandboxId) => updateRuntimeComputer(computerId, ownerId, { daytonaSandboxId: sandboxId }),
       pause: (sandboxId) => provider.pauseComputer(sandboxId),
       ready: (id, sandboxId) => markPooledReady(id, ownerId, sandboxId),
@@ -291,6 +316,8 @@ async function warmBox(
   box: { projectId: string; computerId: string; userId: string },
   environmentId: string,
   req: {
+    /** How long the hook may run (Plan.warmHookMinutes). */
+    limitMs: number;
     baseBranch: string;
     env: Record<string, string>;
     files: Record<string, string>;
@@ -357,7 +384,7 @@ async function warmBox(
     await failed(`The warm hook couldn't be started: ${error instanceof Error ? error.message : String(error)}`).catch(() => {});
     throw error;
   }
-  const deadline = Date.now() + WARM_WAIT_MS;
+  const deadline = Date.now() + req.limitMs + WARM_ANSWER_MS;
   let misses = 0;
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, WARM_POLL_MS));
@@ -373,16 +400,23 @@ async function warmBox(
     }
     if (status.state === "running" && Date.now() < deadline) continue;
     const ok = status.state === "succeeded";
+    // Past its limit: the settings page says so, after the hook's own output.
+    const stopped =
+      status.state === "running"
+        ? `\nThe warm hook was stopped after ${Math.round(req.limitMs / 60_000)} minutes, the longest your plan allows a ready box's warm hook to run.\n`
+        : "";
     await recordWarmRun(environmentId, box.userId, {
       status: ok ? "succeeded" : "failed",
-      log: (status.log ?? "").slice(-WARM_LOG_KEPT) || null,
+      log: ((status.log ?? "") + stopped).slice(-WARM_LOG_KEPT) || null,
       startedAt,
       finishedAt: status.finishedAt ?? new Date().toISOString(),
       generation: req.generation,
     });
     if (ok) return;
     throw new WarmHookError(
-      status.state === "running" ? "The warm hook ran past its hour." : `The warm hook failed (exit ${status.exitCode ?? "?"}).`,
+      status.state === "running"
+        ? `The warm hook ran past its ${Math.round(req.limitMs / 60_000)} minutes, the longest the plan allows; the box was deleted.`
+        : `The warm hook failed (exit ${status.exitCode ?? "?"}).`,
     );
   }
 }
@@ -525,7 +559,8 @@ export async function sweepExpiredIntentWarmups(
  * their pool. Only for a repository whose sessions are pooled already. Best
  * effort, after the change is saved: it never throws.
  */
-export async function refillAfterChange(ownerId: string, environmentId: string): Promise<void> {
+export async function refillAfterChange(owner: Owner, environmentId: string): Promise<void> {
+  const ownerId = owner.id;
   try {
     const environment = await getEnvironment(ownerId, environmentId);
     const repo = environment?.repos[0];
@@ -534,7 +569,7 @@ export async function refillAfterChange(ownerId: string, environmentId: string):
     if (!isComputerProvider(provider)) return;
     await refillProjectPool({
       provider,
-      ownerId,
+      owner,
       project: { id: repo.projectId, orgId: environment.orgId, fullName: repo.fullName, defaultBranch: repo.defaultBranch },
       environmentId,
       githubToken: await optionalGitToken(ownerId, { orgId: environment.orgId, fullName: repo.fullName }),

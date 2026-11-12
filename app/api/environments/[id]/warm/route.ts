@@ -33,7 +33,7 @@ export async function POST(request: Request, context: RouteContext) {
       if (error instanceof EnvironmentAccessError) return NextResponse.json({ error: error.message }, { status: 403 });
       throw error;
     }
-    after(() => refillAfterChange(owner.id, id));
+    after(() => refillAfterChange(owner, id));
     return NextResponse.json(await getEnvironment(owner.id, id));
   });
 }

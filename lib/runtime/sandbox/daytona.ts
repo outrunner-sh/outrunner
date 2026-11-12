@@ -198,8 +198,27 @@ export class DaytonaBackend implements SandboxBackend {
       return null;
     }
     await relabel(sandbox, labels);
+    // A box made before the backstop gets it as it comes back.
+    if (!this.apiKey) await backstop(sandbox);
     return box(sandbox);
   }
+
+  /** The reconciler's heartbeat: resets Daytona's auto-stop timer. Only on
+   *  Outrunner's account, whose boxes have one (AUTO_STOP_MINUTES). */
+  async keepAlive(id: string): Promise<void> {
+    if (this.apiKey) return;
+    await (await (await this.daytona()).get(id)).refreshActivity();
+  }
+}
+
+/** Put Daytona's auto-stop backstop (AUTO_STOP_MINUTES) on a box of
+ *  Outrunner's made before it. Best effort: the box is up either way, and the
+ *  reconciler still looks after it. Exported for tests. */
+export async function backstop(sandbox: Sandbox): Promise<void> {
+  if (sandbox.autoStopInterval === AUTO_STOP_MINUTES) return;
+  await Promise.resolve()
+    .then(() => sandbox.setAutostopInterval(AUTO_STOP_MINUTES))
+    .catch((error: unknown) => console.warn(`Could not set Daytona box ${sandbox.id}'s auto-stop`, error));
 }
 
 /** Put `labels` on a box made before them (the deployment's, which the
@@ -242,6 +261,23 @@ export function daytonaSnapshotFor(size: BoxResources): string | undefined {
  */
 export const AUTO_ARCHIVE_MINUTES = 24 * 60;
 
+/**
+ * Minutes without an event before Daytona stops one of Outrunner's boxes on
+ * its own: the provider-side backstop should Outrunner stop looking after
+ * its boxes (the reconciler's cron down, a deploy that broke it), so no box
+ * bills for ever. Daytona counts SDK calls and state changes as events, not
+ * preview traffic (the agent's API, the browser's socket), so a session in
+ * use doesn't keep its box up by itself: the reconciler calls keepAlive on
+ * every box it looks at and keeps running (lib/billing/reconcile.ts), every
+ * couple of minutes. A long turn on a box the reconciler is watching is never
+ * stopped by this; one on a box nothing watches is stopped within 4 hours.
+ * Generous on purpose: well past any cron outage worth riding out, and the
+ * reconciler's own limits (3h unreachable, 6h stuck in a turn, 12h a run)
+ * are what normally stop a box. A user's own Daytona keeps it off: their
+ * account, their bill, and nothing of Outrunner's heartbeats it.
+ */
+export const AUTO_STOP_MINUTES = 4 * 60;
+
 /** Without a size keep the account's default (including user-owned Daytona).
  * Outrunner's selected default size already arrives via boxSizeOn. */
 export function createParams(
@@ -252,8 +288,10 @@ export function createParams(
 ): CreateSandboxFromSnapshotParams {
   const snapshot = size && daytonaSnapshotFor(size);
   return {
-    // Outrunner owns idle stopping; Daytona must not auto-stop/delete it.
-    autoStopInterval: 0,
+    // Outrunner owns idle stopping (the reconciler); Daytona's auto-stop is
+    // only the backstop on Outrunner's own account (AUTO_STOP_MINUTES), and
+    // it never deletes a box.
+    autoStopInterval: platform ? AUTO_STOP_MINUTES : 0,
     autoDeleteInterval: -1,
     ...(platform && { autoArchiveInterval: AUTO_ARCHIVE_MINUTES }),
     labels,
