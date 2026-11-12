@@ -147,8 +147,8 @@ function later(work: () => Promise<unknown>): void {
 /**
  * Queue a post under its key. A new one is queued; one under the same key
  * that failed or was dropped is queued again (as this call has it: the
- * queue checks it again before it goes, and chunks already posted stay
- * posted); one pending or sent is left as it is, and one ambiguous too, as
+ * queue checks it again before it goes, chunks already posted stay posted,
+ * and one whose last send went unanswered is still looked for first); one pending or sent is left as it is, and one ambiguous too, as
  * it may have posted. Sent right after the response; the tick tries again
  * if that fails.
  */
@@ -176,7 +176,8 @@ export async function queuePost(post: QueuedPost): Promise<QueueOutcome> {
         ...fields,
         status: "pending",
         attempts: 0,
-        in_doubt: false,
+        // in_doubt is kept: a send that went unanswered before it was
+        // dropped is looked for in the thread before anything is posted.
         lease_until: null,
         next_attempt_at: new Date().toISOString(),
         last_error: null,
