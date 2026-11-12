@@ -150,9 +150,9 @@ async function lostOf(ids: string[]): Promise<Set<string>> {
   // Failed fresh provisions and pool refills leave such rows too, and they
   // stay until reopened: a few at a time, not a burst of one per row.
   const withBoxes = await mapWithConcurrency(rows, LOST_LOOKUP_CONCURRENCY, async (row) => ({
-      status: row.status,
-      daytonaSandboxId: row.daytona_sandbox_id,
-      lastBox: await lastMeteredBox(row.id),
+    status: row.status,
+    daytonaSandboxId: row.daytona_sandbox_id,
+    lastBox: await lastMeteredBox(row.id),
     }));
   return lostBoxes(withBoxes, new Set(ids));
 }
