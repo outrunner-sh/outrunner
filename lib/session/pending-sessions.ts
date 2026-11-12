@@ -133,6 +133,8 @@ export function usePendingSessions(): Record<string, PendingSession> {
  * and to give the prompt back.
  */
 export type FailedCreate = {
+  /** The repository it was refused in: the reason is about that one only. */
+  projectId: string;
   prompt: string;
   /** The files it went with, given back to the composer with the prompt. */
   attachmentIds: string[];
@@ -182,6 +184,13 @@ export const FAILED_CREATE = store<FailedCreate | null>(null);
 export function takeFailedAttachments(): void {
   const failed = FAILED_CREATE.get();
   if (failed && failed.attachmentIds.length > 0) FAILED_CREATE.set({ ...failed, attachmentIds: [] });
+}
+
+/** Said on the screen only while `projectId` is the one picked: a refusal
+ *  names its own repository ("the App can't reach X"), which is wrong, and
+ *  alarming, under another one picked since. */
+export function failureFor(failed: FailedCreate | null, projectId: string): FailedCreate | null {
+  return failed && failed.projectId === projectId ? failed : null;
 }
 
 /** The last creation that failed, until the next is started. */

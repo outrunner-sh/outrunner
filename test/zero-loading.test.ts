@@ -9,6 +9,7 @@ import { workingStep } from "@/lib/runtime/conversation-events";
 import type { Workspace } from "@/lib/runtime/types";
 import {
   FAILED_CREATE,
+  failureFor,
   optimisticSession,
   sendingAgain,
   takeFailedAttachments,
@@ -180,10 +181,18 @@ test("a lost create is sent again as itself only when the same request follows s
 });
 
 test("a refused create's files are given back once, then are the composer's", () => {
-  FAILED_CREATE.set({ prompt: "p", attachmentIds: ["a1"], message: "no", action: null });
+  FAILED_CREATE.set({ projectId: "p1", prompt: "p", attachmentIds: ["a1"], message: "no", action: null });
   takeFailedAttachments();
   assert.deepEqual(FAILED_CREATE.get()?.attachmentIds, []);
   // The prompt and the reason stay for the screen to say.
   assert.equal(FAILED_CREATE.get()?.message, "no");
   FAILED_CREATE.set(null);
+});
+
+test("a refusal is said only under the repository it was refused in", () => {
+  const failed = { projectId: "landing", prompt: "p", attachmentIds: [], message: "can't reach landing", action: null };
+  assert.equal(failureFor(failed, "landing"), failed);
+  // Another repository picked since: its reason isn't this one's.
+  assert.equal(failureFor(failed, "outrunner"), null);
+  assert.equal(failureFor(null, "landing"), null);
 });

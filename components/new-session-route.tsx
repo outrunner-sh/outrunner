@@ -9,24 +9,26 @@ import { RecentSessions } from "@/components/recent-sessions";
 import { useServerAnswer } from "@/components/server-answer";
 import { parseAgentPick, startingPick } from "@/lib/onboarding/rules";
 import type { Project } from "@/lib/runtime/types";
-import { lastSessionProjectId } from "@/lib/session/initial-project";
+import { homeProjectId } from "@/lib/session/initial-project";
 import { useNewSessionCount } from "@/lib/session/new-session-reset";
+import { useFailedCreate } from "@/lib/session/pending-sessions";
 
 /**
- * Home: the new-session form, on the repository of the most recent session,
- * from what the sidebar holds. A fresh form on each "New Session", the
- * prompt's draft kept.
+ * Home: the new-session form, on the repository a session was just refused
+ * in, else that of the most recent session, from what the sidebar holds. A
+ * fresh form on each "New Session", the prompt's draft kept.
  */
 export function HomeSessionRoute() {
   const data = useAppData();
   const projects = data?.projects ?? [];
   const asked = useNewSessionCount();
+  const refused = useFailedCreate();
   return (
     <NewSessionCreator
       key={asked}
       projects={projects}
       projectsKnown={data !== null}
-      initialProjectId={lastSessionProjectId(projects, data?.workspaces ?? [])}
+      initialProjectId={homeProjectId(projects, data?.workspaces ?? [], refused?.projectId)}
     >
       <RecentSessions />
     </NewSessionCreator>
