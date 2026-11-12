@@ -4,7 +4,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { CommandExitError, NotFoundError, Sandbox } from "e2b";
 
 import { shellQuote } from "@/lib/runtime/daytona/deploy";
-import { box, BOX_TIMEOUT_MS, E2bBackend, EXEC_TIMEOUT_MS, guestMtu } from "@/lib/runtime/sandbox/e2b";
+import { box, BOX_TIMEOUT_MS, E2bBackend, EXEC_TIMEOUT_MS, forgetE2bHandles, guestMtu } from "@/lib/runtime/sandbox/e2b";
 import { E2B_RELAY_PREFIX, relayKey, relayTicketValid } from "@/lib/runtime/sandbox/relay-ticket";
 
 const ENV = {
@@ -15,7 +15,14 @@ const ENV = {
   RUNTIME_BASE_URL: "https://app.example",
 };
 const saved: Record<string, string | undefined> = {};
-const statics = { getInfo: Sandbox.getInfo, connect: Sandbox.connect, create: Sandbox.create, kill: Sandbox.kill };
+const statics = {
+  getInfo: Sandbox.getInfo,
+  connect: Sandbox.connect,
+  create: Sandbox.create,
+  kill: Sandbox.kill,
+  pause: Sandbox.pause,
+  setTimeout: Sandbox.setTimeout,
+};
 
 beforeEach(() => {
   for (const [key, value] of Object.entries(ENV)) {
@@ -32,6 +39,7 @@ afterEach(() => {
   }
   delete process.env.E2B_GUEST_MTU;
   Object.assign(Sandbox, statics);
+  forgetE2bHandles();
 });
 
 type Run = { command: string; opts: Record<string, unknown> };
@@ -62,6 +70,22 @@ function fakeSandbox(answer: (command: string) => unknown = () => ({ stdout: "",
 }
 
 const INFO = { cpuCount: 2, memoryMB: 4096 };
+
+/** What E2B says of box `sbx-1`: started at `startedAt`, its timeout `left` away. */
+function info(state: string, startedAt = 1_000, left = BOX_TIMEOUT_MS) {
+  return { ...INFO, sandboxId: "sbx-1", state, startedAt: new Date(startedAt), endAt: new Date(Date.now() + left) };
+}
+
+/** Stand in for E2B's static calls, recording which were made. */
+function fakeE2b(overrides: Partial<Record<keyof typeof statics, (...args: never[]) => unknown>>) {
+  const calls: string[] = [];
+  const record = (name: keyof typeof statics) => async (...args: never[]) => {
+    calls.push(name);
+    return overrides[name]?.(...args);
+  };
+  Object.assign(Sandbox, Object.fromEntries(Object.keys(statics).map((name) => [name, record(name as keyof typeof statics)])));
+  return calls;
+}
 
 test("E2B_GUEST_MTU is a sane whole number or nothing", () => {
   assert.equal(guestMtu(undefined), null);
@@ -131,50 +155,87 @@ test("the agent is reached through E2B's proxy by header, and the browser throug
   });
 });
 
-test("get never resumes a paused box; alive and restore treat a gone one as gone", async () => {
+test("get never resumes a paused box, and reuses its handle while the box keeps its start", async () => {
   let state = "paused";
-  const connects: unknown[] = [];
-  Object.assign(Sandbox, {
-    getInfo: async (id: string) => {
-      if (id === "gone") throw new NotFoundError("sandbox not found");
-      return { ...INFO, state };
-    },
-    connect: async (id: string, opts: { timeoutMs?: number }) => {
-      if (id === "gone") throw new NotFoundError("sandbox not found");
-      connects.push(opts.timeoutMs);
-      return fakeSandbox().sandbox;
-    },
-  });
+  const calls = fakeE2b({ getInfo: () => info(state), connect: () => fakeSandbox().sandbox });
   const backend = new E2bBackend();
 
   await assert.rejects(backend.get("sbx-1"), /paused, not running/);
-  assert.equal(connects.length, 0);
+  assert.deepEqual(calls, ["getInfo"]);
   assert.equal(await backend.alive("sbx-1"), false);
 
   state = "running";
-  assert.equal(await backend.alive("sbx-1"), true);
+  calls.length = 0;
   await backend.get("sbx-1");
-  assert.deepEqual(connects, [BOX_TIMEOUT_MS]);
+  await backend.get("sbx-1");
+  // One connect, then one look per get: no timeout rewritten with hours left.
+  assert.deepEqual(calls, ["getInfo", "connect", "getInfo", "getInfo"]);
+});
 
+test("a box paused between the look and the connect is paused again, not left running", async () => {
+  let started = 1_000;
+  const calls = fakeE2b({
+    getInfo: () => info("running", started),
+    // connect resumed it: a resume is a new start.
+    connect: () => {
+      started = 2_000;
+      return fakeSandbox().sandbox;
+    },
+  });
+  await assert.rejects(new E2bBackend().get("sbx-1"), /paused while being reached/);
+  assert.deepEqual(calls, ["getInfo", "connect", "getInfo", "pause"]);
+});
+
+test("a box in use has its timeout pushed back out only once half of it is gone", async () => {
+  let left = BOX_TIMEOUT_MS;
+  const extended: unknown[] = [];
+  fakeE2b({
+    getInfo: () => info("running", 1_000, left),
+    connect: () => fakeSandbox().sandbox,
+    setTimeout: (...args: never[]) => extended.push(args[1]),
+  });
+  const backend = new E2bBackend();
+  await backend.get("sbx-1");
+  assert.deepEqual(extended, []);
+  left = BOX_TIMEOUT_MS / 2 - 1;
+  await backend.get("sbx-1");
+  assert.deepEqual(extended, [BOX_TIMEOUT_MS]);
+});
+
+test("alive and restore treat a gone box as gone", async () => {
+  const gone = () => {
+    throw new NotFoundError("sandbox not found");
+  };
+  fakeE2b({ getInfo: gone, connect: gone });
+  const backend = new E2bBackend();
   assert.equal(await backend.alive("gone"), false);
   assert.equal(await backend.restore("gone"), null);
 });
 
+test("a resumed box that can't be set up is paused again, keeping its sessions", async () => {
+  process.env.E2B_GUEST_MTU = "1460";
+  const calls = fakeE2b({ connect: () => fakeSandbox(() => new Error("guest unreachable")).sandbox });
+  await assert.rejects(new E2bBackend().restore("sbx-1"), /guest unreachable/);
+  assert.deepEqual(calls, ["connect", "pause"]);
+});
+
+test("without E2B_SANDBOX_URL no box is made, rather than one on E2B's cloud", async () => {
+  delete process.env.E2B_SANDBOX_URL;
+  const calls = fakeE2b({});
+  await assert.rejects(new E2bBackend().create({}), /E2B_SANDBOX_URL/);
+  assert.deepEqual(calls, []);
+});
+
 test("a new box gets the guest MTU as root, and is killed if it can't be set up", async () => {
   process.env.E2B_GUEST_MTU = "1460";
-  const killed: string[] = [];
   let created: Record<string, unknown> = {};
   let fake = fakeSandbox();
-  Object.assign(Sandbox, {
-    create: async (_template: string, opts: Record<string, unknown>) => {
-      created = opts;
+  const calls = fakeE2b({
+    create: (...args: never[]) => {
+      created = args[1];
       return fake.sandbox;
     },
-    getInfo: async () => ({ ...INFO, state: "running" }),
-    kill: async (id: string) => {
-      killed.push(id);
-      return true;
-    },
+    getInfo: () => info("running"),
   });
   const backend = new E2bBackend();
 
@@ -184,9 +245,9 @@ test("a new box gets the guest MTU as root, and is killed if it can't be set up"
   assert.equal(created.timeoutMs, BOX_TIMEOUT_MS);
   assert.equal(fake.runs[0].command, "ip link set eth0 mtu 1460");
   assert.equal(fake.runs[0].opts.user, "root");
-  assert.deepEqual(killed, []);
+  assert.ok(!calls.includes("kill"));
 
   fake = fakeSandbox(() => new Error("guest unreachable"));
   await assert.rejects(backend.create({}), /guest unreachable/);
-  assert.deepEqual(killed, ["sbx-1"]);
+  assert.equal(calls.at(-1), "kill");
 });

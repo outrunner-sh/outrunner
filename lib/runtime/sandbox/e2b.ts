@@ -18,8 +18,8 @@ import { E2B_RELAY_PREFIX, mintRelayTicket, relayKey } from "@/lib/runtime/sandb
 /**
  * How long a box runs before E2B pauses it on its own (lifecycle onTimeout
  * "pause", memory kept). Outrunner pauses idle boxes itself; this is the
- * backstop, and every {@link E2bBackend.get} pushes it out again, so a box in
- * use isn't paused under its session. It must be within the E2B team's
+ * backstop, and {@link E2bBackend.get} pushes it back out once half is gone,
+ * so a box in use isn't paused under its session. It must be within the E2B team's
  * max_length_hours, or E2B refuses the box.
  */
 export const BOX_TIMEOUT_MS = 24 * 60 * 60 * 1000;
@@ -52,12 +52,14 @@ export function guestMtu(value = optionalEnv("E2B_GUEST_MTU")): number | null {
   return mtu;
 }
 
-/** The SDK's connection, on the deployment's own E2B (an Embed or a cluster). */
+/** The SDK's connection, on the deployment's own E2B (an Embed or a cluster).
+ *  Both URLs are required: unset, the SDK would quietly use E2B's cloud, and
+ *  a box made there couldn't be reached through E2B_SANDBOX_URL after. */
 function connection() {
   return {
     apiKey: requireEnv("E2B_API_KEY"),
-    apiUrl: optionalEnv("E2B_API_URL"),
-    sandboxUrl: optionalEnv("E2B_SANDBOX_URL"),
+    apiUrl: requireEnv("E2B_API_URL"),
+    sandboxUrl: requireEnv("E2B_SANDBOX_URL"),
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
   };
 }
@@ -65,6 +67,33 @@ function connection() {
 /** Whether `error` is E2B saying the box doesn't exist (killed, or never was). */
 function notFound(error: unknown): boolean {
   return error instanceof NotFoundError;
+}
+
+/**
+ * Each running box's SDK handle in this server, with the start it belongs to
+ * (E2B gives a box a new startedAt each time it resumes). Getting a handle
+ * means E2B's connect, which resumes a paused box; reusing it keeps
+ * {@link E2bBackend.get} to one call and never resumes anything. Dropped
+ * when the box is paused or deleted here, and unused once its start changes.
+ */
+const HANDLES = new Map<string, { sandbox: Sandbox; startedAt: number }>();
+
+/** Forget every handle: a test seam. */
+export function forgetE2bHandles(): void {
+  HANDLES.clear();
+}
+
+/**
+ * Push a running box's backstop timeout back out to {@link BOX_TIMEOUT_MS}
+ * once less than half of it is left, so a box in use isn't paused under its
+ * session, without a write to E2B on every call. Best effort: a box that
+ * can't be extended now has hours left to try again.
+ */
+async function keepAlive(info: Pick<SandboxInfo, "sandboxId" | "endAt">, now = Date.now()): Promise<void> {
+  if (info.endAt.getTime() - now >= BOX_TIMEOUT_MS / 2) return;
+  await Sandbox.setTimeout(info.sandboxId, BOX_TIMEOUT_MS, connection()).catch((error: unknown) =>
+    console.warn(`Could not extend E2B box ${info.sandboxId}'s timeout`, error),
+  );
 }
 
 /**
@@ -90,6 +119,7 @@ export class E2bBackend implements SandboxBackend {
         );
       }
       await setGuestMtu(sandbox);
+      HANDLES.set(sandbox.sandboxId, { sandbox, startedAt: info.startedAt.getTime() });
       return box(sandbox, info);
     } catch (error) {
       // Not left running where nothing records it.
@@ -102,9 +132,29 @@ export class E2bBackend implements SandboxBackend {
    *  never resumes a paused box (alive/get must not start one). */
   async get(id: string): Promise<SandboxBox> {
     const info = await Sandbox.getInfo(id, connection());
-    if (info.state !== "running") throw new Error(`E2B box ${id} is ${info.state}, not running`);
-    // On a running box connect only pushes its timeout out, never shortens it.
-    return box(await Sandbox.connect(id, { ...connection(), timeoutMs: BOX_TIMEOUT_MS }), info);
+    if (info.state !== "running") {
+      HANDLES.delete(id);
+      throw new Error(`E2B box ${id} is ${info.state}, not running`);
+    }
+    await keepAlive(info);
+    const startedAt = info.startedAt.getTime();
+    const held = HANDLES.get(id);
+    if (held?.startedAt === startedAt) return box(held.sandbox, info);
+
+    // A handle means connect, which resumes a box paused since the look
+    // above. A resume gives it a new start, so one that has a new start now
+    // was resumed by this call, and is paused again rather than left running
+    // where nothing tracks it.
+    const sandbox = await Sandbox.connect(id, connection());
+    const after = await Sandbox.getInfo(id, connection());
+    if (after.startedAt.getTime() !== startedAt) {
+      await Sandbox.pause(id, connection()).catch((error: unknown) =>
+        console.error(`E2B box ${id} was resumed while being reached and could not be paused again`, error),
+      );
+      throw new Error(`E2B box ${id} was paused while being reached; it's left paused`);
+    }
+    HANDLES.set(id, { sandbox, startedAt });
+    return box(sandbox, after);
   }
 
   async alive(id: string): Promise<boolean> {
@@ -117,11 +167,13 @@ export class E2bBackend implements SandboxBackend {
   }
 
   async delete(id: string): Promise<void> {
+    HANDLES.delete(id);
     await Sandbox.kill(id, connection());
   }
 
   /** Pause with its memory: the next {@link restore} has it as it was. */
   async pause(id: string): Promise<void> {
+    HANDLES.delete(id);
     await Sandbox.pause(id, connection());
   }
 
@@ -136,8 +188,19 @@ export class E2bBackend implements SandboxBackend {
       if (notFound(error)) return null;
       throw error;
     }
-    await setGuestMtu(sandbox);
-    return box(sandbox, await Sandbox.getInfo(id, connection()));
+    try {
+      await setGuestMtu(sandbox);
+      const info = await Sandbox.getInfo(id, connection());
+      HANDLES.set(id, { sandbox, startedAt: info.startedAt.getTime() });
+      return box(sandbox, info);
+    } catch (error) {
+      // Resumed but not usable: paused again, keeping its sessions (this is
+      // their only copy), rather than left running with nothing tracking it.
+      await Sandbox.pause(id, connection()).catch((pauseError: unknown) =>
+        console.error(`Could not pause E2B box ${id} again`, pauseError),
+      );
+      throw error;
+    }
   }
 }
 
