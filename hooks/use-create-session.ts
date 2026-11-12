@@ -201,7 +201,8 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       FAILED_CREATE.set({ projectId: selected.id, prompt, attachmentIds, message: error, action, unsent });
       // Still on its page: back to this screen, which says why. Elsewhere,
       // the screen says so when next opened.
-      if (window.location.pathname === href) router.replace("/new");
+      // On the repository it was refused in, where the screen says why.
+      if (window.location.pathname === href) router.replace(`/new?project=${encodeURIComponent(selected.id)}`);
     };
     return (async () => {
       // The prompt goes along only to name the session, and its branch, at
@@ -354,16 +355,18 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     }));
   }
 
+  // A refusal is said only under the repository it was refused in; its
+  // prompt is given back whichever is picked.
+  const refusal = failureFor(failedCreate, projectId);
+
   return {
     projects: known,
     projectId,
     selectProject,
     selected,
     isCreating,
-    // A refusal is said only under the repository it was refused in; its
-    // prompt is given back whichever is picked.
-    message: message ?? failureFor(failedCreate, projectId)?.message ?? null,
-    messageAction: message ? messageAction : (failureFor(failedCreate, projectId)?.action ?? null),
+    message: message ?? refusal?.message ?? null,
+    messageAction: message ? messageAction : (refusal?.action ?? null),
     /** The prompt of a session the server refused, and its files, for the
      *  composer to give back. */
     refusedPrompt: failedCreate?.prompt ?? null,
