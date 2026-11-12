@@ -643,7 +643,7 @@ type UserCredentialsRow = {
   modal_token_ciphertext: string | null;
   modal_token_hint: string | null;
   modal_token_updated_at: string | null;
-  // supabase/migrations/20261112130000_user_e2b.sql.
+  // supabase/migrations/20261112170000_user_e2b.sql.
   e2b_key_ciphertext: string | null;
   e2b_key_hint: string | null;
   e2b_key_updated_at: string | null;

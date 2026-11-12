@@ -277,7 +277,7 @@ export type SandboxSettings = {
   daytona: StoredKey;
   /** The Modal token; its hint is the token id's last 4. */
   modal: StoredKey;
-  /** Absent before supabase/migrations/20261112130000_user_e2b.sql. */
+  /** Absent before supabase/migrations/20261112170000_user_e2b.sql. */
   e2b?: E2bSettings;
   /** How big a new sandbox is, on Outrunner's or the user's own Modal
    *  (lib/runtime/box-sizes.ts). */
@@ -413,7 +413,7 @@ type E2bRow = Pick<
 >;
 
 /** The user's E2B columns: null for no row, undefined before
- *  20261112130000_user_e2b.sql, which reads as no E2B at all. */
+ *  20261112170000_user_e2b.sql, which reads as no E2B at all. */
 async function storedE2bRow(userId: string): Promise<E2bRow | null | undefined> {
   const { data, error } = await createSupabaseAdminClient()
     .from("user_credentials")
