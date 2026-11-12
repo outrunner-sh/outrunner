@@ -25,7 +25,9 @@ before(() => {
   sql(`
     create schema auth;
     create table auth.users (id uuid primary key);
-    create table organizations (id uuid primary key);
+    create table auth.identities (user_id uuid, provider text, provider_id text);
+    create table organizations (id uuid primary key, personal_owner_id uuid unique);
+    create table user_github_connections (user_id uuid primary key, github_user_id bigint not null);
     create table organization_members (org_id uuid references organizations(id) on delete cascade, user_id uuid, role text, primary key(org_id, user_id));
     create function set_updated_at() returns trigger language plpgsql as $$ begin new.updated_at = now(); return new; end $$;
     do $$ declare r text; begin foreach r in array array['anon','authenticated','service_role'] loop
@@ -46,10 +48,12 @@ before(() => {
     insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_id, removed_from)
     values (45, 'previously-removed', 'Organization', 'all', 7, '${ORG}');
   `);
-  execFileSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-q", "-f", "supabase/migrations/20261104100000_shared_github_installations.sql"], { stdio: "pipe" });
+  for (const file of ["20261104100000_shared_github_installations.sql", "20261112110000_github_installation_share_authority.sql"]) {
+    execFileSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-q", "-f", `supabase/migrations/${file}`], { stdio: "pipe" });
+  }
   // Supabase grants these on pre-existing tables; exercise the invoker RPC
   // as the actual service role rather than relying on the database owner.
-  sql("grant select, update on github_installations to service_role; grant select on organization_members to service_role");
+  sql("grant select, update on github_installations to service_role; grant select, update on organization_members to service_role; grant select on organizations to service_role");
 });
 after(() => { if (server) psql(server, `drop database if exists ${name} with (force)`); });
 

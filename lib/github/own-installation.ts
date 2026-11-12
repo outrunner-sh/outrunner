@@ -23,8 +23,9 @@ export type OwnInstallationOutcome = { next: "install"; orgId: string } | { next
 /**
  * Link the App's installation on the user's own account to their personal
  * org, if they have one and it isn't linked yet; or say it's to be installed.
- * Best-effort past that: a link the database refuses (the installation is
- * another org's, which the user doesn't administer) leaves the connection
+ * As the account's owner (its installer, with their verified GitHub id) the
+ * database links it as their own even when another org already has it.
+ * Best-effort past that: a link the database refuses leaves the connection
  * working as it is.
  */
 export async function linkOwnInstallation(

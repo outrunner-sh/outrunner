@@ -1079,6 +1079,9 @@ type GithubInstallationRow = {
   installation_id: number;
   /** Authorization history survives disconnects and org deletion. */
   connected_org_ids: string[];
+  /** Orgs that held a root (not shared) link: they may reconnect.
+   *  supabase/migrations/20261112110000_github_installation_share_authority.sql */
+  root_org_ids: string[];
   account_login: string;
   account_type: "User" | "Organization";
   repository_selection: "all" | "selected";
@@ -1097,6 +1100,20 @@ type OrgGithubInstallationRow = {
   installation_id: number;
   installed_by: string | null;
   created_at: string;
+  /** A share's source org (its sharer, installed_by, administers it); null
+   *  for a root link. Revoked with the source link or the sharer's admin. */
+  shared_from_org: string | null;
+};
+
+type GithubInstallationLinkRevocationRow = {
+  id: number;
+  org_id: string;
+  installation_id: number;
+  installed_by: string | null;
+  shared_from_org: string | null;
+  link_created_at: string | null;
+  reason: string;
+  revoked_at: string;
 };
 
 type OrgGithubInstallationDetailsRow = GithubInstallationRow & OrgGithubInstallationRow;
@@ -1591,6 +1608,12 @@ export type Database = {
         Row: OrgGithubInstallationRow;
         Insert: Insert<OrgGithubInstallationRow, "org_id" | "installation_id">;
         Update: Partial<OrgGithubInstallationRow>;
+        Relationships: [];
+      };
+      github_installation_link_revocations: {
+        Row: GithubInstallationLinkRevocationRow;
+        Insert: Insert<GithubInstallationLinkRevocationRow, "org_id" | "installation_id" | "reason">;
+        Update: Partial<GithubInstallationLinkRevocationRow>;
         Relationships: [];
       };
       github_installations: {

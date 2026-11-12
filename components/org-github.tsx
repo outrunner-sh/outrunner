@@ -28,6 +28,8 @@ const ERRORS: Record<string, string> = {
   not_admin: "You must administer this org and an org already connected to the installation to share it.",
   link_expired: "That install link has expired, or was someone else's. Start again from here.",
   not_installer: "Only whoever installed the App on GitHub can make its first org connection. Ask them to add it here.",
+  personal_org:
+    "A personal org can't take another org's GitHub connection. Install the App on your own GitHub account instead.",
   verify_declined:
     "Outrunner needs that one-time GitHub sign-in to confirm you installed the App. Install it again and allow it to finish.",
   no_installation:
@@ -168,6 +170,14 @@ export function OrgGitHubSettings({
                                 i.repositorySelection === "all" ? "all repositories" : `${i.total} selected ${i.total === 1 ? "repository" : "repositories"}`
                               }`}
                       </p>
+                      {i.shared ? (
+                        <p
+                          className="text-xs text-muted-foreground"
+                          title="It ends if whoever shared it stops administering that org, or that org disconnects it."
+                        >
+                          Shared from another org
+                        </p>
+                      ) : null}
                     </div>
                     {admin ? (
                       <a
@@ -206,7 +216,7 @@ export function OrgGitHubSettings({
                 {installations.length === 0 ? "Install the GitHub App" : "Install on another account"}
               </a>
               <p className="text-xs text-muted-foreground">
-                {`On GitHub, pick the account and repositories Outrunner may reach. Removing it here only disconnects ${org.name}; other Outrunner organizations keep their connections. Uninstalling it on GitHub removes access for every connected organization.`}
+                {`On GitHub, pick the account and repositories Outrunner may reach. Removing it here disconnects ${org.name}, and any org it was shared with from here; other Outrunner organizations keep their connections. Uninstalling it on GitHub removes access for every connected organization.`}
               </p>
             </div>
           ) : (
