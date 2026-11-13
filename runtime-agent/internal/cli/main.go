@@ -96,14 +96,14 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	case "":
 		return start(ctx, url, path, config, *account, in, stdout, stderr)
 	case "login":
-		_, _, code := signIn(ctx, url, path, "/cli-login/done", *account, stdout, stderr)
+		_, _, code := signIn(ctx, url, path, "/cli-login/done", *account, in, stdout, stderr)
 		return code
 	case "logout":
 		return logout(ctx, url, path, config, stdout, stderr)
 	case "whoami":
 		return whoami(ctx, url, config, stdout, stderr)
 	case "codex-auth":
-		config, code := ensureSignedIn(ctx, url, path, config, *account, stdout, stderr)
+		config, code := ensureSignedIn(ctx, url, path, config, *account, in, stdout, stderr)
 		if code != 0 {
 			return code
 		}
@@ -111,7 +111,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	case "claude":
 		// The command onboarding's subscription page shows: that page is
 		// open already and moves on by itself, so no browser opens after.
-		config, code := ensureSignedIn(ctx, url, path, config, *account, stdout, stderr)
+		config, code := ensureSignedIn(ctx, url, path, config, *account, in, stdout, stderr)
 		if code != 0 {
 			return code
 		}
@@ -151,7 +151,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 // when it's on this computer, then the web app takes over onboarding from
 // its first step the user hasn't done.
 func start(ctx context.Context, url, path string, config Config, account string, in terminal, stdout, stderr io.Writer) int {
-	config, code := ensureSignedIn(ctx, url, path, config, account, stdout, stderr)
+	config, code := ensureSignedIn(ctx, url, path, config, account, in, stdout, stderr)
 	if code != 0 {
 		return code
 	}
@@ -169,7 +169,7 @@ func start(ctx context.Context, url, path string, config Config, account string,
 // ensureSignedIn returns config as is when its token still works, and signs
 // in through the browser when there's none, the app has dropped it, or it's
 // for another account than `account` (when one is asked for).
-func ensureSignedIn(ctx context.Context, url, path string, config Config, account string, stdout, stderr io.Writer) (Config, int) {
+func ensureSignedIn(ctx context.Context, url, path string, config Config, account string, in terminal, stdout, stderr io.Writer) (Config, int) {
 	// The other account's token, signed out once this one is in.
 	replaced := ""
 	if config.Token != "" {
@@ -188,7 +188,7 @@ func ensureSignedIn(ctx context.Context, url, path string, config Config, accoun
 			return config, 1
 		}
 	}
-	token, _, code := signIn(ctx, url, path, "/cli-login/done", account, stdout, stderr)
+	token, _, code := signIn(ctx, url, path, "/cli-login/done", account, in, stdout, stderr)
 	if code != 0 {
 		return config, code
 	}
@@ -267,13 +267,14 @@ func connectClaude(ctx context.Context, url string, config Config, in terminal, 
 // signIn signs in through the browser and saves the token, unless it's for
 // another account than `account` (when one is asked for): that one is
 // signed out again and nothing is saved.
-func signIn(ctx context.Context, url, path, after, account string, stdout, stderr io.Writer) (string, User, int) {
+func signIn(ctx context.Context, url, path, after, account string, in terminal, stdout, stderr io.Writer) (string, User, int) {
 	token, user, err := Login(ctx, LoginOptions{
 		BaseURL:     url,
 		DeviceName:  DeviceName(),
 		After:       after,
 		OpenBrowser: openBrowser,
 		Out:         stdout,
+		Pasted:      in.pasted(),
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "outrunner: sign-in failed:", err)
