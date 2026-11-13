@@ -371,3 +371,26 @@ func TestLoginWaitsForTheBrowserAfterStdinEnds(t *testing.T) {
 		t.Fatalf("got %q, %v", token, err)
 	}
 }
+
+// --url after the command is read, not dropped for the hosted app.
+func TestFlagsAfterTheCommandAreRead(t *testing.T) {
+	app := newFakeApp(t)
+	app.tokens["or_cli_token"] = true
+	t.Setenv("OUTRUNNER_CONFIG", filepath.Join(t.TempDir(), "cli.json"))
+	t.Setenv("OUTRUNNER_URL", "")
+	path, _ := ConfigPath()
+	_ = SaveConfig(path, Config{URL: app.server.URL, Token: "or_cli_token"})
+
+	var out, errOut bytes.Buffer
+	if code := Main(context.Background(), []string{"whoami", "--url", app.server.URL}, nil, &out, &errOut); code != 0 {
+		t.Fatalf("whoami --url: %d %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "immad") {
+		t.Errorf("whoami printed %q", out.String())
+	}
+
+	errOut.Reset()
+	if code := Main(context.Background(), []string{"login", "--url", app.server.URL, "extra"}, nil, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), `unexpected argument "extra"`) {
+		t.Fatalf("an argument login doesn't take: %d %q", code, errOut.String())
+	}
+}

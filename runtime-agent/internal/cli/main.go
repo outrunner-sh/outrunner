@@ -64,14 +64,35 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 		return 2
 	}
+	// The command, and what follows it.
+	command, rest := flags.Arg(0), []string(nil)
+	if flags.NArg() > 0 {
+		rest = flags.Args()[1:]
+	}
+	// A command that takes nothing of its own takes these flags after it too
+	// (`outrunner login --url …`), rather than drop them unread and sign in
+	// to the wrong app.
+	switch command {
+	case "login", "logout", "whoami", "claude":
+		if err := flags.Parse(rest); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return 0
+			}
+			return 2
+		}
+		if flags.NArg() != 0 {
+			fmt.Fprintf(stderr, "outrunner %s: unexpected argument %q\n\n%s", command, flags.Arg(0), usage)
+			return 2
+		}
+	}
 	if *version {
 		fmt.Fprintln(stdout, "outrunner", Version)
 		return 0
 	}
 	// A session's media goes through its box's agent, never a sign-in, and
 	// a GIF is made here: neither reads this terminal's config.
-	if flags.Arg(0) == "media" {
-		return mediaCommand(ctx, flags.Args()[1:], stdout, stderr)
+	if command == "media" {
+		return mediaCommand(ctx, rest, stdout, stderr)
 	}
 	url := strings.TrimRight(firstNonEmpty(*base, os.Getenv("OUTRUNNER_URL"), DefaultURL), "/")
 
@@ -91,7 +112,6 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 
 	in := terminal{lines: readLines(stdin), interactive: isTerminal(stdin), out: stdout}
-	command := flags.Arg(0)
 	switch command {
 	case "":
 		return start(ctx, url, path, config, *account, in, stdout, stderr)
@@ -107,7 +127,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		if code != 0 {
 			return code
 		}
-		return connectCodex(ctx, url, config, flags.Args()[1:], stdout, stderr)
+		return connectCodex(ctx, url, config, rest, stdout, stderr)
 	case "claude":
 		// The command onboarding's subscription page shows: that page is
 		// open already and moves on by itself, so no browser opens after.
@@ -121,23 +141,23 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		fmt.Fprintln(stdout, "\nGo back to your browser to carry on.")
 		return 0
 	case "sandbox":
-		return sandboxCommand(ctx, url, path, config, *account, flags.Args()[1:], in, stdout, stderr)
+		return sandboxCommand(ctx, url, path, config, *account, rest, in, stdout, stderr)
 	case "triage":
-		return triage(ctx, url, config, flags.Args()[1:], in, stdout, stderr)
+		return triage(ctx, url, config, rest, in, stdout, stderr)
 	case "list":
-		return listCommand(ctx, url, config, flags.Args()[1:], stdout, stderr)
+		return listCommand(ctx, url, config, rest, stdout, stderr)
 	case "get":
-		return getCommand(ctx, url, config, flags.Args()[1:], stdout, stderr)
+		return getCommand(ctx, url, config, rest, stdout, stderr)
 	case "create":
-		return createCommand(ctx, url, config, flags.Args()[1:], in, stdout, stderr)
+		return createCommand(ctx, url, config, rest, in, stdout, stderr)
 	case "send":
-		return sendCommand(ctx, url, config, flags.Args()[1:], in, stdout, stderr)
+		return sendCommand(ctx, url, config, rest, in, stdout, stderr)
 	case "read":
-		return readCommand(ctx, url, config, flags.Args()[1:], stdout, stderr)
+		return readCommand(ctx, url, config, rest, stdout, stderr)
 	case "wait":
-		return waitCommand(ctx, url, config, flags.Args()[1:], stdout, stderr)
+		return waitCommand(ctx, url, config, rest, stdout, stderr)
 	case "delete":
-		return deleteCommand(ctx, url, config, flags.Args()[1:], in, stdout, stderr)
+		return deleteCommand(ctx, url, config, rest, in, stdout, stderr)
 	case "help":
 		fmt.Fprint(stdout, usage)
 		return 0
