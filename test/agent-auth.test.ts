@@ -174,3 +174,9 @@ test("Codex account choice preserves API-key picks and legacy Mac login", async 
   assert.equal((await resolveAgentAuth(store(null, saved), "codex", "cloud")).credential?.kind, "codex-account");
   await assert.rejects(resolveAgentAuth(store("chatgpt", saved), "codex", "cloud"), AgentAuthError);
 });
+
+test("a cloud Claude subscription may use its scoped broker without changing the user's authentication choice", async () => {
+  const broker = { kind: "claude-account" as const, token: "opaque-broker-grant" };
+  const s: AgentAuthStore = { load: async () => ({ choice: "subscription", open: () => broker.token, sessionCredential: () => broker }) };
+  assert.deepEqual(await resolveAgentAuth(s, "claude", "cloud"), { method: "subscription", credential: broker, picked: true });
+});
