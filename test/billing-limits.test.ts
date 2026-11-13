@@ -123,3 +123,8 @@ test("a refused claim is recognised, and only that", () => {
   assert.equal(isPlanLimitError(new Error("no")), null);
   assert.equal(isPlanLimitError(null), null);
 });
+
+test("Max can start past the old 500-hour cap, while its concurrent-box cap still applies", () => {
+  for (const used of [500, 501, 100000]) assert.equal(hoursDenial(PLANS.max, used), null);
+  assert.ok(boxesDenial(PLANS.max, 50));
+});

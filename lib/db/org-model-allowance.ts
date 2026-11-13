@@ -50,7 +50,7 @@ function store(orgId: string): AllowanceStore {
               period: data.allowance_period,
               plan: data.allowance_plan as PlanId,
               baselineUsd: Number(data.allowance_baseline_usd ?? 0),
-              limitUsd: Number(data.allowance_limit_usd ?? 0),
+              limitUsd: data.allowance_limit_usd === null ? null : Number(data.allowance_limit_usd),
             }
           : null;
       return { hash: data?.key_hash ?? null, state };

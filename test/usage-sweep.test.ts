@@ -180,3 +180,17 @@ test("an email that throws gives its alert back, and the limit is still looked a
   assert.equal(released, 1);
   assert.deepEqual(w.paused, ["sb-1", "sb-2"]);
 });
+
+test("Max boxes keep running beyond 500 hours, including with saved org limits", async () => {
+  for (const account of [
+    { kind: "team", orgId: "o-1" },
+    { kind: "personal", orgId: "o-me" },
+  ] as Account[]) {
+    const w = world(100000, { limitPercent: 50, alertThresholds: [50, 80, 100] }, new Set(), [account]);
+    w.deps.entitlements = async () => ({ plan: PLANS.max, period });
+    const report = await sweepOrgUsage(w.deps);
+    assert.deepEqual(w.paused, []);
+    assert.deepEqual(w.emailed, []);
+    assert.equal(report.failed, 0);
+  }
+});

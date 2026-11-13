@@ -15,8 +15,8 @@ export type PlanId = "free" | "pro" | "max" | "enterprise";
 export type Plan = {
   id: PlanId;
   label: string;
-  /** Hours on Outrunner's sandboxes a month, counted in Small-box hours. */
-  cloudHoursPerMonth: number;
+  /** Hours on Outrunner's sandboxes a month, counted in Small-box hours; null for unlimited. */
+  cloudHoursPerMonth: number | null;
   /** Outrunner sandboxes running at once. */
   concurrentCloudSessions: number;
   /** The largest box size on Outrunner's sandboxes. */
@@ -26,11 +26,11 @@ export type Plan = {
    *  sweep of abandoned refills waits past the largest of these
    *  (STALE_REFILL_MS, lib/runtime/warm-pool.ts). */
   warmHookMinutes: number;
-  /** Spend on Outrunner's models, in USD: once ever, or each month. */
-  models: { usd: number; per: "once" | "month" };
+  /** Spend on Outrunner's models, in USD: once ever, or each month; null for unlimited. */
+  models: { usd: number | null; per: "once" | "month" };
 };
 
-export const PLANS: Readonly<Record<PlanId, Plan>> = {
+export const PLANS = {
   free: {
     id: "free",
     label: "Free",
@@ -52,13 +52,13 @@ export const PLANS: Readonly<Record<PlanId, Plan>> = {
   max: {
     id: "max",
     label: "Max",
-    cloudHoursPerMonth: 500,
+    cloudHoursPerMonth: null,
     concurrentCloudSessions: 50,
     largestBoxSize: "large",
     warmHookMinutes: 15,
-    models: { usd: 50, per: "month" },
+    models: { usd: null, per: "month" },
   },
-  // Contracts set their own terms; until one needs more, Max's limits.
+  // Contracts set their own terms; retain the default enterprise allowance.
   enterprise: {
     id: "enterprise",
     label: "Enterprise",
@@ -68,7 +68,7 @@ export const PLANS: Readonly<Record<PlanId, Plan>> = {
     warmHookMinutes: 15,
     models: { usd: 50, per: "month" },
   },
-};
+} as const satisfies Readonly<Record<PlanId, Plan>>;
 
 /**
  * What an org's `outrunner-connector` (lib/automations/connector.ts), the

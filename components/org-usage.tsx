@@ -35,8 +35,11 @@ export function OrgUsageSettings({
   const [error, setError] = useState<string | null>(null);
   const admin = org.role === "admin";
   const { controls, hours } = usage;
-  const share = hours.planHours > 0 ? Math.min(100, (hours.used / hours.planHours) * 100) : 0;
-  const capShare = hours.planHours > 0 ? (hours.cap / hours.planHours) * 100 : 100;
+  const unlimited = hours.planHours === null;
+  const share =
+    hours.planHours !== null && hours.planHours > 0 ? Math.min(100, (hours.used / hours.planHours) * 100) : 0;
+  const capShare =
+    hours.planHours !== null && hours.planHours > 0 && hours.cap !== null ? (hours.cap / hours.planHours) * 100 : 100;
 
   async function save(next: UsageControls) {
     setSaving(true);
@@ -77,24 +80,32 @@ export function OrgUsageSettings({
 
       <div className="space-y-2">
         <div className="flex items-baseline justify-between text-sm">
-          <span className="text-foreground">{`${hours.used} of ${hours.planHours} hours`}</span>
+          <span className="text-foreground">
+            {unlimited
+              ? `${hours.used} hours used · Unlimited cloud hours`
+              : `${hours.used} of ${hours.planHours} hours`}
+          </span>
           <span className="text-xs text-muted-foreground" suppressHydrationWarning>
             {`Resets ${new Date(hours.periodEnd).toLocaleDateString(undefined, { dateStyle: "medium" })}`}
           </span>
         </div>
-        <div className="relative h-2 rounded-full bg-muted" aria-hidden>
-          <div className="h-2 rounded-full bg-foreground/70" style={{ width: `${share}%` }} />
-          {controls.limitPercent !== null && controls.limitPercent < 100 ? (
-            <div className="absolute top-[-3px] h-[14px] w-px bg-destructive" style={{ left: `${capShare}%` }} />
-          ) : null}
-        </div>
+        {!unlimited && (
+          <div className="relative h-2 rounded-full bg-muted" aria-hidden>
+            <div className="h-2 rounded-full bg-foreground/70" style={{ width: `${share}%` }} />
+            {controls.limitPercent !== null && controls.limitPercent < 100 ? (
+              <div className="absolute top-[-3px] h-[14px] w-px bg-destructive" style={{ left: `${capShare}%` }} />
+            ) : null}
+          </div>
+        )}
       </div>
 
       <div className="space-y-2 border-t border-border/60 pt-6">
         <label htmlFor="org-usage-limit" className="text-sm font-medium text-foreground">
           Usage limit
         </label>
-        {admin ? (
+        {unlimited ? (
+          <p className="text-sm text-muted-foreground">Unlimited cloud hours on your {hours.planLabel} plan.</p>
+        ) : admin ? (
           <select
             id="org-usage-limit"
             className="block w-full max-w-sm rounded-md border border-border bg-transparent px-2 py-1.5 text-sm"
@@ -108,7 +119,7 @@ export function OrgUsageSettings({
               <option key={limit ?? "none"} value={limit ?? ""}>
                 {limit === null
                   ? `None: all ${hours.planHours} of the plan's hours`
-                  : `${limit}% of the plan's hours (${(hours.planHours * limit) / 100})`}
+                  : `${limit}% of the plan's hours (${(hours.planHours! * limit) / 100})`}
               </option>
             ))}
             {controls.limitPercent !== null && !LIMITS.includes(controls.limitPercent as (typeof LIMITS)[number]) ? (
@@ -120,30 +131,34 @@ export function OrgUsageSettings({
             {controls.limitPercent === null ? "None" : `${controls.limitPercent}% of the plan's hours`}
           </p>
         )}
-        <p className="text-xs text-muted-foreground">
-          {pausesBoxes
-            ? "At the limit, no new cloud session starts, and running ones pause within a couple of minutes."
-            : "At the limit, no new cloud session starts; running ones carry on."}
-        </p>
+        {!unlimited && (
+          <p className="text-xs text-muted-foreground">
+            {pausesBoxes
+              ? "At the limit, no new cloud session starts, and running ones pause within a couple of minutes."
+              : "At the limit, no new cloud session starts; running ones carry on."}
+          </p>
+        )}
       </div>
 
-      <fieldset className="space-y-2 border-t border-border/60 pt-6">
-        <legend className="text-sm font-medium text-foreground">Email the admins at</legend>
-        <div className="flex gap-4">
-          {ALERT_THRESHOLDS.map((threshold) => (
-            <label key={threshold} className="flex items-center gap-2 text-sm text-foreground">
-              <input
-                type="checkbox"
-                checked={controls.alertThresholds.includes(threshold)}
-                disabled={!admin || saving}
-                onChange={() => toggle(threshold)}
-              />
-              {`${threshold}%`}
-            </label>
-          ))}
-        </div>
-        <p className="text-xs text-muted-foreground">Of the plan&apos;s hours, once each per period.</p>
-      </fieldset>
+      {!unlimited && (
+        <fieldset className="space-y-2 border-t border-border/60 pt-6">
+          <legend className="text-sm font-medium text-foreground">Email the admins at</legend>
+          <div className="flex gap-4">
+            {ALERT_THRESHOLDS.map((threshold) => (
+              <label key={threshold} className="flex items-center gap-2 text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  checked={controls.alertThresholds.includes(threshold)}
+                  disabled={!admin || saving}
+                  onChange={() => toggle(threshold)}
+                />
+                {`${threshold}%`}
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">Of the plan&apos;s hours, once each per period.</p>
+        </fieldset>
+      )}
 
       {error && <InlineMessage tone="error">{error}</InlineMessage>}
       {!admin && <p className="text-xs text-muted-foreground">Only the org&apos;s admins change these.</p>}

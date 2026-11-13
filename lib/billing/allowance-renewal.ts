@@ -7,6 +7,7 @@
  */
 
 import { allowancePeriod } from "@/lib/billing/periods";
+import { PLANS } from "@/lib/billing/plans";
 import { currentSubscription, type SubscriptionRecord } from "@/lib/billing/subscriptions";
 
 /**
@@ -32,7 +33,13 @@ export function dueForRenewal(
     if (!storedPeriods.has(userId)) continue;
     const current = currentSubscription(theirs, now);
     if (!current) continue;
-    if (storedPeriods.get(userId) !== allowancePeriod(current, now).start.toISOString()) due.push(userId);
+    // Unlimited keys are also reconciled within the period: this removes
+    // pre-existing caps on rollout and retries a failed OpenRouter patch.
+    if (
+      PLANS[current.plan].models.usd === null ||
+      storedPeriods.get(userId) !== allowancePeriod(current, now).start.toISOString()
+    )
+      due.push(userId);
   }
   return due;
 }

@@ -20,8 +20,8 @@ export type AllowanceState = {
   plan: PlanId;
   /** What the key had spent when this allowance began. */
   baselineUsd: number;
-  /** The key's cap: baseline plus the allowance. */
-  limitUsd: number;
+  /** The key's cap: baseline plus the allowance; null for unlimited. */
+  limitUsd: number | null;
 };
 
 export const ONCE = "once";
@@ -46,14 +46,24 @@ export function nextAllowance(
 ): AllowanceState | null {
   const { plan, allowancePeriod } = entitlements;
   const usd = plan.models.usd;
+  if (usd === null) {
+    const period = allowancePeriod?.start.toISOString() ?? ONCE;
+    if (stored?.period === period && stored.plan === plan.id && stored.limitUsd === null) return null;
+    return {
+      period,
+      plan: plan.id,
+      baselineUsd: stored?.period === period ? stored.baselineUsd : spentUsd,
+      limitUsd: null,
+    };
+  }
   if (plan.models.per === "once" || !allowancePeriod) {
-    if (stored?.period === ONCE && stored.plan === plan.id) return null;
+    if (stored?.period === ONCE && stored.plan === plan.id && stored.limitUsd !== null) return null;
     const limitUsd = cents(Math.max(usd, spentUsd));
     return { period: ONCE, plan: plan.id, baselineUsd: limitUsd - usd, limitUsd };
   }
   const period = allowancePeriod.start.toISOString();
   if (stored?.period === period) {
-    if (stored.plan === plan.id) return null;
+    if (stored.plan === plan.id && stored.limitUsd !== null) return null;
     return {
       period,
       plan: plan.id,
@@ -82,7 +92,7 @@ export type AllowanceStore = {
 
 export type AllowanceDeps = {
   usage(hash: string): Promise<KeyUsage>;
-  setLimit(hash: string, limitUsd: number): Promise<void>;
+  setLimit(hash: string, limitUsd: number | null): Promise<void>;
   entitlements(): Promise<Entitlements>;
 };
 
@@ -107,7 +117,12 @@ export async function refreshAllowance(
   const next = nextAllowance(await deps.entitlements(), state, usage.usedUsd);
   if (next) current = (await store.claim(state, next)) ? next : (await store.read()).state;
   if (!current) throw new Error("A model allowance was claimed but none is stored.");
-  if (usage.limitUsd === null || Math.abs(usage.limitUsd - current.limitUsd) > SAME_CAP_WITHIN_USD) {
+  if (
+    usage.limitUsd !== current.limitUsd &&
+    (usage.limitUsd === null ||
+      current.limitUsd === null ||
+      Math.abs(usage.limitUsd - current.limitUsd) > SAME_CAP_WITHIN_USD)
+  ) {
     await deps.setLimit(hash, current.limitUsd);
   }
   return { ...allowanceWithin(current, usage.usedUsd), disabled: usage.disabled };
@@ -130,6 +145,9 @@ export function refuseUnusable(allowance: RefreshedAllowance | null): void {
 
 /** What the sidebar shows: spent and cap within the allowance, so a period
  *  starts at 0%. */
-export function allowanceWithin(state: AllowanceState, spentUsd: number): { usedUsd: number; limitUsd: number } {
-  return { usedUsd: spentUsd - state.baselineUsd, limitUsd: state.limitUsd - state.baselineUsd };
+export function allowanceWithin(state: AllowanceState, spentUsd: number): Allowance {
+  return {
+    usedUsd: spentUsd - state.baselineUsd,
+    limitUsd: state.limitUsd === null ? null : state.limitUsd - state.baselineUsd,
+  };
 }
