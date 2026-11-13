@@ -1,3 +1,5 @@
+import { GitLabConnectionCard } from "@/components/gitlab-connection-card";
+import { gitLabConnection } from "@/lib/db/gitlab-connections";
 import { PageHeader } from "@/components/page-layout";
 
 import Link from "next/link";
@@ -92,6 +94,7 @@ async function IntegrationsSection({
       </div>
 
       <GitHubConnectionSection userId={owner.id} login={owner.githubLogin} result={github ?? null} />
+      <GitLabConnectionCard initial={await gitLabConnection(owner.id)} />
       {linkError && <p role="alert" className="text-sm text-destructive">{linkError === "identity_already_exists" ? "That GitHub account is already linked to another Outrunner account. Connect a different account, or sign in with GitHub to use it." : "GitHub could not be connected. Please try again."}</p>}
 
       <div className="space-y-3">

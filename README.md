@@ -160,3 +160,4 @@ threat model included.
 - Agent & protocol — [`runtime-agent.md`](docs/architecture/runtime-agent.md), [`protocol.md`](docs/architecture/protocol.md)
 - Validation report — [`spike4-runtime-report.md`](docs/architecture/spike4-runtime-report.md)
 - GitHub App (`@outrunner` on issues and pull requests, its permissions and events) — [`docs/github-app.md`](docs/github-app.md)
+- GitLab code provider (repositories, personal tokens and merge requests) — [`docs/gitlab.md`](docs/gitlab.md)

@@ -543,6 +543,9 @@ const FeatureCodexGateway = "codex-gateway"
 // gitcred). An older agent ignores the variables and keeps GH_TOKEN.
 const FeatureGitCredential = "git-credential"
 
+// FeatureGitLabCredential scopes GitLab tokens to GitLab.com, with nested namespaces.
+const FeatureGitLabCredential = "gitlab-credential"
+
 // FeatureMessageKeys is a message sent once per key: POST /message's `key`,
 // which the agent keeps on disk, answering a repeat as sent without sending it
 // again. For a sender that may repeat after a restart (a Mission's events). An

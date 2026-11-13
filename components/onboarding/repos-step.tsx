@@ -144,7 +144,7 @@ export function ReposStep({
     try {
       const ids = [...picked];
       const projects = await env.connect(ids);
-      await onDone(projects.filter((project) => ids.includes(project.githubRepoId)));
+      await onDone(projects.filter((project) => project.githubRepoId !== null && ids.includes(project.githubRepoId)));
       // Still busy: the page is on its way out.
     } catch (e) {
       setError({
@@ -213,14 +213,14 @@ export function ReposStep({
           ) : (
             <ul className="space-y-0.5">
               {shown.map((repo) => {
-                const on = picked.has(repo.githubRepoId);
+                const on = repo.githubRepoId !== null && picked.has(repo.githubRepoId);
                 return (
                   <li key={repo.githubRepoId}>
                     <button
                       type="button"
                       role="checkbox"
                       aria-checked={on}
-                      onClick={() => toggle(repo.githubRepoId)}
+                      onClick={() => repo.githubRepoId !== null && toggle(repo.githubRepoId)}
                       className={cn(
                         "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors",
                         on ? "bg-accent/40" : "hover:bg-accent/20",

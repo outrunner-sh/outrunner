@@ -1,15 +1,13 @@
+import type { RepositoryRecord } from "@/lib/code-providers/repository";
 import { mapWithConcurrency } from "@/lib/concurrency";
-import { isGitHubFullName, type RepositoryListing } from "@/lib/github/listing";
+import { isGitHubFullName } from "@/lib/github/listing";
 import type { VerifiedEmail } from "@/lib/orgs/domains";
 
 /**
  * A GitHub repository normalized to the fields Runtime persists, plus the
  * owner's kind and avatar the pickers show.
  */
-export type GitHubRepository = RepositoryListing & {
-  defaultBranch: string;
-  htmlUrl: string;
-};
+export type GitHubRepository = RepositoryRecord & { githubRepoId: number };
 
 /** What a listing of the user's repositories found. */
 export type GitHubRepositoryList = {

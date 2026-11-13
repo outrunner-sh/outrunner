@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { projectLevel } from "@/lib/db/org-access";
 import { getProject, getWorkspace, getWorkspacePullRequest } from "@/lib/db/repositories";
-import { getPullRequestStatus, mergePullRequest } from "@/lib/github/client";
+import { getPullRequestStatus, mergePullRequest } from "@/lib/code-providers/client";
 import { githubErrorResponse } from "@/lib/github/http";
 import { requireGitToken } from "@/lib/github/identity.deps";
 import { allows } from "@/lib/orgs/access";

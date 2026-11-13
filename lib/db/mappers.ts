@@ -30,6 +30,7 @@ export function toProject(row: Tables["projects"]["Row"]): Project {
     id: row.id,
     orgId: row.org_id,
     githubRepoId: row.github_repo_id,
+    ...(row.gitlab_repo_id ? { provider: "gitlab" as const, repositoryId: row.gitlab_repo_id } : {}),
     fullName: row.full_name,
     owner: row.owner,
     name: row.name,

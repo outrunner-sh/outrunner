@@ -10,6 +10,7 @@ import { isGitHubFullName } from "@/lib/github/listing";
 import { readCappedBody } from "@/lib/http/capped-body";
 import { gitCredentialRequestValid } from "@/lib/runtime/git-credential";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import { gitLabPath, isGitLabRef } from "@/lib/code-providers/repository";
 
 /** A request's body is a repository's name at most. */
 const MAX_BODY_BYTES = 4096;
@@ -67,8 +68,12 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "Expected a JSON body." }, { status: 400 });
   }
-  if (asked !== undefined && asked !== "" && (typeof asked !== "string" || !isGitHubFullName(asked))) {
-    return NextResponse.json({ error: "Name a GitHub repository as owner/name." }, { status: 400 });
+  let valid = asked === undefined || asked === "";
+  if (typeof asked === "string" && asked) {
+    try { valid = isGitLabRef(asked) ? Boolean(gitLabPath(asked)) : isGitHubFullName(asked); } catch { valid = false; }
+  }
+  if (!valid) {
+    return NextResponse.json({ error: "Name a GitHub repository as owner/name or GitLab as gitlab.com/group/project." }, { status: 400 });
   }
 
   try {
@@ -81,6 +86,9 @@ export async function POST(request: Request) {
         ? asked
         : (await listOrgProjects(computer.org_id)).find((p) => p.id === computer.project_id)?.fullName;
     if (!repo) return NextResponse.json({ error: "This box's project is gone." }, { status: 404 });
+    // An unqualified request comes from gh outside a GitHub checkout. Never
+    // hand a GitLab credential to a client that may send it to GitHub.
+    if (!asked && isGitLabRef(repo)) return NextResponse.json({ error: "Name the GitLab repository explicitly." }, { status: 409 });
 
     const review = computer.workspace_id ? await isReviewSession(computer.workspace_id) : false;
     const credential = await gitCredentialFor({

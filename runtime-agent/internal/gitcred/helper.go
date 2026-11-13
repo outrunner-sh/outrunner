@@ -26,10 +26,20 @@ func Helper(ctx context.Context, op string, in io.Reader, out, errOut io.Writer,
 		return 0
 	}
 	attrs := readCredentialRequest(in)
-	if attrs["protocol"] != "https" || !strings.EqualFold(attrs["host"], "github.com") {
+	isGitLab := strings.EqualFold(attrs["host"], "gitlab.com")
+	if attrs["protocol"] != "https" || (!isGitLab && !strings.EqualFold(attrs["host"], "github.com")) {
 		return 0
 	}
 	repo, _ := firstTwo(attrs["path"])
+	if isGitLab {
+		var err error
+		repo, err = NormalizeRepo("gitlab.com/" + attrs["path"])
+		if err != nil {
+			return 0
+		}
+		// GH_TOKEN is never a fallback for GitLab, including an outage.
+		fallback = ""
+	}
 	if op == "erase" {
 		_ = local.Erase(ctx, repo)
 		return 0
@@ -37,7 +47,7 @@ func Helper(ctx context.Context, op string, in io.Reader, out, errOut io.Writer,
 	token, err := local.Token(ctx, repo)
 	if err != nil {
 		if fallback == "" || refused(err) {
-			fmt.Fprintf(errOut, "outrunner: no GitHub token for %s: %v\n", describeRepo(repo), err)
+			fmt.Fprintf(errOut, "outrunner: no Git credential for %s: %v\n", describeRepo(repo), err)
 			return 0
 		}
 		token = fallback
