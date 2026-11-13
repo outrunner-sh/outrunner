@@ -2,10 +2,12 @@
 
 import { Check, Lock, Search } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { GitHubConnectLink } from "@/components/github-connect-link";
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
+import { GitLabConnectionCard, type GitLabConnectionView } from "@/components/gitlab-connection-card";
+import { repositoryKey, type CodeProvider } from "@/lib/code-providers/repository";
 import { DashedPanel, DashedRule } from "@/components/onboarding/dashed";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/loaders";
@@ -18,7 +20,7 @@ import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /**
- * Step 2, the last: the GitHub repositories to work on, connected as
+ * Step 2, the last: GitHub or GitLab repositories to work on, connected as
  * projects. Those already connected start ticked. At least one is needed: a
  * session works in a repository. Done, onboarding ends (`onDone`).
  *
@@ -36,6 +38,11 @@ export function ReposStep({
    *  busy until it's done, as it leaves the page. */
   onDone: (projects: Project[]) => Promise<void>;
 }) {
+  const [provider, setProvider] = useState<CodeProvider>("github");
+  const currentProvider = useRef<CodeProvider>("github");
+  const [gitlab, setGitlab] = useState<GitLabConnectionView>();
+  const [gitlabError, setGitlabError] = useState<string | null>(null);
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
   const [list, setList] = useState<RepositoryListing[] | null>(null);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [query, setQuery] = useState("");
@@ -61,7 +68,7 @@ export function ReposStep({
         }
         const active = found.orgs.find((o) => o.id === found.activeOrgId);
         const withApp = found.orgs.find((o) => o.accounts.length > 0);
-        if (!stale && active && noRepositories(found, active) && withApp) {
+        if (!stale && provider === "github" && active && noRepositories(found, active) && withApp) {
           // Kept if the switch fails: the Connect panel and the org switch.
           const switched = await env.useOrg(withApp.id).then(
             () => true,
@@ -78,17 +85,30 @@ export function ReposStep({
     return () => {
       stale = true;
     };
-  }, [env]);
+  }, [env, provider]);
+
+  useEffect(() => {
+    if (provider !== "gitlab") return;
+    let stale = false;
+    env.gitlabConnection().then((connection) => {
+      if (!stale) { setGitlab(connection); setGitlabError(null); }
+    }).catch((error: unknown) => {
+      if (!stale) setGitlabError(error instanceof Error ? error.message : "Couldn't read your GitLab connection.");
+    });
+    return () => { stale = true; };
+  }, [env, provider, connectionAttempt]);
 
   const active = access?.orgs.find((o) => o.id === access.activeOrgId);
   // Nothing to list from: no App in this org, and no GitHub sign-in.
-  const unreachable = !!access && !!active && noRepositories(access, active);
+  const unreachable = provider === "github" && !!access && !!active && noRepositories(access, active);
+  const canList = provider === "gitlab" ? Boolean(gitlab) : access !== undefined && !unreachable;
+  const githubOrgId = provider === "github" ? access?.activeOrgId : undefined;
 
   useEffect(() => {
-    if (access === undefined || unreachable) return;
+    if (!canList) return;
     let stale = false;
     env
-      .repositories()
+      .repositories(provider)
       .then(({ repositories, connected }) => {
         if (stale) return;
         setListError(null);
@@ -106,13 +126,33 @@ export function ReposStep({
     return () => {
       stale = true;
     };
-  }, [env, access, unreachable, attempt]);
+  }, [env, githubOrgId, canList, provider, attempt]);
 
   const retryList = () => {
     setList(null);
     setListError(null);
     setAttempt((n) => n + 1);
   };
+
+  function changeProvider(next: CodeProvider) {
+    if (provider === next) return;
+    currentProvider.current = next;
+    setProvider(next);
+    setList(null);
+    setPicked(new Set());
+    setQuery("");
+    setError(null);
+    setListError(null);
+    setGitlab(undefined);
+    setGitlabError(null);
+  }
+
+  function changeGitlab(connection: GitLabConnectionView) {
+    if (currentProvider.current !== "gitlab") return;
+    setGitlab(connection);
+    setPicked(new Set());
+    retryList();
+  }
 
   async function switchOrg(orgId: string) {
     if (!access || orgId === access.activeOrgId) return;
@@ -127,6 +167,7 @@ export function ReposStep({
     setListError(null);
     setPicked(new Set());
     setAccess({ ...access, activeOrgId: orgId });
+    setAttempt((n) => n + 1);
   }
 
   const shown = useMemo(() => filterRepositories(list ?? [], query), [list, query]);
@@ -143,8 +184,9 @@ export function ReposStep({
     setError(null);
     try {
       const ids = [...picked];
-      const projects = await env.connect(ids);
-      await onDone(projects.filter((project) => project.githubRepoId !== null && ids.includes(project.githubRepoId)));
+      const projects = await env.connect(ids, provider);
+      const selected = new Set(ids.map((id) => `${provider}:${id}`));
+      await onDone(projects.filter((project) => selected.has(repositoryKey(project))));
       // Still busy: the page is on its way out.
     } catch (e) {
       setError({
@@ -162,9 +204,26 @@ export function ReposStep({
         <p className="text-muted-foreground text-sm">The ones you&apos;ll work on. Sessions clone them on their own cloud computer.</p>
       </div>
 
+      <div role="group" aria-label="Code provider" className="flex gap-1 rounded-lg border border-border p-1">
+        {(["github", "gitlab"] as const).map((id) => (
+          <button key={id} type="button" aria-pressed={provider === id} disabled={busy} onClick={() => changeProvider(id)}
+            className={cn("flex-1 rounded-md px-3 py-2 text-sm", provider === id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent")}>
+            {id === "github" ? "GitHub" : "GitLab"}
+          </button>
+        ))}
+      </div>
+
       {access && active && (
-        <OrgSource access={access} active={active} onSwitch={(id) => void switchOrg(id)} />
+        <OrgSource access={access} active={active} provider={provider} onSwitch={(id) => void switchOrg(id)} />
       )}
+
+      {provider === "gitlab" && (gitlabError ? (
+        <p role="alert" className="text-sm text-destructive">{gitlabError} <button type="button" className="underline" onClick={() => setConnectionAttempt((n) => n + 1)}>Try again</button></p>
+      ) : gitlab === undefined ? (
+        <p className="text-sm text-muted-foreground">Checking your GitLab connection…</p>
+      ) : (
+        <GitLabConnectionCard initial={gitlab} saveConnection={env.saveGitlabConnection} onChange={changeGitlab} />
+      ))}
 
       {unreachable && active ? (
         <ConnectGitHub
@@ -175,7 +234,7 @@ export function ReposStep({
           ownRepositories={active.personal}
           orgName={active.name}
         />
-      ) : (
+      ) : (provider === "github" || gitlab) && (
       <DashedPanel>
         <div className="relative">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2" />
@@ -189,14 +248,14 @@ export function ReposStep({
         </div>
         <DashedRule />
         <div className="max-h-[45vh] overflow-y-auto p-1.5">
-          {list === null || access === undefined ? (
+          {list === null || (provider === "github" && access === undefined) ? (
             <div className="text-muted-foreground flex items-center gap-2 px-3 py-5 text-sm">
-              <Spinner /> Reading your GitHub repositories…
+              <Spinner /> Reading your {provider === "gitlab" ? "GitLab" : "GitHub"} repositories…
             </div>
           ) : listError ? (
             <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-5 text-sm">
               <span className="text-destructive">
-                {listError.message} {listError.reconnect && <GitHubReconnectLink />}
+                {listError.message} {provider === "github" && listError.reconnect && <GitHubReconnectLink />}
               </span>
               <button type="button" onClick={retryList} className="text-foreground underline underline-offset-4">
                 Try again
@@ -206,6 +265,7 @@ export function ReposStep({
             <p className="text-muted-foreground px-3 py-5 text-sm">
               {query
                 ? "No repository matches that."
+                : provider === "gitlab" ? "No repositories on your GitLab account yet."
                 : active?.accounts.length
                   ? `The GitHub App doesn't reach any repositories on ${active.accounts.join(", ")} yet.`
                   : "No repositories on your GitHub account yet."}
@@ -213,14 +273,15 @@ export function ReposStep({
           ) : (
             <ul className="space-y-0.5">
               {shown.map((repo) => {
-                const on = repo.githubRepoId !== null && picked.has(repo.githubRepoId);
+                const id = repo.repositoryId ?? repo.githubRepoId;
+                const on = id !== null && picked.has(id);
                 return (
-                  <li key={repo.githubRepoId}>
+                  <li key={repositoryKey(repo)}>
                     <button
                       type="button"
                       role="checkbox"
                       aria-checked={on}
-                      onClick={() => repo.githubRepoId !== null && toggle(repo.githubRepoId)}
+                      onClick={() => id !== null && toggle(id)}
                       className={cn(
                         "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors",
                         on ? "bg-accent/40" : "hover:bg-accent/20",
@@ -253,7 +314,7 @@ export function ReposStep({
 
       {error && (
         <p role="alert" className="text-destructive text-sm">
-          {error.message} {error.reconnect && <GitHubReconnectLink />}
+          {error.message} {provider === "github" && error.reconnect && <GitHubReconnectLink />}
         </p>
       )}
 
@@ -276,13 +337,15 @@ export function ReposStep({
 function OrgSource({
   access,
   active,
+  provider,
   onSwitch,
 }: {
   access: GitHubAccess;
   active: GitHubAccess["orgs"][number];
+  provider: CodeProvider;
   onSwitch: (orgId: string) => void;
 }) {
-  const from = active.accounts.length
+  const from = provider === "gitlab" ? "from your GitLab account" : active.accounts.length
     ? `from the GitHub App on ${active.accounts.join(", ")}`
     : access.personalGithub
       ? "from your GitHub account"
@@ -307,7 +370,7 @@ function OrgSource({
         <span className="text-foreground">{active.personal ? "Personal" : active.name}</span>
       )}
       {from && <span>{from}</span>}
-      {active.personal && active.accounts.length === 0 && active.admin && access.appInstallable && access.personalGithub && (
+      {provider === "github" && active.personal && active.accounts.length === 0 && active.admin && access.appInstallable && access.personalGithub && (
         // A plain link: the install route goes to GitHub, then back here.
         <a href="/api/github/app/install?next=/onboarding" className="text-foreground underline underline-offset-4">
           Install the GitHub App instead
