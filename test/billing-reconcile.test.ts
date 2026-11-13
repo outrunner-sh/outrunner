@@ -204,7 +204,7 @@ test("boxes are looked at longest unseen first, so a run out of time doesn't ski
   assert.deepEqual(logs.all.filter((line) => line.startsWith("look ")), ["look c", "look b", "look a"]);
 });
 
-test("where paused boxes can't come back (jcode), idle boxes are still metered, not paused", async () => {
+test("where paused boxes can't come back, idle boxes are still metered, not paused", async () => {
   const { deps, log: logs } = world({
     computers: [computer("a")],
     states: { a: idle },
@@ -351,7 +351,7 @@ test("an agent that answers again just before its forced pause keeps its box", a
   assert.deepEqual(logs.writes(), ["seen i-a"]);
 });
 
-test("where paused boxes can't come back (jcode), no box is forced either", async () => {
+test("where paused boxes can't come back, no box is forced either", async () => {
   const { deps, log: logs } = world({
     computers: [computer("a")],
     states: { a: { running: true, activity: null } },
