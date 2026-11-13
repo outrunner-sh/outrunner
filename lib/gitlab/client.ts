@@ -1,6 +1,8 @@
 import { gitLabPath } from "@/lib/code-providers/repository";
 import type { GitLabRepository } from "@/lib/code-providers/repository";
 
+export type GitLabConnectionStatus = { login: string; updatedAt: string };
+
 export class GitLabError extends Error {
   readonly status: number;
   constructor(message: string, status = 502) {

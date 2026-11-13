@@ -2,10 +2,15 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import type { GitLabConnectionStatus } from "@/lib/gitlab/client";
 
-export type GitLabConnectionView = { login: string; updatedAt: string } | null;
+export type GitLabConnectionView = GitLabConnectionStatus | null;
 
-export function GitLabConnectionCard({ initial }: { initial: GitLabConnectionView }) {
+export function GitLabConnectionCard({ initial, saveConnection, onChange }: {
+  initial: GitLabConnectionView;
+  saveConnection?: (token: string | null) => Promise<GitLabConnectionView>;
+  onChange?: (connection: GitLabConnectionView) => void;
+}) {
   const [connection, setConnection] = useState(initial);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -16,15 +21,20 @@ export function GitLabConnectionCard({ initial }: { initial: GitLabConnectionVie
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch("/api/gitlab/connection", {
-        method: disconnect ? "DELETE" : "POST", headers: { "Content-Type": "application/json" },
-        ...(disconnect ? {} : { body: JSON.stringify({ token }) }),
-      });
-      const data = await response.json() as { error?: string; connection: GitLabConnectionView };
-      if (!response.ok) throw new Error(data.error ?? "Could not connect GitLab. Try again.");
-      setConnection(data.connection);
+      const persist = async () => {
+        const response = await fetch("/api/gitlab/connection", {
+          method: disconnect ? "DELETE" : "POST", headers: { "Content-Type": "application/json" },
+          ...(disconnect ? {} : { body: JSON.stringify({ token }) }),
+        });
+        const data = await response.json() as { error?: string; connection: GitLabConnectionView };
+        if (!response.ok) throw new Error(data.error ?? "Could not connect GitLab. Try again.");
+        return data.connection;
+      };
+      const next = saveConnection ? await saveConnection(disconnect ? null : token) : await persist();
+      setConnection(next);
       setToken("");
       setEditing(disconnect);
+      onChange?.(next);
     } catch (error) { setError(error instanceof Error ? error.message : "Could not connect GitLab. Try again."); }
     finally { setBusy(false); }
   }

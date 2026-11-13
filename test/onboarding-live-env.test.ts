@@ -81,6 +81,37 @@ test("picking repositories connects just those, as the repository picker does", 
   assert.equal(projects[0].id, "p1");
 });
 
+test("GitLab onboarding reads and saves its connection in place using the Settings API", async () => {
+  const connection = { login: "ada", updatedAt: "2026-11-13T00:00:00Z" };
+  const calls = stubFetch({
+    "GET /api/gitlab/connection": () => [200, { connection: null }],
+    "POST /api/gitlab/connection": () => [200, { connection }],
+    "DELETE /api/gitlab/connection": () => [200, { connection: null }],
+  });
+  assert.equal(await env().gitlabConnection(), null);
+  assert.deepEqual(await env().saveGitlabConnection("glpat_fixture"), connection);
+  assert.deepEqual(calls[1], { method: "POST", url: "/api/gitlab/connection", body: { token: "glpat_fixture" } });
+  assert.equal(await env().saveGitlabConnection(null), null);
+  assert.equal(calls[2].method, "DELETE");
+});
+
+test("GitLab onboarding lists and connects multiple selected repositories without calling GitHub", async () => {
+  const projects = [{ id: "gitlab-7", provider: "gitlab", repositoryId: 7, githubRepoId: null }, { id: "gitlab-8", provider: "gitlab", repositoryId: 8, githubRepoId: null }];
+  const calls = stubFetch({
+    "GET /api/gitlab/repositories": () => [200, { repositories: [], connected: [7] }],
+    "POST /api/gitlab/projects": () => [200, { projects }],
+  });
+  assert.deepEqual(await env().repositories("gitlab"), { repositories: [], connected: [7] });
+  assert.deepEqual(await env().connect([7, 8], "gitlab"), projects);
+  assert.deepEqual(calls.map((call) => call.url), ["/api/gitlab/repositories", "/api/gitlab/projects", "/api/gitlab/projects"]);
+  assert.deepEqual(calls.slice(1).map((call) => call.body), [{ repoId: 7 }, { repoId: 8 }]);
+});
+
+test("a rejected GitLab onboarding token stays an actionable error", async () => {
+  stubFetch({ "POST /api/gitlab/connection": () => [409, { error: "Your GitLab token expired.", settingsHref: "/settings/connections" }] });
+  await assert.rejects(env().saveGitlabConnection("expired"), (error: unknown) => error instanceof OnboardingError && error.message === "Your GitLab token expired." && error.href === "/settings/connections");
+});
+
 test("finishing marks onboarding done and opens the new-session screen on the repository and agent picked", async () => {
   const calls = stubFetch({ "POST /api/onboarding/complete": () => [200, { ok: true }] });
   assert.equal(await env().finish("p1", "claude"), "/new?project=p1&focus=composer&start=claude");

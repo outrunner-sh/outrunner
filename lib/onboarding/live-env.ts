@@ -11,6 +11,7 @@ import type {
   RepositoryList,
 } from "@/lib/onboarding/types";
 import type { Project } from "@/lib/runtime/types";
+import type { GitLabConnectionStatus } from "@/lib/gitlab/client";
 
 /** A failure the page can show, with where to fix it when there's a place. */
 export class OnboardingError extends Error {
@@ -27,7 +28,7 @@ export class OnboardingError extends Error {
 
 /** A JSON request to the app's own API; its `error` (and `settingsHref`)
  *  thrown as an OnboardingError when it fails. */
-async function call<T>(method: "GET" | "POST" | "PUT", url: string, body?: unknown): Promise<T> {
+async function call<T>(method: "GET" | "POST" | "PUT" | "DELETE", url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method,
     cache: "no-store",
@@ -121,9 +122,18 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
 
     githubAccess: () => call<{ access: GitHubAccess | null }>("GET", "/api/onboarding/github").then((r) => r.access),
     useOrg: (orgId) => call("POST", "/api/orgs/active", { orgId }).then(() => undefined),
-    repositories: () => call<RepositoryList>("GET", "/api/github/repositories"),
-    async connect(githubRepoIds) {
-      const { projects } = await call<{ projects: Project[] }>("POST", "/api/projects/sync", { repoIds: githubRepoIds });
+    gitlabConnection: () => call<{ connection: GitLabConnectionStatus | null }>("GET", "/api/gitlab/connection").then((r) => r.connection),
+    saveGitlabConnection: (token) => call<{ connection: GitLabConnectionStatus | null }>(token === null ? "DELETE" : "POST", "/api/gitlab/connection", token === null ? undefined : { token }).then((r) => r.connection),
+    repositories: (provider = "github") => call<RepositoryList>("GET", `/api/${provider}/repositories`),
+    async connect(repoIds, provider = "github") {
+      if (provider === "gitlab") {
+        let projects: Project[] = [];
+        for (const repoId of repoIds) {
+          ({ projects } = await call<{ projects: Project[] }>("POST", "/api/gitlab/projects", { repoId }));
+        }
+        return projects;
+      }
+      const { projects } = await call<{ projects: Project[] }>("POST", "/api/projects/sync", { repoIds });
       return projects;
     },
 

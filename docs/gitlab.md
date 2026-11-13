@@ -6,6 +6,13 @@ the `api` scope. Tokens belong to the signed-in user, are encrypted at rest
 with `CREDENTIALS_ENCRYPTION_KEY`, and are never shared with an organization.
 Replace or disconnect the token from the same card.
 
+Onboarding's **Pick your repositories** step offers GitHub and GitLab too.
+Choose GitLab to connect a token directly in onboarding, pick repositories
+from your account, and finish on a GitLab project with your selected coding
+agent. A GitHub connection is not required. Switching providers clears the
+previous selection so matching numeric repository ids cannot select a
+repository from the other provider.
+
 Choose **GitLab** in the repository picker to browse membership projects,
 search their namespaces, and select one for a session. Nested groups are
 supported. GitLab references include their host, for example
