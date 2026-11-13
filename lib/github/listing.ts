@@ -7,7 +7,9 @@ import type { Project } from "@/lib/runtime/types";
  * import it without pulling in the GitHub request code.
  */
 export type RepositoryListing = {
-  githubRepoId: number;
+  githubRepoId: number | null;
+  provider?: "github" | "gitlab";
+  repositoryId?: number;
   fullName: string;
   name: string;
   owner: string;
@@ -42,6 +44,7 @@ export function isGitHubFullName(value: string): boolean {
 export function toListing(repo: RepositoryListing): RepositoryListing {
   return {
     githubRepoId: repo.githubRepoId,
+    ...(repo.provider ? { provider: repo.provider, repositoryId: repo.repositoryId } : {}),
     fullName: repo.fullName,
     name: repo.name,
     owner: repo.owner,
@@ -58,6 +61,7 @@ export function toListing(repo: RepositoryListing): RepositoryListing {
 export function projectToListing(project: Project): RepositoryListing {
   return {
     githubRepoId: project.githubRepoId,
+    ...(project.provider ? { provider: project.provider, repositoryId: project.repositoryId } : {}),
     fullName: project.fullName,
     name: project.name,
     owner: project.owner,

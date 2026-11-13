@@ -1,3 +1,4 @@
+import { isGitLabRef } from "@/lib/code-providers/repository";
 import { NextResponse } from "next/server";
 
 import { getEnvironment } from "@/lib/db/environments";
@@ -26,6 +27,10 @@ export async function GET(request: Request, context: RouteContext) {
   const errors: string[] = [];
   const perRepo = await Promise.all(
     environment.repos.map(async (repo) => {
+      if (isGitLabRef(repo.fullName)) {
+        errors.push(`Skills from ${repo.fullName} are available in the session checkout; browsing GitLab skills is not supported yet.`);
+        return [];
+      }
       const branch = repo.branch ?? repo.defaultBranch;
       const token = await optionalGitToken(c.owner.id, { orgId: environment.orgId, fullName: repo.fullName });
       const items = await committedSkills(token, repo.fullName, branch);

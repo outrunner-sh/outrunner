@@ -91,13 +91,19 @@ func TestUseGitCredentialPointsGitAtTheAgent(t *testing.T) {
 		}
 	}
 	want := []string{
-		"GIT_CONFIG_COUNT=3",
+		"GIT_CONFIG_COUNT=6",
 		"GIT_CONFIG_KEY_0=credential.https://github.com.helper",
 		"GIT_CONFIG_VALUE_0=",
 		"GIT_CONFIG_KEY_1=credential.https://github.com.helper",
 		"GIT_CONFIG_VALUE_1=!'" + strings.ReplaceAll(exe, "'", `'\''`) + "' git-credential --root '" + s.Root + "'",
 		"GIT_CONFIG_KEY_2=credential.https://github.com.useHttpPath",
 		"GIT_CONFIG_VALUE_2=true",
+		"GIT_CONFIG_KEY_3=credential.https://gitlab.com.helper",
+		"GIT_CONFIG_VALUE_3=",
+		"GIT_CONFIG_KEY_4=credential.https://gitlab.com.helper",
+		"GIT_CONFIG_VALUE_4=!'" + strings.ReplaceAll(exe, "'", `'\''`) + "' git-credential --root '" + s.Root + "'",
+		"GIT_CONFIG_KEY_5=credential.https://gitlab.com.useHttpPath",
+		"GIT_CONFIG_VALUE_5=true",
 	}
 	if !slices.Equal(gitConfig, want) {
 		t.Fatalf("git config = %q, want %q", gitConfig, want)

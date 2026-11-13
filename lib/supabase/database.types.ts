@@ -80,7 +80,8 @@ type ProjectRow = {
    *  (20261027120000_organizations.sql). */
   org_id: string;
   owner_id: string;
-  github_repo_id: number;
+  github_repo_id: number | null;
+  gitlab_repo_id: number | null;
   full_name: string;
   owner: string;
   name: string;
@@ -1644,6 +1645,12 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      user_gitlab_connections: {
+        Row: { user_id: string; gitlab_user_id: number; gitlab_login: string; token_ciphertext: string; updated_at: string };
+        Insert: { user_id: string; gitlab_user_id: number; gitlab_login: string; token_ciphertext: string; updated_at?: string };
+        Update: { gitlab_user_id?: number; gitlab_login?: string; token_ciphertext?: string; updated_at?: string };
+        Relationships: [];
       };
       projects: {
         Row: ProjectRow;

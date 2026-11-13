@@ -48,7 +48,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         repositories: list.repositories.map(toListing),
-        connected: projects.map((p) => p.githubRepoId),
+        connected: projects.flatMap((p) => p.githubRepoId === null ? [] : [p.githubRepoId]),
         complete: list.complete,
         ssoPartialOrgIds: list.ssoPartialOrgIds,
         source: access.source.kind === "app" ? { kind: "app", accounts: access.source.accounts } : { kind: "user" },

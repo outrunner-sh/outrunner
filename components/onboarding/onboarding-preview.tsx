@@ -147,7 +147,7 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
     },
     async connect(ids) {
       await wait(600);
-      return REPOS.filter((r) => ids.includes(r.githubRepoId)).map(project);
+      return REPOS.filter((r) => r.githubRepoId !== null && ids.includes(r.githubRepoId)).map(project);
     },
     finish: async (projectId, runOn) => (await wait(300), newSessionAfterOnboarding(projectId, runOn)),
     skip: async () => (await wait(300), "/"),

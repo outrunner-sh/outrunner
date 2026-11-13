@@ -8,7 +8,7 @@ import {
   getWorkspacePullRequest,
   relinkWorkspacePullRequest,
 } from "@/lib/db/repositories";
-import { findPullRequest, getPullRequestStatus } from "@/lib/github/client";
+import { findPullRequest, getPullRequestStatus } from "@/lib/code-providers/client";
 import { githubErrorResponse } from "@/lib/github/http";
 import { requireGitToken } from "@/lib/github/identity.deps";
 import { supersedingPullRequest } from "@/lib/session/pull-request-status";
