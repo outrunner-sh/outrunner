@@ -69,7 +69,7 @@ export function isPlanLimitError(error: unknown): { message: string } | null {
 
 /** The plan's cloud hours are used up: refuse the start. */
 export function hoursDenial(plan: Plan, used: number): CloudLimitDenial | null {
-  if (used < plan.cloudHoursPerMonth) return null;
+  if (plan.cloudHoursPerMonth === null || used < plan.cloudHoursPerMonth) return null;
   return {
     error: `Your plan's ${plan.cloudHoursPerMonth} cloud hours are used up for this month. Upgrade for more.`,
     settingsHref: UPGRADE_HREF,

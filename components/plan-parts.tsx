@@ -6,11 +6,19 @@ import { cn } from "@/lib/utils";
 export function PlanIncludes({ plan }: { plan: Plan }) {
   return (
     <ul className="space-y-1 text-xs text-muted-foreground">
-      <li>{plan.cloudHoursPerMonth} cloud hours a month</li>
+      <li>
+        {plan.cloudHoursPerMonth === null ? "Unlimited cloud hours" : `${plan.cloudHoursPerMonth} cloud hours a month`}
+      </li>
       <li>
         {plan.concurrentCloudSessions} cloud sessions at once, up to {boxSize(plan.largestBoxSize).label} boxes
       </li>
-      <li>{plan.models.per === "once" ? "Outrunner's models, to try" : "Outrunner's models, usage included"}</li>
+      <li>
+        {plan.models.usd === null
+          ? "Outrunner's models, unlimited usage"
+          : plan.models.per === "once"
+            ? "Outrunner's models, to try"
+            : "Outrunner's models, usage included"}
+      </li>
     </ul>
   );
 }

@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   type AllowanceState,
   type AllowanceStore,
+  type AllowanceDeps,
   allowanceWithin,
   nextAllowance,
   ONCE,
@@ -40,11 +41,10 @@ test("each new period renews the allowance from what's spent, unused allowance n
   assert.deepEqual(nov, { period: november.start.toISOString(), plan: "pro", baselineUsd: 4, limitUsd: 14 });
 });
 
-test("an upgrade mid-period adds the difference, keeping what this period has used", () => {
+test("an upgrade to Max removes the cap, keeping what this period has used", () => {
   const onPro = nextAllowance(pro(), null, 0)!;
   const onMax = nextAllowance(max(), onPro, 7);
-  // $7 of Pro's $10 used; Max allows $50 this period: $43 left.
-  assert.deepEqual(onMax, { period: october.start.toISOString(), plan: "max", baselineUsd: 0, limitUsd: 50 });
+  assert.deepEqual(onMax, { period: october.start.toISOString(), plan: "max", baselineUsd: 0, limitUsd: null });
 });
 
 test("a downgrade mid-period never sets the cap below what's spent", () => {
@@ -63,7 +63,7 @@ test("back on Free after paying, nothing more is free", () => {
 function keyWorld(opts: { state?: AllowanceState | null; spent: number; cap: number | null; hash?: string | null }) {
   const row = { hash: opts.hash === undefined ? "h1" : opts.hash, state: opts.state ?? null };
   const key = { spent: opts.spent, cap: opts.cap, disabled: false };
-  const patches: number[] = [];
+  const patches: (number | null)[] = [];
   const store: AllowanceStore = {
     read: async () => ({ hash: row.hash, state: row.state }),
     claim: async (previous, next) => {
@@ -72,9 +72,9 @@ function keyWorld(opts: { state?: AllowanceState | null; spent: number; cap: num
       return true;
     },
   };
-  const deps = {
+  const deps: AllowanceDeps = {
     usage: async () => ({ usedUsd: key.spent, limitUsd: key.cap, disabled: key.disabled }),
-    setLimit: async (_hash: string, usd: number) => {
+    setLimit: async (_hash: string, usd: number | null) => {
       patches.push(usd);
       key.cap = usd;
     },
@@ -143,4 +143,58 @@ test("a key with allowance left is handed out; a spent or disabled one is refuse
 test("with no allowance to judge, the key is handed out", () => {
   // No key yet, or the refresh failed: OpenRouter's own cap still holds.
   refuseUnusable(null);
+});
+
+test("existing Max keys lose their old cap within the same period", async () => {
+  const state: AllowanceState = {
+    period: october.start.toISOString(),
+    plan: "max",
+    baselineUsd: 3,
+    limitUsd: 53,
+  };
+  const w = keyWorld({ state, spent: 53, cap: 53 });
+  w.deps.entitlements = async () => max();
+  const refreshed = await refreshAllowance(w.store, w.deps);
+  assert.deepEqual(refreshed, { usedUsd: 50, limitUsd: null, disabled: false });
+  assert.deepEqual(w.patches, [null]);
+  refuseUnusable(refreshed);
+  w.key.spent = 10000;
+  await refreshAllowance(w.store, w.deps);
+  assert.deepEqual(w.patches, [null], "an unlimited key is not patched repeatedly");
+});
+
+test("a failed removal of an existing key's cap is retried without another grant", async () => {
+  const w = keyWorld({ spent: 50, cap: 50 });
+  w.deps.entitlements = async () => max();
+  await assert.rejects(
+    refreshAllowance(w.store, {
+      ...w.deps,
+      setLimit: async () => {
+        throw new Error("offline");
+      },
+    }),
+    /offline/,
+  );
+  assert.equal(w.row.state?.limitUsd, null);
+  await refreshAllowance(w.store, w.deps);
+  assert.deepEqual(w.patches, [null]);
+});
+
+test("downgrading from unlimited reinstates the paid or Free cap", async () => {
+  const state = nextAllowance(max(), null, 0)!;
+  for (const entitlements of [pro(), free]) {
+    const w = keyWorld({ state, spent: 200, cap: null });
+    w.deps.entitlements = async () => entitlements;
+    const refreshed = await refreshAllowance(w.store, w.deps);
+    assert.deepEqual(w.patches, [200]);
+    assert.throws(() => refuseUnusable(refreshed), AllowanceSpentError);
+  }
+});
+
+test("unlimited model usage still respects a manually disabled key", async () => {
+  const w = keyWorld({ spent: 1000, cap: null });
+  w.deps.entitlements = async () => max();
+  w.key.disabled = true;
+  const refreshed = await refreshAllowance(w.store, w.deps);
+  assert.throws(() => refuseUnusable(refreshed), ModelKeyDisabledError);
 });

@@ -63,7 +63,7 @@ export function stillBills(status: string): boolean {
 /** The best plan any of a user's subscriptions gives them at `now`; Free when
  *  none does. */
 export function planFromSubscriptions(subscriptions: readonly SubscriptionRecord[], now: Date): Plan {
-  return subscriptions.filter((s) => entitles(s, now)).reduce((best, s) => betterPlan(best, PLANS[s.plan]), PLANS.free);
+  return subscriptions.filter((s) => entitles(s, now)).reduce<Plan>((best, s) => betterPlan(best, PLANS[s.plan]), PLANS.free);
 }
 
 /** The subscription a user's plan comes from: the entitled one with the best
