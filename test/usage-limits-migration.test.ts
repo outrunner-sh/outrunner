@@ -22,8 +22,18 @@ test("usage limits in dollars: old % limits become alerts, and the checks hold",
   psql("postgres", `create database ${db}`);
   const sql = (input: string) => psql(db, input);
   try {
-    sql(`create table organizations(id uuid primary key);
-      create table organization_settings(org_id uuid primary key references organizations(id), updated_by uuid);
+    sql(`create table organizations(id uuid primary key, personal_owner_id uuid);
+      create table organization_settings(org_id uuid primary key references organizations(id), updated_by uuid,
+        default_model jsonb, box_size text, archive_on_close boolean not null default true);
+      -- The guard as 20261030150000_org_defaults.sql made it: no row at all for a personal org.
+      create function organization_settings_team_only() returns trigger language plpgsql as $$ begin
+        if exists (select 1 from organizations where id = new.org_id and personal_owner_id is not null) then
+          raise exception 'a personal org''s defaults are its owner''s own' using errcode = 'check_violation';
+        end if;
+        return new;
+      end $$;
+      create trigger organization_settings_team_only before insert or update on organization_settings
+        for each row execute function organization_settings_team_only();
       create table subscriptions(stripe_subscription_id text primary key, org_id uuid);
       do $$ begin
         if not exists(select 1 from pg_roles where rolname='anon') then create role anon; end if;
@@ -59,6 +69,17 @@ test("usage limits in dollars: old % limits become alerts, and the checks hold",
 
     sql(`insert into subscriptions values('sub_1', '${ids[0]}')`);
     assert.equal(sql(`select overage_unpaid_since is null from subscriptions`), "t");
+
+    // A personal org's owner sets its usage controls; its session defaults stay theirs alone.
+    const personal = randomUUID();
+    sql(`insert into organizations values('${personal}', '${randomUUID()}')`);
+    sql(`insert into organization_settings(org_id, usage_limit_usd, alert_thresholds) values('${personal}', 40, '{100,150}')`);
+    sql(`update organization_settings set alert_thresholds = '{50}' where org_id='${personal}'`);
+    assert.equal(sql(`select alert_thresholds from organization_settings where org_id='${personal}'`), "{50}");
+    for (const set of ["box_size = 'large'", `default_model = '{"id":"x"}'`, "archive_on_close = false"]) {
+      assert.throws(() => sql(`update organization_settings set ${set} where org_id='${personal}'`), /owner's own/, set);
+    }
+    sql(`update organization_settings set box_size = 'large' where org_id='${ids[0]}'`);
 
     // Run again (a retried deploy): nothing changes, nothing fails.
     sql(migration("20261114120000_usage_limits_in_dollars.sql"));

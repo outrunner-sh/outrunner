@@ -1,6 +1,6 @@
 -- Usage-based billing, step one: an org's usage controls in dollars
 -- (lib/billing/usage-controls.ts), and where a failed overage payment is
--- recorded (lib/billing/standing.ts).
+-- recorded (lib/billing/standing.ts), for team and personal orgs alike.
 --
 -- A plan now includes cloud usage worth its price and bills usage past it at
 -- the overage rate (lib/billing/usage.ts), so the admins' limit is a dollar
@@ -48,6 +48,25 @@ end $$;
 alter table organization_settings
   add constraint organization_settings_alert_thresholds_check
     check (alert_thresholds <@ array[50, 80, 100, 150, 200]);
+
+-- A personal org's admin (its owner) now sets its usage controls too: its
+-- plan may bill overage like a team's. Its session defaults stay its
+-- owner's own (20261030150000_org_defaults.sql), so the guard now refuses
+-- only a personal org's row that sets one of those, not one that holds just
+-- usage controls.
+create or replace function organization_settings_team_only()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if (new.default_model is not null or new.box_size is not null or new.archive_on_close is distinct from true)
+     and exists (select 1 from organizations where id = new.org_id and personal_owner_id is not null) then
+    raise exception 'a personal org''s defaults are its owner''s own' using errcode = 'check_violation';
+  end if;
+  return new;
+end;
+$$;
 
 -- Since when an overage payment on the subscription has been failing; null
 -- while paid up. Stripe's invoice webhooks set and clear it; while it's set,
