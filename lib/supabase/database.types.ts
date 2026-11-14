@@ -729,6 +729,8 @@ type OrganizationSettingsRow = {
   alert_thresholds: number[];
   // supabase/migrations/20261102100000_github_agent_loop.sql.
   archive_on_close: boolean;
+  // supabase/migrations/20261114120000_automation_cover_new_repos.sql.
+  automations_on_harness: boolean;
   updated_by: string | null;
   updated_at: string;
 };
@@ -924,6 +926,8 @@ type AutomationRow = {
   archive_when_done: boolean;
   debounce_seconds: number;
   session_mode: "new" | "reuse";
+  /** supabase/migrations/20261114120000_automation_cover_new_repos.sql */
+  cover_new_repos: boolean;
   archived_at: string | null;
   runs_since: string;
   created_at: string;
@@ -2406,6 +2410,19 @@ export type Database = {
           settings: Json;
         };
         Returns: boolean;
+      };
+      // supabase/migrations/20261114120000_automation_cover_new_repos.sql
+      ensure_code_review: {
+        Args: {
+          target_org: string;
+          runner: string;
+          automation_name: string;
+          automation_template: string;
+          automation_prompt: string;
+          automation_triggers: AutomationTriggerDb[];
+          project_ids: string[];
+        };
+        Returns: string | null;
       };
       // supabase/migrations/20261102198000_automation_limits.sql
       automation_times_run: {
