@@ -13,8 +13,9 @@
 
 import { createHash } from "node:crypto";
 
-import { type CallTokens, type ComputeRate, type CostBasis, estimateCall, roundUsd } from "@/lib/missions/cost-basis";
-import { hoursUsed, type Interval, type Period } from "@/lib/billing/hours";
+import { type CallTokens, type CostBasis, estimateCall, roundUsd } from "@/lib/missions/cost-basis";
+import { type Interval, type Period } from "@/lib/billing/hours";
+import { INCLUDED_CENTS_PER_VCPU_HOUR, vcpuHoursUsed } from "@/lib/billing/usage";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { SYNTHETIC_MODEL } from "@/lib/runtime/conversation-events";
 
@@ -372,11 +373,12 @@ export type MissionSpend = {
      *  since (a box that stopped unread): their calls aren't known yet. */
     unreadSessions: number;
   };
-  /** The family's boxes, in Small-box hours; dollars only on a configured,
-   *  versioned rate, and then an estimate. */
-  compute: { hours: number; usd: number | null; rate: string | null; coverage: Coverage | null };
-  /** Models, plus compute where a rate turns it into dollars. */
-  total: { coverage: Coverage; usd: number | null; knownUsd: number; includesCompute: boolean };
+  /** The family's boxes: vCPU-hours, and their dollars at the plan's
+   *  included rate (lib/billing/usage.ts), the rate an org's usage limit is
+   *  measured at. Recorded intervals priced by rule, so never unknown. */
+  compute: { vcpuHours: number; usd: number; centsPerVcpuHour: number; coverage: "reported" };
+  /** Models plus compute. */
+  total: { coverage: Coverage; usd: number | null; knownUsd: number };
   /** Policy reservations now, whatever the period: held, and uncertain
    *  (lapsed or settled without a cost), never dropped. */
   reservations: Liability;
@@ -391,7 +393,6 @@ export function summarizeSpend(input: {
   intervals: readonly Interval[];
   unreadSessions: number;
   liability: Liability;
-  rate: ComputeRate | null;
   now: Date;
 }): MissionSpend {
   const { totals } = input;
@@ -402,11 +403,10 @@ export function summarizeSpend(input: {
         ? "estimated"
         : "reported";
   const knownUsd = roundUsd(totals.reportedUsd + totals.estimatedUsd);
-  const hours = hoursUsed(input.intervals, input.period, input.now);
-  const computeUsd = input.rate ? roundUsd(hours * input.rate.usdPerHour) : null;
-  const computeCoverage: Coverage | null = input.rate ? "estimated" : null;
-  const totalCoverage = computeCoverage ? weakest(modelsCoverage, computeCoverage) : modelsCoverage;
-  const totalKnown = roundUsd(knownUsd + (computeUsd ?? 0));
+  const vcpuHours = vcpuHoursUsed(input.intervals, input.period, input.now);
+  const computeUsd = roundUsd((vcpuHours * INCLUDED_CENTS_PER_VCPU_HOUR) / 100);
+  const totalCoverage = modelsCoverage;
+  const totalKnown = roundUsd(knownUsd + computeUsd);
   return {
     missionId: input.missionId,
     period: { kind: input.kind, start: input.period.start.toISOString(), end: input.period.end.toISOString() },
@@ -421,12 +421,11 @@ export function summarizeSpend(input: {
       tokens: totals.tokens,
       unreadSessions: input.unreadSessions,
     },
-    compute: { hours: Math.round(hours * 1e4) / 1e4, usd: computeUsd, rate: input.rate?.version ?? null, coverage: computeCoverage },
+    compute: { vcpuHours: Math.round(vcpuHours * 1e4) / 1e4, usd: computeUsd, centsPerVcpuHour: INCLUDED_CENTS_PER_VCPU_HOUR, coverage: "reported" },
     total: {
       coverage: totalCoverage,
       usd: totalCoverage === "unavailable" ? null : totalKnown,
       knownUsd: totalKnown,
-      includesCompute: computeUsd !== null,
     },
     reservations: input.liability,
   };

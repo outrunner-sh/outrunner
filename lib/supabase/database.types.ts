@@ -244,7 +244,7 @@ type MissionQueuedMessageRow = {
   sent_at: string | null;
 };
 
-// supabase/migrations/20261112160000_mission_spend.sql
+// supabase/migrations/20261114150000_mission_spend.sql
 type MissionUsageRow = {
   usage_ref: string;
   mission_id: string;
@@ -2337,7 +2337,7 @@ export type Database = {
         Args: { max_missions: number };
         Returns: { mission_id: string }[];
       };
-      // supabase/migrations/20261112160000_mission_spend.sql
+      // supabase/migrations/20261114150000_mission_spend.sql
       record_mission_usage: {
         Args: { calls: Json };
         Returns: number;

@@ -6,7 +6,7 @@
 
 import type { Interval } from "@/lib/billing/hours";
 import { allRows } from "@/lib/billing/metering-store";
-import { computeRate, costBasisExtension } from "@/lib/missions/cost-basis";
+import { costBasisExtension } from "@/lib/missions/cost-basis";
 import {
   callsFromEvents,
   classifierCall,
@@ -273,7 +273,6 @@ export async function readMissionSpend(missionId: string, kind: SpendPeriodKind,
       uncertainUsd: Number(l?.uncertain_usd ?? 0),
       openReservations: Number(l?.open_reservations ?? 0),
     },
-    rate: computeRate(),
     now,
   });
 }

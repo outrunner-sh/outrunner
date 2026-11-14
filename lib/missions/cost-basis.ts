@@ -163,21 +163,3 @@ export function estimateCall(
 export function roundUsd(usd: number): number {
   return Math.round(usd * 1e8) / 1e8;
 }
-
-/** MISSION_COMPUTE_RATE: a USD rate for a Small-box hour, versioned. */
-export type ComputeRate = { version: string; usdPerHour: number };
-
-const Rate = z.object({ version: z.string().trim().min(1).max(60), usdPerHour: z.number().nonnegative() });
-
-/** The configured compute rate, or null: hours then stay hours. */
-export function computeRate(raw: string | undefined = optionalEnv("MISSION_COMPUTE_RATE")): ComputeRate | null {
-  if (!raw?.trim()) return null;
-  try {
-    const parsed = Rate.safeParse(JSON.parse(raw));
-    if (parsed.success) return parsed.data;
-  } catch {
-    // Logged below.
-  }
-  console.error("MISSION_COMPUTE_RATE isn't {version, usdPerHour}: compute stays in hours.");
-  return null;
-}

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { INCLUDED_CENTS_PER_VCPU_HOUR } from "@/lib/billing/usage";
 import {
   BUILTIN_COST_BASIS,
-  computeRate,
   costBasisExtension,
   estimateCall,
   pricedModelName,
@@ -215,7 +215,6 @@ const summary = (over: Partial<Parameters<typeof summarizeSpend>[0]> = {}) =>
     intervals: [],
     unreadSessions: 0,
     liability: { heldUsd: 0, uncertainUsd: 0, openReservations: 0 },
-    rate: null,
     now: NOW,
     ...over,
   });
@@ -248,23 +247,25 @@ test("coverage is the least known part: reported, then estimated", () => {
   assert.equal(weakest(), "reported");
 });
 
-test("compute is hours, apart; dollars only on a configured rate, as an estimate", () => {
+test("compute is priced at the plan's included rate, the one usage limits are measured at", () => {
   const intervals = [
     // A Small box (2 vCPU) from 09:00 to 11:00, and a Medium (4) from 23:00 the day before to 01:00.
     { sandboxId: "a", cpu: 2, startedAt: new Date("2026-11-12T09:00:00Z"), lastSeenAt: new Date("2026-11-12T11:00:00Z"), endedAt: new Date("2026-11-12T11:00:00Z") },
     { sandboxId: "b", cpu: 4, startedAt: new Date("2026-11-11T23:00:00Z"), lastSeenAt: new Date("2026-11-12T01:00:00Z"), endedAt: new Date("2026-11-12T01:00:00Z") },
   ];
   const totals = { ...noTotals, reportedUsd: 1, reportedCalls: 1 };
-  const hoursOnly = summary({ intervals, totals });
-  // 2 Small hours, plus the Medium's one hour within the day, at twice the weight.
-  assert.equal(hoursOnly.compute.hours, 4);
-  assert.deepEqual([hoursOnly.compute.usd, hoursOnly.compute.coverage], [null, null]);
-  assert.deepEqual([hoursOnly.total.usd, hoursOnly.total.coverage, hoursOnly.total.includesCompute], [1, "reported", false]);
-  const priced = summary({ intervals, totals, rate: { version: "r1", usdPerHour: 0.25 } });
-  assert.deepEqual([priced.compute.usd, priced.compute.rate, priced.compute.coverage], [1, "r1", "estimated"]);
-  assert.deepEqual([priced.total.usd, priced.total.coverage, priced.total.includesCompute], [2, "estimated", true]);
+  const spend = summary({ intervals, totals });
+  // 2 vCPU for 2 hours, plus the Medium's one hour within the day at 4 vCPU.
+  assert.equal(spend.compute.vcpuHours, 8);
+  // 12¢ a vCPU-hour (lib/billing/usage.ts), never the overage rate.
+  assert.equal(spend.compute.centsPerVcpuHour, INCLUDED_CENTS_PER_VCPU_HOUR);
+  assert.deepEqual([spend.compute.usd, spend.compute.coverage], [0.96, "reported"]);
+  assert.deepEqual([spend.total.usd, spend.total.coverage, spend.total.knownUsd], [1.96, "reported", 1.96]);
   // The models' own figure stays the models'.
-  assert.deepEqual([priced.models.usd, priced.models.coverage], [1, "reported"]);
+  assert.deepEqual([spend.models.usd, spend.models.coverage], [1, "reported"]);
+  // Compute's dollars are known even when a model call isn't: they count in the lower bound.
+  const unknown = summary({ intervals, totals: { ...totals, unavailableCalls: 1 } });
+  assert.deepEqual([unknown.total.usd, unknown.total.coverage, unknown.total.knownUsd], [null, "unavailable", 1.96]);
 });
 
 test("compute rolls over with the period: the week holds what the day splits", () => {
@@ -276,7 +277,7 @@ test("compute rolls over with the period: the week holds what the day splits", (
   const monday = summary({ intervals, now, period: spendPeriod("day", new Date("2026-11-16T12:00:00Z")) });
   const lastWeek = summary({ intervals, now, kind: "week", period: spendPeriod("week", new Date("2026-11-15T12:00:00Z")) });
   const thisWeek = summary({ intervals, now, kind: "week", period: spendPeriod("week", new Date("2026-11-16T12:00:00Z")) });
-  assert.deepEqual([sunday.compute.hours, monday.compute.hours, lastWeek.compute.hours, thisWeek.compute.hours], [1, 1, 1, 1]);
+  assert.deepEqual([sunday.compute.vcpuHours, monday.compute.vcpuHours, lastWeek.compute.vcpuHours, thisWeek.compute.vcpuHours], [2, 2, 2, 2]);
 });
 
 // ---------------------------------------------------------------------------
@@ -336,13 +337,10 @@ test("the deployment's cost basis prices what the built-in one doesn't, under it
   try {
     assert.equal(costBasisExtension("{not json"), null);
     assert.equal(costBasisExtension(JSON.stringify({ models: {} })), null);
-    assert.equal(computeRate(JSON.stringify({ usdPerHour: 1 })), null);
   } finally {
     console.error = quiet;
   }
   assert.equal(costBasisExtension(""), null);
-  assert.deepEqual(computeRate(JSON.stringify({ version: "r", usdPerHour: 0.1 })), { version: "r", usdPerHour: 0.1 });
-  assert.equal(computeRate(undefined), null);
 });
 
 // ---------------------------------------------------------------------------

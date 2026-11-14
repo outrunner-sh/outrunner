@@ -30,7 +30,7 @@ reference unique to the call across every Mission:
 | A reply from an agent before usage, or before `callId` | `unattributed:<session>:<record uuid>` | always `unavailable`: its records can't be told apart into calls |
 | A turn cut off unread (box down, paused or archived mid-turn) | `gap:<session>:<box>:<cursor>:<UTC day>` | `unavailable` until the same box's log is read on from that cursor |
 | A call the database refuses for its data | `refused:<reference>` | `unavailable` stand-in: a call too odd to store still isn't $0 |
-| Compute (the family's boxes) | `compute_intervals` | hours, apart; `estimated` dollars only with `MISSION_COMPUTE_RATE` |
+| Compute (the family's boxes) | `compute_intervals` | `reported`: vCPU-hours priced at the plan's included rate |
 
 So sessions' model spend is **estimated** today: Claude Code's log says each
 call's tokens and model, not its price. Only a provider that states a call's
@@ -115,13 +115,17 @@ logged and ignored: those models stay `unavailable`.
 
 ### Compute
 
-The family's boxes' `compute_intervals`, in Small-box hours as plan hours
-count them (`lib/billing/hours.ts`), within the period. Shown apart from the
-models. With `MISSION_COMPUTE_RATE`
-(`{"version": "daytona-2026-11", "usdPerHour": 0.1}`, USD per Small-box
-hour) they also get dollars, labelled `estimated` with the rate's version,
-and `total` includes them (`includesCompute`); without it, `total` is the
-models alone.
+The family's boxes' `compute_intervals` within the period, as vCPU-hours
+counted the way an org's cloud usage is (`vcpuHoursUsed`,
+`lib/billing/usage.ts`: each ended session at least a minute), priced at the
+plan's **included** rate (`INCLUDED_CENTS_PER_VCPU_HOUR`, 12¢ a vCPU-hour).
+That is the rate an org's usage and its dollar limit are measured at, so a
+Mission's budget and its org's limit speak the same dollars. It is never the
+overage rate: whether a box's minutes fall past the plan's included usage
+depends on the org's other sessions, not the Mission's. There is no second
+rate to configure. Compute is `reported` (recorded intervals priced by
+rule), shown apart from the models, and always in `total`; an unknown model
+call still makes `total.usd` null, with compute in `knownUsd`.
 
 ## Periods
 
@@ -171,8 +175,8 @@ owner only; `period` defaults to `day`, `at` to now.
       "tokens": { "input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 },
       "unreadSessions": 0
     },
-    "compute": { "hours": 6.5, "usd": null, "rate": null, "coverage": null },
-    "total": { "coverage": "estimated", "usd": 3.41, "knownUsd": 3.41, "includesCompute": false },
+    "compute": { "vcpuHours": 13, "usd": 1.56, "centsPerVcpuHour": 12, "coverage": "reported" },
+    "total": { "coverage": "estimated", "usd": 4.97, "knownUsd": 4.97 },
     "reservations": { "heldUsd": 0, "uncertainUsd": 0, "openReservations": 0 }
   }
 }
@@ -184,9 +188,9 @@ In code, `readMissionSpend(missionId, kind, at)`.
 
 | Piece | Where |
 | --- | --- |
-| Tables and functions | `supabase/migrations/20261112160000_mission_spend.sql` |
+| Tables and functions | `supabase/migrations/20261114150000_mission_spend.sql` |
 | Calls, periods, coverage (pure) | `lib/missions/spend.ts` |
-| Cost basis and compute rate | `lib/missions/cost-basis.ts` |
+| Cost basis | `lib/missions/cost-basis.ts`; compute's rate is `lib/billing/usage.ts` |
 | Database side, reservations | `lib/missions/spend.deps.ts` |
 | Recording a family's calls | `lib/session/watch.ts` (`readSession`) |
 | A reply's call id | runtime-agent `internal/conversation/watcher.go` (`callId`, from the log's `message.id`) |
@@ -197,13 +201,12 @@ nothing granted to `anon` or `authenticated`), as the other Missions tables.
 
 ## Setting it up
 
-1. Run `pnpm db:migrate` (`20261112160000_mission_spend.sql`).
+1. Run `pnpm db:migrate` (`20261114150000_mission_spend.sql`).
 2. Deploy. Boxes made after the deploy run a runtime-agent that names each
    reply's call (`callId`); a box from before goes on with its own agent, and
    its replies count as `unavailable` until it's rebuilt.
-3. Optional: set `MISSION_COST_BASIS` to price models the list doesn't, and
-   `MISSION_COMPUTE_RATE` to show compute in dollars. Both are estimates and
-   say their version.
+3. Optional: set `MISSION_COST_BASIS` to price models the list doesn't. Its
+   prices are estimates and say their version. Compute needs nothing set.
 
 ## Known gaps
 
@@ -219,7 +222,8 @@ nothing granted to `anon` or `authenticated`), as the other Missions tables.
 
 - `test/mission-spend.test.ts`: periods and their rollover, one call per
   reply however its records are read, Codex calls, classifier calls,
-  coverage (never $0 for unknown), compute, the cost basis.
+  coverage (never $0 for unknown), compute at the included rate, the cost
+  basis.
 - `test/mission-spend-sql.test.ts` (needs `MISSIONS_PG`): once per call
   under racing writes, reported never replaced, one Mission per call, period
   boundaries, reservations' idempotence, lock, lapse and settle, and that
