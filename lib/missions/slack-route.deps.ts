@@ -4,7 +4,9 @@
  * access, the Mission's outbox, and Slack through the installation's bot.
  */
 
+import { POST as interruptPOST } from "@/app/api/workspaces/[id]/interrupt/route";
 import { after } from "@/lib/observability/after";
+import { asBrowser } from "@/lib/slack/research";
 
 import { getOwner } from "@/lib/auth/owner";
 import { getEnvironment } from "@/lib/db/environments";
@@ -14,7 +16,8 @@ import type { SlackInstallation } from "@/lib/db/slack-agent";
 import { slackLinkTarget } from "@/lib/db/slack-links";
 import { toWorkspace } from "@/lib/db/mappers";
 import { sessionById } from "@/lib/missions/store";
-import { stopThread } from "@/lib/missions/requests.deps";
+import { stopThreadWork } from "@/lib/missions/requests";
+import { requestDeps } from "@/lib/missions/requests.deps";
 import { announceBinding, takeOffCall } from "@/lib/missions/slack-binding";
 import {
   acceptThread,
@@ -25,6 +28,7 @@ import {
   recordRequest,
   setChannelPaused,
   setThreadMuted,
+  shipRunnersOfThread,
 } from "@/lib/missions/slack-store";
 import type { FoundProject, Requester, SlackRouteDeps, SlackRouteMessage } from "@/lib/missions/slack-route";
 import { recordMissionEvent } from "@/lib/missions/watch.deps";
@@ -162,6 +166,15 @@ async function createMission(requester: Requester, project: FoundProject, channe
   return Promise.race([created, run]);
 }
 
+/** Interrupt a Ship's running turn, as its owner (who the Mission runs it
+ *  as); false when it couldn't be. */
+async function interruptRunner(ownerId: string, runnerId: string): Promise<boolean> {
+  return actAsUser(ownerId, async () => {
+    const response = await interruptPOST(asBrowser(`/api/workspaces/${runnerId}/interrupt`, {}), { params: Promise.resolve({ id: runnerId }) });
+    return response.ok;
+  }).catch(() => false);
+}
+
 export function slackRouteDeps(
   install: SlackInstallation,
   message: SlackRouteMessage,
@@ -195,7 +208,8 @@ export function slackRouteDeps(
       if (mission) await takeOffCall(mission, by.userId);
     },
     enqueue: recordMissionEvent,
-    stopThread,
+    stopThread: (mission, threadId) =>
+      stopThreadWork(mission.id, threadId, { ...requestDeps(), shipRunners: shipRunnersOfThread, interrupt: (runnerId) => interruptRunner(mission.ownerId, runnerId) }),
     name: async (slackUserId) => (await userNames(install.botToken, [slackUserId])).get(slackUserId) ?? slackUserId,
     permalink: (ts) => messagePermalink(install.botToken, channel, ts),
     reply: async (threadTs, text) => {

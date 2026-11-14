@@ -13,7 +13,7 @@ import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { checkMissionWebhook, pagerDutySignatureOf, providerOf, signatureOf } from "@/lib/missions/webhook-target";
+import { checkMissionWebhook, pagerDutySignatureOf, payloadHashOf, providerOf, signatureOf } from "@/lib/missions/webhook-target";
 
 const sentryBody = readFileSync("test/fixtures/sentry-issue-created.json", "utf8");
 const pagerBody = readFileSync("test/fixtures/pagerduty-incident-priority-updated.json", "utf8");
@@ -24,10 +24,10 @@ const sentryHeaders = (patch: Record<string, string> = {}) =>
   new Headers({ "content-type": "application/json", "request-id": "b1946ac9-2f3c-4a39-9cd1-0e5f1d3b7c11", "sentry-hook-resource": "issue", "sentry-hook-timestamp": "1731272160", "sentry-hook-signature": hex(sentryBody), ...patch });
 const pagerHeaders = (signature: string) => new Headers({ "content-type": "application/json", "x-pagerduty-signature": signature });
 
-test("Sentry: its signature (a hex HMAC of the raw body) and its Request-ID are the check and the key", () => {
+test("Sentry: its signature (a hex HMAC of the raw body) is the check and the signed body is the key, whatever Request-ID says", () => {
   const ok = checkMissionWebhook({ headers: sentryHeaders(), raw: sentryBody, secret });
   assert.ok(ok.ok);
-  assert.equal(ok.ok && ok.key, "webhook:sentry:b1946ac9-2f3c-4a39-9cd1-0e5f1d3b7c11");
+  assert.equal(ok.ok && ok.key, `webhook:sentry:${payloadHashOf(sentryBody)}`);
   assert.equal(providerOf(sentryHeaders()), "sentry");
   // The same delivery again: the same key, so the route answers it as the first.
   const again = checkMissionWebhook({ headers: sentryHeaders(), raw: sentryBody, secret });
@@ -44,10 +44,19 @@ test("Sentry: its signature (a hex HMAC of the raw body) and its Request-ID are 
   assert.equal(checkMissionWebhook({ headers: unsigned, raw: sentryBody, secret }).ok, false);
   // Re-serialised JSON is another body: the docs say to sign the raw bytes.
   assert.equal(checkMissionWebhook({ headers: sentryHeaders(), raw: JSON.stringify(JSON.parse(sentryBody), null, 1), secret }).ok, false);
-  // No Request-ID: nothing to key it by.
+  // Request-ID isn't signed: a replay under another one is the same delivery.
+  const replay = checkMissionWebhook({ headers: sentryHeaders({ "request-id": "a-fresh-id-from-the-replayer" }), raw: sentryBody, secret });
+  assert.equal(replay.ok && replay.key, ok.ok && ok.key);
+  // None is fine when it's signed.
   const noId = sentryHeaders();
   noId.delete("request-id");
-  assert.equal(checkMissionWebhook({ headers: noId, raw: sentryBody, secret }).ok, false);
+  const without = checkMissionWebhook({ headers: noId, raw: sentryBody, secret });
+  assert.equal(without.ok && without.key, ok.ok && ok.key);
+  // A body that differs by a byte (re-signed) is another delivery.
+  const changed = sentryBody.replace('"count":"3"', '"count":"4"');
+  const another = checkMissionWebhook({ headers: sentryHeaders({ "sentry-hook-signature": hex(changed) }), raw: changed, secret });
+  assert.ok(another.ok);
+  assert.notEqual(another.ok && another.key, ok.ok && ok.key);
 });
 
 test("PagerDuty: v1= signatures (several, comma separated) and the body's event.id are the check and the key", () => {

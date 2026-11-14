@@ -62,8 +62,8 @@ export type RequestDeps = {
   cancel(missionId: string, key: string): Promise<boolean>;
   /** A thread's requests still open. */
   openInThread(threadId: string): Promise<MissionRequest[]>;
-  /** The Mission's open requests that started no Ship. */
-  pending(missionId: string): Promise<MissionRequest[]>;
+  /** The Mission's open requests of one binding that started no Ship. */
+  pending(missionId: string, bindingRevision: string): Promise<MissionRequest[]>;
   enqueue(event: RecordedEvent): Promise<boolean>;
 };
 
@@ -247,21 +247,43 @@ export async function cancelRequest(missionId: string, key: string, reason: stri
   return true;
 }
 
-/** `@Outrunner stop` in a thread: each of its open requests cancelled, so the
- *  Mission stops that work and no other thread's. How many were open. */
-export async function stopThreadRequests(missionId: string, threadId: string, deps: RequestDeps): Promise<number> {
-  let stopped = 0;
+/** `@Outrunner stop` in a thread: each of its open requests cancelled (the
+ *  Mission archives their Ships with no open pull request and starts nothing
+ *  more for them), and the running turn of each Ship started for the thread
+ *  interrupted now, by the server, rather than left to the Mission to get to.
+ *  No other thread's, no other Mission's. One Ship that can't be interrupted
+ *  (not running, gone) doesn't stop the rest. */
+export type StopDeps = RequestDeps & {
+  /** The runner ids of the Ships started for the thread. */
+  shipRunners(missionId: string, threadId: string): Promise<string[]>;
+  /** Interrupt a Ship's turn, as its owner; false when it couldn't be. */
+  interrupt(runnerId: string): Promise<boolean>;
+};
+
+export async function stopThreadWork(missionId: string, threadId: string, deps: StopDeps): Promise<{ requests: number; ships: number }> {
+  let requests = 0;
   for (const request of await deps.openInThread(threadId)) {
-    if (request.missionId === missionId && (await cancelRequest(missionId, request.requestKey, "stopped in Slack", deps))) stopped++;
+    if (request.missionId === missionId && (await cancelRequest(missionId, request.requestKey, "stopped in Slack", deps))) requests++;
   }
-  return stopped;
+  let ships = 0;
+  for (const runnerId of await deps.shipRunners(missionId, threadId)) {
+    if (await deps.interrupt(runnerId).catch(() => false)) ships++;
+  }
+  return { requests, ships };
 }
 
-/** The Mission off call: its open requests that started no Ship are
- *  cancelled. Ships already started go on with their owner. How many. */
-export async function cancelPendingRequests(missionId: string, reason: string, deps: RequestDeps): Promise<number> {
+/** The Mission off call: its open requests of the ended binding that started
+ *  no Ship are cancelled. Ships already started go on with their owner.
+ *  How many.
+ *
+ *  Why the order is safe: this runs after the binding is gone, and a Ship
+ *  start (or post) in flight is refused once its binding revision isn't the
+ *  live one (recheckStart, lib/missions/slack-tools.ts). So no request listed
+ *  here can start a Ship while it's being cancelled, and one that reserved
+ *  its Ship before the unbind has a Ship row, so it isn't listed. */
+export async function cancelPendingRequests(missionId: string, bindingRevision: string, reason: string, deps: RequestDeps): Promise<number> {
   let cancelled = 0;
-  for (const request of await deps.pending(missionId)) {
+  for (const request of await deps.pending(missionId, bindingRevision)) {
     if (await cancelRequest(missionId, request.requestKey, reason, deps)) cancelled++;
   }
   return cancelled;

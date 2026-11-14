@@ -105,7 +105,7 @@ test("a mention becomes a Ship and its pull request's cards, once each, through 
       events.push({ id: `e${events.length + 1}`, runnerId: event.runnerId, kind: event.kind, payload: event.payload, createdAt: "2026-11-12T10:00:00Z", key: event.key, delivered: false });
       return true;
     },
-    stopThread: async () => 0,
+    stopThread: async () => ({ requests: 0, ships: 0 }),
     name: async () => "Ana",
     permalink: async (ts) => `https://acme.slack.com/archives/C1/p${ts.replace(".", "")}`,
     reply: async () => undefined,

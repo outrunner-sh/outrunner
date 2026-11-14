@@ -12,7 +12,8 @@
  *   theirs is checked their way, with the same per-trigger secret (their
  *   Client Secret / subscription secret):
  *     Sentry     `Sentry-Hook-Signature`: hex HMAC-SHA256 of the raw body;
- *                its `Request-ID` is the key.
+ *                the key is the body's hash (`Request-ID` isn't signed, so
+ *                it's never the key).
  *                https://docs.sentry.io/organization/integrations/integration-platform/webhooks/
  *     PagerDuty  `X-PagerDuty-Signature`: `v1=<hex>`, several comma
  *                separated (a secret being rotated), any one may match;
@@ -82,9 +83,11 @@ function providerCheck(provider: "sentry" | "pagerduty", input: { headers: Heade
     if (input.secret !== null && !sameSignature((input.headers.get("sentry-hook-signature") ?? "").trim().toLowerCase(), hexHmac(input.raw, input.secret))) {
       return fail(401, "The Sentry-Hook-Signature header doesn't match: set this trigger's signing secret to the integration's Client Secret.");
     }
-    const id = (input.headers.get("request-id") ?? "").trim();
-    if (!KEY_OK(id)) return fail(400, "A Sentry delivery needs its Request-ID header.");
-    return { ok: true, key: `webhook:sentry:${id}`, payloadHash: payloadHashOf(input.raw) };
+    // Keyed by the signed body, not by Request-ID: the signature covers the
+    // body only, so a replay under a fresh Request-ID would otherwise be a new
+    // delivery, and a retry that doesn't keep its Request-ID a second one.
+    const payloadHash = payloadHashOf(input.raw);
+    return { ok: true, key: `webhook:sentry:${payloadHash}`, payloadHash };
   }
   if (input.secret !== null && !pagerDutySigned(input.headers.get("x-pagerduty-signature") ?? "", input.raw, input.secret)) {
     return fail(401, "The X-PagerDuty-Signature header doesn't match: set this trigger's signing secret to the webhook subscription's secret.");

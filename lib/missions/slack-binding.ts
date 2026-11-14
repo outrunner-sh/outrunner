@@ -15,6 +15,7 @@ import { getInstallation } from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";
 import { eventKey } from "@/lib/missions/events";
 import { missionBinding, type MissionChannel, openAsks, threadById, unbindChannel } from "@/lib/missions/slack-store";
+import { cancelPending } from "@/lib/missions/requests.deps";
 import { takeMissionOffCall } from "@/lib/missions/slack-offcall";
 import { type CardEnd, introText } from "@/lib/missions/slack-text";
 import { recordMissionEvent } from "@/lib/missions/watch.deps";
@@ -81,6 +82,7 @@ export async function takeOffCall(mission: Workspace, userId: string, why: CardE
       await updateMessage(install.botToken, { channel: binding.channelId, ts, text, blocks });
     },
     unbind: unbindChannel,
+    dropPending: (missionId, binding, why) => cancelPending(missionId, binding.revision, why === "archived" ? "the Mission was archived" : "the Mission went off call"),
     tell: async (m, binding) => {
       await recordMissionEvent({
         missionId: m.id,

@@ -83,10 +83,10 @@ export type SlackRouteDeps = {
   unbind(binding: MissionChannel, by: Requester): Promise<void>;
   /** Record an event for the Mission: true when it's new. */
   enqueue(event: RecordedEvent): Promise<boolean>;
-  /** Stop this thread's work: its open requests cancelled (the Mission
-   *  stops their Ships and starts nothing more for them), no other
-   *  thread's. How many requests were open. */
-  stopThread(missionId: string, threadId: string): Promise<number>;
+  /** Stop this thread's work: its open requests cancelled and its Ships'
+   *  running turns interrupted (lib/missions/requests.ts stopThreadWork),
+   *  no other thread's. */
+  stopThread(mission: Workspace, threadId: string): Promise<{ requests: number; ships: number }>;
   /** A Slack user's name, as Slack shows it. */
   name(slackUserId: string): Promise<string>;
   permalink(ts: string): Promise<string | null>;
@@ -280,14 +280,15 @@ async function runCommand(
       return;
     case "stop": {
       const thread = await deps.thread(binding.teamId, binding.channelId, threadTs);
-      const stopped = thread && thread.missionId === mission.id ? await deps.stopThread(mission.id, thread.id).catch(() => null) : 0;
+      const stopped = thread && thread.missionId === mission.id ? await deps.stopThread(mission, thread.id).catch(() => null) : { requests: 0, ships: 0 };
+      const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
       await deps.reply(
         threadTs,
         stopped === null
           ? "I couldn't reach the Mission to stop this thread's work."
-          : stopped === 0
+          : stopped.requests === 0 && stopped.ships === 0
             ? "Nothing is open in this thread."
-            : `Stopped: ${stopped === 1 ? "this thread's request is" : `this thread's ${stopped} requests are`} cancelled. The Mission archives their Ships that have no open pull request and starts nothing more for them. Other threads go on.`,
+            : `Stopped: ${plural(stopped.requests, "request", "requests")} cancelled and ${plural(stopped.ships, "Ship's turn", "Ships' turns")} interrupted. The Mission archives the Ships with no open pull request and starts nothing more for these requests. Other threads go on.`,
       );
       return;
     }

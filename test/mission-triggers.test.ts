@@ -18,7 +18,7 @@ import type { RunCandidate } from "@/lib/db/automation-runs";
 import { filterSystemPrompt, type MissionRunDeps, type MissionRunOutcome, parseFilterAnswer, startMissionRun } from "@/lib/missions/automation-target";
 import { parseRunnerEvents, formatDelivery, type MissionEvent } from "@/lib/missions/events";
 import { checkMissionTarget } from "@/lib/missions/mission-automations";
-import { announceLate, cancelPendingRequests, cancelRequest, stopThreadRequests, createRequest, type NewRequest, onRootSettled, type RequestDeps, rootText, updateRequest } from "@/lib/missions/requests";
+import { announceLate, cancelPendingRequests, cancelRequest, stopThreadWork, createRequest, type NewRequest, onRootSettled, type RequestDeps, rootText, updateRequest } from "@/lib/missions/requests";
 import type { QueuedPost } from "@/lib/missions/slack-outbox";
 import type { MissionChannel, MissionRequest, MissionThread } from "@/lib/missions/slack-store";
 import type { RecordedEvent } from "@/lib/missions/watch";
@@ -226,7 +226,7 @@ function requestWorld(bound: boolean) {
       return true;
     },
     openInThread: async (threadId) => [...rows.values()].filter((r) => r.threadId === threadId && r.status === "open"),
-    pending: async () => [...rows.values()].filter((r) => r.status === "open" && !shipped.has(r.requestKey)),
+    pending: async (_m, revision) => [...rows.values()].filter((r) => r.status === "open" && r.bindingRevision === revision && !shipped.has(r.requestKey)),
     enqueue: async (event) => {
       if (events.some((e) => e.key === event.key)) return false;
       events.push(event);
@@ -303,25 +303,46 @@ test("updates reach the same request; cancelling stops that one only", async () 
   assert.equal(await updateRequest(MISSION, "run:none", { id: "a3", text: "more" }, w.deps), "missing");
 });
 
-test("stop in a thread cancels that thread's open requests and no other's; off call drops only requests with no Ship", async () => {
+test("stop in a thread cancels its open requests and interrupts its Ships, and no other thread's or Mission's; one failing interrupt doesn't stop the rest", async () => {
   const w = requestWorld(true);
-  for (const [key, thread] of [["r1", "1731400001.000100"], ["r2", "1731400001.000100"], ["r3", "1731400002.000100"], ["r4", "1731400003.000100"]] as const) {
+  for (const [key, thread] of [["r1", "1731400001.000100"], ["r2", "1731400001.000100"], ["r3", "1731400002.000100"]] as const) {
     await createRequest({ ...newRequest, key, threadTs: thread } as NewRequest, w.deps);
     w.rows.get(key)!.threadId = (await w.deps.acceptThread({ missionId: MISSION, teamId: "T1", channelId: "C100", threadTs: thread, startedBy: null })).id;
   }
   const first = w.rows.get("r1")!.threadId!;
-  assert.equal(await stopThreadRequests(MISSION, first, w.deps), 2);
-  assert.equal(await stopThreadRequests(MISSION, first, w.deps), 0, "nothing left open there");
-  assert.deepEqual([...w.rows.values()].map((r) => `${r.requestKey}:${r.status}`), ["r1:cancelled", "r2:cancelled", "r3:open", "r4:open"]);
-  assert.equal(await stopThreadRequests("another-mission", w.rows.get("r3")!.threadId!, w.deps), 0, "another Mission's stop touches nothing");
-  const stops = w.events.filter((e) => e.kind === "request_cancelled");
-  assert.deepEqual(stops.map((e) => (e.payload.request as { key: string; reason: string }).reason), ["stopped in Slack", "stopped in Slack"]);
-  // Off call: r3 started a Ship, so it goes on; r4 hadn't, so it's dropped.
-  w.shipped.add("r3");
-  assert.equal(await cancelPendingRequests(MISSION, "the Mission went off call", w.deps), 1);
+  const other = w.rows.get("r3")!.threadId!;
+  const interrupted: string[] = [];
+  const deps = {
+    ...w.deps,
+    shipRunners: async (mission: string, thread: string) => (mission !== MISSION ? [] : thread === first ? ["ship-a", "ship-broken", "ship-b"] : ["ship-other"]),
+    interrupt: async (runnerId: string) => {
+      interrupted.push(runnerId);
+      if (runnerId === "ship-broken") throw new Error("not running");
+      return true;
+    },
+  };
+  assert.deepEqual(await stopThreadWork(MISSION, first, deps), { requests: 2, ships: 2 });
+  assert.deepEqual(interrupted, ["ship-a", "ship-broken", "ship-b"], "every Ship of the thread is tried; the broken one doesn't stop ship-b");
+  assert.deepEqual(await stopThreadWork(MISSION, first, deps), { requests: 0, ships: 2 }, "nothing left to cancel; the Ships are tried again");
+  assert.deepEqual([...w.rows.values()].map((r) => `${r.requestKey}:${r.status}`), ["r1:cancelled", "r2:cancelled", "r3:open"]);
+  assert.equal(interrupted.includes("ship-other"), false, "another thread's Ship is left alone");
+  // Another Mission's stop touches no request and no Ship.
+  assert.deepEqual(await stopThreadWork("another-mission", other, deps), { requests: 0, ships: 0 });
   assert.equal(w.rows.get("r3")?.status, "open");
-  assert.equal(w.rows.get("r4")?.status, "cancelled");
-  assert.equal(w.events.at(-1)?.key, "request_cancelled:" + MISSION + ":r4");
+});
+
+test("off call cancels every open request of that binding with no Ship, and none of a newer binding's", async () => {
+  const w = requestWorld(true);
+  for (const key of ["r1", "r2", "r3", "r4"]) await createRequest({ ...newRequest, key } as NewRequest, w.deps);
+  w.rows.get("r1")!.bindingRevision = "rev1";
+  w.rows.get("r2")!.bindingRevision = "rev1";
+  w.rows.get("r3")!.bindingRevision = "rev1"; // started a Ship: goes on
+  w.rows.get("r4")!.bindingRevision = "rev2"; // put on call again since
+  w.shipped.add("r3");
+  assert.equal(await cancelPendingRequests(MISSION, "rev1", "the Mission went off call", w.deps), 2);
+  assert.deepEqual([...w.rows.values()].map((r) => `${r.requestKey}:${r.status}`), ["r1:cancelled", "r2:cancelled", "r3:open", "r4:open"]);
+  assert.deepEqual(w.events.filter((e) => e.kind === "request_cancelled").map((e) => e.key), [`request_cancelled:${MISSION}:r1`, `request_cancelled:${MISSION}:r2`]);
+  assert.equal(await cancelPendingRequests(MISSION, "rev1", "again", w.deps), 0);
 });
 
 test("a root post can\'t ping the channel or hide a link in what came from outside", () => {

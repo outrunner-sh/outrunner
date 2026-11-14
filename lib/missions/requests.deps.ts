@@ -12,7 +12,6 @@ import {
   createRequest,
   onRootSettled,
   type RequestDeps,
-  stopThreadRequests,
   updateRequest,
 } from "@/lib/missions/requests";
 import type { QueuedPost } from "@/lib/missions/slack-outbox";
@@ -92,10 +91,6 @@ export async function announceUntold(): Promise<number> {
   return told;
 }
 
-export function stopThread(missionId: string, threadId: string) {
-  return stopThreadRequests(missionId, threadId, requestDeps());
-}
-
-export function cancelPending(missionId: string, reason: string) {
-  return cancelPendingRequests(missionId, reason, requestDeps());
+export function cancelPending(missionId: string, bindingRevision: string, reason: string) {
+  return cancelPendingRequests(missionId, bindingRevision, reason, requestDeps());
 }

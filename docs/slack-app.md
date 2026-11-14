@@ -69,7 +69,7 @@ sessions that open pull requests), and posts their pull requests there. A Missio
 answers Slack (so a crash loses nothing, and the endpoint answers 503, for Slack to retry, when it can't be saved),
 and every post it makes goes through a queue that never posts the same thing twice. Only connected members who can read the
 project can task it. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread,
-`@Outrunner stop` stops that thread's work: its open requests are cancelled, the Mission archives their Ships with no open pull request and starts nothing more for them. Other threads go on. `@Outrunner pause` / `resume` and `@Outrunner stop being on call here` need write
+`@Outrunner stop` stops that thread's work: its open requests are cancelled, its Ships' running turns are interrupted by the server, the Mission archives the Ships with no open pull request and starts nothing more for them. Other threads go on. `@Outrunner pause` / `resume` and `@Outrunner stop being on call here` need write
 on the project. It starts at most 6 Ships an hour and 30 a day. The commands are exact and handled directly, not
 by a model. Channels with no Mission keep everything below. See [Missions](missions.md#on-call-in-slack).
 

@@ -471,17 +471,26 @@ export async function openThreadRequests(threadId: string): Promise<MissionReque
   return (data ?? []).map(toRequest);
 }
 
-/** The Mission's open requests that have started no Ship: what going off
- *  call drops. A request with a Ship goes on with it, with its owner. */
-export async function pendingRequests(missionId: string): Promise<MissionRequest[]> {
-  const [requests, ships] = await Promise.all([
-    db().from("mission_slack_requests").select("*").eq("mission_id", missionId).eq("status", "open"),
-    db().from("mission_slack_ships").select("request_key").eq("mission_id", missionId).not("request_key", "is", null),
-  ]);
+/** The Mission's open requests of one binding (its revision) that started
+ *  no Ship: what that binding ending drops. A request with a Ship goes on
+ *  with it, with its owner; one of a newer binding is not this one's. */
+export async function pendingRequests(missionId: string, bindingRevision: string): Promise<MissionRequest[]> {
+  const requests = await db().from("mission_slack_requests").select("*").eq("mission_id", missionId).eq("status", "open").eq("binding_revision", bindingRevision);
   if (requests.error) throw requests.error;
+  const open = (requests.data ?? []).map(toRequest);
+  if (open.length === 0) return [];
+  // Only the Ships of these requests: not every Ship the Mission ever had.
+  const ships = await db().from("mission_slack_ships").select("request_key").eq("mission_id", missionId).in("request_key", open.map((r) => r.requestKey));
   if (ships.error) throw ships.error;
   const started = new Set((ships.data ?? []).map((row) => row.request_key));
-  return (requests.data ?? []).map(toRequest).filter((request) => !started.has(request.requestKey));
+  return open.filter((request) => !started.has(request.requestKey));
+}
+
+/** The Ships started for a thread's requests, by their runner ids. */
+export async function shipRunnersOfThread(missionId: string, threadId: string): Promise<string[]> {
+  const { data, error } = await db().from("mission_slack_ships").select("runner_id").eq("mission_id", missionId).eq("thread_id", threadId).not("runner_id", "is", null);
+  if (error) throw error;
+  return (data ?? []).flatMap((row) => (row.runner_id ? [row.runner_id] : []));
 }
 
 /** Cancel a request: true when it was open. */
