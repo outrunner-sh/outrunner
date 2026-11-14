@@ -87,9 +87,9 @@ export async function createWorkspace(
   const askedId = key ? idempotentId(context.owner.id, key) : undefined;
   // Sent again: the session the first send made, before anything is
   // uploaded or watched a second time.
-  const made = askedId ? await getWorkspace(askedId) : null;
-  if (made && made.ownerId === context.owner.id) {
-    return Response.json(workspaceJson(made, context.base), { status: 200, headers: { "idempotent-replayed": "true" } });
+  const replayed = askedId ? await getWorkspace(askedId) : null;
+  if (replayed && replayed.ownerId === context.owner.id) {
+    return Response.json(workspaceJson(replayed, context.base), { status: 200, headers: { "idempotent-replayed": "true" } });
   }
   const raw = await jsonBody(context.request);
   if (raw instanceof Response) return raw;
@@ -121,7 +121,9 @@ export async function createWorkspace(
   if (!project || project.orgId !== caller.orgId || !allows(await projectLevel(owner.id, project.id), "read")) {
     return apiError(404, "No repository by that id that you can see in this org.");
   }
-  const start = input.pullRequest ? await pullRequestStart(owner.id, project, input) : { baseBranch: input.baseBranch };
+  const start: { baseBranch?: string; preamble?: string } | Response = input.pullRequest
+    ? await pullRequestStart(owner.id, project, input)
+    : { baseBranch: input.baseBranch };
   if (start instanceof Response) return start;
   const unknownFile = await checkAttachments(input.attachmentIds);
   if (unknownFile) return unknownFile;
