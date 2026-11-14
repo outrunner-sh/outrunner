@@ -1,3 +1,4 @@
+import { claudeAccountForSession } from "@/lib/claude/grant";
 import { gcpConnection } from "@/lib/db/gcp";
 import { accountForSession, inferenceGrant } from "@/lib/codex/grant";
 /**
@@ -769,11 +770,15 @@ export function agentAuthStore(userId: string, orgId?: string): AgentAuthStore {
 
       const account = agent === "codex" && (!choices.codex || choices.codex === "codex-account")
         ? await accountForSession(userId, orgId, !!sealed.get("openai"), choices.codex === "codex-account") : null;
+      const claudeAccount = usesSlot && orgId && (!choices.claude || choices.claude === "subscription")
+        ? await claudeAccountForSession(userId, orgId) : null;
       const opened = new Map<string, string | null>();
       return {
         choice: choices[agent],
+        sessionCredential: (credential) => credential.kind === "claude-slot" && claudeAccount ? { kind: "claude-account", token: claudeAccount } : null,
         open(credential: AuthCredential) {
           if (credential.kind === "own-login") return null;
+          if (credential.kind === "claude-slot" && claudeAccount) return claudeAccount;
           if (credential.kind === "codex-account") return account ? inferenceGrant(userId, orgId, account) : null;
           const which = credential.kind === "claude-slot" ? "claude-slot" : credential.provider;
           if (!opened.has(which)) {

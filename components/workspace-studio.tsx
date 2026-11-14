@@ -10,6 +10,7 @@ import { CollapsedSidebarButtons, MobileNavButton } from "@/components/app-frame
 import { useAppData } from "@/components/app-data";
 import { ChatSwitcher } from "@/components/chat-switcher";
 import { requestSessionDeletion } from "@/components/delete-session-dialog";
+import { useArchiveSession } from "@/components/archive-session-dialog";
 import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
 import { SessionInfo } from "@/components/session-info";
 import { MissionHeader } from "@/components/missions/mission-header";
@@ -38,6 +39,7 @@ import { missionArchiveOffer, unarchivedShipCount } from "@/lib/missions/archive
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
+import { archiveOffer } from "@/lib/session/archive-control";
 import { canDestroy } from "@/lib/session/provisioning";
 import { FORCED_PAUSE_NOTICE_PREFIX } from "@/lib/billing/reconcile";
 import { useNow } from "@/hooks/use-now";
@@ -108,12 +110,17 @@ export function WorkspaceStudio({
   // Dragged wider or narrower by its left edge, where it sits beside the chat.
   const inspectorWidth = useInspectorWidth(isMission ? "mission" : "session");
   const { mission } = useMission(isMission ? workspace.id : undefined);
-  // Missions archive their Ships together. Individual cloud sessions are deleted.
-  const archive = !isLocal && isMission ? missionArchiveOffer(workspace) : null;
-  const archiveLabel = "Archive Mission";
+  // Missions archive their Ships together, after a dialog; a session archives
+  // at once, with Undo (components/archive-session-dialog.tsx).
+  const archive = isLocal ? null : isMission ? missionArchiveOffer(workspace) : archiveOffer(workspace);
+  const archiveLabel = isMission ? "Archive Mission" : "Archive session";
   const [archiving, setArchiving] = useState(false);
+  const archiveSession = useArchiveSession();
   const now = useNow(60_000);
-  const deletable = !isLocal && !isMission && canDestroy(workspace, now);
+  // Delete only where Archive isn't offered at all (a provider with no
+  // Snapshots): a session that didn't start, or stalled, says so in its body,
+  // with Delete there (SessionDidntStart, SetupStalled).
+  const deletable = !isLocal && !isMission && !onRuntimeComputer(workspace.provider) && canDestroy(workspace, now);
   const router = useRouter();
   const leave = () => {
     router.push("/");
@@ -225,7 +232,9 @@ export function WorkspaceStudio({
               // Not `disabled`: a disabled button shows no tooltip saying why.
               aria-disabled={!archive.can}
               onClick={() => {
-                if (archive.can) setArchiving(true);
+                if (!archive.can) return;
+                if (isMission) setArchiving(true);
+                else archiveSession({ id: workspace.id, title: workspaceLabel(workspace) });
               }}
               title={archive.can ? archiveLabel : archive.why}
               aria-label={archiveLabel}
