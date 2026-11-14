@@ -210,6 +210,24 @@ type MissionChannelRow = {
   paused: boolean;
   /** 20261114200100: new each time it's bound. */
   revision: string;
+  /** 20261114210000_mission_budgets.sql */
+  budget_paused_period: "day" | "week" | null;
+  budget_paused_until: string | null;
+  /** 20261114210100_mission_idle_pause.sql */
+  last_human_at: string;
+  idle_warned_at: string | null;
+  idle_paused: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type MissionBudgetRow = {
+  /** 20261114210000_mission_budgets.sql */
+  mission_id: string;
+  org_id: string;
+  daily_usd: number | null;
+  weekly_usd: number | null;
+  set_by: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -272,6 +290,10 @@ type MissionSlackRequestRow = {
   automation_id: string | null;
   announced_at: string | null;
   details: Json | null;
+  /** 20261114210200_mission_assign.sql */
+  assignee_user_id: string | null;
+  assigned_by: string | null;
+  assigned_at: string | null;
   created_at: string;
 };
 type MissionDelegationRow = {
@@ -2174,6 +2196,12 @@ export type Database = {
         Row: MissionSlackShipRow;
         Insert: Insert<MissionSlackShipRow, "mission_id">;
         Update: Partial<MissionSlackShipRow>;
+        Relationships: [];
+      };
+      mission_budgets: {
+        Row: MissionBudgetRow;
+        Insert: Insert<MissionBudgetRow, "mission_id" | "org_id">;
+        Update: Partial<MissionBudgetRow>;
         Relationships: [];
       };
       mission_limits: {
