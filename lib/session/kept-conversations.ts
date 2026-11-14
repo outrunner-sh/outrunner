@@ -4,9 +4,12 @@ import { AgentEvent } from "@/lib/runtime/agent-protocol";
 import type { CachedConversation, ConversationStore } from "@/lib/session/conversation-cache";
 
 /**
- * Conversations kept past the page, in localStorage, so a session opened after
- * a reload or the app's relaunch shows its conversation at once rather than
- * after the attach and the stream's replay of its history.
+ * Conversations kept past the page, in IndexedDB, so a session opened after a
+ * reload, a new deploy or the app's relaunch shows its conversation at once
+ * rather than after its box wakes, the attach and the stream's replay of its
+ * history. IndexedDB rather than localStorage: a long session's conversation
+ * runs to megabytes, and localStorage's few for the whole site, shared with
+ * drafts and the sidebar, held only two or three.
  *
  * What is kept is what was shown, not where the stream left off: a kept
  * conversation's stream replays from the start, which the conversation takes
@@ -23,15 +26,25 @@ const INDEX_KEY = "outrunner:conversations";
 const VERSION = 1;
 
 /** How many sessions' conversations are kept: the most recently opened. */
-export const KEPT_SESSIONS = 10;
+export const KEPT_SESSIONS = 30;
 /** The most one session may take, in characters of JSON. One longer isn't
  *  kept: it opens as it did before, from the stream. */
-export const KEPT_CHARS = 1_000_000;
+export const KEPT_CHARS = 5_000_000;
 /** How often a conversation that changed is written: at most once a second,
  *  however fast a reply streams in. */
 export const SAVE_EVERY_MS = 1000;
 
-type KeptStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
+/** Where conversations are kept: strings by key, read and written in turn. A
+ *  write that finds no room rejects. */
+export type KeptStorage = {
+  get(key: string): Promise<string | undefined>;
+  set(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
+  keys(): Promise<string[]>;
+};
+
+/** localStorage, where builds before IndexedDB kept them. */
+type LegacyStorage = Pick<Storage, "getItem" | "removeItem" | "key" | "length">;
 
 const Kept = z.object({
   v: z.literal(VERSION),
@@ -44,6 +57,9 @@ export class KeptConversations implements ConversationStore {
   private readonly schedule: (flush: () => void) => void;
   private readonly pending = new Map<string, CachedConversation>();
   private scheduled = false;
+  /** Every read and write, one after another: each reads the index, and one
+   *  interleaved with another would write back an index the other changed. */
+  private queue: Promise<unknown> = Promise.resolve();
   /** Forgotten by `clear`: the user signed out, and nothing more is kept or
    *  shown for the rest of the page. Sign-out takes a round trip before the
    *  redirect lands, and a session still streaming would otherwise write its
@@ -57,24 +73,25 @@ export class KeptConversations implements ConversationStore {
     this.schedule = schedule;
   }
 
-  load(id: string): Pick<CachedConversation, "events" | "seenIds"> | undefined {
-    if (this.forgotten) return undefined;
-    const storage = this.storage();
-    if (!storage) return undefined;
-    try {
-      const raw = storage.getItem(PREFIX + id);
-      if (raw === null) return undefined;
-      const parsed = Kept.safeParse(JSON.parse(raw));
-      if (!parsed.success) {
+  load(id: string): Promise<Pick<CachedConversation, "events" | "seenIds"> | undefined> {
+    return this.run(async (storage) => {
+      if (this.forgotten) return undefined;
+      const raw = await storage.get(PREFIX + id);
+      if (raw === undefined) return undefined;
+      let parsed;
+      try {
+        parsed = Kept.safeParse(JSON.parse(raw));
+      } catch {
+        parsed = null;
+      }
+      if (!parsed?.success) {
         // Kept by an older build, or damaged: it opens from the stream.
-        this.remove(id);
+        await this.drop(storage, id);
         return undefined;
       }
-      this.writeIndex(storage, [...this.readIndex(storage).filter((kept) => kept !== id), id]);
+      await this.writeIndex(storage, [...(await this.readIndex(storage)).filter((kept) => kept !== id), id]);
       return { events: parsed.data.events, seenIds: new Set(parsed.data.seenIds) };
-    } catch {
-      return undefined;
-    }
+    }, undefined);
   }
 
   save(id: string, entry: CachedConversation): void {
@@ -82,126 +99,238 @@ export class KeptConversations implements ConversationStore {
     this.pending.set(id, entry);
     if (this.scheduled) return;
     this.scheduled = true;
-    this.schedule(() => this.flush());
+    this.schedule(() => void this.flush());
   }
 
   /** Write what has changed since the last flush. */
-  flush(): void {
+  flush(): Promise<void> {
     this.scheduled = false;
     const pending = [...this.pending];
     this.pending.clear();
-    if (this.forgotten) return;
-    const storage = this.storage();
-    if (!storage) return;
-    for (const [id, entry] of pending) {
-      try {
-        this.write(storage, id, entry);
-      } catch {
-        // Storage gone bad mid-write: this one opens from the stream.
+    return this.run(async (storage) => {
+      if (this.forgotten) return;
+      for (const [id, entry] of pending) {
+        try {
+          await this.write(storage, id, entry);
+        } catch {
+          // Storage gone bad mid-write: this one opens from the stream.
+        }
       }
-    }
+    }, undefined);
   }
 
-  remove(id: string): void {
+  remove(id: string): Promise<void> {
     this.pending.delete(id);
-    const storage = this.storage();
-    if (!storage) return;
-    try {
-      storage.removeItem(PREFIX + id);
-      this.writeIndex(storage, this.readIndex(storage).filter((kept) => kept !== id));
-    } catch {
-      // Blocked storage keeps nothing to remove.
-    }
+    return this.run((storage) => this.drop(storage, id), undefined);
   }
 
   /** Forget every kept conversation, for good: whoever signs in next isn't
    *  shown them, and nothing this page goes on to stream is kept. Every key
-   *  this browser holds, not the ones the index lists: a full storage can
-   *  leave the two out of step (see `writeIndex`), and one the index lost
-   *  would otherwise outlive the sign-out. */
-  clear(): void {
+   *  kept, not the ones the index lists: the two can fall out of step (a
+   *  write that failed half done), and one the index lost would otherwise
+   *  outlive the sign-out. */
+  clear(): Promise<void> {
     this.forgotten = true;
     this.pending.clear();
-    const storage = this.storage();
-    if (!storage) return;
-    try {
-      for (const key of keptKeys(storage)) storage.removeItem(key);
-      storage.removeItem(INDEX_KEY);
-    } catch {
-      // Blocked storage keeps nothing to forget.
-    }
+    return this.run(async (storage) => {
+      for (const key of await storage.keys()) {
+        if (key.startsWith(PREFIX) || key === INDEX_KEY) await storage.delete(key);
+      }
+    }, undefined);
   }
 
-  private write(storage: KeptStorage, id: string, entry: CachedConversation): void {
+  /** Take in what an older build kept in localStorage, the most recently
+   *  opened last, and leave none of it there: it was taking up the room the
+   *  site's drafts and lists share. */
+  adopt(legacy: LegacyStorage): Promise<void> {
+    let taken: [string, string][];
+    try {
+      taken = takeLegacy(legacy);
+    } catch {
+      return Promise.resolve(); // Blocked storage held nothing.
+    }
+    if (taken.length === 0) return Promise.resolve();
+    return this.run(async (storage) => {
+      if (this.forgotten) return;
+      const index = await this.readIndex(storage);
+      // One this build has kept since is newer; and older than any it kept,
+      // they take only the room left.
+      const fresh = taken.filter(([id]) => !index.includes(id));
+      const room = Math.max(0, KEPT_SESSIONS - index.length);
+      const adopted: string[] = [];
+      for (const [id, json] of fresh.slice(fresh.length - Math.min(room, fresh.length))) {
+        await storage.set(PREFIX + id, json);
+        adopted.push(id);
+      }
+      await this.writeIndex(storage, [...adopted, ...index]);
+    }, undefined);
+  }
+
+  /** Run `op` once those before it are done; with no storage, or one that
+   *  fails, it answers `fallback`. */
+  private run<T>(op: (storage: KeptStorage) => Promise<T>, fallback: T): Promise<T> {
+    const next = this.queue.then(async () => {
+      const storage = this.storage();
+      if (!storage) return fallback;
+      try {
+        return await op(storage);
+      } catch {
+        return fallback;
+      }
+    });
+    this.queue = next;
+    return next;
+  }
+
+  private async drop(storage: KeptStorage, id: string): Promise<void> {
+    await storage.delete(PREFIX + id);
+    await this.writeIndex(storage, (await this.readIndex(storage)).filter((kept) => kept !== id));
+  }
+
+  private async write(storage: KeptStorage, id: string, entry: CachedConversation): Promise<void> {
     const events = entry.events.filter((event) => event.t !== "state");
     const json = JSON.stringify({ v: VERSION, events, seenIds: [...entry.seenIds] });
     if (events.length === 0 || json.length > KEPT_CHARS) {
       // Nothing to show at once, or too long to keep: no older copy may stand
       // in for it either.
-      this.remove(id);
+      await this.drop(storage, id);
       return;
     }
-    const index = this.readIndex(storage).filter((kept) => kept !== id);
+    const index = (await this.readIndex(storage)).filter((kept) => kept !== id);
     while (index.length >= KEPT_SESSIONS) {
       const oldest = index.shift();
-      if (oldest !== undefined) storage.removeItem(PREFIX + oldest);
+      if (oldest !== undefined) await storage.delete(PREFIX + oldest);
     }
     // Out of room: the least recently opened make way, until this fits or
     // there is no one left to make way.
     for (;;) {
       try {
-        storage.setItem(PREFIX + id, json);
+        await storage.set(PREFIX + id, json);
         break;
       } catch {
         const oldest = index.shift();
         if (oldest === undefined) {
           // No room even on its own: no older copy may stand in for it.
-          storage.removeItem(PREFIX + id);
-          this.writeIndex(storage, index);
+          await storage.delete(PREFIX + id);
+          await this.writeIndex(storage, index);
           return;
         }
-        storage.removeItem(PREFIX + oldest);
+        await storage.delete(PREFIX + oldest);
       }
     }
-    this.writeIndex(storage, [...index, id]);
+    await this.writeIndex(storage, [...index, id]);
   }
 
-  private readIndex(storage: KeptStorage): string[] {
+  private async readIndex(storage: KeptStorage): Promise<string[]> {
     try {
-      const parsed = z.array(z.string()).safeParse(JSON.parse(storage.getItem(INDEX_KEY) ?? "[]"));
+      const parsed = z.array(z.string()).safeParse(JSON.parse((await storage.get(INDEX_KEY)) ?? "[]"));
       return parsed.success ? parsed.data : [];
     } catch {
       return [];
     }
   }
 
-  private writeIndex(storage: KeptStorage, index: string[]): void {
+  private async writeIndex(storage: KeptStorage, index: string[]): Promise<void> {
     try {
-      storage.setItem(INDEX_KEY, JSON.stringify(index));
+      await storage.set(INDEX_KEY, JSON.stringify(index));
     } catch {
       // Full: the entries are there, and the next write orders them again.
     }
   }
 }
 
-/** Every key a conversation is kept under. INDEX_KEY ("outrunner:conversations")
- *  isn't one: PREFIX ends in a colon it doesn't share. */
-function keptKeys(storage: KeptStorage): string[] {
+/** What localStorage kept, the most recently opened last, removed from it. */
+function takeLegacy(legacy: LegacyStorage): [string, string][] {
   const keys: string[] = [];
   // Collected before any removal: removing one renumbers the rest.
-  for (let i = 0; i < storage.length; i++) {
-    const key = storage.key(i);
+  for (let i = 0; i < legacy.length; i++) {
+    const key = legacy.key(i);
     if (key?.startsWith(PREFIX)) keys.push(key);
   }
-  return keys;
+  let order: string[] = [];
+  try {
+    const parsed = z.array(z.string()).safeParse(JSON.parse(legacy.getItem(INDEX_KEY) ?? "[]"));
+    if (parsed.success) order = parsed.data;
+  } catch {
+    // No order kept: they go in as found.
+  }
+  const rank = (key: string) => order.indexOf(key.slice(PREFIX.length));
+  keys.sort((a, b) => rank(a) - rank(b));
+  const taken: [string, string][] = [];
+  for (const key of keys) {
+    const json = legacy.getItem(key);
+    if (json !== null) taken.push([key.slice(PREFIX.length), json]);
+    legacy.removeItem(key);
+  }
+  legacy.removeItem(INDEX_KEY);
+  return taken;
 }
 
+const DATABASE = "outrunner-conversations";
+const OBJECTS = "kept";
+
+/** IndexedDB, as strings by key; the database opened on first use. */
+export function indexedStorage(factory: IDBFactory): KeptStorage {
+  let opening: Promise<IDBDatabase> | null = null;
+  const database = () => {
+    opening ??= new Promise<IDBDatabase>((resolve, reject) => {
+      const request = factory.open(DATABASE, 1);
+      request.onupgradeneeded = () => request.result.createObjectStore(OBJECTS);
+      request.onsuccess = () => {
+        const db = request.result;
+        // A newer build's upgrade in another tab: let it go ahead.
+        db.onversionchange = () => {
+          db.close();
+          opening = null;
+        };
+        resolve(db);
+      };
+      request.onerror = () => {
+        opening = null;
+        reject(request.error);
+      };
+    });
+    return opening;
+  };
+  const read = async <T>(op: (objects: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
+    const objects = (await database()).transaction(OBJECTS, "readonly").objectStore(OBJECTS);
+    return new Promise<T>((resolve, reject) => {
+      const request = op(objects);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  };
+  // Done when its transaction is: a full disk can abort one after its request
+  // succeeded.
+  const write = async (op: (objects: IDBObjectStore) => void): Promise<void> => {
+    const transaction = (await database()).transaction(OBJECTS, "readwrite");
+    op(transaction.objectStore(OBJECTS));
+    return new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error);
+      transaction.onerror = () => reject(transaction.error);
+    });
+  };
+  return {
+    get: async (key) => {
+      const value: unknown = await read((objects) => objects.get(key));
+      return typeof value === "string" ? value : undefined;
+    },
+    set: (key, value) => write((objects) => void objects.put(value, key)),
+    delete: (key) => write((objects) => void objects.delete(key)),
+    keys: async () => (await read((objects) => objects.getAllKeys())).filter((key): key is string => typeof key === "string"),
+  };
+}
+
+let browserKept: KeptStorage | null | undefined;
 function browserStorage(): KeptStorage | null {
+  if (browserKept !== undefined) return browserKept;
   try {
-    return typeof window === "undefined" ? null : window.localStorage;
+    browserKept = typeof indexedDB === "undefined" ? null : indexedStorage(indexedDB);
   } catch {
-    return null; // Storage blocked: nothing is kept, sessions open as before.
+    browserKept = null; // Storage blocked: nothing is kept, sessions open as before.
   }
+  return browserKept;
 }
 
 let leaving = false;
@@ -210,7 +339,7 @@ function browserSchedule(flush: () => void): void {
   setTimeout(flush, SAVE_EVERY_MS);
   if (leaving || typeof window === "undefined") return;
   leaving = true;
-  const now = () => KEPT_CONVERSATIONS.flush();
+  const now = () => void KEPT_CONVERSATIONS.flush();
   window.addEventListener("pagehide", now);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") now();
@@ -219,3 +348,11 @@ function browserSchedule(flush: () => void): void {
 
 /** This browser's kept conversations. */
 export const KEPT_CONVERSATIONS = new KeptConversations(browserStorage, browserSchedule);
+
+if (typeof window !== "undefined") {
+  try {
+    void KEPT_CONVERSATIONS.adopt(window.localStorage);
+  } catch {
+    // Storage blocked: an older build kept nothing here either.
+  }
+}

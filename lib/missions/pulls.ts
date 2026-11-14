@@ -6,7 +6,8 @@
  */
 
 import { toWorkspacePullRequest } from "@/lib/db/mappers";
-import { findPullRequest, getPullRequestStatus, type PullRequestStatus } from "@/lib/github/client";
+import type { PullRequestStatus } from "@/lib/github/client";
+import { findPullRequest, getPullRequestStatus } from "@/lib/code-providers/client";
 import { requireGitToken } from "@/lib/github/identity.deps";
 import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { pullRequestVerdict, type PullRequestVerdict } from "@/lib/session/pull-request-status";

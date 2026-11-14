@@ -25,6 +25,10 @@ import {
   type TokenLevel,
 } from "@/lib/github/identity";
 import type { AccessLevel } from "@/lib/orgs/access";
+import { isGitLabRef, gitLabPath } from "@/lib/code-providers/repository";
+import { requireGitLabToken } from "@/lib/db/gitlab-connections";
+import { GitLabError } from "@/lib/gitlab/client";
+import { GitIdentityError } from "@/lib/github/identity-error";
 
 const tokens = new Map<string, InstallationToken>();
 
@@ -81,13 +85,23 @@ const deps: IdentityDeps = {
 };
 
 /** {@link resolveGitCredential}, as the app runs it. */
-export function gitCredentialFor(input: {
+export async function gitCredentialFor(input: {
   userId: string;
   orgId: string;
   repo: string;
   level?: TokenLevel;
   identity?: GitHubIdentity;
 }): Promise<GitCredential> {
+  if (isGitLabRef(input.repo)) {
+    gitLabPath(input.repo);
+    if (input.identity === "app") throw new GitIdentityError("no_access", "GitLab repositories use your personal GitLab connection.", "/settings/connections");
+    try {
+      return { identity: "personal", token: await requireGitLabToken(input.userId), expiresAt: null };
+    } catch (error) {
+      if (error instanceof GitLabError) throw new GitIdentityError("no_access", error.message, "/settings/connections");
+      throw error;
+    }
+  }
   return resolveGitCredential(input, deps);
 }
 

@@ -13,6 +13,7 @@
  *   remote `sandbox.exec`.
  */
 
+import { repositoryRemote } from "@/lib/code-providers/repository";
 import { makeRedactor } from "@/lib/runtime/redact";
 import type { ChangedFile } from "@/lib/runtime/types";
 
@@ -205,8 +206,7 @@ function authOptions(
   return { env: { ...(base?.env ?? {}), RUNTIME_GIT_TOKEN: token } };
 }
 
-const remoteUrl = (repoFullName: string) =>
-  `https://github.com/${repoFullName}.git`;
+const remoteUrl = repositoryRemote;
 
 // ---------------------------------------------------------------------------
 // Operations

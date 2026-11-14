@@ -18,8 +18,10 @@ export type Project = {
   id: string;
   /** The org it's a project of. */
   orgId: string;
-  githubRepoId: number;
-  /** `owner/name`, e.g. `immadsahin/runtime`. */
+  githubRepoId: number | null;
+  provider?: "github" | "gitlab";
+  repositoryId?: number;
+  /** GitHub owner/name, or gitlab.com/group/project (subgroups included). */
   fullName: string;
   owner: string;
   name: string;
@@ -27,7 +29,7 @@ export type Project = {
   private: boolean;
   language: string | null;
   description: string | null;
-  /** Canonical GitHub repository page. */
+  /** Canonical repository page. */
   htmlUrl: string;
   pushedAt: string | null;
   /** Linear issues attached to this project (never standalone projects). */

@@ -36,3 +36,16 @@ test("a posted limit is a whole percent from 10 to 100, or none", () => {
   assert.equal(postedLimit(50.5), undefined);
   assert.equal(postedLimit("50"), undefined);
 });
+
+test("unlimited hours ignore saved percentage caps and threshold alerts", () => {
+  for (const limitPercent of [null, 25, 80, 100]) {
+    const controls = { limitPercent, alertThresholds: [50, 80, 100] as const };
+    const saved = {
+      ...controls,
+      alertThresholds: [...controls.alertThresholds],
+    };
+    assert.equal(hoursCap(PLANS.max, saved), null);
+    assert.equal(limitDenial(PLANS.max, saved, 100000), null);
+    assert.deepEqual(alertsDue(PLANS.max, saved, 100000, new Set()), []);
+  }
+});

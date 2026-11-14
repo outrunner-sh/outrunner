@@ -25,10 +25,10 @@ test("Stripe billing needs both its keys, and a setting it can't read is refused
   assert.throws(() => billingMode({ RUNTIME_BILLING: "true" }), BillingConfigError);
 });
 
-test("Max is 5× Pro, and each paid plan includes more than the one below", () => {
+test("Max has unlimited cloud hours, and each paid plan includes more than the one below", () => {
   const { free, pro, max } = PLANS;
-  assert.equal(max.cloudHoursPerMonth, 5 * pro.cloudHoursPerMonth);
-  assert.equal(max.models.usd, 5 * pro.models.usd);
+  assert.equal(max.cloudHoursPerMonth, null);
+  assert.equal(max.models.usd, null);
   assert.ok(pro.cloudHoursPerMonth > free.cloudHoursPerMonth);
   assert.ok(pro.concurrentCloudSessions > free.concurrentCloudSessions);
   assert.ok(max.concurrentCloudSessions > pro.concurrentCloudSessions);

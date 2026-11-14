@@ -6,10 +6,12 @@
  * of the database and unit-testable.
  */
 
+import { isGitLabRef } from "@/lib/code-providers/repository";
+import { getProject } from "@/lib/db/repositories";
 import type { AgentId } from "@/lib/agents/registry";
 import { type AgentConfig, getAgentConfig } from "@/lib/db/agent-config";
 import { getGithubIdentity } from "@/lib/db/credentials";
-import { defaultEnvironmentId, environmentSetup, type EnvironmentSetup } from "@/lib/db/environments";
+import { getEnvironment, defaultEnvironmentId, environmentSetup, type EnvironmentSetup } from "@/lib/db/environments";
 import { sessionMcpServers } from "@/lib/db/environment-mcp";
 import { listEnvironmentSkills } from "@/lib/db/environment-skills";
 import { getProjectEnvironment } from "@/lib/db/project-environment";
@@ -40,6 +42,7 @@ export async function setUpSession(
    *  Outrunner App whatever its user chose (an automation's review). */
   session: { agent: AgentId; appIdentity?: boolean },
 ): Promise<void> {
+  const project = await getProject(projectId);
   const id = environmentId ?? (await defaultEnvironmentId(ownerId, projectId));
   const [environment, skills, projectServers, userConfig, githubIdentity, mission, agentContext] = await Promise.all([
     sessionEnvironment(ownerId, projectId, id),
@@ -68,6 +71,7 @@ export async function setUpSession(
       agentContext,
       agent: session.agent,
       appIdentity: session.appIdentity || githubIdentity === "app",
+      gitlab: Boolean(project && isGitLabRef(project.fullName)) || Boolean(id && (await getEnvironment(ownerId, id))?.repos?.some((repo) => isGitLabRef(repo.fullName))),
       downloadUrl: (path) => mintSnapshotDownloadUrl(supabaseSnapshotStorage(), path, ownerId),
     },
   );

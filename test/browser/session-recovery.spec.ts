@@ -110,7 +110,19 @@ test("a cached conversation reloads without a hydration error while attachment i
   });
   await openSession(page);
   await expect(page.getByText("Reply from preview-0", { exact: true })).toBeVisible();
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("outrunner:conversation:preview-0"))).not.toBeNull();
+  await expect.poll(() => page.evaluate(() => new Promise((resolve) => {
+    // Opened as the app opens it, so whichever comes first makes its store.
+    const open = indexedDB.open("outrunner-conversations", 1);
+    open.onupgradeneeded = () => open.result.createObjectStore("kept");
+    open.onerror = () => resolve(null);
+    open.onsuccess = () => {
+      const read = open.result.transaction("kept").objectStore("kept").get("outrunner:conversation:preview-0");
+      read.onsuccess = () => {
+        open.result.close();
+        resolve(read.result ?? null);
+      };
+    };
+  }))).not.toBeNull();
   delayAttach = true;
   await page.reload();
   await expect.poll(() => pending !== null).toBe(true);

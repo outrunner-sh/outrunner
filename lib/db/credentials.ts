@@ -892,7 +892,7 @@ export async function refreshModelAllowance(userId: string): Promise<RefreshedAl
               period: data.neev_allowance_period,
               plan: data.neev_allowance_plan as PlanId,
               baselineUsd: Number(data.neev_allowance_baseline_usd ?? 0),
-              limitUsd: Number(data.neev_allowance_limit_usd ?? 0),
+              limitUsd: data.neev_allowance_limit_usd === null ? null : Number(data.neev_allowance_limit_usd),
             }
           : null;
       return { hash: data?.neev_key_hash ?? null, state };

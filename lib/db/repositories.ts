@@ -74,6 +74,22 @@ export async function getProject(id: string): Promise<Project | null> {
   return data ? toProject(data) : null;
 }
 
+/** The org's project of the repository `fullName` names (GitHub's names
+ *  match whatever their case), or null for none the user can see. */
+export async function getProjectByFullName(orgId: string, fullName: string): Promise<Project | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("projects")
+    .select("*")
+    .eq("org_id", orgId)
+    .ilike("full_name", fullName.replace(/[\\%_]/g, "\\$&"))
+    .is("hidden_at", null)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toProject(data) : null;
+}
+
 /** Projects by id, hidden ones included, in one query. */
 export async function getProjects(ids: string[]): Promise<Project[]> {
   if (ids.length === 0) return [];
@@ -147,6 +163,38 @@ export async function upsertProjects(
 
   if (error) throw error;
   return count ?? mine.length;
+}
+
+/** GitLab repositories are verified by the caller against the user's token.
+ * Server-client RLS enforces the same org write permission as GitHub. */
+export async function upsertGitLabProjects(
+  ownerId: string,
+  repos: import("@/lib/code-providers/repository").GitLabRepository[],
+  orgId?: string,
+): Promise<void> {
+  if (!repos.length) return;
+  const db = await createSupabaseServerClient();
+  const ids = repos.map((repo) => {
+    if (repo.provider !== "gitlab" || !repo.repositoryId) throw new Error("Expected a verified GitLab repository.");
+    return repo.repositoryId;
+  });
+  let taken = new Set<number>();
+  if (orgId) {
+    const { data, error } = await db.from("projects").select("gitlab_repo_id")
+      .eq("org_id", orgId).neq("owner_id", ownerId).in("gitlab_repo_id", ids);
+    if (error) throw error;
+    taken = new Set((data ?? []).flatMap((row) => row.gitlab_repo_id === null ? [] : [row.gitlab_repo_id]));
+  }
+  const rows = repos.filter((repo) => !taken.has(repo.repositoryId)).map((repo) => ({
+    ...(orgId ? { org_id: orgId } : {}), owner_id: ownerId,
+    github_repo_id: null, gitlab_repo_id: repo.repositoryId,
+    full_name: repo.fullName, owner: repo.owner, name: repo.name, default_branch: repo.defaultBranch,
+    is_private: repo.private, language: repo.language, description: repo.description,
+    html_url: repo.htmlUrl, pushed_at: repo.pushedAt,
+  }));
+  if (!rows.length) return;
+  const { error } = await db.from("projects").upsert(rows, { onConflict: "org_id,gitlab_repo_id" });
+  if (error) throw error;
 }
 
 // --- workspaces ------------------------------------------------------------

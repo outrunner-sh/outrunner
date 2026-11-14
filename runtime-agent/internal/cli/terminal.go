@@ -78,3 +78,12 @@ func (t terminal) confirmNo(question string) bool {
 	answer := strings.ToLower(strings.TrimSpace(line))
 	return answer == "y" || answer == "yes"
 }
+
+// pasted is what the user types while signing in, when someone is typing:
+// nothing is asked of a pipe or /dev/null.
+func (t terminal) pasted() <-chan string {
+	if !t.interactive {
+		return nil
+	}
+	return t.lines
+}

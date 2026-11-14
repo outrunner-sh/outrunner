@@ -81,7 +81,7 @@ export function pauseReason(
   used: number,
   account: Account["kind"] = "personal",
 ): string | null {
-  if (used >= plan.cloudHoursPerMonth) return planHoursReason(plan, account);
+  if (plan.cloudHoursPerMonth !== null && used >= plan.cloudHoursPerMonth) return planHoursReason(plan, account);
   if (controls && overLimit(plan, controls, used)) return orgLimitReason(plan, controls);
   return null;
 }

@@ -24,14 +24,16 @@ export const DEFAULT_USAGE_CONTROLS: UsageControls = { limitPercent: null, alert
 export const USAGE_CONTROLS_HREF = "/settings/org/usage";
 
 /** The hours the org may use this period: its limit's share of the plan's. */
-export function hoursCap(plan: Plan, controls: UsageControls): number {
+export function hoursCap(plan: Plan, controls: UsageControls): number | null {
+  if (plan.cloudHoursPerMonth === null) return null;
   return controls.limitPercent === null ? plan.cloudHoursPerMonth : (plan.cloudHoursPerMonth * controls.limitPercent) / 100;
 }
 
 /** Whether the org has reached the limit its admins set (not its plan's,
  *  which hoursDenial says). */
 export function overLimit(plan: Plan, controls: UsageControls, used: number): boolean {
-  return controls.limitPercent !== null && controls.limitPercent < 100 && used >= hoursCap(plan, controls);
+  const cap = hoursCap(plan, controls);
+  return cap !== null && controls.limitPercent !== null && controls.limitPercent < 100 && used >= cap;
 }
 
 /** The refusal for a box starting past the admins' limit. */
@@ -46,7 +48,7 @@ export function limitDenial(plan: Plan, controls: UsageControls, used: number): 
 /** The thresholds `used` hours has crossed that aren't in `sent`, lowest
  *  first: the alerts to send now. */
 export function alertsDue(plan: Plan, controls: UsageControls, used: number, sent: ReadonlySet<number>): AlertThreshold[] {
-  if (plan.cloudHoursPerMonth <= 0) return [];
+  if (plan.cloudHoursPerMonth === null || plan.cloudHoursPerMonth <= 0) return [];
   const share = (used / plan.cloudHoursPerMonth) * 100;
   return [...controls.alertThresholds].sort((a, b) => a - b).filter((t) => share >= t && !sent.has(t));
 }

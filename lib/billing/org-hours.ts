@@ -8,7 +8,8 @@ import { calendarMonth, hoursUsed } from "@/lib/billing/hours";
 import { intervalsFor } from "@/lib/billing/metering-store";
 import { hoursCap, type UsageControls } from "@/lib/billing/usage-controls";
 
-export type OrgHours = { used: number; planHours: number; cap: number; planLabel: string; periodEnd: string };
+/** Null planHours/cap means unlimited, including in JSON API responses. */
+export type OrgHours = { used: number; planHours: number | null; cap: number | null; planLabel: string; periodEnd: string };
 
 export async function orgHours(orgId: string, controls: UsageControls, now = new Date()): Promise<OrgHours> {
   const { plan, allowancePeriod } = await entitlementsFor(orgId, now);

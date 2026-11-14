@@ -196,6 +196,7 @@ export const AGENT_FEATURE_MESSAGE_KEYS = "message-keys";
  *  (app/api/runtime/git-credential), rather than keep the one it booted with:
  *  the Outrunner App's last an hour. */
 export const AGENT_FEATURE_GIT_CREDENTIAL = "git-credential";
+export const AGENT_FEATURE_GITLAB_CREDENTIAL = "gitlab-credential";
 
 /** A project's several repositories, each in its own folder (its
  *  checkout) off its mirror at $ROOT/repos/<checkout>.git. */
