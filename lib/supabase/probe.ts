@@ -1,5 +1,7 @@
+import { optionalEnv } from "@/lib/env";
+
 /** Every application table required for Runtime's initial control plane. */
-export const RUNTIME_TABLES = ["projects", "workspaces", "jobs", "pull_requests"] as const;
+export const RUNTIME_TABLES = ["projects", "workspaces", "pull_requests"] as const;
 
 export type RuntimeTable = (typeof RUNTIME_TABLES)[number];
 /** `outdated`: the table is there, but a later migration that adds a column
@@ -16,7 +18,6 @@ export type DatabaseProbe = Record<RuntimeTable, TableProbeStatus>;
 export const RUNTIME_COLUMNS: Record<RuntimeTable, readonly string[]> = {
   projects: ["id"],
   workspaces: ["id", "computer_id", "tmux_session", "agent_workspace_id", "title", "agent", "main_chat_name"],
-  jobs: ["id", "result_path", "execution_handle", "agent"],
   pull_requests: ["id"],
 };
 
@@ -52,7 +53,19 @@ export async function probeRuntimeDatabase(client?: ProbeClient): Promise<Databa
   try {
     // Loaded here, not imported at the top: it needs Next's request scope
     // (next/headers), which tests that pass their own client do not have.
-    supabase = client ?? (await (await import("@/lib/supabase/server")).createSupabaseServerClient());
+    // The service role when there is one: this checks the schema is there,
+    // and a table only the server reads (pull_requests, since
+    // 20261112110000) is denied to the anonymous caller /api/health has.
+    // Without the service role, pull_requests always reads as unreachable;
+    // startup-env requires the key, so that's only `next dev` or tests.
+    if (client) {
+      supabase = client;
+    } else {
+      const server = await import("@/lib/supabase/server");
+      supabase = optionalEnv("SUPABASE_SERVICE_ROLE_KEY")
+        ? server.createSupabaseAdminClient()
+        : await server.createSupabaseServerClient();
+    }
   } catch (error) {
     console.error("Runtime database probe could not create a Supabase client", error);
     return result;

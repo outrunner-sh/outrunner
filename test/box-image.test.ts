@@ -31,7 +31,7 @@ function box(tools: string[], versions: Partial<Record<"node" | "claude" | "code
   const bin = mkdtempSync(join(tmpdir(), "box-"));
   for (const util of ["awk", "cut"]) symlinkSync(`/usr/bin/${util}`, join(bin, util));
   const says: Record<string, string> = {
-    node: `v${versions.node ?? BOX_TOOLS.node}.11.0`,
+    node: `v${versions.node ?? BOX_TOOLS.node}`,
     claude: `${versions.claude ?? BOX_TOOLS.claudeCode} (Claude Code)`,
     codex: `codex-cli ${versions.codex ?? BOX_TOOLS.codex}`,
     gh: `gh version ${versions.gh ?? BOX_TOOLS.gh} (2026-10-01)\\nhttps://github.com/cli/cli/releases/latest`,
@@ -54,14 +54,14 @@ test("boxCheckScript passes quietly on a box with every tool at its version", ()
 test("boxCheckScript names every tool that's off, and fails", () => {
   const result = box(
     ALL.filter((tool) => tool !== "tmux" && tool !== "codex"),
-    { node: "18", claude: "2.1.19", gh: "2.102.0" },
+    { node: "18.20.0", claude: "2.1.19", gh: "2.102.0" },
   );
   assert.equal(result.status, 1);
   assert.deepEqual(result.stdout.trim().split("\n"), [
     `Claude Code is 2.1.19, expected ${BOX_TOOLS.claudeCode}`,
     `Codex is missing, expected ${BOX_TOOLS.codex}`,
     `gh is 2.102.0, expected ${BOX_TOOLS.gh}`,
-    `Node is 18, expected ${BOX_TOOLS.node}`,
+    `Node is 18.20.0, expected ${BOX_TOOLS.node}`,
     "tmux is missing",
   ]);
 });

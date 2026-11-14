@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useArchiveSession } from "@/components/archive-session-dialog";
 import { RenameSessionDialog } from "@/components/rename-session-dialog";
 import { Spinner, ThinkingIcon } from "@/components/ui/loaders";
 import {
@@ -156,7 +157,8 @@ function StatusRowLink({
         title={rowTooltip(row)}
         aria-current={active ? "page" : undefined}
         className={cn(
-          "flex items-center gap-2 rounded-md py-1 pl-2 pr-2 text-[13px] transition-colors group-hover/row:pr-8 group-focus-within/row:pr-8",
+          "flex items-center gap-2 rounded-md py-1 pl-2 pr-2 text-[13px] transition-colors",
+          rowActionsRoom(row, row.markable),
           active
             ? "bg-accent text-foreground"
             : standing.unread
@@ -171,16 +173,14 @@ function StatusRowLink({
         )}
         {standing.pinned && <Pin aria-label="Pinned" className="size-3 shrink-0 text-muted-foreground" />}
         {row.slackThreadUrl && <Slack aria-label="From Slack" className="size-3 shrink-0 text-muted-foreground" />}
-        {row.archived && <Archive aria-label="Archived" className="size-3 shrink-0 text-muted-foreground" />}
         <RowTail at={row.at} now={now} hideOnHover />
       </Link>
-      <SessionMenu
+      <RowActions
         session={row}
         markable={row.markable}
         standing={standing}
         pullRequestUrl={pullRequest?.url}
         onDelete={onDelete}
-        className="absolute right-1 top-1/2 -translate-y-1/2"
       />
     </div>
   );
@@ -223,11 +223,62 @@ export function StandingMark({
   }
 }
 
+type RowActionsProps = Parameters<typeof SessionMenu>[0] & {
+  session: Pick<SidebarSession, "archivable">;
+};
+
+/** Whether a row shows its menu on hover (see {@link SessionMenu}'s own rule). */
+function hasSessionMenu(session: Pick<SidebarSession, "deletion" | "branch">, markable: boolean): boolean {
+  return markable || session.deletion !== null || session.branch !== "";
+}
+
+/** The room a row leaves at its end, on hover, for its {@link RowActions}. */
+export function rowActionsRoom(
+  session: Pick<SidebarSession, "archivable" | "deletion" | "branch">,
+  markable: boolean,
+): string | false {
+  const buttons = Number(session.archivable) + Number(hasSessionMenu(session, markable));
+  if (buttons === 0) return false;
+  return buttons === 2
+    ? "group-hover/row:pr-14 group-focus-within/row:pr-14"
+    : "group-hover/row:pr-8 group-focus-within/row:pr-8";
+}
+
+/**
+ * A sidebar row's buttons, shown on its hover where its time was: its menu,
+ * then Archive — one click, with Undo after (components/archive-session-dialog.tsx).
+ * Archive takes the place Delete had; Delete stays, in the menu, only for a
+ * session with nothing to archive.
+ */
+export function RowActions(props: RowActionsProps) {
+  const archive = useArchiveSession();
+  const { session } = props;
+  return (
+    <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
+      <SessionMenu {...props} />
+      {session.archivable && (
+        <button
+          type="button"
+          onClick={() => archive({ id: session.id, title: session.title })}
+          aria-label={`Archive ${session.title}`}
+          title="Archive session"
+          className={ROW_BUTTON}
+        >
+          <Archive className="size-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** A row button: hidden until the row is hovered or it has focus. */
+const ROW_BUTTON =
+  "rounded p-1 text-muted-foreground opacity-0 outline-none transition hover:bg-accent hover:text-foreground focus-visible:opacity-100 data-[state=open]:opacity-100 group-hover/row:opacity-100";
+
 /**
  * A session's menu: Rename, Pin, Move to (a group by hand, or back to
- * Automatic), Copy branch, Open pull request and Delete, each where it
- * applies. Shown on the row's hover, as its buttons were. (Archive was
- * replaced by Delete: 246c9389.)
+ * Automatic), Copy branch, Open pull request and, for a session with nothing
+ * to archive ({@link RowActions}), Delete, each where it applies.
  */
 export function SessionMenu({
   session,
@@ -255,7 +306,7 @@ export function SessionMenu({
     return () => clearTimeout(t);
   }, [copied]);
   const { deletion, branch } = session;
-  if (!markable && !deletion && !branch) return null;
+  if (!hasSessionMenu(session, markable)) return null;
   const mark = (change: Parameters<typeof markSession>[1]) => {
     void markSession(session.id, change).catch((error: unknown) => {
       console.error(`Couldn't change ${session.id}'s marks`, error);
@@ -273,10 +324,7 @@ export function SessionMenu({
       <DropdownMenuTrigger
         aria-label={`More for ${session.title}`}
         title="More"
-        className={cn(
-          "rounded p-1 text-muted-foreground opacity-0 outline-none transition hover:bg-accent hover:text-foreground focus-visible:opacity-100 data-[state=open]:opacity-100 group-hover/row:opacity-100",
-          className,
-        )}
+        className={cn(ROW_BUTTON, className)}
       >
         <Ellipsis className="size-3.5" />
       </DropdownMenuTrigger>

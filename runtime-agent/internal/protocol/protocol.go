@@ -123,7 +123,7 @@ type SetModelRequest struct {
 }
 
 // SetAuthRequest gives a workspace's session its own credential, applied at
-// its next launch: Kind is "claude-oauth-token" or "anthropic-api-key" for a
+// its next launch: Kind is "claude-oauth-token", "claude-account" or "anthropic-api-key" for a
 // Claude session, "openai-api-key" or "codex-access-token" for a Codex one, or "none" to take it
 // away (the agent's own login applies again), which carries no Token.
 type SetAuthRequest struct {
@@ -432,6 +432,8 @@ const FeatureAgentContext = "agent-context"
 
 // FeatureCodexAccessToken accepts a Codex workspace access token, separately
 // from an OpenAI Platform API key.
+const FeatureClaudeAccount = "claude-account"
+
 const FeatureCodexAccount = "codex-account"
 const FeatureCodexAccessToken = "codex-access-token"
 
@@ -542,6 +544,9 @@ const FeatureCodexGateway = "codex-gateway"
 // /api/runtime/git-credential for it, signed with its secret (package
 // gitcred). An older agent ignores the variables and keeps GH_TOKEN.
 const FeatureGitCredential = "git-credential"
+
+// FeatureGitLabCredential scopes GitLab tokens to GitLab.com, with nested namespaces.
+const FeatureGitLabCredential = "gitlab-credential"
 
 // FeatureMessageKeys is a message sent once per key: POST /message's `key`,
 // which the agent keeps on disk, answering a repeat as sent without sending it

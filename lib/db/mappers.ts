@@ -4,7 +4,6 @@ import { parseManifest } from "@/lib/runtime/snapshot/manifest";
 import type { WorkspaceSnapshot } from "@/lib/runtime/snapshot/types";
 import type { Database } from "@/lib/supabase/database.types";
 import type {
-  Job,
   Project,
   ProviderName,
   ProvisionTimings,
@@ -31,6 +30,7 @@ export function toProject(row: Tables["projects"]["Row"]): Project {
     id: row.id,
     orgId: row.org_id,
     githubRepoId: row.github_repo_id,
+    ...(row.gitlab_repo_id ? { provider: "gitlab" as const, repositoryId: row.gitlab_repo_id } : {}),
     fullName: row.full_name,
     owner: row.owner,
     name: row.name,
@@ -153,26 +153,6 @@ export function toRuntimeComputer(
     lastActiveAt: row.last_active_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-  };
-}
-
-export function toJob(row: Tables["jobs"]["Row"]): Job {
-  return {
-    id: row.id,
-    workspaceId: row.workspace_id,
-    agent: row.agent,
-    status: row.status,
-    prompt: row.prompt,
-    logPath: row.log_path ?? "",
-    resultPath: row.result_path ?? "",
-    executionHandle: row.execution_handle,
-    logBytes: row.log_bytes,
-    exitCode: row.exit_code,
-    sessionId: row.session_id,
-    costUsd: row.cost_usd,
-    startedAt: row.started_at,
-    finishedAt: row.finished_at,
-    createdAt: row.created_at,
   };
 }
 

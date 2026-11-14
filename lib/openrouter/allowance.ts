@@ -6,7 +6,7 @@
  * the client and the tests use it as is.
  */
 
-export type Allowance = { usedUsd: number; limitUsd: number };
+export type Allowance = { usedUsd: number; limitUsd: number | null };
 
 export type AllowanceView = {
   /** "out" once it's spent; "low" from 80%, to warn ahead. */
@@ -24,10 +24,12 @@ const LOW_FROM_PERCENT = 80;
 /** Nothing of the allowance is left: what the bar shows as "out", and when the
  *  key stops being handed out. */
 export function allowanceSpent({ usedUsd, limitUsd }: Allowance): boolean {
+  if (limitUsd === null) return false;
   return limitUsd <= 0 || Math.max(0, usedUsd) >= limitUsd - SPENT_WITHIN_USD;
 }
 
 export function allowanceView({ usedUsd, limitUsd }: Allowance): AllowanceView {
+  if (limitUsd === null) return { state: "ok", percent: 0, label: "Unlimited usage" };
   const used = Math.max(0, usedUsd);
   const out = allowanceSpent({ usedUsd, limitUsd });
   const percent = out ? 100 : Math.min(100, (used / limitUsd) * 100);

@@ -14,14 +14,29 @@
 # every provider and every user's own account. The runtime-agent isn't baked in;
 # it's uploaded on deploy, at the build the control plane runs.
 
-FROM ubuntu:24.04
+#
+# Nothing is piped from a URL into a shell: each download is checked against
+# its sha256, pinned beside its version in BOX_TOOL_SHA256, before it's used.
 
-ARG NODE_MAJOR
+# Pinned by digest, so the base can't change under the tag. To bump: the new
+# tag's index digest, e.g. `docker buildx imagetools inspect ubuntu:24.04`.
+FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
+
+ARG NODE_VERSION
+ARG NODE_SHA256_AMD64
+ARG NODE_SHA256_ARM64
 ARG CLAUDE_CODE_VERSION
+ARG CLAUDE_CODE_SHA256_AMD64
+ARG CLAUDE_CODE_SHA256_ARM64
 ARG CODEX_VERSION
 ARG GH_VERSION
-RUN test -n "$NODE_MAJOR" -a -n "$CLAUDE_CODE_VERSION" -a -n "$CODEX_VERSION" -a -n "$GH_VERSION" \
-  || (echo "ERROR: build with scripts/box-image.ts build-args" && exit 1)
+ARG GH_SHA256_AMD64
+ARG GH_SHA256_ARM64
+RUN for v in "$NODE_VERSION" "$NODE_SHA256_AMD64" "$NODE_SHA256_ARM64" \
+    "$CLAUDE_CODE_VERSION" "$CLAUDE_CODE_SHA256_AMD64" "$CLAUDE_CODE_SHA256_ARM64" \
+    "$CODEX_VERSION" "$GH_VERSION" "$GH_SHA256_AMD64" "$GH_SHA256_ARM64"; do \
+    test -n "$v" || { echo "ERROR: build with scripts/box-image.ts build-args"; exit 1; }; \
+  done
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -33,14 +48,23 @@ RUN apt-get update \
     procps python3 python3-pip python3-venv ripgrep sudo tmux unzip \
   && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
-  && apt-get install -y --no-install-recommends nodejs \
-  && rm -rf /var/lib/apt/lists/*
+# Node's own release (nodejs.org), into /usr/local.
+RUN case "$(dpkg --print-architecture)" in \
+    amd64) arch=x64 sum="$NODE_SHA256_AMD64" ;; \
+    arm64) arch=arm64 sum="$NODE_SHA256_ARM64" ;; \
+    *) echo "No Node build for $(dpkg --print-architecture)"; exit 1 ;; \
+  esac \
+  && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${arch}.tar.gz" -o /tmp/node.tar.gz \
+  && echo "${sum}  /tmp/node.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 --no-same-owner \
+  && rm -f /tmp/node.tar.gz /usr/local/README.md /usr/local/CHANGELOG.md /usr/local/LICENSE
 
 # gh's own release (Ubuntu's is years behind), downloaded whole before unpacking.
 RUN arch="$(dpkg --print-architecture)" \
+  && case "$arch" in amd64) sum="$GH_SHA256_AMD64" ;; arm64) sum="$GH_SHA256_ARM64" ;; *) sum= ;; esac \
   && dir="gh_${GH_VERSION}_linux_${arch}" \
   && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${dir}.tar.gz" -o /tmp/gh.tar.gz \
+  && echo "${sum}  /tmp/gh.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/gh.tar.gz -C /tmp \
   && install -m 0755 "/tmp/${dir}/bin/gh" /usr/local/bin/gh \
   && rm -rf /tmp/gh.tar.gz "/tmp/${dir}"
@@ -56,13 +80,25 @@ RUN useradd -m -s /bin/bash runtime \
   && echo 'runtime ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/runtime \
   && chmod 0440 /etc/sudoers.d/runtime
 
-# Claude Code's own installer, for the box user, at the pinned version; linked
-# into /usr/local/bin so it's on every PATH (login shell or not, sudo's too).
-# Its updater off, in managed settings (whatever env a provider starts it with)
-# and the env: it would move a long-lived box off the pin after a session.
+# Claude Code's native build, for the box user, at the pinned version, installed
+# by itself as claude.ai/install.sh would (lib/runtime/claude-cli.ts's
+# claudeNativeInstallCommand is the same for Modal); linked into /usr/local/bin
+# so it's on every PATH (login shell or not, sudo's too). Its updater off, in
+# managed settings (whatever env a provider starts it with) and the env: it
+# would move a long-lived box off the pin after a session.
 USER runtime
 WORKDIR /home/runtime
-RUN curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"
+RUN case "$(dpkg --print-architecture)" in \
+    amd64) platform=linux-x64 sum="$CLAUDE_CODE_SHA256_AMD64" ;; \
+    arm64) platform=linux-arm64 sum="$CLAUDE_CODE_SHA256_ARM64" ;; \
+    *) echo "No Claude Code build for $(dpkg --print-architecture)"; exit 1 ;; \
+  esac \
+  && curl -fsSL "https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/${platform}/claude" -o /tmp/claude \
+  && echo "${sum}  /tmp/claude" | sha256sum -c - \
+  && chmod 0755 /tmp/claude \
+  && /tmp/claude install "${CLAUDE_CODE_VERSION}" \
+  && rm /tmp/claude \
+  && echo "${sum}  /home/runtime/.local/share/claude/versions/${CLAUDE_CODE_VERSION}" | sha256sum -c -
 USER root
 RUN ln -sf /home/runtime/.local/bin/claude /usr/local/bin/claude \
   && mkdir -p /etc/claude-code \

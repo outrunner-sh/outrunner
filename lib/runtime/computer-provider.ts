@@ -39,7 +39,6 @@ import type { BoxResources, PreviewTarget, SandboxBackend, SandboxBox } from "@/
 import type {
   ChangedFile,
   CommitWorkspaceResult,
-  CreatePullRequestResult,
   CreateWorkspaceResult,
   ProviderName,
   ProvisionStage,
@@ -565,6 +564,13 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     return this.backend.alive(sandboxId);
   }
 
+  /** The reconciler's heartbeat for a box it looked at and keeps running:
+   *  resets the provider's own idle stop where it has one (Daytona's
+   *  backstop, lib/runtime/sandbox/daytona.ts AUTO_STOP_MINUTES). */
+  async keepComputerAlive(sandboxId: string): Promise<void> {
+    await this.backend.keepAlive?.(sandboxId);
+  }
+
   /** Whether this provider can pause a box and bring it back. Not for the
    *  jcode engine, whose provision always makes a new box: a paused one would
    *  be left behind with its sessions. */
@@ -736,20 +742,12 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     return notWiredYet("commitWorkspace");
   }
 
-  pushWorkspaceBranch(): Promise<void> {
-    return notWiredYet("pushWorkspaceBranch");
-  }
-
   suspendWorkspace(): Promise<void> {
     return notWiredYet("suspendWorkspace");
   }
 
   destroyWorkspace(): Promise<void> {
     return notWiredYet("destroyWorkspace");
-  }
-
-  createPullRequest(): Promise<CreatePullRequestResult> {
-    return notWiredYet("createPullRequest");
   }
 }
 

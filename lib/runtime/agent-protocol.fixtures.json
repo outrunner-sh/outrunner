@@ -557,6 +557,7 @@
     }
   ],
   "SetAuthRequest": [
+    { "kind": "claude-account", "token": "eyJ1cmwiOiJodHRwczovL2FwcC5leGFtcGxlL2FwaS9ydW50aW1lL2NsYXVkZSIsImJlYXJlciI6InYxLnN5bnRoZXRpYy1jbGF1ZGUtYnJva2VyLWJlYXJlci0wMTIzNDU2Nzg5In0" },
     {
       "kind": "codex-access-token",
       "token": "synthetic-workspace-access-token-for-tests"
@@ -717,7 +718,7 @@
         "rewind",
         "environment-skills",
         "codex-mcp",
-        "canvas", "codex-access-token", "codex-account", "codex-request-secrets", "snapshot-patch-integrity",
+        "canvas", "codex-access-token", "codex-account", "claude-account", "codex-request-secrets", "snapshot-patch-integrity",
         "ask-call-identity"
       ]
     }

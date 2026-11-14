@@ -18,10 +18,10 @@ export type CachedConversation = {
 /** Where conversations are kept past the page (lib/session/kept-conversations.ts):
  *  what was shown, without a cursor to resume from. */
 export type ConversationStore = {
-  load(id: string): Pick<CachedConversation, "events" | "seenIds"> | undefined;
+  load(id: string): Promise<Pick<CachedConversation, "events" | "seenIds"> | undefined>;
   save(id: string, entry: CachedConversation): void;
-  remove(id: string): void;
-  clear(): void;
+  remove(id: string): unknown;
+  clear(): unknown;
 };
 
 /** How many sessions' conversations are kept: the most recently opened. */
@@ -34,7 +34,7 @@ export const CONVERSATIONS_KEPT = 20;
  * least recently used goes once there are more than `limit`.
  *
  * With a `store`, they outlive the page too: one the page hasn't seen comes
- * from there, shown at once while its stream replays from the start.
+ * from there (`restore`), shown while its stream replays from the start.
  */
 export class ConversationCache {
   private readonly entries: Lru<CachedConversation>;
@@ -45,11 +45,19 @@ export class ConversationCache {
     this.store = store;
   }
 
+  /** The conversation this page has seen. */
   get(id: string): CachedConversation | undefined {
+    return this.entries.get(id);
+  }
+
+  /** The conversation this page has seen, or else one kept from before it. */
+  async restore(id: string): Promise<CachedConversation | undefined> {
     const seen = this.entries.get(id);
-    if (seen) return seen;
-    const kept = this.store?.load(id);
-    if (!kept) return undefined;
+    if (seen || !this.store) return seen;
+    const kept = await this.store.load(id);
+    // A warm-up's stream may have brought it in meanwhile, and is newer.
+    const since = this.entries.get(id);
+    if (since || !kept) return since;
     const entry = { ...kept, lastEventId: null };
     this.entries.set(id, entry);
     return entry;

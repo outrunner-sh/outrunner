@@ -504,58 +504,76 @@ test("long names and branches fit narrow content panels", async ({ page }) => {
   }
 });
 
-for (const state of ["normal", "archived"]) {
-  test(`a ${state} workspace can be permanently deleted from the sidebar`, async ({ page }, testInfo) => {
-    await openFixture(page, `/?state=${state}`);
-    if (testInfo.project.name === "mobile") {
-      await page.getByRole("button", { name: "Open menu", exact: true }).click();
-    }
-    const more = page.getByRole("button", { name: "More for Improve workspace navigation", exact: true });
-    await more.click();
-    await expect(page.getByRole("menuitem", { name: "Archive", exact: true })).toHaveCount(0);
-    await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
-    await expect(page.getByRole("menuitemradio", { name: "Automatic", exact: true })).toBeVisible();
-    await expect(page.getByRole("menuitemradio", { name: "Done", exact: true })).toHaveCount(0);
-    await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
-    const dialog = page.getByRole("dialog").last();
-    await expect(dialog).toContainText("This can't be undone.");
-    if (state === "archived" && testInfo.project.name === "desktop") {
-      await expect(dialog).toHaveCSS("opacity", "1");
-      await expect(page.getByRole("menu")).toHaveCount(0);
-      await page.screenshot({ path: ".context/workspace-delete-confirmation.png" });
-    }
-    const hold = dialog.getByRole("button", { name: "Hold to delete session", exact: true });
-    const deletion = page.waitForRequest((request) => request.url().endsWith("/api/workspaces/preview-0/lifecycle") && request.method() === "POST");
-    await hold.click({ delay: 1_100 });
-    const request = await deletion;
-    expect(request.postDataJSON()).toEqual({ action: "destroy" });
-    await expect(more).toHaveCount(0);
-    await expect(page.getByRole("dialog", { name: "Delete “Improve workspace navigation”?" })).toHaveCount(0);
+/** Count the session's lifecycle calls, answering each as `answer` says. */
+async function watchLifecycle(page: Page, answer: (attempt: number) => { status?: number; json: unknown } = () => ({ json: {} })) {
+  const calls: unknown[] = [];
+  await page.route("**/api/workspaces/preview-0/lifecycle", async (route) => {
+    calls.push(route.request().postDataJSON());
+    await route.fulfill(answer(calls.length));
   });
+  return calls;
 }
 
-test("header deletion preserves failures and allows retry after navigating home", async ({ page }, testInfo) => {
+async function openSidebar(page: Page, project: string) {
+  if (project === "mobile") await page.getByRole("button", { name: "Open menu", exact: true }).click();
+}
+
+test("a sidebar row archives in one click, and Undo takes it back before anything is sent", async ({ page }, testInfo) => {
+  const calls = await watchLifecycle(page);
+  await openFixture(page, "/");
+  await openSidebar(page, testInfo.project.name);
+  const archive = page.getByRole("button", { name: "Archive Improve workspace navigation", exact: true });
+  // Delete is gone from a session with work to keep: Archive took its place.
+  await page.getByRole("button", { name: "More for Improve workspace navigation", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Delete", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  if (testInfo.project.name === "desktop") {
+    await page.getByRole("link", { name: "Improve workspace navigation" }).first().hover();
+    await page.screenshot({ path: ".context/sidebar-archive-hover.png" });
+  }
+  await archive.click();
+  await expect(archive).toHaveCount(0);
+  const toast = page.getByText("Archived “Improve workspace navigation”", { exact: true });
+  await expect(toast).toBeVisible();
+  if (testInfo.project.name === "desktop") await page.screenshot({ path: ".context/sidebar-archive-undo.png" });
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(toast).toHaveCount(0);
+  await expect(archive).toHaveCount(1);
+  expect(calls).toEqual([]);
+});
+
+test("an archive not undone is sent once Undo has passed, and the session stays out of the sidebar", async ({ page }, testInfo) => {
+  const calls = await watchLifecycle(page, () => ({ json: { workspace: { id: "preview-0", status: "archived" } } }));
+  await openFixture(page, "/");
+  await openSidebar(page, testInfo.project.name);
+  const sent = page.waitForRequest((request) => request.url().endsWith("/api/workspaces/preview-0/lifecycle"), { timeout: 10_000 });
+  await page.getByRole("button", { name: "Archive Improve workspace navigation", exact: true }).click();
+  expect((await sent).postDataJSON()).toEqual({ action: "archive" });
+  await expect.poll(() => calls).toEqual([{ action: "archive" }]);
+  await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "More for Improve workspace navigation", exact: true })).toHaveCount(0);
+});
+
+test("an archived session isn't listed in the sidebar", async ({ page }, testInfo) => {
+  await openFixture(page, "/?state=archived");
+  await openSidebar(page, testInfo.project.name);
+  await expect(page.getByRole("button", { name: "More for Improve workspace navigation", exact: true })).toHaveCount(0);
+});
+
+test("the header's Archive leaves the session, and a refusal says why", async ({ page }, testInfo) => {
   await page.route("**/api/workspaces/preview-0/chats", (route) => route.fulfill({ json: { chats: [] } }));
+  const calls = await watchLifecycle(page, () => ({ status: 409, json: { error: "This workspace is busy. Please try again." } }));
   await openFixture(page, "/workspaces/preview-0");
   if (testInfo.project.name === "desktop") {
     await page.getByRole("button", { name: "Collapse sidebar", exact: true }).click();
   }
-  let attempts = 0;
-  await page.route("**/api/workspaces/preview-0/lifecycle", async (route) => {
-    attempts++;
-    if (attempts === 1) {
-      await route.fulfill({ status: 409, json: { error: "This workspace is busy. Please try again." } });
-    } else {
-      await route.fulfill({ json: { workspace: { id: "preview-0", status: "destroyed" } } });
-    }
-  });
-  await page.getByRole("button", { name: "Delete session", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Delete “Improve workspace navigation”?" });
-  const hold = dialog.getByRole("button", { name: "Hold to delete session", exact: true });
-  await hold.click({ delay: 1_100 });
+  await expect(page.getByRole("button", { name: "Delete session", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Archive session", exact: true }).click();
+  // Left at once: open, its page would restore it the moment it read archived.
   await expect(page).toHaveURL(/\/$/);
-  await expect(dialog.getByRole("alert")).toHaveText("This workspace is busy. Please try again.");
-  await hold.click({ delay: 1_100 });
-  await expect(dialog).toHaveCount(0);
-  expect(attempts).toBe(2);
+  // Dismissing the toast sends it now.
+  await page.getByRole("button", { name: "Dismiss", exact: true }).click();
+  const notice = page.getByRole("alert").filter({ hasText: "Couldn't archive “Improve workspace navigation”" });
+  await expect(notice).toContainText("This workspace is busy. Please try again.");
+  await expect.poll(() => calls).toEqual([{ action: "archive" }]);
 });

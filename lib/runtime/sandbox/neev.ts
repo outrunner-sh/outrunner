@@ -341,7 +341,9 @@ export class SandboxRuntime {
         env: options.env ? Object.entries(options.env).map(([k, v]) => `${k}=${v}`) : undefined,
         timeout_ms: options.timeoutMs,
       }),
-      signal: options.timeoutMs ? AbortSignal.timeout(options.timeoutMs + 30_000) : undefined,
+      // The command's own limit, or Daytona's (EXEC_TIMEOUT_SECONDS) when it
+      // has none, and a margin for the stream: never a request held for good.
+      signal: AbortSignal.timeout((options.timeoutMs ?? NEEV_EXEC_DEFAULT_TIMEOUT_MS) + 30_000),
     });
     if (!response.ok) throw await this.refused("exec", response);
     return parseExecStream(await response.text());
@@ -358,11 +360,17 @@ export class SandboxRuntime {
         },
         // A Blob: fetch's types take no Buffer, and a copy keeps the bytes as is.
         body: new Blob([Uint8Array.from(data)]),
+        signal: AbortSignal.timeout(NEEV_WRITE_TIMEOUT_MS),
       },
     );
     if (!response.ok) throw await this.refused(`write ${path}`, response);
   }
 }
+
+/** An exec with no timeout of its own waits this long, as Daytona's does. */
+const NEEV_EXEC_DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+/** A file write (the agent's binary is the largest) waits this long. */
+const NEEV_WRITE_TIMEOUT_MS = 2 * 60 * 1000;
 
 /** Read exec's response: `{type:"stdout"|"stderr", data:<base64>}` chunks,
  *  then `{type:"exit", exit_code}`. A stream with no exit event failed. */

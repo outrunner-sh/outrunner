@@ -316,6 +316,19 @@ test("CI failing is queued for each linked pull request, by its branch when GitH
   assert.equal(unlinked.recorded.queued.length, 0);
 });
 
+test("a branch's pull request is looked up within the event's org and project", async () => {
+  const asked: string[][] = [];
+  const { deps, recorded } = fakeDeps({
+    pullForBranch: async (orgId, projectId, branch) => {
+      asked.push([orgId, projectId, branch]);
+      return null;
+    },
+  });
+  assert.deepEqual(await queueCiFailure("check_suite", suite({ pulls: [] }), deps, SLUG), []);
+  assert.deepEqual(asked, [["o1", "p1", "feature/login"]]);
+  assert.equal(recorded.queued.length, 0);
+});
+
 test("a review is queued into its pull request's batch once, whatever GitHub redelivers", async () => {
   const { deps, recorded } = fakeDeps();
   assert.equal(await queueReview("pull_request_review", reviewEvent(), deps), "row1");

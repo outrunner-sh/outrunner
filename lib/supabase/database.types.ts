@@ -80,7 +80,8 @@ type ProjectRow = {
    *  (20261027120000_organizations.sql). */
   org_id: string;
   owner_id: string;
-  github_repo_id: number;
+  github_repo_id: number | null;
+  gitlab_repo_id: number | null;
   full_name: string;
   owner: string;
   name: string;
@@ -288,6 +289,9 @@ type ComputeIntervalRow = {
   cpu: number;
   started_at: string;
   last_seen_at: string;
+  /** When the reconciler last had an answer from the box's agent
+   *  (20261112140000_box_backstops.sql); optional where read before it. */
+  agent_seen_at?: string | null;
   ended_at: string | null;
 };
 
@@ -314,6 +318,8 @@ type SubscriptionRow = {
   current_period_end: string;
   cancel_at_period_end: boolean;
   past_due_since: string | null;
+  /** Since when an overage payment has been failing (20261114120000_usage_limits_in_dollars.sql). */
+  overage_unpaid_since: string | null;
   synced_at: string;
   updated_at: string;
 };
@@ -720,8 +726,9 @@ type OrganizationSettingsRow = {
   org_id: string;
   default_model: Json | null;
   box_size: "x-small" | "small" | "medium" | "large" | null;
-  // supabase/migrations/20261101100000_org_usage_controls.sql.
-  usage_limit_percent: number | null;
+  // supabase/migrations/20261101100000_org_usage_controls.sql, its limit in
+  // dollars since 20261114120000_usage_limits_in_dollars.sql.
+  usage_limit_usd: number | null;
   alert_thresholds: number[];
   // supabase/migrations/20261102100000_github_agent_loop.sql.
   archive_on_close: boolean;
@@ -1090,6 +1097,9 @@ type GithubInstallationRow = {
   suspended_at: string | null;
   created_at: string;
   updated_at: string;
+  /** The org that sees and manages its shares: the first linked by GitHub's
+   *  say (20261112130000). Stays when it disconnects; null once it's deleted. */
+  source_org_id: string | null;
 };
 
 type OrgGithubInstallationRow = {
@@ -1097,6 +1107,22 @@ type OrgGithubInstallationRow = {
   installation_id: number;
   installed_by: string | null;
   created_at: string;
+  // supabase/migrations/20261112130000_github_installation_sharing.sql
+  authority: GithubLinkAuthority | null;
+  authorized_github_id: number | null;
+};
+
+/** How GitHub authorized an org's link to an installation (20261112130000). */
+export type GithubLinkAuthority = "installer" | "account_owner" | "org_owner";
+
+type GithubInstallationShareRow = {
+  org_id: string;
+  org_name: string;
+  personal: boolean;
+  linked_at: string;
+  linked_by: string | null;
+  linked_by_email: string | null;
+  authority: GithubLinkAuthority | null;
 };
 
 type OrgGithubInstallationDetailsRow = GithubInstallationRow & OrgGithubInstallationRow;
@@ -1350,6 +1376,16 @@ type TrackerIssueClaimRow = {
 };
 
 // supabase/migrations/20261110100000_jira_delegation.sql
+// supabase/migrations/20261112150000_cron_heartbeats.sql
+type CronHeartbeatRow = {
+  job: string;
+  last_run_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  updated_at: string;
+};
+
 type JiraIssueSessionRow = {
   installation_id: string;
   issue_id: string;
@@ -1613,6 +1649,12 @@ export type Database = {
           },
         ];
       };
+      user_gitlab_connections: {
+        Row: { user_id: string; gitlab_user_id: number; gitlab_login: string; token_ciphertext: string; updated_at: string };
+        Insert: { user_id: string; gitlab_user_id: number; gitlab_login: string; token_ciphertext: string; updated_at?: string };
+        Update: { gitlab_user_id?: number; gitlab_login?: string; token_ciphertext?: string; updated_at?: string };
+        Relationships: [];
+      };
       projects: {
         Row: ProjectRow;
         Insert: Insert<
@@ -1846,6 +1888,12 @@ export type Database = {
         Row: TrackerIssueClaimRow;
         Insert: TrackerIssueClaimRow;
         Update: Partial<TrackerIssueClaimRow>;
+        Relationships: [];
+      };
+      cron_heartbeats: {
+        Row: CronHeartbeatRow;
+        Insert: Insert<CronHeartbeatRow, "job">;
+        Update: Partial<CronHeartbeatRow>;
         Relationships: [];
       };
       jira_issue_sessions: {
@@ -2188,7 +2236,22 @@ export type Database = {
       select_gcp_connection: { Args: { for_owner: string; for_connection: string; requested_size?: string }; Returns: undefined };
       disconnect_gcp_connection: { Args: { for_owner: string; for_connection: string }; Returns: undefined };
       link_github_installation: {
-        Args: { target_org: string; target_installation: number; github_user_id: number | null; actor_id: string };
+        Args: {
+          target_org: string;
+          target_installation: number;
+          github_user_id: number | null;
+          actor_id: string;
+          verified_owner?: "account_owner" | "org_owner" | null;
+        };
+        Returns: string | null;
+      };
+      github_installation_source: { Args: { target_installation: number }; Returns: string | null };
+      github_installation_shares: {
+        Args: { source_org: string; target_installation: number };
+        Returns: GithubInstallationShareRow[];
+      };
+      remove_github_installation_share: {
+        Args: { source_org: string; target_installation: number; target_org: string };
         Returns: string | null;
       };
       set_slack_channel_access: {
@@ -2391,11 +2454,12 @@ export type Database = {
         Returns: number;
       };
       claim_pooled_computer: {
-        Args: { requested_workspace_id: string; requested_provider: string; requested_generation?: number | null };
+        Args: { acting_user: string; requested_workspace_id: string; requested_provider: string; requested_generation?: number | null };
         Returns: string | null;
       };
       claim_pooled_warmup: {
         Args: {
+          acting_user: string;
           requested_project_id: string;
           requested_provider: string;
           requested_generation?: number | null;
@@ -2420,6 +2484,8 @@ export type Database = {
       };
       claim_workspace_computer: {
         Args: {
+          /** The signed-in user the server claims for (service role only). */
+          acting_user: string;
           requested_workspace_id: string;
           requested_agent_secret: string;
           requested_image_version?: string;
@@ -2433,6 +2499,8 @@ export type Database = {
       };
       claim_runtime_computer: {
         Args: {
+          /** The signed-in user the server claims for (service role only). */
+          acting_user: string;
           requested_project_id: string;
           requested_agent_secret: string;
           requested_image_version?: string;

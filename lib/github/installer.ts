@@ -27,6 +27,9 @@ export function authorizeUrl(clientId: string, redirectUri: string, state: strin
   return `https://github.com/login/oauth/authorize?${query}`;
 }
 
+/** How long each call to GitHub below waits: the user is on the page. */
+const GITHUB_TIMEOUT_MS = 15_000;
+
 /** The GitHub user id the code signs in, or null for a code GitHub won't
  *  take (expired, used). Throws when GitHub doesn't answer as it should, so
  *  a hiccup is "try again", not "you aren't the installer". The token it's
@@ -42,6 +45,7 @@ export async function githubUserFromCode(
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify({ client_id: config.clientId, client_secret: clientSecret, code, redirect_uri: redirectUri }),
+    signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
   });
   const body = ((await traded.json().catch(() => null)) ?? {}) as { access_token?: string; error?: string };
   if (body.error === "bad_verification_code") return null;
@@ -50,6 +54,7 @@ export async function githubUserFromCode(
   try {
     const user = await doFetch("https://api.github.com/user", {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+      signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
     });
     if (!user.ok) throw new Error(`GitHub didn't say who signed in (${user.status})`);
     const { id } = ((await user.json().catch(() => null)) ?? {}) as { id?: unknown };
@@ -63,6 +68,7 @@ export async function githubUserFromCode(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ access_token: token }),
+      signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
     }).catch(() => undefined);
   }
 }

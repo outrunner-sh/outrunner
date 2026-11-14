@@ -1,5 +1,5 @@
 import { projectBranchesLike } from "@/lib/db/repositories";
-import { branchKnownOnGitHub } from "@/lib/github/client";
+import { branchKnown as branchKnownOnGitHub } from "@/lib/code-providers/client";
 import { optionalGitToken } from "@/lib/github/identity.deps";
 import type { RenameBranchDeps } from "@/lib/session/rename-branch";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";

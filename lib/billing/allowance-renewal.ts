@@ -7,6 +7,7 @@
  */
 
 import { allowancePeriod } from "@/lib/billing/periods";
+import { PLANS } from "@/lib/billing/plans";
 import { currentSubscription, type SubscriptionRecord } from "@/lib/billing/subscriptions";
 
 /**
@@ -32,7 +33,14 @@ export function dueForRenewal(
     if (!storedPeriods.has(userId)) continue;
     const current = currentSubscription(theirs, now);
     if (!current) continue;
-    if (storedPeriods.get(userId) !== allowancePeriod(current, now).start.toISOString()) due.push(userId);
+    // A plan with unlimited models (none today; Max was until usage-based
+    // billing) is reconciled within the period too: a capped key moving onto
+    // it loses its cap, and a failed OpenRouter patch is retried.
+    if (
+      PLANS[current.plan].models.usd === null ||
+      storedPeriods.get(userId) !== allowancePeriod(current, now).start.toISOString()
+    )
+      due.push(userId);
   }
   return due;
 }

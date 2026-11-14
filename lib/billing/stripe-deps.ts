@@ -10,13 +10,15 @@ import {
   recordEvent,
   orgForCustomer,
   saveSubscription,
+  setOverageUnpaid,
   subscriptionById,
 } from "@/lib/billing/billing-store";
+import { OVERAGE_KIND } from "@/lib/billing/overage";
 import type { CheckoutDeps } from "@/lib/billing/checkout";
 import { refreshModelAllowance } from "@/lib/db/credentials";
 import { refreshOrgModelAllowance } from "@/lib/db/org-model-allowance";
 import { getOrg, personalOrgId, personalOwners } from "@/lib/db/orgs";
-import { LOOKUP_KEYS, PLANS } from "@/lib/billing/plans";
+import { PLANS } from "@/lib/billing/plans";
 import { stripe } from "@/lib/billing/stripe";
 import type { SyncDeps } from "@/lib/billing/sync";
 
@@ -53,6 +55,16 @@ export const syncDeps: SyncDeps = {
     if (owner) await refreshModelAllowance(owner);
     else await refreshOrgModelAllowance(orgId);
   },
+  async openOverageInvoices(customerId) {
+    const open: { created: Date; attempted: boolean }[] = [];
+    for await (const invoice of stripe().invoices.list({ customer: customerId, status: "open", limit: 100 })) {
+      if (invoice.metadata?.kind === OVERAGE_KIND) {
+        open.push({ created: new Date(invoice.created * 1000), attempted: invoice.attempt_count > 0 });
+      }
+    }
+    return open;
+  },
+  setOverageUnpaid,
 };
 
 export const checkoutDeps: CheckoutDeps = {
@@ -79,11 +91,11 @@ export const checkoutDeps: CheckoutDeps = {
     }
     return statuses;
   },
-  priceIdFor: async (lookupKey) => {
+  priceFor: async (lookupKey) => {
     const prices = await stripe().prices.list({ lookup_keys: [lookupKey], active: true, limit: 1 });
     const price = prices.data[0];
     if (!price) throw new Error(`No active Stripe price has the lookup key ${lookupKey}.`);
-    return price.id;
+    return { id: price.id, unitAmountCents: price.unit_amount, currency: price.currency };
   },
   createCheckoutSession: async ({ customerId, priceId, orgId, userId, successUrl, cancelUrl }) => {
     const session = await stripe().checkout.sessions.create({
@@ -109,26 +121,3 @@ export const checkoutDeps: CheckoutDeps = {
     }
   },
 };
-
-/** How long to wait for Stripe's prices before going without them. The pages
- *  that show them render around the answer, so a slow Stripe must not hold
- *  them: the SDK waits 80 seconds and retries twice by default, long enough
- *  to look like a hang. A price lookup changes nothing, and both callers show
- *  their page without prices, so it is not worth retrying either. */
-const PRICES_TIMEOUT_MS = 5000;
-
-/** What Stripe charges for each plan and interval, in USD, by lookup key:
- *  shown on the billing page and onboarding's plans step, so prices live in
- *  Stripe alone. Rejects rather than wait past PRICES_TIMEOUT_MS. */
-export async function listedPricesUsd(): Promise<Record<string, number>> {
-  const keys = Object.values(LOOKUP_KEYS).flatMap((byInterval) => Object.values(byInterval));
-  const prices = await stripe().prices.list(
-    { lookup_keys: keys, active: true, limit: keys.length },
-    { timeout: PRICES_TIMEOUT_MS, maxNetworkRetries: 0 },
-  );
-  return Object.fromEntries(
-    prices.data.flatMap((price) =>
-      price.lookup_key && price.unit_amount !== null ? [[price.lookup_key, price.unit_amount / 100]] : [],
-    ),
-  );
-}

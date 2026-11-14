@@ -101,7 +101,7 @@ func sandboxCommand(ctx context.Context, base, path string, config Config, accou
 		fmt.Fprintln(errout, "Non-interactive setup requires --project and --yes. Add --use to switch new sessions to GCP.")
 		return 2
 	}
-	config, code := ensureSignedIn(ctx, base, path, config, account, out, errout)
+	config, code := ensureSignedIn(ctx, base, path, config, account, in, out, errout)
 	if code != 0 {
 		return code
 	}
