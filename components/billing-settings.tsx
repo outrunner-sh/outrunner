@@ -202,8 +202,8 @@ function perMinute(cpu: number, centsPerVcpuHour: number): string {
 
 /** Per-minute rates by box size, included and past the included usage. */
 function RatesTable() {
-  const pro = formatUsd((PLANS.pro.priceUsd ?? 0) * 100);
-  const max = formatUsd((PLANS.max.priceUsd ?? 0) * 100);
+  const pro = formatUsd(PLANS.pro.usage.includedUsd * 100);
+  const max = formatUsd(PLANS.max.usage.includedUsd * 100);
   return (
     <div className="space-y-2">
       <p className="text-sm font-medium text-foreground">Per-minute rates</p>
