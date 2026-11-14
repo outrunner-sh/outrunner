@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { recordAudit } from "@/lib/audit/record";
 import { getOwner } from "@/lib/auth/owner";

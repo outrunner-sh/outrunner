@@ -14,8 +14,8 @@ const session = (id: string, minutesAgo: number): SidebarSession => ({
   title: id,
   branch: `runtime/${id}`,
   at: ago(minutesAgo * 60_000),
-  deletion: { kind: "cloud" },
-  archived: false,
+  archivable: true,
+  deletion: null,
 });
 const group = (key: string, sessions: SidebarSession[], local = false): SidebarGroup => ({
   key,

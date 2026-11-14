@@ -10,7 +10,7 @@
  * the owner reads its conversation or acts on it.
  */
 
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import { GET as pullRequestGET } from "@/app/api/workspaces/[id]/pull-request/route";
 import { POST as answerPOST } from "@/app/api/workspaces/[id]/answer/route";
@@ -23,7 +23,7 @@ import { POST as messagePOST } from "@/app/api/workspaces/[id]/message/route";
 import { POST as secretsPOST } from "@/app/api/workspaces/[id]/secrets/route";
 import {
   conversationPage,
-  fenceBefore,
+  sentPrompt,
   turnSettled,
   eventJson,
   lastAssistantText,
@@ -33,20 +33,26 @@ import {
 } from "@/lib/api/conversation";
 import { modelSwitch, parseAnswers, secretNames } from "@/lib/api/answers";
 import { checkAttachments } from "@/lib/api/attachments";
+import { parseImages } from "@/lib/api/images";
+import { imagesToAttachments } from "@/lib/api/images.deps";
 import { boxSetupRefusal } from "@/lib/api/auth";
-import { firstPrompt, MAX_PROMPT, parseAttachmentIds, parseCreate, type CreateInput } from "@/lib/api/create-request";
+import { firstPrompt, idempotencyKey, idempotentId, MAX_PROMPT, parseAttachmentIds, parseCreate, type CreateInput } from "@/lib/api/create-request";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
 import { readConversation, readLiveConversation } from "@/lib/api/live";
+import { runsFrom, sessionUsage, type Run } from "@/lib/api/runs";
 import { getChat, listChats } from "@/lib/db/chats";
 import { agentChat, chatNamed } from "@/lib/session/chat-target";
 import { mainChatOf, orderedChats, type SessionChat } from "@/lib/session/chats";
-import { pageOf, pageRequest } from "@/lib/api/pagination";
+import { pageOf, pageRequest, paginate } from "@/lib/api/pagination";
 import { isApiSource, isApiStatus, snakeKeys, statusesFor, workspaceJson } from "@/lib/api/serialize";
 import { getEnvironment } from "@/lib/db/environments";
 import { toWorkspace } from "@/lib/db/mappers";
 import { projectLevel } from "@/lib/db/org-access";
-import { getProject, getWorkspace } from "@/lib/db/repositories";
+import { getProject, getProjectByFullName, getWorkspace } from "@/lib/db/repositories";
+import { pullRequestPreamble, pullRequestRef } from "@/lib/api/repo-ref";
+import { getPullRequestStatusWithDetails } from "@/lib/code-providers/client";
+import { requireGitToken } from "@/lib/github/identity.deps";
 import { isUuid } from "@/lib/ids";
 import { settableEnv } from "@/lib/imports/settable-env";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
@@ -76,6 +82,15 @@ export async function createWorkspace(
   hooks: CreateHooks = {},
   check?: (input: CreateInput) => Promise<Response | null>,
 ): Promise<Response> {
+  const key = idempotencyKey(context.request.headers);
+  if (key && typeof key === "object") return apiError(400, key.refused);
+  const askedId = key ? idempotentId(context.owner.id, key) : undefined;
+  // Sent again: the session the first send made, before anything is
+  // uploaded or watched a second time.
+  const replayed = askedId ? await getWorkspace(askedId) : null;
+  if (replayed && replayed.ownerId === context.owner.id) {
+    return Response.json(workspaceJson(replayed, context.base), { status: 200, headers: { "idempotent-replayed": "true" } });
+  }
   const raw = await jsonBody(context.request);
   if (raw instanceof Response) return raw;
   const input = parseCreate(raw);
@@ -87,6 +102,11 @@ export async function createWorkspace(
   const { owner, caller } = context;
 
   let projectId = input.projectId;
+  if (input.repoFullName) {
+    const found = await getProjectByFullName(caller.orgId, input.repoFullName);
+    if (!found) return apiError(404, "No repository at that address in this org that you can see. Add it to Outrunner first.");
+    projectId = found.id;
+  }
   if (input.environmentId) {
     const environment = await getEnvironment(owner.id, input.environmentId);
     if (!environment || environment.orgId !== caller.orgId) return apiError(404, "No project by that id that you can see.");
@@ -101,8 +121,15 @@ export async function createWorkspace(
   if (!project || project.orgId !== caller.orgId || !allows(await projectLevel(owner.id, project.id), "read")) {
     return apiError(404, "No repository by that id that you can see in this org.");
   }
+  const start: { baseBranch?: string; preamble?: string } | Response = input.pullRequest
+    ? await pullRequestStart(owner.id, project, input)
+    : { baseBranch: input.baseBranch };
+  if (start instanceof Response) return start;
   const unknownFile = await checkAttachments(input.attachmentIds);
   if (unknownFile) return unknownFile;
+  const imageIds = await imagesToAttachments(context, input.images);
+  if (imageIds instanceof Response) return imageIds;
+  const attachmentIds = [...input.attachmentIds, ...imageIds];
 
   // The kept sign-in stays while the box is set up, after this answer.
   const release = holdActingUser();
@@ -118,11 +145,13 @@ export async function createWorkspace(
         effort: input.effort,
         agent: input.agent,
         prompt: input.prompt,
+        ...(askedId && { id: askedId }),
       },
       {
-        baseBranch: input.baseBranch,
-        firstMessage: firstPrompt(input),
-        firstAttachmentIds: input.attachmentIds,
+        baseBranch: start.baseBranch,
+        ...(input.name && { title: input.name }),
+        firstMessage: firstPrompt(input, start.preamble),
+        firstAttachmentIds: attachmentIds,
         source: "api",
         boxSize: input.size && isBoxSizeId(input.size) ? input.size : undefined,
         onSettled: async (outcome) => {
@@ -146,6 +175,33 @@ export async function createWorkspace(
   return Response.json({ ...workspaceJson(workspace, context.base), status: "preparing" }, { status: 202 });
 }
 
+/** Where a session on a pull request starts (its head branch, in the
+ *  repository itself) and what it's told of it, or why it can't. */
+async function pullRequestStart(
+  ownerId: string,
+  project: { orgId: string; fullName: string },
+  input: CreateInput,
+): Promise<{ baseBranch: string; preamble: string } | Response> {
+  const pr = input.pullRequest!;
+  let read;
+  try {
+    const token = await requireGitToken(ownerId, { orgId: project.orgId, fullName: project.fullName });
+    read = await getPullRequestStatusWithDetails({ token, repoFullName: project.fullName, number: pr.number });
+  } catch (error) {
+    console.warn(`API: couldn't read ${project.fullName}#${pr.number}`, error);
+    return apiError(404, "Couldn't read that pull request with your account. Check it exists and that you can see it.");
+  }
+  const { status, details } = read;
+  if (status.state !== "open") return apiError(409, `That pull request is ${status.state}: a session works on an open one.`);
+  if (details.fromFork || !details.headRef) {
+    return apiError(409, "That pull request's branch is in a fork, which a session can't push to. Start one on the repository's own branch instead.");
+  }
+  return {
+    baseBranch: details.headRef,
+    preamble: pullRequestPreamble({ url: pr.url, title: details.title, baseRef: details.baseRef, headRef: details.headRef, workOnPrBranch: input.workOnCurrentBranch }),
+  };
+}
+
 /** GET /workspaces: the caller's sessions in the org (an admin's, the
  *  org's), newest first, filtered by status, source, user and repository. */
 export async function listWorkspaces(context: ApiContext): Promise<Response> {
@@ -166,6 +222,10 @@ export async function listWorkspaces(context: ApiContext): Promise<Response> {
   }
   const projectId = params.get("project_id");
   if (projectId && !isUuid(projectId)) return apiError(400, "`project_id` is a repository's id.");
+  const prUrl = params.get("pr_url");
+  if (prUrl !== null && !pullRequestRef(prUrl)) return apiError(400, "`pr_url` is a pull request's address.");
+  const archived = params.get("include_archived");
+  if (archived !== null && archived !== "true" && archived !== "false") return apiError(400, "`include_archived` is true or false.");
 
   // The service role, with the access checked here: RLS shows each user only
   // their own sessions, and an admin's listing is the org's.
@@ -180,6 +240,20 @@ export async function listWorkspaces(context: ApiContext): Promise<Response> {
   query = status && isApiStatus(status) ? query.in("status", statusesFor(status)) : query.neq("status", "destroyed");
   if (source && isApiSource(source)) query = query.eq("source", source);
   if (projectId) query = query.eq("project_id", projectId);
+  if (archived === "false") query = query.not("status", "in", `(${[...statusesFor("archived"), ...statusesFor("archiving")].join(",")})`);
+  if (prUrl !== null) {
+    // The sessions whose pull request it is: its address as GitHub (or
+    // GitLab) gives it, whatever page of it was named.
+    const ref = pullRequestRef(prUrl)!;
+    const { data: prs, error: prError } = await createSupabaseAdminClient()
+      .from("pull_requests")
+      .select("workspace_id, url")
+      .eq("github_number", ref.number)
+      .ilike("url", `%${ref.fullName.replace(/^gitlab\.com\//, "").replace(/[\\%_]/g, "\\$&")}%`);
+    if (prError) throw prError;
+    const ids = (prs ?? []).filter((pr) => pullRequestRef(pr.url)?.fullName.toLowerCase() === ref.fullName.toLowerCase()).map((pr) => pr.workspace_id as string);
+    query = query.in("id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
+  }
   const from = (page.page - 1) * page.perPage;
   const { data, error, count } = await query
     .order("created_at", { ascending: false })
@@ -207,7 +281,7 @@ async function visible(context: ApiContext, id: string): Promise<{ workspace: Wo
 }
 
 /** The caller's own session, or the answer to give. */
-async function ownSession(context: ApiContext, id: string): Promise<Workspace | Response> {
+export async function ownSession(context: ApiContext, id: string): Promise<Workspace | Response> {
   const found = await visible(context, id);
   if (!found) return apiError(404, "No session by that id that you can see.");
   if (!found.own) return apiError(403, "Only the session's owner can do that.");
@@ -246,7 +320,7 @@ export async function getWorkspaceApi(context: ApiContext, id: string): Promise<
  * which is where a call that names none goes; a response when it names one
  * the session doesn't have.
  */
-async function apiChat(workspace: Workspace, value: unknown): Promise<string | undefined | Response> {
+export async function apiChat(workspace: Workspace, value: unknown): Promise<string | undefined | Response> {
   if (value !== undefined && value !== null && typeof value !== "string") return apiError(400, "`chat_id` is a chat's id.");
   const named = await chatNamed(value, workspace);
   if (!named.ok) return apiError(named.response.status === 404 ? 404 : 400, named.response.status === 404 ? "No chat by that id in this session." : "`chat_id` is a chat's id.");
@@ -313,18 +387,25 @@ export async function sendMessageApi(
   const raw = await jsonBody(context.request);
   if (raw instanceof Response) return raw;
   const content = typeof raw.content === "string" ? raw.content.trim() : "";
-  const attachmentIds = parseAttachmentIds(raw.attachment_ids);
-  if (typeof attachmentIds === "string") return apiError(400, attachmentIds);
+  const uploaded = parseAttachmentIds(raw.attachment_ids);
+  if (typeof uploaded === "string") return apiError(400, uploaded);
+  const images = parseImages(raw.images, uploaded.length);
+  if (typeof images === "string") return apiError(400, images);
   // Files alone are a message too ("here's the log"), as in the composer.
-  if (!content && attachmentIds.length === 0) return apiError(400, "Say something (`content`), or send files (`attachment_ids`).");
+  if (!content && uploaded.length === 0 && images.length === 0) {
+    return apiError(400, "Say something (`content`), or send files (`attachment_ids`) or `images`.");
+  }
   if (content.length > MAX_PROMPT) return apiError(400, "The message is too long.");
   if (raw.mode !== undefined && raw.mode !== "build" && raw.mode !== "plan") return apiError(400, "`mode` is build or plan.");
   const workspace = await ownSession(context, id);
   if (workspace instanceof Response) return workspace;
-  const unknownFile = await checkAttachments(attachmentIds);
+  const unknownFile = await checkAttachments(uploaded);
   if (unknownFile) return unknownFile;
   const chat = await apiChat(workspace, raw.chat_id);
   if (chat instanceof Response) return chat;
+  const imageIds = await imagesToAttachments(context, images);
+  if (imageIds instanceof Response) return imageIds;
+  const attachmentIds = [...uploaded, ...imageIds];
   const refused = await wake(context, workspace);
   if (refused) return refused;
   const sentAt = Date.now();
@@ -335,11 +416,18 @@ export async function sendMessageApi(
     routeParams({ id }),
   );
   if (!sent.ok) return errorFromRoute(sent, context.base);
-  const fence = await fenceAfterSend((await getWorkspace(id)) ?? workspace, content, sentAt, chat);
+  const logged = await fenceAfterSend((await getWorkspace(id)) ?? workspace, content, sentAt, chat);
+  const fence = logged?.fence ?? null;
   // Its webhooks follow the session's turn: the main chat's.
   if (!chat) await onSent?.(workspace, fence);
   return Response.json(
-    { result: "sent", workspace_id: id, ...(chat && { chat_id: chat }), after_event: fence === null ? null : String(fence) },
+    {
+      result: "sent",
+      workspace_id: id,
+      ...(chat && { chat_id: chat }),
+      after_event: fence === null ? null : String(fence),
+      run_id: logged ? String(logged.promptId) : null,
+    },
     { status: 202 },
   );
 }
@@ -355,12 +443,12 @@ const FENCE_RETRY_MS = 1_500;
  * message. Null when the log still doesn't show it: docs/api.md says what a
  * caller does then.
  */
-async function fenceAfterSend(workspace: Workspace, content: string, sentAt: number, chat?: string): Promise<number | null> {
+async function fenceAfterSend(workspace: Workspace, content: string, sentAt: number, chat?: string): Promise<{ fence: number; promptId: number } | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, FENCE_RETRY_MS));
     const live = await readLiveConversation(workspace, chat).catch(() => null);
-    const fence = live ? fenceBefore(live.entries, content, sentAt) : null;
-    if (fence !== null) return fence;
+    const sent = live ? sentPrompt(live.entries, content, sentAt) : null;
+    if (sent) return sent;
   }
   return null;
 }
@@ -376,6 +464,54 @@ export async function interruptApi(context: ApiContext, id: string): Promise<Res
   const stopped = await interruptPOST(appRequest(context.base, `/api/workspaces/${id}/interrupt${chatParam(chat)}`), routeParams({ id }));
   if (!stopped.ok) return errorFromRoute(stopped, context.base);
   return Response.json({ result: "interrupted", workspace_id: id, ...(chat && { chat_id: chat }) });
+}
+
+/** The session's runs (a chat's, with `chat_id`), oldest first, and where
+ *  they were read from; or the answer to give. */
+async function sessionRuns(context: ApiContext, id: string): Promise<{ workspace: Workspace; chat?: string; runs: Run[]; entries: ConversationEntry[]; from: string } | Response> {
+  const workspace = await ownSession(context, id);
+  if (workspace instanceof Response) return workspace;
+  const chat = await apiChat(workspace, new URL(context.request.url).searchParams.get("chat_id") ?? undefined);
+  if (chat instanceof Response) return chat;
+  const conversation = await readConversation(workspace, chat);
+  return { workspace, chat, runs: runsFrom(conversation.entries, conversation.state), entries: conversation.entries, from: conversation.from };
+}
+
+/** GET /workspaces/{id}/runs: its runs, newest first, a page at a time. */
+export async function listRunsApi(context: ApiContext, id: string): Promise<Response> {
+  const page = pageRequest(new URL(context.request.url).searchParams);
+  if (typeof page === "string") return apiError(400, page);
+  const read = await sessionRuns(context, id);
+  if (read instanceof Response) return read;
+  return Response.json({ ...paginate([...read.runs].reverse(), page), from: read.from });
+}
+
+/** GET /workspaces/{id}/runs/{run_id}: one run. */
+export async function getRunApi(context: ApiContext, id: string, runId: string): Promise<Response> {
+  const read = await sessionRuns(context, id);
+  if (read instanceof Response) return read;
+  const run = read.runs.find((r) => r.id === runId);
+  return run ? Response.json({ ...run, from: read.from }) : apiError(404, "No run by that id in this session.");
+}
+
+/** POST /workspaces/{id}/runs/{run_id}/cancel: stop the run, when it's the
+ *  one going on (as interrupt does). */
+export async function cancelRunApi(context: ApiContext, id: string, runId: string): Promise<Response> {
+  const read = await sessionRuns(context, id);
+  if (read instanceof Response) return read;
+  const run = read.runs.find((r) => r.id === runId);
+  if (!run) return apiError(404, "No run by that id in this session.");
+  if (run.status !== "running" && run.status !== "needs_input") return apiError(409, `That run is ${run.status}: only the one going on can be cancelled.`);
+  const stopped = await interruptPOST(appRequest(context.base, `/api/workspaces/${id}/interrupt${chatParam(read.chat)}`), routeParams({ id }));
+  if (!stopped.ok) return errorFromRoute(stopped, context.base);
+  return Response.json({ result: "cancelled", workspace_id: id, run_id: run.id, ...(read.chat && { chat_id: read.chat }) });
+}
+
+/** GET /workspaces/{id}/usage: the tokens it spent, in all and by run. */
+export async function usageApi(context: ApiContext, id: string): Promise<Response> {
+  const read = await sessionRuns(context, id);
+  if (read instanceof Response) return read;
+  return Response.json({ ...sessionUsage(read.entries, read.runs), from: read.from });
 }
 
 export type LifecycleVerb = "suspend" | "resume" | "archive" | "delete";
@@ -575,7 +711,7 @@ async function sessionOnlySecrets(
     return apiError(502, "Couldn't send them to the session. Please try again.");
   }
   // No longer waiting on the user: working again, and watched, as the form's.
-  if (!chat) after(() => watchSent(workspace.id, workspace.ownerId));
+  if (!chat) after(() => watchSent(workspace.id, workspace.ownerId), { where: "watch-sent", workspaceId: workspace.id });
   return Response.json({ result: "provided", saved: false, workspace_id: workspace.id, ...(chat && { chat_id: chat }) });
 }
 

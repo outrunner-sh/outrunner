@@ -55,3 +55,10 @@ function addMonths(date: Date, months: number): Date {
     ),
   );
 }
+
+/** The month-long period just before `period`: the one ending where it
+ *  starts, counted back from its start's day (lib/billing/overage.ts reports
+ *  its tail after a renewal). */
+export function periodBefore(period: Period): Period {
+  return monthlyPeriod(period.start, new Date(period.start.getTime() - 1));
+}

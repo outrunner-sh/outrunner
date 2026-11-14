@@ -1,6 +1,6 @@
 /** What lib/trackers/linear-agent.ts does its work with, on the server. */
 
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import { agentRow, claimIssue, claimRuleSession, latestRowForIssue, releaseIssue, rowsAwaitingLink, saveAgentRow, setAgentRowWorkspace, stopAgentRow } from "@/lib/db/linear-agent";
 import { listOrgProjects, projectLevel } from "@/lib/db/org-access";

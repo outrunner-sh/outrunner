@@ -40,3 +40,9 @@ test("a subscription that no longer gives its plan renews nothing", () => {
   const lapsed = yearly("u-1", { status: "past_due", pastDueSince: new Date("2026-03-01T00:00:00Z") });
   assert.deepEqual(dueForRenewal([lapsed], (s) => s.userId, stored, NOW), []);
 });
+
+test("Max renews monthly like any capped plan, not every run", () => {
+  const subscription = yearly("u-max", { plan: "max", priceLookupKey: "max_yearly" });
+  assert.deepEqual(dueForRenewal([subscription], (s) => s.userId, new Map([["u-max", "2026-03-17T00:00:00.000Z"]]), NOW), []);
+  assert.deepEqual(dueForRenewal([subscription], (s) => s.userId, new Map([["u-max", "2026-02-17T00:00:00.000Z"]]), NOW), ["u-max"]);
+});

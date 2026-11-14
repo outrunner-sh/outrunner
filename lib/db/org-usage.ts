@@ -1,6 +1,7 @@
 /**
  * An org's usage controls and the alerts sent under them
- * (20261101100000_org_usage_controls.sql; lib/billing/usage-controls.ts).
+ * (20261101100000_org_usage_controls.sql, 20261114120000_usage_limits_in_dollars.sql;
+ * lib/billing/usage-controls.ts).
  * The server's alone: the admin route has checked the caller is the org's
  * admin; the reconciler runs as the server.
  */
@@ -18,14 +19,14 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 export async function getUsageControls(orgId: string): Promise<UsageControls> {
   const { data, error } = await createSupabaseAdminClient()
     .from("organization_settings")
-    .select("usage_limit_percent, alert_thresholds")
+    .select("usage_limit_usd, alert_thresholds")
     .eq("org_id", orgId)
     .maybeSingle();
   if (error && ["missing", "outdated"].includes(probeStatus(error))) return DEFAULT_USAGE_CONTROLS;
   if (error) throw error;
   if (!data) return DEFAULT_USAGE_CONTROLS;
   return {
-    limitPercent: data.usage_limit_percent ?? null,
+    limitUsd: data.usage_limit_usd === null ? null : Number(data.usage_limit_usd),
     alertThresholds: (data.alert_thresholds ?? []).filter((t): t is AlertThreshold =>
       (ALERT_THRESHOLDS as readonly number[]).includes(t),
     ),
@@ -48,7 +49,7 @@ export async function setUsageControls(orgId: string, controls: UsageControls, b
     .upsert(
       {
         org_id: orgId,
-        usage_limit_percent: controls.limitPercent,
+        usage_limit_usd: controls.limitUsd,
         alert_thresholds: controls.alertThresholds,
         updated_by: by,
       },

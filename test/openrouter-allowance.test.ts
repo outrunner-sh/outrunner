@@ -37,3 +37,9 @@ test("an overspend or a bad number never breaks the bar", () => {
   assert.equal(allowanceView({ usedUsd: -1, limitUsd: 5 }).percent, 0);
   assert.equal(allowanceView({ usedUsd: 0, limitUsd: 0 }).state, "out");
 });
+
+test("unlimited allowance stays available at any spend and displays unlimited usage", () => {
+  assert.deepEqual(allowanceView({ usedUsd: 100000, limitUsd: null }), {
+    state: "ok", percent: 0, label: "Unlimited usage",
+  });
+});

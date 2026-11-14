@@ -109,8 +109,8 @@ test("sessions nest under their workspace, newest first, with links and times", 
       title: "new",
       branch: "runtime/new",
       at: "2026-10-02T00:00:00Z",
-      deletion: { kind: "cloud" },
-      archived: false,
+      archivable: true,
+      deletion: null,
     },
     {
       id: "old",
@@ -118,8 +118,8 @@ test("sessions nest under their workspace, newest first, with links and times", 
       title: "Pull latest code from main",
       branch: "runtime/old",
       at: "2026-10-01T00:00:00Z",
-      deletion: { kind: "cloud" },
-      archived: false,
+      archivable: true,
+      deletion: null,
     },
   ]);
 });
@@ -382,30 +382,34 @@ test("a workspace's + opens /new on that repository or folder, the same URL each
   assert.equal(newSessionHref(start), newSessionHref(start));
 });
 
-test("a cloud session can be deleted from a settled status, or a setup that stalled", () => {
+test("a cloud session with work offers Archive; Delete only where there's nothing to archive", () => {
   const at = "2026-10-01T00:00:00Z";
-  const statuses = ["ready", "idle", "suspended", "archived", "failed", "provisioning", "destroying", "resuming"] as const;
+  const statuses = ["ready", "idle", "suspended", "failed", "provisioning", "resuming"] as const;
   const sessions = [
     ...statuses.map((status, i) => ({ ...workspace(`w${i}`, "p1", at), createdAt: at, status })),
     // Still setting up an hour after it was made: its setup is never ending.
     { ...workspace("stalled", "p1", at), createdAt: "2026-09-30T23:00:00Z", status: "creating" as const },
+    // A legacy sandbox has no Snapshot to restore from.
+    { ...workspace("legacy", "p1", at), provider: "modal" as const },
   ];
   const [group] = buildSidebarGroups([project("p1", "outrunner")], sessions, [], {
     now: Date.parse("2026-10-01T00:01:00Z"),
   });
-  const deletable = Object.fromEntries(group.sessions.map((s) => [s.id, s.deletion !== null]));
+  const offered = Object.fromEntries(
+    group.sessions.map((s) => [s.id, s.archivable ? "archive" : s.deletion ? "delete" : "none"]),
+  );
   assert.deepEqual(
-    [...statuses.map((status, i) => [status, deletable[`w${i}`]]), ["stalled creating", deletable.stalled]],
+    [...statuses.map((status, i) => [status, offered[`w${i}`]]), ["stalled creating", offered.stalled], ["legacy", offered.legacy]],
     [
-      ["ready", true],
-      ["idle", true],
-      ["suspended", true],
-      ["archived", true],
-      ["failed", true],
-      ["provisioning", false],
-      ["destroying", undefined],
-      ["resuming", false],
-      ["stalled creating", true],
+      ["ready", "archive"],
+      ["idle", "archive"],
+      ["suspended", "archive"],
+      // It never started: there's no work for a Snapshot to keep.
+      ["failed", "delete"],
+      ["provisioning", "none"],
+      ["resuming", "none"],
+      ["stalled creating", "delete"],
+      ["legacy", "delete"],
     ],
   );
 });
@@ -428,25 +432,23 @@ test("deleting a local session removes its worktree, or only forgets an in-place
   );
 });
 
-test("an archived cloud session remains identifiable and deletable", () => {
+test("archived sessions, and ones being archived or deleted, leave the sidebar", () => {
   const at = "2026-10-01T00:00:00Z";
-  const [cloud] = buildSidebarGroups(
+  const groups = buildSidebarGroups(
     [project("p1", "outrunner")],
     [
       { ...workspace("live", "p1", at), status: "ready" },
-      { ...workspace("setup", "p1", at), status: "provisioning" },
+      { ...workspace("archiving", "p1", at), status: "archiving" },
       { ...workspace("shelved", "p1", at), status: "archived" },
-      // A legacy sandbox has no Snapshot to restore from.
-      { ...workspace("legacy", "p1", at), provider: "modal" },
+      { ...workspace("going", "p1", at), status: "destroying" },
+      { ...workspace("gone", "p1", at), status: "destroyed" },
     ],
     [],
   );
-  assert.deepEqual(
-    Object.fromEntries(cloud.sessions.map((s) => [s.id, [s.deletion !== null, s.archived]])),
-    { live: [true, false], setup: [true, false], shelved: [true, true], legacy: [true, false] },
-  );
+  assert.deepEqual(groups.flatMap((g) => g.sessions.map((s) => s.id)), ["live"]);
+  // The server keeps no Snapshot of a session on this Mac: it is deleted.
   const [mac] = buildSidebarGroups([], [], [local("tree", "/Users/ada/app", at)]);
-  assert.deepEqual([mac.sessions[0].deletion, mac.sessions[0].archived], [{ kind: "local-worktree" }, false]);
+  assert.deepEqual([mac.sessions[0].archivable, mac.sessions[0].deletion], [false, { kind: "local-worktree" }]);
 });
 
 test("the delete confirmation says what goes and what stays", () => {

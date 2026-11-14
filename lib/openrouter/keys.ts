@@ -169,7 +169,7 @@ export type CreatedKey = {
 };
 
 /**
- * Create a key for one user, capped at `limitUsd` (their plan's allowance,
+ * Create a key for one user, capped at `limitUsd` (null for unlimited; their plan's allowance,
  * lib/billing/plans.ts). `name` labels it in the OpenRouter dashboard; it
  * should identify the user without personal data. limit_reset null is
  * OpenRouter's "no reset": a monthly allowance raises the cap each period
@@ -178,7 +178,7 @@ export type CreatedKey = {
  * Errors carry OpenRouter's status but never its body, which could echo the
  * request back.
  */
-export async function createUserKey(name: string, limitUsd: number): Promise<CreatedKey> {
+export async function createUserKey(name: string, limitUsd: number | null): Promise<CreatedKey> {
   const management = managementKey();
   if (!management) throw new OutrunnerModelsUnavailableError();
 
@@ -240,9 +240,9 @@ export async function disableUserKey(hash: string): Promise<void> {
   }
 }
 
-/** Cap a user's key at `limitUsd` of spend over its life: how a period's
+/** Cap a user's key at `limitUsd` of spend over its life (null removes the cap): how a period's
  *  allowance is given (lib/billing/model-allowance.ts). */
-export async function setKeyLimit(hash: string, limitUsd: number): Promise<void> {
+export async function setKeyLimit(hash: string, limitUsd: number | null): Promise<void> {
   const management = managementKey();
   if (!management) throw new OutrunnerModelsUnavailableError();
 

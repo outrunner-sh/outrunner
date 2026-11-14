@@ -261,3 +261,136 @@ func TestLoginForAnotherAccountKeepsNoSignIn(t *testing.T) {
 		t.Errorf("saved %q", config.Token)
 	}
 }
+
+// pasteBrowser is a browser that can't reach this terminal (WSL, SSH, a
+// container): it approves, and the user pastes the address it couldn't open.
+func (app *fakeApp) pasteBrowser(t *testing.T, pasted chan<- string, lines ...func(callback string) string) func(string) error {
+	return func(loginURL string) error {
+		u, err := url.Parse(loginURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := u.Query()
+		app.setCode("the-code", q.Get("challenge"))
+		callback := "http://127.0.0.1:" + q.Get("port") + "/callback?code=the-code&state=" + url.QueryEscape(q.Get("state"))
+		go func() {
+			for _, line := range lines {
+				pasted <- line(callback)
+			}
+		}()
+		return nil
+	}
+}
+
+func TestLoginTakesTheCallbackAddressPasted(t *testing.T) {
+	app := newFakeApp(t)
+	pasted := make(chan string)
+	var out bytes.Buffer
+	token, user, err := Login(context.Background(), LoginOptions{
+		BaseURL: app.server.URL, DeviceName: "Mac", Out: &out, Pasted: pasted,
+		OpenBrowser: app.pasteBrowser(t, pasted,
+			func(string) string { return "" },
+			func(callback string) string { return "  '" + callback + "'  " },
+		),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "or_cli_token" || user.Login != "immad" {
+		t.Fatalf("got %q as %+v", token, user)
+	}
+	if !strings.Contains(out.String(), "paste it here") {
+		t.Errorf("the user isn't told they can paste: %q", out.String())
+	}
+}
+
+// Copied without its scheme, as an address bar shows it.
+func TestLoginTakesAPastedAddressWithoutItsScheme(t *testing.T) {
+	app := newFakeApp(t)
+	pasted := make(chan string)
+	token, user, err := Login(context.Background(), LoginOptions{
+		BaseURL: app.server.URL, DeviceName: "Mac", Out: &bytes.Buffer{}, Pasted: pasted,
+		OpenBrowser: app.pasteBrowser(t, pasted,
+			func(callback string) string { return strings.TrimPrefix(callback, "http://") },
+		),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "or_cli_token" || user.Login != "immad" {
+		t.Fatalf("got %q as %+v", token, user)
+	}
+}
+
+func TestLoginRefusesAPastedAddressForAnotherTerminal(t *testing.T) {
+	app := newFakeApp(t)
+	pasted := make(chan string)
+	var out bytes.Buffer
+	token, _, err := Login(context.Background(), LoginOptions{
+		BaseURL: app.server.URL, DeviceName: "Mac", Out: &out, Pasted: pasted,
+		OpenBrowser: app.pasteBrowser(t, pasted,
+			func(string) string { return "the-code" },
+			func(callback string) string { return strings.Replace(callback, "state=", "state=someone-else", 1) },
+			// Still waiting: the right address still signs in.
+			func(callback string) string { return callback },
+		),
+	})
+	if err != nil || token != "or_cli_token" {
+		t.Fatalf("got %q, %v", token, err)
+	}
+	for _, said := range []string{"That's not the address", "That's the address of another terminal's sign-in"} {
+		if !strings.Contains(out.String(), said) {
+			t.Errorf("didn't say %q: %q", said, out.String())
+		}
+	}
+}
+
+func TestLoginAsksForNoPasteWithNoOneTyping(t *testing.T) {
+	app := newFakeApp(t)
+	var out bytes.Buffer
+	if _, _, err := Login(context.Background(), LoginOptions{
+		BaseURL: app.server.URL, DeviceName: "Mac", Out: &out, OpenBrowser: app.approve(t, ""),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "paste") {
+		t.Errorf("asked a script to paste: %q", out.String())
+	}
+}
+
+// Stdin ending (a closed pipe) leaves the browser to finish.
+func TestLoginWaitsForTheBrowserAfterStdinEnds(t *testing.T) {
+	app := newFakeApp(t)
+	pasted := make(chan string)
+	close(pasted)
+	token, _, err := Login(context.Background(), LoginOptions{
+		BaseURL: app.server.URL, DeviceName: "Mac", Out: &bytes.Buffer{}, Pasted: pasted,
+		OpenBrowser: app.approve(t, ""),
+	})
+	if err != nil || token != "or_cli_token" {
+		t.Fatalf("got %q, %v", token, err)
+	}
+}
+
+// --url after the command is read, not dropped for the hosted app.
+func TestFlagsAfterTheCommandAreRead(t *testing.T) {
+	app := newFakeApp(t)
+	app.tokens["or_cli_token"] = true
+	t.Setenv("OUTRUNNER_CONFIG", filepath.Join(t.TempDir(), "cli.json"))
+	t.Setenv("OUTRUNNER_URL", "")
+	path, _ := ConfigPath()
+	_ = SaveConfig(path, Config{URL: app.server.URL, Token: "or_cli_token"})
+
+	var out, errOut bytes.Buffer
+	if code := Main(context.Background(), []string{"whoami", "--url", app.server.URL}, nil, &out, &errOut); code != 0 {
+		t.Fatalf("whoami --url: %d %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "immad") {
+		t.Errorf("whoami printed %q", out.String())
+	}
+
+	errOut.Reset()
+	if code := Main(context.Background(), []string{"login", "--url", app.server.URL, "extra"}, nil, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), `unexpected argument "extra"`) {
+		t.Fatalf("an argument login doesn't take: %d %q", code, errOut.String())
+	}
+}

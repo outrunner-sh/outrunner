@@ -93,7 +93,7 @@ func TestHelperLeavesOtherHostsAndOperationsAlone(t *testing.T) {
 	agent := &fakeAgent{}
 	local := startAgent(t, agent)
 	for _, c := range []struct{ op, stdin string }{
-		{"get", "protocol=https\nhost=gitlab.com\npath=acme/widgets.git\n"},
+		{"get", "protocol=https\nhost=bitbucket.org\npath=acme/widgets.git\n"},
 		{"get", "protocol=http\nhost=github.com\npath=acme/widgets.git\n"},
 		{"store", "protocol=https\nhost=github.com\npath=acme/widgets.git\nusername=x\npassword=y\n"},
 		{"", ""},
@@ -182,5 +182,41 @@ func TestGitHubTokenPrintsATokenForTheCommandsRepository(t *testing.T) {
 	}
 	if out, errOut, code := run(nil, nil); out != "" || code != 1 || !strings.Contains(errOut, "no installation") {
 		t.Fatalf("without a fallback = %q, %q (%d)", out, errOut, code)
+	}
+}
+
+func TestHelperGetsGitLabSubgroupCredentialWithoutGitHubFallback(t *testing.T) {
+	agent := &fakeAgent{}
+	local := startAgent(t, agent)
+	request := "protocol=https\nhost=gitlab.com\npath=acme/platform/app.git\n\n"
+	out, _, code := runHelper(local, "get", request, "github-secret")
+	if code != 0 || !strings.Contains(out, "password=ghs_for_gitlab.com/acme/platform/app") {
+		t.Fatalf("get = %q (%d)", out, code)
+	}
+	if agent.requests[0].Repo != "gitlab.com/acme/platform/app" {
+		t.Fatalf("repo = %q", agent.requests[0].Repo)
+	}
+	agent.fail = "offline"
+	out, _, _ = runHelper(local, "get", request, "github-secret")
+	if out != "" {
+		t.Fatalf("GitHub fallback reached GitLab: %q", out)
+	}
+}
+
+func TestHelperRefusesMalformedGitLabPathsAndOtherHosts(t *testing.T) {
+	agent := &fakeAgent{}
+	local := startAgent(t, agent)
+	for _, request := range []string{
+		"protocol=https\nhost=gitlab.com\npath=acme/../app.git\n\n",
+		"protocol=https\nhost=gitlab.com.evil.test\npath=acme/app.git\n\n",
+		"protocol=https\nhost=gitlab.com\n\n",
+	} {
+		out, _, _ := runHelper(local, "get", request, "github-secret")
+		if out != "" {
+			t.Fatalf("credential for invalid request: %q", out)
+		}
+	}
+	if len(agent.requests) != 0 {
+		t.Fatalf("invalid request reached agent: %+v", agent.requests)
 	}
 }

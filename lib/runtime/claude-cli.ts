@@ -1,4 +1,4 @@
-import { BOX_TOOLS } from "@/lib/runtime/box-image";
+import { BOX_TOOL_SHA256, BOX_TOOLS } from "@/lib/runtime/box-image";
 import { npmInstallGlobal } from "@/lib/runtime/npm-global";
 
 /**
@@ -22,5 +22,30 @@ export function claudeInstallCommand({ sudo }: { sudo: boolean }): string {
   return (
     `{ ${current} || { ${npmInstallGlobal(`@anthropic-ai/claude-code@${pinned}`, { sudo })} && hash -r && ${current}; } || ` +
     `{ echo "Could not bring Claude Code (\${v:-none}) up to ${pinned}"; false; }; }`
+  );
+}
+
+/** Where Claude Code's native builds are published, by version and platform. */
+const CLAUDE_RELEASES = "https://downloads.claude.ai/claude-code-releases";
+
+/**
+ * Install Claude Code's native build at {@link CLAUDE_CODE_VERSION} for the
+ * user it runs as, as Anthropic's installer (claude.ai/install.sh) does: the
+ * binary under ~/.local/share/claude, `claude` linked into ~/.local/bin, where
+ * it can keep itself up to date. Unlike piping that installer into bash, the
+ * build is checked against its pinned sha256 (BOX_TOOL_SHA256) before it runs,
+ * and the version it installed after. glibc Linux, x64 or arm64.
+ */
+export function claudeNativeInstallCommand(): string {
+  const version = CLAUDE_CODE_VERSION;
+  const { amd64, arm64 } = BOX_TOOL_SHA256.claudeCode;
+  return (
+    `case "$(uname -m)" in x86_64|amd64) p=linux-x64 sum=${amd64};; aarch64|arm64) p=linux-arm64 sum=${arm64};; ` +
+    `*) echo "No Claude Code build for $(uname -m)"; exit 1;; esac && ` +
+    `tmp=$(mktemp -d) && ` +
+    `curl -fsSL "${CLAUDE_RELEASES}/${version}/$p/claude" -o "$tmp/claude" && ` +
+    `echo "$sum  $tmp/claude" | sha256sum -c --quiet - && ` +
+    `chmod 0755 "$tmp/claude" && "$tmp/claude" install ${version} && rm -rf "$tmp" && ` +
+    `echo "$sum  $HOME/.local/share/claude/versions/${version}" | sha256sum -c --quiet -`
   );
 }

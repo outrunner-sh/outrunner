@@ -30,10 +30,23 @@ export function keyHint(key: string): string {
 /** What signed a request in: an API key, or the CLI's token. */
 export type ApiCredential = { kind: "api_key"; secret: string } | { kind: "cli_token"; secret: string };
 
-/** The credential in `Authorization: Bearer …`, or null for none or one of
- *  neither shape. */
+/** The secret in `Authorization: Basic …` sent as the user name with no
+ *  password (`curl -u $KEY:`), as clients written for Cursor's API send
+ *  theirs; null for anything else. */
+function basicSecret(header: string): string | null {
+  const match = /^Basic\s+([A-Za-z0-9+/=]+)$/.exec(header);
+  if (!match) return null;
+  const decoded = Buffer.from(match[1], "base64").toString("utf8");
+  return /^[A-Za-z0-9_-]+:$/.test(decoded) ? decoded.slice(0, -1) : null;
+}
+
+/** The credential in `Authorization: Bearer …` (or Basic, the key as the
+ *  user name), or null for none or one of neither shape. */
 export function apiCredential(headers: Headers): ApiCredential | null {
-  const match = /^Bearer\s+(\S+)$/.exec(headers.get("authorization")?.trim() ?? "");
+  const header = headers.get("authorization")?.trim() ?? "";
+  const basic = basicSecret(header);
+  if (basic) return apiCredential(new Headers({ authorization: `Bearer ${basic}` }));
+  const match = /^Bearer\s+(\S+)$/.exec(header);
   if (match && API_KEY_PATTERN.test(match[1])) return { kind: "api_key", secret: match[1] };
   const cli = bearerToken(headers);
   return cli ? { kind: "cli_token", secret: cli } : null;

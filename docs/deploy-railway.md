@@ -55,6 +55,7 @@ Requires a local Go toolchain (cross-compiles `GOOS=linux GOARCH=amd64`).
 | `RUNTIME_BASE_URL` | `https://<your-railway-domain>` (gates same-origin CSRF checks) |
 | `RUNTIME_BILLING` | `off` (everyone on Free) or `stripe`; required in production, or the server won't start |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | with `RUNTIME_BILLING=stripe` (see deploy-cloudflare.md, Billing) |
+| `RUNTIME_OVERAGE_BILLING` | `on` to bill usage past a plan's included amount (docs/billing-overage.md); off by default |
 | `RUNTIME_OWNER_GITHUB_LOGIN` | the single GitHub login allowed to sign in |
 | `RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN` | optional comma-separated GitHub logins exempt from plan limits only; blank means none |
 | `NEXT_PUBLIC_SUPABASE_URL` | from Supabase |

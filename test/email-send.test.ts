@@ -45,9 +45,10 @@ test("/api/health reports email only in its bearer-token section", () => {
   const route = readFileSync(path.join(process.cwd(), "app/api/health/route.ts"), "utf8");
   // In `configured`, which only the full report (after the bearer check) carries.
   assert.match(route, /const configured = \{[\s\S]*?\n\s+email: emailStatus\(\),[\s\S]*?\n {2}\};/);
-  // Anyone without the token gets `ok` and `build`, nothing else.
-  const anonymous = route.match(/if \(!cronSecret \|\| !bearerMatches\([^\n]*\{\n([\s\S]*?)\n {2}\}/)?.[1] ?? "";
-  assert.equal(anonymous.trim(), "return NextResponse.json({ ok, build }, { status: ok ? 200 : 503 });");
+  // Anyone without the token gets `ok` and `build` (and `draining` while the
+  // server shuts down), nothing else.
+  const anonymous = route.match(/if \(!hasCronSecret\(request\)\) \{\n([\s\S]*?)\n {2}\}/)?.[1] ?? "";
+  assert.equal(anonymous.trim(), "return NextResponse.json({ ok, build, ...(draining ? { draining } : {}) }, { status: ok ? 200 : 503 });");
   const full = route.slice(route.indexOf("probeCodexSchema()"));
   assert.match(full, /\n\s+configured,\n/);
 });

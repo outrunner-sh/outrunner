@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  Archive,
   ChevronRight,
   GitBranchPlus,
   Folder,
@@ -29,7 +28,7 @@ import { GetStarted } from "@/components/get-started";
 import { HomeUserMenu } from "@/components/home-user-menu";
 import { SidebarMissions } from "@/components/missions/sidebar-missions";
 import { OutrunnerAllowance } from "@/components/outrunner-allowance";
-import { RowTail, SessionMenu, StatusSections } from "@/components/sidebar-status";
+import { RowActions, RowTail, rowActionsRoom, StatusSections } from "@/components/sidebar-status";
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { SkeletonRows, SkeletonSwap } from "@/components/ui/skeleton-swap";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
@@ -448,9 +447,8 @@ function WorkspaceGroup({
         )}
         {shownSessions(group, { folded, searching, active }).map((session) => {
           const isActive = session.id === active;
-          const { deletion } = session;
           const standing = group.local ? undefined : standings[session.id];
-          const hasMenu = !group.local || deletion !== null || session.branch !== "";
+          const room = rowActionsRoom(session, !group.local);
           // A cloud session warms up as the pointer rests on it, so its click
           // shows the conversation at once. A Mac one is near already, and
           // attaching would start it.
@@ -466,8 +464,8 @@ function WorkspaceGroup({
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-2 rounded-md py-1 pl-[32px] pr-2 text-[13px] transition-colors",
-                  // Room for the row's menu as it shows.
-                  hasMenu && "group-hover/row:pr-8 group-focus-within/row:pr-8",
+                  // Room for the row's buttons as they show.
+                  room,
                   isActive
                     ? "bg-accent text-foreground"
                     : standing?.unread
@@ -484,20 +482,14 @@ function WorkspaceGroup({
                     <Slack aria-label="From Slack" className="size-3 text-muted-foreground" />
                   </span>
                 )}
-                {session.archived && (
-                  <span title="Archived. Opening it restores it." className="shrink-0">
-                    <Archive aria-label="Archived" className="size-3 text-muted-foreground" />
-                  </span>
-                )}
-                <RowTail at={session.at} now={now} hideOnHover={hasMenu} />
+                <RowTail at={session.at} now={now} hideOnHover={room !== false} />
               </Link>
-              <SessionMenu
+              <RowActions
                 session={session}
                 markable={!group.local}
                 standing={standing}
                 pullRequestUrl={group.local ? undefined : pullRequests[session.id]?.url}
                 onDelete={onDelete}
-                className="absolute right-1 top-1/2 -translate-y-1/2"
               />
             </div>
           );

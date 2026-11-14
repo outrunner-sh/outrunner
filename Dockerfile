@@ -7,8 +7,13 @@
 # app on disk (not a standalone bundle) so lib/runtime/daytona-provider.ts can
 # read it at runtime.
 
+# Base images are pinned by digest, so a tag can't change under a build. To
+# bump one: its new tag's index digest, e.g.
+#   docker buildx imagetools inspect node:22-slim
+# (keep golang's minor in step with runtime-agent/go.mod).
+
 # ---- agent: cross-compile runtime-agent to a static linux/amd64 binary -------
-FROM golang:1.22-bookworm AS agent
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS agent
 WORKDIR /src
 COPY runtime-agent/ ./runtime-agent/
 WORKDIR /src/runtime-agent
@@ -17,7 +22,7 @@ RUN GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
     -o /out/runtime-agent-linux-amd64 ./cmd/runtime-agent
 
 # ---- base node ---------------------------------------------------------------
-FROM node:22-slim AS base
+FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS base
 RUN corepack enable
 WORKDIR /app
 
@@ -45,9 +50,16 @@ RUN test -n "$NEXT_PUBLIC_SUPABASE_URL" -a -n "$NEXT_PUBLIC_SUPABASE_ANON_KEY" \
   || (echo "ERROR: NEXT_PUBLIC_SUPABASE_* build args are empty; the client bundle would ship without them" && exit 1)
 RUN pnpm build
 
-# ---- runtime: `pnpm start` + the built agent binary --------------------------
+# ---- runtime: server.ts under tini + the built agent binary -------------------
 FROM base AS runtime
 ENV NODE_ENV=production
+# tini as PID 1: it passes SIGTERM on to node, which drains (server.ts) before
+# it exits, and reaps any child left behind. Node as PID 1 would get no
+# default signal handling, and `pnpm start` under it didn't pass SIGTERM on.
+# The static release binary, checked against its published sha256
+# (tini-static-amd64.sha256sum on the release), like every other download.
+ADD --checksum=sha256:c5b0666b4cb676901f90dfcb37106783c5fe2077b04590973b885950611b30ee --chmod=0755 \
+  https://github.com/krallin/tini/releases/download/v0.19.0/tini-static-amd64 /usr/bin/tini
 # Cloudflare Containers routes to the port the process listens on; `pnpm start`
 # runs server.ts (Next plus the Neev WebSocket relay) on ${PORT}. Keep in sync
 # with defaultPort in cloudflare/worker.ts.
@@ -56,9 +68,16 @@ ENV PORT=8080
 ENV RUNTIME_AGENT_BINARY_PATH=bin/runtime-agent-linux-amd64
 COPY --from=build /app /app
 COPY --from=agent /out/runtime-agent-linux-amd64 /app/bin/runtime-agent-linux-amd64
+# Not root: the image's own `node` user (uid 1000). The app stays root-owned
+# and read-only to it; Next's cache is the one place it writes under /app.
+RUN mkdir -p /app/.next/cache && chown -R node:node /app/.next/cache
+USER node
 EXPOSE 8080
 # The commit it's built from, for /api/health (cloudflare/worker.ts checks the
 # running container is the latest deploy's). Last, so it costs no cache.
 ARG OUTRUNNER_BUILD=""
 ENV OUTRUNNER_BUILD=$OUTRUNNER_BUILD
-CMD ["pnpm", "start"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
+# What `pnpm start` runs, without pnpm and a shell in between to swallow the
+# signal (NODE_ENV is set above).
+CMD ["node", "--experimental-strip-types", "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON", "server.ts"]

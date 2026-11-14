@@ -48,7 +48,6 @@ test("a fully migrated database probes ok, asking each table for its columns", a
   assert.deepEqual(await probeRuntimeDatabase(client), {
     projects: "ok",
     workspaces: "ok",
-    jobs: "ok",
     pull_requests: "ok",
   });
   assert.equal(asked.workspaces, RUNTIME_COLUMNS.workspaces.join(","));

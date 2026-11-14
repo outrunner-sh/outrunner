@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Archive,
   ArrowLeft,
   BarChart3,
   Blocks,
@@ -25,7 +26,7 @@ import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PERSONAL_SETTINGS, ORG_SETTINGS } from "@/lib/settings-navigation";
 import { cn } from "@/lib/utils";
 
-const icons = [User, SlidersHorizontal, Terminal, Cloud, Plug, BarChart3, Code];
+const icons = [User, SlidersHorizontal, Terminal, Cloud, Plug, BarChart3, Archive, Code];
 const orgIcons = [
   Building2,
   Users,

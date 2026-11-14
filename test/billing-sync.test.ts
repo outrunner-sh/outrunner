@@ -37,6 +37,8 @@ function world(subscription: Stripe.Subscription, customers: Record<string, stri
   const deleted: string[] = [];
   const handled = new Set<string>();
   const logs: string[] = [];
+  const unpaid: Array<[string, Date | null]> = [];
+  let openOverage: { created: Date; attempted: boolean }[] = [];
   let retrieves = 0;
   const deps: SyncDeps = {
     retrieveSubscription: async () => {
@@ -55,8 +57,19 @@ function world(subscription: Stripe.Subscription, customers: Record<string, stri
     recordEvent: async (id) => void handled.add(id),
     now: () => NOW,
     log: (m) => void logs.push(m),
+    openOverageInvoices: async () => openOverage,
+    setOverageUnpaid: async (orgId, since) => void unpaid.push([orgId, since]),
   };
-  return { deps, saved, deleted, handled, logs, retrieves: () => retrieves };
+  return {
+    deps,
+    saved,
+    deleted,
+    handled,
+    logs,
+    unpaid,
+    setOpenOverage: (invoices: typeof openOverage) => void (openOverage = invoices),
+    retrieves: () => retrieves,
+  };
 }
 
 test("each synced event finds its subscription where Stripe puts it", () => {
@@ -187,4 +200,41 @@ test("a stored subscription refreshes the org's allowances; a failure there does
   assert.deepEqual(refreshed, ["o-1"]);
   assert.match(w.logs[0], /Could not refresh org o-1's allowances/);
   assert.equal(w.handled.has("evt_1"), true);
+});
+
+test("an overage invoice's payment marks the org unpaid or paid, as Stripe's open overage invoices say", async () => {
+  const overage = (id: string, metadata: Record<string, string> = { kind: "overage", org_id: "o-1" }, customer = "cus_1") =>
+    ({ id, customer, metadata, parent: null }) as unknown as Stripe.Invoice;
+  const failedAt = new Date("2026-11-15T00:00:00Z");
+
+  const failed = world(stripeSubscription("active"));
+  failed.setOpenOverage([{ created: failedAt, attempted: true }]);
+  assert.equal(await handleEvent(event("invoice.payment_failed", overage("in_1")), failed.deps), "synced");
+  assert.deepEqual(failed.unpaid, [["o-1", failedAt]]);
+  assert.equal(failed.retrieves(), 0);
+
+  // Paid, or voided or written off, with none left open: paid up.
+  for (const type of ["invoice.paid", "invoice.voided", "invoice.marked_uncollectible"]) {
+    const paid = world(stripeSubscription("active"));
+    paid.setOpenOverage([]);
+    await handleEvent(event(type, overage("in_1")), paid.deps);
+    assert.deepEqual(paid.unpaid, [["o-1", null]], type);
+  }
+
+  // One paid while another still fails: still unpaid.
+  const partly = world(stripeSubscription("active"));
+  partly.setOpenOverage([{ created: failedAt, attempted: true }]);
+  await handleEvent(event("invoice.paid", overage("in_2")), partly.deps);
+  assert.deepEqual(partly.unpaid, [["o-1", failedAt]]);
+
+  // A customer stored late: the org from the invoice's metadata.
+  const late = world(stripeSubscription("active"), {});
+  await handleEvent(event("invoice.payment_failed", overage("in_3", { kind: "overage", org_id: "o-9" }, "cus_new")), late.deps);
+  assert.deepEqual(late.unpaid, [["o-9", null]]);
+
+  // Not an overage invoice, or another event: unpaid isn't touched.
+  const other = world(stripeSubscription("active"));
+  await handleEvent(event("invoice.payment_failed", overage("in_4", {})), other.deps);
+  await handleEvent(event("invoice.created", overage("in_5"), "evt_2"), other.deps);
+  assert.deepEqual(other.unpaid, []);
 });

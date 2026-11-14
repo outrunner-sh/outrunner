@@ -86,6 +86,9 @@ type EnvKey =
   // webhook endpoint's signing secret.
   | "STRIPE_SECRET_KEY"
   | "STRIPE_WEBHOOK_SECRET"
+  // "on" bills usage past a plan's included amount to Stripe
+  // (lib/billing/overage.ts); off until Stripe is set up for it.
+  | "RUNTIME_OVERAGE_BILLING"
   // Slack app (triage capture): its signing secret, from the app's Basic
   // Information page. Unset turns /api/integrations/slack off.
   | "SLACK_SIGNING_SECRET"

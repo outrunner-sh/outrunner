@@ -39,6 +39,11 @@ test("each kind of event reads as what happened", () => {
     describeAudit(event("usage.changed", null, { limitPercent: 80, alertThresholds: [50, 100] })),
     "set the usage limit to 80%, alerts at 50%, 100%",
   );
+  assert.equal(
+    describeAudit(event("usage.changed", null, { limitUsd: 30, alertThresholds: [100, 150] })),
+    "set the usage limit to $30.00, alerts at 100%, 150%",
+  );
+  assert.equal(describeAudit(event("usage.changed", null, { limitUsd: null, alertThresholds: [] })), "set the usage limit to none, alerts at none");
   assert.equal(describeAudit(event("billing.plan_changed", "Pro", { status: "past_due" })), "saw the plan become Pro (past_due)");
   // One this release doesn't know reads as its name, not nothing.
   assert.equal(describeAudit(event("thing.happened", null)), "thing.happened");

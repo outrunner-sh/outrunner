@@ -1,21 +1,26 @@
 /**
  * The plan's limits on cloud sessions, applied where a box starts
- * (lib/billing/plans.ts): hours of Outrunner's boxes in the plan's period,
- * and boxes running at once. A box is what a plan buys and what the limits
- * protect — each session has its own box (a project's sessions from before
- * share one), so `concurrentCloudSessions` counts boxes, as plans.ts defines
- * it and the meter meters it. The Billing page sells the same limit as
- * "sessions".
+ * (lib/billing/plans.ts): what the account's cloud usage leaves it
+ * (lib/billing/standing.ts, lib/billing/usage.ts), and boxes running at
+ * once. A box is what a plan buys and what the limits protect — each
+ * session has its own box (a project's sessions from before share one), so
+ * `concurrentCloudSessions` counts boxes, as plans.ts defines it and the
+ * meter meters it. The Billing page sells the same limit as "sessions".
  *
- * Two-sided on purpose: hours are checked here against the meter
- * (compute_intervals, lib/billing/hours.ts), and the box count is enforced
- * in the database, inside claim_runtime_computer, so two requests that
- * start boxes at the same moment cannot both pass it. A session whose box is
- * already running starts no box, so the count doesn't refuse it.
- * At a limit the start is refused with the upgrade link; a box already
- * running is never paused for it (a box is paused when its last session is
- * archived or ended, lib/billing/release-box.ts, and the reconciler pauses
- * idle ones itself, after 15 minutes).
+ * Two-sided on purpose: usage is checked here against the meter
+ * (compute_intervals), and the box count is enforced in the database,
+ * inside claim_runtime_computer, so two requests that start boxes at the
+ * same moment cannot both pass it. A session whose box is already running
+ * starts no box, so the count doesn't refuse it.
+ *
+ * No box starts once the trial's credit or a fixed plan's included usage is
+ * spent, at the limit the org's admins set, or while an overage payment is
+ * failing; the refusal says which, and where to go. A box already running
+ * is not paused for the box cap or an unpaid overage, but is for the first
+ * two: the reconciler's usage sweep pauses it (lib/billing/usage-sweep.ts).
+ * Otherwise a box is paused when its last session is archived or ended
+ * (lib/billing/release-box.ts), and the reconciler pauses idle ones itself,
+ * after 15 minutes.
  *
  * The deployment's named operators can be exempted with
  * RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN. That is separate from
@@ -25,8 +30,8 @@
 
 import { parseAllowlist } from "@/lib/auth/allowlist";
 import type { Owner } from "@/lib/auth/owner";
-import { calendarMonth, hoursUsed } from "@/lib/billing/hours";
 import type { Plan } from "@/lib/billing/plans";
+import { blocksStarts, formatUsd, type UsageStanding } from "@/lib/billing/usage";
 import { optionalEnv } from "@/lib/env";
 import { type ComputerScope, inScope } from "@/lib/runtime/computer-scope";
 import type { ProviderName, RuntimeComputer } from "@/lib/runtime/types";
@@ -34,9 +39,15 @@ import type { ProviderName, RuntimeComputer } from "@/lib/runtime/types";
 /** How a refused start points at a way past the limit. */
 export const UPGRADE_HREF = "/upgrade" as const;
 
-/** Where the refusal sends the user: a bigger plan, or (an admin's limit) the
- *  org's usage controls. */
-export type CloudLimitDenial = { error: string; settingsHref: typeof UPGRADE_HREF | "/settings/org/usage" };
+/** Where an unpaid overage is paid: the org's billing. */
+export const BILLING_HREF = "/settings/org/billing" as const;
+
+/** Where the refusal sends the user: a plan (the trial's credit spent), the
+ *  org's usage controls (an admin's limit), or its billing (unpaid). */
+export type CloudLimitDenial = {
+  error: string;
+  settingsHref: typeof UPGRADE_HREF | "/settings/org/usage" | typeof BILLING_HREF;
+};
 
 /** A gate's answer: the refusal, or the box cap the claim is to enforce. */
 export type CloudBoxStartGate = { denial: CloudLimitDenial } | { cap: number | null };
@@ -65,13 +76,39 @@ export function isPlanLimitError(error: unknown): { message: string } | null {
   return null;
 }
 
-/** The plan's cloud hours are used up: refuse the start. */
-export function hoursDenial(plan: Plan, used: number): CloudLimitDenial | null {
-  if (used < plan.cloudHoursPerMonth) return null;
-  return {
-    error: `Your plan's ${plan.cloudHoursPerMonth} cloud hours are used up for this month. Upgrade for more.`,
-    settingsHref: UPGRADE_HREF,
-  };
+/** Why usage stops the account, in a sentence; null while it doesn't. One
+ *  wording for the start gate's refusal and the sweep's pause notice. */
+export function usageReason(standing: UsageStanding, plan: Plan): string | null {
+  switch (standing.state) {
+    case "included_spent":
+      return plan.id === "free"
+        ? `The free trial's ${formatUsd(standing.includedCapCents)} of cloud usage is used up.`
+        : `The ${plan.label} plan's ${formatUsd(standing.includedCapCents)} of cloud usage is used up for this period.`;
+    case "at_limit":
+      return `The org's usage limit of ${formatUsd(standing.limitCents ?? 0)} is reached for this period.`;
+    case "unpaid":
+      return "An overage payment failed.";
+    case "overage":
+    case "within":
+      return null;
+  }
+}
+
+/** The refusal for a box starting where usage stops it: why, and what to do. */
+export function usageDenial(standing: UsageStanding, plan: Plan): CloudLimitDenial | null {
+  const reason = usageReason(standing, plan);
+  if (!reason || !blocksStarts(standing.state)) return null;
+  switch (standing.state) {
+    case "at_limit":
+      return { error: `${reason} An admin can raise it in Settings → Org → Usage.`, settingsHref: "/settings/org/usage" };
+    case "unpaid":
+      return { error: `${reason} Pay it in Settings → Org → Billing to start new sessions.`, settingsHref: BILLING_HREF };
+    default:
+      return {
+        error: plan.id === "free" ? `${reason} Subscribe to keep going.` : `${reason} It starts again next period.`,
+        settingsHref: UPGRADE_HREF,
+      };
+  }
 }
 
 /** Every one of the plan's cloud sessions is on a box already running. */
@@ -161,12 +198,13 @@ export async function cloudBoxStartGate(
   // Node test runner: these pull Next's request scope (next/headers) through
   // lib/supabase/server, which tests have none of. lib/supabase/probe.ts
   // loads its client the same way.
-  const [{ isMetered, intervalsFor }, { entitlementsFor, personalEntitlements }, { runtimeComputersFor }, { isConnector }] =
+  const [{ isMetered }, { accountStanding }, { runtimeComputersFor }, { isConnector }, { usageControlsFor }] =
     await Promise.all([
       import("@/lib/billing/metering-store"),
-      import("@/lib/billing/entitlements"),
+      import("@/lib/billing/standing"),
       import("@/lib/db/repositories"),
       import("@/lib/automations/connector"),
+      import("@/lib/db/org-usage"),
     ]);
   if (!isMetered(provider)) return { cap: null };
   if (exemptFromPlanLimits(owner, optionalEnv("RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN"))) {
@@ -174,23 +212,13 @@ export async function cloudBoxStartGate(
   }
   const now = new Date();
   // An org's connector, which its automations run as, is on its own plan,
-  // paid by the deployment: its own hours and boxes, apart from the org's.
+  // paid by the deployment: its own usage and boxes, apart from the org's.
   const whose = (await isConnector(owner.id)) ? { ownerId: owner.id } : { orgId };
-  const { plan, allowancePeriod } = "ownerId" in whose ? await personalEntitlements(owner.id) : await entitlementsFor(orgId);
-  const period = allowancePeriod ?? calendarMonth(now);
-  const used = hoursUsed(await intervalsFor(whose, period), period, now);
-  const hours = hoursDenial(plan, used);
-  if (hours) return { denial: hours };
-  // Within the plan, the limit its admins set (Settings → Org → Usage); not
-  // the connector's, on its own plan.
-  if ("orgId" in whose) {
-    const [{ usageControlsFor }, { limitDenial }] = await Promise.all([
-      import("@/lib/db/org-usage"),
-      import("@/lib/billing/usage-controls"),
-    ]);
-    const limited = limitDenial(plan, await usageControlsFor(orgId), used);
-    if (limited) return { denial: limited };
-  }
+  // The admins' controls, read leniently: the defaults, said in the log,
+  // rather than no box when they can't be read.
+  const { plan, standing } = await accountStanding(whose, now, usageControlsFor);
+  const denial = usageDenial(standing, plan);
+  if (denial) return { denial };
   const computers = await runtimeComputersFor(whose);
   if (!boxLive(computers, scope, now)) {
     const boxes = boxesDenial(plan, liveMeteredComputers(computers, now));

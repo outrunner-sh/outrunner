@@ -17,6 +17,7 @@
  * wiring is warm-pool.deps.ts.
  */
 
+import { PLANS } from "@/lib/billing/plans";
 import { AGENT_FEATURE_MULTI_REPO_WARM, AGENT_FEATURE_WARM_HOOKS } from "@/lib/runtime/agent-protocol";
 import type { RuntimeComputer, SessionCheckout } from "@/lib/runtime/types";
 
@@ -24,9 +25,11 @@ import type { RuntimeComputer, SessionCheckout } from "@/lib/runtime/types";
 export const POOL_SIZE = 2;
 
 /** How long a pooled box may stay "provisioning" before its refill is taken
- *  for dead (a deploy or crash cut it off): longer than a clone and the warm
- *  hook's hour together. */
-export const STALE_REFILL_MS = 90 * 60_000;
+ *  for dead (a deploy or crash cut it off) and its box deleted: longer than a
+ *  clone (30 minutes, with the box's making) and the longest warm hook any
+ *  plan allows (Plan.warmHookMinutes) together, and no longer, since a box no refill watches any more bills
+ *  until then. */
+export const STALE_REFILL_MS = (Math.max(...Object.values(PLANS).map((plan) => plan.warmHookMinutes)) + 30) * 60_000;
 
 /** How long a project whose refill failed waits before the next try: a
  *  repository that can't be pooled (a clone that fails after minutes) isn't
@@ -86,7 +89,11 @@ export type WarmPoolDeps = {
   claimSlot(slot: number, secret: string): Promise<Pick<RuntimeComputer, "id"> | null>;
   /** Make a box ready: tools, agent, the project's repository. `onBox` is
    *  told its id as soon as it exists. */
-  make(secret: string, onBox: (sandboxId: string) => Promise<void>): Promise<{ sandboxId: string }>;
+  make(secret: string, onBox: (sandboxId: string) => Promise<void>): Promise<{ sandboxId: string; cpu?: number }>;
+  /** Count the box's time running, from when it existed (`from`) to when it
+   *  stopped or went (`to`), against the owner's cloud usage: a pooled box
+   *  runs on Outrunner's bill while it's made and warmed. Best effort. */
+  meter(computerId: string, sandboxId: string, cpu: number | undefined, from: number, to: number): Promise<void>;
   /** Warm it: the project's files and warm hook in a checkout of its base
    *  branch, for the session that takes it. Throws when the hook fails. */
   warm(computerId: string, sandboxId: string, secret: string): Promise<void>;
@@ -239,21 +246,37 @@ async function makeOne(deps: WarmPoolDeps, slot: number): Promise<boolean> {
   if (!row) return false;
 
   let sandboxId: string | null = null;
+  let madeAt: number | null = null;
+  let cpu: number | undefined;
+  let metered = false;
+  // Its running time, made to stopped (or deleted), on the owner's hours:
+  // once, whichever way it ends.
+  const meter = async () => {
+    if (!sandboxId || madeAt === null || metered) return;
+    metered = true;
+    await deps.meter(row.id, sandboxId, cpu, madeAt, deps.now()).catch((error: unknown) =>
+      console.error(`Pooled box ${sandboxId}'s time couldn't be metered`, error),
+    );
+  };
   try {
-    sandboxId = (
-      await deps.make(secret, async (id) => {
-        sandboxId = id;
-        await deps.recordBox(row.id, id);
-      })
-    ).sandboxId;
+    const made = await deps.make(secret, async (id) => {
+      sandboxId = id;
+      madeAt = deps.now();
+      await deps.recordBox(row.id, id);
+    });
+    sandboxId = made.sandboxId;
+    madeAt ??= deps.now();
+    cpu = made.cpu;
     await deps.warm(row.id, sandboxId, secret);
     await deps.pause(sandboxId);
+    await meter();
     if (!(await deps.ready(row.id, sandboxId))) {
       throw new Error("its row went while it was made (the sweep took it for dead)");
     }
     return true;
   } catch (error) {
     const deleted = sandboxId ? await deps.discard(sandboxId, deps.provider).then(() => true, () => false) : true;
+    await meter();
     await deps.failed(row.id, deleted ? null : sandboxId).catch(() => {
       if (!deleted) console.warn(`Pooled box ${sandboxId} couldn't be deleted or recorded: delete it by hand`);
       return deps.forget(row.id).catch(() => {});
