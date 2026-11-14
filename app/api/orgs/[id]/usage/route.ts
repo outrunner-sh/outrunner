@@ -5,7 +5,7 @@ import { entitlementsFor } from "@/lib/billing/entitlements";
 import { orgUsage } from "@/lib/billing/org-standing";
 import { formatUsd } from "@/lib/billing/usage";
 import { postedLimitUsd, postedThreshold, takesLimit, type AlertThreshold } from "@/lib/billing/usage-controls";
-import { setUsageControls } from "@/lib/db/org-usage";
+import { getUsageControls, setUsageControls } from "@/lib/db/org-usage";
 import { savingSettings } from "@/lib/http/settings-save";
 import { orgCaller } from "@/lib/orgs/routes";
 
@@ -17,7 +17,8 @@ type RouteContext = { params: Promise<{ id: string }> };
  * member: the controls and where its usage stands. PUT, an admin's:
  * `{ limitUsd: number | null, alertThresholds: (50 | 80 | 100 | 150 | 200)[] }`,
  * the limit in dollars from the plan's included usage up, on a plan that
- * bills overage (none on one that doesn't).
+ * bills overage; on one that doesn't, the posted limit is ignored and the
+ * saved one kept.
  */
 export async function GET(request: Request, context: RouteContext) {
   const { id } = await context.params;
@@ -32,14 +33,15 @@ export async function PUT(request: Request, context: RouteContext) {
   if (caller instanceof Response) return caller;
   const body = (await request.json().catch(() => null)) as { limitUsd?: unknown; alertThresholds?: unknown } | null;
   const { plan } = await entitlementsFor(id);
-  const limitUsd = postedLimitUsd(body?.limitUsd ?? null, plan);
+  // On a plan that takes no limit, the one saved (on a plan that did) is
+  // kept as it is and ignored (limitFor), and only the alerts change: the
+  // page posts the whole controls, saved limit and all, on every toggle.
+  const limitUsd = takesLimit(plan)
+    ? postedLimitUsd(body?.limitUsd ?? null, plan)
+    : (await getUsageControls(id)).limitUsd;
   if (limitUsd === undefined) {
     return NextResponse.json(
-      {
-        error: takesLimit(plan)
-          ? `Set the limit in dollars and cents, from the plan's included ${formatUsd(plan.usage.includedUsd * 100)} up, or none.`
-          : `The ${plan.label} plan stops at its included usage, so it takes no limit.`,
-      },
+      { error: `Set the limit in dollars and cents, from the plan's included ${formatUsd(plan.usage.includedUsd * 100)} up, or none.` },
       { status: 400 },
     );
   }
