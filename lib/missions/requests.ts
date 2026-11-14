@@ -60,6 +60,10 @@ export type RequestDeps = {
   /** Mark it told; true for the first only. */
   markAnnounced(missionId: string, key: string): Promise<boolean>;
   cancel(missionId: string, key: string): Promise<boolean>;
+  /** A thread's requests still open. */
+  openInThread(threadId: string): Promise<MissionRequest[]>;
+  /** The Mission's open requests that started no Ship. */
+  pending(missionId: string): Promise<MissionRequest[]>;
   enqueue(event: RecordedEvent): Promise<boolean>;
 };
 
@@ -241,4 +245,24 @@ export async function cancelRequest(missionId: string, key: string, reason: stri
     key: eventKey.requestCancelled(missionId, key),
   });
   return true;
+}
+
+/** `@Outrunner stop` in a thread: each of its open requests cancelled, so the
+ *  Mission stops that work and no other thread's. How many were open. */
+export async function stopThreadRequests(missionId: string, threadId: string, deps: RequestDeps): Promise<number> {
+  let stopped = 0;
+  for (const request of await deps.openInThread(threadId)) {
+    if (request.missionId === missionId && (await cancelRequest(missionId, request.requestKey, "stopped in Slack", deps))) stopped++;
+  }
+  return stopped;
+}
+
+/** The Mission off call: its open requests that started no Ship are
+ *  cancelled. Ships already started go on with their owner. How many. */
+export async function cancelPendingRequests(missionId: string, reason: string, deps: RequestDeps): Promise<number> {
+  let cancelled = 0;
+  for (const request of await deps.pending(missionId)) {
+    if (await cancelRequest(missionId, request.requestKey, reason, deps)) cancelled++;
+  }
+  return cancelled;
 }

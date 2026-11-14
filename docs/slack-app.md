@@ -10,7 +10,7 @@ thread, where everyone can see it, and the thread becomes the work's session (Re
    in their sidebar with a **Slack badge**, and its header links back to the thread.
 3. From then on, **the thread and the session are in step**:
    - what people say in the thread goes to the session, with who said it (`!aside` keeps a message out;
-     `@Outrunner stop` stops its turn);
+     `@Outrunner stop` stops that thread's work);
    - the session's reply at the end of each turn is posted in the thread, with a link to the whole session;
    - what you type in the session in Outrunner is posted in the thread too.
    The session header's **Synced** toggle turns this off and on (Devin's sync toggle).
@@ -69,7 +69,7 @@ sessions that open pull requests), and posts their pull requests there. A Missio
 answers Slack (so a crash loses nothing, and the endpoint answers 503, for Slack to retry, when it can't be saved),
 and every post it makes goes through a queue that never posts the same thing twice. Only connected members who can read the
 project can task it. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread,
-`@Outrunner stop` stops its turn. `@Outrunner pause` / `resume` and `@Outrunner stop being on call here` need write
+`@Outrunner stop` stops that thread's work: its open requests are cancelled, the Mission archives their Ships with no open pull request and starts nothing more for them. Other threads go on. `@Outrunner pause` / `resume` and `@Outrunner stop being on call here` need write
 on the project. It starts at most 6 Ships an hour and 30 a day. The commands are exact and handled directly, not
 by a model. Channels with no Mission keep everything below. See [Missions](missions.md#on-call-in-slack).
 

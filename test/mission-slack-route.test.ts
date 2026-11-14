@@ -40,7 +40,7 @@ function world(patch: { binding?: Partial<MissionChannel>; mission?: Partial<Wor
     UNORA: { userId: "nora", orgId: "o1" },
   };
   const levels: Record<string, AccessLevel | null> = { alice: "read", wes: "write", nora: null, bob: "read" };
-  const state = { interrupted: 0, bound: [] as string[], created: 0 };
+  const state = { stopped: [] as string[], open: new Map<string, number>(), stopFails: false, bound: [] as string[], created: 0 };
   const deps: SlackRouteDeps = {
     botUserId: BOT,
     binding: async (team, channel) => bindings.find((b) => b.teamId === team && b.channelId === channel) ?? null,
@@ -89,9 +89,10 @@ function world(patch: { binding?: Partial<MissionChannel>; mission?: Partial<Wor
       events.push(event);
       return true;
     },
-    interrupt: async () => {
-      state.interrupted++;
-      return true;
+    stopThread: async (missionId, threadId) => {
+      if (state.stopFails) throw new Error("down");
+      state.stopped.push(`${missionId}:${threadId}`);
+      return state.open.get(threadId) ?? 0;
     },
     name: async (id) => `name-of-${id}`,
     permalink: async (ts) => `https://acme.slack.com/archives/C1/p${ts.replace(".", "")}`,
@@ -260,15 +261,29 @@ test("paused, it says so and takes nothing; pause and resume need write", async 
   assert.equal(w.events.length, 1);
 });
 
-test("@Outrunner stop interrupts the Mission's turn; stop being on call here unbinds", async () => {
+test("@Outrunner stop stops that thread's work only; stop being on call here unbinds", async () => {
   const w = world();
-  await routeToMission(msg({ text: `<@${BOT}> stop` }), w.deps);
-  assert.equal(w.state.interrupted, 1);
+  // Two threads, each with a request: the Mission takes both.
+  await routeToMission(msg({ ts: "1731400000.000100", eventId: "Ea" }), w.deps);
+  await routeToMission(msg({ ts: "1731400100.000100", eventId: "Eb" }), w.deps);
+  const [a, b] = w.threads;
+  w.state.open.set(a.id, 2);
+  w.state.open.set(b.id, 1);
+  await routeToMission(msg({ ts: "1731400200.000100", threadTs: a.threadTs, text: `<@${BOT}> stop`, eventId: "Es" }), w.deps);
+  assert.deepEqual(w.state.stopped, [`m1:${a.id}`], "only the thread it was said in");
+  assert.match(w.said.at(-1) ?? "", /Stopped: this thread's 2 requests are cancelled.*Other threads go on/);
+  // A thread the Mission never took has nothing open, and nothing is asked of the store.
+  await routeToMission(msg({ ts: "1731400300.000100", threadTs: "1731300000.000100", text: `<@${BOT}> stop`, eventId: "Es2" }), w.deps);
+  assert.deepEqual(w.state.stopped, [`m1:${a.id}`]);
+  assert.equal(w.said.at(-1), "reply: Nothing is open in this thread.");
+  // The store failing is said, not swallowed.
+  w.state.stopFails = true;
+  await routeToMission(msg({ ts: "1731400400.000100", threadTs: b.threadTs, text: `<@${BOT}> stop`, eventId: "Es3" }), w.deps);
+  assert.match(w.said.at(-1) ?? "", /couldn't reach the Mission to stop this thread's work/);
   await routeToMission(msg({ text: `<@${BOT}> stop being on call here`, eventId: "E2" }), w.deps);
   assert.equal(w.bindings.length, 1, "needs write");
   await routeToMission(msg({ user: "UWES", text: `<@${BOT}> stop being on call here`, eventId: "E3" }), w.deps);
   assert.equal(w.bindings.length, 0);
-  assert.equal(w.events.length, 0);
 });
 
 test("bots: never, unless the channel takes bots' messages and they mention it; then vouched for by its binder", async () => {

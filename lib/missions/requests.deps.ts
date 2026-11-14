@@ -7,10 +7,12 @@
 import {
   type NewRequest,
   announceLate,
+  cancelPendingRequests,
   cancelRequest,
   createRequest,
   onRootSettled,
   type RequestDeps,
+  stopThreadRequests,
   updateRequest,
 } from "@/lib/missions/requests";
 import type { QueuedPost } from "@/lib/missions/slack-outbox";
@@ -20,6 +22,8 @@ import {
   cancelRequestRow,
   markAnnounced,
   missionBinding,
+  openThreadRequests,
+  pendingRequests,
   recordRequest,
   requestByKey,
   rootPostStatus,
@@ -50,6 +54,8 @@ export function requestDeps(): RequestDeps {
     thread: threadById,
     markAnnounced,
     cancel: cancelRequestRow,
+    openInThread: openThreadRequests,
+    pending: pendingRequests,
     enqueue: recordMissionEvent,
   };
 }
@@ -84,4 +90,12 @@ export async function announceUntold(): Promise<number> {
     if (await announceLate(request, root, deps).catch(() => false)) told++;
   }
   return told;
+}
+
+export function stopThread(missionId: string, threadId: string) {
+  return stopThreadRequests(missionId, threadId, requestDeps());
+}
+
+export function cancelPending(missionId: string, reason: string) {
+  return cancelPendingRequests(missionId, reason, requestDeps());
 }

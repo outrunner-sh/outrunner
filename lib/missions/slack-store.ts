@@ -467,6 +467,26 @@ export async function markAnnounced(missionId: string, requestKey: string): Prom
   return (data ?? []).length > 0;
 }
 
+/** A thread's requests still open. */
+export async function openThreadRequests(threadId: string): Promise<MissionRequest[]> {
+  const { data, error } = await db().from("mission_slack_requests").select("*").eq("thread_id", threadId).eq("status", "open");
+  if (error) throw error;
+  return (data ?? []).map(toRequest);
+}
+
+/** The Mission's open requests that have started no Ship: what going off
+ *  call drops. A request with a Ship goes on with it, with its owner. */
+export async function pendingRequests(missionId: string): Promise<MissionRequest[]> {
+  const [requests, ships] = await Promise.all([
+    db().from("mission_slack_requests").select("*").eq("mission_id", missionId).eq("status", "open"),
+    db().from("mission_slack_ships").select("request_key").eq("mission_id", missionId).not("request_key", "is", null),
+  ]);
+  if (requests.error) throw requests.error;
+  if (ships.error) throw ships.error;
+  const started = new Set((ships.data ?? []).map((row) => row.request_key));
+  return (requests.data ?? []).map(toRequest).filter((request) => !started.has(request.requestKey));
+}
+
 /** Cancel a request: true when it was open. */
 export async function cancelRequestRow(missionId: string, requestKey: string): Promise<boolean> {
   const { data, error } = await db()

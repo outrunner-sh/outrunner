@@ -187,8 +187,9 @@ Slack's retries, timeouts and rebinds
     "was archived"), with no buttons. A click on one that couldn't be edited,
     or on a card of an earlier binding (the Mission put on call again in the
     same channel), is refused with a private note, never silently ignored.
-    Requests of the ended binding start no Ship (the check below), and the
-    Mission is told so. Ships already started go on with their owner in the
+    Open requests that started no Ship are cancelled (the Mission gets a
+    `request_cancelled` for each), and any other request of the ended binding
+    starts no Ship (the check below). Ships already started go on with their owner in the
     app. Archiving a Mission takes it off call.
   - Each Ship start: the same binding, not paused, the thread not muted, the
     requester still able to read the project. A request from before a rebind

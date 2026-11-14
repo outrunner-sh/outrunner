@@ -13,6 +13,7 @@ import { personLabel } from "@/lib/audit/labels";
 import { recordAudit } from "@/lib/audit/record";
 import { getInstallation } from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";
+import { cancelPending } from "@/lib/missions/requests.deps";
 import { eventKey } from "@/lib/missions/events";
 import { missionBinding, type MissionChannel, openAsks, threadById, unbindChannel } from "@/lib/missions/slack-store";
 import { type CardEnd, cardEndText, closedBlocks, introText } from "@/lib/missions/slack-text";
@@ -97,6 +98,10 @@ export async function takeOffCall(mission: Workspace, userId: string, why: CardE
   // Closed first: once the row is gone, a card's click can't tell its binding.
   await closeOpenCards(mission.id, binding, why).catch((error: unknown) => console.error(`Mission ${mission.id}: couldn't close its cards`, error));
   if (!(await unbindChannel(mission.id))) return false;
+  // Requests with no Ship yet are dropped; Ships started go on (their owner's).
+  await cancelPending(mission.id, why === "archived" ? "the Mission was archived" : "the Mission went off call").catch((error: unknown) =>
+    console.error(`Mission ${mission.id}: couldn't cancel its pending requests`, error),
+  );
   await recordMissionEvent({
     missionId: mission.id,
     runnerId: null,

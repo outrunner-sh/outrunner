@@ -6,7 +6,6 @@
 
 import { after } from "next/server";
 
-import { POST as interruptPOST } from "@/app/api/workspaces/[id]/interrupt/route";
 import { getOwner } from "@/lib/auth/owner";
 import { getEnvironment } from "@/lib/db/environments";
 import { environmentLevel, projectLevel } from "@/lib/db/org-access";
@@ -15,6 +14,7 @@ import type { SlackInstallation } from "@/lib/db/slack-agent";
 import { slackLinkTarget } from "@/lib/db/slack-links";
 import { toWorkspace } from "@/lib/db/mappers";
 import { sessionById } from "@/lib/missions/store";
+import { stopThread } from "@/lib/missions/requests.deps";
 import { announceBinding, takeOffCall } from "@/lib/missions/slack-binding";
 import {
   acceptThread,
@@ -31,7 +31,6 @@ import { recordMissionEvent } from "@/lib/missions/watch.deps";
 import type { Workspace } from "@/lib/runtime/types";
 import { createCloudSession } from "@/lib/session/create-cloud-session";
 import { slackAccountActive } from "@/lib/slack/channel-access";
-import { asBrowser } from "@/lib/slack/research";
 import { channelIdentity, messagePermalink, postEphemeral, postMessage, senderIdentity, userNames } from "@/lib/slack/web";
 import { ActAsUserError, actAsUser } from "@/lib/supabase/acting-user";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -163,15 +162,6 @@ async function createMission(requester: Requester, project: FoundProject, channe
   return Promise.race([created, run]);
 }
 
-async function interrupt(mission: Workspace): Promise<boolean> {
-  return actAsUser(mission.ownerId, async () => {
-    const response = await interruptPOST(asBrowser(`/api/workspaces/${mission.id}/interrupt`, {}), {
-      params: Promise.resolve({ id: mission.id }),
-    });
-    return response.ok;
-  }).catch(() => false);
-}
-
 export function slackRouteDeps(
   install: SlackInstallation,
   message: SlackRouteMessage,
@@ -205,7 +195,7 @@ export function slackRouteDeps(
       if (mission) await takeOffCall(mission, by.userId);
     },
     enqueue: recordMissionEvent,
-    interrupt,
+    stopThread,
     name: async (slackUserId) => (await userNames(install.botToken, [slackUserId])).get(slackUserId) ?? slackUserId,
     permalink: (ts) => messagePermalink(install.botToken, channel, ts),
     reply: async (threadTs, text) => {

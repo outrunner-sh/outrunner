@@ -18,7 +18,7 @@ import type { RunCandidate } from "@/lib/db/automation-runs";
 import { filterSystemPrompt, type MissionRunDeps, type MissionRunOutcome, parseFilterAnswer, startMissionRun } from "@/lib/missions/automation-target";
 import { parseRunnerEvents, formatDelivery, type MissionEvent } from "@/lib/missions/events";
 import { checkMissionTarget } from "@/lib/missions/mission-automations";
-import { announceLate, cancelRequest, createRequest, type NewRequest, onRootSettled, type RequestDeps, rootText, updateRequest } from "@/lib/missions/requests";
+import { announceLate, cancelPendingRequests, cancelRequest, stopThreadRequests, createRequest, type NewRequest, onRootSettled, type RequestDeps, rootText, updateRequest } from "@/lib/missions/requests";
 import type { QueuedPost } from "@/lib/missions/slack-outbox";
 import type { MissionChannel, MissionRequest, MissionThread } from "@/lib/missions/slack-store";
 import type { RecordedEvent } from "@/lib/missions/watch";
@@ -186,6 +186,7 @@ function requestWorld(bound: boolean) {
   const queued: QueuedPost[] = [];
   const events: RecordedEvent[] = [];
   const threads: MissionThread[] = [];
+  const shipped = new Set<string>();
   const binding: MissionChannel = { missionId: MISSION, orgId: "o1", teamId: "T1", channelId: "C100", boundBy: "w", listen: "mentions", allowBotMessages: false, paused: false, revision: "rev1" };
   const deps: RequestDeps = {
     binding: async () => (bound ? binding : null),
@@ -224,13 +225,15 @@ function requestWorld(bound: boolean) {
       row.status = "cancelled";
       return true;
     },
+    openInThread: async (threadId) => [...rows.values()].filter((r) => r.threadId === threadId && r.status === "open"),
+    pending: async () => [...rows.values()].filter((r) => r.status === "open" && !shipped.has(r.requestKey)),
     enqueue: async (event) => {
       if (events.some((e) => e.key === event.key)) return false;
       events.push(event);
       return true;
     },
   };
-  return { deps, rows, queued, events, threads };
+  return { deps, rows, queued, events, threads, shipped };
 }
 
 const newRequest: NewRequest = {
@@ -300,7 +303,28 @@ test("updates reach the same request; cancelling stops that one only", async () 
   assert.equal(await updateRequest(MISSION, "run:none", { id: "a3", text: "more" }, w.deps), "missing");
 });
 
-test("a root post can't ping the channel or hide a link in what came from outside", () => {
+test("stop in a thread cancels that thread's open requests and no other's; off call drops only requests with no Ship", async () => {
+  const w = requestWorld(true);
+  for (const [key, thread] of [["r1", "1731400001.000100"], ["r2", "1731400001.000100"], ["r3", "1731400002.000100"], ["r4", "1731400003.000100"]] as const) {
+    await createRequest({ ...newRequest, key, threadTs: thread } as NewRequest, w.deps);
+    w.rows.get(key)!.threadId = (await w.deps.acceptThread({ missionId: MISSION, teamId: "T1", channelId: "C100", threadTs: thread, startedBy: null })).id;
+  }
+  const first = w.rows.get("r1")!.threadId!;
+  assert.equal(await stopThreadRequests(MISSION, first, w.deps), 2);
+  assert.equal(await stopThreadRequests(MISSION, first, w.deps), 0, "nothing left open there");
+  assert.deepEqual([...w.rows.values()].map((r) => `${r.requestKey}:${r.status}`), ["r1:cancelled", "r2:cancelled", "r3:open", "r4:open"]);
+  assert.equal(await stopThreadRequests("another-mission", w.rows.get("r3")!.threadId!, w.deps), 0, "another Mission's stop touches nothing");
+  const stops = w.events.filter((e) => e.kind === "request_cancelled");
+  assert.deepEqual(stops.map((e) => (e.payload.request as { key: string; reason: string }).reason), ["stopped in Slack", "stopped in Slack"]);
+  // Off call: r3 started a Ship, so it goes on; r4 hadn't, so it's dropped.
+  w.shipped.add("r3");
+  assert.equal(await cancelPendingRequests(MISSION, "the Mission went off call", w.deps), 1);
+  assert.equal(w.rows.get("r3")?.status, "open");
+  assert.equal(w.rows.get("r4")?.status, "cancelled");
+  assert.equal(w.events.at(-1)?.key, "request_cancelled:" + MISSION + ":r4");
+});
+
+test("a root post can\'t ping the channel or hide a link in what came from outside", () => {
   const text = rootText(newRequest);
   assert.ok(!text.includes("<!channel>"));
   assert.ok(!text.includes("<https://evil"));
