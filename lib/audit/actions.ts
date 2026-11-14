@@ -44,6 +44,7 @@ export type AuditAction =
   | "webhook.changed"
   | "webhook.secret_rotated"
   | "defaults.changed"
+  | "automations.settings_changed"
   | "learning.created"
   | "learning.suggested"
   | "learning.changed"
@@ -183,6 +184,10 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `revoked the API key ${what}${text(d.hint) ? ` (…${text(d.hint)})` : ""}`;
     case "defaults.changed":
       return `set the org's defaults: model ${text(d.defaultModel) ?? "Outrunner's"}, box ${text(d.boxSize) ?? "Outrunner's"}`;
+    case "automations.settings_changed":
+      return d.automationsOnHarness === true
+        ? "set automations to run on their runner's default model and coding agent"
+        : "set automations to run on Outrunner's models";
     case "learning.created":
       return `added the learning ${what}`;
     case "learning.suggested":

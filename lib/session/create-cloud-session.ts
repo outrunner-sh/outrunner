@@ -206,9 +206,9 @@ export type ServerSessionOptions = {
   firstAttachmentIds?: string[];
   /** Set it up before answering, not after: for a caller with no page waiting. */
   inline?: boolean;
-  /** Only on Outrunner's models metered to the user (their allowance): a
-   *  server whose models run on one shared key meters no one, and what the
-   *  server starts on its own mustn't spend it unwatched. */
+  /** Outrunner's models only when they're metered to the user (their
+   *  allowance): a server whose models run on one shared key meters no one,
+   *  and what the server starts on its own mustn't spend it unwatched. */
   meteredOnly?: boolean;
   /**
    * An automation's review: it works on GitHub as the Outrunner App, reading
@@ -345,19 +345,20 @@ async function createOnce(
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Choose an eligible harness and model." }, { status: 409 });
   }
-  // First: it turns on the server's setup alone, and no credential of the
-  // user's would change it.
-  if (options.meteredOnly && !menu.allowance) {
-    return NextResponse.json(
-      { error: "Outrunner's models aren't metered per user on this server, so it can't start sessions on its own." },
-      { status: 409 },
-    );
-  }
   // What it needs to start: the model chosen, else the menu's default. On a
   // model on a key, Claude Code needs no account of the user's: one they
   // haven't connected doesn't stop it, and one they have is still resolved,
   // so a session with none chosen starts on it (startingModel).
   const startsOn = chosenModel ?? defaultModel(menu);
+  // First: on Outrunner's models it turns on the server's setup alone, and no
+  // credential of the user's would change it. On the user's own (a server
+  // session on their harness) it's theirs to pay for.
+  if (options.meteredOnly && !menu.allowance && startsOn?.provider === "outrunner") {
+    return NextResponse.json(
+      { error: "Outrunner's models aren't metered per user on this server, so it can't start sessions on its own." },
+      { status: 409 },
+    );
+  }
   const ownAccount = !startsOn || runsOnOwnAccount(startsOn);
   // How it signs in, said before a box is set up for it, not after.
   let auth: ResolvedAuth;
