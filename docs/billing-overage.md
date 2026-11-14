@@ -19,7 +19,8 @@ minutes) runs `runOverageBilling` (`lib/billing/overage.deps.ts`) when
   renewal, the period just ended is reported too.
 - **Charge**, once a day (lease `overage-charge`): an org with $50 or more
   pending gets an invoice for its pending items (metadata `kind=overage`),
-  finalized and charged at once. Less than $50 rides the renewal invoice,
+  finalized and charged at once; a declined card is retried on the account's
+  Smart Retries schedule. Less than $50 rides the renewal invoice,
   which pulls a customer's pending items in. Once a subscription has ended,
   what's left is charged whatever the amount.
 - **Unpaid**: `invoice.payment_failed`, `invoice.paid`, `invoice.voided` and

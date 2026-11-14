@@ -89,11 +89,19 @@ export const overageDeps: OverageDeps = {
       { idempotencyKey },
     );
     if (!invoice.id) throw new Error("Stripe made an overage invoice with no id.");
-    const finalized = await stripe().invoices.finalizeInvoice(invoice.id, {}, { idempotencyKey: `${idempotencyKey}:finalize` });
+    // Made without auto-advance so Stripe doesn't finalize it on its own
+    // before this does; finalized with it, so a declined card is retried on
+    // the account's schedule (Smart Retries) like any subscription invoice.
+    const finalized = await stripe().invoices.finalizeInvoice(
+      invoice.id,
+      { auto_advance: true },
+      { idempotencyKey: `${idempotencyKey}:finalize` },
+    );
     if (finalized.status !== "open") return;
     // A declined card is an answer, not a failure here: Stripe sends
     // invoice.payment_failed, which marks the overage unpaid
-    // (lib/billing/sync.ts), and retries the card on its schedule.
+    // (lib/billing/sync.ts), and retries the card on its schedule; paid,
+    // voided or written off at the end of those retries clears the mark.
     await stripe()
       .invoices.pay(invoice.id, {}, { idempotencyKey: `${idempotencyKey}:pay` })
       .catch((error: unknown) => {
