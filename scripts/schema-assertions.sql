@@ -1940,16 +1940,21 @@ begin
   raise notice 'ok: a session''s first prompt is claimed once per key';
 end $$;
 
--- 47. An org's usage controls: a limit between 10% and all of the plan's hours,
--- alerts at 50, 80 or 100%, and each alert once per period.
+-- 47. An org's usage controls: a positive dollar limit (the API keeps it at
+-- or above what the plan includes), alerts at 50, 80, 100, 150 or 200%, and
+-- each alert once per period; the old percentage limit is gone.
 do $$
 begin
-  insert into organization_settings (org_id, usage_limit_percent, alert_thresholds)
-  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 80, '{50,100}')
-  on conflict (org_id) do update set usage_limit_percent = 80, alert_thresholds = '{50,100}';
+  if exists (select 1 from information_schema.columns
+             where table_name = 'organization_settings' and column_name = 'usage_limit_percent') then
+    raise exception 'FAIL: the percentage usage limit is still there';
+  end if;
+  insert into organization_settings (org_id, usage_limit_usd, alert_thresholds)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 30.50, '{100,150}')
+  on conflict (org_id) do update set usage_limit_usd = 30.50, alert_thresholds = '{100,150}';
   begin
-    update organization_settings set usage_limit_percent = 150 where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-    raise exception 'FAIL: a limit beyond the plan was kept';
+    update organization_settings set usage_limit_usd = 0 where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    raise exception 'FAIL: a zero limit was kept';
   exception when check_violation then null;
   end;
   begin
@@ -1968,7 +1973,7 @@ begin
   end if;
   delete from org_usage_alerts where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
   delete from organization_settings where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-  raise notice 'ok: an org''s usage controls stay within its plan, and alert once';
+  raise notice 'ok: an org''s usage controls are a positive dollar limit and known alerts, each alert once';
 end $$;
 
 -- 48. The audit log is append-only and the server's alone; its events go only
