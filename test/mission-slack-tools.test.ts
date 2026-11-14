@@ -14,7 +14,7 @@ import { test } from "node:test";
 import type { QueuedPost } from "@/lib/missions/slack-outbox";
 import type { MissionChannel, MissionRequest, MissionThread, SpawnReservation } from "@/lib/missions/slack-store";
 import { askBlocks, parseAskValue } from "@/lib/missions/slack-text";
-import type { MissionSlackDeps } from "@/lib/missions/slack-tools";
+import { type MissionSlackDeps, refusalSaid } from "@/lib/missions/slack-tools";
 import { callMissionTool, MISSION_TOOLS, type MissionToolDeps, type RunnerStart } from "@/lib/missions/tools";
 import type { Workspace } from "@/lib/runtime/types";
 
@@ -351,11 +351,26 @@ test("a Ship the platform refuses (the plan's cloud sessions, say) is said in th
   assert.equal(posts.length, 1, "the post is keyed by the reservation, so a repeat of it is one post");
   assert.equal(posts[0].threadTs, "1731400000.000100");
   assert.equal(posts[0].kind, "card");
-  assert.match((posts[0].payload as { chunks: string[] }).chunks[0], /A Ship couldn't start for this request: the plan's box limit/);
+  assert.match((posts[0].payload as { chunks: string[] }).chunks[0], /A Ship couldn't start for this request\. Outrunner couldn't start it right now\./);
   const before = queue.size;
   state.next = "unknown";
   await call(deps, "m1", "spawn_runner", { ...args, spawn_key: "c" });
   assert.equal(queue.size, before, "a start that may have worked says nothing: it's retried");
+});
+
+test("what Slack is told of a refused Ship is fixed per kind, and never carries the platform's own words or any dollar figure", () => {
+  const refusals = [
+    "Your plan's 2 concurrent cloud sessions are already running. End one to free its box (idle boxes pause within 15 minutes), or upgrade for more.",
+    "The Pro plan's $20.00 of cloud usage is used up for this period. It starts again next period.",
+    "The org's usage limit of $150.00 is reached for this period. An admin can raise it in Settings → Org → Usage.",
+    "The free trial's $100.00 of cloud usage is used up. Subscribe to keep going.",
+    "An overage payment failed. Pay it in Settings → Org → Billing to start new sessions.",
+    "the plan's box limit",
+  ];
+  const said = refusals.map(refusalSaid);
+  assert.deepEqual(said.slice(0, 1), ["The Mission owner's plan has no room for another cloud session right now."]);
+  assert.deepEqual(new Set(said), new Set(["The Mission owner's plan has no room for another cloud session right now.", "The Mission owner's cloud usage is used up for now.", "Outrunner couldn't start it right now."]));
+  for (const text of said) assert.doesNotMatch(text, /\$|\d/);
 });
 
 test("limits: one reached is told in the thread (queued, once) and starts nothing; existing keys still answer", async () => {

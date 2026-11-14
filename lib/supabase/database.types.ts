@@ -331,6 +331,7 @@ type MissionSlackAskRow = {
   answered_by_slack: string | null;
   answered_at: string | null;
   op_key: string | null;
+  binding_revision: string | null;
   created_at: string;
 };
 // supabase/migrations/20261102250000_mission_events.sql

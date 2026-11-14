@@ -13,10 +13,10 @@ import { personLabel } from "@/lib/audit/labels";
 import { recordAudit } from "@/lib/audit/record";
 import { getInstallation } from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";
-import { cancelPending } from "@/lib/missions/requests.deps";
 import { eventKey } from "@/lib/missions/events";
 import { missionBinding, type MissionChannel, openAsks, threadById, unbindChannel } from "@/lib/missions/slack-store";
-import { type CardEnd, cardEndText, closedBlocks, introText } from "@/lib/missions/slack-text";
+import { takeMissionOffCall } from "@/lib/missions/slack-offcall";
+import { type CardEnd, introText } from "@/lib/missions/slack-text";
 import { recordMissionEvent } from "@/lib/missions/watch.deps";
 import type { Workspace } from "@/lib/runtime/types";
 import { channelName, postMessage, updateMessage } from "@/lib/slack/web";
@@ -67,48 +67,30 @@ export async function announceBinding(binding: MissionChannel, mission: Workspac
   await audit("mission.slack_bound", binding, mission, userId);
 }
 
-/** Every open question card of the Mission says nothing is waiting on it
- *  now. Best effort, one at a time: a card that can't be edited is still
- *  refused when clicked (lib/missions/slack-ask.ts). How many were closed. */
-export async function closeOpenCards(missionId: string, binding: MissionChannel, why: CardEnd): Promise<number> {
-  const install = await getInstallation(binding.teamId).catch(() => null);
-  if (!install) return 0;
-  let closed = 0;
-  for (const ask of await openAsks(missionId).catch(() => [])) {
-    const thread = await threadById(ask.threadId).catch(() => null);
-    if (!ask.messageTs || !thread || thread.channelId !== binding.channelId) continue;
-    try {
-      await updateMessage(install.botToken, { channel: binding.channelId, ts: ask.messageTs, text: `${ask.question}: ${cardEndText(why)}`, blocks: closedBlocks(ask.question, why) });
-      closed++;
-    } catch (error) {
-      console.error(`Mission ${missionId}: couldn't close its question card ${ask.id}`, error);
-    }
-  }
-  return closed;
-}
-
-/** Take the Mission off call: it's told, its open question cards are closed,
- *  and the org's log has it. Work it already started goes on, with its owner
- *  (docs/missions.md); requests of this binding start nothing more, as their
- *  binding is gone (lib/missions/slack-tools.ts). False when it wasn't on
- *  call. */
+/** Take the Mission off call (lib/missions/slack-offcall.ts): its open
+ *  question cards closed, it's told, and the org's log has it. False when it
+ *  wasn't on call. */
 export async function takeOffCall(mission: Workspace, userId: string, why: CardEnd = "off_call"): Promise<boolean> {
-  const binding = await missionBinding(mission.id);
-  if (!binding) return false;
-  // Closed first: once the row is gone, a card's click can't tell its binding.
-  await closeOpenCards(mission.id, binding, why).catch((error: unknown) => console.error(`Mission ${mission.id}: couldn't close its cards`, error));
-  if (!(await unbindChannel(mission.id))) return false;
-  // Requests with no Ship yet are dropped; Ships started go on (their owner's).
-  await cancelPending(mission.id, why === "archived" ? "the Mission was archived" : "the Mission went off call").catch((error: unknown) =>
-    console.error(`Mission ${mission.id}: couldn't cancel its pending requests`, error),
-  );
-  await recordMissionEvent({
-    missionId: mission.id,
-    runnerId: null,
-    kind: "slack_channel",
-    payload: { slack: { channel: binding.channelId, bound: false } },
-    key: eventKey.slackChannel(mission.id, false, new Date().toISOString()),
-  }).catch((error: unknown) => console.error(`Mission ${mission.id}: couldn't tell it it's off call`, error));
-  await audit("mission.slack_unbound", binding, mission, userId);
-  return true;
+  return takeMissionOffCall(mission, userId, why, {
+    binding: missionBinding,
+    openAsks,
+    thread: threadById,
+    update: async (binding, ts, text, blocks) => {
+      const install = await getInstallation(binding.teamId);
+      if (!install) throw new Error(`Outrunner isn't installed in Slack workspace ${binding.teamId} any more`);
+      await updateMessage(install.botToken, { channel: binding.channelId, ts, text, blocks });
+    },
+    unbind: unbindChannel,
+    tell: async (m, binding) => {
+      await recordMissionEvent({
+        missionId: m.id,
+        runnerId: null,
+        kind: "slack_channel",
+        payload: { slack: { channel: binding.channelId, bound: false } },
+        key: eventKey.slackChannel(m.id, false, new Date().toISOString()),
+      });
+    },
+    audit: (m, binding, id) => audit("mission.slack_unbound", binding, m, id),
+    log: (message, error) => console.error(message, error),
+  });
 }

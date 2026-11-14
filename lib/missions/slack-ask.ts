@@ -44,7 +44,7 @@ export async function answerAsk(click: AskClick, deps: AskDeps): Promise<"answer
   if (!thread || thread.missionId !== ask.missionId || thread.teamId !== click.teamId) return "ignored";
   // A card of a binding that's over (the Mission went off call, was archived
   // or put on call again): nothing waits on it, and the click says so.
-  const over = !binding || binding.teamId !== click.teamId || thread.channelId !== binding.channelId || (ask.createdAt && binding.boundAt && ask.createdAt < binding.boundAt);
+  const over = !binding || binding.teamId !== click.teamId || thread.channelId !== binding.channelId || (ask.bindingRevision !== null && ask.bindingRevision !== binding.revision);
   if (over) {
     if (!ask.answeredAt) await deps.tellAt(thread.channelId, thread.threadTs, "That question isn't waiting any more: the Mission went off call (or was put on call again) since it was asked.").catch(() => undefined);
     return "refused";

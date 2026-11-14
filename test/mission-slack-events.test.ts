@@ -183,7 +183,7 @@ test("a slack_request while the Mission works is folded into its turn: one turn,
 
 // A question card's click.
 
-function askWorld(patch: { answered?: boolean; binding?: Partial<MissionChannel> | null } = {}) {
+function askWorld(patch: { answered?: boolean; binding?: Partial<MissionChannel> | null; askRevision?: string | null } = {}) {
   const binding: MissionChannel = { missionId: "m1", orgId: "o1", teamId: "T1", channelId: "C1", boundBy: "wes", listen: "mentions", allowBotMessages: false, paused: false, revision: "rev1", ...patch.binding };
   const thread: MissionThread = {
     id: "t1",
@@ -205,7 +205,7 @@ function askWorld(patch: { answered?: boolean; binding?: Partial<MissionChannel>
     options: ["staging", "prod"],
     messageTs: "1731400005.000100",
     answeredAt: patch.answered ? at(1) : null,
-    createdAt: "2026-11-14T10:00:00.000Z",
+    bindingRevision: patch.askRevision === undefined ? "rev1" : patch.askRevision,
   };
   const events: RecordedEvent[] = [];
   const said: string[] = [];
@@ -280,13 +280,16 @@ test("a card of a binding that's over says nothing is waiting, and answers nothi
   assert.deepEqual(off.said, [gone]);
   assert.equal(off.events.length, 0);
   // Put on call again in the same channel since: the card is of the old binding.
-  const rebound = askWorld({ binding: { boundAt: "2026-11-14T11:00:00.000Z", revision: "rev2" } });
+  const rebound = askWorld({ binding: { revision: "rev2" } });
   assert.equal(await answerAsk(click("UANA", `${id}:1`), rebound.deps), "refused");
   assert.deepEqual(rebound.said, [gone]);
   assert.equal(rebound.events.length, 0);
-  // Bound before the card was asked: live.
-  const live = askWorld({ binding: { boundAt: "2026-11-14T09:00:00.000Z" } });
+  // Asked under the binding that stands: live.
+  const live = askWorld();
   assert.equal(await answerAsk(click("UANA", `${id}:1`), live.deps), "answered");
+  // Asked before revisions were kept (null): live while the channel is the same.
+  const old = askWorld({ askRevision: null, binding: { revision: "rev2" } });
+  assert.equal(await answerAsk(click("UANA", `${id}:1`), old.deps), "answered");
   // On call in another channel now: not this card's.
   const moved = askWorld({ binding: { channelId: "C9" } });
   assert.equal(await answerAsk(click("UANA", `${id}:1`), moved.deps), "refused");

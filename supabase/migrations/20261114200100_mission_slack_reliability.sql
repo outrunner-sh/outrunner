@@ -263,6 +263,10 @@ $$;
 
 -- A question card's key: the same slack_ask twice is one card.
 alter table mission_slack_asks add column if not exists op_key text unique check (char_length(op_key) between 1 and 300);
+-- The binding it was asked under (mission_channels.revision): a click on a
+-- card of another binding (the Mission went off call, or was put on call
+-- again) is refused. Null: asked before this column.
+alter table mission_slack_asks add column if not exists binding_revision uuid;
 
 alter table mission_slack_inbound enable row level security;
 alter table mission_slack_requests enable row level security;
