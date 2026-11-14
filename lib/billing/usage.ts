@@ -28,19 +28,25 @@ export const MIN_SESSION_MS = 60_000;
 
 const HOUR_MS = 60 * 60_000;
 
-/** All time: the trial's period, as its credit is once ever. Usage under a
- *  paid plan counts too, so an org back on Free after one has no fresh
- *  credit. Year 9999 is the furthest Postgres and ISO strings agree on. */
-export const ALL_TIME: Period = { start: new Date(0), end: new Date("9999-12-31T00:00:00Z") };
+/** When usage-based billing launched: the trial counts usage from here, so
+ *  every org on Free then got a full credit, whatever it ran under the old
+ *  hour allowances. Set to the launch date when the change ships. */
+export const TRIAL_STARTS_AT = new Date("2026-11-14T00:00:00Z");
 
-/** The period an account's usage is counted over: all time for a plan
+/** The trial's period: from launch on, as its credit is once ever. Usage
+ *  under a paid plan counts too, so an org back on Free after one has no
+ *  fresh credit. Year 9999 is the furthest Postgres and ISO strings agree
+ *  on. */
+export const TRIAL_PERIOD: Period = { start: TRIAL_STARTS_AT, end: new Date("9999-12-31T00:00:00Z") };
+
+/** The period an account's usage is counted over: from launch on (TRIAL_PERIOD) for a plan
  *  whose usage is once (the trial); else its subscription's allowance
  *  period, or the calendar month without one (a contract, the connector).
  *  With billing off (lib/billing/mode.ts) every org is on Free and there is
  *  nothing to subscribe to, so a trial that never renews would stop a
  *  deployment for good: there, Free's usage renews each calendar month. */
 export function usagePeriod(plan: Plan, allowancePeriod: Period | null, now: Date, billing: BillingMode): Period {
-  if (plan.usage.per === "once" && billing === "stripe") return ALL_TIME;
+  if (plan.usage.per === "once" && billing === "stripe") return TRIAL_PERIOD;
   return allowancePeriod ?? calendarMonth(now);
 }
 

@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { connectorPlan, type Plan, PLANS } from "@/lib/billing/plans";
 import type { AccountStanding } from "@/lib/billing/standing";
-import { ALL_TIME, usageCost, usageStanding } from "@/lib/billing/usage";
+import { TRIAL_PERIOD, usageCost, usageStanding } from "@/lib/billing/usage";
 import { limitFor, type UsageControls } from "@/lib/billing/usage-controls";
 import { type Account, pauseReason, sweepOrgUsage, type UsageSweepDeps } from "@/lib/billing/usage-sweep";
 
@@ -14,7 +14,7 @@ const none: UsageControls = { limitUsd: null, alertThresholds: [] };
 function standingOf(plan: Plan, vcpuHours: number, controls: UsageControls = none, unpaidSince: Date | null = null): AccountStanding {
   return {
     plan,
-    period: plan.usage.per === "once" ? ALL_TIME : period,
+    period: plan.usage.per === "once" ? TRIAL_PERIOD : period,
     controls,
     standing: usageStanding({ plan, cost: usageCost(plan, vcpuHours), limitUsd: limitFor(plan, controls), unpaidSince }),
   };
@@ -103,11 +103,11 @@ test("each threshold crossed is emailed once, for personal orgs too, and never f
   assert.deepEqual(connector.paused, ["sb-1", "sb-2"]);
 });
 
-test("the trial's alerts are once ever: keyed to the all-time period", async () => {
+test("the trial's alerts are once ever: keyed to the trial's period", async () => {
   const w = world(standingOf(PLANS.free, 70, { limitUsd: null, alertThresholds: [80] }));
   await sweepOrgUsage(w.deps);
   assert.deepEqual(w.emailed, [80]);
-  assert.deepEqual(w.periods, [ALL_TIME.start]);
+  assert.deepEqual(w.periods, [TRIAL_PERIOD.start]);
 });
 
 test("an owner exempt from plan limits keeps their box; the org's others pause", async () => {

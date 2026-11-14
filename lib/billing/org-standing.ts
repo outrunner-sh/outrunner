@@ -5,7 +5,7 @@
  */
 
 import { type AccountStanding, accountStanding } from "@/lib/billing/standing";
-import { ALL_TIME, type UsageState } from "@/lib/billing/usage";
+import { TRIAL_PERIOD, type UsageState } from "@/lib/billing/usage";
 import { takesLimit, thresholdsFor, type AlertThreshold, type UsageControls } from "@/lib/billing/usage-controls";
 import { getUsageControls } from "@/lib/db/org-usage";
 
@@ -45,7 +45,7 @@ export function orgUsageView({ plan, period, standing }: AccountStanding): OrgUs
     overage: plan.usage.overage,
     takesLimit: takesLimit(plan),
     alertThresholds: thresholdsFor(plan),
-    periodEnd: period.end.getTime() === ALL_TIME.end.getTime() ? null : period.end.toISOString(),
+    periodEnd: period.end.getTime() === TRIAL_PERIOD.end.getTime() ? null : period.end.toISOString(),
   };
 }
 
