@@ -19,7 +19,10 @@ export async function getAutomationSettings(orgId: string): Promise<AutomationSe
     .select("automations_on_harness")
     .eq("org_id", orgId)
     .maybeSingle();
-  if (error && probeStatus(error) !== "unreachable") return { onHarness: false };
+  // Before the migration (the table, or its column, not there yet):
+  // Outrunner's models, as with none saved. Any other error is thrown.
+  const status = probeStatus(error);
+  if (status === "missing" || status === "outdated") return { onHarness: false };
   if (error) throw error;
   return { onHarness: data?.automations_on_harness ?? false };
 }
