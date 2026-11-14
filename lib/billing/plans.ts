@@ -28,6 +28,13 @@ export type Plan = {
   warmHookMinutes: number;
   /** Spend on Outrunner's models, in USD: once ever, or each month; null for unlimited. */
   models: { usd: number | null; per: "once" | "month" };
+  /** What the plan costs a month, in USD; null where a contract sets it. */
+  priceUsd: number | null;
+  /** Cloud usage the plan includes, in USD at the included rate
+   *  (lib/billing/usage.ts): once ever (the trial) or each month. With
+   *  `overage`, usage past it is billed at the overage rate; without, it
+   *  stops there. A paid plan includes its price. */
+  usage: { includedUsd: number; per: "once" | "month"; overage: boolean };
 };
 
 export const PLANS = {
@@ -39,6 +46,8 @@ export const PLANS = {
     largestBoxSize: "small",
     warmHookMinutes: 15,
     models: { usd: 5, per: "once" },
+    priceUsd: 0,
+    usage: { includedUsd: 10, per: "once", overage: false },
   },
   pro: {
     id: "pro",
@@ -48,6 +57,8 @@ export const PLANS = {
     largestBoxSize: "medium",
     warmHookMinutes: 15,
     models: { usd: 10, per: "month" },
+    priceUsd: 20,
+    usage: { includedUsd: 20, per: "month", overage: true },
   },
   max: {
     id: "max",
@@ -57,6 +68,8 @@ export const PLANS = {
     largestBoxSize: "large",
     warmHookMinutes: 15,
     models: { usd: null, per: "month" },
+    priceUsd: 100,
+    usage: { includedUsd: 100, per: "month", overage: true },
   },
   // Contracts set their own terms; retain the default enterprise allowance.
   enterprise: {
@@ -67,6 +80,9 @@ export const PLANS = {
     largestBoxSize: "large",
     warmHookMinutes: 15,
     models: { usd: 50, per: "month" },
+    // 500 Small-box hours (1,000 vCPU-hours) at the included rate.
+    priceUsd: null,
+    usage: { includedUsd: 120, per: "month", overage: false },
   },
 } as const satisfies Readonly<Record<PlanId, Plan>>;
 
