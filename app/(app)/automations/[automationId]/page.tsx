@@ -6,6 +6,7 @@ import { AutomationLoading } from "@/components/automations-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { orgAppCoverage } from "@/lib/automations/coverage";
 import type { AppCoverage } from "@/lib/automations/rules";
+import { automationSettingsOrDefault } from "@/lib/db/automation-settings";
 import { webhookPathOf } from "@/lib/db/automation-webhooks";
 import { getAutomation, listOrgRepos } from "@/lib/db/automations";
 import { isUuid } from "@/lib/ids";
@@ -52,9 +53,10 @@ async function AutomationSection({ params }: { params: Params }) {
   if (!context) redirect("/automations");
   const { active } = context;
   const admin = active.role === "admin";
-  const [automation, repos, webhook] = await Promise.all([
+  const [automation, repos, settings, webhook] = await Promise.all([
     getAutomation(active.id, automationId),
     listOrgRepos(active.id),
+    automationSettingsOrDefault(active.id),
     // Its URL is a secret: its admins' alone.
     admin
       ? webhookPathOf(active.id, automationId).catch((error: unknown) => {
@@ -91,6 +93,7 @@ async function AutomationSection({ params }: { params: Params }) {
         archived: automation.archived,
         runsUsed: automation.runsUsed,
         projectIds: automation.repos.map((r) => r.projectId),
+        coverNewRepos: automation.coverNewRepos,
         enabled: automation.enabled,
         // Its runner's login, "" when it can't be told (no GitHub login on
         // record), null once they're no longer in the org.
@@ -99,6 +102,7 @@ async function AutomationSection({ params }: { params: Params }) {
       repos={repos}
       coverage={coverage}
       byConnector={!active.personal}
+      onHarness={settings.onHarness}
       editable={admin}
       webhook={webhook}
     />
