@@ -7,6 +7,8 @@
  * key's last 4), never a secret.
  */
 
+import { formatUsd } from "@/lib/billing/usage";
+
 export type AuditAction =
   | "slack_channel.shared"
   | "slack_channel.revoked"
@@ -196,7 +198,7 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
     case "usage.changed": {
       // A dollar limit since 20261114120000_usage_limits_in_dollars.sql; a
       // share of the plan's hours in entries from before.
-      const usd = typeof d.limitUsd === "number" ? `$${d.limitUsd.toFixed(2)}` : null;
+      const usd = typeof d.limitUsd === "number" ? formatUsd(d.limitUsd * 100) : null;
       const percent = text(d.limitPercent);
       const limit = usd ?? (percent ? `${percent}%` : "none");
       const alerts = Array.isArray(d.alertThresholds) ? d.alertThresholds.map(text).filter(Boolean) : [];
