@@ -58,8 +58,8 @@ export type OverageItem = {
   periodStart: string;
   amountCents: number;
   state: "pending" | "draft" | "invoiced";
-  /** The plan it was made under: what its period is priced by once the
-   *  plan has changed since. */
+  /** The plan it was last priced under: what its period is priced by once
+   *  the plan has changed since. */
   plan: PaidPlanId | null;
 };
 
@@ -69,7 +69,8 @@ export type OverageDeps = {
   overageCents(orgId: string, plan: Plan, period: Period, now: Date): Promise<number>;
   /** The customer's overage items made since `since`. */
   items(customerId: string, since: Date): Promise<OverageItem[]>;
-  setItemAmount(itemId: string, amountCents: number, idempotencyKey: string): Promise<void>;
+  /** Set the item's amount, recording the plan it was priced under. */
+  setItemAmount(itemId: string, amountCents: number, plan: Plan, idempotencyKey: string): Promise<void>;
   createItem(input: {
     customerId: string;
     orgId: string;
@@ -116,10 +117,11 @@ export async function reportOverage(deps: OverageDeps, now: Date): Promise<Overa
         const mine = items.filter((i) => i.periodStart === periodStart);
         // A tail with no item is a period this account never reported.
         if (tail && mine.length === 0) continue;
-        // The period just ended is priced by the plan its items were made
-        // under: a plan changed at the renewal mustn't reprice the month
-        // before. The period now is priced by the plan now, so an upgrade's
-        // included usage counts at once, as the upgrade is charged at once.
+        // The period just ended is priced by the plan its items were last
+        // priced under: a plan changed at the renewal mustn't reprice the
+        // month before. The period now is priced by the plan now, so an
+        // upgrade's included usage counts at once, as the upgrade is charged
+        // at once, and the item records it, so the tail keeps it too.
         const recorded = mine.find((i) => i.plan !== null)?.plan;
         const plan = tail && recorded ? PLANS[recorded] : account.plan;
         const overage = await deps.overageCents(account.orgId, plan, period, now);
@@ -128,8 +130,8 @@ export async function reportOverage(deps: OverageDeps, now: Date): Promise<Overa
         // an item set to an amount; a period's next item after what's
         // already invoiced.
         if (open) {
-          if (open.amountCents === targetCents) continue;
-          await deps.setItemAmount(open.id, targetCents, `overage-set:${open.id}:${targetCents}`);
+          if (open.amountCents === targetCents && open.plan === plan.id) continue;
+          await deps.setItemAmount(open.id, targetCents, plan, `overage-set:${open.id}:${plan.id}:${targetCents}`);
           report.updated += 1;
         } else if (targetCents > 0) {
           await deps.createItem({

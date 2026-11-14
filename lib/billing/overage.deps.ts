@@ -64,8 +64,9 @@ export const overageDeps: OverageDeps = {
     }
     return items;
   },
-  async setItemAmount(itemId, amountCents, idempotencyKey) {
-    await stripe().invoiceItems.update(itemId, { amount: amountCents }, { idempotencyKey });
+  async setItemAmount(itemId, amountCents, plan, idempotencyKey) {
+    // Stripe merges metadata keys on update: only the plan changes.
+    await stripe().invoiceItems.update(itemId, { amount: amountCents, metadata: { plan: plan.id } }, { idempotencyKey });
   },
   async createItem({ customerId, orgId, plan, period, amountCents, idempotencyKey }) {
     await stripe().invoiceItems.create(

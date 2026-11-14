@@ -60,8 +60,8 @@ function world(owed: Record<string, number>, items: OverageItem[] = [], accounts
       return owed[period.start.toISOString()] ?? 0;
     },
     items: async () => items,
-    setItemAmount: async (id, cents, key) => {
-      calls.push(`set ${id} ${cents}`);
+    setItemAmount: async (id, cents, plan, key) => {
+      calls.push(`set ${id} ${cents}${plan.id === "pro" ? "" : ` ${plan.id}`}`);
       keys.push(key);
     },
     createItem: async ({ period, amountCents, idempotencyKey }) => {
@@ -91,7 +91,7 @@ test("reporting creates the period's item, then sets it to what's owed, and leav
   const grown = world({ [nov]: 1800 }, [item("ii_1", 1200, "pending")]);
   await reportOverage(grown.deps, NOW);
   assert.deepEqual(grown.calls, ["set ii_1 1800"]);
-  assert.deepEqual(grown.keys, ["overage-set:ii_1:1800"]);
+  assert.deepEqual(grown.keys, ["overage-set:ii_1:pro:1800"]);
 
   const same = world({ [nov]: 1800 }, [item("ii_1", 1800, "pending")]);
   await reportOverage(same.deps, NOW);
@@ -258,4 +258,20 @@ test("a charge that stopped at a draft invoice is finished the next day", async 
   const report = await chargeOverage(w.deps, NOW);
   assert.deepEqual(w.calls, ["finalize in_stuck"]);
   assert.equal(report.charged, 1);
+});
+
+test("an item repriced under a new plan records it, so the tail keeps that plan", async () => {
+  // Pro → Max mid-period: the same amount, but under Max now, is recorded.
+  const upgraded = world({ [nov]: 7500 }, [item("ii_1", 7500, "pending", NOVEMBER, "pro")]);
+  upgraded.account.plan = PLANS.max;
+  await reportOverage(upgraded.deps, NOW);
+  assert.deepEqual(upgraded.calls, ["set ii_1 7500 max"]);
+  assert.deepEqual(upgraded.keys, ["overage-set:ii_1:max:7500"]);
+  // At the renewal, that period is the tail, priced at Max as recorded.
+  const renewed = world({ [nov]: 7500 }, [item("ii_1", 7500, "draft", NOVEMBER, "max")]);
+  renewed.account.tail = NOVEMBER;
+  renewed.account.period = { start: NOVEMBER.end, end: at("2027-01-12T00:00:00Z") };
+  await reportOverage(renewed.deps, NOW);
+  assert.equal(renewed.pricedBy[0], "2026-11-12 max");
+  assert.deepEqual(renewed.calls, []);
 });
