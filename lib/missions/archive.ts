@@ -77,6 +77,8 @@ export type MissionArchiveDeps = {
    *  can't send one (and restore it); their ids, to give back if it isn't. */
   takeQueued(runnerId: string): Promise<string[]>;
   returnQueued(ids: string[]): Promise<void>;
+  /** The Mission archived: off call in Slack, if it was. Best effort. */
+  offCall?(mission: Workspace): Promise<void>;
   /** Archive one session as its owner; why not, or null once archived, or
    *  `note` once archived without its files (its box out of reach). */
   archive(session: Workspace): Promise<string | ArchivedWithNote | null>;
@@ -240,6 +242,8 @@ export async function archiveMission(mission: Workspace, deps: MissionArchiveDep
     ...(unsaved.length > 0 ? [unsavedNote(unsaved)] : []),
     ...(runnerUnsaved ? ["The Mission itself was archived without its files, its box out of reach."] : []),
   ];
+  // An archived Mission takes nothing from Slack: its open cards are closed.
+  await deps.offCall?.(mission).catch((e: unknown) => console.error(`Mission ${mission.id}: couldn't take it off call`, e));
   return { archived: true, ships, ...(unsaved.length > 0 && { unsaved }), ...(notes.length > 0 && { note: notes.join(" ") }) };
 }
 

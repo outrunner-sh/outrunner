@@ -183,8 +183,8 @@ test("a slack_request while the Mission works is folded into its turn: one turn,
 
 // A question card's click.
 
-function askWorld(patch: { answered?: boolean } = {}) {
-  const binding: MissionChannel = { missionId: "m1", orgId: "o1", teamId: "T1", channelId: "C1", boundBy: "wes", listen: "mentions", allowBotMessages: false, paused: false, revision: "rev1" };
+function askWorld(patch: { answered?: boolean; binding?: Partial<MissionChannel> | null } = {}) {
+  const binding: MissionChannel = { missionId: "m1", orgId: "o1", teamId: "T1", channelId: "C1", boundBy: "wes", listen: "mentions", allowBotMessages: false, paused: false, revision: "rev1", ...patch.binding };
   const thread: MissionThread = {
     id: "t1",
     missionId: "m1",
@@ -205,6 +205,7 @@ function askWorld(patch: { answered?: boolean } = {}) {
     options: ["staging", "prod"],
     messageTs: "1731400005.000100",
     answeredAt: patch.answered ? at(1) : null,
+    createdAt: "2026-11-14T10:00:00.000Z",
   };
   const events: RecordedEvent[] = [];
   const said: string[] = [];
@@ -212,7 +213,7 @@ function askWorld(patch: { answered?: boolean } = {}) {
   const deps: AskDeps = {
     ask: async (id) => (id === ask.id ? ask : null),
     thread: async () => thread,
-    binding: async () => binding,
+    binding: async () => (patch.binding === null ? null : binding),
     mission: async () => ({ id: "m1", kind: "mission", status: "ready" }) as Workspace,
     linked: async (u) => (u === "UANA" ? { userId: "ana", orgId: "o1" } : u === "UNORA" ? { userId: "nora", orgId: "o1" } : null),
     level: async (userId) => (userId === "ana" ? "read" : null),
@@ -231,6 +232,9 @@ function askWorld(patch: { answered?: boolean } = {}) {
     },
     tell: async (_b, _ts, text) => {
       said.push(`tell: ${text}`);
+    },
+    tellAt: async (channel, _ts, text) => {
+      said.push(`tellAt ${channel}: ${text}`);
     },
     askToConnect: async () => {
       said.push("connect");
@@ -265,4 +269,26 @@ test("a question card is answered once, by someone who may, and reaches the Miss
   ]);
   // A card from another channel's click is ignored.
   assert.equal(await answerAsk({ ...click("UANA", `${id}:0`), channel: "C2" }, askWorld().deps), "ignored");
+});
+
+test("a card of a binding that's over says nothing is waiting, and answers nothing", async () => {
+  const id = "00000000-0000-0000-0000-0000000000aa";
+  const gone = "tellAt C1: That question isn't waiting any more: the Mission went off call (or was put on call again) since it was asked.";
+  // Off call: no binding at all.
+  const off = askWorld({ binding: null });
+  assert.equal(await answerAsk(click("UANA", `${id}:0`), off.deps), "refused");
+  assert.deepEqual(off.said, [gone]);
+  assert.equal(off.events.length, 0);
+  // Put on call again in the same channel since: the card is of the old binding.
+  const rebound = askWorld({ binding: { boundAt: "2026-11-14T11:00:00.000Z", revision: "rev2" } });
+  assert.equal(await answerAsk(click("UANA", `${id}:1`), rebound.deps), "refused");
+  assert.deepEqual(rebound.said, [gone]);
+  assert.equal(rebound.events.length, 0);
+  // Bound before the card was asked: live.
+  const live = askWorld({ binding: { boundAt: "2026-11-14T09:00:00.000Z" } });
+  assert.equal(await answerAsk(click("UANA", `${id}:1`), live.deps), "answered");
+  // On call in another channel now: not this card's.
+  const moved = askWorld({ binding: { channelId: "C9" } });
+  assert.equal(await answerAsk(click("UANA", `${id}:1`), moved.deps), "refused");
+  assert.equal(moved.events.length, 0);
 });

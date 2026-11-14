@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { eventKey, type PullRequestRef } from "@/lib/missions/events";
+import { cardEndText, closedBlocks } from "@/lib/missions/slack-text";
 import { announcePullRequest, announceShipEvent, announceWaiting, type AnnounceDeps, cardKey } from "@/lib/missions/slack-announce";
 import type { QueuedPost } from "@/lib/missions/slack-outbox";
 import type { MissionChannel, MissionThread, ShipLedger } from "@/lib/missions/slack-store";
@@ -129,4 +130,14 @@ test("a wait on the owner is told once a wait, in the latest thread", async () =
   const [first] = queue.values();
   assert.equal(first.requester, "bo");
   assert.match((first.payload as { chunks: string[] }).chunks[0], /<https:\/\/outrunner\.example\.com\/workspaces\/m1\|answer in Outrunner>/);
+});
+
+test("a closed card names why nothing waits on it, with no buttons", () => {
+  for (const why of ["off_call", "archived"] as const) {
+    const blocks = closedBlocks("Which env?", why);
+    assert.equal(JSON.stringify(blocks).includes('"button"'), false);
+    assert.equal(blocks.length, 2);
+    assert.match(JSON.stringify(blocks[1]), why === "archived" ? /was archived/ : /went off call/);
+    assert.match(cardEndText(why), /^No longer waiting: the Mission /);
+  }
 });

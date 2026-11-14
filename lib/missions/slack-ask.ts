@@ -29,6 +29,8 @@ export type AskDeps = {
   /** Replace the card. */
   update(binding: MissionChannel, ts: string, text: string, blocks: Record<string, unknown>[]): Promise<void>;
   tell(binding: MissionChannel, threadTs: string, text: string): Promise<void>;
+  /** Said to the person who clicked, with no binding to say it under. */
+  tellAt(channel: string, threadTs: string, text: string): Promise<void>;
   askToConnect(binding: MissionChannel, threadTs: string): Promise<void>;
 };
 
@@ -39,9 +41,13 @@ export async function answerAsk(click: AskClick, deps: AskDeps): Promise<"answer
   const ask = await deps.ask(parsed.askId);
   if (!ask) return "ignored";
   const [thread, binding] = await Promise.all([deps.thread(ask.threadId), deps.binding(ask.missionId)]);
-  // Only on a card of the channel the Mission is on call in now.
-  if (!thread || !binding || binding.teamId !== click.teamId || thread.channelId !== binding.channelId || thread.missionId !== ask.missionId) {
-    return "ignored";
+  if (!thread || thread.missionId !== ask.missionId || thread.teamId !== click.teamId) return "ignored";
+  // A card of a binding that's over (the Mission went off call, was archived
+  // or put on call again): nothing waits on it, and the click says so.
+  const over = !binding || binding.teamId !== click.teamId || thread.channelId !== binding.channelId || (ask.createdAt && binding.boundAt && ask.createdAt < binding.boundAt);
+  if (over) {
+    if (!ask.answeredAt) await deps.tellAt(thread.channelId, thread.threadTs, "That question isn't waiting any more: the Mission went off call (or was put on call again) since it was asked.").catch(() => undefined);
+    return "refused";
   }
   if (click.channel && click.channel !== binding.channelId) return "ignored";
   const requester = await deps.linked(click.user);

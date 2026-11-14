@@ -14,11 +14,11 @@ import { recordAudit } from "@/lib/audit/record";
 import { getInstallation } from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";
 import { eventKey } from "@/lib/missions/events";
-import { missionBinding, type MissionChannel, unbindChannel } from "@/lib/missions/slack-store";
-import { introText } from "@/lib/missions/slack-text";
+import { missionBinding, type MissionChannel, openAsks, threadById, unbindChannel } from "@/lib/missions/slack-store";
+import { type CardEnd, cardEndText, closedBlocks, introText } from "@/lib/missions/slack-text";
 import { recordMissionEvent } from "@/lib/missions/watch.deps";
 import type { Workspace } from "@/lib/runtime/types";
-import { channelName, postMessage } from "@/lib/slack/web";
+import { channelName, postMessage, updateMessage } from "@/lib/slack/web";
 
 export function missionUrl(missionId: string): string | null {
   const base = optionalEnv("RUNTIME_BASE_URL");
@@ -66,11 +66,37 @@ export async function announceBinding(binding: MissionChannel, mission: Workspac
   await audit("mission.slack_bound", binding, mission, userId);
 }
 
-/** Take the Mission off call: it's told, and the org's log has it. False
- *  when it wasn't on call. */
-export async function takeOffCall(mission: Workspace, userId: string): Promise<boolean> {
+/** Every open question card of the Mission says nothing is waiting on it
+ *  now. Best effort, one at a time: a card that can't be edited is still
+ *  refused when clicked (lib/missions/slack-ask.ts). How many were closed. */
+export async function closeOpenCards(missionId: string, binding: MissionChannel, why: CardEnd): Promise<number> {
+  const install = await getInstallation(binding.teamId).catch(() => null);
+  if (!install) return 0;
+  let closed = 0;
+  for (const ask of await openAsks(missionId).catch(() => [])) {
+    const thread = await threadById(ask.threadId).catch(() => null);
+    if (!ask.messageTs || !thread || thread.channelId !== binding.channelId) continue;
+    try {
+      await updateMessage(install.botToken, { channel: binding.channelId, ts: ask.messageTs, text: `${ask.question}: ${cardEndText(why)}`, blocks: closedBlocks(ask.question, why) });
+      closed++;
+    } catch (error) {
+      console.error(`Mission ${missionId}: couldn't close its question card ${ask.id}`, error);
+    }
+  }
+  return closed;
+}
+
+/** Take the Mission off call: it's told, its open question cards are closed,
+ *  and the org's log has it. Work it already started goes on, with its owner
+ *  (docs/missions.md); requests of this binding start nothing more, as their
+ *  binding is gone (lib/missions/slack-tools.ts). False when it wasn't on
+ *  call. */
+export async function takeOffCall(mission: Workspace, userId: string, why: CardEnd = "off_call"): Promise<boolean> {
   const binding = await missionBinding(mission.id);
-  if (!binding || !(await unbindChannel(mission.id))) return false;
+  if (!binding) return false;
+  // Closed first: once the row is gone, a card's click can't tell its binding.
+  await closeOpenCards(mission.id, binding, why).catch((error: unknown) => console.error(`Mission ${mission.id}: couldn't close its cards`, error));
+  if (!(await unbindChannel(mission.id))) return false;
   await recordMissionEvent({
     missionId: mission.id,
     runnerId: null,

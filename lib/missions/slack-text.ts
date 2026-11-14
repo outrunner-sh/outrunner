@@ -88,6 +88,21 @@ export function answeredBlocks(question: string, answer: string, by: string): Re
   ];
 }
 
+/** Why a card's question isn't waiting any more. */
+export type CardEnd = "off_call" | "archived";
+
+export const cardEndText = (why: CardEnd): string =>
+  why === "archived" ? "No longer waiting: the Mission was archived" : "No longer waiting: the Mission went off call";
+
+/** The card once its Mission can't hear the answer: the question, and why
+ *  nothing is waiting on it. No buttons. */
+export function closedBlocks(question: string, why: CardEnd): Record<string, unknown>[] {
+  return [
+    { type: "section", text: { type: "mrkdwn", text: question.slice(0, 2900) } },
+    { type: "context", elements: [{ type: "mrkdwn", text: cardEndText(why) }] },
+  ];
+}
+
 /** A click's value read back: the card and the option. */
 export function parseAskValue(value: string): { askId: string; option: number | "other" } | null {
   const match = /^([0-9a-f-]{36}):(\d|other)$/.exec(value);

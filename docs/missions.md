@@ -182,6 +182,14 @@ Slack's retries, timeouts and rebinds
     it answers can still read the project. After an unbind or a rebind,
     queued posts are dropped, never moved to the new channel. A paused
     Mission still posts about work it had started (pause stops new requests).
+  - **Off call (unbind, or the Mission archived):** every open question
+    card is edited to "No longer waiting: the Mission went off call" (or
+    "was archived"), with no buttons. A click on one that couldn't be edited,
+    or on a card of an earlier binding (the Mission put on call again in the
+    same channel), is refused with a private note, never silently ignored.
+    Requests of the ended binding start no Ship (the check below), and the
+    Mission is told so. Ships already started go on with their owner in the
+    app. Archiving a Mission takes it off call.
   - Each Ship start: the same binding, not paused, the thread not muted, the
     requester still able to read the project. A request from before a rebind
     can't start a Ship.
