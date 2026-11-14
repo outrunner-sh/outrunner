@@ -30,6 +30,7 @@ import {
   SLACK_TOOLS,
   SPAWN_SLACK_PROPERTIES,
   slackSpawn,
+  tellStartRefused,
 } from "@/lib/missions/slack-tools";
 import type { Workspace } from "@/lib/runtime/types";
 
@@ -320,7 +321,11 @@ async function spawnRunner(mission: Workspace, args: Record<string, unknown>, de
   if ("error" in started) {
     // A refusal is proof no Ship was made by this call; anything else isn't,
     // and the place stays reserved for a retry under the same key.
-    if (started.definite) await giveBack();
+    if (started.definite) {
+      await giveBack();
+      // Said in the thread by the server: the Mission may not, and must not go quiet.
+      if (slack && deps.slack) await tellStartRefused(slack, started.error, deps.slack).catch(() => undefined);
+    }
     return refuse(
       `The Ship didn't start: ${started.error}${slack && !started.definite ? " Call spawn_runner again with the same request_id and spawn_key: it finds the Ship if one was made, or starts it." : ""}`,
     );

@@ -1,3 +1,4 @@
+import { isGitLabRef } from "@/lib/code-providers/repository";
 import { type AgentConnection, AGENTS, type AgentId } from "@/lib/agents/registry";
 import { sharedResource } from "@/lib/client/shared-resource";
 import { cliReason } from "@/lib/desktop/cli-reason";
@@ -518,20 +519,20 @@ export function folderGone(error: unknown): boolean {
 }
 
 /**
- * Clone a repository picked from GitHub (`owner/name`) into ~/outrunner/repos,
+ * Clone a repository picked from GitHub or GitLab into ~/outrunner/repos,
  * or use the clone made before, as the folder a local session works in. A
  * GitHub token goes to the app for this clone only (their own, or the org's
  * App's for that repository, as they chose), so private repositories clone
  * too.
  */
 export async function cloneLocalRepository(fullName: string): Promise<LocalFolder> {
-  const res = await fetch("/api/github/clone-token", {
+  const res = await fetch(isGitLabRef(fullName) ? "/api/gitlab/clone-token" : "/api/github/clone-token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ fullName }),
   });
   const data = (await res.json().catch(() => null)) as { token?: string; error?: string } | null;
-  if (!res.ok || !data?.token) throw new Error(data?.error ?? "Couldn't reach GitHub for that repository.");
+  if (!res.ok || !data?.token) throw new Error(data?.error ?? "Couldn't get access to that repository.");
   return call<LocalFolder>("local_clone_repo", { fullName, token: data.token });
 }
 
@@ -629,7 +630,7 @@ export function messageForLocalError(error: unknown, agent: AgentId = "claude"):
     case "repo-folders-taken":
       return "~/outrunner/repos already has folders of that name. Move some away and try again.";
     case "repo-invalid":
-      return "That isn't a GitHub repository name.";
+      return "That repository name is invalid, or this version of the Mac app does not support its provider. Update the app and try again.";
     case "repo-folder":
       return "Couldn't make a folder in ~/outrunner/repos for it.";
     case "folder-not-chosen":

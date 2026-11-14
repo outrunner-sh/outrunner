@@ -57,13 +57,16 @@ export function entitles(subscription: SubscriptionRecord, now: Date): boolean {
  * themselves.
  */
 export function stillBills(status: string): boolean {
-  return ["active", "trialing", "past_due", "unpaid", "paused"].includes(status);
+  return (BILLING_STATUSES as readonly string[]).includes(status);
 }
+
+/** The statuses stillBills holds can bill, for queries that need them. */
+export const BILLING_STATUSES = ["active", "trialing", "past_due", "unpaid", "paused"] as const;
 
 /** The best plan any of a user's subscriptions gives them at `now`; Free when
  *  none does. */
 export function planFromSubscriptions(subscriptions: readonly SubscriptionRecord[], now: Date): Plan {
-  return subscriptions.filter((s) => entitles(s, now)).reduce((best, s) => betterPlan(best, PLANS[s.plan]), PLANS.free);
+  return subscriptions.filter((s) => entitles(s, now)).reduce<Plan>((best, s) => betterPlan(best, PLANS[s.plan]), PLANS.free);
 }
 
 /** The subscription a user's plan comes from: the entitled one with the best

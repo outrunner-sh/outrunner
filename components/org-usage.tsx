@@ -5,20 +5,22 @@ import { PageHeader } from "@/components/page-layout";
 import { useState } from "react";
 
 import { InlineMessage } from "@/components/ui/notice";
-import type { OrgHours } from "@/lib/billing/org-hours";
-import { ALERT_THRESHOLDS, type AlertThreshold, type UsageControls } from "@/lib/billing/usage-controls";
+import type { OrgUsage } from "@/lib/billing/org-standing";
+import { formatUsd } from "@/lib/billing/usage";
+import type { AlertThreshold, UsageControls } from "@/lib/billing/usage-controls";
 import { requestJson } from "@/lib/http/request-json";
 import type { Org } from "@/lib/orgs/active";
 
-type Usage = { controls: UsageControls; hours: OrgHours };
+type Usage = { controls: UsageControls; usage: OrgUsage };
 
-const LIMITS = [null, 90, 80, 50, 25] as const;
+/** The limits offered, as multiples of the plan's included usage. */
+const LIMIT_MULTIPLES = [1, 1.5, 2, 3, 5] as const;
 
 /**
- * Settings → Org → Usage: the org's cloud hours this period against its
- * plan's, and its admins' controls: a limit at a share of them (no box
- * starts past it, and running ones pause where the backend can), and email
- * alerts as they're used.
+ * Settings → Org → Usage: the org's cloud usage this period against what its
+ * plan includes, any overage, and its admins' controls: a dollar limit on a
+ * plan that bills overage (no box starts past it, and running ones pause
+ * where the backend can), and email alerts as usage grows.
  */
 export function OrgUsageSettings({
   org,
@@ -30,19 +32,21 @@ export function OrgUsageSettings({
   /** Whether running boxes pause at the limit here (lib/billing/usage-sweep.ts). */
   pausesBoxes: boolean;
 }) {
-  const [usage, setUsage] = useState(initial);
+  const [state, setState] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const admin = org.role === "admin";
-  const { controls, hours } = usage;
-  const share = hours.planHours > 0 ? Math.min(100, (hours.used / hours.planHours) * 100) : 0;
-  const capShare = hours.planHours > 0 ? (hours.cap / hours.planHours) * 100 : 100;
+  const { controls, usage } = state;
+  const cap = usage.includedCapCents;
+  const share = cap > 0 ? Math.min(100, (usage.includedCents / cap) * 100) : 0;
+  const includedUsd = cap / 100;
+  const limits = LIMIT_MULTIPLES.map((multiple) => includedUsd * multiple);
 
   async function save(next: UsageControls) {
     setSaving(true);
     setError(null);
     try {
-      setUsage(
+      setState(
         await requestJson<Usage>(`/api/orgs/${org.id}/usage`, {
           method: "PUT",
           body: next,
@@ -71,66 +75,87 @@ export function OrgUsageSettings({
       <div className="space-y-1">
         <PageHeader title="Usage &amp; limits" />
         <p className="max-w-prose text-sm text-muted-foreground">
-          {`${org.name}'s cloud hours this period, shared by all its members' sessions, against its ${hours.planLabel} plan's.`}
+          {usage.periodEnd === null
+            ? `${org.name}'s cloud usage on the free trial, shared by all its members' sessions.`
+            : `${org.name}'s cloud usage this period, shared by all its members' sessions, against its ${usage.planLabel} plan's included usage.`}
         </p>
       </div>
 
       <div className="space-y-2">
         <div className="flex items-baseline justify-between text-sm">
-          <span className="text-foreground">{`${hours.used} of ${hours.planHours} hours`}</span>
+          <span className="text-foreground">{`${formatUsd(usage.includedCents)} of ${formatUsd(cap)} included`}</span>
           <span className="text-xs text-muted-foreground" suppressHydrationWarning>
-            {`Resets ${new Date(hours.periodEnd).toLocaleDateString(undefined, { dateStyle: "medium" })}`}
+            {usage.periodEnd === null
+              ? "Once, doesn't reset"
+              : `Resets ${new Date(usage.periodEnd).toLocaleDateString(undefined, { dateStyle: "medium" })}`}
           </span>
         </div>
-        <div className="relative h-2 rounded-full bg-muted" aria-hidden>
+        <div className="h-2 rounded-full bg-muted" aria-hidden>
           <div className="h-2 rounded-full bg-foreground/70" style={{ width: `${share}%` }} />
-          {controls.limitPercent !== null && controls.limitPercent < 100 ? (
-            <div className="absolute top-[-3px] h-[14px] w-px bg-destructive" style={{ left: `${capShare}%` }} />
-          ) : null}
         </div>
+        {usage.overage && usage.overageCents > 0 ? (
+          <p className="text-sm text-foreground">{`${formatUsd(usage.overageCents)} overage, billed at 1.5x the included rate`}</p>
+        ) : null}
+        {usage.state === "unpaid" ? (
+          <InlineMessage tone="error">
+            An overage payment failed: no new cloud session starts until it&apos;s paid in Settings → Org → Billing.
+          </InlineMessage>
+        ) : null}
       </div>
 
       <div className="space-y-2 border-t border-border/60 pt-6">
         <label htmlFor="org-usage-limit" className="text-sm font-medium text-foreground">
           Usage limit
         </label>
-        {admin ? (
+        {!usage.takesLimit ? (
+          <p className="text-sm text-muted-foreground">
+            {usage.periodEnd === null
+              ? "The trial stops at its included usage. Subscribe to keep going past it."
+              : `The ${usage.planLabel} plan stops at its included usage.`}
+          </p>
+        ) : admin ? (
           <select
             id="org-usage-limit"
             className="block w-full max-w-sm rounded-md border border-border bg-transparent px-2 py-1.5 text-sm"
             disabled={saving}
-            value={controls.limitPercent ?? ""}
+            value={controls.limitUsd ?? ""}
             onChange={(event) =>
-              void save({ ...controls, limitPercent: event.target.value ? Number(event.target.value) : null })
+              void save({ ...controls, limitUsd: event.target.value ? Number(event.target.value) : null })
             }
           >
-            {LIMITS.map((limit) => (
-              <option key={limit ?? "none"} value={limit ?? ""}>
-                {limit === null
-                  ? `None: all ${hours.planHours} of the plan's hours`
-                  : `${limit}% of the plan's hours (${(hours.planHours * limit) / 100})`}
+            <option value="">None: overage is billed as it comes</option>
+            {limits.map((limit, i) => (
+              <option key={limit} value={limit}>
+                {LIMIT_MULTIPLES[i] === 1
+                  ? `${formatUsd(limit * 100)}: the included usage, no overage`
+                  : `${formatUsd(limit * 100)} (${LIMIT_MULTIPLES[i]}x the included)`}
               </option>
             ))}
-            {controls.limitPercent !== null && !LIMITS.includes(controls.limitPercent as (typeof LIMITS)[number]) ? (
-              <option value={controls.limitPercent}>{`${controls.limitPercent}%`}</option>
+            {controls.limitUsd !== null && !limits.includes(controls.limitUsd) ? (
+              <option value={controls.limitUsd}>{formatUsd(controls.limitUsd * 100)}</option>
             ) : null}
           </select>
         ) : (
           <p className="text-sm text-muted-foreground">
-            {controls.limitPercent === null ? "None" : `${controls.limitPercent}% of the plan's hours`}
+            {usage.limitCents === null ? "None" : formatUsd(usage.limitCents)}
           </p>
         )}
+        {usage.takesLimit && controls.limitUsd !== null && usage.limitCents !== null && usage.limitCents > controls.limitUsd * 100 ? (
+          <p className="text-xs text-muted-foreground">
+            {`The saved ${formatUsd(controls.limitUsd * 100)} is below what the plan includes, so the limit is ${formatUsd(usage.limitCents)}.`}
+          </p>
+        ) : null}
         <p className="text-xs text-muted-foreground">
-          {pausesBoxes
-            ? "At the limit, no new cloud session starts, and running ones pause within a couple of minutes."
-            : "At the limit, no new cloud session starts; running ones carry on."}
+          {`At ${usage.takesLimit ? "the limit" : "it"}, no new cloud session starts${
+            pausesBoxes ? ", and running ones pause within a couple of minutes." : "; running ones carry on."
+          }`}
         </p>
       </div>
 
       <fieldset className="space-y-2 border-t border-border/60 pt-6">
         <legend className="text-sm font-medium text-foreground">Email the admins at</legend>
         <div className="flex gap-4">
-          {ALERT_THRESHOLDS.map((threshold) => (
+          {usage.alertThresholds.map((threshold) => (
             <label key={threshold} className="flex items-center gap-2 text-sm text-foreground">
               <input
                 type="checkbox"
@@ -142,7 +167,7 @@ export function OrgUsageSettings({
             </label>
           ))}
         </div>
-        <p className="text-xs text-muted-foreground">Of the plan&apos;s hours, once each per period.</p>
+        <p className="text-xs text-muted-foreground">Of the included usage, once each period.</p>
       </fieldset>
 
       {error && <InlineMessage tone="error">{error}</InlineMessage>}

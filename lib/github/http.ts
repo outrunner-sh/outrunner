@@ -1,3 +1,4 @@
+import { GitLabError, gitLabErrorResponse } from "@/lib/gitlab/client";
 import { GitHubReconnectError, GitHubSyncError, MissingGithubTokenError } from "@/lib/github/client";
 import { GitIdentityError } from "@/lib/github/identity-error";
 
@@ -19,6 +20,7 @@ export const GITHUB_RECONNECT_HREF = "/settings/connections";
  * A plain `Response` (not NextResponse) so it stays importable outside Next.
  */
 export function githubErrorResponse(error: unknown, fallback: string): Response {
+  if (error instanceof GitLabError) return gitLabErrorResponse(error);
   if (error instanceof GitIdentityError) {
     return Response.json({ error: error.message, settingsHref: error.href }, { status: 409 });
   }

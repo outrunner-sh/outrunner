@@ -8,6 +8,12 @@
 // /callback with a one-time code; trade that code and the verifier for a
 // token at /api/cli/token. The verifier never leaves this process until that
 // trade, so a code seen anywhere else is no use.
+//
+// A browser on another computer than this process (WSL's Windows side, a
+// laptop SSHed into a box, the host of a container) can't reach 127.0.0.1
+// here: it shows "refused to connect" with the callback's address, code and
+// state in it. So a terminal someone is typing in also takes that address,
+// pasted, and finishes the same way.
 package cli
 
 import (
@@ -52,6 +58,10 @@ type LoginOptions struct {
 	OpenBrowser func(string) error
 	// Out is where progress is printed.
 	Out io.Writer
+	// Pasted is the lines the user types, when someone is: the callback's
+	// address pasted from a browser that couldn't reach this one. Nil asks
+	// for none.
+	Pasted <-chan string
 	// HTTP is the client for the token trade; nil is http.DefaultClient.
 	HTTP *http.Client
 }
@@ -118,21 +128,65 @@ func Login(ctx context.Context, opts LoginOptions) (string, User, error) {
 	fmt.Fprintln(opts.Out, "Opening browser to sign in...")
 	fmt.Fprintln(opts.Out, "If the browser doesn't open, visit:")
 	fmt.Fprintf(opts.Out, "%s\n\n", loginURL)
+	if opts.Pasted != nil {
+		fmt.Fprintln(opts.Out, "If the browser then can't reach 127.0.0.1 (\"refused to connect\"), copy that page's address and paste it here:")
+	}
 	if opts.OpenBrowser != nil {
 		_ = opts.OpenBrowser(loginURL)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, loginTimeout)
 	defer cancel()
-	select {
-	case r := <-done:
-		return r.token, r.user, r.err
-	case <-ctx.Done():
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", User{}, errors.New("sign-in timed out waiting for the browser")
+	pasted := opts.Pasted
+	for {
+		select {
+		case r := <-done:
+			return r.token, r.user, r.err
+		case line, ok := <-pasted:
+			if !ok {
+				// Stdin ended: wait for the browser alone.
+				pasted = nil
+				continue
+			}
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			code, err := pastedCode(line, state)
+			if err != nil {
+				fmt.Fprintf(opts.Out, "That's %v. Paste the whole address from the browser's address bar:\n", err)
+				continue
+			}
+			token, user, err := exchange(ctx, opts, code, verifier)
+			if err != nil {
+				return "", User{}, err
+			}
+			return token, user, nil
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return "", User{}, errors.New("sign-in timed out waiting for the browser")
+			}
+			return "", User{}, ctx.Err()
 		}
-		return "", User{}, ctx.Err()
 	}
+}
+
+// pastedCode is the code in a callback address the user pasted, once its
+// state is this sign-in's: a code meant for another terminal is refused, as
+// the callback refuses it.
+func pastedCode(line, state string) (string, error) {
+	address := strings.Trim(strings.TrimSpace(line), `"'<>`)
+	// An address bar can hide the scheme, and a hand-made selection miss it.
+	if !strings.Contains(address, "://") {
+		address = "http://" + address
+	}
+	pasted, err := url.Parse(address)
+	if err != nil || pasted.Path != "/callback" || pasted.Query().Get("code") == "" {
+		return "", errors.New("not the address of the page that couldn't connect (it has /callback?code=… in it)")
+	}
+	if pasted.Query().Get("state") != state {
+		return "", errors.New("the address of another terminal's sign-in")
+	}
+	return pasted.Query().Get("code"), nil
 }
 
 func loginPageURL(base string, port int, state, challenge, deviceName string) string {

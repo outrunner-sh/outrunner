@@ -34,6 +34,8 @@ function pool(
   } = {},
 ) {
   const log: string[] = [];
+  const metered: string[] = [];
+  let clock = NOW;
   const deps: WarmPoolDeps = {
     pools: opts.pools ?? true,
     provider: "daytona",
@@ -52,9 +54,13 @@ function pool(
       log.push(`make with ${secret}`);
       if (opts.makeFails === "before-box") throw new Error("Daytona said no");
       await onBox("sb-1");
+      // Making and warming it takes ten minutes.
+      clock += 10 * 60_000;
       if (opts.makeFails === "after-box") throw new Error("clone failed");
-      return { sandboxId: "sb-1" };
+      return { sandboxId: "sb-1", cpu: 4 };
     },
+    meter: async (computerId, sandboxId, cpu, from, to) =>
+      void metered.push(`${computerId} ${sandboxId} ${cpu ?? "?"} vCPU for ${(to - from) / 60_000} min`),
     recordBox: async (computerId, sandboxId) => void log.push(`record ${sandboxId} on ${computerId}`),
     pause: async (sandboxId) => {
       log.push(`pause ${sandboxId}`);
@@ -76,9 +82,9 @@ function pool(
       return !opts.claimedMeanwhile;
     },
     newSecret: () => "s3cret",
-    now: () => NOW,
+    now: () => clock,
   };
-  return { deps, log };
+  return { deps, log, metered };
 }
 
 const box = (over: Partial<PooledBox>): PooledBox => ({
@@ -132,6 +138,27 @@ test("a pooled box from the provider the user moved from is deleted there and re
   const { deps, log } = pool({ existing: [box({ provider: "user-modal" })] });
   assert.equal(await refillPool(deps), 1);
   assert.deepEqual(log, ["release c-old", "discard sb-old on user-modal", ...MADE]);
+});
+
+test("a pooled box's time running, made to stopped, is metered on its owner's hours, once", async () => {
+  const { deps, metered } = pool();
+  await refillPool(deps);
+  assert.deepEqual(metered, ["c-1 sb-1 4 vCPU for 10 min"]);
+  // One that failed after it existed is metered to its delete.
+  const failed = pool({ warmFails: true });
+  await assert.rejects(refillPool(failed.deps), /warm hook failed/);
+  assert.deepEqual(failed.metered, ["c-1 sb-1 4 vCPU for 10 min"]);
+  const swept = pool({ rowGone: true });
+  await assert.rejects(refillPool(swept.deps), /sweep/);
+  assert.equal(swept.metered.length, 1);
+  // One never made has no time.
+  const never = pool({ makeFails: "before-box" });
+  await assert.rejects(refillPool(never.deps), /Daytona said no/);
+  assert.deepEqual(never.metered, []);
+});
+
+test("a refill no longer watched is taken for dead within the longest warm hook and a clone", () => {
+  assert.ok(STALE_REFILL_MS >= 30 * 60_000 && STALE_REFILL_MS <= 60 * 60_000);
 });
 
 test("a box that couldn't be made goes, and its row is kept failed for the back-off", async () => {

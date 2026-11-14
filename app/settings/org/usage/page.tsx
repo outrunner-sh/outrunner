@@ -15,8 +15,7 @@ import { keySource } from "@/lib/openrouter/keys";
 import { OrgUsageSettings } from "@/components/org-usage";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { orgHours } from "@/lib/billing/org-hours";
-import { getUsageControls } from "@/lib/db/org-usage";
+import { orgUsage } from "@/lib/billing/org-standing";
 import { getOrgContext } from "@/lib/orgs/server";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
@@ -24,8 +23,8 @@ import { getRuntimeProvider } from "@/lib/runtime/provider";
 /** Opens at once, its data streaming in behind: the build checks it. */
 export const unstable_instant = { prefetch: "static" };
 
-/** Settings → Org → Usage: the org's cloud hours this period, and its admins'
- *  limit and alerts on them (lib/billing/usage-controls.ts). */
+/** Settings → Org → Usage: the org's cloud usage this period, and its
+ *  admins' limit and alerts on it (lib/billing/usage-controls.ts). */
 export default function OrgUsage() {
   return (
     <Suspense fallback={<SettingsLoading title="Usage & limits" />}>
@@ -53,7 +52,6 @@ async function UsageSection() {
     source === "per-user"
       ? await outrunnerModelAllowance(owner.id, org.id).catch(() => undefined)
       : null;
-  const controls = await getUsageControls(org.id);
   const provider = getRuntimeProvider();
   return (
     <div className="space-y-8">
@@ -79,7 +77,7 @@ async function UsageSection() {
       </UsageCard>
       <OrgUsageSettings
         org={org}
-        initial={{ controls, hours: await orgHours(org.id, controls) }}
+        initial={await orgUsage(org.id)}
         pausesBoxes={isComputerProvider(provider) && provider.pausesBoxes}
       />
     </div>

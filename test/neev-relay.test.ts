@@ -5,7 +5,7 @@ import { after, test } from "node:test";
 
 import WebSocket, { WebSocketServer } from "ws";
 
-import { createNeevRelay, sendable } from "@/lib/runtime/sandbox/neev-relay";
+import { createNeevRelay, sendable, SERVICE_RESTART } from "@/lib/runtime/sandbox/neev-relay";
 import {
   mintRelayTicket,
   NEEV_RELAY_PREFIX,
@@ -176,3 +176,35 @@ test("a plain request to the relay prefix is not an upgrade the relay sees", asy
   });
   assert.equal(status, 404);
 });
+
+test("closeAll closes every relayed connection with the code given, its agent side too", async () => {
+  const agentClosed: number[] = [];
+  const agentServer = createServer();
+  const agentWss = new WebSocketServer({ noServer: true });
+  agentServer.on("upgrade", (req, socket, head) =>
+    agentWss.handleUpgrade(req, socket, head, (ws) => {
+      ws.on("close", (code) => agentClosed.push(code));
+      ws.send("hello");
+    }),
+  );
+  const agent = `http://127.0.0.1:${await listen(agentServer)}`;
+  const relay = createNeevRelay({ key: () => KEY, tunnel: async () => agent });
+  const server = createServer((_req, res) => res.writeHead(404).end());
+  server.on("upgrade", (req, socket, head) => {
+    if (!relay(req, socket, head)) socket.end("HTTP/1.1 418 Not Relayed\r\n\r\n");
+  });
+  const port = await listen(server);
+
+  const ws = new WebSocket(relayUrl(port, "events-ws"));
+  await nextMessage(ws);
+  const closed = new Promise<[number, string]>((resolve) => ws.once("close", (code, reason) => resolve([code, reason.toString()])));
+  assert.equal(relay.closeAll(SERVICE_RESTART, "Server restarting"), 1);
+  assert.deepEqual(await closed, [1012, "Server restarting"]);
+  await waitUntil(() => agentClosed.length > 0);
+  assert.deepEqual(agentClosed, [1012]);
+  assert.equal(relay.closeAll(SERVICE_RESTART, "again"), 0);
+});
+
+async function waitUntil(done: () => boolean): Promise<void> {
+  for (let i = 0; i < 100 && !done(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+}

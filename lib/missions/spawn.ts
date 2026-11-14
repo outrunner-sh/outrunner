@@ -12,7 +12,7 @@
 
 import { runnerRequest } from "@/lib/missions/runner-request";
 export { runnerRequest } from "@/lib/missions/runner-request";
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import { getOwner } from "@/lib/auth/owner";
 import { saveBrief } from "@/lib/missions/store";

@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -295,5 +297,53 @@ func TestTheComputersOpenAIKeyIsMasked(t *testing.T) {
 	_, secrets := sessionEnvironment([]string{"OPENAI_API_KEY=sk-proj-computer", "PATH=/usr/bin"})
 	if !slices.Contains(secrets, "sk-proj-computer") {
 		t.Errorf("secrets = %q, want the OpenAI key", secrets)
+	}
+}
+
+func TestClaudeAccountGrantIsScopedAppliedAndRedacted(t *testing.T) {
+	encode := func(url, bearer string) string {
+		raw, _ := json.Marshal(map[string]string{"url": url, "bearer": bearer})
+		return base64.RawURLEncoding.EncodeToString(raw)
+	}
+	bearer := "v1." + strings.Repeat("a", 900)
+	grant := encode("https://app.example/api/runtime/claude", bearer)
+	if !ValidAuthToken(AuthClaudeAccount, grant) {
+		t.Fatal("valid broker grant rejected")
+	}
+	for _, url := range []string{"https://user:pass@app.example/api/runtime/claude", "https://app.example/other", "https://app.example/api/runtime/claude?x=1", "http://app.example/api/runtime/claude", "https:///api/runtime/claude"} {
+		if ValidAuthToken(AuthClaudeAccount, encode(url, bearer)) {
+			t.Errorf("unsafe broker URL accepted: %s", url)
+		}
+	}
+	if ValidAuthToken(AuthClaudeAccount, encode("https://app.example/api/runtime/claude", bearer+"'\n")) {
+		t.Fatal("unsafe bearer accepted")
+	}
+	s := NewService(t.TempDir())
+	id := "ws-claude-broker"
+	if _, err := s.Create(context.Background(), CreateInput{WorkspaceID: id, Branch: "b", RepoPath: t.TempDir(), Agent: AgentClaude}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAuth(context.Background(), id, AuthClaudeAccount, grant); err != nil {
+		t.Fatal(err)
+	}
+	env := s.authFiles().read(id)
+	for _, line := range []string{"unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN", "export ANTHROPIC_BASE_URL='https://app.example/api/runtime/claude'", "export CLAUDE_CODE_OAUTH_TOKEN='" + bearer + "'"} {
+		if !strings.Contains(env, line+"\n") {
+			t.Errorf("missing environment line: %s", line)
+		}
+	}
+	for _, service := range []*Service{s, NewService(s.Root)} {
+		if !slices.Contains(service.RedactionSecrets(), bearer) || !slices.Contains(service.RedactionSecrets(), grant) {
+			t.Fatal("broker credentials not masked after restart")
+		}
+	}
+	if err := s.SetAuth(context.Background(), id, AuthClaudeOAuthToken, testOAuthToken); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(s.authFiles().read(id), "unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN OUTRUNNER_CLAUDE_GRANT") {
+		t.Fatal("direct login did not clear broker environment")
+	}
+	if !slices.Contains(NewService(s.Root).RedactionSecrets(), bearer) {
+		t.Fatal("retired bearer no longer masked")
 	}
 }

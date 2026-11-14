@@ -2,7 +2,10 @@ import { connection, NextResponse } from "next/server";
 
 import { billingMode } from "@/lib/billing/mode";
 import { emailStatus } from "@/lib/email/send";
-import { bearerMatches } from "@/lib/http/bearer";
+import { hasCronSecret } from "@/lib/cron/auth";
+import { readHeartbeats } from "@/lib/cron/heartbeat.deps";
+import { checkDaytona, checkOpenRouter } from "@/lib/health/dependencies";
+import { isDraining } from "@/lib/observability/drain";
 import { optionalEnv, providerName } from "@/lib/env";
 import { keySource } from "@/lib/openrouter/keys";
 import { codexCliVersion, probeCodexSchema } from "@/lib/codex/rollout";
@@ -17,11 +20,17 @@ import {
  * booleans about which settings are present, never their values, and nothing
  * about any individual user's credentials.
  *
+ * Readiness: `ok` is false (503) until the database answers with every
+ * table migrated, and while the server drains on SIGTERM. Liveness, which
+ * touches nothing, is /api/health/live.
+ *
  * To anyone anonymous — the Worker's deploy check among them — it says only
  * `ok` and `build`, which is all that check reads. The rest (which settings
  * are configured, per-table migration state) is a deployment's own map of
  * its attack surface, so it goes to whoever holds BILLING_CRON_SECRET (the
- * reconciler's caller — `curl -H "Authorization: Bearer $BILLING_CRON_SECRET"`).
+ * reconciler's caller — `curl -H "Authorization: Bearer $BILLING_CRON_SECRET"`),
+ * with each cron job's heartbeat (`crons`, `stale` when it hasn't succeeded
+ * in 10 minutes) and whether Daytona and OpenRouter take the deployment's keys.
  */
 export async function GET(request: Request) {
   // Per request, never prerendered at build (Cache Components prerenders a
@@ -56,7 +65,7 @@ export async function GET(request: Request) {
     // set wrong, which the server refuses to start on.
     billing: billingModeOrInvalid(),
     // The cron's secret for the reconciler, which pauses idle boxes and keeps
-    // cloud hours; without it neither happens.
+    // cloud usage; without it neither happens.
     billingCron: Boolean(optionalEnv("BILLING_CRON_SECRET")),
     // Whether invites and requests to join are emailed (RESEND_API_KEY and
     // EMAIL_FROM); "not_configured" is valid: admins share invite links.
@@ -90,21 +99,32 @@ export async function GET(request: Request) {
     database.ok = database.migrated;
   }
 
-  const ok = configured.supabase && configured.credentialEncryption && database.ok;
+  // Shutting down (server.ts, on SIGTERM): still up, but not to be sent work.
+  const draining = isDraining();
+  const ok = configured.supabase && configured.credentialEncryption && database.ok && !draining;
   // The commit this server was built from (Dockerfile OUTRUNNER_BUILD), so
   // the Worker and the deploy check can tell it's the one just deployed.
   const build = process.env.OUTRUNNER_BUILD || null;
 
   // Not the deployment's operator: the check the Worker makes of a container
   // and the readiness a load balancer asks for, answered as thinly as that.
-  const cronSecret = optionalEnv("BILLING_CRON_SECRET");
-  if (!cronSecret || !bearerMatches(request.headers.get("authorization"), cronSecret)) {
-    return NextResponse.json({ ok, build }, { status: ok ? 200 : 503 });
+  if (!hasCronSecret(request)) {
+    return NextResponse.json({ ok, build, ...(draining ? { draining } : {}) }, { status: ok ? 200 : 503 });
   }
 
   // Report optional feature rollout separately: a missing Codex migration
   // must not break existing API-key sessions or the core health check.
-  const codexSchema = configured.supabaseServiceRole ? await probeCodexSchema() : "not configured";
+  // The cron's jobs (lib/cron), and whether the providers sessions depend on
+  // take this deployment's keys: reported, never part of `ok`, which the
+  // deploy gates on (an outage elsewhere mustn't fail a deploy).
+  const [codexSchema, crons, daytona, openrouter] = await Promise.all([
+    configured.supabaseServiceRole ? probeCodexSchema() : ("not configured" as const),
+    configured.supabaseServiceRole ? readHeartbeats() : ("not configured" as const),
+    checkDaytona(),
+    checkOpenRouter(),
+  ]);
+  // null when the heartbeats can't be read: unknown, never "none stale".
+  const cronsStale = typeof crons === "object" ? Object.entries(crons).filter(([, job]) => job.stale).map(([name]) => name) : null;
   const cliVersion = codexCliVersion();
   const codex = { ready: codexSchema === "ok" && cliVersion !== null, schema: codexSchema, cliVersion };
 
@@ -124,6 +144,10 @@ export async function GET(request: Request) {
       configured,
       database,
       codex,
+      crons,
+      cronsStale,
+      dependencies: { daytona, openrouter },
+      ...(draining ? { draining } : {}),
       ...(nextStep ? { nextStep } : {}),
       build,
       time: new Date().toISOString(),

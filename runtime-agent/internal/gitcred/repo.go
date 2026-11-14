@@ -11,6 +11,8 @@ import (
 var ErrInvalidRepo = errors.New("invalid repository: want owner/name")
 
 // repoPattern is GitHub's own: owner and repository names are made of these.
+var gitLabPart = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 // NormalizeRepo is repo as the control plane is asked for it: "owner/name",
@@ -20,6 +22,18 @@ func NormalizeRepo(repo string) (string, error) {
 	repo = strings.TrimSuffix(strings.Trim(strings.TrimSpace(repo), "/"), ".git")
 	if repo == "" {
 		return "", nil
+	}
+	if strings.HasPrefix(repo, "gitlab.com/") {
+		parts := strings.Split(strings.TrimPrefix(repo, "gitlab.com/"), "/")
+		if len(parts) < 2 {
+			return "", ErrInvalidRepo
+		}
+		for _, part := range parts {
+			if !gitLabPart.MatchString(part) || part == "." || part == ".." {
+				return "", ErrInvalidRepo
+			}
+		}
+		return repo, nil
 	}
 	owner, name, _ := strings.Cut(repo, "/")
 	if !repoPattern.MatchString(repo) || strings.Trim(owner, ".") == "" || strings.Trim(name, ".") == "" {

@@ -6,7 +6,7 @@
  * events that arrive together go together.
  */
 
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import { boxSummary, sessionWorking } from "@/lib/missions/box";
 import { readSession } from "@/lib/session/watch";

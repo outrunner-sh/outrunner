@@ -1,4 +1,4 @@
-import { BOX_TOOLS } from "@/lib/runtime/box-image";
+import { BOX_TOOL_SHA256, BOX_TOOLS } from "@/lib/runtime/box-image";
 
 /**
  * The GitHub CLI a box installs, pinned: the agent's orientation tells it to
@@ -19,7 +19,9 @@ export const GH_VERSION = BOX_TOOLS.gh;
  * connection leaves no half-written `gh` behind, and the architecture comes
  * from the box rather than being assumed (`uname -m`, not dpkg, which a
  * non-Debian image hasn't got). An architecture with no release 404s here
- * instead of installing nothing and failing later at `gh pr create`.
+ * instead of installing nothing and failing later at `gh pr create`. The
+ * download is checked against its pinned sha256 before it's unpacked: one that
+ * doesn't match stops the install.
  */
 export function ghInstallCommand({ sudo }: { sudo: boolean }): string {
   const as = sudo ? "sudo " : "";
@@ -27,9 +29,11 @@ export function ghInstallCommand({ sudo }: { sudo: boolean }): string {
   const dir = `gh_${GH_VERSION}_linux_$arch`;
   return (
     `{ command -v gh >/dev/null || { ` +
-    `arch=$(uname -m); case "$arch" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; esac; ` +
+    `arch=$(uname -m); sum=; case "$arch" in ` +
+    `x86_64|amd64) arch=amd64 sum=${BOX_TOOL_SHA256.gh.amd64};; aarch64|arm64) arch=arm64 sum=${BOX_TOOL_SHA256.gh.arm64};; esac; ` +
     `tmp=$(mktemp -d) && ` +
     `curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${dir}.tar.gz" -o "$tmp/gh.tar.gz" && ` +
+    `echo "$sum  $tmp/gh.tar.gz" | sha256sum -c --quiet - && ` +
     `tar -xzf "$tmp/gh.tar.gz" -C "$tmp" && ` +
     `${as}install -m 0755 "$tmp/${dir}/bin/gh" /usr/local/bin/gh && ` +
     `rm -rf "$tmp"; }; }`

@@ -341,6 +341,23 @@ test("a refused start gives its place back, only when this call took it and no S
   assert.deepEqual(ledger.map((l) => l.spawnKey), ["b"]);
 });
 
+test("a Ship the platform refuses (the plan's cloud sessions, say) is said in the thread by the server, once; an unknown outcome says nothing", async () => {
+  const { deps, state, queue } = world();
+  state.next = "refused";
+  const args = { prompt: "x", request_id: "Ev1", spawn_key: "a" };
+  await call(deps, "m1", "spawn_runner", args);
+  await call(deps, "m1", "spawn_runner", args);
+  const posts = [...queue.values()].filter((p) => p.opKey.startsWith("refused:"));
+  assert.equal(posts.length, 1, "the post is keyed by the reservation, so a repeat of it is one post");
+  assert.equal(posts[0].threadTs, "1731400000.000100");
+  assert.equal(posts[0].kind, "card");
+  assert.match((posts[0].payload as { chunks: string[] }).chunks[0], /A Ship couldn't start for this request: the plan's box limit/);
+  const before = queue.size;
+  state.next = "unknown";
+  await call(deps, "m1", "spawn_runner", { ...args, spawn_key: "c" });
+  assert.equal(queue.size, before, "a start that may have worked says nothing: it's retried");
+});
+
 test("limits: one reached is told in the thread (queued, once) and starts nothing; existing keys still answer", async () => {
   const { deps, ledger, started, queue, state } = world();
   state.perHour = 2;

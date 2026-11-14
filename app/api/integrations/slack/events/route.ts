@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { firstSighting } from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";

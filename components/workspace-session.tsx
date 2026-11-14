@@ -1356,7 +1356,9 @@ export function WorkspaceSession({
               // Only between turns: an edit cuts the conversation under the
               // agent, which must not be writing to it.
               onEdit={attached && !boundary && !working && !waitingOnUser && !waitingOnPlan ? editMessage : undefined}
-              placeholder={startup ? null : conversationPlaceholder({
+              // Until the browser has said whether it kept this
+              // conversation, it isn't "connecting": it may be there at once.
+              placeholder={startup || conversation.restoring ? null : conversationPlaceholder({
                 events: timelineEvents,
                 attachment: attachment.status,
                 stream: conversation.status,

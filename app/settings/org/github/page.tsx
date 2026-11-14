@@ -6,7 +6,7 @@ import { Suspense } from "react";
 import { OrgGitHubSettings, type InstallationView } from "@/components/org-github";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { listOrgInstallations, listAvailableFor } from "@/lib/db/github-installations";
+import { listInstallationShares, listOrgInstallations, listAvailableFor } from "@/lib/db/github-installations";
 import { githubAppConfig, installationToken, listInstallationRepositories } from "@/lib/github/app";
 import { getOrgContext } from "@/lib/orgs/server";
 
@@ -19,7 +19,8 @@ const SHOWN = 12;
 /**
  * Settings → Org → GitHub: the Outrunner GitHub App's installations the org
  * keeps, and the repositories each reaches. Its admins install it, and let
- * an installation go.
+ * an installation go, and the org that first connected one sees, and can
+ * remove, the other orgs it's shared with.
  */
 type Query = { installed?: string; error?: string; pending?: string };
 
@@ -54,7 +55,10 @@ async function GitHubSection({ searchParams }: { searchParams: Promise<Query> })
       ])
     : [[], []];
   const installations: InstallationView[] = await Promise.all(
-    kept.map(async (installation) => {
+    kept.map(async (kept) => {
+      // Only its source org's admins see the other orgs it's shared with.
+      const shares = org.role === "admin" ? await listInstallationShares(org.id, kept.id).catch(() => null) : null;
+      const installation = { ...kept, shares };
       if (installation.suspended || !config) return { ...installation, repositories: [], total: 0, reachable: false };
       try {
         // A kept token, and one request for the few names shown.

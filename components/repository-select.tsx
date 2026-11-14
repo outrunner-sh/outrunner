@@ -4,6 +4,7 @@ import { ChevronDown, Lock, RefreshCw, Search } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { repositoryKey, type CodeProvider } from "@/lib/code-providers/repository";
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { Spinner } from "@/components/ui/loaders";
@@ -60,7 +61,7 @@ let askGitHubAgain = false;
  * form mounts, so the picker opens on it at once, and again in the background
  * each time it opens. A failure is an answer too, said in the picker.
  */
-const REPOSITORIES = sharedResource<ListingAnswer | null>(async () => {
+const GITHUB_REPOSITORIES = sharedResource<ListingAnswer | null>(async () => {
   const fresh = askGitHubAgain;
   askGitHubAgain = false;
   try {
@@ -90,9 +91,18 @@ const REPOSITORIES = sharedResource<ListingAnswer | null>(async () => {
 /** Ask GitHub again (the picker's Refresh list). */
 function refreshRepositories(): Promise<unknown> {
   askGitHubAgain = true;
-  REPOSITORIES.invalidate();
-  return REPOSITORIES.ensure();
+  GITHUB_REPOSITORIES.invalidate();
+  return GITHUB_REPOSITORIES.ensure();
 }
+
+const GITLAB_REPOSITORIES = sharedResource<ListingAnswer | null>(async () => {
+  try {
+    const res = await fetch("/api/gitlab/repositories");
+    if (!res.ok) return { listing: null, error: await readError(res, "Couldn't load your GitLab repositories.") };
+    const data = await res.json() as Partial<Listing>;
+    return { listing: { repositories: data.repositories ?? [], connected: data.connected ?? [], complete: data.complete ?? true, ssoPartialOrgIds: [], source: { kind: "user" } }, error: null };
+  } catch { return { listing: null, error: { message: "Couldn't load your GitLab repositories.", reconnect: false } }; }
+}, null);
 
 const BELOW: Placement = { side: "below" };
 
@@ -168,19 +178,21 @@ export function RepositorySelect({
     if (!open) onClosed?.();
   }, [open, onClosed]);
   useCloseWhenHidden(useCallback(() => setOpen(false), []));
-  const repositories = useSharedResource(REPOSITORIES);
+  const [provider, setProvider] = useState<CodeProvider>(() => projects.find((p) => p.id === selectedProjectId)?.provider ?? "github");
+  const resource = provider === "gitlab" ? GITLAB_REPOSITORIES : GITHUB_REPOSITORIES;
+  const repositories = useSharedResource(resource);
   const listing = repositories.value?.listing ?? null;
   const [refreshing, setRefreshing] = useState(false);
   const loading = repositories.status === "loading" || refreshing;
   // Looked up as the form mounts, so the picker opens on it at once.
   useEffect(() => {
-    void REPOSITORIES.ensure();
-  }, []);
+    void resource.refresh();
+  }, [resource]);
   // Connecting one that failed; the listing's own failure is its answer's.
   const [connectError, setError] = useState<PickerError | null>(null);
   const error = connectError ?? repositories.value?.error ?? null;
   const [query, setQuery] = useState("");
-  const [connectingId, setConnectingId] = useState<number | null>(null);
+  const [connectingId, setConnectingId] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   // The option the arrow keys are on (a combobox: focus stays in the search
@@ -203,12 +215,13 @@ export function RepositorySelect({
    *  meanwhile); Refresh list asks GitHub itself, and waits. */
   async function load(force = false) {
     if (!force) {
-      void REPOSITORIES.refresh();
+      void resource.refresh();
       return;
     }
     if (refreshing) return;
     setRefreshing(true);
-    await refreshRepositories();
+    if (provider === "github") await refreshRepositories();
+    else { resource.invalidate(); await resource.ensure(); }
     setRefreshing(false);
     // Asked GitHub and answered: a reason left from connecting a repository
     // gives way to this look's own answer.
@@ -261,10 +274,10 @@ export function RepositorySelect({
       listing?.repositories ??
       // Before the live list arrives, offer what is already connected so the
       // menu is never empty.
-      projects.map(projectToListing);
+      projects.filter((p) => (p.provider ?? "github") === provider).map(projectToListing);
     const q = query.trim().toLowerCase();
     return q ? repos.filter((r) => r.fullName.toLowerCase().includes(q)) : repos;
-  }, [listing, projects, query]);
+  }, [listing, projects, query, provider]);
 
   async function choose(repo: RepositoryListing) {
     if (onPick) {
@@ -273,7 +286,7 @@ export function RepositorySelect({
       onPick(repo);
       return;
     }
-    const existing = projects.find((p) => p.githubRepoId === repo.githubRepoId);
+    const existing = projects.find((p) => repositoryKey(p) === repositoryKey(repo));
     if (existing) {
       onSelect?.(existing);
       setOpen(false);
@@ -281,19 +294,19 @@ export function RepositorySelect({
       return;
     }
     // Not connected yet — connect just this one, then select it.
-    setConnectingId(repo.githubRepoId);
+    setConnectingId(repositoryKey(repo));
     try {
-      const res = await fetch("/api/projects/sync", {
+      const res = await fetch(provider === "gitlab" ? "/api/gitlab/projects" : "/api/projects/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repoIds: [repo.githubRepoId] }),
+        body: JSON.stringify(provider === "gitlab" ? { repoId: repo.repositoryId } : { repoIds: [repo.githubRepoId] }),
       });
       if (!res.ok) {
         setError({ ...(await readError(res, "Couldn't connect this repository. Try again.")), repo: repo.fullName });
         return;
       }
       const data = (await res.json()) as { projects?: Project[] };
-      const created = data.projects?.find((p) => p.githubRepoId === repo.githubRepoId);
+      const created = data.projects?.find((p) => repositoryKey(p) === repositoryKey(repo));
       if (!created) {
         setError({
           message: "Connected it, but Outrunner couldn't find it afterwards. Refresh the list.",
@@ -360,6 +373,13 @@ export function RepositorySelect({
           )}
           style={{ maxHeight: place.maxHeight }}
         >
+          <div className="flex shrink-0 gap-1 border-b border-border p-1" role="group" aria-label="Code provider">
+            {(["github", "gitlab"] as const).map((id) => <button key={id} type="button" disabled={connectingId !== null} aria-pressed={provider === id}
+              onClick={() => { setProvider(id); setQuery(""); setActive(0); setError(null); }}
+              className={cn("flex-1 rounded-md px-3 py-1.5 text-sm", provider === id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent")}>
+              {id === "github" ? "GitHub" : "GitLab"}
+            </button>)}
+          </div>
           {/* Search first, focused as it opens. */}
           <div className="border-border relative shrink-0 border-b">
             <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
@@ -414,7 +434,7 @@ export function RepositorySelect({
             )}
             {visible.map((repo, i) => (
               <button
-                key={repo.githubRepoId}
+                key={repositoryKey(repo)}
                 id={`${listId}-${i}`}
                 type="button"
                 role="option"
@@ -431,7 +451,7 @@ export function RepositorySelect({
               >
                 <span className="flex-1 truncate">{repo.fullName}</span>
                 {repo.private && <Lock className="text-muted-foreground size-3 shrink-0" />}
-                {connectingId === repo.githubRepoId && (
+                {connectingId === repositoryKey(repo) && (
                   <Spinner className="size-3 shrink-0" />
                 )}
               </button>
@@ -444,7 +464,7 @@ export function RepositorySelect({
             <p className="text-muted-foreground border-border shrink-0 border-t px-3 py-2 text-xs">
               {listing.ssoPartialOrgIds.length > 0
                 ? "Some organizations' repositories are hidden until you authorize Outrunner for their single sign-on on GitHub."
-                : "GitHub may have more repositories than this list shows."}
+                : `${provider === "gitlab" ? "GitLab" : "GitHub"} may have more repositories than this list shows.`}
             </p>
           )}
 
@@ -494,7 +514,8 @@ export function RepositorySelect({
                     ? "Outrunner's GitHub App can't reach it. Add it to the App's repositories on GitHub."
                     : "GitHub isn't giving Outrunner access to it. If an organization owns it, an owner may need to approve Outrunner."
                   : error.message}
-                {error.reconnect && <GitHubReconnectLink />}
+                {provider === "github" && error.reconnect && <GitHubReconnectLink />}
+                {provider === "gitlab" && <Link href="/settings/connections" className="ml-1 underline">Connect GitLab</Link>}
               </InlineMessage>
             </div>
           )}

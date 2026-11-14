@@ -19,7 +19,6 @@
 import {
   clearAnthropicKey,
   credentialStatus,
-  getAnthropicKey,
   setAnthropicKey,
   settleClaudeSlot,
 } from "@/lib/db/credentials";
@@ -41,11 +40,6 @@ export async function setClaudeToken(
   token: string,
 ): Promise<void> {
   await setAnthropicKey(ownerId, token);
-}
-
-/** The owner's decrypted token, or null when they have not stored one. */
-export async function getClaudeToken(ownerId: string): Promise<string | null> {
-  return getAnthropicKey(ownerId);
 }
 
 /** Presence + last-4 metadata safe to expose to the signed-in owner. */

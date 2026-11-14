@@ -1142,6 +1142,21 @@ fn github_repo(full_name: &str) -> Option<(String, String)> {
     (owner_ok && name_ok).then(|| (owner.to_string(), name.to_string()))
 }
 
+/// Host-qualified references keep GitLab namespaces distinct from GitHub.
+fn repository_remote(full_name: &str) -> Option<(String, String)> {
+    if let Some(path) = full_name.strip_prefix("gitlab.com/") {
+        let parts: Vec<_> = path.split('/').collect();
+        if parts.len() < 2 || parts.iter().any(|part| {
+            part.is_empty() || *part == "." || *part == ".." || part.ends_with(".git")
+                || !part.chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                || !part.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        }) { return None; }
+        return Some((parts.last()?.to_string(), format!("https://gitlab.com/{path}")));
+    }
+    let (owner, name) = github_repo(full_name)?;
+    Some((name.clone(), github_url(&owner, &name)))
+}
+
 fn github_url(owner: &str, name: &str) -> String {
     format!("https://github.com/{owner}/{name}")
 }
@@ -1172,10 +1187,10 @@ fn clone_target(repos: &Path, name: &str, url: &str) -> Result<(PathBuf, bool), 
     Err("repo-folders-taken".into())
 }
 
-/// git with the user's GitHub token for this one command: as a request header
+/// git with the user's provider token for this one command: as a request header
 /// in git's environment, so it never lands in the clone's config, in argv
 /// (where `ps` shows it), or on disk.
-fn git_for_github(token: Option<&str>) -> Command {
+fn git_for_repository(token: Option<&str>, url: &str) -> Command {
     let mut git = Command::new("git");
     git.env("PATH", session_path())
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -1185,7 +1200,7 @@ fn git_for_github(token: Option<&str>) -> Command {
     if let Some(token) = token.filter(|t| !t.is_empty()) {
         let basic = STANDARD.encode(format!("x-access-token:{token}"));
         git.env("GIT_CONFIG_COUNT", "1")
-            .env("GIT_CONFIG_KEY_0", "http.https://github.com/.extraheader")
+            .env("GIT_CONFIG_KEY_0", if url.starts_with("https://gitlab.com/") { "http.https://gitlab.com/.extraheader" } else { "http.https://github.com/.extraheader" })
             .env("GIT_CONFIG_VALUE_0", format!("AUTHORIZATION: basic {basic}"));
     }
     git
@@ -1241,7 +1256,7 @@ fn remove_abandoned_clones(parent: &Path, running: &HashSet<PathBuf>) {
 
 /// The clone itself, into `staging`, then renamed to `dir`.
 fn clone_through(url: &str, staging: &Path, dir: &Path, token: Option<&str>) -> Result<(), String> {
-    let out = git_for_github(token)
+    let out = git_for_repository(token, url)
         .args(["clone", "--quiet", "--", url])
         .arg(staging)
         .output()
@@ -1268,26 +1283,26 @@ fn last_line(bytes: &[u8]) -> String {
 fn ensure_clone(repos: &Path, name: &str, url: &str, token: Option<&str>) -> Result<LocalFolder, String> {
     let (dir, exists) = clone_target(repos, name, url)?;
     if exists {
-        let _ = git_for_github(token).arg("-C").arg(&dir).args(["fetch", "--quiet", "--prune", "origin"]).output();
+        let _ = git_for_repository(token, url).arg("-C").arg(&dir).args(["fetch", "--quiet", "--prune", "origin"]).output();
     } else {
         clone_into(url, &dir, token)?;
     }
     inspect_folder(&dir)
 }
 
-/// Clone a repository the user picked from GitHub into `~/outrunner/repos`
+/// Clone a repository the user picked from GitHub or GitLab into `~/outrunner/repos`
 /// (or use the clone made before), as the folder a local session works in.
-/// `token` is the user's GitHub token, from the page, for this clone only.
+/// `token` is the user's provider token, from the page, for this clone only.
 #[tauri::command]
 pub async fn local_clone_repo(
     state: State<'_, LocalRuntime>,
     full_name: String,
     token: Option<String>,
 ) -> Result<LocalFolder, String> {
-    let (owner, name) = github_repo(&full_name).ok_or("repo-invalid")?;
+    let (name, url) = repository_remote(&full_name).ok_or("repo-invalid")?;
     let repos = repos_dir()?;
     let folder = tauri::async_runtime::spawn_blocking(move || {
-        ensure_clone(&repos, &name, &github_url(&owner, &name), token.as_deref())
+        ensure_clone(&repos, &name, &url, token.as_deref())
     })
     .await
     .map_err(|error| error.to_string())??;
@@ -1758,8 +1773,20 @@ mod tests {
     }
 
     #[test]
+    fn gitlab_references_include_subgroups_and_keep_their_own_host() {
+        assert_eq!(repository_remote("gitlab.com/acme/team/app"), Some(("app".into(), "https://gitlab.com/acme/team/app".into())));
+        for bad in ["gitlab.com/acme/../app", "gitlab.com/acme//app", "gitlab.com/acme/-app", "gitlab.com/acme/app?x", "gitlab.com/acme/app.git", "https://gitlab.com/acme/app"] {
+            assert_eq!(repository_remote(bad), None, "{bad}");
+        }
+        let git = git_for_repository(Some("glpat_secret"), "https://gitlab.com/acme/team/app");
+        let envs: HashMap<_, _> = git.get_envs().filter_map(|(k, v)| Some((k.to_string_lossy().into_owned(), v?.to_string_lossy().into_owned()))).collect();
+        assert_eq!(envs["GIT_CONFIG_KEY_0"], "http.https://gitlab.com/.extraheader");
+        assert!(git.get_args().all(|a| !a.to_string_lossy().contains("glpat_secret")));
+    }
+
+    #[test]
     fn the_token_rides_in_the_environment_only() {
-        let git = git_for_github(Some("ghu_secret"));
+        let git = git_for_repository(Some("ghu_secret"), "https://github.com/acme/app");
         let envs: HashMap<_, _> = git
             .get_envs()
             .filter_map(|(k, v)| Some((k.to_string_lossy().into_owned(), v?.to_string_lossy().into_owned())))
@@ -1770,7 +1797,7 @@ mod tests {
             format!("AUTHORIZATION: basic {}", STANDARD.encode("x-access-token:ghu_secret"))
         );
         assert!(git.get_args().all(|a| !a.to_string_lossy().contains("ghu_secret")));
-        assert!(git_for_github(None).get_envs().all(|(k, _)| k != "GIT_CONFIG_COUNT"));
+        assert!(git_for_repository(None, "https://github.com/acme/app").get_envs().all(|(k, _)| k != "GIT_CONFIG_COUNT"));
     }
 
     /// A directory holding one `claude`, with `body` as its script and `mode`.

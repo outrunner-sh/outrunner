@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { type PendingRun, recordOf, startRun, type StartDeps } from "@/lib/automations/runs";
 import { startDeps } from "@/lib/automations/start-deps";

@@ -14,6 +14,7 @@ import {
   ScanSearch,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
@@ -343,7 +344,7 @@ const PR_CLOSED_POLL_MS = 120_000;
 /** How long Merge waits for its confirming second click. */
 const MERGE_CONFIRM_MS = 4_000;
 
-type RowError = { message: string; reconnect: boolean };
+type RowError = { message: string; reconnect: boolean; settingsHref?: string };
 
 /**
  * Hand the agent a job the way Conductor does: a short prompt with the steps
@@ -528,10 +529,10 @@ function PullRequestRow({
           // GitHub answered with the sign-in, so a Reconnect GitHub error is
           // stale. Not on the pull request alone: one on record comes back
           // without asking GitHub. Any other error (a failed merge) stays.
-          setError((e) => (e?.reconnect ? null : e));
+          setError((e) => (e?.reconnect || e?.settingsHref ? null : e));
         }
-      } else if (result.reconnect) {
-        setError({ message: result.error ?? "Reconnect GitHub to see the pull request.", reconnect: true });
+      } else if (result.reconnect || result.settingsHref) {
+        setError({ message: result.error ?? "Reconnect your code provider to see the pull request.", reconnect: result.reconnect === true, settingsHref: result.settingsHref });
       }
     };
     if (Date.now() - lastLook.current > PR_POLL_MS / 2) void look();
@@ -548,7 +549,7 @@ function PullRequestRow({
   const errorLine = error && (
     <p aria-live="polite" className="studio-env-unfold text-destructive pt-0 text-xs">
       {error.message}
-      {error.reconnect && <GitHubReconnectLink />}
+      {error.settingsHref ? <Link href={error.settingsHref} className="ml-1 underline">Open connection settings</Link> : error.reconnect && <GitHubReconnectLink />}
     </p>
   );
 
@@ -659,6 +660,8 @@ function OpenedPullRequestRow({
   const [merging, setMerging] = useState(false);
   const verdict = status ? pullRequestVerdict(status) : null;
   const merged = verdict?.tone === "merged";
+  const gitlab = pullRequest.url.startsWith("https://gitlab.com/");
+  const codeHost = gitlab ? "GitLab" : "GitHub";
 
   useEffect(() => {
     if (!confirming) return;
@@ -685,9 +688,10 @@ function OpenedPullRequestRow({
         status?: PullRequestStatus | null;
         error?: string;
         reconnect?: boolean;
+        settingsHref?: string;
       };
       if (!response.ok) {
-        onError({ message: result.error ?? "Could not merge the pull request.", reconnect: result.reconnect === true });
+        onError({ message: result.error ?? "Could not merge the pull request.", reconnect: result.reconnect === true, settingsHref: result.settingsHref });
         return;
       }
       onStatus(result.status ?? { ...status, state: "merged" });
@@ -711,7 +715,7 @@ function OpenedPullRequestRow({
             onClick={() => void merge()}
             aria-busy={merging || undefined}
             className="studio-env-merge"
-            title={`Merge #${pullRequest.number} into ${pullRequest.baseBranch} on GitHub`}
+            title={`Merge #${pullRequest.number} into ${pullRequest.baseBranch} on ${codeHost}`}
           >
             {merging ? <Spinner label="Merging" /> : <GitMerge />}
             {/* The confirm step keeps its words while the merge runs. */}
@@ -724,7 +728,7 @@ function OpenedPullRequestRow({
         href={pullRequest.url}
         target="_blank"
         rel="noreferrer"
-        title={`Open pull request #${pullRequest.number} on GitHub`}
+        title={`Open ${gitlab ? "merge request" : "pull request"} #${pullRequest.number} on ${codeHost}`}
         className="studio-env-pr-link"
       >
         {repo && <span className="mr-1.5 font-mono text-xs text-white/45">{repo.checkout}/</span>}
@@ -749,6 +753,7 @@ async function lookUpPullRequest(workspaceId: string, projectId?: string): Promi
   status?: PullRequestStatus | null;
   error?: string;
   reconnect?: boolean;
+  settingsHref?: string;
 }> {
   try {
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";

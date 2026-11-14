@@ -14,7 +14,9 @@ import { optionalEnv } from "@/lib/env";
 import { PLAN_MODE_PREAMBLE } from "@/lib/api/create-request";
 import { generatedBranch, insertOnBranch } from "@/lib/session/generated-branch";
 
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import type { AgentId } from "@/lib/agents/registry";
 import { AgentAuthError, resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
@@ -123,7 +125,10 @@ import { abandonedBefore, gateFirstPrompt } from "@/lib/session/first-prompt-cla
 import { evidenceToolsFor, prGuide } from "@/lib/session/pr-template";
 import { SETTING_UP } from "@/lib/session/provisioning";
 import { watchSent } from "@/lib/session/watch";
-import { branchKnownOnGitHub, getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
+import { GitLabError, gitLabErrorResponse } from "@/lib/gitlab/client";
+import { isGitLabRef } from "@/lib/code-providers/repository";
+import { branchKnown as branchKnownOnGitHub, getRepository as getGitHubRepository } from "@/lib/code-providers/client";
+import { GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
 import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
 import { GitIdentityError } from "@/lib/github/identity";
 import { gitTokensFor, markReviewSession, REVIEW_AS_APP, requireGitToken } from "@/lib/github/identity.deps";
@@ -389,7 +394,7 @@ async function createOnce(
     return NextResponse.json(
       {
         error:
-          "Connect GitHub in Settings → Connections to clone a private repository.",
+          `Connect ${isGitLabRef(project.fullName) ? "GitLab" : "GitHub"} in Settings → Connections to clone a private repository.`,
       },
       { status: 409 },
     );
@@ -416,6 +421,9 @@ async function createOnce(
 
   // Only a Runtime Computer's agent can put a session on another model, or
   // run Codex.
+  if (isGitLabRef(project.fullName) && !isComputerProvider(provider)) {
+    return needsSandbox("GitLab sessions require a cloud computer with GitLab credential support.");
+  }
   if (agentId === "codex" && !isComputerProvider(provider)) {
     return NextResponse.json(
       { error: "Codex requires a cloud computer. Ask your deployment administrator to check runtime configuration." },
@@ -662,7 +670,7 @@ async function createOnce(
       boxSize: options.boxSize,
     });
   if (options.inline) await provision();
-  else after(provision);
+  else after(provision, { where: "provision", workspaceId: workspace.id, orgId: project.orgId, userId: owner.id });
   // The whole row, not only its id: the caller opens the session on it at once
   // (lib/session/pending-sessions.ts), rather than waiting for the layout's
   // data to be read again. Read back rather than sent as it was inserted,
@@ -1036,9 +1044,9 @@ async function provisionWorkspace({
       // A review took no pooled box, so has none to make again.
       if (as) return;
       const refill = () =>
-        refillProjectPool({ provider, ownerId: owner.id, project, environmentId: workspace.environmentId, githubToken, sessionEnv });
+        refillProjectPool({ provider, owner, project, environmentId: workspace.environmentId, githubToken, sessionEnv });
       if (inline) await refill();
-      else after(refill);
+      else after(refill, { where: "refill-pool", workspaceId: workspace.id, userId: owner.id });
       return;
     }
 
@@ -1120,12 +1128,13 @@ function gitTokenFor(userId: string, orgId: string, as?: typeof REVIEW_AS_APP) {
 async function githubRefusal(
   githubToken: string | undefined,
   project: { fullName: string; private: boolean },
-): Promise<NextResponse | null> {
+): Promise<Response | null> {
   if (!githubToken) return null;
   try {
     if (await getGitHubRepository(githubToken, project.fullName)) return null;
     // Lost access, an organization's SSO, or the repository renamed or gone:
     // GitHub says only that it can't be seen. Logged, to tell them apart.
+    if (isGitLabRef(project.fullName)) return NextResponse.json({ error: "Your GitLab account cannot access this repository. Check its permissions in GitLab.", settingsHref: "/settings/connections" }, { status: 409 });
     console.warn(`GitHub can't see ${project.fullName} with its owner's token (private: ${project.private})`);
     if (!project.private) return null;
     return NextResponse.json(
@@ -1137,6 +1146,7 @@ async function githubRefusal(
       { status: 409 },
     );
   } catch (error) {
+    if (error instanceof GitLabError) return gitLabErrorResponse(error);
     // With the link the form shows: where GitHub is connected again.
     if (error instanceof GitHubReconnectError) {
       return NextResponse.json({ error: error.message, reconnect: true, settingsHref: GITHUB_RECONNECT_HREF }, { status: 409 });

@@ -194,13 +194,17 @@ without both keys.
 pnpm dlx wrangler secret put STRIPE_SECRET_KEY      # restricted key (rk_…)
 pnpm dlx wrangler secret put STRIPE_WEBHOOK_SECRET  # whsec_… from the webhook endpoint
 pnpm dlx wrangler secret put RUNTIME_BILLING        # stripe
+pnpm dlx wrangler secret put RUNTIME_OVERAGE_BILLING # on, once Stripe is set up for it (below)
 ```
 
 The webhook endpoint is `https://<domain>/api/stripe/webhook`. Stripe needs
 these events: `checkout.session.completed`, `customer.subscription.created`,
 `.updated`, `.deleted`, `.paused`, `.resumed`, `invoice.paid`,
-`invoice.payment_failed`, and `charge.dispute.created`. Prices are found by
-lookup key (`pro_monthly`, `pro_yearly`, `max_monthly`, `max_yearly`).
+`invoice.payment_failed`, `invoice.voided`, `invoice.marked_uncollectible`,
+and `charge.dispute.created`. The restricted key also needs write access to
+Invoice Items and Invoices, which overage billing uses
+([billing-overage.md](billing-overage.md)). Prices are found by
+lookup key: `pro_usage_monthly` ($20) and `max_usage_monthly` ($100), monthly; checkout refuses a price at any other amount. Subscriptions on the old keys (`pro_monthly`, `pro_yearly`, `max_monthly`, `max_yearly`) keep their plan until `scripts/migrate-usage-prices.ts` moves them.
 
 ## Domain: `app.outrunner.sh`
 

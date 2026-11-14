@@ -442,6 +442,11 @@ test("actual scope resolver preserves personal/key precedence and checks current
     (await selectCodexAccount("alice", "one", false, false, deps))?.key,
     own.key,
   );
+  const selected = await selectCodexAccount("alice", "one", false, false, deps);
+  assert.equal(selected && "fallback" in selected ? selected.fallback.key : null, shared.key);
+  assert.equal(selected && "fallback" in selected ? selected.fallback.generation : null, shared.generation);
+  const personalOnly = await selectCodexAccount("alice", undefined, false, false, deps);
+  assert.ok(personalOnly && !("fallback" in personalOnly));
   const grant = {
     purpose: "codex-inference" as const,
     user: "bob",

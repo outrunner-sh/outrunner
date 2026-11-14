@@ -7,6 +7,7 @@
 
 import type Stripe from "stripe";
 
+import { OVERAGE_KIND, unpaidSinceOf } from "@/lib/billing/overage";
 import { recordFromStripe, type SubscriptionRecord } from "@/lib/billing/subscriptions";
 
 export type SyncDeps = {
@@ -26,20 +27,12 @@ export type SyncDeps = {
   log(message: string): void;
   /** An org's subscriptions changed: its allowances may have moved. */
   changed?(orgId: string): Promise<void>;
+  /** The customer's open overage invoices (lib/billing/overage.ts): when
+   *  each was made, and whether its payment has been tried. */
+  openOverageInvoices(customerId: string): Promise<{ created: Date; attempted: boolean }[]>;
+  /** Record since when the org's overage has been unpaid; null once paid. */
+  setOverageUnpaid(orgId: string, since: Date | null): Promise<void>;
 };
-
-/** The events whose subscription is synced; the rest are acknowledged and
- *  left. */
-export const SYNCED_EVENTS = [
-  "checkout.session.completed",
-  "customer.subscription.created",
-  "customer.subscription.updated",
-  "customer.subscription.deleted",
-  "customer.subscription.paused",
-  "customer.subscription.resumed",
-  "invoice.paid",
-  "invoice.payment_failed",
-] as const;
 
 /** The subscription an event concerns, or null for one that concerns none. */
 export function subscriptionIdOf(event: Stripe.Event): string | null {
@@ -108,6 +101,34 @@ async function refreshAllowances(orgId: string, subscriptionId: string, deps: Sy
   );
 }
 
+/** The events that can change whether an org's overage is paid: a payment
+ *  failing or going through, or the invoice voided or written off. */
+const OVERAGE_INVOICE_EVENTS = new Set(["invoice.paid", "invoice.payment_failed", "invoice.voided", "invoice.marked_uncollectible"]);
+
+/** The overage invoice an event is about (lib/billing/overage.ts), or null. */
+export function overageInvoiceOf(event: Stripe.Event): Stripe.Invoice | null {
+  if (!OVERAGE_INVOICE_EVENTS.has(event.type)) return null;
+  const invoice = event.data.object as Stripe.Invoice;
+  return invoice.metadata?.kind === OVERAGE_KIND ? invoice : null;
+}
+
+/**
+ * Bring the org's unpaid overage in line with Stripe: unpaid since its
+ * earliest open overage invoice whose payment was tried, or paid once none
+ * is. Read from Stripe rather than from the one event, so a payment that
+ * clears one invoice while another still fails keeps the org unpaid.
+ */
+async function syncOverageUnpaid(invoice: Stripe.Invoice, deps: SyncDeps): Promise<void> {
+  const customerId = idOf(invoice.customer);
+  if (!customerId) return;
+  const orgId = (await deps.orgForCustomer(customerId)) || invoice.metadata?.org_id || null;
+  if (!orgId) {
+    deps.log(`Stripe overage invoice ${invoice.id} is for customer ${customerId}, who is no Outrunner org`);
+    return;
+  }
+  await deps.setOverageUnpaid(orgId, unpaidSinceOf(await deps.openOverageInvoices(customerId)));
+}
+
 export type EventOutcome = "synced" | "duplicate" | "ignored";
 
 /** Handle one verified webhook event. Recorded as handled only once it has
@@ -120,8 +141,10 @@ export async function handleEvent(event: Stripe.Event, deps: SyncDeps): Promise<
   }
   const subscriptionId = subscriptionIdOf(event);
   if (subscriptionId) await syncSubscription(subscriptionId, deps);
+  const overage = overageInvoiceOf(event);
+  if (overage) await syncOverageUnpaid(overage, deps);
   await deps.recordEvent(event.id, event.type);
-  return subscriptionId ? "synced" : "ignored";
+  return subscriptionId || overage ? "synced" : "ignored";
 }
 
 function idOf(value: string | { id: string } | null | undefined): string | null {

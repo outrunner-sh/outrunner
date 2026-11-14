@@ -17,6 +17,7 @@ test("settings have exactly the approved personal and organization orders", () =
       "Sandbox",
       "Connections",
       "Usage",
+      "Archived sessions",
       "Developer",
     ],
   );

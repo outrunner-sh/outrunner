@@ -1,5 +1,5 @@
 /**
- * A Mission on call in Slack, in the database (20261112200000_mission_slack.sql),
+ * A Mission on call in Slack, in the database (20261114130000_mission_slack.sql),
  * with the service role: the channel it's bound to, the threads it took, the
  * Ships it started for them under its limits, and its question cards. The
  * callers have checked who may (lib/missions/slack-route.ts, the Mission's
@@ -348,7 +348,7 @@ export async function claimAnswer(id: string, answer: { text: string; userId: st
 }
 
 // ---------------------------------------------------------------------------
-// Requests, spawn keys, the post queue (20261112210000_mission_slack_reliability.sql)
+// Requests, spawn keys, the post queue (20261114130100_mission_slack_reliability.sql)
 // ---------------------------------------------------------------------------
 
 /** A Slack request a Mission took: its key, thread, who asked, and the
@@ -361,7 +361,7 @@ export type MissionRequest = {
   messageTs: string | null;
   requestedBy: string | null;
   requestedBySlack: string | null;
-  /** Where it came from (20261113100000_mission_inputs.sql); Slack's own
+  /** Where it came from (20261114130200_mission_inputs.sql); Slack's own
    *  when absent. */
   source?: "slack" | "slack_watch" | "webhook" | "schedule" | "linear";
   /** Cancelled: its Ships take no more work for it. */

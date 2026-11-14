@@ -21,6 +21,7 @@ export const PERSONAL_SETTINGS = [
   ["sandbox", "Sandbox"],
   ["connections", "Connections"],
   ["usage", "Usage"],
+  ["archived", "Archived sessions"],
   ["developer", "Developer"],
 ] as const;
 export const ORG_SETTINGS = [

@@ -132,16 +132,6 @@ export function ModalIcon(props: IconProps) {
   );
 }
 
-/** Conductor. A placeholder until its own mark is in: a "C" in a rounded square. */
-export function ConductorIcon(props: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="1em" height="1em" aria-hidden {...props}>
-      <rect x="2" y="2" width="20" height="20" rx="5" />
-      <path d="M15.5 9a4 4 0 1 0 0 6" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 /** An agent's mark, in its brand's colour; a className sizes it without losing the colour. */
 export function AgentIcon({ agent, className, ...props }: IconProps & { agent: "claude" | "codex" }) {
   return agent === "codex" ? (
@@ -164,23 +154,6 @@ const PROVIDER_ICONS = {
 export function ProviderIcon({ provider, ...props }: IconProps & { provider: string }) {
   const Icon = PROVIDER_ICONS[provider as keyof typeof PROVIDER_ICONS];
   return Icon ? <Icon className="size-4" {...props} /> : null;
-}
-
-/** Where an imported session comes from, as its mark; Outrunner's own on this Mac has none. */
-export function ImportSourceIcon({
-  source,
-  ...props
-}: IconProps & { source: "conductor" | "claude-cli" | "codex-cli" | "outrunner-local" }) {
-  switch (source) {
-    case "conductor":
-      return <ConductorIcon className="size-4" {...props} />;
-    case "claude-cli":
-      return <AgentIcon agent="claude" {...props} />;
-    case "codex-cli":
-      return <AgentIcon agent="codex" {...props} />;
-    case "outrunner-local":
-      return null;
-  }
 }
 
 /** GitHub's mark (its own, from primer/octicons, MIT). */

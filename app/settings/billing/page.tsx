@@ -9,7 +9,6 @@ import { getOwnerSafe } from "@/lib/auth/owner";
 import { customerIdFor, subscriptionsFor } from "@/lib/billing/billing-store";
 import { billingMode } from "@/lib/billing/mode";
 import { PLANS } from "@/lib/billing/plans";
-import { listedPricesUsd } from "@/lib/billing/stripe-deps";
 import { currentSubscription, planFromSubscriptions } from "@/lib/billing/subscriptions";
 import { getOrgContext } from "@/lib/orgs/server";
 
@@ -45,20 +44,12 @@ async function BillingSection({ searchParams }: { searchParams: SearchParams }) 
 
   if (billingMode() !== "stripe") {
     return (
-      <BillingSettings org={org} plan={PLANS.free} subscription={null} prices={null} hasCustomer={false} checkout={null} />
+      <BillingSettings org={org} plan={PLANS.free} subscription={null} forSale={false} hasCustomer={false} checkout={null} />
     );
   }
 
   const now = new Date();
-  const [subscriptions, customerId, prices] = await Promise.all([
-    subscriptionsFor(active.id),
-    customerIdFor(active.id),
-    // The page still shows the plan when Stripe can't be reached for prices.
-    listedPricesUsd().catch((error: unknown) => {
-      console.error("Could not read prices from Stripe", error);
-      return {};
-    }),
-  ]);
+  const [subscriptions, customerId] = await Promise.all([subscriptionsFor(active.id), customerIdFor(active.id)]);
   const current = currentSubscription(subscriptions, now);
   const subscription: ShownSubscription | null = current && {
     status: current.status,
@@ -71,7 +62,7 @@ async function BillingSection({ searchParams }: { searchParams: SearchParams }) 
       org={org}
       plan={planFromSubscriptions(subscriptions, now)}
       subscription={subscription}
-      prices={prices}
+      forSale
       hasCustomer={customerId !== null}
       checkout={checkout === "success" || checkout === "canceled" || checkout === "error" ? checkout : null}
     />

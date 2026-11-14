@@ -34,7 +34,7 @@ export type Conversation = {
 };
 
 /** The box's event stream URL, while its box is up; null when it isn't. */
-async function liveEventsUrl(workspace: Workspace, chat?: string): Promise<string | null> {
+export async function liveEventsUrl(workspace: Workspace, chat?: string): Promise<string | null> {
   if (workspace.status !== "ready" && workspace.status !== "idle") return null;
   const resolution = resolveProvider(workspace);
   if (!resolution.ok || !isComputerProvider(resolution.provider)) return null;

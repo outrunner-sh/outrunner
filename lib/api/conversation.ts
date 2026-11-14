@@ -278,6 +278,12 @@ export const CLOCK_SKEW_MS = 2_000;
  * (docs/api.md: poll for `working`); a wrong fence isn't.
  */
 export function fenceBefore(entries: readonly ConversationEntry[], content: string, sentAt: number): number | null {
+  return sentPrompt(entries, content, sentAt)?.fence ?? null;
+}
+
+/** fenceBefore's fence, and the id of the prompt it found (the run it
+ *  starts, lib/api/runs.ts); null when the log doesn't have it yet. */
+export function sentPrompt(entries: readonly ConversationEntry[], content: string, sentAt: number): { fence: number; promptId: number } | null {
   const wanted = content.trim();
   for (let i = entries.length - 1; i >= 0; i--) {
     const { event } = entries[i];
@@ -288,7 +294,7 @@ export function fenceBefore(entries: readonly ConversationEntry[], content: stri
     // The newest that reads the same is from before this send: this one
     // isn't in the log yet.
     if (!Number.isFinite(at) || at < sentAt - CLOCK_SKEW_MS) return null;
-    return i > 0 ? entries[i - 1].id : 0;
+    return { fence: i > 0 ? entries[i - 1].id : 0, promptId: entries[i].id };
   }
   return null;
 }
