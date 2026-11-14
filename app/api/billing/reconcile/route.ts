@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 import { retireOldSlackKeys } from "@/lib/db/slack-agent";
 import { billingMode } from "@/lib/billing/mode";
-import { runOverageBilling } from "@/lib/billing/overage.deps";
+import { overageBillingOn, runOverageBilling } from "@/lib/billing/overage.deps";
 import { runUsageSweep } from "@/lib/billing/usage-sweep.deps";
 import { runReconcile } from "@/lib/billing/reconcile-run";
 import { renewDueModelAllowances } from "@/lib/db/credentials";
@@ -114,9 +114,11 @@ export async function POST(request: Request) {
       ? await runUsageSweep(provider).catch(failure("usage", "Sweeping org usage failed", null))
       : null;
     // And overage billed to Stripe: reported every ten minutes at most,
-    // charged once a day at $50 or more (lib/billing/overage.ts).
+    // charged once a day at $50 or more (lib/billing/overage.ts). Only once
+    // the deployment turns it on (RUNTIME_OVERAGE_BILLING=on), after Stripe
+    // is set up for it (docs/billing-overage.md).
     const overage =
-      billingMode() === "stripe"
+      billingMode() === "stripe" && overageBillingOn()
         ? await runOverageBilling().catch(failure("overage", "Billing overage failed", null))
         : null;
     await recordHeartbeat(

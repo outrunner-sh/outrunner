@@ -194,6 +194,7 @@ without both keys.
 pnpm dlx wrangler secret put STRIPE_SECRET_KEY      # restricted key (rk_…)
 pnpm dlx wrangler secret put STRIPE_WEBHOOK_SECRET  # whsec_… from the webhook endpoint
 pnpm dlx wrangler secret put RUNTIME_BILLING        # stripe
+pnpm dlx wrangler secret put RUNTIME_OVERAGE_BILLING # on, once Stripe is set up for it (below)
 ```
 
 The webhook endpoint is `https://<domain>/api/stripe/webhook`. Stripe needs
