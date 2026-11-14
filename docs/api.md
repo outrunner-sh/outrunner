@@ -10,6 +10,9 @@ export OUTRUNNER=https://app.outrunner.sh
 export OUTRUNNER_API_KEY=or_key_…
 ```
 
+Coming from Cursor's Cloud Agents API? [docs/cursor-migration.md](cursor-migration.md)
+maps its calls to these.
+
 ## Keys
 
 Send a key with every call:
@@ -17,6 +20,9 @@ Send a key with every call:
 ```sh
 curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" $OUTRUNNER/api/v1/me
 ```
+
+Basic auth takes the same key as the user name with no password, as
+clients written for Cursor's API send theirs: `curl -u "$OUTRUNNER_API_KEY:" …`.
 
 There are two kinds, and the CLI's own token works too:
 
@@ -77,6 +83,7 @@ counted apart. The budget refills continuously: every answer carries
 | GET | `/api/v1/me` | Who the key acts as, in which org, with what role |
 | GET | `/api/v1/members` | The org's members and their roles (emails for its admins) |
 | GET | `/api/v1/usage` | The org's cloud usage in cents (`usage`: `state`, `includedCapCents`, `includedCents`, `overageCents`, `totalCents`, `limitCents`, `periodEnd`, null for the trial) and its admins' `controls` (`limitUsd`, `alertThresholds`) |
+| GET | `/api/v1/models` | The models the key's maker can start a session on, with their efforts and the default |
 | GET | `/api/v1/environments` | The org's projects (one or several repositories each) |
 | GET | `/api/v1/environments/{id}` | A project in full: instructions, scripts, hooks, variables' names, files' paths |
 | PATCH | `/api/v1/environments/{id}` | Change its `name`, `description`, `instructions`, `scripts` or `hooks` |
@@ -85,11 +92,11 @@ counted apart. The budget refills continuously: every answer carries
 | DELETE | `/api/v1/environments/{id}/repos/{project_id}` | Take one out |
 | GET | `/api/v1/projects` | The org's repositories the key's maker may start sessions on |
 | POST | `/api/v1/attachments` | Upload a file (multipart, `file`) to send with a prompt or a message |
-| GET | `/api/v1/workspaces` | Sessions, newest first: `status`, `source` (`app`, `slack`, `automation`, `github`, `api`), `user_id`, `project_id` |
-| POST | `/api/v1/workspaces` | Start a session: `preparing` at once |
+| GET | `/api/v1/workspaces` | Sessions, newest first: `status`, `source` (`app`, `slack`, `automation`, `github`, `api`), `user_id`, `project_id`, `pr_url`, `include_archived` |
+| POST | `/api/v1/workspaces` | Start a session: `preparing` at once (`Idempotency-Key` makes a retry safe) |
 | GET | `/api/v1/workspaces/{id}` | A session, and where its turn is |
 | DELETE | `/api/v1/workspaces/{id}` | Delete a session for good |
-| POST | `/api/v1/workspaces/{id}/messages` | Send it a message (waking it first if it was paused or archived): `content`, `attachment_ids`, `mode` |
+| POST | `/api/v1/workspaces/{id}/messages` | Send it a message (waking it first if it was paused or archived): `content`, `attachment_ids`, `images`, `mode` |
 | POST | `/api/v1/workspaces/{id}/answer` | Answer the question its agent is waiting on: `answers`, or `dismissed` |
 | POST | `/api/v1/workspaces/{id}/secrets` | Give its agent the secrets it asked for: `values`, or `skipped` |
 | POST | `/api/v1/workspaces/{id}/plan/approve` | Approve the plan its agent is waiting on |
@@ -98,11 +105,20 @@ counted apart. The budget refills continuously: every answer carries
 | POST | `/api/v1/workspaces/{id}/interrupt` | Stop the turn it's running |
 | GET | `/api/v1/workspaces/{id}/conversation` | Its conversation, a page at a time going back: `before_event` |
 | GET | `/api/v1/workspaces/{id}/wait` | Hold the call until its turn is over or it needs input, up to 10 minutes: `after_event`, `timeout` |
+| GET | `/api/v1/workspaces/{id}/stream` | Its events as they happen, over SSE: `after_event` (or `Last-Event-ID`) |
+| GET | `/api/v1/workspaces/{id}/runs` | Its runs, one per prompt, newest first: status, result, duration, tokens |
+| GET | `/api/v1/workspaces/{id}/runs/{run_id}` | One run |
+| GET | `/api/v1/workspaces/{id}/runs/{run_id}/stream` | One run's events as they happen, ending with its result |
+| POST | `/api/v1/workspaces/{id}/runs/{run_id}/cancel` | Stop the run going on |
+| GET | `/api/v1/workspaces/{id}/usage` | The tokens it spent, in all and by run |
 | GET | `/api/v1/workspaces/{id}/chats` | Its chats, its main one first |
 | POST | `/api/v1/workspaces/{id}/suspend` | Pause its box |
 | POST | `/api/v1/workspaces/{id}/resume` | Wake it (or restore it, if archived) |
 | POST | `/api/v1/workspaces/{id}/archive` | Snapshot it and let its box go |
+| POST | `/api/v1/workspaces/{id}/unarchive` | Restore it: `resume`, by another name |
 | GET | `/api/v1/workspaces/{id}/pull-requests` | Its pull request in each of its repositories, with GitHub's status |
+| GET | `/api/v1/workspaces/{id}/artifacts` | The screenshots and recordings its agent uploaded |
+| GET | `/api/v1/workspaces/{id}/artifacts/{artifact_id}/download` | A link to one artifact's bytes, for 15 minutes |
 | GET | `/api/v1/environments/{id}/skills` | The skills.sh catalog skills enabled on a project |
 | POST | `/api/v1/environments/{id}/skills` | Enable a catalog skill: `name`, `slug`, `source` |
 | DELETE | `/api/v1/environments/{id}/skills/{skill_id}` | Disable one |
@@ -151,7 +167,13 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 | Field | |
 | --- | --- |
 | `project_id` or `environment_id` | The repository to work on, or a project that's a repository's own |
+| `repo_url` | Or the repository by its address: `https://github.com/acme/web`, `acme/web`, an SSH remote, or a GitLab.com project's |
+| `pr_url` | Or a pull request (a GitLab merge request) to work on: the checkout starts at its head branch |
 | `prompt` | What to do. Sent once the session is ready |
+| `images` | Images for the agent to see with the prompt: `{ "data": "<base64>", "mime_type": "image/png" }` or `{ "url": "https://…" }` (png, jpeg, gif, webp) |
+| `name` | Its title (up to 120 characters); one is made from the prompt when left out |
+| `auto_create_pr` | `true` tells it to open a pull request once the work is done |
+| `work_on_current_branch` | `true` pushes to the branch it starts on (the pull request's head with `pr_url`, else `base_branch`) instead of a branch of its own |
 | `model` | A model id from the new-session menu (`opus`, `sonnet`, an Outrunner or provider model); the user's (or org's) default when left out |
 | `provider` | Whose model it is, where an id is offered by two (`claude`, `outrunner`, `openrouter`, …) |
 | `effort` | `low`, `medium`, `high`, `xhigh` or `max`, where the model takes one |
@@ -161,6 +183,20 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 | `branch`, `base_branch` | The branch to work on (made for it when left out) and the one it starts from |
 | `attachment_ids` | Files uploaded with `POST /attachments`, put on the box with the prompt (up to 10) |
 | `webhook_url` | An https URL told of this session's events (see Webhooks) |
+
+`repo_url` and `pr_url` name a repository the org has in Outrunner (a
+`404` otherwise). A pull request has to be open, and its branch in the
+repository itself: one from a fork is a `409`, since a session can't push
+there. Without `work_on_current_branch`, a session on a pull request works
+on a branch of its own made from its head, and bases any pull request it
+opens on that head. `auto_create_pr` and `work_on_current_branch` are told
+to the agent with its prompt; the pull request it opens shows in
+`pull-requests` and the `pr.opened` webhook.
+
+Send an `Idempotency-Key` header (1 to 255 printable characters) to make a
+create safe to retry: the same key from the same person answers `200` with
+the session the first call made (`Idempotent-Replayed: true`), whatever the
+body says, and starts nothing new.
 
 It answers `202` straight away with the session, `"status": "preparing"`;
 its box is set up after (`setup_phase` says the step), and its prompt is
@@ -203,9 +239,9 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/wait?timeout=600"
 ```
 
-A send answers `{ "result": "sent", "after_event": "48213" }`: where the
-conversation stood before this message, read once the send has gone. Pass
-that to `wait` as `after_event`:
+A send answers `{ "result": "sent", "after_event": "48213", "run_id": "48290" }`:
+where the conversation stood before this message, read once the send has
+gone, and the run it starts (see Runs). Pass `after_event` to `wait`:
 
 ```sh
 curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/wait?after_event=48213&timeout=600"
@@ -248,6 +284,92 @@ A tool's result is a `tool_result` block with its call's `tool_use_id`, and
 edit that didn't apply); it's left out otherwise, and on boxes whose agent
 predates it.
 
+A message sent while the agent is working isn't refused: it reaches the
+running turn, which takes it at its next step (what Cursor's API calls a
+steer). Only a switch to plan mode waits for the turn to end (`409`).
+
+### Runs
+
+A run is a prompt and what the agent did for it, up to the next prompt:
+the session's first, then one for each message.
+
+```sh
+curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/runs/$RUN"
+```
+
+```json
+{ "id": "48290", "number": 2, "prompt": "Also add a test for it.", "status": "finished", "started_at": "…", "ended_at": "…", "duration_ms": 84120, "result": "Added checkout.test.ts; all 41 pass.", "error": null, "pending_input": null, "usage": { "input_tokens": 3120, "output_tokens": 2210, "cache_creation_input_tokens": 18800, "cache_read_input_tokens": 96400, "total_tokens": 120530 }, "first_event": "48290", "last_event": "51877", "from": "live" }
+```
+
+`status` is `running`, `needs_input` (it asked a question or for secrets:
+`pending_input` says what), `finished`, `cancelled` (stopped, by `cancel` or
+`interrupt`), or `error` (an API error or usage limit ended it: `error` is
+what it said). `result` is the last thing it said, once it's over. A run's
+id is its prompt's event id: stable while the box is up, and counted from 1
+in an archived session's, as its events are. `GET /runs` lists them newest
+first, a page at a time; each takes `chat_id`. `POST
+/runs/{run_id}/cancel` stops the run going on (`409` for one that's over).
+
+`GET /usage` totals the tokens: in all, and each run's. A model call logged
+as several records (its words, then each tool call) counts once.
+
+### Streaming
+
+`GET /workspaces/{id}/stream` holds an SSE stream open and sends what the
+session does as it happens:
+
+```sh
+curl -N -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Accept: text/event-stream" "$OUTRUNNER/api/v1/workspaces/$ID/stream"
+```
+
+```text
+event: status
+data: {"state":"working","run_id":"48290"}
+
+id: 48290
+event: prompt
+data: {"run_id":"48290","text":"Also add a test for it.","timestamp":"…"}
+
+id: 48733
+event: tool_call
+data: {"call_id":"toolu_…","name":"Bash","status":"running","args":{"command":"pnpm test"}}
+
+id: 50102
+event: tool_call
+data: {"call_id":"toolu_…","name":"Bash","status":"completed","args":{"command":"pnpm test"},"result":"41 passed"}
+
+id: 51877
+event: assistant
+data: {"uuid":"…","text":"Added checkout.test.ts; all 41 pass."}
+
+event: status
+data: {"state":"idle","run_id":"48290"}
+
+id: 51877
+event: result
+data: {"run_id":"48290","status":"finished","text":"Added checkout.test.ts; all 41 pass.","error":null,"duration_ms":84120,"usage":{…}}
+```
+
+| Event | |
+| --- | --- |
+| `status` | Where the turn is: `working`, `needs_input`, `idle`; `preparing` while the session is set up or woken |
+| `prompt` | A run began |
+| `assistant` | What the agent said: each record's words, or what a growing one added |
+| `tool_call` | A tool call: `running`, then `completed` with its `result` (`is_error` when it failed) |
+| `needs_input` | It asked a question or for secrets (`pending_input`, as on the session) |
+| `result` | A run ended: its status, last words, duration and tokens |
+| `heartbeat` | Every 15 seconds |
+| `error`, `done` | The stream failed, or ended |
+
+Without a start it begins at the newest run's prompt. Every event but
+`status` and `heartbeat` has an `id`: reconnect with it as `Last-Event-ID`
+(or `after_event`) to go on after it. `GET /runs/{run_id}/stream` sends that
+run's events alone and ends with its `result` and `done`, at once for a run
+that's over. A stream lasts 15 minutes at most, then sends `done` with
+`"reconnect": true`. A key holds up to 20 streams open at once. A session
+being set up is waited for; a paused or archived one has no stream (`409`):
+read its runs and conversation, or resume it.
+
 ### Files
 
 Upload each file first, then name it by id when you start a session or
@@ -272,6 +394,12 @@ are kept until they're sent or deleted. The files land in the
 session's worktree under `.attachments/`, named in the message; images are
 named so the agent sees them. Files alone, without `content`, are a message
 too. A file is its uploader's: anyone else's id is `404`.
+
+Images can also go inline, as `images` on a create or a message, with no
+upload first: base64 `data` with its `mime_type`, or an https `url` on the
+public internet that Outrunner fetches (redirects followed, at most 3).
+They're uploads like any other (the same size cap and daily room), named
+`image-1.png` and on, and count toward the 10 files a message takes.
 
 ### Questions, secrets and plans
 
@@ -379,6 +507,38 @@ curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces
 
 `pull_request` is null until the session opens one; `status` is null when
 GitHub couldn't be asked.
+
+### Artifacts
+
+```sh
+curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/artifacts"
+```
+
+```json
+{ "data": [{ "id": "…", "name": "Header on mobile, after", "content_type": "image/png", "size_bytes": 48211, "access": "public", "url": "https://app.outrunner.sh/m/k3x9….png", "markdown": "![Header on mobile, after](https://app.outrunner.sh/m/k3x9….png)", "created_at": "…" }], "page": 1, "per_page": 20, "total": 1, "total_pages": 1, "has_more": false }
+```
+
+The screenshots and recordings the session's agent uploaded from its box
+([docs/media.md](media.md)), newest first. `url` opens for anyone when the
+file is public, else for its uploader signed in; `GET
+/artifacts/{artifact_id}/download` answers a `download_url` to its bytes
+that works for 15 minutes either way.
+
+### Models
+
+```sh
+curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/models"
+```
+
+```json
+{ "data": [{ "id": "opus", "provider": "claude", "label": "Opus", "group": "Claude account", "agents": ["claude"], "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high", "supports_images": true, "default": true }], "custom_providers": [] }
+```
+
+What the new-session menu offers the key's maker: their Claude and Codex,
+providers on their own keys, and Outrunner's models. Pass `id` (and
+`provider`, where two offer it) and an `effort` from `efforts` to `POST
+/workspaces`. `default` is the one a session that names none starts on. A
+provider in `custom_providers` also runs ids that aren't listed.
 
 ### Previews
 
@@ -619,11 +779,17 @@ claude mcp add --transport http outrunner https://app.outrunner.sh/api/mcp --hea
 | Tool | REST |
 | --- | --- |
 | `list_projects` | `GET /projects` |
+| `list_models` | `GET /models` |
 | `create_workspace` | `POST /workspaces` |
 | `send_message` | `POST /workspaces/{id}/messages` |
 | `read_conversation` | `GET /workspaces/{id}/conversation` |
 | `wait_for_workspace` | `GET /workspaces/{id}/wait` |
 | `list_chats` | `GET /workspaces/{id}/chats` |
+| `list_runs` | `GET /workspaces/{id}/runs` |
+| `get_run` | `GET /workspaces/{id}/runs/{run_id}` |
+| `cancel_run` | `POST /workspaces/{id}/runs/{run_id}/cancel` |
+| `get_usage` | `GET /workspaces/{id}/usage` |
+| `list_artifacts` | `GET /workspaces/{id}/artifacts` |
 | `list_workspaces` | `GET /workspaces` |
 | `get_workspace` | `GET /workspaces/{id}` |
 | `answer_question` | `POST /workspaces/{id}/answer` |
@@ -640,7 +806,8 @@ claude mcp add --transport http outrunner https://app.outrunner.sh/api/mcp --hea
 `send_message`, `read_conversation`, `wait_for_workspace`, `answer_question`,
 `provide_secrets`, `approve_plan` and `switch_model` take a `chat_id`, as
 their REST calls do; `send_message` takes `mode`. Files are uploaded over
-REST (`POST /attachments`): MCP has no upload.
+REST (`POST /attachments`), or sent inline as `images` with
+`create_workspace` and `send_message`. Streaming is REST's alone.
 
 Each tool answers with the REST call's JSON (as text, and as structured
 content), or its error, flagged `isError`. The same rights, rate limits and

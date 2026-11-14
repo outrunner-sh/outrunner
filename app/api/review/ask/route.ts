@@ -2,10 +2,18 @@ import { NextResponse } from "next/server";
 
 import { orgModelKey } from "@/lib/db/slack-agent";
 import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
-import { askAboutPull, type AskMessage } from "@/lib/review/ask";
+import { askAboutPull, type AskMessage, ModelCallError } from "@/lib/review/ask";
 import { pullDetail } from "@/lib/review/pulls";
 import { repoToken } from "@/lib/slack/github";
 import { triageCaller } from "@/lib/triage/caller";
+
+/** What to tell the asker when OpenRouter refuses the org's key: trying
+ *  again won't help with these. */
+function refusal(status: number): string | null {
+  if (status === 401) return "Outrunner's model key for this org was refused. Ask an admin to check Outrunner's models in Settings.";
+  if (status === 402 || status === 403) return "The org's model budget is used up. Ask an admin to raise it, then ask again.";
+  return null;
+}
 
 /** "Ask about this PR": the conversation so far in, an answer from the code
  *  out, on the org's model budget. Only for a PR the asker may read. */
@@ -42,6 +50,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ answer });
   } catch (error) {
     console.error("Review: the question failed", error);
+    const refused = error instanceof ModelCallError ? refusal(error.status) : null;
+    if (refused) return NextResponse.json({ error: refused }, { status: 409 });
     return NextResponse.json({ error: "Couldn't answer that. Please try again." }, { status: 502 });
   }
 }

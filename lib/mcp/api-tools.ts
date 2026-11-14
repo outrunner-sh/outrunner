@@ -8,7 +8,9 @@
  * endpoint and context makes its own McpServer (lib/mcp/server.ts).
  */
 
+import { listArtifactsApi } from "@/lib/api/artifacts.deps";
 import { listProjectsApi } from "@/lib/api/catalog";
+import { listModelsApi } from "@/lib/api/models.deps";
 import { takeLimit, type ApiContext } from "@/lib/api/handler";
 import { createPreviewApi, deletePreviewApi, listPreviewsApi, updatePreviewApi } from "@/lib/api/previews";
 import { createLearningApi, deleteLearningApi, listLearningsApi, updateLearningApi } from "@/lib/api/learnings";
@@ -17,16 +19,20 @@ import { checkWebhookUrl, messageSent, webhookHooks } from "@/lib/api/webhooks.d
 import {
   answerApi,
   approvePlanApi,
+  cancelRunApi,
   changesApi,
   createWorkspace,
+  getRunApi,
   getWorkspaceApi,
   lifecycleApi,
   listChatsApi,
+  listRunsApi,
   listWorkspaces,
   readConversationApi,
   secretsApi,
   sendMessageApi,
   switchModelApi,
+  usageApi,
   waitApi,
 } from "@/lib/api/workspaces";
 import { McpServer, toolResult, type McpTool, type McpToolResult } from "@/lib/mcp/server";
@@ -65,6 +71,18 @@ function id(args: Record<string, unknown>): string {
 
 const WORKSPACE_ID = { workspace_id: { type: "string", description: "The session's id." } };
 
+const IMAGES = {
+  images: {
+    type: "array",
+    maxItems: 10,
+    description: "Images for the agent to see: base64 `data` with its `mime_type` (png, jpeg, gif, webp), or an https `url`.",
+    items: {
+      type: "object",
+      properties: { data: { type: "string" }, mime_type: { type: "string" }, url: { type: "string" } },
+    },
+  },
+};
+
 const CHAT_ID = {
   chat_id: { type: "string", description: "One of the session's chats (list_chats); none is its main chat." },
 };
@@ -89,7 +107,13 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
       properties: {
         project_id: { type: "string", description: "The repository's id (list_projects)." },
         environment_id: { type: "string", description: "Or a project that's a repository's own." },
+        repo_url: { type: "string", description: "Or the repository's address (https://github.com/acme/web, a GitLab.com one, or acme/web)." },
+        pr_url: { type: "string", description: "Or a pull request to work on: its checkout starts at the pull request's head." },
         prompt: { type: "string", description: "What the session should do." },
+        name: { type: "string", description: "Its title; one is made from the prompt when left out." },
+        auto_create_pr: { type: "boolean", description: "Open a pull request once the work is done." },
+        work_on_current_branch: { type: "boolean", description: "Push to the branch it starts on (the pull request's head, or base_branch) rather than its own." },
+        ...IMAGES,
         model: { type: "string" },
         provider: { type: "string" },
         effort: { type: "string", enum: ["low", "medium", "high", "xhigh", "max"] },
@@ -125,9 +149,10 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
         ...WORKSPACE_ID,
         content: { type: "string", description: "The message." },
         mode: { type: "string", enum: ["build", "plan"], description: "plan: it replies with a plan and waits for approve_plan." },
+        ...IMAGES,
         ...CHAT_ID,
       },
-      required: ["workspace_id", "content"],
+      required: ["workspace_id"],
     },
     call: async (context, args) =>
       answer(
@@ -137,6 +162,7 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
             body: {
               content: args.content,
               ...(args.mode !== undefined && { mode: args.mode }),
+              ...(args.images !== undefined && { images: args.images }),
               ...(args.chat_id !== undefined && { chat_id: args.chat_id }),
             },
           }),
@@ -342,6 +368,48 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
       required: ["workspace_id"],
     },
     call: async (context, args) => answer(await changesApi(asCall(context, { query: { path: args.path } }), id(args))),
+  },
+  {
+    name: "list_runs",
+    description: "A session's runs, newest first: one per prompt, each with its status (running, needs_input, finished, cancelled, error), result, duration and tokens.",
+    inputSchema: {
+      type: "object",
+      properties: { ...WORKSPACE_ID, ...CHAT_ID, page: { type: "integer", minimum: 1 }, per_page: { type: "integer", minimum: 1, maximum: 100 } },
+      required: ["workspace_id"],
+    },
+    call: async (context, args) =>
+      answer(await listRunsApi(asCall(context, { query: { chat_id: args.chat_id, page: args.page, per_page: args.per_page } }), id(args))),
+  },
+  {
+    name: "get_run",
+    description: "One of a session's runs, by the run_id send_message answers with (or list_runs').",
+    inputSchema: { type: "object", properties: { ...WORKSPACE_ID, run_id: { type: "string" }, ...CHAT_ID }, required: ["workspace_id", "run_id"] },
+    call: async (context, args) => answer(await getRunApi(asCall(context, { query: { chat_id: args.chat_id } }), id(args), String(args.run_id ?? ""))),
+  },
+  {
+    name: "cancel_run",
+    description: "Stop the run a session is on.",
+    inputSchema: { type: "object", properties: { ...WORKSPACE_ID, run_id: { type: "string" }, ...CHAT_ID }, required: ["workspace_id", "run_id"] },
+    call: async (context, args) =>
+      answer(await cancelRunApi(asCall(context, { method: "POST", query: { chat_id: args.chat_id } }), id(args), String(args.run_id ?? ""))),
+  },
+  {
+    name: "get_usage",
+    description: "The tokens a session spent, in all and by run.",
+    inputSchema: { type: "object", properties: { ...WORKSPACE_ID, ...CHAT_ID }, required: ["workspace_id"] },
+    call: async (context, args) => answer(await usageApi(asCall(context, { query: { chat_id: args.chat_id } }), id(args))),
+  },
+  {
+    name: "list_artifacts",
+    description: "The screenshots and recordings a session's agent uploaded, newest first, each with its link and the markdown that shows it.",
+    inputSchema: { type: "object", properties: { ...WORKSPACE_ID, page: { type: "integer", minimum: 1 }, per_page: { type: "integer", minimum: 1, maximum: 100 } }, required: ["workspace_id"] },
+    call: async (context, args) => answer(await listArtifactsApi(asCall(context, { query: { page: args.page, per_page: args.per_page } }), id(args))),
+  },
+  {
+    name: "list_models",
+    description: "The models a session can be started on (create_workspace's model and provider), with the efforts each takes and the default.",
+    inputSchema: { type: "object", properties: {} },
+    call: async (context) => answer(await listModelsApi(asCall(context, {}))),
   },
   {
     name: "archive_workspace",
