@@ -29,7 +29,7 @@ import { USAGE_SETTINGS_HREF } from "@/lib/settings-links";
 export const unstable_instant = { prefetch: "static" };
 
 /** Personal provider-account totals, including activity outside Outrunner.
- * Shared model allowance and cloud hours live under Organization → Usage & limits. */
+ * Shared model allowance and cloud usage live under Organization → Usage & limits. */
 export default function UsageSettingsPage() {
   return (
     <Suspense fallback={<SettingsLoading title="Usage" />}>
@@ -48,7 +48,7 @@ async function UsageSection() {
       <div className="space-y-1">
         <PageHeader title={"Usage"} />
         <p className="text-sm text-muted-foreground">
-          Totals reported by your connected provider accounts. These can include activity outside Outrunner; they are not per-user session analytics. Shared allowance and cloud hours are under Organization → Usage & limits.
+          Totals reported by your connected provider accounts. These can include activity outside Outrunner; they are not per-user session analytics. Shared allowance and cloud usage are under Organization → Usage & limits.
         </p>
       </div>
       {cards.length === 0 ? <NoUsage /> : cards.map((card) => <UsageCardFor key={cardKey(card)} card={card} userId={owner.id} />)}

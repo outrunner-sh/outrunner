@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { retireOldSlackKeys } from "@/lib/db/slack-agent";
 import { billingMode } from "@/lib/billing/mode";
+import { overageBillingOn, runOverageBilling } from "@/lib/billing/overage.deps";
 import { runUsageSweep } from "@/lib/billing/usage-sweep.deps";
 import { runReconcile } from "@/lib/billing/reconcile-run";
 import { renewDueModelAllowances } from "@/lib/db/credentials";
@@ -29,8 +30,9 @@ import { sweepAbandonedBoxClaims, sweepInterruptedSetups, sweepInterruptedTransi
  * (lib/github/followups.deps.ts), and the deployment's
  * Daytona boxes no row names any more (lib/runtime/orphan-boxes.deps.ts), and
  * the Slack agent's old keys of its own (lib/db/slack-agent.ts), and each
- * busy account's hours against its plan and its admins' controls
- * (lib/billing/usage-sweep.ts), for
+ * busy account's usage against its plan and its admins' controls
+ * (lib/billing/usage-sweep.ts), and overage billed to Stripe
+ * (lib/billing/overage.ts), for
  * the Cloudflare cron (cloudflare/worker.ts, every 2 minutes). Not a user's
  * route: it takes only BILLING_CRON_SECRET, as a bearer token. Answers what
  * the run did.
@@ -111,6 +113,14 @@ export async function POST(request: Request) {
     const usage = isComputerProvider(provider)
       ? await runUsageSweep(provider).catch(failure("usage", "Sweeping org usage failed", null))
       : null;
+    // And overage billed to Stripe: reported every ten minutes at most,
+    // charged once a day at $50 or more (lib/billing/overage.ts). Only once
+    // the deployment turns it on (RUNTIME_OVERAGE_BILLING=on), after Stripe
+    // is set up for it (docs/billing-overage.md).
+    const overage =
+      billingMode() === "stripe" && overageBillingOn()
+        ? await runOverageBilling().catch(failure("overage", "Billing overage failed", null))
+        : null;
     await recordHeartbeat(
       "reconcile",
       failed.length ? new Error(`Failed: ${failed.map(({ step, error }) => `${step} (${errorText(error)})`).join("; ")}`) : undefined,
@@ -119,6 +129,7 @@ export async function POST(request: Request) {
       ...(report ?? { error: "Reconcile failed." }),
       gcpResourcesDeleted,
       usage,
+      overage,
       allowancesRenewed,
       slackKeysRetired,
       githubFollowUps,

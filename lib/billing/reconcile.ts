@@ -1,6 +1,6 @@
 /**
  * The reconciler: run every couple of minutes (a Cloudflare cron calls
- * POST /api/billing/reconcile), it keeps cloud hours true to what Outrunner's
+ * POST /api/billing/reconcile), it keeps cloud usage true to what Outrunner's
  * boxes do, and pauses the idle ones.
  *
  * Each run, for every ready computer on a box Outrunner pays for:
@@ -55,6 +55,11 @@ export const MAX_BOX_RUN_MS = 12 * 60 * 60_000;
  *  mid-turn, and that turn is lost. The tradeoff is deliberate: a loop that
  *  keeps producing activity would otherwise bill for ever. */
 export const MAX_BOX_RUN_HARD_MS = 16 * 60 * 60_000;
+/** Longer than any ended interval: the hard cap on a run, plus room for the
+ *  reconciler to be late pausing it. Usage reads look back this far before a
+ *  period for ended intervals overlapping it (lib/billing/metering-store.ts),
+ *  so they don't scan the account's whole history. */
+export const LONGEST_INTERVAL_MS = MAX_BOX_RUN_HARD_MS + 8 * 60 * 60_000;
 /** Activity this recent counts as the box in use, for the run cap. */
 export const ACTIVE_WITHIN_MS = IDLE_AFTER_MS;
 

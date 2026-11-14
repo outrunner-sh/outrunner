@@ -19,6 +19,9 @@ const november = { start: new Date("2026-11-17T00:00:00Z"), end: new Date("2026-
 const free = { plan: PLANS.free, allowancePeriod: null };
 const pro = (period = october) => ({ plan: PLANS.pro, allowancePeriod: period });
 const max = (period = october) => ({ plan: PLANS.max, allowancePeriod: period });
+/** No plan's models are unlimited now (Max is capped at $50), but the
+ *  allowance still supports one, as Max was before usage-based billing. */
+const unlimited = (period = october) => ({ plan: { ...PLANS.max, models: { usd: null, per: "month" as const } }, allowancePeriod: period });
 
 test("Free is its allowance once over the key's life, and is set once", () => {
   const first = nextAllowance(free, null, 2);
@@ -41,9 +44,9 @@ test("each new period renews the allowance from what's spent, unused allowance n
   assert.deepEqual(nov, { period: november.start.toISOString(), plan: "pro", baselineUsd: 4, limitUsd: 14 });
 });
 
-test("an upgrade to Max removes the cap, keeping what this period has used", () => {
+test("an upgrade to an unlimited plan removes the cap, keeping what this period has used", () => {
   const onPro = nextAllowance(pro(), null, 0)!;
-  const onMax = nextAllowance(max(), onPro, 7);
+  const onMax = nextAllowance(unlimited(), onPro, 7);
   assert.deepEqual(onMax, { period: october.start.toISOString(), plan: "max", baselineUsd: 0, limitUsd: null });
 });
 
@@ -145,7 +148,15 @@ test("with no allowance to judge, the key is handed out", () => {
   refuseUnusable(null);
 });
 
-test("existing Max keys lose their old cap within the same period", async () => {
+test("an existing Max key from when Max was unlimited is capped at $50 over the period's baseline", () => {
+  const before = nextAllowance(unlimited(), null, 3)!;
+  assert.equal(before.limitUsd, null);
+  assert.deepEqual(nextAllowance(max(), before, 20), { period: october.start.toISOString(), plan: "max", baselineUsd: 3, limitUsd: 53 });
+  // One that already spent past it this period stops there until the next.
+  assert.equal(nextAllowance(max(), before, 80)?.limitUsd, 80);
+});
+
+test("existing keys lose their old cap within the same period on an unlimited plan", async () => {
   const state: AllowanceState = {
     period: october.start.toISOString(),
     plan: "max",
@@ -153,7 +164,7 @@ test("existing Max keys lose their old cap within the same period", async () => 
     limitUsd: 53,
   };
   const w = keyWorld({ state, spent: 53, cap: 53 });
-  w.deps.entitlements = async () => max();
+  w.deps.entitlements = async () => unlimited();
   const refreshed = await refreshAllowance(w.store, w.deps);
   assert.deepEqual(refreshed, { usedUsd: 50, limitUsd: null, disabled: false });
   assert.deepEqual(w.patches, [null]);
@@ -165,7 +176,7 @@ test("existing Max keys lose their old cap within the same period", async () => 
 
 test("a failed removal of an existing key's cap is retried without another grant", async () => {
   const w = keyWorld({ spent: 50, cap: 50 });
-  w.deps.entitlements = async () => max();
+  w.deps.entitlements = async () => unlimited();
   await assert.rejects(
     refreshAllowance(w.store, {
       ...w.deps,
@@ -181,7 +192,7 @@ test("a failed removal of an existing key's cap is retried without another grant
 });
 
 test("downgrading from unlimited reinstates the paid or Free cap", async () => {
-  const state = nextAllowance(max(), null, 0)!;
+  const state = nextAllowance(unlimited(), null, 0)!;
   for (const entitlements of [pro(), free]) {
     const w = keyWorld({ state, spent: 200, cap: null });
     w.deps.entitlements = async () => entitlements;
@@ -193,7 +204,7 @@ test("downgrading from unlimited reinstates the paid or Free cap", async () => {
 
 test("unlimited model usage still respects a manually disabled key", async () => {
   const w = keyWorld({ spent: 1000, cap: null });
-  w.deps.entitlements = async () => max();
+  w.deps.entitlements = async () => unlimited();
   w.key.disabled = true;
   const refreshed = await refreshAllowance(w.store, w.deps);
   assert.throws(() => refuseUnusable(refreshed), ModelKeyDisabledError);

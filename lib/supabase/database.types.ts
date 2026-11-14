@@ -318,6 +318,8 @@ type SubscriptionRow = {
   current_period_end: string;
   cancel_at_period_end: boolean;
   past_due_since: string | null;
+  /** Since when an overage payment has been failing (20261114120000_usage_limits_in_dollars.sql). */
+  overage_unpaid_since: string | null;
   synced_at: string;
   updated_at: string;
 };
@@ -724,8 +726,9 @@ type OrganizationSettingsRow = {
   org_id: string;
   default_model: Json | null;
   box_size: "x-small" | "small" | "medium" | "large" | null;
-  // supabase/migrations/20261101100000_org_usage_controls.sql.
-  usage_limit_percent: number | null;
+  // supabase/migrations/20261101100000_org_usage_controls.sql, its limit in
+  // dollars since 20261114120000_usage_limits_in_dollars.sql.
+  usage_limit_usd: number | null;
   alert_thresholds: number[];
   // supabase/migrations/20261102100000_github_agent_loop.sql.
   archive_on_close: boolean;

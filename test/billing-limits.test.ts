@@ -4,15 +4,16 @@ import { test } from "node:test";
 import {
   boxesDenial,
   exemptFromPlanLimits,
-  hoursDenial,
   isLiveMeteredComputer,
   isPlanLimitError,
   liveMeteredComputers,
   type MeteredComputerRow,
   boxLive,
   STALE_PROVISION_MS,
+  usageDenial,
 } from "@/lib/billing/limits";
-import { PLANS } from "@/lib/billing/plans";
+import { type Plan, PLANS } from "@/lib/billing/plans";
+import { usageCost, usageStanding } from "@/lib/billing/usage";
 import type { ProviderName, RuntimeComputerStatus } from "@/lib/runtime/types";
 
 const now = new Date("2026-10-19T12:00:00Z");
@@ -26,16 +27,31 @@ const box = (
   workspaceId: string | null = null,
 ): MeteredComputerRow => ({ projectId, workspaceId, status, provider, updatedAt });
 
-test("the plan's cloud hours are a denial only once used up", () => {
-  assert.equal(hoursDenial(PLANS.free, 9.99), null);
-  const denial = hoursDenial(PLANS.free, 10);
-  assert.match(denial?.error ?? "", /10 cloud hours/);
-  assert.equal(denial?.settingsHref, "/upgrade");
+test("a start is refused only where usage stops it, saying why and where to go", () => {
+  const unpaid = new Date("2026-10-15T00:00:00Z");
+  const standing = (plan: Plan, vcpuHours: number, limitUsd: number | null = null, unpaidSince: Date | null = null) =>
+    usageStanding({ plan, cost: usageCost(plan, vcpuHours), limitUsd, unpaidSince });
+  const cases = [
+    { what: "trial within", plan: PLANS.free, s: standing(PLANS.free, 10), error: null, href: null },
+    { what: "trial spent", plan: PLANS.free, s: standing(PLANS.free, 1000), error: /free trial's \$100\.00 of cloud usage is used up\. Subscribe/, href: "/upgrade" },
+    { what: "contract spent", plan: PLANS.enterprise, s: standing(PLANS.enterprise, 1000), error: /Enterprise plan's \$120\.00 .* starts again next period/, href: "/upgrade" },
+    { what: "Pro in overage", plan: PLANS.pro, s: standing(PLANS.pro, 400), error: null, href: null },
+    { what: "Pro at its limit", plan: PLANS.pro, s: standing(PLANS.pro, 250, 30), error: /usage limit of \$30\.00 is reached.*Settings → Org → Usage/, href: "/settings/org/usage" },
+    { what: "Pro unpaid", plan: PLANS.pro, s: standing(PLANS.pro, 10, null, unpaid), error: /overage payment failed.*Billing/, href: "/settings/org/billing" },
+  ] as const;
+  for (const { what, plan, s, error, href } of cases) {
+    const denial = usageDenial(s, plan);
+    if (error === null) assert.equal(denial, null, what);
+    else {
+      assert.match(denial?.error ?? "", error, what);
+      assert.equal(denial?.settingsHref, href, what);
+    }
+  }
 });
 
 test("the plan's boxes are a denial only once all running", () => {
-  assert.equal(boxesDenial(PLANS.free, 9), null);
-  assert.match(boxesDenial(PLANS.free, 10)?.error ?? "", /10 concurrent cloud sessions/);
+  assert.equal(boxesDenial(PLANS.free, 1), null);
+  assert.match(boxesDenial(PLANS.free, 2)?.error ?? "", /2 concurrent cloud sessions/);
 });
 
 // Keep these boundaries aligned with schema assertion 20's SQL count checks.
@@ -122,9 +138,4 @@ test("a refused claim is recognised, and only that", () => {
   assert.equal(isPlanLimitError({ code: "23505", message: "no" }), null);
   assert.equal(isPlanLimitError(new Error("no")), null);
   assert.equal(isPlanLimitError(null), null);
-});
-
-test("Max can start past the old 500-hour cap, while its concurrent-box cap still applies", () => {
-  for (const used of [500, 501, 100000]) assert.equal(hoursDenial(PLANS.max, used), null);
-  assert.ok(boxesDenial(PLANS.max, 50));
 });

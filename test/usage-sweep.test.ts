@@ -1,23 +1,38 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { PLANS } from "@/lib/billing/plans";
-import type { UsageControls } from "@/lib/billing/usage-controls";
-import { type Account, orgLimitReason, pauseReason, planHoursReason, sweepOrgUsage, type UsageSweepDeps } from "@/lib/billing/usage-sweep";
+import { connectorPlan, type Plan, PLANS } from "@/lib/billing/plans";
+import type { AccountStanding } from "@/lib/billing/standing";
+import { TRIAL_PERIOD, usageCost, usageStanding } from "@/lib/billing/usage";
+import { limitFor, type UsageControls } from "@/lib/billing/usage-controls";
+import { type Account, pauseReason, sweepOrgUsage, type UsageSweepDeps } from "@/lib/billing/usage-sweep";
 
 const period = { start: new Date("2026-11-01T00:00:00Z"), end: new Date("2026-12-01T00:00:00Z") };
+const none: UsageControls = { limitUsd: null, alertThresholds: [] };
 
-function world(used: number, controls: UsageControls, sent = new Set<number>(), accounts: Account[] = [{ kind: "team", orgId: "o-1" }]) {
+/** An account on `plan` that has run `vcpuHours` this period. */
+function standingOf(plan: Plan, vcpuHours: number, controls: UsageControls = none, unpaidSince: Date | null = null): AccountStanding {
+  return {
+    plan,
+    period: plan.usage.per === "once" ? TRIAL_PERIOD : period,
+    controls,
+    standing: usageStanding({ plan, cost: usageCost(plan, vcpuHours), limitUsd: limitFor(plan, controls), unpaidSince }),
+  };
+}
+
+function world(account: AccountStanding, sent = new Set<number>(), accounts: Account[] = [{ kind: "team", orgId: "o-1" }]) {
   const emailed: number[] = [];
   const paused: string[] = [];
   const reasons: string[] = [];
   const claimed = new Set(sent);
+  const periods: Date[] = [];
   const deps: UsageSweepDeps = {
     busyAccounts: async () => accounts,
-    controls: async () => controls,
-    entitlements: async () => ({ plan: PLANS.pro, period }),
-    hoursUsed: async () => used,
-    sentAlerts: async () => new Set(sent),
+    standing: async () => account,
+    sentAlerts: async (_o, p) => {
+      periods.push(p.start);
+      return new Set(sent);
+    },
     claimAlert: async (_o, _p, threshold) => {
       if (claimed.has(threshold)) return false;
       claimed.add(threshold);
@@ -41,98 +56,70 @@ function world(used: number, controls: UsageControls, sent = new Set<number>(), 
     },
     log: () => {},
   };
-  return { deps, emailed, paused, reasons };
+  return { deps, emailed, paused, reasons, periods };
 }
 
-test("each threshold crossed is emailed once; below the limit nothing is paused", async () => {
-  const w = world(85, { limitPercent: null, alertThresholds: [50, 80, 100] });
-  const report = await sweepOrgUsage(w.deps);
-  assert.deepEqual(w.emailed, [50, 80]);
-  assert.deepEqual(w.paused, []);
-  assert.equal(report.alerts, 2);
-  // Sent already: not again.
-  const again = world(85, { limitPercent: null, alertThresholds: [50, 80, 100] }, new Set([50, 80]));
-  await sweepOrgUsage(again.deps);
-  assert.deepEqual(again.emailed, []);
-});
-
-test("at the admins' limit, the org's running boxes pause", async () => {
-  const w = world(80, { limitPercent: 80, alertThresholds: [] });
-  const report = await sweepOrgUsage(w.deps);
-  assert.deepEqual(w.paused, ["sb-1", "sb-2"]);
-  assert.equal(report.paused, 2);
-  assert.equal(w.reasons[0], orgLimitReason(PLANS.pro, { limitPercent: 80, alertThresholds: [] }));
-});
-
-test("an org with no limit and no alerts still pauses at its plan's hours", async () => {
-  const within = world(PLANS.pro.cloudHoursPerMonth - 1, { limitPercent: null, alertThresholds: [] });
-  await sweepOrgUsage(within.deps);
-  assert.deepEqual(within.paused, []);
-  const over = world(PLANS.pro.cloudHoursPerMonth, { limitPercent: null, alertThresholds: [] });
-  const report = await sweepOrgUsage(over.deps);
-  assert.deepEqual(over.paused, ["sb-1", "sb-2"]);
-  assert.equal(report.paused, 2);
-  assert.deepEqual(over.emailed, []);
-  assert.deepEqual(over.reasons, [planHoursReason(PLANS.pro), planHoursReason(PLANS.pro)]);
-});
-
-test("every owner over their plan's hours is paused: personal orgs and connectors too, with no admins' controls read", async () => {
-  for (const account of [{ kind: "personal", orgId: "o-me" }, { kind: "connector", ownerId: "u-bot" }] as Account[]) {
-    const w = world(PLANS.pro.cloudHoursPerMonth + 3, { limitPercent: 50, alertThresholds: [50] }, new Set(), [account]);
-    let controlsRead = false;
-    w.deps.controls = async () => {
-      controlsRead = true;
-      return { limitPercent: 50, alertThresholds: [50] };
-    };
-    const seen: Account[] = [];
-    w.deps.hoursUsed = async (a) => {
-      seen.push(a);
-      return PLANS.pro.cloudHoursPerMonth + 3;
-    };
-    await sweepOrgUsage(w.deps);
-    assert.deepEqual(seen, [account]);
-    assert.equal(controlsRead, false);
-    assert.deepEqual(w.emailed, []);
-    assert.deepEqual(w.paused, ["sb-1", "sb-2"]);
-    assert.match(w.reasons[0], /plan's 100 cloud hours are used up/);
+test("each state does what it says to running boxes: pause where usage stops the account, else run on", async () => {
+  const unpaid = new Date("2026-11-10T00:00:00Z");
+  const cases: Array<[string, AccountStanding, string[], RegExp | null]> = [
+    ["within", standingOf(PLANS.pro, 100), [], null],
+    ["overage is billed, not paused", standingOf(PLANS.pro, 1000), [], null],
+    ["unpaid refuses starts but pauses nothing", standingOf(PLANS.pro, 10, none, unpaid), [], null],
+    ["at the admins' limit", standingOf(PLANS.pro, 400, { limitUsd: 30, alertThresholds: [] }), ["sb-1", "sb-2"], /usage limit of \$30\.00 is reached.*an admin can raise the limit/],
+    ["the trial's credit spent", standingOf(PLANS.free, 1000), ["sb-1", "sb-2"], /the free trial's \$100\.00 of cloud usage is used up\. Its files are kept; subscribe to keep going\.$/],
+    ["a contract's usage spent", standingOf(PLANS.enterprise, 1000), ["sb-1", "sb-2"], /Enterprise plan's \$120\.00 .* it can start again next period\.$/],
+  ];
+  for (const [what, account, paused, reason] of cases) {
+    const w = world(account);
+    const report = await sweepOrgUsage(w.deps);
+    assert.deepEqual(w.paused, paused, what);
+    assert.equal(report.paused, paused.length, what);
+    if (reason) {
+      assert.match(w.reasons[0], /^Its box was paused: /, what);
+      assert.match(w.reasons[0], reason, what);
+      assert.equal(pauseReason(account), w.reasons[0], what);
+    } else assert.equal(pauseReason(account), null, what);
   }
 });
 
-test("a personal org within its hours runs on", async () => {
-  const w = world(10, { limitPercent: null, alertThresholds: [] }, new Set(), [{ kind: "personal", orgId: "o-me" }]);
+test("each threshold crossed is emailed once, for personal orgs too, and never for a connector", async () => {
+  // $18 of Pro's $20: 90%.
+  const ninety = (controls: UsageControls) => standingOf(PLANS.pro, 150, controls);
+  const alerts: UsageControls = { limitUsd: null, alertThresholds: [50, 80, 100] };
+  for (const account of [{ kind: "team", orgId: "o-1" }, { kind: "personal", orgId: "o-me" }] as Account[]) {
+    const w = world(ninety(alerts), new Set(), [account]);
+    const report = await sweepOrgUsage(w.deps);
+    assert.deepEqual(w.emailed, [50, 80], account.kind);
+    assert.equal(report.alerts, 2);
+    assert.deepEqual(w.paused, []);
+  }
+  const again = world(ninety(alerts), new Set([50, 80]));
+  await sweepOrgUsage(again.deps);
+  assert.deepEqual(again.emailed, []);
+
+  const connector = world(standingOf(connectorPlan(50), 1000, alerts), new Set(), [{ kind: "connector", ownerId: "u-bot" }]);
+  await sweepOrgUsage(connector.deps);
+  assert.deepEqual(connector.emailed, []);
+  assert.deepEqual(connector.paused, ["sb-1", "sb-2"]);
+});
+
+test("the trial's alerts are once ever: keyed to the trial's period", async () => {
+  const w = world(standingOf(PLANS.free, 700, { limitUsd: null, alertThresholds: [80] }));
   await sweepOrgUsage(w.deps);
-  assert.deepEqual(w.paused, []);
+  assert.deepEqual(w.emailed, [80]);
+  assert.deepEqual(w.periods, [TRIAL_PERIOD.start]);
 });
 
 test("an owner exempt from plan limits keeps their box; the org's others pause", async () => {
-  const w = world(PLANS.pro.cloudHoursPerMonth * 2, { limitPercent: null, alertThresholds: [] });
+  const w = world(standingOf(PLANS.free, 1000));
   w.deps.exempt = async (ownerId) => ownerId === "u-1";
   const report = await sweepOrgUsage(w.deps);
   assert.deepEqual(w.paused, ["sb-2"]);
   assert.equal(report.paused, 1);
 });
 
-test("the plan's reason offers an upgrade only where there is one to buy", () => {
-  assert.match(planHoursReason(PLANS.free), /upgrade for more hours/);
-  assert.match(planHoursReason(PLANS.pro, "team"), /upgrade for more hours/);
-  for (const [plan, kind] of [[PLANS.max, "team"], [PLANS.enterprise, "personal"], [PLANS.pro, "connector"]] as const) {
-    const reason = planHoursReason(plan, kind);
-    assert.doesNotMatch(reason, /upgrade/);
-    assert.match(reason, /start again next period/);
-  }
-});
-
-test("the reason is the limit that stops it: the admins' below the plan's, the plan's past both", () => {
-  const controls = { limitPercent: 50, alertThresholds: [] };
-  assert.equal(pauseReason(PLANS.pro, controls, 40), null);
-  assert.equal(pauseReason(PLANS.pro, controls, 50), orgLimitReason(PLANS.pro, controls));
-  assert.equal(pauseReason(PLANS.pro, controls, 100), planHoursReason(PLANS.pro));
-  assert.equal(pauseReason(PLANS.pro, null, 99.9), null);
-  assert.match(orgLimitReason(PLANS.pro, controls), /^Its box was paused: the org's usage limit \(50% of its plan's 100/);
-});
-
 test("a box that won't pause doesn't stop the others", async () => {
-  const w = world(90, { limitPercent: 50, alertThresholds: [] });
+  const w = world(standingOf(PLANS.free, 1000));
   w.deps.pause = async (box) => {
     if (box.sandboxId === "sb-1") throw new Error("gone");
     w.paused.push(box.sandboxId);
@@ -142,8 +129,24 @@ test("a box that won't pause doesn't stop the others", async () => {
   assert.equal(report.failed, 1);
 });
 
+test("an account whose standing can't be read fails alone", async () => {
+  const w = world(standingOf(PLANS.free, 1000), new Set(), [{ kind: "team", orgId: "o-1" }, { kind: "team", orgId: "o-2" }]);
+  let calls = 0;
+  const account = standingOf(PLANS.free, 1000);
+  w.deps.standing = async () => {
+    calls += 1;
+    if (calls === 1) throw new Error("controls unreadable");
+    return account;
+  };
+  const report = await sweepOrgUsage(w.deps);
+  assert.equal(report.failed, 1);
+  assert.deepEqual(w.paused, ["sb-1", "sb-2"]);
+  assert.deepEqual(w.emailed, []);
+});
+
 test("an alert whose email didn't go is taken back, to be tried again; none is claimed without email", async () => {
-  const w = world(85, { limitPercent: null, alertThresholds: [80] });
+  const eighty: UsageControls = { limitUsd: null, alertThresholds: [80] };
+  const w = world(standingOf(PLANS.pro, 150, eighty));
   w.deps.emailAdmins = async () => "failed";
   let released = 0;
   w.deps.releaseAlert = async () => void (released += 1);
@@ -151,7 +154,7 @@ test("an alert whose email didn't go is taken back, to be tried again; none is c
   assert.equal(report.alerts, 0);
   assert.equal(released, 1);
 
-  const off = world(85, { limitPercent: null, alertThresholds: [80] });
+  const off = world(standingOf(PLANS.pro, 150, eighty));
   off.deps.canEmail = false;
   let claims = 0;
   off.deps.claimAlert = async () => {
@@ -162,15 +165,8 @@ test("an alert whose email didn't go is taken back, to be tried again; none is c
   assert.equal(claims, 0);
 });
 
-test("where boxes can't be paused, running ones run on at the limit", async () => {
-  const w = world(90, { limitPercent: 50, alertThresholds: [] });
-  w.deps.canPause = false;
-  await sweepOrgUsage(w.deps);
-  assert.deepEqual(w.paused, []);
-});
-
-test("an email that throws gives its alert back, and the limit is still looked at", async () => {
-  const w = world(90, { limitPercent: 50, alertThresholds: [80] });
+test("an email that throws gives its alert back, and the pause is still looked at", async () => {
+  const w = world(standingOf(PLANS.free, 1000, { limitUsd: null, alertThresholds: [80] }));
   w.deps.emailAdmins = async () => {
     throw new Error("database blip");
   };
@@ -181,16 +177,9 @@ test("an email that throws gives its alert back, and the limit is still looked a
   assert.deepEqual(w.paused, ["sb-1", "sb-2"]);
 });
 
-test("Max boxes keep running beyond 500 hours, including with saved org limits", async () => {
-  for (const account of [
-    { kind: "team", orgId: "o-1" },
-    { kind: "personal", orgId: "o-me" },
-  ] as Account[]) {
-    const w = world(100000, { limitPercent: 50, alertThresholds: [50, 80, 100] }, new Set(), [account]);
-    w.deps.entitlements = async () => ({ plan: PLANS.max, period });
-    const report = await sweepOrgUsage(w.deps);
-    assert.deepEqual(w.paused, []);
-    assert.deepEqual(w.emailed, []);
-    assert.equal(report.failed, 0);
-  }
+test("where boxes can't be paused, running ones run on", async () => {
+  const w = world(standingOf(PLANS.free, 1000));
+  w.deps.canPause = false;
+  await sweepOrgUsage(w.deps);
+  assert.deepEqual(w.paused, []);
 });

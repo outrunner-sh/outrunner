@@ -28,6 +28,7 @@ jobs:
       MISSIONS_PG: postgresql://postgres:postgres@localhost:5432/postgres
       COMPOSER_HISTORY_PG: postgresql://postgres:postgres@localhost:5432/postgres
       CODEX_AUTH_PG: postgresql://postgres:postgres@localhost:5432/postgres
+      USAGE_LIMITS_PG: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
       # No version pin: pnpm/action-setup reads the pnpm version from the

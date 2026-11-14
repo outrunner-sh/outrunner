@@ -65,7 +65,7 @@ export async function GET(request: Request) {
     // set wrong, which the server refuses to start on.
     billing: billingModeOrInvalid(),
     // The cron's secret for the reconciler, which pauses idle boxes and keeps
-    // cloud hours; without it neither happens.
+    // cloud usage; without it neither happens.
     billingCron: Boolean(optionalEnv("BILLING_CRON_SECRET")),
     // Whether invites and requests to join are emailed (RESEND_API_KEY and
     // EMAIL_FROM); "not_configured" is valid: admins share invite links.

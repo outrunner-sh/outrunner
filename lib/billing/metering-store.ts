@@ -1,11 +1,12 @@
 /**
- * The database side of cloud hours: compute_intervals, the reconciler's lease,
+ * The database side of cloud usage: compute_intervals, the reconciler's lease,
  * and the computers it looks after. Service role throughout: the reconciler
  * runs for every user at once, with no one signed in, and the tables are
  * service-role only.
  */
 
 import type { Interval, Period } from "@/lib/billing/hours";
+import { LONGEST_INTERVAL_MS } from "@/lib/billing/reconcile";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { sandboxOf } from "@/lib/runtime/sandbox-choice";
 import type { ProviderName } from "@/lib/runtime/types";
@@ -146,7 +147,7 @@ export async function openIntervals(): Promise<OpenInterval[]> {
 
 /** The intervals overlapping `period` of an org (every member's but its
  *  connector's, which is on its own plan) or one owner (the connector): its
- *  cloud hours' raw
+ *  cloud usage's raw
  *  material (only Outrunner's boxes are ever metered into the table). Two
  *  reads rather than one `.or()`: an ISO timestamp's dots sit awkwardly in
  *  `.or()`'s comma-separated grammar. */
@@ -167,8 +168,12 @@ export async function intervalsFor(
   const open = await allRows((from, to) =>
     before().is("ended_at", null).order("id").range(from, to),
   );
+  // Bounded below too: an ended interval overlapping the period started at
+  // most LONGEST_INTERVAL_MS before it, so the index on (org_id or
+  // owner_id, started_at) reads that stretch, not every interval ever.
   const closed = await allRows((from, to) =>
     before()
+      .gt("started_at", new Date(period.start.getTime() - LONGEST_INTERVAL_MS).toISOString())
       .not("ended_at", "is", null)
       .gt("ended_at", period.start.toISOString())
       .order("id")
