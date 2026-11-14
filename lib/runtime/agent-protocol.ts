@@ -911,6 +911,10 @@ export const ConversationMessage = z.object({
   // The model call's tokens, on an assistant turn whose log has them: how
   // full the context is (the composer's ring). Absent from agents before it.
   usage: ReplyUsage.optional(),
+  // The id of the model call `usage` is from (Claude's message id), where
+  // the log names one: the same on every record of one reply, so a call's
+  // usage counts once (lib/missions/spend.ts). Absent from agents before it.
+  callId: z.string().optional(),
   // The model's context, in tokens, where the log says it (Codex's does,
   // Claude's doesn't: the page then knows it by the model).
   contextWindow: z.number().int().positive().optional(),

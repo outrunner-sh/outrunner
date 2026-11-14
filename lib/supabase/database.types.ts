@@ -395,6 +395,49 @@ type MissionQueuedMessageRow = {
   sent_at: string | null;
 };
 
+// supabase/migrations/20261114150000_mission_spend.sql
+type MissionUsageRow = {
+  usage_ref: string;
+  mission_id: string;
+  workspace_id: string | null;
+  source: "session" | "classifier";
+  occurred_at: string;
+  model: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  coverage: "reported" | "estimated" | "unavailable";
+  usd_reported: number | null;
+  usd_estimated: number | null;
+  cost_basis: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type MissionSpendReservationRow = {
+  mission_id: string;
+  operation_id: string;
+  state: "held" | "lapsed" | "uncertain" | "settled";
+  amount_usd: number;
+  settled_usd: number | null;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+  settled_at: string | null;
+};
+
+/** What reserve, renew and settle_mission_spend answer. */
+type MissionSpendReservationResult = {
+  state: "held" | "lapsed" | "uncertain" | "settled";
+  amount_usd: number;
+  settled_usd: number | null;
+  expires_at: string;
+  replayed: boolean;
+  held_usd: number;
+  uncertain_usd: number;
+}[];
+
 type RuntimeComputerRow = {
   id: string;
   /** Its project's org, set from the project. */
@@ -2211,6 +2254,18 @@ export type Database = {
         Update: Partial<MissionQueuedMessageRow>;
         Relationships: [];
       };
+      mission_usage: {
+        Row: MissionUsageRow;
+        Insert: Insert<MissionUsageRow, "usage_ref" | "mission_id" | "source" | "occurred_at" | "coverage">;
+        Update: Partial<MissionUsageRow>;
+        Relationships: [];
+      };
+      mission_spend_reservations: {
+        Row: MissionSpendReservationRow;
+        Insert: Insert<MissionSpendReservationRow, "mission_id" | "operation_id" | "amount_usd" | "expires_at">;
+        Update: Partial<MissionSpendReservationRow>;
+        Relationships: [];
+      };
       slack_research: {
         Row: SlackResearchRow;
         Insert: Insert<SlackResearchRow, "conversation_id" | "question" | "token_hash">;
@@ -2578,6 +2633,42 @@ export type Database = {
       missions_with_pending_events: {
         Args: { max_missions: number };
         Returns: { mission_id: string }[];
+      };
+      // supabase/migrations/20261114150000_mission_spend.sql
+      record_mission_usage: {
+        Args: { calls: Json };
+        Returns: number;
+      };
+      mission_usage_totals: {
+        Args: { target: string; from_at: string; to_at: string };
+        Returns: {
+          reported_usd: number;
+          reported_calls: number;
+          estimated_usd: number;
+          estimated_calls: number;
+          unavailable_calls: number;
+          cost_bases: string[];
+          input_tokens: number;
+          output_tokens: number;
+          cache_creation_input_tokens: number;
+          cache_read_input_tokens: number;
+        }[];
+      };
+      mission_spend_liability: {
+        Args: { target: string };
+        Returns: { held_usd: number; uncertain_usd: number; open_reservations: number }[];
+      };
+      reserve_mission_spend: {
+        Args: { target: string; operation: string; amount: number; hold_seconds: number };
+        Returns: MissionSpendReservationResult;
+      };
+      renew_mission_spend: {
+        Args: { target: string; operation: string; amount: number | null; hold_seconds: number };
+        Returns: MissionSpendReservationResult;
+      };
+      settle_mission_spend: {
+        Args: { target: string; operation: string; actual: number | null };
+        Returns: MissionSpendReservationResult;
       };
       // supabase/migrations/20261027120000_organizations.sql
       is_org_member: {

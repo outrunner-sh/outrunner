@@ -19,6 +19,7 @@ import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { resolveProvider } from "@/lib/runtime/resolve";
 import { toRuntimeComputer, toWorkspace } from "@/lib/db/mappers";
 import { notifyActivity } from "@/lib/notifications/record";
+import { closeSessionGap, recordSessionCalls, recordSessionGap } from "@/lib/missions/spend.deps";
 import { readStream } from "@/lib/session/event-stream";
 import { foldEvents, IDLE, type TurnState } from "@/lib/session/turn-state";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -111,6 +112,17 @@ export async function readSession(workspaceId: string): Promise<ActivityChange |
   );
   if (cursor > 0) url.searchParams.set("lastEventId", String(cursor));
   const read = await readStream(url.toString(), cursor);
+  // A Mission's or Ship's model calls, before the cursor moves past them: a
+  // failure leaves them to be read again, and each call counts once however
+  // often it's read (docs/mission-spend.md).
+  await recordSessionCalls(workspace, read.events);
+  // Read on from where a cut-off turn left it, on the same box (whatever
+  // the turn shows now: a send that woke the box marks it working first):
+  // that stretch is being read after all. Box, cursor and last read name the
+  // gap's entries exactly, so they're deleted by key.
+  if (sameBox && activity?.stream_box) {
+    await closeSessionGap(workspace, { box: activity.stream_box, cursor, at: activity.read_at });
+  }
   // From the start of a log, the state starts over, but a reply already
   // known stays known (its unread mark mustn't come back on a new box).
   const from = sameBox && before ? before : { ...IDLE, repliedAt: before?.repliedAt ?? null, replyPreview: before?.replyPreview ?? null };
@@ -154,6 +166,15 @@ async function settle(
     .select("workspace_id");
   if (error) throw error;
   if (!settled?.length) return null;
+  // Cut off mid-turn: what it did since the last read may never be read, so
+  // a Mission's spend says that stretch is unknown (docs/mission-spend.md).
+  if (before.turn === "working") {
+    await recordSessionGap(workspace, {
+      box: activity.stream_box,
+      cursor: Number(activity.stream_cursor ?? 0),
+      at: activity.read_at,
+    });
+  }
   return { workspaceId: workspace.id, ownerId: workspace.ownerId, before, after };
 }
 

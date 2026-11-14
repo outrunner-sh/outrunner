@@ -66,6 +66,10 @@ This replaces the earlier Mission Engine design
   handles it, and a Mission's routine turn ends aren't told.
 - Missions run on Claude Code. Ships use the Mission's model, agent and
   effort unless it asks for others.
+- **Spend:** what a Mission and its Ships spent, by UTC day and ISO week,
+  each figure labelled reported, estimated or unavailable
+  ([`mission-spend.md`](mission-spend.md)). Policy accounting only: it bills
+  no one and caps nothing.
 
 ## On call in Slack
 
@@ -327,6 +331,7 @@ The four inputs:
 | Who may point an automation at a Mission | `lib/missions/mission-automations.ts`, `/api/missions/[id]/triggers`, the org's automation routes |
 | Triggers UI | `components/automation-editor.tsx` (destination), `components/missions/mission-triggers.tsx`, `/missions/[id]/triggers` |
 | UI | `components/missions/*`, `hooks/use-missions.ts`, `GET /api/missions` |
+| What the Mission and its Ships spent, by day and week ([`mission-spend.md`](mission-spend.md)) | `lib/missions/spend*.ts`, `GET /api/missions/[id]/spend` |
 
 ### Tools
 
@@ -540,3 +545,5 @@ twice records it once. Events are delivered in batches:
 - `test/mission-slack-e2e.test.ts`: a mention through a crash, the outbox,
   the Mission's tools (a lost spawn retried), the queue (a lost send) and the
   Ship's cards, each message once and in order.
+- `test/mission-spend.test.ts` and `test/mission-spend-sql.test.ts`: spend
+  accounting ([`mission-spend.md`](mission-spend.md)).

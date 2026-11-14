@@ -1,5 +1,6 @@
 import { optionalEnv } from "@/lib/env";
 import { AGENT_TOOLS, type ChatMessage, REPLY_TOOL } from "@/lib/slack/agent";
+import type { OpenRouterAnswer } from "@/lib/missions/spend";
 
 /** The model the Slack agent thinks with (OpenRouter's id); SLACK_AGENT_MODEL
  *  changes it. */
@@ -87,9 +88,18 @@ export async function agentTurn(key: string, conversation: ChatMessage[], lookup
 /**
  * A short one-shot call with JSON back (the watch mode's check of whether a
  * message is work to file), on the org's key. The raw answer; the caller
- * parses it.
+ * parses it. `onAnswer`, where the call is made for a Mission, hears
+ * OpenRouter's answer with its generation id and cost (asked for with
+ * `usage: {include: true}`), for the Mission's spend
+ * (lib/missions/spend.deps.ts recordClassifierCall); a failure there is
+ * logged, never the call's.
  */
-export async function oneShot(key: string, system: string, user: string): Promise<string> {
+export async function oneShot(
+  key: string,
+  system: string,
+  user: string,
+  onAnswer?: (answer: OpenRouterAnswer) => Promise<void>,
+): Promise<string> {
   const response = await fetch(COMPLETIONS_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Outrunner Slack agent" },
@@ -101,10 +111,18 @@ export async function oneShot(key: string, system: string, user: string): Promis
       ],
       max_tokens: 200,
       temperature: 0,
+      ...(onAnswer && { usage: { include: true } }),
     }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
-  const body = (await response.json().catch(() => null)) as { choices?: { message?: { content?: string | null } }[] } | null;
+  const body = (await response.json().catch(() => null)) as
+    | ({ choices?: { message?: { content?: string | null } }[] } & OpenRouterAnswer)
+    | null;
+  // A call the provider named (its generation id) may have cost something,
+  // failed or not; one it didn't name made no generation.
+  if (onAnswer && typeof body?.id === "string") {
+    await onAnswer(body).catch((error: unknown) => console.error("Slack agent: couldn't record a classifier call's usage", error));
+  }
   if (!response.ok) throw new Error(`The model call failed (${response.status}).`);
   return body?.choices?.[0]?.message?.content ?? "";
 }
