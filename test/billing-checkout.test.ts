@@ -19,7 +19,7 @@ const BASE = "https://app.outrunner.sh";
 /** What Stripe charges for each price: the plans' own amounts unless a test says otherwise. */
 const AMOUNTS: Record<string, number> = { pro_usage_monthly: 2000, max_usage_monthly: 10000 };
 
-function deps(opts: { stored?: string; subscriptions?: SubscriptionRecord[]; amounts?: Record<string, number> } = {}) {
+function deps(opts: { stored?: string; subscriptions?: SubscriptionRecord[]; amounts?: Record<string, number>; currency?: string } = {}) {
   let stored: string | null = opts.stored ?? null;
   const calls: string[] = [];
   const d: CheckoutDeps = {
@@ -33,7 +33,7 @@ function deps(opts: { stored?: string; subscriptions?: SubscriptionRecord[]; amo
       return "cus_new";
     },
     subscriptionStatuses: async () => (opts.subscriptions ?? []).map((s) => s.status),
-    priceFor: async (key) => ({ id: `price_${key}`, unitAmountCents: (opts.amounts ?? AMOUNTS)[key] ?? null }),
+    priceFor: async (key) => ({ id: `price_${key}`, unitAmountCents: (opts.amounts ?? AMOUNTS)[key] ?? null, currency: opts.currency ?? "usd" }),
     createCheckoutSession: async (input) => {
       calls.push(`checkout ${input.customerId} ${input.priceId} ${input.successUrl} ${input.cancelUrl}`);
       return "https://checkout.stripe.com/c/pay/1";
@@ -138,7 +138,7 @@ test("a link asks for a plan Outrunner sells; an old link's interval is ignored"
 test("a Stripe price that charges other than the plan shows is never sold", async () => {
   for (const amount of [1999, 0]) {
     const { d, calls } = deps({ stored: "cus_1", amounts: { pro_usage_monthly: amount } });
-    await assert.rejects(checkoutDestination(user, "pro", BASE, d), /charges \d+ cents, not the 2000 the plan shows/);
+    await assert.rejects(checkoutDestination(user, "pro", BASE, d), /charges \d+ usd, not the 2000 usd cents the plan shows/);
     assert.deepEqual(calls, [], "no checkout opened, none expired");
   }
   // Cents compare rounded: a plan at $19.99 matches a 1999-cent price.
@@ -146,10 +146,13 @@ test("a Stripe price that charges other than the plan shows is never sold", asyn
   const was = pro.priceUsd;
   pro.priceUsd = 19.99;
   try {
-    assert.doesNotThrow(() => assertPlanPrice("pro", 1999));
+    assert.doesNotThrow(() => assertPlanPrice("pro", { unitAmountCents: 1999, currency: "usd" }));
   } finally {
     pro.priceUsd = was;
   }
   const missing = deps({ stored: "cus_1", amounts: {} });
-  await assert.rejects(checkoutDestination(user, "max", BASE, missing.d), /charges nothing cents, not the 10000/);
+  await assert.rejects(checkoutDestination(user, "max", BASE, missing.d), /charges nothing usd, not the 10000/);
+  // The same minor units in another currency (€20) is another price.
+  const euros = deps({ stored: "cus_1", currency: "eur" });
+  await assert.rejects(checkoutDestination(user, "pro", BASE, euros.d), /charges 2000 eur/);
 });

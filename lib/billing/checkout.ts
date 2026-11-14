@@ -27,7 +27,7 @@ export type CheckoutDeps = {
    *  sell, one made in Stripe's dashboard). */
   subscriptionStatuses(customerId: string): Promise<string[]>;
   /** The active price with `lookupKey`: its id, and what it charges. */
-  priceFor(lookupKey: string): Promise<{ id: string; unitAmountCents: number | null }>;
+  priceFor(lookupKey: string): Promise<{ id: string } & StripePrice>;
   createCheckoutSession(input: {
     customerId: string;
     priceId: string;
@@ -82,7 +82,7 @@ export async function checkoutDestination(
     return { url: await deps.createPortalSession(customerId, back), kind: "portal" };
   }
   const price = await deps.priceFor(LOOKUP_KEYS[plan]);
-  assertPlanPrice(plan, price.unitAmountCents);
+  assertPlanPrice(plan, price);
   await deps.expireOpenCheckouts(customerId);
   const url = await deps.createCheckoutSession({
     customerId,
@@ -96,15 +96,18 @@ export async function checkoutDestination(
   return { url, kind: "checkout" };
 }
 
+/** What a Stripe price charges: its amount in the currency's minor units. */
+export type StripePrice = { unitAmountCents: number | null; currency: string };
+
 /** Refuse a Stripe price for `plan` that charges anything but the price
- *  plans.ts sets, which every page shows: checkout and the price move
- *  (scripts/migrate-usage-prices.ts) never sell one. */
-export function assertPlanPrice(plan: "pro" | "max", unitAmountCents: number | null): void {
+ *  plans.ts sets, in US dollars, which every page shows: checkout and the
+ *  price move (scripts/migrate-usage-prices.ts) never sell one. */
+export function assertPlanPrice(plan: "pro" | "max", price: StripePrice): void {
   // Rounded, as a price like 19.99 isn't a whole number of cents in floats.
   const expected = Math.round((PLANS[plan].priceUsd ?? 0) * 100);
-  if (unitAmountCents !== expected) {
+  if (price.currency.toLowerCase() !== "usd" || price.unitAmountCents !== expected) {
     throw new Error(
-      `Stripe's price ${LOOKUP_KEYS[plan]} charges ${unitAmountCents ?? "nothing"} cents, not the ${expected} the plan shows.`,
+      `Stripe's price ${LOOKUP_KEYS[plan]} charges ${price.unitAmountCents ?? "nothing"} ${price.currency}, not the ${expected} usd cents the plan shows.`,
     );
   }
 }

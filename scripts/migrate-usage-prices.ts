@@ -29,7 +29,7 @@ const prices = new Map<string, string>();
 for (const plan of ["pro", "max"] as const) {
   const found = (await stripe.prices.list({ lookup_keys: [LOOKUP_KEYS[plan]], active: true, limit: 1 })).data[0];
   if (!found) throw new Error(`No active Stripe price has the lookup key ${LOOKUP_KEYS[plan]}.`);
-  assertPlanPrice(plan, found.unit_amount);
+  assertPlanPrice(plan, { unitAmountCents: found.unit_amount, currency: found.currency });
   prices.set(LOOKUP_KEYS[plan], found.id);
 }
 

@@ -95,7 +95,7 @@ export const checkoutDeps: CheckoutDeps = {
     const prices = await stripe().prices.list({ lookup_keys: [lookupKey], active: true, limit: 1 });
     const price = prices.data[0];
     if (!price) throw new Error(`No active Stripe price has the lookup key ${lookupKey}.`);
-    return { id: price.id, unitAmountCents: price.unit_amount };
+    return { id: price.id, unitAmountCents: price.unit_amount, currency: price.currency };
   },
   createCheckoutSession: async ({ customerId, priceId, orgId, userId, successUrl, cancelUrl }) => {
     const session = await stripe().checkout.sessions.create({
