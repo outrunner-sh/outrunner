@@ -103,6 +103,8 @@ test("a plan without overage stops at what it includes", () => {
   // The trial's $10 is 41⅔ Small hours.
   assert.equal(cost(PLANS.free, hours(42), monthEnd).includedSpent, true);
   assert.equal(cost(PLANS.free, hours(41), monthEnd).includedSpent, false);
+  // Within half a cent of the cap it shows as all used, so it is: 999.6¢ reads $10.00 of $10.00.
+  assert.deepEqual(usageCost(PLANS.free, 83.3), { includedCents: 1000, overageCents: 0, totalCents: 1000, includedSpent: true });
 });
 
 test("cents round once, over the whole period, not per session", () => {
