@@ -4,11 +4,15 @@ import { test } from "node:test";
 import { calendarMonth, type Interval, OPEN_GRACE_MS } from "@/lib/billing/hours";
 import { connectorPlan, PLANS, type Plan } from "@/lib/billing/plans";
 import { BOX_SIZES } from "@/lib/runtime/box-sizes";
+import { LONGEST_INTERVAL_MS, MAX_BOX_RUN_HARD_MS } from "@/lib/billing/reconcile";
 import {
+  ALL_TIME,
   blocksStarts,
+  formatUsd,
   pausesRunning,
   usageCost,
   type UsageCost,
+  usagePeriod,
   usageStanding,
   type UsageState,
   vcpuHoursUsed,
@@ -162,4 +166,24 @@ test("standing: the worst state wins, and each says whether boxes start or pause
     ["overage", false, false],
     ["within", false, false],
   ]);
+});
+
+test("the period: the calendar month by default, all time for the trial, a monthly Free with billing off", () => {
+  assert.deepEqual(october, { start: at("2026-10-01T00:00:00Z"), end: at("2026-11-01T00:00:00Z") });
+  assert.deepEqual(calendarMonth(at("2026-12-31T23:59:59Z")).end, at("2027-01-01T00:00:00Z"));
+  const subscribed = { start: at("2026-10-12T00:00:00Z"), end: at("2026-11-12T00:00:00Z") };
+  assert.deepEqual(usagePeriod(PLANS.free, null, now, "stripe"), ALL_TIME);
+  // Nothing to subscribe to: a trial that never renewed would stop the deployment for good.
+  assert.deepEqual(usagePeriod(PLANS.free, null, now, "off"), october);
+  assert.deepEqual(usagePeriod(PLANS.pro, subscribed, now, "stripe"), subscribed);
+  assert.deepEqual(usagePeriod(PLANS.enterprise, null, now, "stripe"), october);
+  assert.ok(ALL_TIME.end.toISOString().startsWith("9999-"));
+});
+
+test("usage reads look back past the longest an ended interval can run", () => {
+  assert.ok(LONGEST_INTERVAL_MS > MAX_BOX_RUN_HARD_MS + OPEN_GRACE_MS);
+});
+
+test("cents read as dollars", () => {
+  assert.deepEqual([0, 5, 1000, 123456].map(formatUsd), ["$0.00", "$0.05", "$10.00", "$1234.56"]);
 });

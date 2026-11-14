@@ -1,10 +1,7 @@
 /**
- * Cloud hours from the intervals Outrunner's boxes ran (compute_intervals):
- * what a user has used of their plan's hours in a period. Pure, so the
- * counting rules are tested without a database.
- *
- * Hours are Small-box hours: an hour on a box weighs its vCPUs over a Small
- * box's 2, so a Medium (4 vCPU) hour is 2 and an X Small (1 vCPU) one half.
+ * The intervals Outrunner's boxes ran (compute_intervals), as runs: what
+ * usage is priced from (lib/billing/usage.ts). Pure, so the counting rules
+ * are tested without a database.
  */
 
 export type Interval = {
@@ -30,25 +27,13 @@ export const SMALL_BOX_CPU = 2;
  */
 export const OPEN_GRACE_MS = 5 * 60_000;
 
-const HOUR_MS = 60 * 60_000;
-
-/** The calendar month (UTC) `now` is in: the Free plan's period. */
+/** The calendar month (UTC) `now` is in: the period of a monthly plan with
+ *  no subscription period of its own (a contract, the connector). */
 export function calendarMonth(now: Date): Period {
   return {
     start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
     end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)),
   };
-}
-
-/** Small-box hours the intervals ran within `period`, up to `now`. */
-export function hoursUsed(intervals: readonly Interval[], period: Period, now: Date): number {
-  let weightedMs = 0;
-  for (const run of mergedRuns(intervals, now)) {
-    const start = Math.max(run.start, period.start.getTime());
-    const end = Math.min(run.end, period.end.getTime(), now.getTime());
-    if (end > start) weightedMs += (end - start) * (run.cpu / SMALL_BOX_CPU);
-  }
-  return weightedMs / HOUR_MS;
 }
 
 /** A box's continuous run: one session. Open while any interval in it is. */

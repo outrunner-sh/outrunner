@@ -11,7 +11,8 @@
  * the same whichever boxes ran first.
  */
 
-import { mergedRuns, type Interval, type Period } from "@/lib/billing/hours";
+import { calendarMonth, mergedRuns, type Interval, type Period } from "@/lib/billing/hours";
+import type { BillingMode } from "@/lib/billing/mode";
 import type { Plan } from "@/lib/billing/plans";
 
 /** The included rate: 12¢ a vCPU-hour, $0.002 a vCPU-minute (a Small box,
@@ -26,6 +27,27 @@ export const OVERAGE_CENTS_PER_VCPU_HOUR = 18;
 export const MIN_SESSION_MS = 60_000;
 
 const HOUR_MS = 60 * 60_000;
+
+/** All time: the trial's period, as its credit is once ever. Usage under a
+ *  paid plan counts too, so an org back on Free after one has no fresh
+ *  credit. Year 9999 is the furthest Postgres and ISO strings agree on. */
+export const ALL_TIME: Period = { start: new Date(0), end: new Date("9999-12-31T00:00:00Z") };
+
+/** The period an account's usage is counted over: all time for a plan
+ *  whose usage is once (the trial); else its subscription's allowance
+ *  period, or the calendar month without one (a contract, the connector).
+ *  With billing off (lib/billing/mode.ts) every org is on Free and there is
+ *  nothing to subscribe to, so a trial that never renews would stop a
+ *  deployment for good: there, Free's usage renews each calendar month. */
+export function usagePeriod(plan: Plan, allowancePeriod: Period | null, now: Date, billing: BillingMode): Period {
+  if (plan.usage.per === "once" && billing === "stripe") return ALL_TIME;
+  return allowancePeriod ?? calendarMonth(now);
+}
+
+/** Cents as dollars, as every usage message and page shows them: "$12.34". */
+export function formatUsd(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
 
 /** vCPU-hours the intervals ran within `period`, up to `now`, each ended
  *  session at least MIN_SESSION_MS (which may run past now: it's owed once

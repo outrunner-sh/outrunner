@@ -5,18 +5,11 @@
  */
 
 import { githubLogin } from "@/lib/auth/allowlist";
-import { entitlementsFor, personalEntitlements } from "@/lib/billing/entitlements";
-import { calendarMonth, hoursUsed } from "@/lib/billing/hours";
 import { exemptFromPlanLimits } from "@/lib/billing/limits";
-import {
-  allRows,
-  closeIntervalOf,
-  intervalsFor,
-  isMetered,
-  markStoppedIfReady,
-  noticeWorkspace,
-} from "@/lib/billing/metering-store";
-import { hoursCap, USAGE_CONTROLS_HREF } from "@/lib/billing/usage-controls";
+import { allRows, closeIntervalOf, isMetered, markStoppedIfReady, noticeWorkspace } from "@/lib/billing/metering-store";
+import { accountStanding } from "@/lib/billing/standing";
+import { formatUsd } from "@/lib/billing/usage";
+import { USAGE_CONTROLS_HREF } from "@/lib/billing/usage-controls";
 import { type Account, sweepOrgUsage, type UsageSweepReport } from "@/lib/billing/usage-sweep";
 import { orgAdmins } from "@/lib/db/org-members";
 import { claimAlert, getUsageControls, releaseAlert, sentAlerts } from "@/lib/db/org-usage";
@@ -96,18 +89,10 @@ export function runUsageSweep(provider: ComputerRuntimeProvider): Promise<UsageS
       for (const ownerId of connectorOwners) accounts.push({ kind: "connector", ownerId });
       return accounts;
     },
-    controls: getUsageControls,
-    async entitlements(account) {
-      const { plan, allowancePeriod } =
-        account.kind === "connector" ? await personalEntitlements(account.ownerId, now) : await entitlementsFor(account.orgId, now);
-      return { plan, period: allowancePeriod ?? calendarMonth(now) };
-    },
-    hoursUsed: async (account, period) =>
-      hoursUsed(
-        await intervalsFor(account.kind === "connector" ? { ownerId: account.ownerId } : { orgId: account.orgId }, period),
-        period,
-        now,
-      ),
+    // The controls read strictly: a failed read fails the account (said in
+    // the log) rather than emailing alerts an admin turned off.
+    standing: (account) =>
+      accountStanding(account.kind === "connector" ? { ownerId: account.ownerId } : { orgId: account.orgId }, now, getUsageControls),
     sentAlerts: (orgId, period) => sentAlerts(orgId, period.start),
     claimAlert: (orgId, period, threshold) => claimAlert(orgId, period.start, threshold),
     releaseAlert: (orgId, period, threshold) => releaseAlert(orgId, period.start, threshold),
@@ -115,22 +100,25 @@ export function runUsageSweep(provider: ComputerRuntimeProvider): Promise<UsageS
     // A box that can't come back from a pause (a jcode engine's, or none)
     // runs on; the start gate refuses new ones.
     canPause: provider.pausesBoxes,
-    async emailAdmins(orgId, threshold, used, plan, controls) {
+    async emailAdmins(orgId, threshold, { plan, standing }) {
       const [org, admins] = await Promise.all([getOrg(orgId), orgAdmins(orgId)]);
       const to = admins.flatMap((admin) => (admin.email ? [admin.email] : []));
       if (to.length === 0) return "nobody";
-      const limit =
-        controls.limitPercent === null
-          ? ""
-          : `\nIts usage limit is ${controls.limitPercent}% (${hoursCap(plan, controls)} hours): at it, no new cloud session starts${
-              provider.pausesBoxes ? ", and running ones pause" : ""
-            }.`;
+      const name = org?.name ?? "Your org";
+      const pauses = provider.pausesBoxes ? ", and running ones pause" : "";
+      const included = formatUsd(standing.includedCapCents);
+      const whatNext = plan.usage.overage
+        ? `Usage past ${included} is billed at the overage rate (1.5x).` +
+          (standing.limitCents === null
+            ? ""
+            : `\nIts usage limit is ${formatUsd(standing.limitCents)}: at it, no new cloud session starts${pauses}.`)
+        : `At 100%, no new cloud session starts${pauses} until ${plan.id === "free" ? "you subscribe" : "the next period"}.`;
       const sent = await sendEmail({
         to,
-        subject: `${org?.name ?? "Your org"} has used ${threshold}% of its cloud hours`,
+        subject: `${name} has used ${threshold}% of its included cloud usage`,
         text:
-          `${org?.name ?? "Your org"} has used ${Math.round(used * 10) / 10} of its ${plan.label} plan's ${plan.cloudHoursPerMonth} cloud hours this period (${threshold}% or more).` +
-          `${limit}\nAt 100%, no new cloud session starts${provider.pausesBoxes ? " and running ones pause" : ""} until the next period or an upgrade.` +
+          `${name} has used ${formatUsd(standing.totalCents)} of cloud usage against its ${plan.label} plan's ${included} included (${threshold}% or more).` +
+          `\n${whatNext}` +
           `\n\nChange the limit or these alerts: ${appUrl(USAGE_CONTROLS_HREF)}\n`,
       });
       return sent ? "sent" : "failed";
