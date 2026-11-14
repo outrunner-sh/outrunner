@@ -13,10 +13,22 @@ test("a new key has its own prefix, and is told apart from a CLI token", () => {
   assert.deepEqual(apiCredential(auth(`Bearer ${cli}`)), { kind: "cli_token", secret: cli });
 });
 
+test("Basic auth takes the key as the user name, with no password", () => {
+  const key = newApiKey();
+  const basic = (pair: string) => auth(`Basic ${Buffer.from(pair).toString("base64")}`);
+  assert.deepEqual(apiCredential(basic(`${key}:`)), { kind: "api_key", secret: key });
+  const cli = `or_cli_${"a".repeat(43)}`;
+  assert.deepEqual(apiCredential(basic(`${cli}:`)), { kind: "cli_token", secret: cli });
+});
+
 test("anything else in the header is no credential", () => {
   assert.equal(apiCredential(new Headers()), null);
   assert.equal(apiCredential(auth("Bearer or_key_short")), null);
   assert.equal(apiCredential(auth(`Basic or_key_${"a".repeat(43)}`)), null);
+  const basic = (pair: string) => auth(`Basic ${Buffer.from(pair).toString("base64")}`);
+  assert.equal(apiCredential(basic(`or_key_${"a".repeat(43)}:secret`)), null);
+  assert.equal(apiCredential(basic(`someone:or_key_${"a".repeat(43)}`)), null);
+  assert.equal(apiCredential(basic("or_key_short:")), null);
   assert.equal(apiCredential(auth(`Bearer sk-${"a".repeat(43)}`)), null);
 });
 

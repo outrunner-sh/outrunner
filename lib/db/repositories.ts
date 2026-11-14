@@ -74,6 +74,22 @@ export async function getProject(id: string): Promise<Project | null> {
   return data ? toProject(data) : null;
 }
 
+/** The org's project of the repository `fullName` names (GitHub's names
+ *  match whatever their case), or null for none the user can see. */
+export async function getProjectByFullName(orgId: string, fullName: string): Promise<Project | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("projects")
+    .select("*")
+    .eq("org_id", orgId)
+    .ilike("full_name", fullName.replace(/[\\%_]/g, "\\$&"))
+    .is("hidden_at", null)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toProject(data) : null;
+}
+
 /** Projects by id, hidden ones included, in one query. */
 export async function getProjects(ids: string[]): Promise<Project[]> {
   if (ids.length === 0) return [];
