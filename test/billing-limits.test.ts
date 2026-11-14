@@ -50,8 +50,8 @@ test("a start is refused only where usage stops it, saying why and where to go",
 });
 
 test("the plan's boxes are a denial only once all running", () => {
-  assert.equal(boxesDenial(PLANS.free, 9), null);
-  assert.match(boxesDenial(PLANS.free, 10)?.error ?? "", /10 concurrent cloud sessions/);
+  assert.equal(boxesDenial(PLANS.free, 1), null);
+  assert.match(boxesDenial(PLANS.free, 2)?.error ?? "", /2 concurrent cloud sessions/);
 });
 
 // Keep these boundaries aligned with schema assertion 20's SQL count checks.
