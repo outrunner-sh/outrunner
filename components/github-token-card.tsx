@@ -11,6 +11,7 @@ import { requestJson } from "@/lib/http/request-json";
 const NEW_FINE_GRAINED = "https://github.com/settings/personal-access-tokens/new";
 const NEW_CLASSIC = "https://github.com/settings/tokens/new?scopes=repo,workflow&description=Outrunner";
 const TOKENS = "https://github.com/settings/tokens";
+const FINE_GRAINED_TOKENS = "https://github.com/settings/personal-access-tokens";
 
 /**
  * Settings → Connections → GitHub → personal access token: for repositories
@@ -28,7 +29,7 @@ export function GitHubTokenCard({ initial, health }: { initial: PersonalTokenVie
   const [error, setError] = useState<string | null>(null);
   // When the page opened: expiry notes are by the day, so it needn't tick.
   const [now] = useState(() => Date.now());
-  const [done, setDone] = useState<{ tone: "info" | "warning"; text: string; revoke?: boolean } | null>(null);
+  const [done, setDone] = useState<{ tone: "info" | "warning"; text: string; revoke?: string } | null>(null);
 
   async function save() {
     if (busy) return;
@@ -75,11 +76,13 @@ export function GitHubTokenCard({ initial, health }: { initial: PersonalTokenVie
         has: (d) => d.token === null,
         fallback: "Couldn't remove the token. Try again.",
       });
+      // Where its kind is revoked, before it's cleared.
+      const revoke = token?.kind === "fine_grained" ? FINE_GRAINED_TOKENS : TOKENS;
       setToken(null);
       setDone({
         tone: "warning",
         text: "Removed. Sessions already running keep it until they end, so revoke it on GitHub too if you no longer want it used.",
-        revoke: true,
+        revoke,
       });
       router.refresh();
     } catch (e) {
@@ -174,7 +177,7 @@ export function GitHubTokenCard({ initial, health }: { initial: PersonalTokenVie
       {done && (
         <InlineMessage
           tone={done.tone}
-          actions={done.revoke ? [{ label: "Revoke on GitHub", href: TOKENS, external: true }] : undefined}
+          actions={done.revoke ? [{ label: "Revoke on GitHub", href: done.revoke, external: true }] : undefined}
         >
           {done.text}
         </InlineMessage>
