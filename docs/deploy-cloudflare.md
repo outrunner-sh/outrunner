@@ -199,7 +199,10 @@ pnpm dlx wrangler secret put RUNTIME_BILLING        # stripe
 The webhook endpoint is `https://<domain>/api/stripe/webhook`. Stripe needs
 these events: `checkout.session.completed`, `customer.subscription.created`,
 `.updated`, `.deleted`, `.paused`, `.resumed`, `invoice.paid`,
-`invoice.payment_failed`, and `charge.dispute.created`. Prices are found by
+`invoice.payment_failed`, `invoice.voided`, `invoice.marked_uncollectible`,
+and `charge.dispute.created`. The restricted key also needs write access to
+Invoice Items and Invoices, which overage billing uses
+([billing-overage.md](billing-overage.md)). Prices are found by
 lookup key (`pro_monthly`, `pro_yearly`, `max_monthly`, `max_yearly`).
 
 ## Domain: `app.outrunner.sh`
