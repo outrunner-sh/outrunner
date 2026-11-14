@@ -32,14 +32,16 @@ const PLANS_WITH_OVERAGE = (Object.keys(PLANS) as (keyof typeof PLANS)[]).filter
 );
 
 const unix = (date: Date) => Math.floor(date.getTime() / 1000);
+const paidPlanId = (value: string | undefined): PaidPlanId | null =>
+  value === "pro" || value === "max" || value === "enterprise" ? value : null;
 const day = (date: Date) => date.toISOString().slice(0, 10);
 
 export const overageDeps: OverageDeps = {
   accounts: async (now) =>
     overageAccountsFrom(await overageSubscriptions(PLANS_WITH_OVERAGE, new Date(now.getTime() - REPORT_TAIL_MS)), now),
-  async overageCents(account, period, now) {
-    const intervals = await intervalsFor({ orgId: account.orgId }, period);
-    return usageCost(account.plan, vcpuHoursUsed(intervals, period, now)).overageCents;
+  async overageCents(orgId, plan, period, now) {
+    const intervals = await intervalsFor({ orgId }, period);
+    return usageCost(plan, vcpuHoursUsed(intervals, period, now)).overageCents;
   },
   async items(customerId, since) {
     const items: OverageItem[] = [];
@@ -57,6 +59,7 @@ export const overageDeps: OverageDeps = {
         periodStart: item.metadata.period_start,
         amountCents: item.amount,
         state: invoice === null ? "pending" : status === "draft" ? "draft" : "invoiced",
+        plan: paidPlanId(item.metadata.plan),
       });
     }
     return items;
@@ -64,14 +67,14 @@ export const overageDeps: OverageDeps = {
   async setItemAmount(itemId, amountCents, idempotencyKey) {
     await stripe().invoiceItems.update(itemId, { amount: amountCents }, { idempotencyKey });
   },
-  async createItem({ customerId, orgId, period, amountCents, idempotencyKey }) {
+  async createItem({ customerId, orgId, plan, period, amountCents, idempotencyKey }) {
     await stripe().invoiceItems.create(
       {
         customer: customerId,
         amount: amountCents,
         currency: "usd",
         description: `Cloud usage overage, ${day(period.start)} to ${day(period.end)}`,
-        metadata: { kind: OVERAGE_KIND, org_id: orgId, period_start: period.start.toISOString() },
+        metadata: { kind: OVERAGE_KIND, org_id: orgId, period_start: period.start.toISOString(), plan: plan.id },
       },
       { idempotencyKey },
     );
@@ -89,13 +92,23 @@ export const overageDeps: OverageDeps = {
       { idempotencyKey },
     );
     if (!invoice.id) throw new Error("Stripe made an overage invoice with no id.");
+    await overageDeps.finalizeAndPay(invoice.id);
+  },
+  async draftOverageInvoices(customerId) {
+    const drafts: string[] = [];
+    for await (const invoice of stripe().invoices.list({ customer: customerId, status: "draft", limit: 100 })) {
+      if (invoice.metadata?.kind === OVERAGE_KIND && invoice.id) drafts.push(invoice.id);
+    }
+    return drafts;
+  },
+  async finalizeAndPay(invoiceId) {
     // Made without auto-advance so Stripe doesn't finalize it on its own
     // before this does; finalized with it, so a declined card is retried on
     // the account's schedule (Smart Retries) like any subscription invoice.
     const finalized = await stripe().invoices.finalizeInvoice(
-      invoice.id,
+      invoiceId,
       { auto_advance: true },
-      { idempotencyKey: `${idempotencyKey}:finalize` },
+      { idempotencyKey: `overage-finalize:${invoiceId}` },
     );
     if (finalized.status !== "open") return;
     // A declined card is an answer, not a failure here: Stripe sends
@@ -103,7 +116,7 @@ export const overageDeps: OverageDeps = {
     // (lib/billing/sync.ts), and retries the card on its schedule; paid,
     // voided or written off at the end of those retries clears the mark.
     await stripe()
-      .invoices.pay(invoice.id, {}, { idempotencyKey: `${idempotencyKey}:pay` })
+      .invoices.pay(invoiceId, {}, { idempotencyKey: `overage-pay:${invoiceId}` })
       .catch((error: unknown) => {
         if ((error as { type?: string }).type !== "StripeCardError") throw error;
       });

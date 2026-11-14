@@ -22,12 +22,13 @@ const at = (iso: string) => new Date(iso);
 const NOW = at("2026-11-20T12:00:00Z");
 const NOVEMBER: Period = { start: at("2026-11-12T00:00:00Z"), end: at("2026-12-12T00:00:00Z") };
 const OCTOBER: Period = { start: at("2026-10-12T00:00:00Z"), end: at("2026-11-12T00:00:00Z") };
-const item = (id: string, amountCents: number, state: OverageItem["state"], period = NOVEMBER): OverageItem => ({
-  id,
-  periodStart: period.start.toISOString(),
-  amountCents,
-  state,
-});
+const item = (
+  id: string,
+  amountCents: number,
+  state: OverageItem["state"],
+  period = NOVEMBER,
+  plan: OverageItem["plan"] = "pro",
+): OverageItem => ({ id, periodStart: period.start.toISOString(), amountCents, state, plan });
 
 test("a period's open item holds its overage less what's already invoiced", () => {
   const cases: Array<[string, number, OverageItem[], string | null, number]> = [
@@ -49,10 +50,15 @@ test("a period's open item holds its overage less what's already invoiced", () =
 function world(owed: Record<string, number>, items: OverageItem[] = [], accounts?: OverageAccount[]) {
   const calls: string[] = [];
   const keys: string[] = [];
+  const pricedBy: string[] = [];
+  let drafts: string[] = [];
   const account: OverageAccount = { orgId: "o-1", customerId: "cus_1", plan: PLANS.pro, period: NOVEMBER, tail: null, ended: false };
   const deps: OverageDeps = {
     accounts: async () => accounts ?? [account],
-    overageCents: async (_a, period) => owed[period.start.toISOString()] ?? 0,
+    overageCents: async (_org, plan, period) => {
+      pricedBy.push(`${period.start.toISOString().slice(0, 10)} ${plan.id}`);
+      return owed[period.start.toISOString()] ?? 0;
+    },
     items: async () => items,
     setItemAmount: async (id, cents, key) => {
       calls.push(`set ${id} ${cents}`);
@@ -66,9 +72,11 @@ function world(owed: Record<string, number>, items: OverageItem[] = [], accounts
       calls.push(`charge ${orgId}`);
       keys.push(idempotencyKey);
     },
+    draftOverageInvoices: async () => drafts,
+    finalizeAndPay: async (invoiceId) => void calls.push(`finalize ${invoiceId}`),
     log: () => {},
   };
-  return { deps, calls, keys, account };
+  return { deps, calls, keys, account, pricedBy, setDrafts: (ids: string[]) => void (drafts = ids) };
 }
 
 const nov = NOVEMBER.start.toISOString();
@@ -145,9 +153,18 @@ test("pending overage is charged at $50 or more, or any amount once the subscrip
     await chargeOverage(w.deps, NOW);
     assert.deepEqual(w.calls, charged ? ["charge o-1"] : [], what);
   }
-  const w = world({}, [item("ii_b", 3000, "pending"), item("ii_a", 2000, "pending")]);
-  await chargeOverage(w.deps, NOW);
-  assert.deepEqual(w.keys, ["overage-charge:ii_a,ii_b:5000"]);
+  // Keyed by a digest of the set: the same items, the same key, whatever
+  // their order, and short however many there are.
+  const keyOf = async (items: OverageItem[]) => {
+    const k = world({}, items);
+    await chargeOverage(k.deps, NOW);
+    return k.keys[0];
+  };
+  const a = await keyOf([item("ii_b", 3000, "pending"), item("ii_a", 2000, "pending")]);
+  assert.equal(a, await keyOf([item("ii_a", 2000, "pending"), item("ii_b", 3000, "pending")]));
+  assert.match(a, /^overage-charge:[0-9a-f]{32}:5000$/);
+  const many = Array.from({ length: 40 }, (_, i) => item(`ii_${"x".repeat(24)}${i}`, 200, "pending"));
+  assert.ok((await keyOf(many)).length < 255);
 
   // Every pending item counts, read from the start of time: a yearly
   // subscription's earlier months add up past $50 with this month's $20.
@@ -223,4 +240,22 @@ test("unpaid since the earliest open overage invoice whose payment was tried", (
     ]),
     at("2026-11-10T00:00:00Z"),
   );
+});
+
+test("the period just ended is priced by the plan its item was made under", async () => {
+  // Max → Pro at the renewal: last month's $150 of usage was Max's, with
+  // $75 of overage already invoiced. Repriced at Pro it would bill $120 more.
+  const w = world({ [oct]: 7500, [nov]: 0 }, [item("ii_max", 7500, "invoiced", OCTOBER, "max")]);
+  w.account.tail = OCTOBER;
+  await reportOverage(w.deps, NOW);
+  assert.deepEqual(w.pricedBy, ["2026-10-12 max", "2026-11-12 pro"]);
+  assert.deepEqual(w.calls, []);
+});
+
+test("a charge that stopped at a draft invoice is finished the next day", async () => {
+  const w = world({}, []);
+  w.setDrafts(["in_stuck"]);
+  const report = await chargeOverage(w.deps, NOW);
+  assert.deepEqual(w.calls, ["finalize in_stuck"]);
+  assert.equal(report.charged, 1);
 });

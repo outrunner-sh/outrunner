@@ -13,9 +13,11 @@
  * I/O is behind {@link OverageDeps}.
  */
 
+import { createHash } from "node:crypto";
+
 import type { Period } from "@/lib/billing/hours";
 import { allowancePeriod, periodBefore } from "@/lib/billing/periods";
-import { type Plan, PLANS } from "@/lib/billing/plans";
+import { type PaidPlanId, type Plan, PLANS } from "@/lib/billing/plans";
 import { currentSubscription, stillBills, type SubscriptionRecord } from "@/lib/billing/subscriptions";
 
 /** The kind every overage invoice item and invoice carries in its metadata,
@@ -56,24 +58,33 @@ export type OverageItem = {
   periodStart: string;
   amountCents: number;
   state: "pending" | "draft" | "invoiced";
+  /** The plan it was made under: what its period is priced by once the
+   *  plan has changed since. */
+  plan: PaidPlanId | null;
 };
 
 export type OverageDeps = {
   accounts(now: Date): Promise<OverageAccount[]>;
-  /** The account's overage in `period` up to `now`, in cents. */
-  overageCents(account: OverageAccount, period: Period, now: Date): Promise<number>;
+  /** The org's overage in `period` up to `now` on `plan`, in cents. */
+  overageCents(orgId: string, plan: Plan, period: Period, now: Date): Promise<number>;
   /** The customer's overage items made since `since`. */
   items(customerId: string, since: Date): Promise<OverageItem[]>;
   setItemAmount(itemId: string, amountCents: number, idempotencyKey: string): Promise<void>;
   createItem(input: {
     customerId: string;
     orgId: string;
+    plan: Plan;
     period: Period;
     amountCents: number;
     idempotencyKey: string;
   }): Promise<void>;
   /** Invoice the customer's pending items and charge it now. */
   chargePending(input: { customerId: string; orgId: string; idempotencyKey: string }): Promise<void>;
+  /** The customer's overage invoices still in draft: a charge that stopped
+   *  between making and finalizing one. */
+  draftOverageInvoices(customerId: string): Promise<string[]>;
+  /** Finalize an overage invoice and charge it now. */
+  finalizeAndPay(invoiceId: string): Promise<void>;
   log(message: string, error?: unknown): void;
 };
 
@@ -105,7 +116,13 @@ export async function reportOverage(deps: OverageDeps, now: Date): Promise<Overa
         const mine = items.filter((i) => i.periodStart === periodStart);
         // A tail with no item is a period this account never reported.
         if (tail && mine.length === 0) continue;
-        const overage = await deps.overageCents(account, period, now);
+        // The period just ended is priced by the plan its items were made
+        // under: a plan changed at the renewal mustn't reprice the month
+        // before. The period now is priced by the plan now, so an upgrade's
+        // included usage counts at once, as the upgrade is charged at once.
+        const recorded = mine.find((i) => i.plan !== null)?.plan;
+        const plan = tail && recorded ? PLANS[recorded] : account.plan;
+        const overage = await deps.overageCents(account.orgId, plan, period, now);
         const { open, targetCents, invoicedCents } = openItemTarget(overage, mine);
         // Keyed by what the call does, so a retry of it is the same call:
         // an item set to an amount; a period's next item after what's
@@ -118,6 +135,7 @@ export async function reportOverage(deps: OverageDeps, now: Date): Promise<Overa
           await deps.createItem({
             customerId: account.customerId,
             orgId: account.orgId,
+            plan,
             period,
             amountCents: targetCents,
             idempotencyKey: `overage-create:${account.orgId}:${periodStart}:${invoicedCents}:${targetCents}`,
@@ -142,14 +160,22 @@ export async function chargeOverage(deps: OverageDeps, now: Date): Promise<Overa
   for (const account of await deps.accounts(now)) {
     report.accounts += 1;
     try {
+      // A charge that stopped between making an invoice and finalizing it
+      // left its items on a draft no renewal will finalize: finish it.
+      for (const invoiceId of await deps.draftOverageInvoices(account.customerId)) {
+        await deps.finalizeAndPay(invoiceId);
+        report.charged += 1;
+      }
       // Every pending item, not just this period's: the invoice pulls them
       // all in, and a yearly subscription's earlier months are pending too
       // (with none coming once it has ended, only this would invoice them).
       const pending = (await deps.items(account.customerId, new Date(0))).filter((i) => i.state === "pending");
       const cents = pending.reduce((sum, i) => sum + i.amountCents, 0);
       if (cents <= 0 || (cents < CHARGE_AT_CENTS && !account.ended)) continue;
-      const ids = pending.map((i) => i.id).sort().join(",");
-      await deps.chargePending({ customerId: account.customerId, orgId: account.orgId, idempotencyKey: `overage-charge:${ids}:${cents}` });
+      // Keyed by the set of items, as a digest: Stripe caps keys at 255
+      // characters, and pending item ids pile up.
+      const digest = createHash("sha256").update(pending.map((i) => i.id).sort().join(",")).digest("hex").slice(0, 32);
+      await deps.chargePending({ customerId: account.customerId, orgId: account.orgId, idempotencyKey: `overage-charge:${digest}:${cents}` });
       report.charged += 1;
     } catch (error) {
       deps.log(`Overage: charging org ${account.orgId} failed`, error);
