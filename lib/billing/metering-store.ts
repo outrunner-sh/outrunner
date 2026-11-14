@@ -147,7 +147,7 @@ export async function openIntervals(): Promise<OpenInterval[]> {
 
 /** The intervals overlapping `period` of an org (every member's but its
  *  connector's, which is on its own plan) or one owner (the connector): its
- *  cloud hours' raw
+ *  cloud usage's raw
  *  material (only Outrunner's boxes are ever metered into the table). Two
  *  reads rather than one `.or()`: an ISO timestamp's dots sit awkwardly in
  *  `.or()`'s comma-separated grammar. */

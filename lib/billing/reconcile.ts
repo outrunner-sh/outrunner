@@ -1,6 +1,6 @@
 /**
  * The reconciler: run every couple of minutes (a Cloudflare cron calls
- * POST /api/billing/reconcile), it keeps cloud hours true to what Outrunner's
+ * POST /api/billing/reconcile), it keeps cloud usage true to what Outrunner's
  * boxes do, and pauses the idle ones.
  *
  * Each run, for every ready computer on a box Outrunner pays for:

@@ -203,7 +203,7 @@ these events: `checkout.session.completed`, `customer.subscription.created`,
 and `charge.dispute.created`. The restricted key also needs write access to
 Invoice Items and Invoices, which overage billing uses
 ([billing-overage.md](billing-overage.md)). Prices are found by
-lookup key (`pro_monthly`, `pro_yearly`, `max_monthly`, `max_yearly`).
+lookup key: `pro_usage_monthly` ($20) and `max_usage_monthly` ($100), monthly; checkout refuses a price at any other amount. Subscriptions on the old keys (`pro_monthly`, `pro_yearly`, `max_monthly`, `max_yearly`) keep their plan until `scripts/migrate-usage-prices.ts` moves them.
 
 ## Domain: `app.outrunner.sh`
 

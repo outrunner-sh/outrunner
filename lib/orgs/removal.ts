@@ -41,9 +41,9 @@ export type RemovalDeps = {
   boxes(removal: Removal): Promise<RemovedBox[]>;
   /** Their sessions in the org not ended yet. */
   sessions(removal: Removal): Promise<string[]>;
-  /** Pause a running box, keeping its disk, and end its cloud hours. */
+  /** Pause a running box, keeping its disk, and end its cloud usage. */
   pause(box: RemovedBox & { sandboxId: string }): Promise<void>;
-  /** Delete a box for good and end its cloud hours. */
+  /** Delete a box for good and end its cloud usage. */
   remove(box: RemovedBox): Promise<void>;
   /** End a session for good. */
   end(sessionId: string): Promise<void>;

@@ -91,7 +91,7 @@ export type WarmPoolDeps = {
    *  told its id as soon as it exists. */
   make(secret: string, onBox: (sandboxId: string) => Promise<void>): Promise<{ sandboxId: string; cpu?: number }>;
   /** Count the box's time running, from when it existed (`from`) to when it
-   *  stopped or went (`to`), against the owner's cloud hours: a pooled box
+   *  stopped or went (`to`), against the owner's cloud usage: a pooled box
    *  runs on Outrunner's bill while it's made and warmed. Best effort. */
   meter(computerId: string, sandboxId: string, cpu: number | undefined, from: number, to: number): Promise<void>;
   /** Warm it: the project's files and warm hook in a checkout of its base
