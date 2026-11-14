@@ -6,7 +6,7 @@
  * the caller is an admin of, or one from Stripe, never from a request.
  */
 
-import type { SubscriptionRecord } from "@/lib/billing/subscriptions";
+import { BILLING_STATUSES, type SubscriptionRecord } from "@/lib/billing/subscriptions";
 import type { BillingInterval, PaidPlanId } from "@/lib/billing/plans";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -179,4 +179,38 @@ export async function overageUnpaidSince(orgId: string): Promise<Date | null> {
   if (error) throw error;
   const since = data?.[0]?.overage_unpaid_since;
   return since ? new Date(since) : null;
+}
+
+/** The subscriptions overage may be owed on: those on a plan billing it
+ *  that can still bill, and those that ended after `endedSince` (their last
+ *  period's tail; lib/billing/overage.ts). Two reads rather than one
+ *  `.or()`, as an ISO timestamp's dots sit awkwardly in its grammar. */
+export async function overageSubscriptions(plans: readonly PaidPlanId[], endedSince: Date): Promise<SubscriptionRecord[]> {
+  const supabase = createSupabaseAdminClient();
+  const read = async (narrow: (query: ReturnType<typeof base>) => ReturnType<typeof base>) => {
+    const rows: SubscriptionRow[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await narrow(base()).order("stripe_subscription_id").range(from, from + 999);
+      if (error) throw error;
+      rows.push(...data);
+      if (data.length < 1000) return rows;
+    }
+  };
+  function base() {
+    return supabase.from("subscriptions").select("*").in("plan", [...plans]);
+  }
+  const billing = await read((query) => query.in("status", [...BILLING_STATUSES]));
+  const ended = await read((query) => query.gte("current_period_end", endedSince.toISOString()));
+  const byId = new Map([...billing, ...ended].map((row) => [row.stripe_subscription_id, row]));
+  return [...byId.values()].map(fromRow);
+}
+
+/** Record since when the org's overage has been unpaid, on each of its
+ *  subscriptions; null once it's paid (lib/billing/standing.ts reads it). */
+export async function setOverageUnpaid(orgId: string, since: Date | null): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("subscriptions")
+    .update({ overage_unpaid_since: since?.toISOString() ?? null })
+    .eq("org_id", orgId);
+  if (error) throw error;
 }

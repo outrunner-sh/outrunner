@@ -10,8 +10,10 @@ import {
   recordEvent,
   orgForCustomer,
   saveSubscription,
+  setOverageUnpaid,
   subscriptionById,
 } from "@/lib/billing/billing-store";
+import { OVERAGE_KIND } from "@/lib/billing/overage";
 import type { CheckoutDeps } from "@/lib/billing/checkout";
 import { refreshModelAllowance } from "@/lib/db/credentials";
 import { refreshOrgModelAllowance } from "@/lib/db/org-model-allowance";
@@ -53,6 +55,16 @@ export const syncDeps: SyncDeps = {
     if (owner) await refreshModelAllowance(owner);
     else await refreshOrgModelAllowance(orgId);
   },
+  async openOverageInvoices(customerId) {
+    const open: { created: Date; attempted: boolean }[] = [];
+    for await (const invoice of stripe().invoices.list({ customer: customerId, status: "open", limit: 100 })) {
+      if (invoice.metadata?.kind === OVERAGE_KIND) {
+        open.push({ created: new Date(invoice.created * 1000), attempted: invoice.attempt_count > 0 });
+      }
+    }
+    return open;
+  },
+  setOverageUnpaid,
 };
 
 export const checkoutDeps: CheckoutDeps = {
