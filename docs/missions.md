@@ -98,7 +98,7 @@ channel, one channel a Mission.
     quietly). Unlinked people in shared channels can't task it;
   - `!aside` keeps a message from it; `!mute` / `!unmute` silences a thread
     (nothing in or out, the system's posts included);
-  - `@Outrunner stop` stops its turn; `@Outrunner pause` / `resume` (write on
+  - `@Outrunner stop` stops that thread's work (its open requests are cancelled; other threads go on); `@Outrunner pause` / `resume` (write on
     the project), or the header's **Pause**: paused, it says so and takes
     nothing;
   - bots' messages are never taken, the bot's own never, unless the
