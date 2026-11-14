@@ -6,7 +6,7 @@
  * whatever that missed, or whose sender died.
  */
 
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import { getInstallation } from "@/lib/db/slack-agent";
 import { missionLevel } from "@/lib/missions/slack-route.deps";

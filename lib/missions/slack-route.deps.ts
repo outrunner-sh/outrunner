@@ -4,7 +4,7 @@
  * access, the Mission's outbox, and Slack through the installation's bot.
  */
 
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
 
 import { POST as interruptPOST } from "@/app/api/workspaces/[id]/interrupt/route";
 import { getOwner } from "@/lib/auth/owner";
