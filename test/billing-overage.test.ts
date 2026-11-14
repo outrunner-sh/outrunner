@@ -141,6 +141,19 @@ test("pending overage is charged at $50 or more, or any amount once the subscrip
   const w = world({}, [item("ii_b", 3000, "pending"), item("ii_a", 2000, "pending")]);
   await chargeOverage(w.deps, NOW);
   assert.deepEqual(w.keys, ["overage-charge:ii_a,ii_b:5000"]);
+
+  // Ended: pending items from before its last period count too (a yearly
+  // subscription's earlier months), read from the start of time.
+  const sinces: Date[] = [];
+  const yearly = world({}, [item("ii_old", 400, "pending", OCTOBER)]);
+  yearly.account.ended = true;
+  yearly.deps.items = async (_c, since) => {
+    sinces.push(since);
+    return since.getTime() === 0 ? [item("ii_old", 400, "pending", OCTOBER)] : [];
+  };
+  await chargeOverage(yearly.deps, NOW);
+  assert.deepEqual(yearly.calls, ["charge o-1"]);
+  assert.deepEqual(sinces, [new Date(0)]);
 });
 
 function subscription(over: Partial<SubscriptionRecord> = {}): SubscriptionRecord {

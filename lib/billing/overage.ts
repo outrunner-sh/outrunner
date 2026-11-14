@@ -135,7 +135,11 @@ export async function chargeOverage(deps: OverageDeps, now: Date): Promise<Overa
     report.accounts += 1;
     try {
       if (account.periods.length === 0) continue;
-      const pending = (await deps.items(account.customerId, account.periods[0].start)).filter((i) => i.state === "pending");
+      // Ended: every pending item, not just the last period's. A yearly
+      // subscription's earlier months are pending too, and with no renewal
+      // coming, only this charge would ever invoice them.
+      const since = account.ended ? new Date(0) : account.periods[0].start;
+      const pending = (await deps.items(account.customerId, since)).filter((i) => i.state === "pending");
       const cents = pending.reduce((sum, i) => sum + i.amountCents, 0);
       if (cents <= 0 || (cents < CHARGE_AT_CENTS && !account.ended)) continue;
       const ids = pending.map((i) => i.id).sort().join(",");
