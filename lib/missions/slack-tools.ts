@@ -40,7 +40,7 @@ export type MissionSlackDeps = {
   canRead(userId: string, mission: Workspace): Promise<boolean>;
   /** Queue a post under its key (slack-outbox.deps.ts's queuePost). */
   queue(post: QueuedPost): Promise<QueueOutcome>;
-  saveAsk(input: { missionId: string; threadId: string; question: string; options: string[]; opKey: string }): Promise<string>;
+  saveAsk(input: { missionId: string; threadId: string; question: string; options: string[]; opKey: string; bindingRevision: string }): Promise<string>;
   askBlocks(askId: string, question: string, options: string[]): SlackBlocks;
   reserveSpawn(input: {
     missionId: string;
@@ -184,14 +184,23 @@ function postIn(
   };
 }
 
-/** A Ship the platform refused to start (the plan's concurrent cloud
- *  sessions, its usage, its box size) is said in the request's thread by the
- *  server, whatever the Mission does next: a thread must never just go
+/** What the channel is told of a Ship the platform refused to start: one
+ *  fixed sentence per kind, never the refusal's own words. Those carry the
+ *  owner's spend and plan (dollar amounts, limits), which everyone in the
+ *  channel would read; the full reason stays in the Mission's tool result. */
+export function refusalSaid(reason: string): string {
+  if (/concurrent cloud sessions/i.test(reason)) return "The Mission owner's plan has no room for another cloud session right now.";
+  if (/cloud usage|usage limit|overage|free trial/i.test(reason)) return "The Mission owner's cloud usage is used up for now.";
+  return "Outrunner couldn't start it right now.";
+}
+
+/** A Ship the platform refused to start is said in the request's thread by
+ *  the server, whatever the Mission does next: a thread must never just go
  *  quiet. Ships run as the Mission's owner, on the owner's plan. Best
  *  effort; whether it was queued. */
-export async function tellStartRefused(start: Pick<SlackStart, "reservation" | "binding" | "thread" | "request">, why: string, deps: Pick<MissionSlackDeps, "queue">): Promise<boolean> {
+export async function tellStartRefused(start: Pick<SlackStart, "reservation" | "binding" | "thread" | "request">, reason: string, deps: Pick<MissionSlackDeps, "queue">): Promise<boolean> {
   if (!start.thread) return false;
-  const text = `:warning: A Ship couldn't start for this request: ${why.replace(/[<>&]/g, "").slice(0, 600)} The work isn't lost: the Mission's owner can free a box or change the plan in Outrunner, and ask again.`;
+  const text = `:warning: A Ship couldn't start for this request. ${refusalSaid(reason)} The work isn't lost: the Mission's owner can sort it out in Outrunner, and you can ask again.`;
   const outcome = await deps.queue(
     postIn(start.binding, start.thread, {
       opKey: `refused:${start.binding.missionId}:${start.reservation}`,
@@ -254,8 +263,8 @@ export async function callSlackTool(mission: Workspace, name: string, args: Reco
         : [];
       if (!question || question.length > 2900) return refuse("question is required, up to 2900 characters.");
       if (options.length < 1 || options.length > 5) return refuse("Give 1 to 5 options.");
-      const opKey = `ask:${mission.id}:${thread.threadTs}:${about}:${hash(question, ...options)}`;
-      const askId = await deps.saveAsk({ missionId: mission.id, threadId: thread.id, question, options, opKey });
+      const opKey = `ask:${mission.id}:${binding.revision}:${thread.threadTs}:${about}:${hash(question, ...options)}`;
+      const askId = await deps.saveAsk({ missionId: mission.id, threadId: thread.id, question, options, opKey, bindingRevision: binding.revision });
       const outcome = await deps.queue(
         postIn(binding, thread, { opKey, kind: "ask", payload: { text: question, blocks: deps.askBlocks(askId, question, options), askId }, requester }),
       );

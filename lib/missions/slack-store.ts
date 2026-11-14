@@ -1,5 +1,5 @@
 /**
- * A Mission on call in Slack, in the database (20261114130000_mission_slack.sql),
+ * A Mission on call in Slack, in the database (20261114200000_mission_slack.sql),
  * with the service role: the channel it's bound to, the threads it took, the
  * Ships it started for them under its limits, and its question cards. The
  * callers have checked who may (lib/missions/slack-route.ts, the Mission's
@@ -25,8 +25,6 @@ export type MissionChannel = {
   /** New each time it's bound: what's queued under one never goes under
    *  another. */
   revision: string;
-  /** When it was bound: a card asked before this is of an earlier binding. */
-  boundAt?: string;
 };
 
 /** A thread the Mission took a request in. */
@@ -53,7 +51,6 @@ type ChannelRow = {
   allow_bot_messages: boolean;
   paused: boolean;
   revision?: string;
-  created_at?: string;
 };
 
 type ThreadRow = {
@@ -81,7 +78,6 @@ function toChannel(row: ChannelRow): MissionChannel {
     paused: row.paused,
     // Before the reliability migration, one revision for the binding's life.
     revision: row.revision ?? `${row.mission_id}:${row.slack_team_id}:${row.channel_id}`,
-    boundAt: row.created_at,
   };
 }
 
@@ -292,7 +288,8 @@ export type MissionAsk = {
   options: string[];
   messageTs: string | null;
   answeredAt: string | null;
-  createdAt?: string;
+  /** The binding it was asked under; null before that was kept. */
+  bindingRevision: string | null;
 };
 
 export async function askById(id: string): Promise<MissionAsk | null> {
@@ -307,7 +304,7 @@ export async function askById(id: string): Promise<MissionAsk | null> {
         options: data.options,
         messageTs: data.message_ts,
         answeredAt: data.answered_at,
-        createdAt: data.created_at,
+        bindingRevision: data.binding_revision,
       }
     : null;
 }
@@ -330,7 +327,7 @@ export async function openAsks(missionId: string): Promise<MissionAsk[]> {
     options: row.options,
     messageTs: row.message_ts,
     answeredAt: row.answered_at,
-    createdAt: row.created_at,
+    bindingRevision: row.binding_revision,
   }));
 }
 
@@ -347,7 +344,7 @@ export async function claimAnswer(id: string, answer: { text: string; userId: st
 }
 
 // ---------------------------------------------------------------------------
-// Requests, spawn keys, the post queue (20261114130100_mission_slack_reliability.sql)
+// Requests, spawn keys, the post queue (20261114200100_mission_slack_reliability.sql)
 // ---------------------------------------------------------------------------
 
 /** A Slack request a Mission took: its key, thread, who asked, and the
@@ -482,11 +479,11 @@ export async function threadMuted(teamId: string, channelId: string, threadTs: s
 }
 
 /** A question card under its key: the one there already, if it was asked. */
-export async function saveAskOnce(input: { missionId: string; threadId: string; question: string; options: string[]; opKey: string }): Promise<string> {
+export async function saveAskOnce(input: { missionId: string; threadId: string; question: string; options: string[]; opKey: string; bindingRevision: string }): Promise<string> {
   const { data, error } = await db()
     .from("mission_slack_asks")
     .upsert(
-      { mission_id: input.missionId, thread_id: input.threadId, question: input.question, options: input.options, op_key: input.opKey },
+      { mission_id: input.missionId, thread_id: input.threadId, question: input.question, options: input.options, op_key: input.opKey, binding_revision: input.bindingRevision },
       { onConflict: "op_key", ignoreDuplicates: true },
     )
     .select("id");

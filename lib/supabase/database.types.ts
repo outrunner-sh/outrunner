@@ -178,7 +178,7 @@ export type MissionEventKind =
   | "merged"
   | "closed"
   | "archived"
-  // 20261114130000_mission_slack.sql: Slack's news, with no Ship.
+  // 20261114200000_mission_slack.sql: Slack's news, with no Ship.
   | "slack_request"
   | "slack_answer"
   | "slack_channel";
@@ -194,7 +194,7 @@ type MissionEventRow = {
   delivery_id: string | null;
   delivered_at: string | null;
 };
-// supabase/migrations/20261114130000_mission_slack.sql
+// supabase/migrations/20261114200000_mission_slack.sql
 type MissionChannelRow = {
   mission_id: string;
   org_id: string;
@@ -204,7 +204,7 @@ type MissionChannelRow = {
   listen: "mentions" | "all";
   allow_bot_messages: boolean;
   paused: boolean;
-  /** 20261114130100: new each time it's bound. */
+  /** 20261114200100: new each time it's bound. */
   revision: string;
   created_at: string;
   updated_at: string;
@@ -236,7 +236,7 @@ type MissionSlackShipRow = {
   binding_revision: string | null;
   created_at: string;
 };
-// supabase/migrations/20261114130100_mission_slack_reliability.sql
+// supabase/migrations/20261114200100_mission_slack_reliability.sql
 type MissionSlackInboundRow = {
   event_id: string;
   team_id: string;
@@ -295,6 +295,7 @@ type MissionSlackAskRow = {
   answered_by_slack: string | null;
   answered_at: string | null;
   op_key: string | null;
+  binding_revision: string | null;
   created_at: string;
 };
 // supabase/migrations/20261102250000_mission_events.sql
