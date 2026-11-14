@@ -100,7 +100,7 @@ export function usageCost(plan: Plan, vcpuHours: number): UsageCost {
     overageCents,
     totalCents: includedCents + overageCents,
     // From the rounded figure, so the flag agrees with what's shown and
-    // billed: "$10.00 of $10.00" is spent, a half-cent early not late.
+    // billed: "$100.00 of $100.00" is spent, a half-cent early not late.
     includedSpent: includedCents >= includedCap,
   };
 }
