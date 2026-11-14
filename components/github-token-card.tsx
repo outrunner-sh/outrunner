@@ -47,7 +47,10 @@ export function GitHubTokenCard({ initial, health }: { initial: PersonalTokenVie
       setEditing(false);
       setDone(
         data.identitySwitched
-          ? { tone: "info", text: `Saved. Your sessions now clone, push and open pull requests as @${data.token.login}.` }
+          ? {
+              tone: "info",
+              text: `Saved. Sessions you start now clone, push and open pull requests as @${data.token.login}; ones already running switch as their git asks again.`,
+            }
           : {
               tone: "warning",
               text: `Saved, but your sessions still work as Outrunner's GitHub App. Choose "My GitHub account" below to use @${data.token.login}'s token.`,
