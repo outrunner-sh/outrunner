@@ -82,7 +82,7 @@ async function IntegrationsSection({
     listTrackerLinks(owner.id).catch((): TrackerLink[] => []),
     // Shows as not connected rather than failing the whole page (e.g. the
     // table's migration not applied yet).
-    gitLabConnection(owner.id).catch((error: unknown) => {
+    gitLabConnection(owner.id).catch((error: unknown): null => {
       console.error("Settings: could not load the GitLab connection", error);
       return null;
     }),
