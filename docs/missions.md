@@ -255,7 +255,15 @@ The four inputs:
    key is the same request, and the same key with a different body is a 409.
    With a signing secret set (the editor; sealed at rest), each body must
    carry `X-Outrunner-Signature: sha256=<hex HMAC-SHA256 of the raw body>`
-   (401 otherwise). URLs in a payload are never fetched; nothing of the body,
+   (401 otherwise). **Sentry and PagerDuty** deliver as they are, with the
+   same secret: a request with Sentry's headers is checked by
+   `Sentry-Hook-Signature` (hex HMAC-SHA256 of the raw body, keyed with the
+   integration's Client Secret) and keyed by its `Request-ID`; one with
+   `X-PagerDuty-Signature` by its `v1=` signatures (any of several matching;
+   the subscription's secret) and keyed by the body's `event.id`, as
+   PagerDuty sends no delivery id header. Sentry's docs don't say whether a
+   retry keeps its `Request-ID`, so a retried delivery may make a second
+   request. URLs in a payload are never fetched; nothing of the body,
    the key or the secret is logged.
 3. **Schedules.** `automation_schedules` and its tick. Each occurrence has
    its own identity: the schedule, its config revision (a hash of when it

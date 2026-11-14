@@ -449,7 +449,7 @@ export function AutomationEditor({
               />
               <p className="text-xs text-muted-foreground">
                 A Mission&apos;s webhook needs an Idempotency-Key (or X-Delivery-Id) header on each delivery: the same key with a
-                different body is refused. With a secret, each body must carry X-Outrunner-Signature: sha256=&lt;HMAC&gt;.
+                different body is refused. With a secret, each body must carry X-Outrunner-Signature: sha256=&lt;HMAC&gt;. Sentry and PagerDuty deliver as they are: use the Client Secret or the subscription&apos;s secret.
               </p>
             </div>
           ) : null}
