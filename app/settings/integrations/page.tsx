@@ -74,12 +74,18 @@ async function IntegrationsSection({
   if (!owner) redirect("/signin");
   const { slack, linear, jira, link_error: linkError, github } = await searchParams;
   const enabled = Boolean(optionalEnv("SLACK_SIGNING_SECRET"));
-  const [links, trackerLinks] = await Promise.all([
+  const [links, trackerLinks, gitLab] = await Promise.all([
     listSlackLinks(owner.id).catch((error: unknown): SlackLink[] => {
       console.error("Settings: could not load Slack links", error);
       return [];
     }),
     listTrackerLinks(owner.id).catch((): TrackerLink[] => []),
+    // Shows as not connected rather than failing the whole page (e.g. the
+    // table's migration not applied yet).
+    gitLabConnection(owner.id).catch((error: unknown) => {
+      console.error("Settings: could not load the GitLab connection", error);
+      return null;
+    }),
   ]);
   const linearLinks = trackerLinks.filter((link) => link.provider === "linear");
   const jiraLinks = trackerLinks.filter((link) => link.provider === "jira");
@@ -94,7 +100,7 @@ async function IntegrationsSection({
       </div>
 
       <GitHubConnectionSection userId={owner.id} login={owner.githubLogin} result={github ?? null} />
-      <GitLabConnectionCard initial={await gitLabConnection(owner.id)} />
+      <GitLabConnectionCard initial={gitLab} />
       {linkError && <p role="alert" className="text-sm text-destructive">{linkError === "identity_already_exists" ? "That GitHub account is already linked to another Outrunner account. Connect a different account, or sign in with GitHub to use it." : "GitHub could not be connected. Please try again."}</p>}
 
       <div className="space-y-3">
