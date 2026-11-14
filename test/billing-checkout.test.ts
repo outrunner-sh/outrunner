@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { PLANS } from "@/lib/billing/plans";
 import {
+  assertPlanPrice,
   type CheckoutDeps,
   checkoutDestination,
   ensureCustomer,
@@ -138,6 +140,15 @@ test("a Stripe price that charges other than the plan shows is never sold", asyn
     const { d, calls } = deps({ stored: "cus_1", amounts: { pro_usage_monthly: amount } });
     await assert.rejects(checkoutDestination(user, "pro", BASE, d), /charges \d+ cents, not the 2000 the plan shows/);
     assert.deepEqual(calls, [], "no checkout opened, none expired");
+  }
+  // Cents compare rounded: a plan at $19.99 matches a 1999-cent price.
+  const pro = PLANS.pro as { priceUsd: number | null };
+  const was = pro.priceUsd;
+  pro.priceUsd = 19.99;
+  try {
+    assert.doesNotThrow(() => assertPlanPrice("pro", 1999));
+  } finally {
+    pro.priceUsd = was;
   }
   const missing = deps({ stored: "cus_1", amounts: {} });
   await assert.rejects(checkoutDestination(user, "max", BASE, missing.d), /charges nothing cents, not the 10000/);

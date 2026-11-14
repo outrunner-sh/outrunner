@@ -100,7 +100,8 @@ export async function checkoutDestination(
  *  plans.ts sets, which every page shows: checkout and the price move
  *  (scripts/migrate-usage-prices.ts) never sell one. */
 export function assertPlanPrice(plan: "pro" | "max", unitAmountCents: number | null): void {
-  const expected = (PLANS[plan].priceUsd ?? 0) * 100;
+  // Rounded, as a price like 19.99 isn't a whole number of cents in floats.
+  const expected = Math.round((PLANS[plan].priceUsd ?? 0) * 100);
   if (unitAmountCents !== expected) {
     throw new Error(
       `Stripe's price ${LOOKUP_KEYS[plan]} charges ${unitAmountCents ?? "nothing"} cents, not the ${expected} the plan shows.`,
