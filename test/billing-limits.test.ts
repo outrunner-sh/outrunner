@@ -33,7 +33,7 @@ test("a start is refused only where usage stops it, saying why and where to go",
     usageStanding({ plan, cost: usageCost(plan, vcpuHours), limitUsd, unpaidSince });
   const cases = [
     { what: "trial within", plan: PLANS.free, s: standing(PLANS.free, 10), error: null, href: null },
-    { what: "trial spent", plan: PLANS.free, s: standing(PLANS.free, 100), error: /free trial's \$10\.00 of cloud usage is used up\. Subscribe/, href: "/upgrade" },
+    { what: "trial spent", plan: PLANS.free, s: standing(PLANS.free, 1000), error: /free trial's \$100\.00 of cloud usage is used up\. Subscribe/, href: "/upgrade" },
     { what: "contract spent", plan: PLANS.enterprise, s: standing(PLANS.enterprise, 1000), error: /Enterprise plan's \$120\.00 .* starts again next period/, href: "/upgrade" },
     { what: "Pro in overage", plan: PLANS.pro, s: standing(PLANS.pro, 400), error: null, href: null },
     { what: "Pro at its limit", plan: PLANS.pro, s: standing(PLANS.pro, 250, 30), error: /usage limit of \$30\.00 is reached.*Settings → Org → Usage/, href: "/settings/org/usage" },

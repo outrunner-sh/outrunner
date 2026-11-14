@@ -31,7 +31,7 @@ const HOUR_MS = 60 * 60_000;
 /** When usage-based billing launched: the trial counts usage from here, so
  *  every org on Free then got a full credit, whatever it ran under the old
  *  hour allowances. Set to the launch date when the change ships. */
-export const TRIAL_STARTS_AT = new Date("2026-11-14T00:00:00Z");
+export const TRIAL_STARTS_AT = new Date("2026-11-14T10:52:00Z");
 
 /** The trial's period: from launch on, as its credit is once ever. Usage
  *  under a paid plan counts too, so an org back on Free after one has no

@@ -37,12 +37,12 @@ function cost(plan: Plan, intervals: Interval[], when = now): UsageCost {
   return usageCost(plan, vcpuHoursUsed(intervals, october, when));
 }
 
-test("paid plans include their price; the trial is a one-off $10; overage only where there's a price", () => {
+test("paid plans include their price; the trial is a one-off $100; overage only where there's a price", () => {
   for (const plan of [PLANS.pro, PLANS.max]) {
     assert.equal(plan.usage.includedUsd, plan.priceUsd);
     assert.deepEqual([plan.usage.per, plan.usage.overage], ["month", true]);
   }
-  assert.deepEqual(PLANS.free.usage, { includedUsd: 10, per: "once", overage: false });
+  assert.deepEqual(PLANS.free.usage, { includedUsd: 100, per: "once", overage: false });
   assert.equal(PLANS.enterprise.usage.overage, false);
   assert.equal(connectorPlan(50).usage.overage, false);
 });
@@ -104,11 +104,11 @@ test("a plan without overage stops at what it includes", () => {
   assert.deepEqual(cost(PLANS.enterprise, hours(499), monthEnd), { includedCents: 11976, overageCents: 0, totalCents: 11976, includedSpent: false });
   assert.deepEqual(cost(PLANS.enterprise, hours(500), monthEnd), { includedCents: 12000, overageCents: 0, totalCents: 12000, includedSpent: true });
   assert.deepEqual(cost(PLANS.enterprise, hours(600), monthEnd), { includedCents: 12000, overageCents: 0, totalCents: 12000, includedSpent: true });
-  // The trial's $10 is 41⅔ Small hours.
-  assert.equal(cost(PLANS.free, hours(42), monthEnd).includedSpent, true);
-  assert.equal(cost(PLANS.free, hours(41), monthEnd).includedSpent, false);
-  // Within half a cent of the cap it shows as all used, so it is: 999.6¢ reads $10.00 of $10.00.
-  assert.deepEqual(usageCost(PLANS.free, 83.3), { includedCents: 1000, overageCents: 0, totalCents: 1000, includedSpent: true });
+  // The trial's $100 is 416⅔ Small hours.
+  assert.equal(cost(PLANS.free, hours(417), monthEnd).includedSpent, true);
+  assert.equal(cost(PLANS.free, hours(416), monthEnd).includedSpent, false);
+  // Within half a cent of the cap it shows as all used, so it is: 9999.6¢ reads $100.00 of $100.00.
+  assert.deepEqual(usageCost(PLANS.free, 833.3), { includedCents: 10000, overageCents: 0, totalCents: 10000, includedSpent: true });
 });
 
 test("cents round once, over the whole period, not per session", () => {

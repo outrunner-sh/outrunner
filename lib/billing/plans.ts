@@ -46,7 +46,7 @@ export const PLANS = {
     warmHookMinutes: 15,
     models: { usd: 5, per: "once" },
     priceUsd: 0,
-    usage: { includedUsd: 10, per: "once", overage: false },
+    usage: { includedUsd: 100, per: "once", overage: false },
   },
   pro: {
     id: "pro",
