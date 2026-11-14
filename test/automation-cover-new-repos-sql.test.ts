@@ -1,4 +1,4 @@
-/** Code Review on every repository (20261114120000_automation_cover_new_repos.sql)
+/** Code Review on every repository (20261114130000_automation_cover_new_repos.sql)
  *  on a disposable Postgres database. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -24,7 +24,7 @@ const BEFORE = [
   "20261102195000_automation_webhooks.sql",
   "20261102198000_automation_limits.sql",
 ];
-const MIGRATION = "20261114120000_automation_cover_new_repos.sql";
+const MIGRATION = "20261114130000_automation_cover_new_repos.sql";
 let url = "";
 
 function psql(target: string, text: string): string {
