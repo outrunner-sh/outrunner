@@ -51,7 +51,7 @@ export type EnsureRuntimeComputerDependencies = {
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   /** A box this request made or brought back is running, with `cpu` vCPUs
-   *  where known: where its cloud hours start. A failure here is logged; it
+   *  where known: where its cloud usage start. A failure here is logged; it
    *  never fails the provision. */
   started?: (computer: RuntimeComputer, cpu: number | undefined) => Promise<void>;
 };

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { PLANS } from "@/lib/billing/plans";
 import {
+  assertPlanPrice,
   type CheckoutDeps,
   checkoutDestination,
   ensureCustomer,
@@ -14,7 +16,10 @@ const NOW = new Date("2026-10-17T12:00:00Z");
 const user = { orgId: "o-1", orgName: "octo", userId: "u-1", githubLogin: "octo", email: null };
 const BASE = "https://app.outrunner.sh";
 
-function deps(opts: { stored?: string; subscriptions?: SubscriptionRecord[] } = {}) {
+/** What Stripe charges for each price: the plans' own amounts unless a test says otherwise. */
+const AMOUNTS: Record<string, number> = { pro_usage_monthly: 2000, max_usage_monthly: 10000 };
+
+function deps(opts: { stored?: string; subscriptions?: SubscriptionRecord[]; amounts?: Record<string, number>; currency?: string } = {}) {
   let stored: string | null = opts.stored ?? null;
   const calls: string[] = [];
   const d: CheckoutDeps = {
@@ -28,7 +33,7 @@ function deps(opts: { stored?: string; subscriptions?: SubscriptionRecord[] } = 
       return "cus_new";
     },
     subscriptionStatuses: async () => (opts.subscriptions ?? []).map((s) => s.status),
-    priceIdFor: async (key) => `price_${key}`,
+    priceFor: async (key) => ({ id: `price_${key}`, unitAmountCents: (opts.amounts ?? AMOUNTS)[key] ?? null, currency: opts.currency ?? "usd" }),
     createCheckoutSession: async (input) => {
       calls.push(`checkout ${input.customerId} ${input.priceId} ${input.successUrl} ${input.cancelUrl}`);
       return "https://checkout.stripe.com/c/pay/1";
@@ -57,14 +62,14 @@ test("two first checkouts at once keep the customer stored first", async () => {
   assert.equal(await ensureCustomer(user, d), "cus_first"); // ...the claim keeps the first
 });
 
-test("a Free user goes to Checkout for the plan and interval asked, and back to Billing", async () => {
+test("a Free user goes to Checkout for the plan asked, monthly, and back to Billing", async () => {
   const { d, calls } = deps({ stored: "cus_1" });
-  const destination = await checkoutDestination(user, "max", "year", BASE, d);
+  const destination = await checkoutDestination(user, "max", BASE, d);
   assert.deepEqual(destination, { url: "https://checkout.stripe.com/c/pay/1", kind: "checkout" });
   assert.deepEqual(calls, [
     // An older checkout in another tab can no longer be paid.
     "expire open checkouts of cus_1",
-    "checkout cus_1 price_max_yearly " +
+    "checkout cus_1 price_max_usage_monthly " +
       `${BASE}/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID} ` +
       `${BASE}/settings/billing?checkout=canceled`,
   ]);
@@ -72,10 +77,10 @@ test("a Free user goes to Checkout for the plan and interval asked, and back to 
 
 test("a new user from a pricing link goes back to onboarding, paid or not", async () => {
   const { d, calls } = deps({ stored: "cus_1" });
-  await checkoutDestination(user, "pro", "month", BASE, d, "/onboarding");
+  await checkoutDestination(user, "pro", BASE, d, "/onboarding");
   assert.equal(
     calls.at(-1),
-    "checkout cus_1 price_pro_monthly " +
+    "checkout cus_1 price_pro_usage_monthly " +
       `${BASE}/onboarding?checkout=success&session_id={CHECKOUT_SESSION_ID} ` +
       `${BASE}/onboarding?checkout=canceled`,
   );
@@ -97,22 +102,22 @@ test("a user with a subscription that can still bill goes to the portal, never a
     pastDueSince: null,
   };
   const { d, calls } = deps({ stored: "cus_1", subscriptions: [pro] });
-  assert.equal((await checkoutDestination(user, "max", "month", BASE, d)).kind, "portal");
+  assert.equal((await checkoutDestination(user, "max", BASE, d)).kind, "portal");
   assert.deepEqual(calls, [`portal cus_1 ${BASE}/settings/billing`]);
   // One whose payment failed past the grace can still bill: the portal, to fix it.
   for (const status of ["past_due", "unpaid", "paused"]) {
     const failing = deps({ stored: "cus_1", subscriptions: [{ ...pro, status, pastDueSince: new Date(0) }] });
-    assert.equal((await checkoutDestination(user, "pro", "month", BASE, failing.d)).kind, "portal", status);
+    assert.equal((await checkoutDestination(user, "pro", BASE, failing.d)).kind, "portal", status);
   }
   // One Outrunner doesn't store (a price it doesn't sell) still counts:
   // Stripe is asked, not the stored copy.
   const unstored = deps({ stored: "cus_1" });
   unstored.d.subscriptionStatuses = async () => ["active"];
-  assert.equal((await checkoutDestination(user, "pro", "month", BASE, unstored.d)).kind, "portal");
+  assert.equal((await checkoutDestination(user, "pro", BASE, unstored.d)).kind, "portal");
   // One that has ended, or never started, checks out again.
   for (const status of ["canceled", "incomplete_expired", "incomplete"]) {
     const lapsed = deps({ stored: "cus_1", subscriptions: [{ ...pro, status }] });
-    assert.equal((await checkoutDestination(user, "pro", "month", BASE, lapsed.d)).kind, "checkout", status);
+    assert.equal((await checkoutDestination(user, "pro", BASE, lapsed.d)).kind, "checkout", status);
   }
 });
 
@@ -121,11 +126,33 @@ test("the portal needs a customer", async () => {
   assert.equal(await portalDestination("o-1", BASE, deps({ stored: "cus_1" }).d), "https://billing.stripe.com/p/session/1");
 });
 
-test("a link asks for a plan Outrunner sells, monthly unless it says yearly", () => {
+test("a link asks for a plan Outrunner sells; an old link's interval is ignored", () => {
   const ask = (query: string) => requestedPlan(new URLSearchParams(query));
-  assert.deepEqual(ask("plan=pro"), { plan: "pro", interval: "month" });
-  assert.deepEqual(ask("plan=max&interval=year"), { plan: "max", interval: "year" });
-  assert.deepEqual(ask("plan=enterprise&interval=year"), { plan: null, interval: "year" });
-  assert.deepEqual(ask("plan=PRO&interval=weekly"), { plan: null, interval: "month" });
-  assert.deepEqual(ask(""), { plan: null, interval: "month" });
+  assert.equal(ask("plan=pro"), "pro");
+  assert.equal(ask("plan=max&interval=year"), "max");
+  assert.equal(ask("plan=enterprise"), null);
+  assert.equal(ask("plan=PRO"), null);
+  assert.equal(ask(""), null);
+});
+
+test("a Stripe price that charges other than the plan shows is never sold", async () => {
+  for (const amount of [1999, 0]) {
+    const { d, calls } = deps({ stored: "cus_1", amounts: { pro_usage_monthly: amount } });
+    await assert.rejects(checkoutDestination(user, "pro", BASE, d), /charges \d+ usd, not the 2000 usd cents the plan shows/);
+    assert.deepEqual(calls, [], "no checkout opened, none expired");
+  }
+  // Cents compare rounded: a plan at $19.99 matches a 1999-cent price.
+  const pro = PLANS.pro as { priceUsd: number | null };
+  const was = pro.priceUsd;
+  pro.priceUsd = 19.99;
+  try {
+    assert.doesNotThrow(() => assertPlanPrice("pro", { unitAmountCents: 1999, currency: "usd" }));
+  } finally {
+    pro.priceUsd = was;
+  }
+  const missing = deps({ stored: "cus_1", amounts: {} });
+  await assert.rejects(checkoutDestination(user, "max", BASE, missing.d), /charges nothing usd, not the 10000/);
+  // The same minor units in another currency (€20) is another price.
+  const euros = deps({ stored: "cus_1", currency: "eur" });
+  await assert.rejects(checkoutDestination(user, "pro", BASE, euros.d), /charges 2000 eur/);
 });

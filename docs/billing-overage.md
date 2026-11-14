@@ -9,7 +9,10 @@ test mode.
 
 The reconciler's cron (`app/api/billing/reconcile/route.ts`, every 2
 minutes) runs `runOverageBilling` (`lib/billing/overage.deps.ts`) when
-`RUNTIME_BILLING=stripe`:
+`RUNTIME_BILLING=stripe` and `RUNTIME_OVERAGE_BILLING=on`. It stays off until
+the Stripe side is set up (the webhook events and key permissions in
+`docs/deploy-cloudflare.md`); usage limits, alerts and the start gate work
+either way, and overage just isn't charged:
 
 - **Report**, at most every 10 minutes (lease `overage-report`): for each org
   on a plan with overage, its overage for the period is priced from

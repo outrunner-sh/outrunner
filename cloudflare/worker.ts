@@ -56,6 +56,9 @@ interface Env {
   /** "stripe" to sell plans (lib/billing/mode.ts), with the two Stripe keys
    *  below; unset, everyone is on Free. */
   RUNTIME_BILLING?: string;
+  /** "on" bills overage to Stripe (lib/billing/overage.ts), once Stripe is
+   *  set up for it (docs/billing-overage.md); unset, it isn't. */
+  RUNTIME_OVERAGE_BILLING?: string;
   /** "0" stops the orphan sweep deleting boxes from before deployment
    *  labels; unset, it does (below). */
   ORPHAN_SWEEP_UNLABELLED?: string;
@@ -325,6 +328,8 @@ export class OutrunnerControlPlane extends Container<Env> {
       // "stripe" sells plans, and the app refuses to start without the Stripe
       // keys then; "off" (the default here) puts everyone on Free.
       RUNTIME_BILLING: env.RUNTIME_BILLING || "off",
+      // "on" bills overage to Stripe; off until Stripe is set up for it.
+      RUNTIME_OVERAGE_BILLING: env.RUNTIME_OVERAGE_BILLING || "off",
       NEXT_PUBLIC_SUPABASE_URL: env.NEXT_PUBLIC_SUPABASE_URL,
       NEXT_PUBLIC_SUPABASE_ANON_KEY: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
       SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,

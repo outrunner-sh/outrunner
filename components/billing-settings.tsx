@@ -5,11 +5,13 @@ import { PageHeader } from "@/components/page-layout";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { BillingIntervalToggle, PlanIncludes, PlanPrice, planPrice } from "@/components/plan-parts";
+import { PlanIncludes, PlanPrice } from "@/components/plan-parts";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
 import { InlineMessage, Notice } from "@/components/ui/notice";
 import { stripePage } from "@/lib/billing/client";
 import { type BillingInterval, type Plan, PLANS } from "@/lib/billing/plans";
+import { formatUsd, INCLUDED_CENTS_PER_VCPU_HOUR, OVERAGE_CENTS_PER_VCPU_HOUR } from "@/lib/billing/usage";
+import { BOX_SIZES } from "@/lib/runtime/box-sizes";
 import { isDesktopApp } from "@/lib/is-desktop";
 
 /** The subscription the plan comes from, as the page shows it. */
@@ -27,13 +29,14 @@ const CONFIRM_EVERY_MS = 2_000;
 
 /**
  * Settings → Billing: the user's plan and what it includes, and Stripe's own
- * pages to start, change or cancel one. `prices` is null where plans aren't
- * sold (billing off); a price Stripe didn't give is left out.
+ * pages to start, change or cancel one. Prices and rates come from plans.ts
+ * and usage.ts, so the page never waits on Stripe. `forSale` is false where
+ * plans aren't sold (billing off).
  */
 export function BillingSettings({
   plan,
   subscription,
-  prices,
+  forSale,
   hasCustomer,
   checkout,
   org = null,
@@ -42,12 +45,11 @@ export function BillingSettings({
   org?: { name: string; personal: boolean; admin: boolean } | null;
   plan: Plan;
   subscription: ShownSubscription | null;
-  prices: Record<string, number> | null;
+  forSale: boolean;
   hasCustomer: boolean;
   checkout: "success" | "canceled" | "error" | null;
 }) {
   const router = useRouter();
-  const [interval, setBillingInterval] = useState<BillingInterval>(subscription?.interval ?? "month");
   const [pending, setPending] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -155,41 +157,78 @@ export function BillingSettings({
         {failed === "portal" && error ? <InlineMessage>{error}</InlineMessage> : null}
       </div>
 
-      {org && !org.admin ? null : prices ? (
+      {org && !org.admin ? null : forSale ? (
         <div className="space-y-4">
-          <BillingIntervalToggle interval={interval} onChange={setBillingInterval} />
           <div className="grid gap-3 sm:grid-cols-2">
             {(["pro", "max"] as const).map((id) => {
               const offered = PLANS[id];
-              const price = planPrice(prices, id, interval);
+              const price = offered.priceUsd;
               const current = plan.id === id;
               return (
                 <div key={id} className="space-y-3 rounded-lg border border-border/60 p-4">
                   <div className="flex items-baseline justify-between gap-2">
                     <p className="text-sm font-medium text-foreground">{offered.label}</p>
-                    {price !== undefined ? <PlanPrice usd={price} interval={interval} /> : null}
+                    {price !== null ? <PlanPrice usd={price} /> : null}
                   </div>
                   <PlanIncludes plan={offered} />
                   <LoadingButton
                     status={status(id)}
-                    disabled={current || price === undefined}
+                    disabled={current || price === null}
                     labels={{
                       idle: current ? "Current plan" : plan.id === "free" ? `Upgrade to ${offered.label}` : `Switch to ${offered.label}`,
                       pending: "Opening Stripe…",
                     }}
-                    onClick={() => void go(id, "/api/billing/checkout", { plan: id, interval })}
+                    onClick={() => void go(id, "/api/billing/checkout", { plan: id })}
                   />
                   {failed === id && error ? <InlineMessage>{error} Nothing was charged.</InlineMessage> : null}
                 </div>
               );
             })}
           </div>
+          <RatesTable />
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">Plans aren&apos;t for sale on this server.</p>
       )}
 
     </section>
+  );
+}
+
+/** A box's per-minute price at `centsPerVcpuHour`: "$0.004". */
+function perMinute(cpu: number, centsPerVcpuHour: number): string {
+  return `$${((cpu * centsPerVcpuHour) / 6000).toFixed(3)}`;
+}
+
+/** Per-minute rates by box size, included and past the included usage. */
+function RatesTable() {
+  const pro = formatUsd(PLANS.pro.usage.includedUsd * 100);
+  const max = formatUsd(PLANS.max.usage.includedUsd * 100);
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium text-foreground">Per-minute rates</p>
+      <table className="w-full max-w-md text-left text-xs">
+        <thead className="text-muted-foreground">
+          <tr>
+            <th className="py-1 pr-4 font-normal">Box</th>
+            <th className="py-1 pr-4 font-normal">Included</th>
+            <th className="py-1 font-normal">After included usage</th>
+          </tr>
+        </thead>
+        <tbody className="text-foreground">
+          {BOX_SIZES.map((size) => (
+            <tr key={size.id}>
+              <td className="py-1 pr-4">{`${size.label} (${size.cpu} vCPU, ${size.memoryGb} GB)`}</td>
+              <td className="py-1 pr-4">{perMinute(size.cpu, INCLUDED_CENTS_PER_VCPU_HOUR)} / min</td>
+              <td className="py-1">{perMinute(size.cpu, OVERAGE_CENTS_PER_VCPU_HOUR)} / min</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-xs text-muted-foreground">
+        {`Boxes are billed only while they run, at least a minute a session. Pro includes ${pro} and Max ${max} of usage a month; set a limit in Settings → Org → Usage.`}
+      </p>
+    </div>
   );
 }
 

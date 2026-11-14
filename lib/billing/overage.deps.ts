@@ -22,6 +22,7 @@ import {
 } from "@/lib/billing/overage";
 import { type PaidPlanId, PLANS } from "@/lib/billing/plans";
 import { stripe } from "@/lib/billing/stripe";
+import { optionalEnv } from "@/lib/env";
 import { usageCost, vcpuHoursUsed } from "@/lib/billing/usage";
 
 const REPORT_LEASE_SECONDS = 9 * 60;
@@ -124,6 +125,13 @@ export const overageDeps: OverageDeps = {
   },
   log: (message, error) => (error === undefined ? console.warn(message) : console.error(message, error)),
 };
+
+/** Whether the deployment bills overage: off until RUNTIME_OVERAGE_BILLING
+ *  is "on", so a Stripe account not yet set up for it (prices, webhook
+ *  events, key permissions) is never charged through. */
+export function overageBillingOn(): boolean {
+  return optionalEnv("RUNTIME_OVERAGE_BILLING")?.trim() === "on";
+}
 
 export type OverageRun = { reported: OverageReport | null; charged: OverageReport | null };
 

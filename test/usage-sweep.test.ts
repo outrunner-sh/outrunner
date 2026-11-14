@@ -66,7 +66,7 @@ test("each state does what it says to running boxes: pause where usage stops the
     ["overage is billed, not paused", standingOf(PLANS.pro, 1000), [], null],
     ["unpaid refuses starts but pauses nothing", standingOf(PLANS.pro, 10, none, unpaid), [], null],
     ["at the admins' limit", standingOf(PLANS.pro, 400, { limitUsd: 30, alertThresholds: [] }), ["sb-1", "sb-2"], /usage limit of \$30\.00 is reached.*an admin can raise the limit/],
-    ["the trial's credit spent", standingOf(PLANS.free, 100), ["sb-1", "sb-2"], /the free trial's \$10\.00 of cloud usage is used up\. Its files are kept; subscribe to keep going\.$/],
+    ["the trial's credit spent", standingOf(PLANS.free, 1000), ["sb-1", "sb-2"], /the free trial's \$100\.00 of cloud usage is used up\. Its files are kept; subscribe to keep going\.$/],
     ["a contract's usage spent", standingOf(PLANS.enterprise, 1000), ["sb-1", "sb-2"], /Enterprise plan's \$120\.00 .* it can start again next period\.$/],
   ];
   for (const [what, account, paused, reason] of cases) {
@@ -104,14 +104,14 @@ test("each threshold crossed is emailed once, for personal orgs too, and never f
 });
 
 test("the trial's alerts are once ever: keyed to the trial's period", async () => {
-  const w = world(standingOf(PLANS.free, 70, { limitUsd: null, alertThresholds: [80] }));
+  const w = world(standingOf(PLANS.free, 700, { limitUsd: null, alertThresholds: [80] }));
   await sweepOrgUsage(w.deps);
   assert.deepEqual(w.emailed, [80]);
   assert.deepEqual(w.periods, [TRIAL_PERIOD.start]);
 });
 
 test("an owner exempt from plan limits keeps their box; the org's others pause", async () => {
-  const w = world(standingOf(PLANS.free, 100));
+  const w = world(standingOf(PLANS.free, 1000));
   w.deps.exempt = async (ownerId) => ownerId === "u-1";
   const report = await sweepOrgUsage(w.deps);
   assert.deepEqual(w.paused, ["sb-2"]);
@@ -119,7 +119,7 @@ test("an owner exempt from plan limits keeps their box; the org's others pause",
 });
 
 test("a box that won't pause doesn't stop the others", async () => {
-  const w = world(standingOf(PLANS.free, 100));
+  const w = world(standingOf(PLANS.free, 1000));
   w.deps.pause = async (box) => {
     if (box.sandboxId === "sb-1") throw new Error("gone");
     w.paused.push(box.sandboxId);
@@ -130,9 +130,9 @@ test("a box that won't pause doesn't stop the others", async () => {
 });
 
 test("an account whose standing can't be read fails alone", async () => {
-  const w = world(standingOf(PLANS.free, 100), new Set(), [{ kind: "team", orgId: "o-1" }, { kind: "team", orgId: "o-2" }]);
+  const w = world(standingOf(PLANS.free, 1000), new Set(), [{ kind: "team", orgId: "o-1" }, { kind: "team", orgId: "o-2" }]);
   let calls = 0;
-  const account = standingOf(PLANS.free, 100);
+  const account = standingOf(PLANS.free, 1000);
   w.deps.standing = async () => {
     calls += 1;
     if (calls === 1) throw new Error("controls unreadable");
@@ -166,7 +166,7 @@ test("an alert whose email didn't go is taken back, to be tried again; none is c
 });
 
 test("an email that throws gives its alert back, and the pause is still looked at", async () => {
-  const w = world(standingOf(PLANS.free, 100, { limitUsd: null, alertThresholds: [80] }));
+  const w = world(standingOf(PLANS.free, 1000, { limitUsd: null, alertThresholds: [80] }));
   w.deps.emailAdmins = async () => {
     throw new Error("database blip");
   };
@@ -178,7 +178,7 @@ test("an email that throws gives its alert back, and the pause is still looked a
 });
 
 test("where boxes can't be paused, running ones run on", async () => {
-  const w = world(standingOf(PLANS.free, 100));
+  const w = world(standingOf(PLANS.free, 1000));
   w.deps.canPause = false;
   await sweepOrgUsage(w.deps);
   assert.deepEqual(w.paused, []);
