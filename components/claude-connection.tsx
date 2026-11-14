@@ -39,12 +39,21 @@ export function ClaudeConnection({
   meta,
   onChange,
   active = true,
+  orgId,
 }: {
+  orgId?: string;
   meta: ClaudeTokenMeta;
   onChange: (meta: ClaudeTokenMeta) => void;
   /** Whether the card is on screen: on the web, it watches for the CLI only then. */
   active?: boolean;
 }) {
+  const endpoint = orgId ? `/api/orgs/${orgId}/claude` : "/api/settings/claude";
+  const readSubscription = () => requestJson<ClaudeTokenMeta>(endpoint, {
+    has: (d) => typeof d.connected === "boolean", fallback: "Couldn't check whether Claude is connected.",
+  });
+  const saveSubscription = useCallback((token: string) => requestJson<ClaudeTokenMeta>(endpoint, {
+    method: "PUT", body: { token }, has: (d) => typeof d.connected === "boolean", fallback: "Could not save the token.",
+  }), [endpoint]);
   const [busy, setBusy] = useState(false);
   // Watching for the CLI to finish after the browser opened. Kept apart from
   // `busy` so Cancel and the code fallback stay usable for the whole wait.
@@ -79,7 +88,7 @@ export function ClaudeConnection({
     setCode("");
     // A save means the login finished, whatever the approval window was doing.
     setExpired(false);
-  }, [onChange]);
+  }, [onChange, saveSubscription]);
 
   // The login attempt the page is following. Cancel, Disconnect and a new
   // Connect move it on, so an older loop stops polling, saving or touching the
@@ -206,7 +215,7 @@ export function ClaudeConnection({
     setBusy(true);
     try {
       onChange(
-        await requestJson<ClaudeTokenMeta>("/api/settings/claude", {
+        await requestJson<ClaudeTokenMeta>(endpoint, {
           method: "DELETE",
           has: (d) => typeof d.connected === "boolean",
           fallback: "Could not disconnect.",
@@ -218,7 +227,7 @@ export function ClaudeConnection({
     } finally {
       setBusy(false);
     }
-  }, [stopLogin, onChange]);
+  }, [stopLogin, onChange, endpoint]);
 
   const { connected } = meta;
 
@@ -235,7 +244,7 @@ export function ClaudeConnection({
               <span className="text-muted-foreground">None saved</span>
             )}
           </DetailRow>
-          <DetailRow term="Billing">Your Claude plan</DetailRow>
+          <DetailRow term="Billing">{orgId ? "The organization’s Claude plan" : "Your Claude plan"}</DetailRow>
           <DetailRow term="Applies to">Workspaces created or restored after connecting</DetailRow>
         </Details>
       </div>
@@ -280,6 +289,7 @@ export function ClaudeConnection({
         <div className="space-y-3">
           <ClaudeFromTerminal
             key={reconnecting}
+            orgId={orgId}
             before={meta}
             check={readSubscription}
             saveToken={saveSubscription}
@@ -339,24 +349,6 @@ export function ClaudeConnection({
       ) : null}
     </div>
   );
-}
-
-/** The subscription as the server has it now. */
-function readSubscription(): Promise<ClaudeTokenMeta> {
-  return requestJson<ClaudeTokenMeta>("/api/settings/claude", {
-    has: (d) => typeof d.connected === "boolean",
-    fallback: "Couldn't check whether Claude is connected.",
-  });
-}
-
-/** Save a pasted `claude setup-token` token. */
-function saveSubscription(token: string): Promise<ClaudeTokenMeta> {
-  return requestJson<ClaudeTokenMeta>("/api/settings/claude", {
-    method: "PUT",
-    body: { token },
-    has: (d) => typeof d.connected === "boolean",
-    fallback: "Could not save the token.",
-  });
 }
 
 /** How long the CLI keeps waiting for the browser, counted down to the second. */

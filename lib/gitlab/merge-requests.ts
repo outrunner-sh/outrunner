@@ -7,7 +7,7 @@ function projectPath(ref: string): string {
 }
 
 type MergeRequest = {
-  iid: number; web_url: string; title: string; target_branch: string;
+  iid: number; web_url: string; title: string; target_branch: string; source_branch?: string;
   source_project_id: number; target_project_id: number;
   state: "opened" | "closed" | "merged" | "locked";
   draft?: boolean; work_in_progress?: boolean; sha: string;
@@ -53,7 +53,8 @@ export async function mergeRequestStatus(input: { token: string; repoFullName: s
       mergeableState: mergeStates[mr.detailed_merge_status ?? ""] ?? "blocked", headSha: mr.sha, checks,
     },
     details: {
-      title: mr.title, baseRef: mr.target_branch, additions: null, deletions: null,
+      title: mr.title, baseRef: mr.target_branch, headRef: mr.source_branch ?? null,
+      fromFork: mr.source_project_id !== mr.target_project_id, additions: null, deletions: null,
       checkRuns: pipeline ? [{ name: "GitLab pipeline", status: checks.pending ? "in_progress" : "completed", conclusion: checks.pending ? null : checks.failing ? "failure" : "success", url: pipeline.web_url ?? null }] : [],
     },
   };

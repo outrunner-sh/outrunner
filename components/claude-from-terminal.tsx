@@ -43,6 +43,7 @@ function useOrigin(): string {
  */
 export function ClaudeFromTerminal({
   before,
+  orgId,
   check,
   saveToken,
   onLanded,
@@ -50,6 +51,7 @@ export function ClaudeFromTerminal({
   next,
   onSaving,
 }: {
+  orgId?: string;
   before: ClaudeTokenMeta;
   /** The subscription as the server has it now. */
   check: () => Promise<ClaudeTokenMeta>;
@@ -71,6 +73,7 @@ export function ClaudeFromTerminal({
   // null when it can't be, and then goes without --account.
   const [account, setAccount] = useState<string | null>();
   useEffect(() => {
+    if (orgId) return;
     void createSupabaseBrowserClient()
       .auth.getSession()
       .then(
@@ -83,9 +86,9 @@ export function ClaudeFromTerminal({
           setAccount(null);
         },
       );
-  }, []);
+  }, [orgId]);
   const origin = useOrigin();
-  const command = account === undefined ? null : connectClaudeCommand(RUNNERS[manager][1], origin, account ?? undefined);
+  const command = orgId ? "claude setup-token" : account === undefined ? null : connectClaudeCommand(RUNNERS[manager][1], origin, account ?? undefined);
 
   // What was in place as this opened, kept: the page's own copy moves on.
   const [baseline] = useState(before);
@@ -127,8 +130,8 @@ export function ClaudeFromTerminal({
 
   return (
     <div className="space-y-3">
-      <p className="text-muted-foreground text-sm">Run the CLI and connect your Claude Code account</p>
-      <div role="tablist" aria-label="Package manager" className="flex gap-4 text-xs">
+      <p className="text-muted-foreground text-sm">{orgId ? "Run this command, then paste the token below to connect the organization’s Claude account" : "Run the CLI and connect your Claude Code account"}</p>
+      {!orgId && <div role="tablist" aria-label="Package manager" className="flex gap-4 text-xs">
         {RUNNERS.map(([name], index) => (
           <button
             key={name}
@@ -141,7 +144,7 @@ export function ClaudeFromTerminal({
             {name}
           </button>
         ))}
-      </div>
+      </div>}
       <div className="bg-muted/40 border-border/60 flex items-center gap-2 rounded-md border px-3 py-2.5">
         <Terminal className="text-amber-500 size-3.5 shrink-0" />
         <code className={cn("flex-1 font-mono text-xs", !command && "text-muted-foreground")}>{command ?? "…"}</code>
@@ -160,8 +163,8 @@ export function ClaudeFromTerminal({
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
         </button>
       </div>
-      <p className="text-muted-foreground text-xs">Claude will give you a code to paste into your terminal. {next}</p>
-      {pasting ? (
+      <p className="text-muted-foreground text-xs">{orgId ? "Approve in your browser, then paste the token printed in your terminal here." : "Claude will give you a code to paste into your terminal."} {next}</p>
+      {pasting || orgId ? (
         <SecretForm
           placeholder="Paste the token from claude setup-token"
           // Saved here, so it's the one: no need to tell it from the one before.
