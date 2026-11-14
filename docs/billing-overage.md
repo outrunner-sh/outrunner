@@ -36,7 +36,10 @@ for what it does, so a retried or repeated run changes nothing.
 ## Checking it in test mode
 
 With test-mode keys on staging and a Pro subscription bought through
-Checkout (card `4242 4242 4242 4242`):
+Checkout (card `4242 4242 4242 4242`). The leases run on real time, not the
+test clock: to make the next tick report or charge at once, delete the
+lease's row (`delete from billing_leases where name in ('overage-report',
+'overage-charge');`) before each step.
 
 1. In the Stripe dashboard, attach a **test clock** to the customer
    (Billing → Test clocks) before subscribing, or make a new customer on one.
@@ -44,7 +47,7 @@ Checkout (card `4242 4242 4242 4242`):
    the org, and wait for a reconcile tick. The customer gets a pending invoice
    item "Cloud usage overage, ..." equal to the org's overage on Settings → Org
    → Usage.
-3. Push the overage past $50, then advance the clock a day. The next tick
+3. Push the overage past $50 and clear the leases. The next tick
    makes, finalizes and pays an invoice with `kind=overage`.
 4. Change the customer's card to `4000 0000 0000 0341` (attaches, then
    declines) and repeat step 3. `invoice.payment_failed` arrives, Settings →
