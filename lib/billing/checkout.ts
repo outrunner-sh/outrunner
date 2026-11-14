@@ -4,7 +4,7 @@
  * touches Outrunner. The I/O is behind {@link CheckoutDeps}.
  */
 
-import { type BillingInterval, LOOKUP_KEYS } from "@/lib/billing/plans";
+import { LOOKUP_KEYS, PLANS } from "@/lib/billing/plans";
 import { stillBills } from "@/lib/billing/subscriptions";
 
 /** The org a plan is bought for, and the admin buying it. */
@@ -26,7 +26,8 @@ export type CheckoutDeps = {
    *  every one, including any Outrunner doesn't store (a price it doesn't
    *  sell, one made in Stripe's dashboard). */
   subscriptionStatuses(customerId: string): Promise<string[]>;
-  priceIdFor(lookupKey: string): Promise<string>;
+  /** The active price with `lookupKey`: its id, and what it charges. */
+  priceFor(lookupKey: string): Promise<{ id: string; unitAmountCents: number | null }>;
   createCheckoutSession(input: {
     customerId: string;
     priceId: string;
@@ -64,12 +65,13 @@ export async function ensureCustomer(buyer: CheckoutBuyer, deps: CheckoutDeps): 
  * copy, which leaves out subscriptions to prices Outrunner doesn't sell. A
  * new checkout expires any older one still open, so two tabs can't each
  * start a subscription. Stripe sends the user back to `returnPath`: Billing,
- * or onboarding for a new user who bought from a link.
+ * or onboarding for a new user who bought from a link. Plans are sold
+ * monthly, at the price plans.ts sets and the pages show: a Stripe price that
+ * charges anything else is refused, never sold.
  */
 export async function checkoutDestination(
   buyer: CheckoutBuyer,
   plan: "pro" | "max",
-  interval: BillingInterval,
   baseUrl: string,
   deps: CheckoutDeps,
   returnPath: string = BILLING_PATH,
@@ -79,11 +81,12 @@ export async function checkoutDestination(
   if ((await deps.subscriptionStatuses(customerId)).some(stillBills)) {
     return { url: await deps.createPortalSession(customerId, back), kind: "portal" };
   }
-  const priceId = await deps.priceIdFor(LOOKUP_KEYS[plan][interval]);
+  const price = await deps.priceFor(LOOKUP_KEYS[plan]);
+  assertPlanPrice(plan, price.unitAmountCents);
   await deps.expireOpenCheckouts(customerId);
   const url = await deps.createCheckoutSession({
     customerId,
-    priceId,
+    priceId: price.id,
     orgId: buyer.orgId,
     userId: buyer.userId,
     // Stripe fills in {CHECKOUT_SESSION_ID}; braces are kept as they are.
@@ -93,14 +96,23 @@ export async function checkoutDestination(
   return { url, kind: "checkout" };
 }
 
-/** The plan and interval a link asks for (`?plan=pro|max&interval=month|year`):
- *  null plan for one Outrunner doesn't sell; monthly unless it says yearly. */
-export function requestedPlan(params: URLSearchParams): { plan: "pro" | "max" | null; interval: BillingInterval } {
+/** Refuse a Stripe price for `plan` that charges anything but the price
+ *  plans.ts sets, which every page shows: checkout and the price move
+ *  (scripts/migrate-usage-prices.ts) never sell one. */
+export function assertPlanPrice(plan: "pro" | "max", unitAmountCents: number | null): void {
+  const expected = (PLANS[plan].priceUsd ?? 0) * 100;
+  if (unitAmountCents !== expected) {
+    throw new Error(
+      `Stripe's price ${LOOKUP_KEYS[plan]} charges ${unitAmountCents ?? "nothing"} cents, not the ${expected} the plan shows.`,
+    );
+  }
+}
+
+/** The plan a link asks for (`?plan=pro|max`); null for one Outrunner
+ *  doesn't sell. An `interval` from older links is ignored: plans are monthly. */
+export function requestedPlan(params: URLSearchParams): "pro" | "max" | null {
   const plan = params.get("plan");
-  return {
-    plan: plan === "pro" || plan === "max" ? plan : null,
-    interval: params.get("interval") === "year" ? "year" : "month",
-  };
+  return plan === "pro" || plan === "max" ? plan : null;
 }
 
 /** The customer portal, to manage the org's plan; null for an org with no
