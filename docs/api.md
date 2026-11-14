@@ -82,7 +82,7 @@ counted apart. The budget refills continuously: every answer carries
 | GET | `/api/v1/openapi.json` | This API as an OpenAPI 3.1 document (no key needed) |
 | GET | `/api/v1/me` | Who the key acts as, in which org, with what role |
 | GET | `/api/v1/members` | The org's members and their roles (emails for its admins) |
-| GET | `/api/v1/usage` | The org's cloud hours and their controls |
+| GET | `/api/v1/usage` | The org's cloud usage in cents (`usage`: `state`, `includedCapCents`, `includedCents`, `overageCents`, `totalCents`, `limitCents`, `periodEnd`, null for the trial) and its admins' `controls` (`limitUsd`, `alertThresholds`) |
 | GET | `/api/v1/models` | The models the key's maker can start a session on, with their efforts and the default |
 | GET | `/api/v1/environments` | The org's projects (one or several repositories each) |
 | GET | `/api/v1/environments/{id}` | A project in full: instructions, scripts, hooks, variables' names, files' paths |

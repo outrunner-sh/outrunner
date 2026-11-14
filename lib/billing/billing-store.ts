@@ -8,6 +8,7 @@
 
 import type { SubscriptionRecord } from "@/lib/billing/subscriptions";
 import type { BillingInterval, PaidPlanId } from "@/lib/billing/plans";
+import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -161,4 +162,21 @@ export async function entitlingSubscriptions(): Promise<SubscriptionRecord[]> {
     rows.push(...data);
     if (data.length < 1000) return rows.map(fromRow);
   }
+}
+
+/** Since when an overage payment on one of the org's subscriptions has been
+ *  failing, the earliest; null while all are paid up (and before the column,
+ *  20261114120000_usage_limits_in_dollars.sql, is there). */
+export async function overageUnpaidSince(orgId: string): Promise<Date | null> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("subscriptions")
+    .select("overage_unpaid_since")
+    .eq("org_id", orgId)
+    .not("overage_unpaid_since", "is", null)
+    .order("overage_unpaid_since")
+    .limit(1);
+  if (error && probeStatus(error) === "outdated") return null;
+  if (error) throw error;
+  const since = data?.[0]?.overage_unpaid_since;
+  return since ? new Date(since) : null;
 }

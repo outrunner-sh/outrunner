@@ -1,11 +1,12 @@
 /**
- * The database side of cloud hours: compute_intervals, the reconciler's lease,
+ * The database side of cloud usage: compute_intervals, the reconciler's lease,
  * and the computers it looks after. Service role throughout: the reconciler
  * runs for every user at once, with no one signed in, and the tables are
  * service-role only.
  */
 
 import type { Interval, Period } from "@/lib/billing/hours";
+import { LONGEST_INTERVAL_MS } from "@/lib/billing/reconcile";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { sandboxOf } from "@/lib/runtime/sandbox-choice";
 import type { ProviderName } from "@/lib/runtime/types";
@@ -167,8 +168,12 @@ export async function intervalsFor(
   const open = await allRows((from, to) =>
     before().is("ended_at", null).order("id").range(from, to),
   );
+  // Bounded below too: an ended interval overlapping the period started at
+  // most LONGEST_INTERVAL_MS before it, so the index on (org_id or
+  // owner_id, started_at) reads that stretch, not every interval ever.
   const closed = await allRows((from, to) =>
     before()
+      .gt("started_at", new Date(period.start.getTime() - LONGEST_INTERVAL_MS).toISOString())
       .not("ended_at", "is", null)
       .gt("ended_at", period.start.toISOString())
       .order("id")
