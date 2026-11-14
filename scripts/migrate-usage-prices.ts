@@ -44,6 +44,7 @@ for await (const subscription of stripe.subscriptions.list({ status: "all", limi
     itemId: item.id,
     lookupKey: item.price.lookup_key ?? null,
     interval: item.price.recurring?.interval ?? null,
+    cancelAtPeriodEnd: subscription.cancel_at_period_end,
   });
   if (!move) continue;
   const line = `${move.subscriptionId} (${item.price.lookup_key} → ${move.toLookupKey}, proration ${move.proration})`;

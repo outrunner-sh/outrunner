@@ -21,6 +21,8 @@ export type SubscriptionPrice = {
   itemId: string;
   lookupKey: string | null;
   interval: string | null;
+  /** Set to end at its period's close: it lapses on its own. */
+  cancelAtPeriodEnd: boolean;
 };
 
 export type PriceMove = {
@@ -34,9 +36,11 @@ export type PriceMove = {
 };
 
 /** How `subscription` moves; null for one that needn't (on a new price
- *  already, a price Outrunner doesn't sell, or past billing). */
+ *  already, a price Outrunner doesn't sell, past billing, or set to cancel:
+ *  moving a yearly one would re-anchor it and end it a month out, the rest
+ *  of its year left as credit it can never spend). */
 export function priceMoveFor(subscription: SubscriptionPrice): PriceMove | null {
-  if (!stillBills(subscription.status)) return null;
+  if (!stillBills(subscription.status) || subscription.cancelAtPeriodEnd) return null;
   const plan = (["pro", "max"] as const).find((p) => LEGACY_LOOKUP_KEYS[p].includes(subscription.lookupKey ?? ""));
   if (!plan) return null;
   return {

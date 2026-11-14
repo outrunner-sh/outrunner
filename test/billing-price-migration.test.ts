@@ -10,6 +10,7 @@ const sub = (over: Partial<SubscriptionPrice>): SubscriptionPrice => ({
   itemId: "si_1",
   lookupKey: "pro_monthly",
   interval: "month",
+  cancelAtPeriodEnd: false,
   ...over,
 });
 
@@ -35,6 +36,7 @@ test("monthly legacy prices move from the next renewal; yearly ones now, with th
     ["past due still bills, so it moves", { status: "past_due" }, { subscriptionId: "sub_1", itemId: "si_1", plan: "pro", toLookupKey: "pro_usage_monthly", proration: "none" }],
     ["already on the new price", { lookupKey: "pro_usage_monthly" }, null],
     ["canceled", { status: "canceled" }, null],
+    ["set to cancel: lapses on its own, not re-anchored", { lookupKey: "max_yearly", interval: "year", cancelAtPeriodEnd: true }, null],
     ["a price Outrunner doesn't sell", { lookupKey: "enterprise_custom" }, null],
   ];
   for (const [what, over, move] of cases) assert.deepEqual(priceMoveFor(sub(over)), move, what);
