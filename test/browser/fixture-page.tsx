@@ -23,6 +23,9 @@ import { PullRequestChip } from "@/components/missions/mission-parts";
 import { HomeSessionRoute, NewSessionRoute } from "@/components/new-session-route";
 import { OrgGitHubSettings } from "@/components/org-github";
 import { OrgMembersSettings } from "@/components/org-members";
+import { OrgKeysSettings } from "@/components/org-keys";
+import { KEY_PROVIDER_IDS } from "@/lib/providers/registry";
+import type { ProviderKeys } from "@/components/api-key-card";
 import { OrgGeneralSettings } from "@/components/org-settings";
 import { PageLayout } from "@/components/page-layout";
 import { ProjectSettings } from "@/components/project-settings";
@@ -260,7 +263,13 @@ export function FixturePage() {
   return (
     <>
       <span hidden data-testid="fixture-ready" data-ready={ready} />
-      {view === "github" ? (
+      {view === "agent-keys" ? (
+        <SettingsFrame>
+          <OrgKeysSettings org={org}
+            initial={Object.fromEntries(KEY_PROVIDER_IDS.map((id) => [id, { connected: false, hint: null, updatedAt: null }])) as ProviderKeys}
+            initialClaude={{ connected: state === "connected", last4: state === "connected" ? "1234" : null, updatedAt: null }} />
+        </SettingsFrame>
+      ) : view === "github" ? (
         <SettingsFrame>
           <OrgGitHubSettings
             org={{ ...org, name: "neevcloud" }} configured

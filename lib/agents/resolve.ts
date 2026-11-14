@@ -23,7 +23,7 @@ import { providerSettingsHref } from "@/lib/settings-links";
 
 /** A credential handed to the agent for one session (POST /workspaces/{id}/auth). */
 export type SessionCredential = {
-  kind: "claude-oauth-token" | "anthropic-api-key" | "openai-api-key" | "codex-access-token" | "codex-account";
+  kind: "claude-account" | "claude-oauth-token" | "anthropic-api-key" | "openai-api-key" | "codex-access-token" | "codex-account";
   token: string;
 };
 
@@ -41,6 +41,8 @@ export type ResolvedAuth = { method: AuthMethodId | null; credential: SessionCre
  *  opened only when asked for. */
 export type AgentAuthState = {
   choice: AuthMethodId | null;
+  /** A server broker may replace a direct provider credential for cloud sessions. */
+  sessionCredential?(credential: AuthCredential): SessionCredential | null;
   /** The credential, or null when it isn't saved or can't be opened. */
   open(credential: AuthCredential): string | null;
 };
@@ -159,7 +161,7 @@ export async function resolveAgentAuth(
   if (way.credential.kind === "own-login") return { method, credential: null, picked: picked !== null };
   const token = state.open(way.credential);
   if (!token) return cantRun(method, "not-connected");
-  return { method, credential: sessionCredential(way.credential, token), picked: picked !== null };
+  return { method, credential: state.sessionCredential?.(way.credential) ?? sessionCredential(way.credential, token), picked: picked !== null };
 }
 
 /**

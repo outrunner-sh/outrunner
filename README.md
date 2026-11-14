@@ -36,6 +36,31 @@ Phase 0 (architecture validated end-to-end on Daytona) and Milestone 1
 needs repo **Metadata: Read**, **Contents: Read/write**, and **Pull requests:
 Read/write**. Keep it out of `NEXT_PUBLIC_*` and commits.
 
+## Shared coding agent accounts
+
+Personal → Coding agents keeps your Claude and Codex subscription connections
+private. Organization → Coding agents lets admins connect either agent for
+members’ cloud sessions; members can see connection status. Claude connects in
+the Mac app or by pasting the token from `claude setup-token` on the web. Codex
+uses its existing organization login flow.
+
+Cloud sessions use personal subscription credentials first, then the connected
+organization subscription for the same agent if the provider rejects a request
+because its quota is exhausted. The broker retries that rejected request once,
+keeps the conversation and model, and briefly avoids the exhausted account.
+If both accounts are exhausted, the provider error is returned. Authentication,
+network and server errors do not switch accounts. API-key selections keep their
+existing billing behavior; fallback does not switch agents or buy API credits.
+Local Mac sessions continue using personal credentials.
+
+Organization Claude tokens use the existing encrypted `org_provider_keys` store
+under `claude-subscription`; no additional database migration is needed. Deploy
+the web app and a runtime-agent advertising `claude-account` together. Existing
+cloud computers upgrade through the normal capability check before accepting a
+shared Claude connection; reconnect or restore existing sessions to apply newly
+connected accounts. `RUNTIME_BASE_URL` must point to the app’s public origin so
+cloud agents can reach its inference brokers.
+
 ## CLI
 
 `npx outrunner@latest` is the one command a new user pastes into their

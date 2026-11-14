@@ -6,6 +6,7 @@ import { Suspense } from "react";
 import { OrgKeysSettings } from "@/components/org-keys";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
+import { orgClaudeMeta } from "@/lib/claude/store";
 import { getOrgKeyStatuses } from "@/lib/db/org-credentials";
 import { parseProviderPlace } from "@/lib/settings-links";
 import { getOrgContext } from "@/lib/orgs/server";
@@ -43,7 +44,7 @@ async function KeysSection({ searchParams }: { searchParams: Search }) {
       </section>
     );
   }
-  const keys = await getOrgKeyStatuses(org.id);
+  const [keys, claude] = await Promise.all([getOrgKeyStatuses(org.id), orgClaudeMeta(org.id)]);
   const { tab, method } = await searchParams;
-  return <OrgKeysSettings org={org} initial={keys} place={parseProviderPlace(tab, method) ?? undefined} />;
+  return <OrgKeysSettings key={org.id} org={org} initial={keys} initialClaude={claude} place={parseProviderPlace(tab, method) ?? undefined} />;
 }

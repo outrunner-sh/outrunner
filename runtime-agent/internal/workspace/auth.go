@@ -2,7 +2,10 @@ package workspace
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -26,11 +29,13 @@ const (
 	AuthOpenAIAPIKey     = "openai-api-key"
 	AuthCodexAccessToken = "codex-access-token"
 	AuthCodexAccount     = "codex-account"
+	AuthClaudeAccount    = "claude-account"
 )
 
 // authAgent is the agent each kind of credential is for.
 var authAgent = map[string]string{
 	AuthClaudeOAuthToken: AgentClaude,
+	AuthClaudeAccount:    AgentClaude,
 	AuthAnthropicAPIKey:  AgentClaude,
 	AuthOpenAIAPIKey:     AgentCodex,
 	AuthCodexAccessToken: AgentCodex,
@@ -55,12 +60,16 @@ var (
 )
 
 // authKeyEnvs are the variables a session's credential is exported in.
-var authKeyEnvs = []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OUTRUNNER_CODEX_GRANT"}
+var authKeyEnvs = []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OUTRUNNER_CODEX_GRANT", "OUTRUNNER_CLAUDE_GRANT"}
 
 // ValidAuthToken keeps API-key bounds unchanged, while accepting the longer
 // opaque credentials issued for Codex workspace automation. Both go into a
 // shell-sourced file, so whitespace, quotes and backslashes remain forbidden.
 func ValidAuthToken(kind, token string) bool {
+	if kind == AuthClaudeAccount {
+		_, err := claudeAccountEnv(token)
+		return err == nil
+	}
 	if kind != AuthCodexAccessToken && kind != AuthCodexAccount {
 		return claude.ValidGatewayToken(token)
 	}
@@ -85,10 +94,13 @@ func (s *Service) authFiles() keyFiles {
 func authEnvFile(kind, token string) string {
 	quoted := claude.ShellQuote(token)
 	switch kind {
+	case AuthClaudeAccount:
+		env, _ := claudeAccountEnv(token)
+		return env
 	case AuthClaudeOAuthToken:
-		return "unset ANTHROPIC_API_KEY\nexport CLAUDE_CODE_OAUTH_TOKEN=" + quoted + "\n"
+		return "unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN OUTRUNNER_CLAUDE_GRANT\nunset ANTHROPIC_API_KEY\nexport CLAUDE_CODE_OAUTH_TOKEN=" + quoted + "\n"
 	case AuthAnthropicAPIKey:
-		return "unset CLAUDE_CODE_OAUTH_TOKEN\nexport ANTHROPIC_API_KEY=" + quoted + "\n"
+		return "unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN OUTRUNNER_CLAUDE_GRANT\nunset CLAUDE_CODE_OAUTH_TOKEN\nexport ANTHROPIC_API_KEY=" + quoted + "\n"
 	case AuthOpenAIAPIKey:
 		return "unset CODEX_ACCESS_TOKEN\nexport OPENAI_API_KEY=" + quoted + "\n"
 	case AuthCodexAccount:
@@ -121,6 +133,11 @@ func (s *Service) SetAuth(ctx context.Context, workspaceID, kind, token string) 
 	}
 	content := ""
 	if kind != AuthNone {
+		if kind == AuthClaudeAccount {
+			if _, err := claudeAccountEnv(token); err != nil {
+				return err
+			}
+		}
 		content = authEnvFile(kind, token)
 	}
 	if err := s.authFiles().put(workspaceID, content); err != nil {
@@ -160,4 +177,24 @@ func (s *Service) requireAuthEnv(workspaceID string) error {
 		return ErrAuthMissing
 	}
 	return nil
+}
+
+// A Claude broker grant is only accepted for the fixed inference endpoint.
+// Neither URL nor bearer is ever interpolated into an unquoted shell command.
+func claudeAccountEnv(encoded string) (string, error) {
+	var grant struct {
+		URL    string `json:"url"`
+		Bearer string `json:"bearer"`
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if len(encoded) > 16384 || err != nil || json.Unmarshal(raw, &grant) != nil || !ValidAuthToken(AuthCodexAccount, grant.Bearer) {
+		return "", errors.New("invalid Claude connection")
+	}
+	u, err := url.Parse(grant.URL)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "/api/runtime/claude" ||
+		(u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))) {
+		return "", errors.New("invalid Claude broker address")
+	}
+	return "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN\nexport ANTHROPIC_BASE_URL=" + claude.ShellQuote(grant.URL) +
+		"\nexport CLAUDE_CODE_OAUTH_TOKEN=" + claude.ShellQuote(grant.Bearer) + "\nexport OUTRUNNER_CLAUDE_GRANT=" + claude.ShellQuote(encoded) + "\n", nil
 }

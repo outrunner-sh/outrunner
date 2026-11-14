@@ -19,7 +19,7 @@ import {
 } from "@/lib/agents/resolve";
 import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
 import { type AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { AGENT_FEATURE_CODEX_ACCESS_TOKEN, AGENT_FEATURE_CODEX_ACCOUNT } from "@/lib/runtime/agent-protocol";
+import { AGENT_FEATURE_CLAUDE_ACCOUNT, AGENT_FEATURE_CODEX_ACCESS_TOKEN, AGENT_FEATURE_CODEX_ACCOUNT } from "@/lib/runtime/agent-protocol";
 import { SessionKeyRemovedError } from "@/lib/runtime/model-switch";
 import { type RecordedModel, runsOnOwnAccount } from "@/lib/runtime/session-models";
 
@@ -101,7 +101,7 @@ async function readyAgents(client: SessionAuthClient, agent: AgentId, mustTake: 
 /** Whether a session can't do without its credential: any of Codex's, and a
  *  Claude one the user picked (an unpicked one is the box's own). */
 function mustTake(agent: AgentId, auth: ResolvedAuth): boolean {
-  return auth.credential !== null && (agent !== "claude" || auth.picked);
+  return auth.credential !== null && (agent !== "claude" || auth.picked || auth.credential.kind === "claude-account");
 }
 
 /** Make sure the box runs `agent`, and takes the session's credential when it
@@ -115,14 +115,15 @@ export async function readyBox(client: SessionAuthClient, agent: AgentId, auth: 
  *  A Codex workspace token must never be treated as a Platform API key. */
 async function readyCredential(client: SessionAuthClient, auth: ResolvedAuth): Promise<void> {
   const kind = auth.credential?.kind;
-  if (kind !== "codex-access-token" && kind !== "codex-account") return;
-  const feature = kind === "codex-account" ? AGENT_FEATURE_CODEX_ACCOUNT : AGENT_FEATURE_CODEX_ACCESS_TOKEN;
+  if (kind !== "claude-account" && kind !== "codex-access-token" && kind !== "codex-account") return;
+  const feature = kind === "claude-account" ? AGENT_FEATURE_CLAUDE_ACCOUNT : kind === "codex-account" ? AGENT_FEATURE_CODEX_ACCOUNT : AGENT_FEATURE_CODEX_ACCESS_TOKEN;
   const supports = async () => (await client.features?.() ?? []).includes(feature);
   if (await supports()) return;
   if (client.upgrade) {
     await client.upgrade();
     if (await supports()) return;
   }
+  if (kind === "claude-account") throw outdated("can't use shared Claude connections and automatic subscription fallback");
   throw outdated(`can't sign Codex in with ${kind === "codex-account" ? "a ChatGPT account" : "a workspace access token"}`);
 }
 
@@ -144,7 +145,7 @@ export async function restoreSignedIn(
 ): Promise<void> {
   const agents = await readyAgents(client, agent, mustTake(agent, auth));
   await readyCredential(client, auth);
-  const fallsBack = agent === "claude" && !auth.picked;
+  const fallsBack = agent === "claude" && !auth.picked && auth.credential?.kind !== "claude-account";
   if (!auth.credential || (agents === null && fallsBack)) {
     await restore();
     return;
