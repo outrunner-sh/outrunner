@@ -49,7 +49,7 @@ test("a period's open item holds its overage less what's already invoiced", () =
 function world(owed: Record<string, number>, items: OverageItem[] = [], accounts?: OverageAccount[]) {
   const calls: string[] = [];
   const keys: string[] = [];
-  const account: OverageAccount = { orgId: "o-1", customerId: "cus_1", plan: PLANS.pro, periods: [NOVEMBER], ended: false };
+  const account: OverageAccount = { orgId: "o-1", customerId: "cus_1", plan: PLANS.pro, period: NOVEMBER, tail: null, ended: false };
   const deps: OverageDeps = {
     accounts: async () => accounts ?? [account],
     overageCents: async (_a, period) => owed[period.start.toISOString()] ?? 0,
@@ -102,16 +102,23 @@ test("a run repeated with the same usage makes the same calls, with the same key
   assert.deepEqual(first.keys, again.keys);
 });
 
-test("the period just ended is reported too, on its own item", async () => {
+test("the period just ended keeps its item up to date, but never gets a new one", async () => {
   const w = world({ [oct]: 900, [nov]: 300 }, [item("ii_old", 700, "draft", OCTOBER)]);
-  w.account.periods = [OCTOBER, NOVEMBER];
+  w.account.tail = OCTOBER;
   await reportOverage(w.deps, NOW);
   assert.deepEqual(w.calls, ["set ii_old 900", "create 2026-11-12 300"]);
+
+  // A subscription in its first days: the month before it began has no item
+  // of its own, and an earlier plan covered its usage, so nothing is billed.
+  const fresh = world({ [oct]: 50_000, [nov]: 300 });
+  fresh.account.tail = OCTOBER;
+  await reportOverage(fresh.deps, NOW);
+  assert.deepEqual(fresh.calls, ["create 2026-11-12 300"]);
 });
 
 test("one account failing doesn't stop the others", async () => {
-  const bad: OverageAccount = { orgId: "o-bad", customerId: "cus_bad", plan: PLANS.pro, periods: [NOVEMBER], ended: false };
-  const good: OverageAccount = { orgId: "o-good", customerId: "cus_good", plan: PLANS.pro, periods: [NOVEMBER], ended: false };
+  const bad: OverageAccount = { orgId: "o-bad", customerId: "cus_bad", plan: PLANS.pro, period: NOVEMBER, tail: null, ended: false };
+  const good: OverageAccount = { orgId: "o-good", customerId: "cus_good", plan: PLANS.pro, period: NOVEMBER, tail: null, ended: false };
   const w = world({ [nov]: 500 }, [], [bad, good]);
   const items = w.deps.items;
   w.deps.items = async (customer, since) => {
@@ -142,14 +149,16 @@ test("pending overage is charged at $50 or more, or any amount once the subscrip
   await chargeOverage(w.deps, NOW);
   assert.deepEqual(w.keys, ["overage-charge:ii_a,ii_b:5000"]);
 
-  // Ended: pending items from before its last period count too (a yearly
-  // subscription's earlier months), read from the start of time.
+  // Every pending item counts, read from the start of time: a yearly
+  // subscription's earlier months add up past $50 with this month's $20.
   const sinces: Date[] = [];
-  const yearly = world({}, [item("ii_old", 400, "pending", OCTOBER)]);
-  yearly.account.ended = true;
+  const AUGUST: Period = { start: at("2026-08-12T00:00:00Z"), end: at("2026-09-12T00:00:00Z") };
+  const SEPTEMBER: Period = { start: at("2026-09-12T00:00:00Z"), end: at("2026-10-12T00:00:00Z") };
+  const months = [item("ii_aug", 3000, "pending", AUGUST), item("ii_sep", 3000, "pending", SEPTEMBER), item("ii_oct", 2000, "pending", OCTOBER)];
+  const yearly = world({}, months);
   yearly.deps.items = async (_c, since) => {
     sinces.push(since);
-    return since.getTime() === 0 ? [item("ii_old", 400, "pending", OCTOBER)] : [];
+    return since.getTime() === 0 ? months : months.slice(2);
   };
   await chargeOverage(yearly.deps, NOW);
   assert.deepEqual(yearly.calls, ["charge o-1"]);
@@ -176,10 +185,11 @@ function subscription(over: Partial<SubscriptionRecord> = {}): SubscriptionRecor
 
 test("accounts: the current period on a plan with overage, and the one before just after a renewal", () => {
   assert.deepEqual(overageAccountsFrom([subscription()], NOW), [
-    { orgId: "o-1", customerId: "cus_1", plan: PLANS.pro, periods: [NOVEMBER], ended: false },
+    { orgId: "o-1", customerId: "cus_1", plan: PLANS.pro, period: NOVEMBER, tail: null, ended: false },
   ]);
   const justRenewed = new Date(NOVEMBER.start.getTime() + REPORT_TAIL_MS - 1);
-  assert.deepEqual(overageAccountsFrom([subscription()], justRenewed)[0].periods, [OCTOBER, NOVEMBER]);
+  const renewed = overageAccountsFrom([subscription()], justRenewed)[0];
+  assert.deepEqual([renewed.tail, renewed.period], [OCTOBER, NOVEMBER]);
   assert.deepEqual(overageAccountsFrom([subscription({ plan: "enterprise" })], NOW), []);
 });
 
@@ -187,7 +197,7 @@ test("accounts: a subscription that ended is charged what's left of its last per
   const canceled = subscription({ status: "canceled", currentPeriodStart: OCTOBER.start, currentPeriodEnd: OCTOBER.end });
   const soon = new Date(OCTOBER.end.getTime() + 60 * 60_000);
   assert.deepEqual(overageAccountsFrom([canceled], soon), [
-    { orgId: "o-1", customerId: "cus_1", plan: PLANS.pro, periods: [OCTOBER], ended: true },
+    { orgId: "o-1", customerId: "cus_1", plan: PLANS.pro, period: OCTOBER, tail: null, ended: true },
   ]);
   assert.deepEqual(overageAccountsFrom([canceled], new Date(OCTOBER.end.getTime() + REPORT_TAIL_MS)), []);
   // Past due beyond the grace: no plan now, but Stripe may still bill it, so

@@ -35,9 +35,14 @@ export type OverageAccount = {
   orgId: string;
   customerId: string;
   plan: Plan;
-  /** The periods to report, oldest first: the one just ended, within
-   *  REPORT_TAIL_MS of its end, and the one now (none once it has ended). */
-  periods: Period[];
+  /** The period to report: the one now, or once the subscription has
+   *  ended, its last. */
+  period: Period;
+  /** The period just ended, within REPORT_TAIL_MS of a renewal: its item is
+   *  brought up to date, but none is made for it, since the account may not
+   *  have had this subscription then (a new one's first days would bill
+   *  usage an earlier plan covered). */
+  tail: Period | null;
   /** Whether its subscription has ended: what's pending is charged now,
    *  whatever the amount. */
   ended: boolean;
@@ -93,12 +98,15 @@ export async function reportOverage(deps: OverageDeps, now: Date): Promise<Overa
   for (const account of await deps.accounts(now)) {
     report.accounts += 1;
     try {
-      if (account.periods.length === 0) continue;
-      const items = await deps.items(account.customerId, account.periods[0].start);
-      for (const period of account.periods) {
+      const items = await deps.items(account.customerId, (account.tail ?? account.period).start);
+      const periods = [...(account.tail ? [{ period: account.tail, tail: true }] : []), { period: account.period, tail: false }];
+      for (const { period, tail } of periods) {
         const periodStart = period.start.toISOString();
+        const mine = items.filter((i) => i.periodStart === periodStart);
+        // A tail with no item is a period this account never reported.
+        if (tail && mine.length === 0) continue;
         const overage = await deps.overageCents(account, period, now);
-        const { open, targetCents, invoicedCents } = openItemTarget(overage, items.filter((i) => i.periodStart === periodStart));
+        const { open, targetCents, invoicedCents } = openItemTarget(overage, mine);
         // Keyed by what the call does, so a retry of it is the same call:
         // an item set to an amount; a period's next item after what's
         // already invoiced.
@@ -134,12 +142,10 @@ export async function chargeOverage(deps: OverageDeps, now: Date): Promise<Overa
   for (const account of await deps.accounts(now)) {
     report.accounts += 1;
     try {
-      if (account.periods.length === 0) continue;
-      // Ended: every pending item, not just the last period's. A yearly
-      // subscription's earlier months are pending too, and with no renewal
-      // coming, only this charge would ever invoice them.
-      const since = account.ended ? new Date(0) : account.periods[0].start;
-      const pending = (await deps.items(account.customerId, since)).filter((i) => i.state === "pending");
+      // Every pending item, not just this period's: the invoice pulls them
+      // all in, and a yearly subscription's earlier months are pending too
+      // (with none coming once it has ended, only this would invoice them).
+      const pending = (await deps.items(account.customerId, new Date(0))).filter((i) => i.state === "pending");
       const cents = pending.reduce((sum, i) => sum + i.amountCents, 0);
       if (cents <= 0 || (cents < CHARGE_AT_CENTS && !account.ended)) continue;
       const ids = pending.map((i) => i.id).sort().join(",");
@@ -164,7 +170,8 @@ export function unpaidSinceOf(openInvoices: readonly { created: Date; attempted:
 /**
  * The accounts overage is billed for, from their orgs' subscriptions: the
  * org's current subscription where its plan bills overage, with the period
- * now and, within REPORT_TAIL_MS of a renewal, the one before; else, for an
+ * now and, within REPORT_TAIL_MS of its start, the one before as a tail;
+ * else, for an
  * org with none current, its latest subscription on such a plan that ended
  * within REPORT_TAIL_MS, for that last period. An org on a plan without
  * overage owes none.
@@ -179,8 +186,8 @@ export function overageAccountsFrom(subscriptions: readonly SubscriptionRecord[]
       const plan = PLANS[current.plan];
       if (!plan.usage.overage) continue;
       const period = allowancePeriod(current, now);
-      const periods = now.getTime() - period.start.getTime() < REPORT_TAIL_MS ? [periodBefore(period), period] : [period];
-      accounts.push({ orgId, customerId: current.stripeCustomerId, plan, periods, ended: false });
+      const tail = now.getTime() - period.start.getTime() < REPORT_TAIL_MS ? periodBefore(period) : null;
+      accounts.push({ orgId, customerId: current.stripeCustomerId, plan, period, tail, ended: false });
       continue;
     }
     const last = subs
@@ -192,7 +199,8 @@ export function overageAccountsFrom(subscriptions: readonly SubscriptionRecord[]
       orgId,
       customerId: last.stripeCustomerId,
       plan: PLANS[last.plan],
-      periods: [allowancePeriod(last, end)],
+      period: allowancePeriod(last, end),
+      tail: null,
       ended: !stillBills(last.status),
     });
   }
