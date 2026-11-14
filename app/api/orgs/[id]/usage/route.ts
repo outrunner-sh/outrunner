@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { recordAudit } from "@/lib/audit/record";
 import { entitlementsFor } from "@/lib/billing/entitlements";
 import { orgUsage } from "@/lib/billing/org-standing";
+import { formatUsd } from "@/lib/billing/usage";
 import { postedLimitUsd, postedThreshold, takesLimit, type AlertThreshold } from "@/lib/billing/usage-controls";
 import { setUsageControls } from "@/lib/db/org-usage";
 import { savingSettings } from "@/lib/http/settings-save";
@@ -36,7 +37,7 @@ export async function PUT(request: Request, context: RouteContext) {
     return NextResponse.json(
       {
         error: takesLimit(plan)
-          ? `Set the limit in dollars and cents, from the plan's included $${plan.usage.includedUsd} up, or none.`
+          ? `Set the limit in dollars and cents, from the plan's included ${formatUsd(plan.usage.includedUsd * 100)} up, or none.`
           : `The ${plan.label} plan stops at its included usage, so it takes no limit.`,
       },
       { status: 400 },
