@@ -51,7 +51,8 @@ export function hoursUsed(intervals: readonly Interval[], period: Period, now: D
   return weightedMs / HOUR_MS;
 }
 
-type Run = { start: number; end: number; cpu: number };
+/** A box's continuous run: one session. Open while any interval in it is. */
+export type Run = { start: number; end: number; cpu: number; open: boolean };
 
 /** Where an interval ends for counting: when it ended; while open, now, or
  *  its last sighting once that is too long ago. */
@@ -67,10 +68,10 @@ function endOf(interval: Interval, now: Date): number {
  * race) counts once. A box keeps its size, so a merged run takes the larger
  * if two disagree. Different boxes' runs overlap and each counts.
  */
-function mergedRuns(intervals: readonly Interval[], now: Date): Run[] {
+export function mergedRuns(intervals: readonly Interval[], now: Date): Run[] {
   const byBox = new Map<string, Run[]>();
   for (const interval of intervals) {
-    const run = { start: interval.startedAt.getTime(), end: endOf(interval, now), cpu: interval.cpu };
+    const run = { start: interval.startedAt.getTime(), end: endOf(interval, now), cpu: interval.cpu, open: interval.endedAt === null };
     if (run.end <= run.start) continue;
     byBox.set(interval.sandboxId, [...(byBox.get(interval.sandboxId) ?? []), run]);
   }
@@ -82,6 +83,7 @@ function mergedRuns(intervals: readonly Interval[], now: Date): Run[] {
       if (run.start <= current.end) {
         current.end = Math.max(current.end, run.end);
         current.cpu = Math.max(current.cpu, run.cpu);
+        current.open = current.open || run.open;
       } else {
         merged.push(current);
         current = { ...run };
