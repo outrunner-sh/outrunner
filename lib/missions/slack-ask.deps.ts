@@ -25,6 +25,7 @@ export async function handleMissionAsk(click: AskClick): Promise<void> {
     name: async (slackUserId) => (await userNames(install.botToken, [slackUserId])).get(slackUserId) ?? slackUserId,
     update: (binding, ts, text, blocks) => updateMessage(install.botToken, { channel: binding.channelId, ts, text, blocks }),
     tell: (binding, threadTs, text) => postEphemeral(install.botToken, { channel: binding.channelId, user: click.user, threadTs, text }),
+    tellAt: (channel, threadTs, text) => postEphemeral(install.botToken, { channel, user: click.user, threadTs, text }),
     askToConnect: async (binding, threadTs) => {
       const secret = optionalEnv("SLACK_SIGNING_SECRET");
       const base = optionalEnv("RUNTIME_BASE_URL");
