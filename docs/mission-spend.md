@@ -217,6 +217,10 @@ nothing granted to `anon` or `authenticated`), as the other Missions tables.
   gap (`unavailable`). If its log is later read on another box (a restore),
   the calls are counted, but the gap stays: the period stays `unavailable`
   rather than claim coverage it can't prove.
+- Compute counts only boxes tied to a family workspace
+  (`runtime_computers.workspace_id`). Time on a project-shared box
+  (`workspace_id` null) isn't counted, so a family that works on one is
+  under-counted by that time.
 
 ## Tests
 
