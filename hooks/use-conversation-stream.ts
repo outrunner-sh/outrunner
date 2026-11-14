@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
@@ -13,6 +13,9 @@ import type { SessionAttachment } from "./use-session-attachment";
 
 export type ConversationStreamState = {
   events: AgentEvent[];
+  /** Looking for the conversation among those kept from before this page,
+   *  which answers within moments: it isn't empty yet, only unknown. */
+  restoring: boolean;
   status: "loading" | "connecting" | "connected" | "disconnected" | "error";
   error: string | null;
   /** Set while the automatic reconnect loop is running after a drop. `attempt`
@@ -59,8 +62,8 @@ const serverReady = () => false;
  * The conversation is kept for the page (lib/session/conversation-cache.ts):
  * a session opened before, or warmed up from the sidebar, shows at once and
  * its stream resumes from the kept cursor. One kept from before a reload
- * (lib/session/kept-conversations.ts) shows at once too, its stream replaying
- * from the start.
+ * (lib/session/kept-conversations.ts) shows as soon as the browser reads it,
+ * long before its box has woken, its stream replaying from the start.
  */
 export function useConversationStream(attachment: SessionAttachment, workspaceId: string): ConversationStreamState {
   const {
@@ -73,39 +76,55 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     refresh,
   } = attachment;
   // Hydration must match the empty server shell. A later client navigation
-  // can take its cached history immediately; a reload restores it before paint.
+  // can take this page's history immediately; one kept from before the page
+  // (or a reload) is read from the browser's store a moment later.
   const hydrated = useSyncExternalStore(subscribeReady, clientReady, serverReady);
   const [kept] = useState(() => hydrated ? CONVERSATIONS.get(workspaceId) : undefined);
   const [events, setEvents] = useState<AgentEvent[]>(kept?.events ?? []);
+  // Not seen by this page: looked for among those kept, and until that
+  // answers the conversation isn't said to be empty, or saved as empty.
+  const [restoring, setRestoring] = useState(!kept);
   const [ws, dispatch] = useReducerState();
   const lastEventIdRef = useRef<string | null>(kept?.lastEventId ?? null);
   // A copy: a sidebar warm-up may still be adding to the kept one.
   const seenIdsRef = useRef<Set<string>>(new Set(kept?.seenIds));
   // The edits taken in, which the stream is told of so it tells only of newer.
   const rewindsRef = useRef<number>(kept?.rewinds ?? 0);
-  const cacheRestored = useRef(hydrated);
-  useLayoutEffect(() => {
-    if (cacheRestored.current) return;
-    cacheRestored.current = true;
-    const cached = CONVERSATIONS.get(workspaceId);
-    if (!cached) return;
-    lastEventIdRef.current = cached.lastEventId;
-    seenIdsRef.current = new Set(cached.seenIds);
-    rewindsRef.current = cached.rewinds ?? 0;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Restore browser-only history after hydration, before paint.
-    setEvents(cached.events);
-  }, [workspaceId]);
+  // Something said on this page's own stream, which a kept copy is older than.
+  const heardRef = useRef(false);
+  useEffect(() => {
+    if (!restoring) return;
+    let live = true;
+    void CONVERSATIONS.restore(workspaceId).then((cached) => {
+      if (!live) return;
+      if (cached && !heardRef.current) {
+        lastEventIdRef.current = cached.lastEventId;
+        seenIdsRef.current = new Set(cached.seenIds);
+        rewindsRef.current = cached.rewinds ?? 0;
+        // Its state, as the stream has said it, is the one to keep.
+        setEvents((now) => {
+          const state = now.filter((event) => event.t === "state");
+          return state.length ? [...cached.events.filter((event) => event.t !== "state"), ...state] : cached.events;
+        });
+      }
+      setRestoring(false);
+    });
+    return () => {
+      live = false;
+    };
+  }, [restoring, workspaceId]);
   // Keep what this page has seen for the next time the session is opened.
   useEffect(() => {
-    // Do not overwrite the saved conversation with the empty hydration shell.
-    if (!hydrated) return;
+    // Do not overwrite the saved conversation with the empty shell it is
+    // about to be restored into.
+    if (!hydrated || restoring) return;
     CONVERSATIONS.set(workspaceId, {
       events,
       lastEventId: lastEventIdRef.current,
       seenIds: seenIdsRef.current,
       rewinds: rewindsRef.current,
     });
-  }, [workspaceId, events, hydrated]);
+  }, [workspaceId, events, hydrated, restoring]);
   const rewind = useCallback((cut: { at: number; uuid: string; rewinds: number }) => {
     // A lower counter belongs to a restored history. Only the stream can
     // reset and replay it; applying that reset locally would erase history
@@ -143,6 +162,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     // URLs (lib/session/kept-streams.ts); else a new one from the cursor.
     const stream = openStream(workspaceId, url, urls, lastEventIdRef.current, {
       onEvent: (event, id) => {
+        if (event.t !== "state") heardRef.current = true;
         // Message/usage events are deduplicated by SSE id. State events use a
         // synthetic id ("0"): they aren't resumable and are re-observed on
         // fresh connects, so we replace the newest state entry instead.
@@ -302,6 +322,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
 
   return {
     events,
+    restoring,
     status,
     error: ws.error ?? attachmentError,
     reconnecting,

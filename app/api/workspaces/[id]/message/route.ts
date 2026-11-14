@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { getOwner } from "@/lib/auth/owner";
 import { resetCiTurnsOfSession } from "@/lib/db/github-loop";
@@ -244,7 +246,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
   // Working, for every client at once, and watched until its turn ends
   // (lib/session/watch.ts): where it stands in the sidebar follows.
-  after(() => watchSent(workspace.id, workspace.ownerId));
+  after(() => watchSent(workspace.id, workspace.ownerId), { where: "watch-sent", workspaceId: workspace.id });
   if (asked && asked !== workspace.mode) await recordWorkspaceMode(workspace.id, workspace.ownerId, asked);
   // A session started from Slack, in step with its thread: what's typed here
   // goes there too, and the reply with it. Not what came from the thread, or

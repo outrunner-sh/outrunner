@@ -77,8 +77,9 @@ function repo(id: number, fullName: string, description: string | null, isPrivat
 
 function project(r: RepositoryListing): Project {
   return {
-    id: `p-${r.githubRepoId}`,
+    id: r.provider === "gitlab" ? `p-gitlab-${r.repositoryId}` : `p-${r.githubRepoId}`,
     githubRepoId: r.githubRepoId,
+    ...(r.provider ? { provider: r.provider, repositoryId: r.repositoryId } : {}),
     fullName: r.fullName,
     owner: r.owner,
     name: r.name,
@@ -86,7 +87,7 @@ function project(r: RepositoryListing): Project {
     private: r.private,
     language: r.language,
     description: r.description,
-    htmlUrl: `https://github.com/${r.fullName}`,
+    htmlUrl: r.provider === "gitlab" ? `https://${r.fullName}` : `https://github.com/${r.fullName}`,
     pushedAt: r.pushedAt,
     linearIssueIds: [],
     orgId: "",
@@ -96,6 +97,8 @@ function project(r: RepositoryListing): Project {
 }
 
 function mockEnv(scenario: Scenario): OnboardingEnv {
+  let gitlab: { login: string; updatedAt: string } | null = null;
+  const gitlabRepos: RepositoryListing[] = [{ ...REPOS[0], githubRepoId: null, provider: "gitlab", repositoryId: 1, fullName: "gitlab.com/acme/platform/app", owner: "acme/platform", name: "app" }];
   const opened = Date.now();
   const status: AgentStatus = {
     claude: {
@@ -140,14 +143,22 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
       };
     },
     useOrg: async () => void (await wait(200)),
-    async repositories() {
+    gitlabConnection: async () => gitlab,
+    async saveGitlabConnection(token) {
+      await wait(500);
+      gitlab = token === null ? null : { login: "sajdakabir", updatedAt: new Date().toISOString() };
+      return gitlab;
+    },
+    async repositories(provider = "github") {
       await wait(700);
+      if (provider === "gitlab") return { repositories: scenario.repos === "none" ? [] : gitlabRepos, connected: [] };
       if (scenario.repos === "github-error") throw new OnboardingError("Your GitHub connection has expired. Reconnect GitHub in Settings → Connections.");
       return { repositories: scenario.repos === "none" ? [] : REPOS, connected: [1] };
     },
-    async connect(ids) {
+    async connect(ids, provider = "github") {
       await wait(600);
-      return REPOS.filter((r) => ids.includes(r.githubRepoId)).map(project);
+      if (provider === "gitlab") return gitlabRepos.filter((r) => ids.includes(r.repositoryId!)).map(project);
+      return REPOS.filter((r) => r.githubRepoId !== null && ids.includes(r.githubRepoId)).map(project);
     },
     finish: async (projectId, runOn) => (await wait(300), newSessionAfterOnboarding(projectId, runOn)),
     skip: async () => (await wait(300), "/"),

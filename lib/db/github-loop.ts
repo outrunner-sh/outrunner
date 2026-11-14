@@ -290,13 +290,19 @@ export async function settleFollowUp(id: string, outcome: string): Promise<void>
   if (updateError) throw updateError;
 }
 
-/** The pull request a session recorded for a branch, the newest. */
-export async function pullForBranch(projectId: string, headBranch: string): Promise<number | null> {
+/** The pull request a session of `orgId` recorded for a branch of the
+ *  project, the newest. Only a session in the org counts: a row is the
+ *  server's own (20261112110000), and the org is checked here too, so one
+ *  can't be attributed to another org's project. */
+export async function pullForBranch(orgId: string, projectId: string, headBranch: string): Promise<number | null> {
+  // One query, inner-joined on the session (pull_requests' (owner_id, workspace_id) foreign
+  // key), so no number of other orgs' rows can hide the org's own.
   const { data, error } = await db()
     .from("pull_requests")
-    .select("github_number")
+    .select("github_number, workspaces!inner(org_id)")
     .eq("project_id", projectId)
     .eq("head_branch", headBranch)
+    .eq("workspaces.org_id", orgId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();

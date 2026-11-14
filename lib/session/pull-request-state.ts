@@ -9,7 +9,10 @@
  * which until now was only found when its page asked.
  */
 
-import { after } from "next/server";
+import { after } from "@/lib/observability/after";
+import { isGitLabRef } from "@/lib/code-providers/repository";
+import { requireGitLabToken } from "@/lib/db/gitlab-connections";
+import { getPullRequestStatus } from "@/lib/code-providers/client";
 
 import { stateOf, type PullRequestEvent, type PullRequestState } from "@/lib/session/pull-request-event";
 import { recordPullRequestEventWith, type PullRequestChange } from "@/lib/session/pull-request-recording";
@@ -52,9 +55,16 @@ export async function checkOpenPullRequests(
   await Promise.all(
     open.map(async (pr) => {
       const project = projectById.get(pr.project_id);
-      const token = project ? await repoToken(project.org_id, project.full_name).catch(() => null) : null;
-      const found = token && project ? await githubGet<{ state?: string; merged?: boolean; merged_at?: string | null }>(token, `/repos/${project.full_name}/pulls/${pr.github_number}`) : null;
-      const state = found ? stateOf(found) : null;
+      let state: PullRequestState | null = null;
+      if (project && isGitLabRef(project.full_name)) {
+        const token = await requireGitLabToken(pr.owner_id).catch(() => null);
+        const status = token ? await getPullRequestStatus({ token, repoFullName: project.full_name, number: pr.github_number }).catch(() => null) : null;
+        state = status?.state ?? null;
+      } else {
+        const token = project ? await repoToken(project.org_id, project.full_name).catch(() => null) : null;
+        const found = token && project ? await githubGet<{ state?: string; merged?: boolean; merged_at?: string | null }>(token, `/repos/${project.full_name}/pulls/${pr.github_number}`) : null;
+        state = found ? stateOf(found) : null;
+      }
       const patch = state && state !== pr.state ? { state, state_at: now, checked_at: now } : { checked_at: now };
       const { data: updated, error: updateError } = await db
         .from("pull_requests")

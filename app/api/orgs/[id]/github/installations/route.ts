@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 
 import { recordAudit } from "@/lib/audit/record";
+import { getGithubConnection } from "@/lib/db/github-connections";
 import { ClaimError, claimInstallation } from "@/lib/db/github-installations";
 import { getInstallation, githubAppConfig } from "@/lib/github/app";
 import { orgCaller } from "@/lib/orgs/routes";
 
 /**
- * Connect an installation to the org, `{ installationId }`, including an
- * installation already connected to another org the admin administers.
+ * Connect an installation to the org, `{ installationId }`, including one
+ * already connected to another org. GitHub must vouch for it: the admin is
+ * its installer, or owns its GitHub account or organization.
  */
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -23,7 +25,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const installation = await getInstallation(config, installationId);
     if (!installation) return NextResponse.json({ error: "GitHub has no such installation." }, { status: 404 });
-    await claimInstallation({ orgId: id, installation, githubId: caller.owner.githubId, userId: caller.owner.id });
+    // The GitHub accounts GitHub has vouched are theirs: their sign-in's, and
+    // the one they connected for repositories.
+    const connected = await getGithubConnection(caller.owner.id).catch(() => null);
+    await claimInstallation({
+      orgId: id,
+      installation,
+      githubIds: [caller.owner.githubId, connected && !connected.broken ? connected.githubUserId : null],
+      userId: caller.owner.id,
+    });
     await recordAudit({
       orgId: id,
       actor: caller.owner,
@@ -35,9 +45,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (error instanceof ClaimError) {
       const message =
         error.reason === "not_installer"
-          ? "Only whoever installed it on GitHub can make its first org connection."
+          ? "Only whoever installed it on GitHub, or an owner of the GitHub account or organization it's installed on, can connect it to an org."
           : error.reason === "not_admin"
-            ? "You must administer this org and an org already connected to this installation."
+            ? "You must administer this org to connect it."
             : "Outrunner hasn't heard of this installation from GitHub.";
       return NextResponse.json({ error: message, code: error.reason }, { status: 409 });
     }

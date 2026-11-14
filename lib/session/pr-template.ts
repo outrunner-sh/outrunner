@@ -13,6 +13,7 @@
  * Any server-side PR creation should build its body from these too.
  */
 
+import { REPOSITORY_HOST_INSTRUCTIONS } from "@/lib/code-providers/gitlab-instructions";
 import type { ProviderName } from "@/lib/runtime/types";
 
 /** What the agent has on its box to show its work. */
@@ -193,6 +194,8 @@ export function prGuide(input: PrFooterInput & { tools: EvidenceTools; baseBranc
   return `# Pull requests
 
 Whenever you open or update a pull request, write it this way.
+
+${REPOSITORY_HOST_INSTRUCTIONS}
 
 ${commitAttributionSection(input.coAuthors)}
 

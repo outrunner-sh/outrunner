@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useState } from "react";
 import { ApiKeyCard, type ProviderKeys } from "@/components/api-key-card";
 import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
+import { ClaudeConnection } from "@/components/claude-connection";
+import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
 import { CodexConnection } from "@/components/codex-connection";
 import { AuthMethodCards } from "@/components/auth-method-cards";
 import { ConnectionStatus } from "@/components/settings-details";
@@ -26,13 +28,21 @@ export function OrgKeysSettings({
   org,
   initial,
   place,
+  initialClaude = { connected: false, last4: null, updatedAt: null },
 }: {
+  initialClaude?: ClaudeTokenMeta;
   org: Org;
   initial: ProviderKeys;
   place?: ProviderPlace;
 }) {
   const [keys, setKeys] = useState(initial);
   const [active, setActive] = useState<ProviderTab>(place?.tab ?? "claude");
+  const [claude, setClaude] = useState(initialClaude);
+  const [claudeMethod, setClaudeMethod] = useState<"subscription" | "api-key">(
+    place?.tab === "claude" && place.method === "api-key"
+      ? "api-key"
+      : "subscription",
+  );
   const admin = org.role === "admin";
   const [codexConnected, setCodexConnected] = useState(false);
   const [codexMethod, setCodexMethod] = useState<"codex-account" | "api-key">(
@@ -61,8 +71,9 @@ export function OrgKeysSettings({
           >
             private personal credentials
           </Link>{" "}
-          keep their existing priority. Sessions on a Mac use your own
-          credentials.
+          are used first. If a subscription reaches its usage limit, cloud
+          sessions automatically try the organization’s subscription for the
+          same agent. Sessions on a Mac use your own credentials.
         </p>
         <p className="text-xs text-muted-foreground">
           A session’s agent can read the key it runs on. Share keys only with
@@ -93,6 +104,7 @@ export function OrgKeysSettings({
           )}
           connected={(id) =>
             (id === "codex" && codexConnected) ||
+            (id === "claude" && claude.connected) ||
             keys[providerFor(id)].connected
           }
         />
@@ -148,14 +160,65 @@ export function OrgKeysSettings({
                 </div>
               )}
               {tab === "claude" && (
-                <p className="text-[13px] text-muted-foreground">
-                  Shared subscription connections for {AGENTS[tab].label} are
-                  not available on this release. You can use a shared{" "}
-                  {PROVIDERS[provider].label} API key here, or connect your
-                  subscription in Personal → Coding agents.
-                </p>
+                <>
+                  <div className="space-y-3">
+                    <h2 className="text-sm font-medium">Authentication</h2>
+                    <AuthMethodCards
+                      methods={AGENTS.claude.methods.filter(
+                        (method) =>
+                          method.id === "subscription" ||
+                          method.id === "api-key",
+                      )}
+                      chosen={null}
+                      shown={claudeMethod}
+                      busy={false}
+                      label="Organization Claude authentication"
+                      onChoose={(method) => {
+                        if (method !== "subscription" && method !== "api-key")
+                          return;
+                        setClaudeMethod(method);
+                        replaceAddressBar(
+                          withProviderMethod(
+                            new URL(window.location.href),
+                            "claude",
+                            method,
+                          ),
+                        );
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Shared with members’ cloud sessions. Subscription fallback
+                      stays within the same coding agent.
+                    </p>
+                  </div>
+                  <div hidden={claudeMethod !== "subscription"}>
+                    {admin ? (
+                      <ClaudeConnection
+                        orgId={org.id}
+                        meta={claude}
+                        onChange={setClaude}
+                        active={
+                          active === "claude" && claudeMethod === "subscription"
+                        }
+                      />
+                    ) : (
+                      <>
+                        <ConnectionStatus connected={claude.connected} />
+                        <p className="text-xs text-muted-foreground">
+                          Only organization admins can change shared
+                          credentials.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </>
               )}
-              <div hidden={tab === "codex" && codexMethod !== "api-key"}>
+              <div
+                hidden={
+                  (tab === "codex" && codexMethod !== "api-key") ||
+                  (tab === "claude" && claudeMethod !== "api-key")
+                }
+              >
                 {admin ? (
                   <ApiKeyCard
                     provider={provider}

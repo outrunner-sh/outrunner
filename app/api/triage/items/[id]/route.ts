@@ -1,4 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { after } from "@/lib/observability/after";
 
 import { getWorkItem, listNotes, ownsSession, updateWorkItem, WorkItemChangeError } from "@/lib/db/work-items";
 import { permissionsFor } from "@/lib/triage/access";

@@ -8,7 +8,7 @@ import {
   getWorkspacePullRequest,
   relinkWorkspacePullRequest,
 } from "@/lib/db/repositories";
-import { findPullRequest, getPullRequestStatus } from "@/lib/github/client";
+import { findPullRequest, getPullRequestStatus } from "@/lib/code-providers/client";
 import { githubErrorResponse } from "@/lib/github/http";
 import { requireGitToken } from "@/lib/github/identity.deps";
 import { supersedingPullRequest } from "@/lib/session/pull-request-status";
@@ -63,6 +63,9 @@ export async function GET(request: Request, context: RouteContext) {
 
   let pullRequest: WorkspacePullRequest | null = recorded;
   if (!pullRequest) {
+    // Only the session's owner records its pull request (the server writes it): anyone else
+    // gets none yet, without asking GitHub on every poll.
+    if (workspace.ownerId !== owner.id) return NextResponse.json({ pullRequest: null, status: null });
     let found;
     try {
       found = await findPullRequest({ token, repoFullName, headBranch: workspace.branch });
@@ -103,8 +106,8 @@ export async function GET(request: Request, context: RouteContext) {
   if (status?.state === "closed") {
     const newest = await findPullRequest({ token, repoFullName, headBranch: workspace.branch }).catch(() => null);
     const next = supersedingPullRequest(pullRequest, status, newest);
-    if (next) {
-      const relinked = await relinkWorkspacePullRequest(pullRequest.id, next).catch((error: unknown) => {
+    if (next && workspace.ownerId === owner.id) {
+      const relinked = await relinkWorkspacePullRequest(pullRequest.id, { workspaceId: workspace.id, ownerId: owner.id }, next).catch((error: unknown) => {
         console.error(`Workspace ${id} pull request could not be relinked`, error);
         return null;
       });

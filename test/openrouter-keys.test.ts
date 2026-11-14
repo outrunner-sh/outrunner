@@ -206,3 +206,12 @@ test("an OpenRouter that can't answer is not a refusal", async () => {
   stubFetch(new Response("down", { status: 503 }));
   await assert.rejects(openRouterAcceptsKey("sk-or-v1-mine"), /503/);
 });
+
+test("OpenRouter keys can be created and updated with no spend limit", async () => {
+  const seen = stubFetch(new Response(JSON.stringify({ key: "test-key", data: { hash: "unlimited" } })));
+  await createUserKey("Max", null);
+  assert.equal(JSON.parse(seen[0].init.body as string).limit, null);
+  const updated = stubFetch(new Response("{}"));
+  await setKeyLimit("unlimited", null);
+  assert.deepEqual(JSON.parse(updated[0].init.body as string), { limit: null });
+});

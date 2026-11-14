@@ -1,7 +1,9 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
+import { after } from "@/lib/observability/after";
+import { cronAuth } from "@/lib/cron/auth";
+import { recordHeartbeat, runCronJob } from "@/lib/cron/heartbeat.deps";
 import { optionalEnv } from "@/lib/env";
-import { bearerMatches } from "@/lib/http/bearer";
 import { runTrackersTick } from "@/lib/trackers/tick";
 
 /**
@@ -11,15 +13,18 @@ import { runTrackersTick } from "@/lib/trackers/tick";
  * the work runs after.
  */
 export async function POST(request: Request) {
-  const secret = optionalEnv("BILLING_CRON_SECRET");
-  if (!secret) return NextResponse.json({ error: "BILLING_CRON_SECRET is not set on this server." }, { status: 503 });
-  if (!bearerMatches(request.headers.get("authorization"), secret)) {
-    return NextResponse.json({ error: "Not allowed." }, { status: 401 });
+  const refused = cronAuth(request);
+  if (refused) return refused;
+  // Not set up is the job done: its heartbeat says it ran.
+  if (!optionalEnv("LINEAR_CLIENT_ID") && !optionalEnv("JIRA_CLIENT_ID")) {
+    after(() => recordHeartbeat("trackers"));
+    return NextResponse.json({ skipped: "No tracker is set up." });
   }
-  if (!optionalEnv("LINEAR_CLIENT_ID") && !optionalEnv("JIRA_CLIENT_ID")) return NextResponse.json({ skipped: "No tracker is set up." });
-  after(async () => {
-    const done = await runTrackersTick();
-    if (done.refreshed || done.failed || done.relayed || done.webhooks) console.log("Trackers tick", done);
-  });
+  after(() =>
+    runCronJob("trackers", async () => {
+      const done = await runTrackersTick();
+      if (done.refreshed || done.failed || done.relayed || done.webhooks) console.log("Trackers tick", done);
+    }),
+  );
   return NextResponse.json({ ticking: true });
 }

@@ -9,6 +9,7 @@
 
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
 import { getPullRequestStatusWithDetails } from "@/lib/github/client";
+import { isGitLabRef } from "@/lib/code-providers/repository";
 import { optionalGitToken } from "@/lib/github/identity.deps";
 import { githubGet } from "@/lib/github/rest";
 import { sessionWorking } from "@/lib/missions/box";
@@ -108,6 +109,7 @@ export async function notePullRequestActivity(activity: PullRequestActivity): Pr
 async function tokenFor(runner: Workspace, repo: string): Promise<string | null> {
   const orgId = runner.orgId;
   if (!orgId) return null;
+  if (isGitLabRef(repo)) return null;
   return (await optionalGitToken(runner.ownerId, { orgId, fullName: repo })) ?? (await repoToken(orgId, repo).catch(() => null));
 }
 
@@ -172,7 +174,7 @@ export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<
         .ilike("full_name", escapeLike(repo));
       if (ownError) throw ownError;
       const orgIds = [...new Set(here.flatMap((r) => (r.orgId ? [r.orgId] : [])))];
-      const projects = await repositoryProjectsWith(db(), (own ?? []).map((p) => p.github_repo_id), orgIds);
+      const projects = await repositoryProjectsWith(db(), (own ?? []).flatMap((p) => p.github_repo_id === null ? [] : [p.github_repo_id]), orgIds);
       sessionBranches = await sessionBranchesAmongWith(db(), projects, heads);
     }
     for (const pull of pulls ?? []) {

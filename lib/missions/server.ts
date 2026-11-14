@@ -51,11 +51,6 @@ export function missionMcpServer(): Promise<McpServer<MissionScope>> {
   return server;
 }
 
-/** Add a tool to every Mission's MCP server, run in that Mission's scope. */
-export async function registerMissionMcpTool(tool: McpTool<MissionScope>): Promise<void> {
-  (await missionMcpServer()).register(tool);
-}
-
 /** Whether a call's Authorization names a Mission's token (`orm_…`), rather
  *  than an API key: which of the two MCP servers /api/mcp answers it with. */
 export function carriesMissionToken(authorization: string | null): boolean {

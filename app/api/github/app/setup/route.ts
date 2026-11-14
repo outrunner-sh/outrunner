@@ -18,13 +18,14 @@ const WAIT_FOR_WEBHOOK_MS = 8_000;
  * Where GitHub sends an org's admin back after installing the App, or after
  * changing which repositories it reaches ("Redirect on update").
  *
- * - From our signed install link: the admin can connect an installation
- *   already used by another org they administer. A first connection needs
- *   the GitHub installer named by the webhook: the admin's GitHub sign-in, or
- *   the GitHub account they connected for repositories (Settings →
- *   Connections, which GitHub vouched for). When neither is, ask them to
- *   authorize the App once on GitHub (app/api/github/app/verify). An
- *   installation id alone grants no access.
+ * - From our signed install link: connecting needs the GitHub installer
+ *   named by the webhook, or an owner of the GitHub account or organization
+ *   it's installed on (lib/github/installation-owner.ts), as one of the
+ *   admin's GitHub accounts: their sign-in, or the one they connected for
+ *   repositories (Settings → Connections, which GitHub vouched for). When
+ *   neither is, ask them to authorize the App once on GitHub
+ *   (app/api/github/app/verify). Administering another org that uses it, or
+ *   an installation id alone, grants no access.
  * - Without a state (an update, or an install begun on GitHub): only an
  *   installation the org has already (the active one, or their personal
  *   org), refreshed. Anything else is sent back to start from Outrunner's link.
@@ -88,18 +89,19 @@ export async function GET(request: Request) {
     // The GitHub accounts GitHub has vouched are theirs: their sign-in's, and
     // the one they connected for repositories.
     const connected = await getGithubConnection(owner.id).catch(() => null);
-    const githubId =
-      [owner.githubId, connected && !connected.broken ? connected.githubUserId : null].find(
-        (id) => id !== null && id === holder?.installerId,
-      ) ?? owner.githubId;
-    // A first connection by another identity: ask GitHub who they are.
-    const clientSecret = appClientSecret();
-    if (holder.orgIds.length === 0 && holder.installerId !== githubId && clientSecret) {
-      const verifyState = signInstallState(config.webhookSecret, { ...state, installationId });
-      return NextResponse.redirect(authorizeUrl(config.clientId, appUrl("/api/github/app/verify", origin), verifyState));
+    const githubIds = [owner.githubId, connected && !connected.broken ? connected.githubUserId : null];
+    try {
+      await claimInstallation({ orgId, installation, githubIds, userId: owner.id });
+    } catch (error) {
+      // Neither GitHub account we know is theirs is its installer or an
+      // owner of its account: ask GitHub who they are, once.
+      const clientSecret = appClientSecret();
+      if (error instanceof ClaimError && error.reason === "not_installer" && clientSecret) {
+        const verifyState = signInstallState(config.webhookSecret, { ...state, installationId });
+        return NextResponse.redirect(authorizeUrl(config.clientId, appUrl("/api/github/app/verify", origin), verifyState));
+      }
+      throw error;
     }
-
-    await claimInstallation({ orgId, installation, githubId, userId: owner.id });
     await recordAudit({
       orgId,
       actor: owner,

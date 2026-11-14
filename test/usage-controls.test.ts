@@ -1,38 +1,53 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { PLANS } from "@/lib/billing/plans";
-import { alertsDue, hoursCap, limitDenial, overLimit, postedLimit } from "@/lib/billing/usage-controls";
+import { connectorPlan, type Plan, PLANS } from "@/lib/billing/plans";
+import { usageCost, usageStanding } from "@/lib/billing/usage";
+import { alertsDue, limitFor, MAX_LIMIT_USD, postedLimitUsd, thresholdsFor, type UsageControls } from "@/lib/billing/usage-controls";
 
-const pro = PLANS.pro; // 100 hours
+const controls = (limitUsd: number | null, alertThresholds: UsageControls["alertThresholds"] = []): UsageControls => ({ limitUsd, alertThresholds });
 
-test("a limit is a share of the plan's hours; none is all of them", () => {
-  assert.equal(hoursCap(pro, { limitPercent: 80, alertThresholds: [] }), 80);
-  assert.equal(hoursCap(pro, { limitPercent: null, alertThresholds: [] }), 100);
+test("a limit applies only on a plan with overage, and never below what the plan includes", () => {
+  assert.equal(limitFor(PLANS.pro, controls(30)), 30);
+  assert.equal(limitFor(PLANS.pro, controls(null)), null);
+  // Saved on Pro, then upgraded to Max: Max's $100 is paid for, so it holds until raised.
+  assert.equal(limitFor(PLANS.max, controls(30)), 100);
+  for (const plan of [PLANS.free, PLANS.enterprise, connectorPlan(50)]) assert.equal(limitFor(plan, controls(500)), null, plan.label);
 });
 
-test("past the admins' limit no box starts; the plan's own limit is the plan's to say", () => {
-  const controls = { limitPercent: 80, alertThresholds: [] };
-  assert.equal(overLimit(pro, controls, 79.9), false);
-  assert.equal(overLimit(pro, controls, 80), true);
-  assert.match(limitDenial(pro, controls, 80)?.error ?? "", /80% of its plan's 100 cloud hours/);
-  // 100% is the plan's own cap: hoursDenial says that one.
-  assert.equal(overLimit(pro, { limitPercent: 100, alertThresholds: [] }, 120), false);
-  assert.equal(overLimit(pro, { limitPercent: null, alertThresholds: [] }, 120), false);
+test("a posted limit is whole cents, from the included usage to the typo guard, on a plan that takes one", () => {
+  const cases: Array<[unknown, Plan, number | null | undefined]> = [
+    [null, PLANS.pro, null],
+    [20, PLANS.pro, 20],
+    [30.5, PLANS.pro, 30.5],
+    [19.99, PLANS.pro, undefined],
+    [99, PLANS.max, undefined],
+    [30.555, PLANS.pro, undefined],
+    [MAX_LIMIT_USD, PLANS.pro, MAX_LIMIT_USD],
+    [MAX_LIMIT_USD + 1, PLANS.pro, undefined],
+    ["30", PLANS.pro, undefined],
+    [Number.NaN, PLANS.pro, undefined],
+    [Number.POSITIVE_INFINITY, PLANS.pro, undefined],
+    [50, PLANS.free, undefined],
+    [null, PLANS.free, null],
+  ];
+  for (const [value, plan, expected] of cases) assert.equal(postedLimitUsd(value, plan), expected, `${String(value)} on ${plan.label}`);
 });
 
-test("each alert crossed and not yet sent is due, lowest first", () => {
-  const controls = { limitPercent: null, alertThresholds: [100, 50, 80] as (50 | 80 | 100)[] };
-  assert.deepEqual(alertsDue(pro, controls, 49, new Set()), []);
-  assert.deepEqual(alertsDue(pro, controls, 85, new Set()), [50, 80]);
-  assert.deepEqual(alertsDue(pro, controls, 85, new Set([50])), [80]);
-  assert.deepEqual(alertsDue(pro, controls, 100, new Set([50, 80])), [100]);
-});
-
-test("a posted limit is a whole percent from 10 to 100, or none", () => {
-  assert.equal(postedLimit(null), null);
-  assert.equal(postedLimit(50), 50);
-  assert.equal(postedLimit(5), undefined);
-  assert.equal(postedLimit(50.5), undefined);
-  assert.equal(postedLimit("50"), undefined);
+test("alerts are shares of the included usage, past 100% only where usage can go past it", () => {
+  assert.deepEqual(thresholdsFor(PLANS.pro), [50, 80, 100, 150, 200]);
+  assert.deepEqual(thresholdsFor(PLANS.free), [50, 80, 100]);
+  const all = controls(null, [200, 50, 150, 80, 100]);
+  const pro = (vcpuHours: number) => usageStanding({ plan: PLANS.pro, cost: usageCost(PLANS.pro, vcpuHours), limitUsd: null, unpaidSince: null });
+  // $20 included: 80 vCPU-hours is $9.60 (48%), 150 is $18 (90%).
+  assert.deepEqual(alertsDue(PLANS.pro, pro(80), all, new Set()), []);
+  assert.deepEqual(alertsDue(PLANS.pro, pro(150), all, new Set()), [50, 80]);
+  assert.deepEqual(alertsDue(PLANS.pro, pro(150), all, new Set([50])), [80]);
+  // $36: $20 included + 88.9 vCPU-hours past it at 18¢ = $16 of overage: 180%.
+  const over = pro(166.667 + 88.889);
+  assert.equal(over.totalCents, 3600);
+  assert.deepEqual(alertsDue(PLANS.pro, over, all, new Set([50, 80])), [100, 150]);
+  // The trial can't pass 100%: a 150% alert saved on a paid plan never fires on it.
+  const trial = usageStanding({ plan: PLANS.free, cost: usageCost(PLANS.free, 1000), limitUsd: null, unpaidSince: null });
+  assert.deepEqual(alertsDue(PLANS.free, trial, all, new Set()), [50, 80, 100]);
 });

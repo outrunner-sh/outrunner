@@ -11,6 +11,8 @@
 import type { AgentAuthChoices } from "@/lib/db/credentials";
 import type { RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
+import type { CodeProvider } from "@/lib/code-providers/repository";
+import type { GitLabConnectionStatus } from "@/lib/gitlab/client";
 
 /** `id` is the account's (Supabase's): what this browser keeps onboarding's
  *  progress under. */
@@ -48,10 +50,10 @@ export type OnboardingStep = "agent" | "repos";
  *  GitHub, or a tab the CLI opened (lib/onboarding/rules.ts resumeAt). */
 export type OnboardingProgress = { step: OnboardingStep; done: OnboardingStep[]; runOn: AgentPick };
 
-/** The user's GitHub repositories, and which are already projects. */
+/** The selected provider's repositories, and which are already projects. */
 export type RepositoryList = {
   repositories: RepositoryListing[];
-  /** GitHub ids of the repositories already connected as projects. */
+  /** Ids within the selected provider. */
   connected: number[];
 };
 
@@ -97,9 +99,12 @@ export type OnboardingEnv = {
   githubAccess(): Promise<GitHubAccess | null>;
   /** Add repositories to this org from now on (the active org). */
   useOrg(orgId: string): Promise<void>;
-  repositories(): Promise<RepositoryList>;
+  gitlabConnection(): Promise<GitLabConnectionStatus | null>;
+  /** Null disconnects; a token connects or replaces the connection. */
+  saveGitlabConnection(token: string | null): Promise<GitLabConnectionStatus | null>;
+  repositories(provider?: CodeProvider): Promise<RepositoryList>;
   /** Connect repositories as projects; every project the user has after. */
-  connect(githubRepoIds: number[]): Promise<Project[]>;
+  connect(repoIds: number[], provider?: CodeProvider): Promise<Project[]>;
 
   /** Finish onboarding; where the first session is started from: the
    *  new-session screen, on the project and the agent picked. */

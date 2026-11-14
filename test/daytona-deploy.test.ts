@@ -11,16 +11,10 @@ import { CLAUDE_CODE_VERSION } from "@/lib/runtime/claude-cli";
 import { CODEX_CLI_VERSION, CODEX_PACKAGE } from "@/lib/runtime/codex-cli";
 
 import {
-  AGENT_BINARY_PATH,
-  AGENT_GZ_PATH,
-  agentLaunchScript,
-  agentPrepScript,
-  bootAgent,
   claudeAgentSupervisorLaunchScript,
   claudeConfigSeedScript,
   claudeInstallScript,
   compressAgent,
-  deployAgent,
   deployClaude,
   deployJcode,
   injectJcodeCreds,
@@ -30,8 +24,6 @@ import {
   jcodePaths,
   ProvisionTimer,
   shellQuote,
-  uploadAgent,
-  waitForAgentHealth,
   type BoxIO,
   type ExecResult,
 } from "@/lib/runtime/daytona/deploy";
@@ -79,26 +71,6 @@ test("compressAgent gzips and round-trips", () => {
   assert.deepEqual(gunzipSync(gz), original);
 });
 
-test("agentPrepScript gunzips then chmods (synchronous, so failures surface)", () => {
-  const script = agentPrepScript();
-  assert.ok(script.includes(`gunzip -f ${AGENT_GZ_PATH}`));
-  assert.ok(script.includes(`chmod 755 ${AGENT_BINARY_PATH}`));
-});
-
-test("agentLaunchScript launches detached with the secret and port", () => {
-  const script = agentLaunchScript("s3cr3t");
-  assert.ok(script.includes("setsid env RUNTIME_AGENT_SECRET='s3cr3t'"));
-  assert.ok(script.includes("PORT=8080"));
-  // Detached and input-closed so it outlives the launch call.
-  assert.ok(script.trim().endsWith("< /dev/null &"));
-});
-
-test("agentLaunchScript injects project secrets as quoted env", () => {
-  const script = agentLaunchScript("k", { CLAUDE_CODE_OAUTH_TOKEN: "tok en", GITHUB_TOKEN: "g" });
-  assert.ok(script.includes("CLAUDE_CODE_OAUTH_TOKEN='tok en'"));
-  assert.ok(script.includes("GITHUB_TOKEN='g'"));
-});
-
 test("ProvisionTimer records ordered stages, total, and fires onStage", async () => {
   let clock = 1000;
   const seen: string[] = [];
@@ -132,89 +104,6 @@ test("ProvisionTimer records a stage even when it throws", async () => {
   assert.equal(timer.timings().stages[0].stage, "agent_boot");
 });
 
-test("uploadAgent uploads the compressed binary to the .gz path", async () => {
-  const box = fakeBox([]);
-  await uploadAgent(box.io, Buffer.from("x".repeat(500)));
-  assert.equal(box.uploads.length, 1);
-  assert.equal(box.uploads[0].path, AGENT_GZ_PATH);
-  assert.ok(box.uploads[0].bytes > 0);
-});
-
-test("bootAgent throws on prep failure and never launches the daemon", async () => {
-  const box = fakeBox([
-    { match: (c) => c.includes("gunzip"), result: { stdout: "gzip: not found", exitCode: 1 } },
-  ]);
-  await assert.rejects(bootAgent(box.io, "s"), /agent prep failed \(exit 1\): gzip: not found/);
-  assert.equal(box.launchCalls.length, 0);
-});
-
-test("bootAgent launches the daemon via the async path after a clean prep", async () => {
-  const box = fakeBox([]);
-  await bootAgent(box.io, "sec", { CLAUDE_CODE_OAUTH_TOKEN: "tok" });
-  assert.equal(box.launchCalls.length, 1);
-  // The launch is wrapped in `bash -lc '<quoted>'`, so assert on markers that
-  // survive shell-quoting (the `=` prefixes and the values themselves).
-  assert.ok(box.launchCalls[0].startsWith("bash -lc "));
-  assert.ok(box.launchCalls[0].includes("setsid env RUNTIME_AGENT_SECRET="));
-  assert.ok(box.launchCalls[0].includes("CLAUDE_CODE_OAUTH_TOKEN="));
-  assert.ok(box.launchCalls[0].includes("tok"));
-});
-
-test("waitForAgentHealth resolves once the probe returns 200", async () => {
-  let probes = 0;
-  const box = fakeBox([
-    {
-      match: (c) => c.includes("http_code") || c.includes("/health"),
-      result: { stdout: "", exitCode: 0 },
-    },
-  ]);
-  // Override exec to fail twice then succeed, and serve the log tail.
-  box.io.exec = async (command) => {
-    if (command.includes("/health")) {
-      probes += 1;
-      return { stdout: probes >= 3 ? "200" : "000", exitCode: 0 };
-    }
-    if (command.includes("cat")) return { stdout: "listening on :8080", exitCode: 0 };
-    return { stdout: "", exitCode: 0 };
-  };
-  const result = await waitForAgentHealth(box.io, { attempts: 5, intervalMs: 1, sleep: noSleep });
-  assert.equal(result.logTail, "listening on :8080");
-  assert.equal(probes, 3);
-});
-
-test("waitForAgentHealth throws with the log tail when the agent never binds", async () => {
-  const box = fakeBox([
-    { match: (c) => c.includes("curl"), result: { stdout: "000", exitCode: 0 } },
-    { match: (c) => c.includes("cat"), result: { stdout: "panic: bad secret", exitCode: 0 } },
-  ]);
-  await assert.rejects(
-    waitForAgentHealth(box.io, { attempts: 2, intervalMs: 1, sleep: noSleep }),
-    /did not bind :8080[\s\S]*panic: bad secret/,
-  );
-});
-
-test("deployAgent runs upload → prep → launch → health in order", async () => {
-  const order: string[] = [];
-  const io: BoxIO = {
-    exec: async (command) => {
-      if (command.includes("gunzip")) order.push("prep");
-      if (command.includes("/health")) {
-        order.push("health");
-        return { stdout: "200", exitCode: 0 };
-      }
-      return { stdout: "", exitCode: 0 };
-    },
-    launch: async () => {
-      order.push("launch");
-    },
-    upload: async () => {
-      order.push("upload");
-    },
-  };
-  await deployAgent(io, Buffer.from("bin"), "secret", { attempts: 1, sleep: noSleep });
-  assert.deepEqual(order.slice(0, 4), ["upload", "prep", "launch", "health"]);
-});
-
 // --- Claude engine deploy --------------------------------------------------
 
 test("claudeInstallScript updates apt before installing tmux + tooling", () => {
@@ -241,10 +130,12 @@ test("claudeInstallScript installs the pinned gh, for the architecture the box r
   const s = claudeInstallScript();
   assert.ok(s.includes(`/v${GH_VERSION}/gh_${GH_VERSION}_linux_$arch.tar.gz`), "installs the pinned gh");
   // uname, not dpkg: the mapping must cover both architectures a box runs on.
-  assert.match(s, /x86_64\) arch=amd64;; aarch64\|arm64\) arch=arm64;;/);
+  // Each with its release's pinned sha256.
+  assert.match(s, /x86_64\|amd64\) arch=amd64 sum=[0-9a-f]{64};; aarch64\|arm64\) arch=arm64 sum=[0-9a-f]{64};;/);
   // Whole release down before anything is unpacked, so a cut connection can't
   // leave a half-written gh on the PATH.
   assert.ok(s.indexOf("-o \"$tmp/gh.tar.gz\"") < s.indexOf("tar -xzf"), "downloads before unpacking");
+  assert.ok(s.indexOf("sha256sum -c") < s.indexOf("tar -xzf"), "checks the download before unpacking");
   assert.ok(s.includes("sudo install -m 0755"), "installs it as root, world-executable");
   assert.ok(s.includes("/usr/local/bin/gh"), "puts gh on every user's PATH");
 });

@@ -1,15 +1,13 @@
+import type { RepositoryRecord } from "@/lib/code-providers/repository";
 import { mapWithConcurrency } from "@/lib/concurrency";
-import { isGitHubFullName, type RepositoryListing } from "@/lib/github/listing";
+import { isGitHubFullName } from "@/lib/github/listing";
 import type { VerifiedEmail } from "@/lib/orgs/domains";
 
 /**
  * A GitHub repository normalized to the fields Runtime persists, plus the
  * owner's kind and avatar the pickers show.
  */
-export type GitHubRepository = RepositoryListing & {
-  defaultBranch: string;
-  htmlUrl: string;
-};
+export type GitHubRepository = RepositoryRecord & { githubRepoId: number };
 
 /** What a listing of the user's repositories found. */
 export type GitHubRepositoryList = {
@@ -537,6 +535,10 @@ export async function getPullRequestStatus(input: {
 export type PullRequestDetails = {
   title: string;
   baseRef: string | null;
+  /** The branch it merges, and whether that's in a fork rather than the
+   *  repository itself (a session can push only to the repository's own). */
+  headRef: string | null;
+  fromFork: boolean;
   additions: number | null;
   deletions: number | null;
   checkRuns: { name: string; status: string; conclusion: string | null; url: string | null }[];
@@ -566,8 +568,8 @@ async function readPullRequest(input: {
     merged?: unknown;
     draft?: unknown;
     mergeable_state?: unknown;
-    head?: { sha?: unknown };
-    base?: { ref?: unknown };
+    head?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } | null };
+    base?: { ref?: unknown; repo?: { full_name?: unknown } | null };
     title?: unknown;
     additions?: unknown;
     deletions?: unknown;
@@ -613,6 +615,9 @@ async function readPullRequest(input: {
     details: {
       title: typeof pr.title === "string" ? pr.title : "",
       baseRef: typeof pr.base?.ref === "string" ? pr.base.ref : null,
+      headRef: typeof pr.head?.ref === "string" ? pr.head.ref : null,
+      // A fork since deleted has no repo: it's no branch of this one either.
+      fromFork: !pr.head?.repo || typeof pr.head.repo.full_name !== "string" || pr.head.repo.full_name !== pr.base?.repo?.full_name,
       additions: typeof pr.additions === "number" ? pr.additions : null,
       deletions: typeof pr.deletions === "number" ? pr.deletions : null,
       checkRuns: runList.slice(0, 50).map((run) => ({

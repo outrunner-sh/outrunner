@@ -18,6 +18,7 @@ import {
   AGENT_FEATURE_CODEX_SECRETS,
   AGENT_FEATURE_ENVIRONMENT,
   AGENT_FEATURE_GIT_CREDENTIAL,
+  AGENT_FEATURE_GITLAB_CREDENTIAL,
   AGENT_FEATURE_INSTRUCTIONS,
   AGENT_FEATURE_SKILLS,
   AGENT_FEATURE_WARM_HOOKS,
@@ -52,6 +53,7 @@ export type SessionSetup = {
   /** Its user works on GitHub as the Outrunner App, whose tokens the box
    *  must ask for as it goes (lib/github/identity.ts). */
   appIdentity?: boolean;
+  gitlab?: boolean;
   /** The coding agent the session runs; Claude where not said. */
   agent?: AgentName;
   /** A signed download URL for the setup's archive. */
@@ -61,6 +63,7 @@ export type SessionSetup = {
 /** Deliver the session's setup; what the box can't take is skipped, said. */
 export async function deliverSessionSetup(client: SetupClient, setup: SessionSetup): Promise<void> {
   const capabilities = cachedFeatures(client);
+  if (setup.gitlab) await requireFeature(capabilities, AGENT_FEATURE_GITLAB_CREDENTIAL, "authenticate with GitLab");
   // First: an upgrade boots the agent again, asking with what it needs to.
   if (setup.appIdentity) await supports(capabilities, AGENT_FEATURE_GIT_CREDENTIAL, "work on GitHub as Outrunner's GitHub App");
 

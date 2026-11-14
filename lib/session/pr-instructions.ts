@@ -11,6 +11,7 @@
  * captured and uploaded before the PR is opened, on a box with a desktop.
  */
 
+import { REPOSITORY_HOST_INSTRUCTIONS } from "@/lib/code-providers/gitlab-instructions";
 import {
   commitAttributionSection,
   type EvidenceTools,
@@ -82,6 +83,8 @@ export function prInstructions(input: {
 ${state.join("\n")}
 
 The user requested a PR.
+
+${REPOSITORY_HOST_INSTRUCTIONS}
 
 Follow these steps to create a PR:
 

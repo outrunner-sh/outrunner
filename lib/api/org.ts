@@ -87,7 +87,7 @@ export async function listAutomationRunsApi(context: ApiContext): Promise<Respon
   return Response.json(paginate(runs.map(snakeKeys), page));
 }
 
-/** GET /usage: the org's cloud hours and its admins' controls on them. */
+/** GET /usage: the org's cloud usage and its admins' controls on it. */
 export async function usageApi(context: ApiContext): Promise<Response> {
   const org = context.caller.orgId;
   const read = await usageGET(appRequest(context.base, `/api/orgs/${org}/usage`, { method: "GET" }), routeParams({ id: org }));

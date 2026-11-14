@@ -13,6 +13,7 @@
  *   remote `sandbox.exec`.
  */
 
+import { repositoryRemote } from "@/lib/code-providers/repository";
 import { makeRedactor } from "@/lib/runtime/redact";
 import type { ChangedFile } from "@/lib/runtime/types";
 
@@ -205,8 +206,7 @@ function authOptions(
   return { env: { ...(base?.env ?? {}), RUNTIME_GIT_TOKEN: token } };
 }
 
-const remoteUrl = (repoFullName: string) =>
-  `https://github.com/${repoFullName}.git`;
+const remoteUrl = repositoryRemote;
 
 // ---------------------------------------------------------------------------
 // Operations
@@ -327,21 +327,6 @@ export async function addWorktree(
     input.branch,
     input.worktreePath,
     input.baseRef,
-  ]);
-}
-
-/** Remove a worktree (and prune its administrative files). */
-export async function removeWorktree(
-  exec: GitExec,
-  input: { repoDir: string; worktreePath: string },
-): Promise<void> {
-  await git(exec, [
-    "-C",
-    input.repoDir,
-    "worktree",
-    "remove",
-    "--force",
-    input.worktreePath,
   ]);
 }
 
