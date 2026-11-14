@@ -184,6 +184,25 @@ function postIn(
   };
 }
 
+/** A Ship the platform refused to start (the plan's concurrent cloud
+ *  sessions, its usage, its box size) is said in the request's thread by the
+ *  server, whatever the Mission does next: a thread must never just go
+ *  quiet. Ships run as the Mission's owner, on the owner's plan. Best
+ *  effort; whether it was queued. */
+export async function tellStartRefused(start: Pick<SlackStart, "reservation" | "binding" | "thread" | "request">, why: string, deps: Pick<MissionSlackDeps, "queue">): Promise<boolean> {
+  if (!start.thread) return false;
+  const text = `:warning: A Ship couldn't start for this request: ${why.replace(/[<>&]/g, "").slice(0, 600)} The work isn't lost: the Mission's owner can free a box or change the plan in Outrunner, and ask again.`;
+  const outcome = await deps.queue(
+    postIn(start.binding, start.thread, {
+      opKey: `refused:${start.binding.missionId}:${start.reservation}`,
+      kind: "card",
+      payload: { chunks: [text] },
+      requester: start.request?.requestedBy ?? start.thread.startedBy,
+    }),
+  );
+  return outcome === "queued";
+}
+
 /** Run one of the Slack tools for the Mission. */
 export async function callSlackTool(mission: Workspace, name: string, args: Record<string, unknown>, deps: MissionSlackDeps | undefined): Promise<ToolResult> {
   if (!deps) return refuse(NOT_ON_CALL);

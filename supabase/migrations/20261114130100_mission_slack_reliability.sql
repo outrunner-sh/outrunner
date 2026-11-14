@@ -1,5 +1,5 @@
 -- Missions on call in Slack, made reliable (docs/missions.md, "Reliability"):
--- on top of 20261112200000_mission_slack.sql, additive only.
+-- on top of 20261114130000_mission_slack.sql, additive only.
 --
 -- - inbound: a Slack event for a Mission is saved before Slack is answered,
 --   and processed under a lease, so a crash between the two loses nothing;
