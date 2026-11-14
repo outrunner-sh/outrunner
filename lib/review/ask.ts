@@ -10,13 +10,27 @@ import { githubGet } from "@/lib/github/rest";
 
 const COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
 const MAX_ROUNDS = 6;
+/** Room for the model's reasoning as well as its answer: the default model
+ *  thinks before it writes, and a cap that thinking fills leaves no answer. */
+const MAX_TOKENS = 8000;
+
+/** OpenRouter refused the call: `status` says why (401 a bad key, 402 no
+ *  credits left, 403 a key's limit reached). */
+export class ModelCallError extends Error {
+  readonly status: number;
+  constructor(status: number, detail: string) {
+    super(`The model call failed (${status}): ${detail}`);
+    this.name = "ModelCallError";
+    this.status = status;
+  }
+}
 
 export type AskMessage = { role: "user" | "assistant"; content: string };
 
 type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 type Message =
   | { role: "system" | "user" | "assistant"; content: string }
-  | { role: "assistant"; content: string | null; tool_calls: ToolCall[] }
+  | { role: "assistant"; content: string | null; tool_calls: ToolCall[]; reasoning_details?: unknown }
   | { role: "tool"; tool_call_id: string; content: string };
 
 const TOOLS = [
@@ -115,27 +129,40 @@ export async function askAboutPull(key: string, pr: PullContext, conversation: A
   const tools = lookups(pr);
   const messages: Message[] = [{ role: "system", content: systemPrompt(pr) }, ...conversation.slice(-12)];
   for (let round = 0; round < MAX_ROUNDS; round++) {
+    const last = round === MAX_ROUNDS - 1;
+    // The tools stay defined on the last round (a conversation with tool
+    // calls in it needs them), but may no longer be called.
+    if (last) messages.push({ role: "user", content: "That's enough reading: answer now from what you have." });
     const response = await fetch(COMPLETIONS_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Outrunner Review" },
       body: JSON.stringify({
         model: agentModel(),
         messages,
-        tools: round === MAX_ROUNDS - 1 ? undefined : TOOLS,
-        max_tokens: 2500,
+        tools: TOOLS,
+        tool_choice: last ? "none" : "auto",
+        reasoning: { effort: "low" },
+        max_tokens: MAX_TOKENS,
         temperature: 0.2,
       }),
       signal: AbortSignal.timeout(90_000),
     });
     const body = (await response.json().catch(() => null)) as {
-      choices?: { message?: { content?: string | null; tool_calls?: ToolCall[] } }[];
+      choices?: { finish_reason?: string; message?: { content?: string | null; tool_calls?: ToolCall[]; reasoning_details?: unknown } }[];
       error?: { message?: string };
     } | null;
-    if (!response.ok) throw new Error(`The model call failed (${response.status}): ${body?.error?.message ?? "no detail"}`);
+    if (!response.ok) throw new ModelCallError(response.status, body?.error?.message ?? "no detail");
     const message = body?.choices?.[0]?.message;
-    const calls = message?.tool_calls ?? [];
-    if (calls.length === 0) return message?.content?.trim() || "I couldn't come up with an answer. Try asking another way.";
-    messages.push({ role: "assistant", content: message?.content ?? null, tool_calls: calls });
+    const calls = last ? [] : (message?.tool_calls ?? []);
+    if (calls.length === 0) {
+      const text = message?.content?.trim();
+      if (text) return text;
+      console.error(`Review: the model wrote no answer (finish: ${body?.choices?.[0]?.finish_reason ?? "unknown"})`);
+      return "I couldn't come up with an answer. Try asking another way.";
+    }
+    // Its reasoning goes back with its tool calls, as Claude expects when
+    // it thinks between them.
+    messages.push({ role: "assistant", content: message?.content ?? null, tool_calls: calls, reasoning_details: message?.reasoning_details });
     for (const call of calls) {
       let result: string;
       try {
