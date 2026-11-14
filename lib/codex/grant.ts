@@ -13,13 +13,14 @@ const grantSchema = z.object({
   org: z.uuid().nullable(),
   key: z.string(),
   generation: z.uuid(),
+  fallback: z.object({ key: z.string(), generation: z.uuid() }).optional(),
 });
 export type CodexGrant = z.infer<typeof grantSchema>;
 /** Scoped broker credentials only. No OAuth token is sent to a computer. */
 export function inferenceGrant(
   user: string,
   org: string | undefined,
-  row: Connection,
+  row: Connection & { fallback?: Connection },
 ): string {
   const origin = optionalEnv("RUNTIME_BASE_URL");
   if (!origin)
@@ -32,6 +33,7 @@ export function inferenceGrant(
       org: org ?? null,
       key: row.key,
       generation: row.generation,
+      ...(row.fallback && { fallback: { key: row.fallback.key, generation: row.fallback.generation } }),
     }),
   );
   return Buffer.from(JSON.stringify({ url, bearer })).toString("base64url");
@@ -66,7 +68,7 @@ export async function accountForSession(
   org: string | undefined,
   personalKey: boolean,
   explicit: boolean,
-): Promise<Connection | null> {
+): Promise<(Connection & { fallback?: Connection }) | null> {
   return selectCodexAccount(user, org, personalKey, explicit, {
     store: codexStore,
     memberRole,

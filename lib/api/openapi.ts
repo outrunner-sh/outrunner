@@ -34,6 +34,7 @@ export const API_OPERATIONS: ApiOperation[] = [
   { method: "GET", path: "/me", summary: "Who the key acts as, in which org, with what role", tag: "Account" },
   { method: "GET", path: "/members", summary: "The org's members and their roles", tag: "Org", query: PAGE },
   { method: "GET", path: "/usage", summary: "The org's cloud usage and its controls", tag: "Org" },
+  { method: "GET", path: "/models", summary: "The models the key's maker can start a session on, with their efforts", tag: "Account" },
 
   { method: "GET", path: "/projects", summary: "The org's repositories the key's maker may start sessions on", tag: "Projects", query: PAGE },
   { method: "GET", path: "/environments", summary: "The org's projects", tag: "Projects", query: PAGE },
@@ -56,7 +57,7 @@ export const API_OPERATIONS: ApiOperation[] = [
   { method: "DELETE", path: "/environments/{id}/mcp-servers/{serverId}", summary: "Remove an MCP server", tag: "MCP servers", orgKey: true },
 
   { method: "POST", path: "/attachments", summary: "Upload a file to send with a prompt or a message", tag: "Sessions", body: "multipart" },
-  { method: "GET", path: "/workspaces", summary: "Sessions, newest first", tag: "Sessions", query: ["status", "source", "user_id", "project_id", ...PAGE] },
+  { method: "GET", path: "/workspaces", summary: "Sessions, newest first", tag: "Sessions", query: ["status", "source", "user_id", "project_id", "pr_url", "include_archived", ...PAGE] },
   { method: "POST", path: "/workspaces", summary: "Start a session", tag: "Sessions", body: "json" },
   { method: "GET", path: "/workspaces/{id}", summary: "A session, and where its turn is", tag: "Sessions" },
   { method: "DELETE", path: "/workspaces/{id}", summary: "Delete a session for good", tag: "Sessions" },
@@ -69,11 +70,20 @@ export const API_OPERATIONS: ApiOperation[] = [
   { method: "GET", path: "/workspaces/{id}/conversation", summary: "Its conversation, a page at a time going back", tag: "Sessions", query: ["before_event", "per_page", "chat_id"] },
   { method: "GET", path: "/workspaces/{id}/wait", summary: "Hold the call until its turn is over or it needs input", tag: "Sessions", query: ["after_event", "timeout", "chat_id"] },
   { method: "GET", path: "/workspaces/{id}/chats", summary: "Its chats, its main one first", tag: "Sessions" },
+  { method: "GET", path: "/workspaces/{id}/runs", summary: "Its runs, one per prompt, newest first", tag: "Sessions", query: ["chat_id", ...PAGE] },
+  { method: "GET", path: "/workspaces/{id}/runs/{runId}", summary: "One run: its status, result, duration and tokens", tag: "Sessions", query: ["chat_id"] },
+  { method: "POST", path: "/workspaces/{id}/runs/{runId}/cancel", summary: "Stop the run going on", tag: "Sessions", query: ["chat_id"] },
+  { method: "GET", path: "/workspaces/{id}/stream", summary: "Its events as they happen, over SSE (Last-Event-ID resumes)", tag: "Sessions", query: ["after_event", "chat_id"] },
+  { method: "GET", path: "/workspaces/{id}/runs/{runId}/stream", summary: "One run's events as they happen, over SSE, ending with its result", tag: "Sessions", query: ["after_event", "chat_id"] },
+  { method: "GET", path: "/workspaces/{id}/usage", summary: "The tokens it spent, in all and by run", tag: "Sessions", query: ["chat_id"] },
   { method: "GET", path: "/workspaces/{id}/changes", summary: "The files it changed, or one file's diff", tag: "Sessions", query: ["path"] },
   { method: "POST", path: "/workspaces/{id}/suspend", summary: "Pause its box", tag: "Sessions" },
   { method: "POST", path: "/workspaces/{id}/resume", summary: "Wake it, or restore it if archived", tag: "Sessions" },
   { method: "POST", path: "/workspaces/{id}/archive", summary: "Snapshot it and let its box go", tag: "Sessions" },
+  { method: "POST", path: "/workspaces/{id}/unarchive", summary: "Restore an archived session (as resume)", tag: "Sessions" },
   { method: "GET", path: "/workspaces/{id}/pull-requests", summary: "Its pull request in each of its repositories", tag: "Sessions" },
+  { method: "GET", path: "/workspaces/{id}/artifacts", summary: "The screenshots and recordings its agent uploaded", tag: "Sessions", query: PAGE },
+  { method: "GET", path: "/workspaces/{id}/artifacts/{artifactId}/download", summary: "A link to one artifact's bytes, for 15 minutes", tag: "Sessions" },
   { method: "GET", path: "/workspaces/{id}/previews", summary: "Its preview links", tag: "Previews" },
   { method: "POST", path: "/workspaces/{id}/previews", summary: "Share one of its servers as a preview link", tag: "Previews", body: "json" },
   { method: "PATCH", path: "/workspaces/{id}/previews/{previewId}", summary: "Change a preview link", tag: "Previews", body: "json" },
@@ -148,9 +158,12 @@ export function openApiSpec(base: string): Record<string, unknown> {
       description: "Start and drive coding sessions, and manage the projects and automations they run on. Each call acts as the key's maker.",
     },
     servers: [{ url: `${base.replace(/\/$/, "")}/api/v1` }],
-    security: [{ bearer: [] }],
+    security: [{ bearer: [] }, { basic: [] }],
     components: {
-      securitySchemes: { bearer: { type: "http", scheme: "bearer", description: "An org or personal API key (or the CLI's token)" } },
+      securitySchemes: {
+        bearer: { type: "http", scheme: "bearer", description: "An org or personal API key (or the CLI's token)" },
+        basic: { type: "http", scheme: "basic", description: "The same key as the user name, with no password" },
+      },
       schemas: {
         Error: {
           type: "object",

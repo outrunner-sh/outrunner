@@ -31,7 +31,11 @@ export async function selectCodexAccount(
   deps: AccessDeps,
 ) {
   const own = await deps.store.read(`personal:${user}`);
-  if (own && own.status !== "disconnected") return own;
+  if (own && own.status !== "disconnected") {
+    if (!org || !(await deps.memberRole(org, user))) return own;
+    const shared = await deps.store.read(`org:${org}`);
+    return shared?.status === "connected" ? { ...own, fallback: shared } : own;
+  }
   if (!org || (personalKey && !explicit)) return null;
   const shared = await deps.store.read(`org:${org}`);
   if (!(await deps.memberRole(org, user))) return null;

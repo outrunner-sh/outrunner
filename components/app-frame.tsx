@@ -9,7 +9,7 @@ import { AppDataProvider, ViewerScopeProvider } from "@/components/app-data";
 import { SessionDeletionDialog } from "@/components/delete-session-dialog";
 import { AppSidebar } from "@/components/app-sidebar";
 import { GitHubConnectionNoticeBanner } from "@/components/github-connection-notice";
-import { ArchiveNotice } from "@/components/archive-session-dialog";
+import { ArchiveNotice, ArchiveUndoToast } from "@/components/archive-session-dialog";
 import { MissionToasts } from "@/components/missions/mission-toasts";
 import { useServerAnswer } from "@/components/server-answer";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -363,6 +363,7 @@ export function AppFrame({
       {chromeSlot}
       {slot}
       <ArchiveNotice />
+      <ArchiveUndoToast />
       <GitHubConnectionNoticeBanner notice={frame?.githubNotice ?? null} />
       <SessionDeletionDialog />
       {/* A Mission's news while the user looks, whatever the sidebar does

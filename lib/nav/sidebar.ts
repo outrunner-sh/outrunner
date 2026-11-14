@@ -15,6 +15,7 @@ import { groupLocalSessions, localSessionLabel } from "@/lib/desktop/local-sessi
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { buildNavGroups, newestFirst, recency, type NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
+import { archiveOffer } from "@/lib/session/archive-control";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { canDestroy, isSettingUp } from "@/lib/session/provisioning";
 import { withoutGeneratedPrefix } from "@/lib/session/branch-name";
@@ -94,11 +95,15 @@ export type SidebarSession = {
   branch: string;
   /** When it was last active, for ordering and the time label. */
   at: string;
-  /** What deleting it would do; null while it cannot be deleted (a cloud
-   *  session still starting, or mid-way through another change). */
+  /** Its hover Archive (lib/session/archive-control.ts): a cloud session with
+   *  work to keep, running or asleep. Archived ones leave the sidebar for
+   *  Settings → Archived sessions. */
+  archivable: boolean;
+  /** What deleting it would do, offered only where there's nothing to archive:
+   *  a session on this Mac, or a cloud one whose setup failed or stalled (or
+   *  on a provider with no Snapshots). Null otherwise, and while it can't be
+   *  deleted (still starting, or mid-way through another change). */
   deletion: SessionDeletion | null;
-  /** Archived: opening it restores it. */
-  archived: boolean;
   /** Started from a Slack thread: its link, for the badge. */
   slackThreadUrl?: string | null;
   /** A cloud session still being set up: Working until the server's read of
@@ -134,6 +139,9 @@ export type SidebarGroup = {
   sessions: SidebarSession[];
 };
 
+/** Statuses whose sessions the sidebar leaves out: deleted, or archived. */
+const GONE: Workspace["status"][] = ["destroying", "destroyed", "archiving", "archived"];
+
 /** How many projects with no session yet the sidebar lists, newest first. */
 export const UNSTARTED_SHOWN = 3;
 
@@ -155,9 +163,11 @@ export function buildSidebarGroups(
 ): SidebarGroup[] {
   const known = new Set(projects.map((p) => p.id));
   // Missions and their Runners are listed in the Missions section instead
-  // (components/missions/sidebar-missions.tsx).
+  // (components/missions/sidebar-missions.tsx). An archived session, or one
+  // being archived, is listed in Settings → Archived sessions: archiving is
+  // how a session leaves the sidebar.
   const sessions = workspaces.filter((w) =>
-    w.kind !== "mission" && !w.parentMissionId && w.status !== "destroying" && w.status !== "destroyed",
+    w.kind !== "mission" && !w.parentMissionId && !GONE.includes(w.status),
   );
   const cloud: SidebarGroup[] = buildNavGroups(projects, sessions).map(({ project, items }) => ({
     key: `cloud:${project.id}`,
@@ -167,20 +177,22 @@ export function buildSidebarGroups(
     // A placeholder group (buildNavGroups' fallbackProject) has no repository
     // behind it to create a session in.
     start: known.has(project.id) ? { kind: "cloud", projectId: project.id } : null,
-    sessions: items.map((w) => ({
-      id: w.id,
-      href: `/workspaces/${w.id}`,
-      title: workspaceLabel(w),
-      branch: w.branch,
-      at: recency(w),
-      // The server's own rule (the lifecycle route's destroy).
-      deletion: canDestroy(w, now) ? { kind: "cloud" } : null,
-      // Being archived reads as archived: the user asked for it, and
-      // opening it waits for the archive either way.
-      archived: w.status === "archived" || w.status === "archiving",
-      ...(w.slackThreadUrl && { slackThreadUrl: w.slackThreadUrl }),
-      ...(isSettingUp(w.status) && { settingUp: true }),
-    })),
+    sessions: items.map((w) => {
+      const archivable = archiveOffer(w)?.can === true;
+      return {
+        id: w.id,
+        href: `/workspaces/${w.id}`,
+        title: workspaceLabel(w),
+        branch: w.branch,
+        at: recency(w),
+        archivable,
+        // The server's own rule (the lifecycle route's destroy), where there's
+        // no work for an archive to keep.
+        deletion: !archivable && canDestroy(w, now) ? { kind: "cloud" as const } : null,
+        ...(w.slackThreadUrl && { slackThreadUrl: w.slackThreadUrl }),
+        ...(isSettingUp(w.status) && { settingUp: true }),
+      };
+    }),
   }));
   const local: SidebarGroup[] = groupLocalSessions(localSessions).map((group) => ({
     key: `local:${group.folder}`,
@@ -196,8 +208,9 @@ export function buildSidebarGroups(
         branch: s.branch,
         // Last use, not creation: comparable with a cloud session's activity.
         at: s.lastActiveAt || s.createdAt,
+        // The server keeps no Snapshot of a session on this Mac.
+        archivable: false,
         deletion: s.inPlace ? { kind: "local-in-place" as const } : { kind: "local-worktree" as const },
-        archived: false,
       }))
       .sort((a, b) => newestFirst(a.at, b.at)),
   }));
