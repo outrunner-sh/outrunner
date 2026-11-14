@@ -217,6 +217,15 @@ Mission's runs are recorded as skipped, a refused one says why.
   at once when the owner makes it, otherwise waiting until they approve it in
   the Mission's Triggers (where they can revoke it too). Unapproved, revoked,
   or with the owner unable to read the project, its runs are refused.
+  **Decision: this, not a per-request check of "the requester".** A webhook
+  or a schedule has no person to check each request against: whoever (or
+  whatever) calls the webhook URL is not an Outrunner account. So access is
+  settled once, where a person is: the owner approves the trigger (and so
+  what it may send), and each run is checked against the owner's access to
+  the project at the time. Slack requests and Linear delegations do have a
+  person, and are checked against theirs on each request. Anyone who holds a
+  webhook's URL (and its signing secret, when set) can send it requests, so
+  the URL is a secret: rotate it from the automation if it leaks.
 - **What a request is.** Recorded (`mission_slack_requests`, with its source,
   text and who it runs for: the approving owner, or a Linear delegator),
   then, on call, a **root post** in the Mission's bound channel (a new
