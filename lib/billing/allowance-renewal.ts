@@ -33,8 +33,9 @@ export function dueForRenewal(
     if (!storedPeriods.has(userId)) continue;
     const current = currentSubscription(theirs, now);
     if (!current) continue;
-    // Unlimited keys are also reconciled within the period: this removes
-    // pre-existing caps on rollout and retries a failed OpenRouter patch.
+    // A plan with unlimited models (none today; Max was until usage-based
+    // billing) is reconciled within the period too: a capped key moving onto
+    // it loses its cap, and a failed OpenRouter patch is retried.
     if (
       PLANS[current.plan].models.usd === null ||
       storedPeriods.get(userId) !== allowancePeriod(current, now).start.toISOString()
