@@ -194,9 +194,13 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
     case "learning.deleted":
       return `deleted the learning ${what}`;
     case "usage.changed": {
-      const limit = text(d.limitPercent);
+      // A dollar limit since 20261114120000_usage_limits_in_dollars.sql; a
+      // share of the plan's hours in entries from before.
+      const usd = typeof d.limitUsd === "number" ? `$${d.limitUsd.toFixed(2)}` : null;
+      const percent = text(d.limitPercent);
+      const limit = usd ?? (percent ? `${percent}%` : "none");
       const alerts = Array.isArray(d.alertThresholds) ? d.alertThresholds.map(text).filter(Boolean) : [];
-      return `set the usage limit to ${limit ? `${limit}%` : "none"}, alerts at ${alerts.length ? alerts.map((a) => `${a}%`).join(", ") : "none"}`;
+      return `set the usage limit to ${limit}, alerts at ${alerts.length ? alerts.map((a) => `${a}%`).join(", ") : "none"}`;
     }
     case "github.installed":
       return `added the GitHub App on ${what}`;

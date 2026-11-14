@@ -33,7 +33,7 @@ export const API_OPERATIONS: ApiOperation[] = [
   { method: "GET", path: "/openapi.json", summary: "This description of the API", tag: "API", open: true },
   { method: "GET", path: "/me", summary: "Who the key acts as, in which org, with what role", tag: "Account" },
   { method: "GET", path: "/members", summary: "The org's members and their roles", tag: "Org", query: PAGE },
-  { method: "GET", path: "/usage", summary: "The org's cloud hours and their controls", tag: "Org" },
+  { method: "GET", path: "/usage", summary: "The org's cloud usage and its controls", tag: "Org" },
 
   { method: "GET", path: "/projects", summary: "The org's repositories the key's maker may start sessions on", tag: "Projects", query: PAGE },
   { method: "GET", path: "/environments", summary: "The org's projects", tag: "Projects", query: PAGE },

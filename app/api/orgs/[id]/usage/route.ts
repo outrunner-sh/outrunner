@@ -1,47 +1,53 @@
 import { NextResponse } from "next/server";
 
 import { recordAudit } from "@/lib/audit/record";
-import { orgHours } from "@/lib/billing/org-hours";
-import { postedLimit, postedThreshold, type AlertThreshold } from "@/lib/billing/usage-controls";
-import { getOrg } from "@/lib/db/orgs";
-import { getUsageControls, setUsageControls } from "@/lib/db/org-usage";
+import { entitlementsFor } from "@/lib/billing/entitlements";
+import { orgUsage } from "@/lib/billing/org-standing";
+import { postedLimitUsd, postedThreshold, takesLimit, type AlertThreshold } from "@/lib/billing/usage-controls";
+import { setUsageControls } from "@/lib/db/org-usage";
 import { savingSettings } from "@/lib/http/settings-save";
 import { orgCaller } from "@/lib/orgs/routes";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**
- * A team org's cloud usage and its admins' controls over it (Settings → Org
- * → Usage; lib/billing/usage-controls.ts). GET, for any member: the controls
- * and where its hours stand. PUT, an admin's: `{ limitPercent: 10..100 |
- * null, alertThresholds: (50 | 80 | 100)[] }`.
+ * An org's cloud usage and its admins' controls over it (Settings → Org →
+ * Usage; lib/billing/usage-controls.ts), personal or team. GET, for any
+ * member: the controls and where its usage stands. PUT, an admin's:
+ * `{ limitUsd: number | null, alertThresholds: (50 | 80 | 100 | 150 | 200)[] }`,
+ * the limit in dollars from the plan's included usage up, on a plan that
+ * bills overage (none on one that doesn't).
  */
 export async function GET(request: Request, context: RouteContext) {
   const { id } = await context.params;
   const caller = await orgCaller(request, id, { admin: false });
   if (caller instanceof Response) return caller;
-  const controls = await getUsageControls(id);
-  return NextResponse.json({ controls, hours: await orgHours(id, controls) });
+  return NextResponse.json(await orgUsage(id));
 }
 
 export async function PUT(request: Request, context: RouteContext) {
   const { id } = await context.params;
   const caller = await orgCaller(request, id, { admin: true });
   if (caller instanceof Response) return caller;
-  if ((await getOrg(id))?.personal) {
-    return NextResponse.json({ error: "Usage controls are for team orgs." }, { status: 409 });
-  }
-  const body = (await request.json().catch(() => null)) as { limitPercent?: unknown; alertThresholds?: unknown } | null;
-  const limitPercent = postedLimit(body?.limitPercent ?? null);
-  if (limitPercent === undefined) {
-    return NextResponse.json({ error: "Set the limit as a whole percent from 10 to 100, or none." }, { status: 400 });
+  const body = (await request.json().catch(() => null)) as { limitUsd?: unknown; alertThresholds?: unknown } | null;
+  const { plan } = await entitlementsFor(id);
+  const limitUsd = postedLimitUsd(body?.limitUsd ?? null, plan);
+  if (limitUsd === undefined) {
+    return NextResponse.json(
+      {
+        error: takesLimit(plan)
+          ? `Set the limit in dollars and cents, from the plan's included $${plan.usage.includedUsd} up, or none.`
+          : `The ${plan.label} plan stops at its included usage, so it takes no limit.`,
+      },
+      { status: 400 },
+    );
   }
   const raw = Array.isArray(body?.alertThresholds) ? body.alertThresholds : null;
   const thresholds = raw?.map(postedThreshold);
   if (!thresholds || thresholds.some((t) => t === null)) {
-    return NextResponse.json({ error: "Choose alerts at 50, 80 or 100%." }, { status: 400 });
+    return NextResponse.json({ error: "Choose alerts at 50, 80, 100, 150 or 200%." }, { status: 400 });
   }
-  const controls = { limitPercent, alertThresholds: [...new Set(thresholds as AlertThreshold[])].sort((a, b) => a - b) };
+  const controls = { limitUsd, alertThresholds: [...new Set(thresholds as AlertThreshold[])].sort((a, b) => a - b) };
   return savingSettings("usage controls", async () => {
     await setUsageControls(id, controls, caller.owner.id);
     await recordAudit({
@@ -49,8 +55,8 @@ export async function PUT(request: Request, context: RouteContext) {
       actor: caller.owner,
       action: "usage.changed",
       resource: { type: "settings", id: "usage" },
-      details: { limitPercent: controls.limitPercent, alertThresholds: controls.alertThresholds },
+      details: { limitUsd: controls.limitUsd, alertThresholds: controls.alertThresholds },
     });
-    return NextResponse.json({ controls, hours: await orgHours(id, controls) });
+    return NextResponse.json(await orgUsage(id));
   });
 }
