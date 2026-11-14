@@ -66,3 +66,5 @@ for await (const subscription of stripe.subscriptions.list({ status: "all", limi
   }
 }
 console.log(apply ? `Moved ${moved}, failed ${failed}.` : "Dry run: nothing changed. Rerun with --apply.");
+// A partial run exits non-zero, so a rerun or a script can tell it from a clean one.
+if (failed > 0) process.exitCode = 1;
