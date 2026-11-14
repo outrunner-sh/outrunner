@@ -122,7 +122,11 @@ export async function reportOverage(deps: OverageDeps, now: Date): Promise<Overa
         // month before. The period now is priced by the plan now, so an
         // upgrade's included usage counts at once, as the upgrade is charged
         // at once, and the item records it, so the tail keeps it too.
-        const recorded = mine.find((i) => i.plan !== null)?.plan;
+        // The open item is the one last priced, so its plan is the period's,
+        // whatever order the items come in; an invoiced item's stands in only
+        // where no open one records a plan.
+        const priced = mine.filter((i) => i.plan !== null);
+        const recorded = priced.find((i) => i.state !== "invoiced")?.plan ?? priced[0]?.plan ?? null;
         const plan = tail && recorded ? PLANS[recorded] : account.plan;
         const overage = await deps.overageCents(account.orgId, plan, period, now);
         const { open, targetCents, invoicedCents } = openItemTarget(overage, mine);

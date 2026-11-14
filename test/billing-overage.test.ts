@@ -275,3 +275,14 @@ test("an item repriced under a new plan records it, so the tail keeps that plan"
   assert.equal(renewed.pricedBy[0], "2026-11-12 max");
   assert.deepEqual(renewed.calls, []);
 });
+
+test("the tail's plan is the open item's, whatever order the items come in", async () => {
+  // Charged under Pro mid-period, then upgraded to Max: the invoiced item says
+  // Pro, the open one Max. Listed oldest first, Max still prices the tail.
+  const w = world({ [nov]: 9000 }, [item("ii_pro", 5200, "invoiced", NOVEMBER, "pro"), item("ii_max", 1000, "draft", NOVEMBER, "max")]);
+  w.account.plan = PLANS.pro;
+  w.account.tail = NOVEMBER;
+  w.account.period = { start: NOVEMBER.end, end: at("2027-01-12T00:00:00Z") };
+  await reportOverage(w.deps, NOW);
+  assert.equal(w.pricedBy[0], "2026-11-12 max");
+});
