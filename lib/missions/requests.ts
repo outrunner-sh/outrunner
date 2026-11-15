@@ -187,7 +187,7 @@ export async function onRootSettled(
     await deps.setThread(post.missionId, post.requestKey, thread.id);
     threadTs = ts;
   }
-  if (request.announcedAt) return;
+  if (request.announcedAt || request.status === "cancelled") return;
   await announce(request, threadTs, deps);
 }
 
@@ -199,7 +199,7 @@ export async function announceLate(
   deps: RequestDeps,
   now = Date.now(),
 ): Promise<boolean> {
-  if (request.announcedAt) return false;
+  if (request.announcedAt || request.status === "cancelled") return false;
   if (root?.status === "pending" && now - Date.parse(root.createdAt) < 10 * 60_000) return false;
   const thread = request.threadId ? await deps.thread(request.threadId) : null;
   await announce(request, thread?.threadTs ?? null, deps);
@@ -237,6 +237,9 @@ export async function cancelRequest(missionId: string, key: string, reason: stri
   if (!request) return false;
   const cancelled = await deps.cancel(missionId, key);
   if (!cancelled) return false;
+  // Cancelled counts as told: neither the tick's sweep nor a late root post
+  // announces it after this as new work.
+  await deps.markAnnounced(missionId, key);
   await deps.enqueue({
     missionId,
     runnerId: null,

@@ -303,6 +303,28 @@ test("updates reach the same request; cancelling stops that one only", async () 
   assert.equal(await updateRequest(MISSION, "run:none", { id: "a3", text: "more" }, w.deps), "missing");
 });
 
+test("cancelled before it was told: never told afterwards as new work, by a late root post or the tick, and out of the tick's window", async () => {
+  const w = requestWorld(true);
+  await createRequest(newRequest, w.deps);
+  await createRequest({ ...newRequest, key: "run:r2" }, w.deps);
+  assert.equal(w.events.length, 0, "both root posts still trying");
+  assert.equal(await cancelRequest(MISSION, "run:r1", "the issue closed", w.deps), true);
+  // The tick's sweep (unannouncedRequests): open and untold only.
+  const sweep = () => [...w.rows.values()].filter((r) => !r.announcedAt && r.status === "open").map((r) => r.requestKey);
+  assert.deepEqual(sweep(), ["run:r2"], "the cancelled one doesn't take a place in the window");
+  const now = Date.parse("2026-11-12T11:00:00Z");
+  assert.equal(await announceLate(w.rows.get("run:r1")!, null, w.deps, now), false);
+  // Even as a sweep read before the cancel's mark would have handed it over.
+  assert.equal(await announceLate({ ...w.rows.get("run:r1")!, announcedAt: null }, null, w.deps, now), false);
+  await onRootSettled({ ...w.queued[0], requestKey: "run:r1" }, "1731400500.000100", w.deps);
+  // A retry of the trigger, after the cancel, is the same request: still not news.
+  assert.equal(await createRequest(newRequest, w.deps), "exists");
+  assert.deepEqual(w.events.map((e) => e.kind), ["request_cancelled"], "no `request` after its `request_cancelled`");
+  // The other is told as ever.
+  await onRootSettled({ ...w.queued[1], requestKey: "run:r2" }, "1731400600.000100", w.deps);
+  assert.deepEqual(w.events.map((e) => `${e.kind}:${(e.payload.request as { key: string }).key}`), ["request_cancelled:run:r1", "request:run:r2"]);
+});
+
 test("stop in a thread cancels its open requests and interrupts its Ships, and no other thread's or Mission's; one failing interrupt doesn't stop the rest", async () => {
   const w = requestWorld(true);
   for (const [key, thread] of [["r1", "1731400001.000100"], ["r2", "1731400001.000100"], ["r3", "1731400002.000100"]] as const) {
