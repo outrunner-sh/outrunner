@@ -82,20 +82,23 @@ from a template (`lib/missions/templates.ts`):
 | **CI fixer** | Fixes failing CI on the default branch | A webhook to point CI at |
 | **Release manager** | Prepares release notes and a release pull request | Weekly, Mondays 09:00 in your time zone |
 
-Each has budgets of $100 a day and $1,000 a week. Pick one and the project;
-the name and instructions can be edited. Hiring then, in order
-(`lib/missions/hire.ts`): starts the Mission (`POST /api/missions`, the
-instructions its first message), names it and sets its icon
-(`PATCH /api/missions/[id]`), makes each trigger
-(`POST /api/missions/[id]/triggers`) and sets the budgets
-(`PUT /api/missions/[id]/budget`; a 404 there, budgets not deployed, is
-skipped, not a failure). The page moves to the Mission while the dialog lists
-each step, and offers its Slack channel. Once the Mission is made it's kept:
-a step that fails after is shown as failed, with where to finish it.
+Pick one and the project; the name and instructions can be edited, and the
+budgets ($100 a day and $1,000 a week to start; each a positive amount or
+No limit). Hiring then, in order (`lib/missions/hire.ts`): starts the
+Mission (`POST /api/missions`, the instructions its first message), sets the
+budgets (`PUT /api/missions/[id]/budget`), names it and sets its icon
+(`PATCH /api/missions/[id]`), and makes each trigger
+(`POST /api/missions/[id]/triggers`). If the budgets aren't saved, no
+trigger is made and the hire fails, saying so. Until budgets are deployed, a
+404 there is skipped and the triggers go ahead. The page moves to the
+Mission while the dialog lists each step, and offers its Slack channel. Once
+the Mission is made it's kept: a step that fails after is shown as failed,
+with where to finish it.
 
-Tests: `test/mission-templates.test.ts` (the templates; their triggers as
-the route parses them) and `test/mission-hire.test.ts` (the order, failures
-after the Mission is made, a budget 404).
+Tests: `test/mission-templates.test.ts` (the templates, their triggers as
+the route parses them, budget fields) and `test/mission-hire.test.ts` (the
+order, failed budgets adding no triggers, other failures after the Mission
+is made, a budget 404).
 
 ## On call in Slack
 
