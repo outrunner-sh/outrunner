@@ -11,16 +11,24 @@
 import { ArrowUp, Check, ChevronRight, ExternalLink, Minus, UserPlus, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { HireSlackStep } from "@/components/missions/hire-slack-step";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/loaders";
 import { refreshMissions } from "@/hooks/use-missions";
 import { describeSchedule } from "@/lib/automations/schedule";
-import { hireMission, type HireOutcome, type HireStep, usd } from "@/lib/missions/hire";
+import { hireMission, type HireOutcome, type HireStep } from "@/lib/missions/hire";
 import { MISSION_ICONS } from "@/lib/missions/icons";
-import { buildHirePlan, localTimeZone, MISSION_NAME_MAX, MISSION_TEMPLATES, type MissionTemplate, type TemplateTrigger } from "@/lib/missions/templates";
+import {
+  buildHirePlan,
+  localTimeZone,
+  MISSION_NAME_MAX,
+  MISSION_TEMPLATES,
+  type MissionTemplate,
+  parseBudgetAmount,
+  type TemplateTrigger,
+} from "@/lib/missions/templates";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import { askPermission } from "@/lib/notifications/show";
 import { firstPromptSearch, newFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
@@ -46,12 +54,18 @@ export function HireDialog({
   const [projectId, setProjectId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState<string | null>(null);
+  // As typed; "no limit" is null.
+  const [daily, setDaily] = useState<string>("100");
+  const [weekly, setWeekly] = useState<string>("1000");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hired, setHired] = useState<(HireOutcome & { missionId: string; suggestsSlack: boolean; title: string }) | null>(null);
   const template = MISSION_TEMPLATES.find((t) => t.id === templateId) ?? MISSION_TEMPLATES[0];
   const chosen = projectId ?? projects[0]?.id ?? null;
   const timezone = localTimeZone();
+  const dailyUsd = parseBudgetAmount(daily);
+  const weeklyUsd = parseBudgetAmount(weekly);
+  const budgetsOk = dailyUsd.ok && weeklyUsd.ok;
 
   // Opened afresh: the picker again, its last choices cleared.
   useEffect(() => {
@@ -61,6 +75,8 @@ export function HireDialog({
     setError(null);
     setName("");
     setPrompt(null);
+    setDaily(String(MISSION_TEMPLATES[0].budget.dailyUsd ?? "no limit"));
+    setWeekly(String(MISSION_TEMPLATES[0].budget.weeklyUsd ?? "no limit"));
   }, [open]);
 
   const pick = (id: MissionTemplate["id"]) => {
@@ -70,12 +86,18 @@ export function HireDialog({
   };
 
   const hire = async () => {
-    if (!chosen || busy) return;
+    if (!chosen || busy || !dailyUsd.ok || !weeklyUsd.ok) return;
     // As Start a Mission does: asked while the click is still the gesture.
     if (typeof Notification !== "undefined" && Notification.permission === "default") void askPermission();
     setBusy(true);
     setError(null);
-    const plan = buildHirePlan(template, { projectId: chosen, timezone, name, prompt: prompt ?? undefined });
+    const plan = buildHirePlan(template, {
+      projectId: chosen,
+      timezone,
+      name,
+      prompt: prompt ?? undefined,
+      budget: { dailyUsd: dailyUsd.value, weeklyUsd: weeklyUsd.value },
+    });
     const outcome = await hireMission(plan, (url, init) => fetch(url, init), (m) => console.info(m));
     setBusy(false);
     if (!outcome.missionId) {
@@ -110,6 +132,11 @@ export function HireDialog({
         {hired ? (
           <>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+              {hired.error && (
+                <p role="alert" className="rounded-md border border-[#f85149]/30 bg-[#f85149]/[0.08] px-3 py-2 text-[12.5px] text-[#ffa198]">
+                  {hired.error}
+                </p>
+              )}
               <ol className="space-y-1.5">
                 {hired.steps.map((step, i) => (
                   <HireStepRow key={i} step={step} missionId={hired.missionId} onLeave={() => onOpenChange(false)} />
@@ -207,11 +234,14 @@ export function HireDialog({
                 <dd className="text-[#d6d6d6]">
                   {template.triggers(timezone).map(triggerSummary).join("; ") || (template.suggestsSlack ? "None: it takes requests from Slack" : "None")}
                 </dd>
-                <dt className="text-[#8f8f8f]">Budgets</dt>
-                <dd className="text-[#d6d6d6]">
-                  {usd(template.budget.dailyUsd)}/day, {usd(template.budget.weeklyUsd)}/week
-                </dd>
               </dl>
+              <fieldset>
+                <legend className="mb-1.5 text-[12px] text-[#8f8f8f]">Budgets</legend>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <BudgetField label="Per day" value={daily} onChange={setDaily} parsed={dailyUsd} fallback="100" />
+                  <BudgetField label="Per week" value={weekly} onChange={setWeekly} parsed={weeklyUsd} fallback="1000" />
+                </div>
+              </fieldset>
               {error && (
                 <p role="alert" className="rounded-md border border-[#f85149]/30 bg-[#f85149]/[0.08] px-3 py-2 text-[12.5px] text-[#ffa198]">
                   {error}
@@ -223,7 +253,7 @@ export function HireDialog({
               <button
                 type="button"
                 onClick={() => void hire()}
-                disabled={!chosen || busy || !(prompt ?? template.prompt).trim()}
+                disabled={!chosen || busy || !budgetsOk || !(prompt ?? template.prompt).trim()}
                 className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#ededed] px-3 text-[13px] font-medium text-[#0a0a0a] transition-colors hover:bg-white disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/40"
               >
                 {busy ? <Spinner className="size-3.5" label="Hiring" /> : <ArrowUp className="size-3.5" />}
@@ -234,6 +264,60 @@ export function HireDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** A budget in dollars, or No limit; why it isn't one, inline. */
+function BudgetField({
+  label,
+  value,
+  onChange,
+  parsed,
+  fallback,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  parsed: ReturnType<typeof parseBudgetAmount>;
+  /** What unticking No limit brings back. */
+  fallback: string;
+}) {
+  const id = useId();
+  const none = parsed.ok && parsed.value === null;
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor={id} className="text-[12px] text-[#a3a3a3]">
+          {label}
+        </label>
+        <label className="flex items-center gap-1.5 text-[11.5px] text-[#8f8f8f]">
+          <input type="checkbox" checked={none} onChange={(e) => onChange(e.target.checked ? "no limit" : fallback)} className="size-3" />
+          No limit
+        </label>
+      </div>
+      <div className="relative mt-1">
+        {!none && <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-[13px] text-[#8f8f8f]">$</span>}
+        <input
+          id={id}
+          inputMode="decimal"
+          value={none ? "No limit" : value}
+          disabled={none}
+          onChange={(e) => onChange(e.target.value)}
+          aria-invalid={!parsed.ok}
+          aria-describedby={parsed.ok ? undefined : `${id}-error`}
+          className={cn(
+            "h-8 w-full rounded-md border bg-transparent pr-2.5 text-[13px] text-[#ededed] outline-none disabled:text-[#8f8f8f]",
+            none ? "pl-2.5" : "pl-6",
+            parsed.ok ? "border-white/10 focus:border-white/25" : "border-[#f85149]/60",
+          )}
+        />
+      </div>
+      {!parsed.ok && (
+        <p id={`${id}-error`} className="mt-1 text-[11.5px] text-[#ffa198]">
+          {parsed.error}
+        </p>
+      )}
+    </div>
   );
 }
 

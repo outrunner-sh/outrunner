@@ -23,6 +23,20 @@ export type MissionBudget = { dailyUsd: number | null; weeklyUsd: number | null 
 
 export const DEFAULT_BUDGET: MissionBudget = { dailyUsd: 100, weeklyUsd: 1000 };
 
+/**
+ * A budget field as typed: "no limit" (null), or a positive amount in
+ * dollars ("$1,000" reads as 1000). Blank, zero, negatives and anything
+ * else aren't one.
+ */
+export function parseBudgetAmount(text: string): { ok: true; value: number | null } | { ok: false; error: string } {
+  const typed = text.trim();
+  if (/^no limit$/i.test(typed)) return { ok: true, value: null };
+  const plain = typed.replace(/^\$/, "").replace(/,/g, "");
+  const amount = /^\d+(\.\d{1,2})?$/.test(plain) ? Number(plain) : Number.NaN;
+  if (!Number.isFinite(amount) || amount <= 0) return { ok: false, error: "Enter an amount above $0, or choose No limit." };
+  return { ok: true, value: amount };
+}
+
 export type MissionTemplate = {
   id: MissionTemplateId;
   name: string;
@@ -126,10 +140,10 @@ export type HirePlan = {
   create: { projectId: string; prompt: string };
   /** PATCH /api/missions/[id]. */
   profile: { title: string; icon: string };
-  /** POST /api/missions/[id]/triggers, each. */
-  triggers: TemplateTrigger[];
-  /** PUT /api/missions/[id]/budget. */
+  /** PUT /api/missions/[id]/budget, before the triggers. */
   budget: MissionBudget;
+  /** POST /api/missions/[id]/triggers, each, once the budgets are saved. */
+  triggers: TemplateTrigger[];
   suggestsSlack: boolean;
 };
 
@@ -137,13 +151,13 @@ export type HirePlan = {
 export const MISSION_NAME_MAX = 120;
 
 /**
- * A template made into a plan for `projectId`: its name and instructions,
- * or the hirer's edits of them (blank is the template's), and its triggers
- * in `timezone`.
+ * A template made into a plan for `projectId`: its name, instructions and
+ * budgets, or the hirer's edits of them (a blank name or instructions is
+ * the template's), and its triggers in `timezone`.
  */
 export function buildHirePlan(
   template: MissionTemplate,
-  options: { projectId: string; timezone: string; name?: string; prompt?: string },
+  options: { projectId: string; timezone: string; name?: string; prompt?: string; budget?: MissionBudget },
 ): HirePlan {
   const name = options.name?.trim().replace(/\s+/g, " ").slice(0, MISSION_NAME_MAX) || template.name;
   const prompt = options.prompt?.trim() || template.prompt;
@@ -152,7 +166,7 @@ export function buildHirePlan(
     create: { projectId: options.projectId, prompt },
     profile: { title: name, icon: template.icon },
     triggers: template.triggers(options.timezone),
-    budget: { ...template.budget },
+    budget: { ...(options.budget ?? template.budget) },
     suggestsSlack: template.suggestsSlack,
   };
 }

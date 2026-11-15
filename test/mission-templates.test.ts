@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { MISSION_TRIGGERS, NAME_MAX, parseAutomationInput, PROMPT_MAX } from "@/lib/automations/rules";
 import { nextRun } from "@/lib/automations/schedule";
 import { MISSION_ICONS } from "@/lib/missions/icons";
-import { buildHirePlan, DEFAULT_BUDGET, MISSION_NAME_MAX, MISSION_TEMPLATES, missionTemplate } from "@/lib/missions/templates";
+import { buildHirePlan, DEFAULT_BUDGET, MISSION_NAME_MAX, MISSION_TEMPLATES, missionTemplate, parseBudgetAmount } from "@/lib/missions/templates";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const MISSION = "22222222-2222-4222-8222-222222222222";
@@ -108,4 +108,29 @@ test("buildHirePlan: the template's defaults, or the hirer's name and instructio
   // A plan's budget is its own: changing it leaves the template's be.
   plan.budget.dailyUsd = 5;
   assert.equal(template.budget.dailyUsd, 100);
+});
+
+test("buildHirePlan sends the hirer's budgets: edited amounts, and no limit as null", () => {
+  const template = missionTemplate("on-call")!;
+  assert.deepEqual(buildHirePlan(template, { projectId: PROJECT, timezone: "UTC", budget: { dailyUsd: 40, weeklyUsd: 250 } }).budget, {
+    dailyUsd: 40,
+    weeklyUsd: 250,
+  });
+  assert.deepEqual(buildHirePlan(template, { projectId: PROJECT, timezone: "UTC", budget: { dailyUsd: null, weeklyUsd: null } }).budget, {
+    dailyUsd: null,
+    weeklyUsd: null,
+  });
+  assert.deepEqual(template.budget, { dailyUsd: 100, weeklyUsd: 1000 });
+});
+
+test("a budget field is no limit or a positive amount; 0, negatives and non-numbers aren't", () => {
+  assert.deepEqual(parseBudgetAmount("100"), { ok: true, value: 100 });
+  assert.deepEqual(parseBudgetAmount(" $1,000 "), { ok: true, value: 1000 });
+  assert.deepEqual(parseBudgetAmount("12.50"), { ok: true, value: 12.5 });
+  assert.deepEqual(parseBudgetAmount("No limit"), { ok: true, value: null });
+  for (const bad of ["0", "0.00", "-5", "abc", "", "1e3", "12.345", "Infinity", "$"]) {
+    const parsed = parseBudgetAmount(bad);
+    assert.equal(parsed.ok, false, bad);
+    assert.equal(parsed.ok ? "" : parsed.error, "Enter an amount above $0, or choose No limit.");
+  }
 });
