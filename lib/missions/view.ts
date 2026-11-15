@@ -4,6 +4,7 @@
  * network; lib/missions/view.deps.ts reads the rows.
  */
 
+import type { OnCallFacts } from "@/lib/missions/on-call-state";
 import type { RunnerState } from "@/lib/missions/rules";
 import type { ProviderName } from "@/lib/runtime/types";
 import { REASON_LABEL, type SessionStanding } from "@/lib/session/standing";
@@ -80,6 +81,9 @@ export type MissionView = {
   standing: SessionStanding | null;
   runners: RunnerView[];
   createdAt: string;
+  /** On call in Slack, or budget-paused (lib/missions/on-call-state.ts);
+   *  absent when neither. */
+  onCall?: OnCallFacts;
 };
 
 /** Shipping shows a merged pull request this long. */

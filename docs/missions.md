@@ -138,6 +138,21 @@ channel, one channel a Mission.
 - **It can't** merge or close pull requests, deploy, post elsewhere, touch
   other projects or orgs, or act on bots' messages; Ships can't spawn Ships.
 
+### Bound channels in Settings
+
+- **Sidebar.** A Mission on call shows Slack's mark on its row; paused (by
+  someone), idle-paused or budget-paused, a badge instead, its tooltip naming
+  which. One state, budget first, then idle, then paused
+  (`lib/missions/on-call-state.ts`); budget-paused shows bound or not. The
+  facts come with `GET /api/missions` (`onCall`), two reads for all.
+- **Settings → Org → Integrations → Slack, "Missions on call".** Each
+  channel of the org a Mission is on call in: channel, workspace, Mission,
+  project, state, who bound it and when. Members see those of Missions whose
+  project they can read (`GET /api/orgs/[id]/mission-channels`).
+  **Disconnect** needs write on the project, owner or not, as `stop being on
+  call here` does (`DELETE /api/orgs/[id]/mission-channels/[missionId]`); it
+  goes through `takeOffCall`, as the header's does.
+
 ### Reliability
 
 Nothing said in Slack is lost, and nothing is done twice, through crashes,
