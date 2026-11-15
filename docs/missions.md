@@ -71,6 +71,32 @@ This replaces the earlier Mission Engine design
   ([`mission-spend.md`](mission-spend.md)). Policy accounting only: it bills
   no one and caps nothing.
 
+### Hire
+
+The person icon beside `+` in the sidebar's **Missions** hires a Mission
+from a template (`lib/missions/templates.ts`):
+
+| Template | Does | Default triggers |
+| --- | --- | --- |
+| **On-call** | Triages requests, starts Ships for fixes, reports in the thread | None; suggests a Slack channel |
+| **CI fixer** | Fixes failing CI on the default branch | A webhook to point CI at |
+| **Release manager** | Prepares release notes and a release pull request | Weekly, Mondays 09:00 in your time zone |
+
+Each has budgets of $100 a day and $1,000 a week. Pick one and the project;
+the name and instructions can be edited. Hiring then, in order
+(`lib/missions/hire.ts`): starts the Mission (`POST /api/missions`, the
+instructions its first message), names it and sets its icon
+(`PATCH /api/missions/[id]`), makes each trigger
+(`POST /api/missions/[id]/triggers`) and sets the budgets
+(`PUT /api/missions/[id]/budget`; a 404 there, budgets not deployed, is
+skipped, not a failure). The page moves to the Mission while the dialog lists
+each step, and offers its Slack channel. Once the Mission is made it's kept:
+a step that fails after is shown as failed, with where to finish it.
+
+Tests: `test/mission-templates.test.ts` (the templates; their triggers as
+the route parses them) and `test/mission-hire.test.ts` (the order, failures
+after the Mission is made, a budget 404).
+
 ## On call in Slack
 
 A Mission can be bound to one Slack channel, where it acts as the on-call

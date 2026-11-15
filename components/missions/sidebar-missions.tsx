@@ -5,15 +5,16 @@
  * live status (needs you, working, ready, idle) and how many pull requests
  * are ready, its Ships with open work nested under it; its menu archives it
  * with its Ships. Dragged to reorder; arrow keys move between rows. `+`
- * starts a Mission.
+ * starts a Mission; the one beside it hires one from a template.
  */
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, ChevronRight, Ellipsis, GitPullRequest, Plus, Rocket } from "lucide-react";
+import { Archive, ChevronRight, Ellipsis, GitPullRequest, Plus, Rocket, UserPlus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
+import { HireDialog } from "@/components/missions/hire-dialog";
 import { MissionGlyph, PullRequestChip, RunnerGlyph, UnreadDot } from "@/components/missions/mission-parts";
 import { NewMissionDialog } from "@/components/missions/new-mission-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -59,6 +60,7 @@ export function SidebarMissions({
 }) {
   const { loaded, missions } = useMissions();
   const [creating, setCreating] = useState(false);
+  const [hiring, setHiring] = useState(false);
   const [archiving, setArchiving] = useState<MissionView | null>(null);
   // Missions whose Ships are all shown, not just the first few.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
@@ -139,6 +141,16 @@ export function SidebarMissions({
         <h2 id="missions-heading" className="text-[13px] text-muted-foreground">
           Missions
         </h2>
+        {/* Hire: a Mission from a template (On-call, CI fixer, Release manager). */}
+        <button
+          type="button"
+          onClick={() => setHiring(true)}
+          aria-label="Hire a Mission from a template"
+          title="Hire a Mission from a template"
+          className="mr-0.5 ml-auto rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <UserPlus className="size-3.5" />
+        </button>
         <button
           type="button"
           onClick={() => setCreating(true)}
@@ -335,6 +347,7 @@ export function SidebarMissions({
         )}
       </div>
       <NewMissionDialog open={creating} onOpenChange={setCreating} projects={offered} />
+      <HireDialog open={hiring} onOpenChange={setHiring} projects={offered} />
       <ArchiveMissionDialog
         mission={archiveTarget && { id: archiveTarget.id, title: archiveTarget.title, ships: unarchivedShipCount(archiveTarget.runners) }}
         onOpenChange={(open) => {
