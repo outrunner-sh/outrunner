@@ -312,18 +312,20 @@ export async function announceLate(
 ): Promise<boolean> {
   if (request.announcedAt || request.status === "cancelled") return false;
   if (request.source === "slack") {
-    if (!isNewThreadRequest(request) || request.status !== "open") return false;
-    if (request.threadId) {
-      const thread = await deps.thread(request.threadId);
+    // The sweep may have read this before a cancel (off call, re-bound) landed: say it from the row now.
+    const fresh = await deps.request(request.missionId, request.requestKey);
+    if (!fresh || fresh.announcedAt || !isNewThreadRequest(fresh) || fresh.status !== "open") return false;
+    if (fresh.threadId) {
+      const thread = await deps.thread(fresh.threadId);
       if (!thread) return false;
-      await announceNewThread(request, thread.channelId, thread.threadTs, deps);
+      await announceNewThread(fresh, thread.channelId, thread.threadTs, deps);
       return true;
     }
     const ts = root?.status === "sent" ? root.postedTs?.[0] : undefined;
     if (!ts || !root?.teamId || !root.channelId) return false;
     await onNewThreadSettled(
-      { missionId: request.missionId, teamId: root.teamId, channelId: root.channelId, requester: root.requester ?? request.requestedBy, requestKey: request.requestKey },
-      request,
+      { missionId: fresh.missionId, teamId: root.teamId, channelId: root.channelId, requester: root.requester ?? fresh.requestedBy, requestKey: fresh.requestKey },
+      fresh,
       ts,
       deps,
     );

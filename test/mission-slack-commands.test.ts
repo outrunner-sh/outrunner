@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { formatDelivery, type MissionEvent } from "@/lib/missions/events";
-import { announceLate, newThreadRequest, onRootSettled, type RequestDeps } from "@/lib/missions/requests";
+import { announceLate, cancelRequest, newThreadRequest, onRootSettled, type RequestDeps } from "@/lib/missions/requests";
 import type { QueuedPost } from "@/lib/missions/slack-outbox";
 import type { MissionChannel, MissionRequest, MissionThread } from "@/lib/missions/slack-store";
 import { assignTarget, newRequestRootText, newTask, threadKeyword } from "@/lib/missions/slack-text";
@@ -234,4 +234,35 @@ test("!new: a crash after its root post was marked sent, before its thread was s
   // The next tick: nothing more.
   assert.equal(await announceLate(row(), { ...at, status: "sent" }, w.deps), false);
   assert.equal(w.events.length, 1);
+});
+
+test("!new cancelled (off call, re-bound) while the tick's sweep held its row: never told as new work", async () => {
+  const at = { createdAt: "2026-11-15T10:00:00Z", postedTs: ["1731400500.000100"], teamId: "T1", channelId: "C1", requester: "alice", status: "sent" };
+  // Its thread set, the Mission not yet told (a crash before the enqueue).
+  {
+    const w = world();
+    await newThreadRequest(input, w.deps);
+    w.crash.enqueue = true;
+    await assert.rejects(onRootSettled({ ...w.queued[0], requestKey: "new:En" }, "1731400500.000100", w.deps));
+    w.crash.enqueue = false;
+    const readBySweep = { ...w.rows.get("new:En")! };
+    assert.deepEqual([readBySweep.status, readBySweep.announcedAt, readBySweep.threadId], ["open", null, "t1"]);
+    assert.equal(await cancelRequest(MISSION, "new:En", "the Mission went off call", w.deps), true);
+    assert.equal(await announceLate(readBySweep, at, w.deps), false);
+    assert.deepEqual(w.events.map((e) => e.kind), ["request_cancelled"], "no slack_request after its request_cancelled");
+  }
+  // Its root post marked sent, its thread never set (a crash before setThread).
+  {
+    const w = world();
+    await newThreadRequest(input, w.deps);
+    w.crash.setThread = true;
+    await assert.rejects(onRootSettled({ ...w.queued[0], requestKey: "new:En" }, "1731400500.000100", w.deps));
+    w.crash.setThread = false;
+    const readBySweep = { ...w.rows.get("new:En")! };
+    assert.deepEqual([readBySweep.status, readBySweep.threadId], ["open", null]);
+    assert.equal(await cancelRequest(MISSION, "new:En", "the Mission was re-bound", w.deps), true);
+    assert.equal(await announceLate(readBySweep, at, w.deps), false);
+    assert.equal(w.rows.get("new:En")!.threadId, null, "no thread settled for a cancelled request");
+    assert.deepEqual(w.events.map((e) => e.kind), ["request_cancelled"]);
+  }
 });
