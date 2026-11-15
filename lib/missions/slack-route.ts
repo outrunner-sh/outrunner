@@ -32,6 +32,7 @@ import {
   assignedNote,
   assignedText,
   assigneeNotLinkedText,
+  NEW_KEY_PREFIX,
   NEW_USAGE,
   newTask,
   ON_CALL_HELP,
@@ -323,7 +324,7 @@ async function newThread(
     await deps.tell(threadTs, NEW_USAGE);
     return;
   }
-  const key = `new:${message.eventId ?? `${message.teamId}:${message.channel}:${message.ts}`}`;
+  const key = `${NEW_KEY_PREFIX}${message.eventId ?? `${message.teamId}:${message.channel}:${message.ts}`}`;
   if (deps.claimMessage && !(await deps.claimMessage(message.ts, mission.id, key))) return;
   const outcome = await deps.newThreadRequest({
     missionId: mission.id,
@@ -378,7 +379,7 @@ async function assign(
         thread: threadTs,
         ts: message.ts,
         author: "Outrunner",
-        text: assignedNote(by, name),
+        text: assignedNote(name, by),
       },
     },
     key: eventKey.slackRequest(`assign:${key}`),

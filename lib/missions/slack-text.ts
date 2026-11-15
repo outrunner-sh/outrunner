@@ -36,8 +36,12 @@ export function assigneeNotLinkedText(slackUserId: string, otherOrg: boolean): s
 }
 
 /** What the Mission is told when a thread is assigned: a note, not a task. */
-export const assignedNote = (by: string, assignee: string): string =>
-  `Note from Outrunner, not a new task: ${by} assigned this thread to ${assignee}. Keep working on it as before; Ships still run as the Mission's owner. Nothing to reply.`;
+export const assignedNote = (assignee: string, by: string): string =>
+  `Note, not a new task: ${assignee} was assigned to this thread by ${by}. Keep going as before. Ships still run as the Mission's owner; nothing to reply.`;
+
+/** `!new`'s requests' keys start so: how the tick tells them from a
+ *  mention's (told inline, never by the tick). */
+export const NEW_KEY_PREFIX = "new:";
 
 /** The message without the bot's mention, trimmed. */
 export function withoutMention(text: string, botUserId: string): string {

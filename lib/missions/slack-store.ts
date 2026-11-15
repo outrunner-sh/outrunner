@@ -6,6 +6,7 @@
  * tools and its routes).
  */
 
+import { NEW_KEY_PREFIX } from "@/lib/missions/slack-text";
 import type { Json } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -560,19 +561,35 @@ export async function cancelRequestRow(missionId: string, requestKey: string): P
   return (data ?? []).length > 0;
 }
 
-/** Requests from triggers the Mission hasn't been told of, made before
- *  `before`: for the tick. */
+/** Requests the Mission hasn't been told of, made before `before`: for the
+ *  tick. Triggers' requests, and `!new`'s once their root post settled into
+ *  their thread, while open. Never a mention's: it's told as it's taken
+ *  (and never marked told). */
 export async function unannouncedRequests(before: Date, max = 25): Promise<MissionRequest[]> {
-  const { data, error } = await db()
-    .from("mission_slack_requests")
-    .select("*")
-    .is("announced_at", null)
-    .neq("source", "slack")
-    .lt("created_at", before.toISOString())
-    .order("created_at", { ascending: true })
-    .limit(max);
-  if (error) throw error;
-  return (data ?? []).map(toRequest);
+  const [triggers, fresh] = await Promise.all([
+    db()
+      .from("mission_slack_requests")
+      .select("*")
+      .is("announced_at", null)
+      .neq("source", "slack")
+      .lt("created_at", before.toISOString())
+      .order("created_at", { ascending: true })
+      .limit(max),
+    db()
+      .from("mission_slack_requests")
+      .select("*")
+      .is("announced_at", null)
+      .eq("source", "slack")
+      .like("request_key", `${NEW_KEY_PREFIX}%`)
+      .eq("status", "open")
+      .not("thread_id", "is", null)
+      .lt("created_at", before.toISOString())
+      .order("created_at", { ascending: true })
+      .limit(max),
+  ]);
+  if (triggers.error) throw triggers.error;
+  if (fresh.error) throw fresh.error;
+  return [...(triggers.data ?? []), ...(fresh.data ?? [])].map(toRequest);
 }
 
 /** The request a Linear agent session is, if one is. */

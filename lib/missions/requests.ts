@@ -22,7 +22,7 @@
  */
 
 import { eventKey, type RequestEventPayload } from "@/lib/missions/events";
-import { newRequestRootText } from "@/lib/missions/slack-text";
+import { NEW_KEY_PREFIX, newRequestRootText } from "@/lib/missions/slack-text";
 import type { QueueOutcome, QueuedPost } from "@/lib/missions/slack-outbox";
 import type { MissionChannel, MissionRequest, MissionThread } from "@/lib/missions/slack-store";
 import type { RecordedEvent } from "@/lib/missions/watch";
@@ -261,16 +261,22 @@ async function onNewThreadSettled(
   }
   const thread = await deps.acceptThread({ missionId: post.missionId, teamId: post.teamId, channelId: post.channelId, threadTs: ts, startedBy: post.requester });
   await deps.setThread(post.missionId, post.requestKey, thread.id, ts);
+  await announceNewThread(request, post.channelId, ts, deps);
+}
+
+/** Tell the Mission of a `!new` request in its thread, as a mention's
+ *  `slack_request` (keyed: twice is once), then mark it told. */
+async function announceNewThread(request: MissionRequest, channelId: string, threadTs: string, deps: RequestDeps): Promise<void> {
   await deps.enqueue({
-    missionId: post.missionId,
+    missionId: request.missionId,
     runnerId: null,
     kind: "slack_request",
     payload: {
       slack: {
-        channel: post.channelId,
-        thread: ts,
+        channel: channelId,
+        thread: threadTs,
         request: request.requestKey,
-        ts,
+        ts: threadTs,
         permalink: null,
         author: request.details?.from ?? "someone",
         ...(request.requestedBySlack && { slackUserId: request.requestedBySlack }),
@@ -280,11 +286,18 @@ async function onNewThreadSettled(
     },
     key: eventKey.slackRequest(request.requestKey),
   });
-  await deps.markAnnounced(post.missionId, post.requestKey);
+  await deps.markAnnounced(request.missionId, request.requestKey);
+}
+
+/** A `!new` request (not a mention's, which is told as it's taken). */
+export function isNewThreadRequest(request: Pick<MissionRequest, "source" | "requestKey">): boolean {
+  return request.source === "slack" && request.requestKey.startsWith(NEW_KEY_PREFIX);
 }
 
 /** The tick's part: a request a crash left untold. One whose root post is
- *  still trying is left a while (ten minutes), then told without a thread. */
+ *  still trying is left a while (ten minutes), then told without a thread.
+ *  A `!new` one is told only once its root post settled into its thread,
+ *  while it's open; a mention's never (it was told as it was taken). */
 export async function announceLate(
   request: MissionRequest,
   root: { status: string; createdAt: string } | null,
@@ -292,6 +305,13 @@ export async function announceLate(
   now = Date.now(),
 ): Promise<boolean> {
   if (request.announcedAt) return false;
+  if (request.source === "slack") {
+    if (!isNewThreadRequest(request) || request.status !== "open" || !request.threadId) return false;
+    const thread = await deps.thread(request.threadId);
+    if (!thread) return false;
+    await announceNewThread(request, thread.channelId, thread.threadTs, deps);
+    return true;
+  }
   if (root?.status === "pending" && now - Date.parse(root.createdAt) < 10 * 60_000) return false;
   const thread = request.threadId ? await deps.thread(request.threadId) : null;
   await announce(request, thread?.threadTs ?? null, deps);

@@ -500,8 +500,13 @@ test("!assign @person: the thread's open requests are theirs; the Mission isn't 
     thread: t.threadTs,
     ts: "1731400060.000100",
     author: "Outrunner",
-    text: assignedNote("name-of-UALICE", "name-of-UWES"),
+    text: assignedNote("name-of-UWES", "name-of-UALICE"),
   });
+  // A note, not a task: said so first.
+  assert.ok(
+    note.payload.slack?.text?.startsWith("Note, not a new task: name-of-UWES was assigned to this thread by name-of-UALICE. Keep going as before."),
+    note.payload.slack?.text,
+  );
   // Slack's retry: assigned again (the same), told once.
   await routeToMission(msg({ mention: false, text: "!assign <@UWES>", threadTs: t.threadTs, ts: "1731400060.000100", eventId: "Ea" }), w.deps);
   assert.equal(w.events.length, 2);

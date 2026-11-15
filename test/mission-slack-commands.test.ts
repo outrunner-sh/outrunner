@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { formatDelivery, type MissionEvent } from "@/lib/missions/events";
-import { newThreadRequest, onRootSettled, type RequestDeps } from "@/lib/missions/requests";
+import { announceLate, newThreadRequest, onRootSettled, type RequestDeps } from "@/lib/missions/requests";
 import type { QueuedPost } from "@/lib/missions/slack-outbox";
 import type { MissionChannel, MissionRequest, MissionThread } from "@/lib/missions/slack-store";
 import { assignTarget, newRequestRootText, newTask, threadKeyword } from "@/lib/missions/slack-text";
@@ -48,6 +48,7 @@ function world(bound = true) {
   const queued: QueuedPost[] = [];
   const events: RecordedEvent[] = [];
   const threads: MissionThread[] = [];
+  const crash = { enqueue: false };
   const binding: MissionChannel = { missionId: MISSION, orgId: "o1", teamId: "T1", channelId: "C1", boundBy: "w", listen: "mentions", allowBotMessages: false, paused: false, revision: "rev1" };
   const deps: RequestDeps = {
     binding: async () => (bound ? binding : null),
@@ -90,12 +91,13 @@ function world(bound = true) {
     openInThread: async (threadId) => [...rows.values()].filter((r) => r.threadId === threadId && r.status === "open"),
     pending: async () => [],
     enqueue: async (event) => {
+      if (crash.enqueue) throw new Error("crashed");
       if (events.some((e) => e.key === event.key)) return false;
       events.push(event);
       return true;
     },
   };
-  return { deps, rows, queued, events, threads };
+  return { deps, rows, queued, events, threads, crash };
 }
 
 const input = { missionId: MISSION, key: "new:En", task: "deploy the docs", requestedBy: "alice", requestedBySlack: "UALICE", author: "Alice" };
@@ -163,4 +165,39 @@ test("!new's root post failed: closed, untold; off call: nothing made", async ()
   assert.equal(await newThreadRequest(input, v.deps), "off_call");
   assert.equal(v.rows.size, 0);
   assert.equal(v.queued.length, 0);
+});
+
+test("!new: a crash after its root post settled, before the Mission heard: the tick tells it, once", async () => {
+  const w = world();
+  await newThreadRequest(input, w.deps);
+  const root = { status: "sent", createdAt: "2026-11-15T10:00:00Z" };
+  // Untold while its root post hasn't settled into a thread.
+  assert.equal(await announceLate(w.rows.get("new:En")!, { status: "pending", createdAt: "2026-11-15T10:00:00Z" }, w.deps), false);
+  w.crash.enqueue = true;
+  await assert.rejects(onRootSettled({ ...w.queued[0], requestKey: "new:En" }, "1731400500.000100", w.deps));
+  w.crash.enqueue = false;
+  const row = w.rows.get("new:En")!;
+  assert.equal(row.threadId, "t1");
+  assert.equal(row.announcedAt, null);
+  assert.equal(w.events.length, 0);
+  // The tick.
+  assert.equal(await announceLate(row, root, w.deps), true);
+  assert.equal(w.events.length, 1);
+  assert.equal(w.events[0].kind, "slack_request");
+  assert.equal(w.events[0].payload.slack?.thread, "1731400500.000100");
+  assert.equal(w.events[0].payload.slack?.request, "new:En");
+  // The next tick: nothing more.
+  assert.equal(await announceLate(w.rows.get("new:En")!, root, w.deps), false);
+  assert.equal(w.events.length, 1);
+});
+
+test("the tick never tells a mention's request (told inline), nor a closed or threadless !new", async () => {
+  const w = world();
+  const mention: MissionRequest = { missionId: MISSION, requestKey: "Ev1", threadId: "t1", bindingRevision: "rev1", messageTs: "1731400000.000100", requestedBy: "alice", requestedBySlack: "UALICE", source: "slack", status: "open", announcedAt: null };
+  w.threads.push({ id: "t1", missionId: MISSION, teamId: "T1", channelId: "C1", threadTs: "1731400000.000100", permalink: null, startedBy: "alice", startedBySlack: "UALICE", lastRequestTs: null, muted: false });
+  assert.equal(await announceLate(mention, null, w.deps), false);
+  const fresh = { ...mention, requestKey: "new:Ex", details: { text: "x", from: "Alice" } };
+  assert.equal(await announceLate({ ...fresh, threadId: null }, null, w.deps), false);
+  assert.equal(await announceLate({ ...fresh, status: "cancelled" }, null, w.deps), false);
+  assert.equal(w.events.length, 0);
 });
