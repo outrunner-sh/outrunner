@@ -102,6 +102,19 @@ channel, one channel a Mission.
     quietly). Unlinked people in shared channels can't task it;
   - `!aside` keeps a message from it; `!mute` / `!unmute` silences a thread
     (nothing in or out, the system's posts included);
+  - `!help` tells the sender the on-call help, ephemerally;
+  - `@Outrunner !new <task>` (or `!new <task>` in one of its threads) starts a
+    fresh request in a new thread: the system posts "New request from @them:
+    <task>" in the channel, and the request is recorded against that thread,
+    with nothing of the one it was typed in. Gated as any request is. With no
+    task, a usage hint;
+  - `!assign @person`, in one of its threads, by anyone with read: the
+    thread's open requests (and so their Ships, shown as "Assigned to <name>"
+    in the Ships pane) are assigned to someone linked to an Outrunner account
+    in the Mission's org (`assignee_user_id`, `assigned_by`, `assigned_at`).
+    Nothing stops: the Mission keeps working, Ships still run as its owner,
+    and it's told in a one-line note. Someone not linked: the sender is told,
+    and nothing is assigned. Exactly one person, and no other keyword;
   - `@Outrunner stop` stops that thread's work (its open requests are cancelled and its Ships' running turns interrupted; other threads go on); `@Outrunner pause` / `resume` (write on
     the project), or the header's **Pause**: paused, it says so and takes
     nothing;

@@ -19,7 +19,8 @@ import {
 } from "@/lib/missions/view";
 import { toWorkspace, toWorkspacePullRequest } from "@/lib/db/mappers";
 import { readStandings } from "@/lib/db/session-standing";
-import { shipThreadLinks } from "@/lib/missions/slack-store";
+import { people } from "@/lib/db/org-members";
+import { shipAssignees, shipThreadLinks } from "@/lib/missions/slack-store";
 import type { Workspace } from "@/lib/runtime/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -107,6 +108,9 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
   });
   // Each Ship's Slack thread, on call: shown, never needed.
   const threadOf = await shipThreadLinks(runnerIds).catch(() => new Map<string, string>());
+  // Who each Ship's request was assigned to in Slack, by name: shown, never needed.
+  const assigneeOf = await shipAssignees(runnerIds).catch(() => new Map<string, string>());
+  const assigneeNames = await people([...assigneeOf.values()]).catch(() => new Map<string, { name: string }>());
   const views = await Promise.all(
     missions.map(async (mission): Promise<MissionView & { position: number | null }> => {
       const own = runners.filter((r) => r.parentMissionId === mission.id);
@@ -152,6 +156,7 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
           standing,
           createdAt: runner.createdAt,
           slackThread: threadOf.get(runner.id) ?? null,
+          assignee: assigneeNames.get(assigneeOf.get(runner.id) ?? "")?.name ?? null,
         };
       });
       const readyCount = runnerViews

@@ -56,6 +56,8 @@ export type RunnerView = {
   createdAt: string;
   /** The Slack thread it was started for, on call (docs/missions.md). */
   slackThread?: string | null;
+  /** Who its request was assigned to in Slack (`!assign @person`), by name. */
+  assignee?: string | null;
 };
 
 export type MissionStatus = "needs_you" | "working" | "ready" | "idle";

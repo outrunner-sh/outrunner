@@ -86,6 +86,8 @@ test("a mention becomes a Ship and its pull request's cards, once each, through 
     linked: async (user) => (user === "UANA" ? { userId: "ana", orgId: "o1" } : null),
     level: async (userId) => (userId === "ana" ? "read" : null),
     projectName: async () => "web",
+    newThreadRequest: async () => "queued",
+    assignThread: async () => 0,
     acceptThread: async (input) => {
       let thread = threads.find((t) => t.threadTs === input.threadTs);
       if (!thread) {

@@ -22,6 +22,7 @@
  */
 
 import { eventKey, type RequestEventPayload } from "@/lib/missions/events";
+import { newRequestRootText } from "@/lib/missions/slack-text";
 import type { QueueOutcome, QueuedPost } from "@/lib/missions/slack-outbox";
 import type { MissionChannel, MissionRequest, MissionThread } from "@/lib/missions/slack-store";
 import type { RecordedEvent } from "@/lib/missions/watch";
@@ -55,7 +56,8 @@ export type RequestDeps = {
   queue(post: QueuedPost): Promise<QueueOutcome>;
   /** Make the root post's thread the Mission's, for this request. */
   acceptThread(input: { missionId: string; teamId: string; channelId: string; threadTs: string; startedBy: string | null }): Promise<MissionThread>;
-  setThread(missionId: string, key: string, threadId: string): Promise<void>;
+  /** With `messageTs`: the root post is the request's message too (`!new`). */
+  setThread(missionId: string, key: string, threadId: string, messageTs?: string): Promise<void>;
   thread(id: string): Promise<MissionThread | null>;
   /** Mark it told; true for the first only. */
   markAnnounced(missionId: string, key: string): Promise<boolean>;
@@ -181,6 +183,7 @@ export async function onRootSettled(
 ): Promise<void> {
   const request = await deps.request(post.missionId, post.requestKey);
   if (!request) return;
+  if (request.source === "slack") return onNewThreadSettled(post, request, ts, deps);
   let threadTs: string | null = null;
   if (ts) {
     const thread = await deps.acceptThread({ missionId: post.missionId, teamId: post.teamId, channelId: post.channelId, threadTs: ts, startedBy: post.requester });
@@ -189,6 +192,95 @@ export async function onRootSettled(
   }
   if (request.announcedAt) return;
   await announce(request, threadTs, deps);
+}
+
+/** `!new <task>` in Slack: a fresh request in a new thread of the bound
+ *  channel, carrying nothing of the thread it was typed in. */
+export type NewThreadRequest = {
+  missionId: string;
+  key: string;
+  task: string;
+  requestedBy: string;
+  requestedBySlack: string;
+  /** The sender, as Slack shows them. */
+  author: string;
+};
+
+/** Recorded (with what it asks, and who), then its root post queued: "New
+ *  request from @them: <task>". Once that post goes, its message is the
+ *  request's thread and the Mission hears it as a `slack_request` there
+ *  (onRootSettled). A retry is the same request and the same post.
+ *  "off_call": no binding to post in any more. */
+export async function newThreadRequest(input: NewThreadRequest, deps: RequestDeps): Promise<"queued" | "off_call"> {
+  const binding = await deps.binding(input.missionId);
+  if (!binding) return "off_call";
+  await deps.record({
+    missionId: input.missionId,
+    requestKey: input.key,
+    threadId: null,
+    bindingRevision: binding.revision,
+    messageTs: null,
+    requestedBy: input.requestedBy,
+    requestedBySlack: input.requestedBySlack,
+    source: "slack",
+    details: { text: input.task.slice(0, REQUEST_TEXT_MAX), from: input.author },
+  });
+  const request = await deps.request(input.missionId, input.key);
+  if (!request) throw new Error(`request ${input.key} wasn't recorded`);
+  if (request.bindingRevision !== binding.revision) return "off_call";
+  if (request.announcedAt) return "queued";
+  await deps.queue({
+    opKey: `root:${input.missionId}:${input.key}`,
+    missionId: input.missionId,
+    bindingRevision: binding.revision,
+    teamId: binding.teamId,
+    channelId: binding.channelId,
+    threadTs: null,
+    kind: "root",
+    payload: { chunks: [newRequestRootText(input.requestedBySlack, input.task)] },
+    requester: input.requestedBy,
+    requestKey: input.key,
+  });
+  return "queued";
+}
+
+/** `!new`'s root post settled. Posted: its message is the request's thread
+ *  and its message, and the Mission hears a `slack_request` there, as for a
+ *  mention. Not posted: there's no thread for it to answer in, so the
+ *  request is closed, untold. */
+async function onNewThreadSettled(
+  post: Pick<QueuedPost, "missionId" | "teamId" | "channelId" | "requester"> & { requestKey: string },
+  request: MissionRequest,
+  ts: string | null,
+  deps: RequestDeps,
+): Promise<void> {
+  if (request.announcedAt) return;
+  if (!ts) {
+    await deps.cancel(post.missionId, post.requestKey);
+    return;
+  }
+  const thread = await deps.acceptThread({ missionId: post.missionId, teamId: post.teamId, channelId: post.channelId, threadTs: ts, startedBy: post.requester });
+  await deps.setThread(post.missionId, post.requestKey, thread.id, ts);
+  await deps.enqueue({
+    missionId: post.missionId,
+    runnerId: null,
+    kind: "slack_request",
+    payload: {
+      slack: {
+        channel: post.channelId,
+        thread: ts,
+        request: request.requestKey,
+        ts,
+        permalink: null,
+        author: request.details?.from ?? "someone",
+        ...(request.requestedBySlack && { slackUserId: request.requestedBySlack }),
+        userId: request.requestedBy,
+        text: (request.details?.text ?? "").slice(0, REQUEST_TEXT_MAX),
+      },
+    },
+    key: eventKey.slackRequest(request.requestKey),
+  });
+  await deps.markAnnounced(post.missionId, post.requestKey);
 }
 
 /** The tick's part: a request a crash left untold. One whose root post is

@@ -10,7 +10,16 @@ import { test } from "node:test";
 
 import type { MissionChannel, MissionRequest, MissionThread } from "@/lib/missions/slack-store";
 import { routeToMission, type SlackRouteDeps, type SlackRouteMessage } from "@/lib/missions/slack-route";
-import { onCallCommand, threadKeyword } from "@/lib/missions/slack-text";
+import {
+  ASSIGN_ELSEWHERE,
+  ASSIGN_USAGE,
+  assignedNote,
+  assigneeNotLinkedText,
+  NEW_USAGE,
+  ON_CALL_HELP,
+  onCallCommand,
+  threadKeyword,
+} from "@/lib/missions/slack-text";
 import type { RecordedEvent } from "@/lib/missions/watch";
 import type { AccessLevel } from "@/lib/orgs/access";
 import type { Workspace } from "@/lib/runtime/types";
@@ -41,7 +50,9 @@ function world(patch: { binding?: Partial<MissionChannel>; mission?: Partial<Wor
   };
   const levels: Record<string, AccessLevel | null> = { alice: "read", wes: "write", nora: null, bob: "read" };
   const state = { stopped: [] as string[], open: new Map<string, number>(),
-    ships: new Map<string, number>(), stopFails: false, bound: [] as string[], created: 0 };
+    ships: new Map<string, number>(), stopFails: false, bound: [] as string[], created: 0,
+    newThreads: [] as Parameters<SlackRouteDeps["newThreadRequest"]>[0][],
+    assigned: [] as Parameters<SlackRouteDeps["assignThread"]>[0][] };
   const deps: SlackRouteDeps = {
     botUserId: BOT,
     binding: async (team, channel) => bindings.find((b) => b.teamId === team && b.channelId === channel) ?? null,
@@ -50,6 +61,15 @@ function world(patch: { binding?: Partial<MissionChannel>; mission?: Partial<Wor
     linked: async (slackUserId) => linkedUsers[slackUserId] ?? null,
     level: async (userId) => levels[userId] ?? null,
     projectName: async () => "web",
+    newThreadRequest: async (input) => {
+      if (!state.newThreads.some((n) => n.key === input.key)) state.newThreads.push(input);
+      return "queued";
+    },
+    // The thread's open requests (state.open) take the assignee.
+    assignThread: async (input) => {
+      state.assigned.push(input);
+      return state.open.get(input.threadId) ?? 0;
+    },
     acceptThread: async (input) => {
       let thread = threads.find((t) => t.threadTs === input.threadTs);
       if (thread) {
@@ -350,4 +370,152 @@ test("commands are exact, parsed before any model", () => {
   assert.equal(threadKeyword("!aside nothing"), "aside");
   assert.equal(threadKeyword("(aside) nothing"), "aside");
   assert.equal(threadKeyword("not !mute"), null);
+});
+
+// --- !help, !new <task>, !assign @person -----------------------------------
+
+test("!help: the on-call help, told to the sender alone, whoever asks", async () => {
+  const w = world();
+  assert.equal(await routeToMission(msg({ text: `<@${BOT}> !help` }), w.deps), true);
+  assert.equal(await routeToMission(msg({ user: "UUNA", text: `<@${BOT}> !help`, eventId: "Eh2" }), w.deps), true);
+  assert.deepEqual(w.said, [`tell: ${ON_CALL_HELP}`, `tell: ${ON_CALL_HELP}`]);
+  for (const keyword of ["!help", "!new <task>", "!assign @person"]) assert.ok(ON_CALL_HELP.includes(keyword), keyword);
+  assert.equal(w.events.length, 0);
+  assert.equal(w.threads.length, 0);
+});
+
+test("!new <task>: a fresh request in a new thread, with nothing of the thread it was typed in", async () => {
+  const w = world();
+  await routeToMission(msg(), w.deps);
+  const [old] = w.threads;
+  // A plain reply in the Mission's thread.
+  const typed = msg({ mention: false, text: "!new  deploy the docs ", threadTs: old.threadTs, ts: "1731400010.000100", eventId: "En" });
+  assert.equal(await routeToMission(typed, w.deps), true);
+  assert.equal(await routeToMission(typed, w.deps), true, "Slack's retry");
+  assert.deepEqual(w.state.newThreads, [
+    { missionId: "m1", key: "new:En", task: "deploy the docs", requestedBy: "alice", requestedBySlack: "UALICE", author: "name-of-UALICE" },
+  ]);
+  // Nothing recorded or told against the thread it was typed in.
+  assert.equal(w.requests.length, 1);
+  assert.equal(w.events.length, 1);
+  assert.equal(w.threads.length, 1);
+  assert.equal(old.lastRequestTs, "1731400000.000100");
+  assert.deepEqual(w.said, []);
+  // At the top of the channel, with a mention.
+  await routeToMission(msg({ text: `<@${BOT}> !new fix CI`, ts: "1731400020.000100", eventId: "En2" }), w.deps);
+  assert.equal(w.state.newThreads.at(-1)?.task, "fix CI");
+  assert.equal(w.state.newThreads.at(-1)?.key, "new:En2");
+});
+
+test("!new is gated as a request is: linked, same org, read, not paused", async () => {
+  const w = world();
+  const ask = (user: string, n: number) => routeToMission(msg({ user, text: `<@${BOT}> !new fix it`, eventId: `Eg${n}` }), w.deps);
+  await ask("UUNA", 1);
+  await ask("UBOB", 2);
+  await ask("UNORA", 3);
+  assert.deepEqual(w.said, [
+    "connect",
+    "tell: Your Slack account is connected to a different Outrunner org than the Mission on call here.",
+    "tell: Only people who can read web in Outrunner can give the Mission on call here work.",
+  ]);
+  w.bindings[0].paused = true;
+  await ask("UALICE", 4);
+  assert.match(w.said.at(-1) ?? "", /^reply: The Mission on call here is paused/);
+  assert.deepEqual(w.state.newThreads, []);
+});
+
+test("!new with no task: a short usage hint, to the sender", async () => {
+  const w = world();
+  await routeToMission(msg({ text: `<@${BOT}> !new` }), w.deps);
+  assert.deepEqual(w.said, [`tell: ${NEW_USAGE}`]);
+  assert.deepEqual(w.state.newThreads, []);
+  assert.equal(w.events.length, 0);
+});
+
+test("a bot's !new is its text, not a command", async () => {
+  const w = world({ binding: { allowBotMessages: true } });
+  await routeToMission(msg({ user: "UCIBOT", botId: "B1", text: `<@${BOT}> !new fix it` }), w.deps);
+  assert.deepEqual(w.state.newThreads, []);
+  assert.equal(w.events[0].payload.slack?.text, "!new fix it");
+});
+
+test("!assign outside a thread the Mission is in: refused as !mute is", async () => {
+  const w = world();
+  await routeToMission(msg({ text: `<@${BOT}> !assign <@UWES>` }), w.deps);
+  await routeToMission(msg({ text: `<@${BOT}> !assign <@UWES>`, threadTs: "1731300000.000100", ts: "1731400030.000100", eventId: "Ea2" }), w.deps);
+  assert.deepEqual(w.said, [`tell: ${ASSIGN_ELSEWHERE}`, `tell: ${ASSIGN_ELSEWHERE}`]);
+  assert.equal(ASSIGN_ELSEWHERE, "`!assign` works in a thread the Mission is in.");
+  assert.deepEqual(w.state.assigned, []);
+});
+
+test("!assign needs exactly one person and no other keyword", async () => {
+  const w = world();
+  await routeToMission(msg(), w.deps);
+  const [t] = w.threads;
+  w.state.open.set(t.id, 1);
+  const texts = ["!assign", `<@${BOT}> !assign <@${BOT}>`, "!assign <@UWES> <@UNORA>", "!assign <@UWES> !mute", "!assign <@UWES> (aside)"];
+  for (const [n, text] of texts.entries()) {
+    await routeToMission(msg({ text, mention: text.includes(BOT), threadTs: t.threadTs, ts: `173140004${n}.000100`, eventId: `Eu${n}` }), w.deps);
+  }
+  assert.deepEqual(w.said, texts.map(() => `tell: ${ASSIGN_USAGE}`));
+  assert.deepEqual(w.state.assigned, []);
+  assert.equal(t.muted, false, "the !mute in it did nothing");
+  assert.equal(w.events.length, 1);
+});
+
+test("!assign to someone not linked in the Mission's org: told to the sender, nothing assigned", async () => {
+  const w = world();
+  await routeToMission(msg(), w.deps);
+  const [t] = w.threads;
+  w.state.open.set(t.id, 1);
+  await routeToMission(msg({ mention: false, text: "!assign <@UUNA>", threadTs: t.threadTs, ts: "1731400050.000100", eventId: "Ec1" }), w.deps);
+  await routeToMission(msg({ mention: false, text: "!assign <@UBOB>", threadTs: t.threadTs, ts: "1731400051.000100", eventId: "Ec2" }), w.deps);
+  assert.deepEqual(w.said, [`tell: ${assigneeNotLinkedText("UUNA", false)}`, `tell: ${assigneeNotLinkedText("UBOB", true)}`]);
+  assert.match(w.said[0], /<@UUNA> hasn't connected Slack to Outrunner, so nothing was assigned/);
+  assert.deepEqual(w.state.assigned, []);
+  assert.equal(w.events.length, 1);
+});
+
+test("!assign @person: the thread's open requests are theirs; the Mission isn't stopped, and is told", async () => {
+  const w = world();
+  // Alice can only read web: enough to assign.
+  await routeToMission(msg(), w.deps);
+  const [t] = w.threads;
+  w.state.open.set(t.id, 2);
+  w.state.ships.set(t.id, 1);
+  await routeToMission(msg({ mention: false, text: "!assign <@UWES>", threadTs: t.threadTs, ts: "1731400060.000100", eventId: "Ea" }), w.deps);
+  assert.deepEqual(w.state.assigned, [{ missionId: "m1", threadId: t.id, assignee: "wes", by: "alice" }]);
+  assert.deepEqual(w.said, ["reply: Assigned this thread to name-of-UWES."]);
+  // Nothing stopped: no cancel, no interrupt.
+  assert.deepEqual(w.state.stopped, []);
+  assert.ok(!w.events.some((e) => e.kind === "request_cancelled"));
+  assert.equal(w.requests.length, 1, "no request made of it");
+  // The Mission's note, in that thread, with no request of its own.
+  assert.equal(w.events.length, 2);
+  const note = w.events[1];
+  assert.equal(note.kind, "slack_request");
+  assert.equal(note.key, "slack_request:assign:Ea");
+  assert.deepEqual(note.payload.slack, {
+    channel: "C1",
+    thread: t.threadTs,
+    ts: "1731400060.000100",
+    author: "Outrunner",
+    text: assignedNote("name-of-UALICE", "name-of-UWES"),
+  });
+  // Slack's retry: assigned again (the same), told once.
+  await routeToMission(msg({ mention: false, text: "!assign <@UWES>", threadTs: t.threadTs, ts: "1731400060.000100", eventId: "Ea" }), w.deps);
+  assert.equal(w.events.length, 2);
+  // With a mention, and Slack's name in the mention.
+  await routeToMission(msg({ text: `<@${BOT}> !assign <@UNORA|nora>`, threadTs: t.threadTs, ts: "1731400061.000100", eventId: "Ea3" }), w.deps);
+  assert.equal(w.state.assigned.at(-1)?.assignee, "nora");
+  assert.equal(w.said.at(-1), "reply: Assigned this thread to name-of-UNORA.");
+});
+
+test("!assign in a thread with nothing open says so and tells the Mission nothing", async () => {
+  const w = world();
+  await routeToMission(msg(), w.deps);
+  const [t] = w.threads;
+  await routeToMission(msg({ mention: false, text: "!assign <@UWES>", threadTs: t.threadTs, ts: "1731400070.000100", eventId: "Ez" }), w.deps);
+  assert.deepEqual(w.said, ["tell: Nothing is open in this thread to assign."]);
+  assert.equal(w.events.length, 1);
 });

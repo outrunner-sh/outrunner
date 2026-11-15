@@ -10,6 +10,8 @@ import {
   cancelPendingRequests,
   cancelRequest,
   createRequest,
+  newThreadRequest,
+  type NewThreadRequest,
   onRootSettled,
   type RequestDeps,
   updateRequest,
@@ -61,6 +63,11 @@ export function requestDeps(): RequestDeps {
 
 export function makeRequest(input: NewRequest) {
   return createRequest(input, requestDeps());
+}
+
+/** `!new <task>` in Slack (lib/missions/slack-route.ts). */
+export function makeNewThreadRequest(input: NewThreadRequest) {
+  return newThreadRequest(input, requestDeps());
 }
 
 export function sendRequestUpdate(missionId: string, key: string, update: { id: string; text: string; from?: string | null }) {

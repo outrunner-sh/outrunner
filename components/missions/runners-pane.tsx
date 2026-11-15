@@ -170,6 +170,7 @@ function RunnerRow({ runner, onOpen }: { runner: RunnerView; onOpen: () => void 
         {pr && <DiffSize additions={pr.additions} deletions={pr.deletions} />}
       </span>
       {runner.summary && <span className="block truncate pl-[22px] text-[12px] text-[#7f7f7f]">{runner.summary}</span>}
+      {runner.assignee && <span className="block truncate pl-[22px] text-[12px] text-[#7f7f7f]">Assigned to {runner.assignee}</span>}
       {runner.attention && <span className="block truncate pl-[22px] text-[12px] text-brand">{runner.attention}</span>}
       {pr && (
         <span className="flex min-w-0 items-center gap-2 pl-[22px]">
@@ -276,6 +277,11 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
         <RunnerGlyph group={runner.group} state={runner.state} standing={runner.standing} attention={runner.attention} />
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#ededed]">{runner.name}</span>
         <span className="shrink-0 text-[11.5px] text-[#7a7a7a]">{STATE_LABEL[runner.state]}</span>
+        {runner.assignee && (
+          <span className="max-w-[120px] shrink-0 truncate text-[11.5px] text-[#7a7a7a]" title={`Assigned to ${runner.assignee} in Slack`}>
+            Assigned to {runner.assignee}
+          </span>
+        )}
         {runner.slackThread && (
           <a
             href={runner.slackThread}
