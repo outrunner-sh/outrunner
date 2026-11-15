@@ -323,7 +323,7 @@ pub fn run() {
                 Menu::with_items(app, &[&show_i, &new_i, &reload_i, &sep, &update_i, &quit_i])?;
 
             TrayIconBuilder::with_id("tray")
-                // The app icon's "o" alone, as a template image: macOS tints
+                // The small arc mark, as a template image: macOS tints
                 // it for a light or dark menu bar, where the app icon's tile
                 // would sit as a dark square.
                 .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
