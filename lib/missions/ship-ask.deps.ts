@@ -126,6 +126,8 @@ export async function handleShipAsk(click: ShipAskClick): Promise<void> {
           launchEpoch: ask.launchEpoch,
           answerOperationId: shipAnswerOperation(ask.id),
         },
+        // A failed delivery's log names the Ship it was for.
+        { workspaceId: runner.id },
       );
     },
     name: async (slackUserId) => (await userNames(install.botToken, [slackUserId])).get(slackUserId) ?? slackUserId,

@@ -142,6 +142,7 @@ function clicks(w: ReturnType<typeof world>, opts: { binding?: MissionChannel | 
           },
         },
         { questions: ask.questions, answers: [{ selected: [label], other: "" }], callId: ask.callId, launchEpoch: ask.launchEpoch, answerOperationId: shipAnswerOperation(ask.id) },
+        { workspaceId: "r1" },
       ),
     name: async () => "Ana",
     edit: async (_team, _channel, ts, _text, blocks) => {
