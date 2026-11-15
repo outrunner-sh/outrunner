@@ -4,10 +4,24 @@
  * network; lib/missions/view.deps.ts reads the rows.
  */
 
+import { boundByName } from "@/lib/missions/mission-channels-list";
 import type { OnCallFacts } from "@/lib/missions/on-call-state";
 import type { RunnerState } from "@/lib/missions/rules";
 import type { ProviderName } from "@/lib/runtime/types";
 import { REASON_LABEL, type SessionStanding } from "@/lib/session/standing";
+
+/** A Ship's assignee as the Ships pane names them: their login or real
+ *  name, else their email, never the "Someone" placeholder (`noName`), the
+ *  same as Settings' "Bound by". No label when they can't be looked up. */
+export function assigneeLabel(
+  assigneeId: string | null | undefined,
+  people: ReadonlyMap<string, { login: string; name: string; email: string | null }>,
+  noName: string,
+): string | null {
+  if (!assigneeId) return null;
+  const person = people.get(assigneeId);
+  return person ? boundByName(person, assigneeId, noName) : null;
+}
 
 export type RunnerCheck = { name: string; status: string; conclusion: string | null; url: string | null };
 

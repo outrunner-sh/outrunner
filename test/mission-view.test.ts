@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { missionIcon } from "@/lib/missions/icons";
 import { missionName } from "@/lib/missions/rules";
 import {
+  assigneeLabel,
   briefSummary,
   missionStatus,
   runnerGroup,
@@ -113,4 +114,20 @@ test("a Mission is named from its first sentence, short", () => {
   // A heading-style first line is the name it was given.
   assert.equal(missionName("Billing\nOwn invoices and keep Stripe in step. Then more."), "Billing");
   assert.equal(missionName("\n\n## Onboarding\nFirst session under a minute"), "Onboarding");
+});
+
+test("the Ships pane names an assignee by login, real name, else email: never the \"Someone\" placeholder", () => {
+  const NO = "Someone";
+  const people = new Map([
+    ["u-gh", { login: "wes", name: "Wes", email: "w@x.dev" }],
+    ["u-named", { login: "", name: "Ana Lima", email: "ana@x.dev" }],
+    // An email-only account (the kind `!assign` picks from Slack): personFrom names it the placeholder.
+    ["u-email", { login: "", name: NO, email: "liverun-a@example.com" }],
+  ]);
+  assert.equal(assigneeLabel("u-gh", people, NO), "wes");
+  assert.equal(assigneeLabel("u-named", people, NO), "Ana Lima");
+  assert.equal(assigneeLabel("u-email", people, NO), "liverun-a@example.com");
+  // No assignee, or one that couldn't be looked up: no label, as before.
+  assert.equal(assigneeLabel(null, people, NO), null);
+  assert.equal(assigneeLabel("u-gone", people, NO), null);
 });

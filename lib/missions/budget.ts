@@ -89,6 +89,14 @@ export function activePause(row: { paused_period: SpendPeriodKind | null; paused
   return Date.parse(row.paused_until) > now.getTime() ? { period: row.paused_period, until: row.paused_until } : null;
 }
 
+/** Whether the header's budget view reads the periods' spend: not for a
+ *  Mission with no budget (the default) seen by someone who can't set one,
+ *  for whom the chip renders nothing. An owner or writer still gets it, for
+ *  the dialog's "Spent today". */
+export function budgetViewReadsSpend(hasBudget: boolean, canEdit: boolean): boolean {
+  return hasBudget || canEdit;
+}
+
 /** Which periods need their spend read for these limits. */
 export function periodsToRead(limits: BudgetLimits): SpendPeriodKind[] {
   return [...(limits.dailyUsd !== null ? (["day"] as const) : []), ...(limits.weeklyUsd !== null ? (["week"] as const) : [])];

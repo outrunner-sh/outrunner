@@ -21,6 +21,7 @@ import { describeSchedule } from "@/lib/automations/schedule";
 import { hireMission, type HireOutcome, type HireStep } from "@/lib/missions/hire";
 import { MISSION_ICONS } from "@/lib/missions/icons";
 import {
+  budgetFields,
   buildHirePlan,
   localTimeZone,
   MISSION_NAME_MAX,
@@ -75,14 +76,21 @@ export function HireDialog({
     setError(null);
     setName("");
     setPrompt(null);
-    setDaily(String(MISSION_TEMPLATES[0].budget.dailyUsd ?? "no limit"));
-    setWeekly(String(MISSION_TEMPLATES[0].budget.weeklyUsd ?? "no limit"));
+    const fields = budgetFields(MISSION_TEMPLATES[0]);
+    setDaily(fields.daily);
+    setWeekly(fields.weekly);
   }, [open]);
 
   const pick = (id: MissionTemplate["id"]) => {
+    const picked = MISSION_TEMPLATES.find((t) => t.id === id) ?? MISSION_TEMPLATES[0];
+    const fields = budgetFields(picked);
     setTemplateId(id);
     setName("");
     setPrompt(null);
+    // The fields follow the template being hired, as the name and
+    // instructions do (edits included), so its own budget reaches the hire.
+    setDaily(fields.daily);
+    setWeekly(fields.weekly);
   };
 
   const hire = async () => {

@@ -280,23 +280,31 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
     await (message.mention ? deps.reply(threadTs, said) : deps.tell(threadTs, said));
     return true;
   }
-  if (keyword === "new") {
-    await newThread(newTask(text), { message, mission, requester }, deps);
-    return true;
-  }
+  // Assigning is bookkeeping a person may want while the budget is sorted:
+  // its note is an event, held like any other while budget-paused.
   if (keyword === "assign") {
     await assign(text, { message, binding, mission, requester, thread: owned ? thread : null, threadTs }, deps);
+    return true;
+  }
+  const budget = deps.budgetPause ? await deps.budgetPause(mission.id) : null;
+  // Nothing recorded, nothing for the Mission: as a pause, said once.
+  const budgetReached = async (reached: NonNullable<typeof budget>) => {
+    const said = budgetReachedText(reached);
+    await (message.mention ? deps.reply(threadTs, said) : deps.tell(threadTs, said));
+  };
+  if (keyword === "new") {
+    // A budget-paused Mission takes no `!new` either: no request, no root
+    // post, the same reply a mention gets (as a person's pause refuses it).
+    if (budget) await budgetReached(budget);
+    else await newThread(newTask(text), { message, mission, requester }, deps);
     return true;
   }
   if (!text && !message.files?.length) {
     if (message.mention) await deps.tell(threadTs, "Mention me with a task, and the Mission on call here takes it on.");
     return true;
   }
-  const budget = deps.budgetPause ? await deps.budgetPause(mission.id) : null;
   if (budget) {
-    // Nothing recorded, nothing for the Mission: as a pause, said once.
-    const said = budgetReachedText(budget);
-    await (message.mention ? deps.reply(threadTs, said) : deps.tell(threadTs, said));
+    await budgetReached(budget);
     return true;
   }
 

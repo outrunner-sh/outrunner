@@ -53,6 +53,13 @@ export type MissionTemplate = {
   budget: MissionBudget;
 };
 
+/** The Hire screen's budget fields for a template, as typed text: its own
+ *  limits, or "no limit". Seeded when the dialog opens and again whenever
+ *  another template is picked, so the fields are the hired template's. */
+export function budgetFields(template: Pick<MissionTemplate, "budget">): { daily: string; weekly: string } {
+  return { daily: String(template.budget.dailyUsd ?? "no limit"), weekly: String(template.budget.weeklyUsd ?? "no limit") };
+}
+
 const ON_CALL_PROMPT = `# On-call
 
 You're this project's on-call engineer. Triage each request that reaches you (from Slack, a trigger or me):

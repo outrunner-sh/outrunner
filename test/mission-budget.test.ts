@@ -17,6 +17,7 @@ import { type MissionRunDeps, type MissionRunOutcome, startMissionRun } from "@/
 import {
   activePause,
   type BudgetLimits,
+  budgetViewReadsSpend,
   budgetStartRefusal,
   countedUsd,
   decideBudget,
@@ -143,6 +144,16 @@ test("a limit raised above what's counted clears the pause; lowered to it, pause
   assert.equal(decideBudget({ limits: limits(null, null), day, week: null, now: NOW }).pause, null);
 });
 
+test("the header's view reads spend only when there's a budget or the viewer can set one", () => {
+  // The default (no budget) for someone who can't set one: nothing to show, nothing read.
+  assert.equal(budgetViewReadsSpend(false, false), false);
+  // An owner or writer sees "Spent today" in the dialog even with no budget yet.
+  assert.equal(budgetViewReadsSpend(false, true), true);
+  // A budget is shown (and checked) for everyone who can see the Mission.
+  assert.equal(budgetViewReadsSpend(true, false), true);
+  assert.equal(budgetViewReadsSpend(true, true), true);
+});
+
 test("limits are dollars to the cent, more than $0, or null", () => {
   assert.deepEqual(parseLimit(100, "dailyUsd"), { usd: 100 });
   assert.deepEqual(parseLimit(12.345, "dailyUsd"), { usd: 12.35 });
@@ -264,13 +275,21 @@ function slackWorld(budget: SpendPeriodKind | null) {
   const events: RecordedEvent[] = [];
   const requests: MissionRequest[] = [];
   const said: string[] = [];
+  const newThreads: string[] = [];
+  const assigned: string[] = [];
   const nope = async (): Promise<never> => {
     throw new Error("not used");
   };
   const deps: SlackRouteDeps = {
     botUserId: BOT,
-    newThreadRequest: async () => "queued",
-    assignThread: async () => 0,
+    newThreadRequest: async (input) => {
+      newThreads.push(input.task);
+      return "queued";
+    },
+    assignThread: async (input) => {
+      assigned.push(input.assignee);
+      return 1;
+    },
     binding: async () => binding,
     thread: async (_t, _c, ts) => (ts === thread.threadTs ? thread : null),
     mission: async () => mission,
@@ -307,7 +326,7 @@ function slackWorld(budget: SpendPeriodKind | null) {
     bind: nope,
     announce: nope,
   };
-  return { deps, events, requests, said };
+  return { deps, events, requests, said, newThreads, assigned };
 }
 
 const mention = (patch: Partial<SlackRouteMessage> = {}): SlackRouteMessage => ({
@@ -342,6 +361,27 @@ test("a Slack request to a budget-paused Mission gets the one fixed reply, and n
   await routeToMission(mention(), open.deps);
   assert.equal(open.events.length, 1);
   assert.equal(open.events[0].kind, "slack_request");
+});
+
+test("budget-paused, `!new` gets the same fixed reply and records nothing; `!assign` still assigns", async () => {
+  const w = slackWorld("day");
+  assert.equal(await routeToMission(mention({ text: `<@${BOT}> !new fix the login redirect`, eventId: "EvNew" }), w.deps), true);
+  assert.deepEqual(w.said, [`reply: ${budgetReachedText("day")}`]);
+  assert.deepEqual(w.newThreads, [], "no request, so no root post");
+  assert.deepEqual(w.requests, []);
+  assert.deepEqual(w.events, []);
+  // !assign in the Mission's thread: bookkeeping, done while the budget is sorted.
+  await routeToMission(
+    mention({ text: `<@${BOT}> !assign <@UALICE>`, threadTs: "1731400000.000100", ts: "1731400300.000100", eventId: "EvAssign" }),
+    w.deps,
+  );
+  assert.deepEqual(w.assigned, ["alice"]);
+  assert.equal(w.said.at(-1), "reply: Assigned this thread to Alice.");
+  // Not paused: !new goes as ever.
+  const open = slackWorld(null);
+  await routeToMission(mention({ text: `<@${BOT}> !new fix the login redirect`, eventId: "EvNew2" }), open.deps);
+  assert.deepEqual(open.newThreads, ["fix the login redirect"]);
+  assert.deepEqual(open.said, []);
 });
 
 // Triggers -------------------------------------------------------------------

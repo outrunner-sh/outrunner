@@ -11,6 +11,7 @@ import { readMissionSpend } from "@/lib/missions/spend.deps";
 import type { MissionSpend, SpendPeriodKind } from "@/lib/missions/spend";
 import {
   activePause,
+  budgetViewReadsSpend,
   type BudgetDecision,
   type BudgetLimits,
   type BudgetPause,
@@ -194,6 +195,9 @@ export async function missionBudgetView(missionId: string, userId: string): Prom
   const now = new Date();
   const row = await readBudget(missionId);
   const limits: BudgetLimits = row ? limitsOf(row) : { dailyUsd: null, weeklyUsd: null };
+  // No budget, and this viewer can't set one: the chip renders nothing, so
+  // the periods' spend isn't read for it.
+  if (!budgetViewReadsSpend(row !== null, found.write)) return { view: { limits, day: null, week: null, paused: null, canEdit: false } };
   const { decision, spend } = await decide(missionId, limits, now, ["day", "week"]);
   let paused: BudgetPause | null = null;
   if (row) {

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { MISSION_TRIGGERS, NAME_MAX, parseAutomationInput, PROMPT_MAX } from "@/lib/automations/rules";
 import { nextRun } from "@/lib/automations/schedule";
 import { MISSION_ICONS } from "@/lib/missions/icons";
-import { buildHirePlan, DEFAULT_BUDGET, MISSION_NAME_MAX, MISSION_TEMPLATES, missionTemplate, parseBudgetAmount } from "@/lib/missions/templates";
+import { budgetFields, buildHirePlan, DEFAULT_BUDGET, MISSION_NAME_MAX, MISSION_TEMPLATES, missionTemplate, parseBudgetAmount } from "@/lib/missions/templates";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const MISSION = "22222222-2222-4222-8222-222222222222";
@@ -133,4 +133,15 @@ test("a budget field is no limit or a positive amount; 0, negatives and non-numb
     assert.equal(parsed.ok, false, bad);
     assert.equal(parsed.ok ? "" : parsed.error, "Enter an amount above $0, or choose No limit.");
   }
+});
+
+test("the Hire screen's budget fields are the picked template's own, or no limit", () => {
+  for (const t of MISSION_TEMPLATES) {
+    assert.deepEqual(budgetFields(t), { daily: String(t.budget.dailyUsd), weekly: String(t.budget.weeklyUsd) });
+  }
+  // A template with a budget of its own (or none) gets its own numbers, not the first template's.
+  assert.deepEqual(budgetFields({ budget: { dailyUsd: 25, weeklyUsd: null } }), { daily: "25", weekly: "no limit" });
+  // What the fields hold parses back to that budget.
+  const own = budgetFields({ budget: { dailyUsd: 25, weeklyUsd: null } });
+  assert.deepEqual([parseBudgetAmount(own.daily), parseBudgetAmount(own.weekly)], [{ ok: true, value: 25 }, { ok: true, value: null }]);
 });
