@@ -205,8 +205,11 @@ export async function announceLate(
 ): Promise<boolean> {
   if (request.announcedAt || request.status === "cancelled") return false;
   if (root?.status === "pending" && now - Date.parse(root.createdAt) < 10 * 60_000) return false;
-  const thread = request.threadId ? await deps.thread(request.threadId) : null;
-  await announce(request, thread?.threadTs ?? null, deps);
+  // The sweep may have read this before a cancel landed: say it from the row now.
+  const fresh = await deps.request(request.missionId, request.requestKey);
+  if (!fresh || fresh.announcedAt || fresh.status === "cancelled") return false;
+  const thread = fresh.threadId ? await deps.thread(fresh.threadId) : null;
+  await announce(fresh, thread?.threadTs ?? null, deps);
   return true;
 }
 
