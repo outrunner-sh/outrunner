@@ -206,6 +206,9 @@ function postIn(
  *  owner's spend and plan (dollar amounts, limits), which everyone in the
  *  channel would read; the full reason stays in the Mission's tool result. */
 export function refusalSaid(reason: string): string {
+  // The Mission's own budget, not the owner's plan: said apart from it.
+  const budget = /budget for (today|this week) is reached/i.exec(reason);
+  if (budget) return `The Mission's budget for ${budget[1]} is reached.`;
   if (/concurrent cloud sessions/i.test(reason)) return "The Mission owner's plan has no room for another cloud session right now.";
   if (/cloud usage|usage limit|overage|free trial/i.test(reason)) return "The Mission owner's cloud usage is used up for now.";
   return "Outrunner couldn't start it right now.";

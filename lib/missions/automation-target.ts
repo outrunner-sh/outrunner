@@ -11,6 +11,7 @@
  *               owner still can read its project (unattended, the run's
  *               authority is theirs)
  *   paused      on call in Slack and paused: skipped
+ *   budget      the Mission's budget reached: skipped, the run saying so
  *   filter      a watched channel's message: the automation's filter prompt,
  *               in a model call with no tools, says match or not, and why,
  *               which the run keeps. A filter that fails is the run failed
@@ -25,6 +26,7 @@ import type { CandidateTarget, RunCandidate } from "@/lib/db/automation-runs";
 import type { PendingRun } from "@/lib/automations/runs";
 import { onClock, type LinearIssueEvent, type ScheduleEvent, type SlackWatchEvent } from "@/lib/automations/run-event";
 import { fillPayload, type WebhookEvent } from "@/lib/automations/webhook";
+import { budgetRunSkipped } from "@/lib/missions/budget";
 import type { NewRequest } from "@/lib/missions/requests";
 import type { MissionChannel } from "@/lib/missions/slack-store";
 import type { Workspace } from "@/lib/runtime/types";
@@ -45,6 +47,8 @@ export type MissionRunDeps = {
   claimMessage(input: { teamId: string; channelId: string; ts: string; missionId: string; claimKey: string }): Promise<boolean>;
   createRequest(input: NewRequest): Promise<"created" | "exists">;
   settleRun(runId: string, outcome: MissionRunOutcome): Promise<void>;
+  /** The Mission's budget pause, if it's budget-paused: the period reached. */
+  budgetPause?(missionId: string): Promise<"day" | "week" | null>;
 };
 
 /** The most of a message the filter reads. */
@@ -158,6 +162,9 @@ export async function startMissionRun(run: PendingRun, deps: MissionRunDeps): Pr
     if (binding?.paused) {
       return settle({ status: "skipped", reason: "The Mission is paused in Slack: nothing was sent to it." });
     }
+    // Recorded, not acted on, as a pause holds runs: the run says why.
+    const budget = deps.budgetPause ? await deps.budgetPause(mission.id) : null;
+    if (budget) return settle({ status: "skipped", reason: budgetRunSkipped(budget) });
     const request = requestOf(run.candidate, run, target);
     let filterReason: string | null = null;
     if (run.event.trigger === "slack.message") {

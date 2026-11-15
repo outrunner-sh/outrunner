@@ -10,6 +10,7 @@
  * the scoping and the refusals here test without a database or a box.
  */
 
+import { budgetStartRefusal } from "@/lib/missions/budget";
 import type { RunnerPullRequest } from "@/lib/missions/pulls";
 import {
   boolArg,
@@ -76,6 +77,9 @@ export type MissionToolDeps = {
   archive(runner: Workspace): Promise<boolean>;
   readNotes(missionId: string): Promise<{ body: string; updatedAt: string | null }>;
   writeNotes(missionId: string, body: string): Promise<void>;
+  /** The Mission's budget pause, if it's budget-paused (budget.deps.ts):
+   *  the period reached. No Ship starts while it is. */
+  budgetPause?(missionId: string): Promise<"day" | "week" | null>;
   /** Slack, for a Mission on call in a channel (lib/missions/slack-tools.ts);
    *  without it, its Slack tools are off. */
   slack?: MissionSlackDeps;
@@ -303,6 +307,15 @@ async function spawnRunner(mission: Workspace, args: Record<string, unknown>, de
       await giveBack();
       return refuse(`The Ship didn't start: ${why}.`);
     }
+  }
+  // Every Ship start, on call or not: the Mission's budget. Ships already
+  // running go on.
+  const budget = deps.budgetPause ? await deps.budgetPause(mission.id) : null;
+  if (budget) {
+    await giveBack();
+    const why = budgetStartRefusal(budget);
+    if (slack && deps.slack) await tellStartRefused(slack, why, deps.slack).catch(() => undefined);
+    return refuse(`The Ship didn't start: ${why}.`);
   }
   let started: Awaited<ReturnType<MissionToolDeps["startRunner"]>>;
   try {

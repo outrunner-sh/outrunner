@@ -15,6 +15,7 @@
  *   gate      a linked Outrunner account in the Mission's org that can read
  *             its project; anyone else is asked to connect, or refused
  *   paused    says so, and takes nothing
+ *   budget    the Mission's budget reached: one fixed reply, takes nothing
  *   bots      the bot's own messages never; other bots' only with
  *             allow_bot_messages, when they mention Outrunner, vouched for
  *             by whoever bound the channel
@@ -24,7 +25,7 @@
 
 import { eventKey, type SlackEventPayload } from "@/lib/missions/events";
 import type { MissionChannel, MissionRequest, MissionThread, BindOutcome } from "@/lib/missions/slack-store";
-import { ON_CALL_HELP, onCallCommand, threadKeyword, withoutMention, type OnCallCommand } from "@/lib/missions/slack-text";
+import { budgetReachedText, ON_CALL_HELP, onCallCommand, threadKeyword, withoutMention, type OnCallCommand } from "@/lib/missions/slack-text";
 import type { RecordedEvent } from "@/lib/missions/watch";
 import { allows, type AccessLevel } from "@/lib/orgs/access";
 import type { Workspace } from "@/lib/runtime/types";
@@ -81,6 +82,9 @@ export type SlackRouteDeps = {
   setPaused(missionId: string, paused: boolean): Promise<void>;
   /** Take the Mission off call here, and tell it. */
   unbind(binding: MissionChannel, by: Requester): Promise<void>;
+  /** The Mission's budget pause, if it's budget-paused (budget.deps.ts):
+   *  the period reached. */
+  budgetPause?(missionId: string): Promise<"day" | "week" | null>;
   /** Record an event for the Mission: true when it's new. */
   enqueue(event: RecordedEvent): Promise<boolean>;
   /** Stop this thread's work: its open requests cancelled and its Ships'
@@ -221,6 +225,13 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
   }
   if (!text && !message.files?.length) {
     if (message.mention) await deps.tell(threadTs, "Mention me with a task, and the Mission on call here takes it on.");
+    return true;
+  }
+  const budget = deps.budgetPause ? await deps.budgetPause(mission.id) : null;
+  if (budget) {
+    // Nothing recorded, nothing for the Mission: as a pause, said once.
+    const said = budgetReachedText(budget);
+    await (message.mention ? deps.reply(threadTs, said) : deps.tell(threadTs, said));
     return true;
   }
 
