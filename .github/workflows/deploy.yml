@@ -57,7 +57,7 @@ jobs:
     # Resolves what to deploy, checks it, and writes the job summary. Fails,
     # and so deploys nothing, on anything it can't vouch for.
     if: >-
-      github.repository == 'neevai-labs/outrunner' &&
+      github.repository == 'outrunner-sh/outrunner' &&
       (github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&

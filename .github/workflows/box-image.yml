@@ -60,7 +60,7 @@ jobs:
 
       - uses: docker/login-action@v3
         if: >-
-          github.repository == 'neevai-labs/outrunner' &&
+          github.repository == 'outrunner-sh/outrunner' &&
           (github.event_name != 'pull_request' ||
            github.event.pull_request.head.repo.full_name == github.repository)
         with:
@@ -101,7 +101,7 @@ jobs:
 
       - name: Publish
         if: >-
-          github.repository == 'neevai-labs/outrunner' &&
+          github.repository == 'outrunner-sh/outrunner' &&
           steps.published.outputs.yes != 'true' &&
           (github.event_name != 'pull_request' ||
            github.event.pull_request.head.repo.full_name == github.repository)

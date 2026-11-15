@@ -36,7 +36,7 @@ jobs:
   plan:
     name: Plan
     # The mirror pushes main to immadsahin/outrunner, which can't sign.
-    if: github.repository == 'neevai-labs/outrunner'
+    if: github.repository == 'outrunner-sh/outrunner'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
