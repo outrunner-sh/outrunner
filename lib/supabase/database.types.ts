@@ -210,9 +210,6 @@ type MissionChannelRow = {
   paused: boolean;
   /** 20261114200100: new each time it's bound. */
   revision: string;
-  /** 20261114210000_mission_budgets.sql */
-  budget_paused_period: "day" | "week" | null;
-  budget_paused_until: string | null;
   /** 20261114210100_mission_idle_pause.sql */
   last_human_at: string;
   idle_warned_at: string | null;
@@ -228,6 +225,8 @@ type MissionBudgetRow = {
   daily_usd: number | null;
   weekly_usd: number | null;
   set_by: string | null;
+  paused_period: "day" | "week" | null;
+  paused_until: string | null;
   created_at: string;
   updated_at: string;
 };

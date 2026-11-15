@@ -8,6 +8,12 @@ create table if not exists mission_budgets (
   daily_usd numeric(12, 2) check (daily_usd > 0),
   weekly_usd numeric(12, 2) check (weekly_usd > 0),
   set_by uuid references auth.users (id) on delete set null,
+  -- Reached: no Mission turn and no Ship start, by any way in (Slack,
+  -- triggers, the app), until paused_until (the next period's start, as
+  -- lib/missions/spend.ts's spendPeriod has it) or a raised limit. On the
+  -- Mission, not its binding: an unbind or rebind can't clear it.
+  paused_period text check (paused_period in ('day', 'week')),
+  paused_until timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -16,12 +22,6 @@ drop trigger if exists mission_budgets_set_updated_at on mission_budgets;
 create trigger mission_budgets_set_updated_at
   before update on mission_budgets
   for each row execute function set_updated_at();
-
--- A binding whose Mission reached a budget: no Mission turn and no Ship start
--- until budget_paused_until (the next UTC day or ISO week) or a raised limit.
-alter table mission_channels add column if not exists budget_paused_period text
-  check (budget_paused_period in ('day', 'week'));
-alter table mission_channels add column if not exists budget_paused_until timestamptz;
 
 alter table mission_budgets enable row level security;
 -- No policy, on purpose: see 20260928120000_user_credentials.sql.
