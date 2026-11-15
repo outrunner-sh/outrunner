@@ -1,8 +1,8 @@
-# Runtime Desktop
+# Outrunner Desktop
 
 A lightweight native macOS shell for [Outrunner](https://app.outrunner.sh),
-built with [Tauri v2](https://tauri.app). Conductor-style: a real app window
-plus a menu-bar (tray) presence, wrapping the hosted Runtime web UI.
+built with [Tauri v2](https://tauri.app). It provides a native window,
+menu-bar presence, and a bridge to local agent sessions around the web UI.
 
 It stays thin on purpose. For cloud sessions the web UI opens the terminal
 WebSocket **directly to the Daytona box**, so the native layer only provides the
@@ -46,8 +46,8 @@ conversation WebSockets over `local_socket_*` with a Channel per socket.
 - Claude uses the user's own `claude` login and starts with
   `--permission-mode acceptEdits`: edits go through, shell commands wait for
   approval in the Terminal panel. Cloud boxes keep `bypassPermissions`.
-- Needs `git`, `tmux` (`brew install tmux`) and `claude` on the login shell's
-  PATH; the app checks and names whatever is missing.
+- Needs `git` and a connected coding agent. The app bundles tmux and can
+  manage Claude Code; it reports missing tools when setting up a session.
 - The agent's log is `~/.outrunner/agent.log`.
 
 ## Planned next (needs a small web API + a webview→Rust bridge)
@@ -60,10 +60,18 @@ conversation WebSockets over `local_socket_*` with a Channel per socket.
 
 ## Develop
 
+Develop on macOS with Xcode Command Line Tools, Rust, Bun, and the Go
+version pinned in `runtime-agent/go.mod`. Start the control plane first with
+`pnpm dev` in the repository root, using [the development setup](../docs/development.md).
+Then, from this directory:
+
 ```bash
-bun install
-bun run tauri dev      # launches the app against the hosted site
+pnpm install --ignore-workspace --frozen-lockfile
+pnpm tauri dev         # debug builds use http://localhost:3000
 ```
+
+Bun is required because Tauri's before-build hooks use `bun run`. The checked-in
+lockfile is pnpm's; use pnpm to update dependencies.
 
 Both `tauri dev` and `tauri build` first run `bun run sidecars`, which builds the
 agent with `scripts/build-agent-desktop.sh` (needs Go ≥ 1.27; `runtime-agent/go.mod` pins the toolchain) and tmux with
@@ -75,7 +83,7 @@ which fail without the sidecars.
 ## Build a distributable .app / .dmg
 
 ```bash
-bun run tauri build    # outputs to src-tauri/target/release/bundle/
+pnpm tauri build      # outputs to src-tauri/target/release/bundle/
 ```
 
 A local build is unsigned. Builds for the team come from CI instead.
@@ -116,6 +124,16 @@ The secrets and variables both workflows need are listed at the top of each.
 
 ## Point at a different environment
 
-The site URL lives in two places: the window `url` in
-`src-tauri/tauri.conf.json` and `SITE_URL` in `src-tauri/src/lib.rs`. Change both
-(e.g. to `http://localhost:3000`) to run against a local control plane.
+The native shell's `site()` function in `src-tauri/src/lib.rs` uses
+`http://localhost:3000` for debug builds and `https://app.outrunner.sh` for
+release builds. Set `OUTRUNNER_SITE` to override it at launch:
+
+```sh
+OUTRUNNER_SITE=https://your-app.example.com pnpm tauri dev
+```
+
+The small Vite build is only a Tauri build entry; the native window loads the
+configured site directly. There is no separate bundled frontend. For a redistributed fork, also replace the app
+identifier, deep-link scheme, updater endpoint and verification key in
+`src-tauri/tauri.conf.json`, and update corresponding native defaults. The
+upstream updater is signed for Outrunner's official releases.

@@ -1,6 +1,8 @@
 # Supabase
 
-Project ref: `butbnitdpiehgwqggowr`
+Use a Supabase project you control. Each deployment needs its own auth settings,
+database, and storage. Copy its API URL and keys into `.env.local` as described
+in [the development guide](../docs/development.md).
 
 ## Applying migrations
 
@@ -25,8 +27,9 @@ Apply a migration before deploying code that reads what it adds.
 
 Notes:
 
-- Do **not** run `supabase init`. This repository already has
-  `supabase/migrations`, and `init` would scaffold a competing config.
+- The supported setup uses a hosted Supabase project. This repository has no
+  local Supabase `config.toml`; `supabase start` is not a ready-made development
+  setup. Use the verification scripts below for a disposable schema test.
 - `supabase db reset` is destructive. `db push` only applies what is pending.
 
 ### One-time: record migrations applied by hand
@@ -48,6 +51,22 @@ shows them on both sides, and `db:migrate` applies only what is newer.
 Paste each pending file in `supabase/migrations/` into the SQL editor, oldest
 first. A migration applied this way also needs recording: `pnpm db:repair
 --through <its version>`.
+
+## Upgrading past the November 14 migration collision
+
+Earlier checkouts assigned `20261114130000` to both
+`automation_cover_new_repos` and `github_personal_tokens`. Fresh installations
+now run the automation migration at `20261114130000` and the personal-token
+migration at `20261114140000`. The latter tolerates an already-created token
+table and reapplies its access restrictions.
+
+If your database used the old checkout, inspect `pnpm db:status` and your schema
+before continuing. In particular, check both `public.user_github_tokens` and
+`public.automations.cover_new_repos`. If version `20261114130000` was recorded
+for personal tokens while the automation changes are absent, apply
+`20261114130000_automation_cover_new_repos.sql` through the SQL editor before
+running `pnpm db:migrate`. Do not mark a migration applied until all of its SQL
+has actually run. Back up the database before reconciling its history.
 
 ## Verifying the schema
 
@@ -75,8 +94,9 @@ and always removes its container.
 1. **Authentication → Providers → GitHub**: enable it and paste the GitHub
    OAuth app's client ID and secret.
 2. Set the GitHub OAuth app's callback URL to:
-   `https://butbnitdpiehgwqggowr.supabase.co/auth/v1/callback`
-3. **Authentication → URL Configuration**: add `<app-origin>/auth/callback`
+   `https://<your-project-ref>.supabase.co/auth/v1/callback`
+3. **Authentication → URL Configuration**: set **Site URL** to your app origin
+   and add `<app-origin>/auth/callback`
    (for example `http://localhost:3000/auth/callback`) to the Redirect URLs
    allowlist.
 4. **Authentication → Providers → Google**: enable it and paste the client ID
@@ -97,17 +117,16 @@ and always removes its container.
    built-in sender is limited to 2 emails an hour. Until then the email
    carries only a link, which works too (it lands at `/auth/callback`).
 
-`/setup` in the running app reports which of these are satisfied.
+Use `/api/health` and the [observability guide](../docs/operations/observability.md)
+to check a deployment. The service-role key bypasses RLS; never put it in a
+`NEXT_PUBLIC_` variable.
 
-## GitHub repository synchronization
+## GitHub repository access
 
-GitHub OAuth above establishes identity only. M2 repository sync reads a
-server-only `GITHUB_PAT`, then verifies that its `/user` identity matches
-`RUNTIME_OWNER_GITHUB_LOGIN` before saving any projects.
+Sign-in establishes identity. Repository access comes from each user's GitHub
+connection or personal access token, or the organization's GitHub App
+installation. Set these up in Settings; credentials are encrypted in the
+database. There is no shared deployment `GITHUB_PAT`.
 
-Create a **fine-grained** PAT for that same GitHub account, restrict it to the
-repositories Runtime should manage, grant repository metadata read access, and
-authorize it for any SSO-enforced organizations. Put it only in
-`GITHUB_PAT` in `.env.local` or your deployment's secret manager — never in a
-`NEXT_PUBLIC_` variable, database row, or source file. Clone/push and pull
-request permissions are intentionally deferred to later milestones.
+For GitHub App permissions, callbacks, webhook setup, and legacy-token behavior,
+see [the GitHub guide](../docs/github-app.md).

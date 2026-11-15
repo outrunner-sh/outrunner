@@ -32,21 +32,24 @@ for target in $targets; do
   GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X runtime-agent/internal/cli.Version=$version" \
     -o "$out/$pkg/bin/$exe" ./cmd/outrunner
+  cp "$repo_root/LICENSE" "$out/$pkg/LICENSE"
+  cat "$repo_root/licenses/go-runtime.txt" "$repo_root/licenses/creack-pty.txt" "$repo_root/licenses/gorilla-websocket.txt" > "$out/$pkg/THIRD_PARTY_NOTICES.txt"
   cat >"$out/$pkg/package.json" <<JSON
 {
   "name": "$pkg",
   "version": "$version",
   "description": "The outrunner CLI for $os $cpu. Install outrunner, not this.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "os": ["$os"],
   "cpu": ["$cpu"],
-  "files": ["bin/$exe"]
+  "files": ["bin/$exe", "THIRD_PARTY_NOTICES.txt"]
 }
 JSON
 done
 
 mkdir -p "$out/outrunner"
 cp -R "$repo_root/cli-npm/." "$out/outrunner/"
+cp "$repo_root/LICENSE" "$out/outrunner/LICENSE"
 node -e '
   const fs = require("fs"), file = process.argv[1], version = process.argv[2];
   const pkg = JSON.parse(fs.readFileSync(file, "utf8"));

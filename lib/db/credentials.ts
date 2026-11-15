@@ -244,7 +244,7 @@ export async function setGithubIdentity(userId: string, identity: GitHubIdentity
 }
 
 /** The user's Anthropic API key, or null when unset or unreadable. */
-export async function getAnthropicKey(userId: string): Promise<string | null> {
+async function getAnthropicKey(userId: string): Promise<string | null> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("user_credentials")
@@ -381,7 +381,7 @@ export async function setSandboxChoice(userId: string, sandbox: SandboxChoice): 
 }
 
 /** The user's Daytona API key, or null when unset or unreadable. */
-export async function getDaytonaKey(userId: string): Promise<string | null> {
+async function getDaytonaKey(userId: string): Promise<string | null> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("user_credentials")
@@ -434,7 +434,7 @@ export function ownSandboxKeys(userId: string): {
 }
 
 /** The user's Modal token, or null when unset or unreadable. */
-export async function getModalToken(userId: string): Promise<ModalToken | null> {
+async function getModalToken(userId: string): Promise<ModalToken | null> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("user_credentials")

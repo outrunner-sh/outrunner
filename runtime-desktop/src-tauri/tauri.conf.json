@@ -40,6 +40,12 @@
     "externalBin": [
       "binaries/runtime-agent",
       "binaries/tmux"
-    ]
+    ],
+    "resources": {
+      "../../LICENSE": "licenses/LICENSE",
+      "../../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
+      "../../licenses/": "licenses/licenses/",
+      "../../public/fonts/OFL.txt": "licenses/public/fonts/OFL.txt"
+    }
   }
 }

@@ -1,8 +1,7 @@
 name: Desktop publish
 
 # Copies a published desktop release to the public download bucket, so the
-# website's download link serves it. The repo is private, so the GitHub
-# Release itself is not downloadable by anyone outside it.
+# website's download link and installed apps share a stable update endpoint.
 #
 #   Automatic: publishing a desktop-v* release (the draft desktop-release.yml
 #              made) puts it live, usually within a minute. A release

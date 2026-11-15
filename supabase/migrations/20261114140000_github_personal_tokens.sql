@@ -1,7 +1,7 @@
 -- A user's own GitHub personal access token (Settings → Connections → GitHub):
 -- reaches every repository their account can, with no GitHub App installed by
 -- an organization owner. Service role only, sealed with CREDENTIALS_ENCRYPTION_KEY.
-create table public.user_github_tokens (
+create table if not exists public.user_github_tokens (
   user_id uuid primary key references auth.users(id) on delete cascade,
   github_user_id bigint not null,
   github_login text not null,

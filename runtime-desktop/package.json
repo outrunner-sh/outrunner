@@ -8,17 +8,18 @@
     "tmux": "bash ../scripts/build-tmux-desktop.sh",
     "sidecars": "bun run agent && bun run tmux",
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },
-  "dependencies": {
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2"
-  },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
-    "vite": "^6.0.3",
-    "typescript": "~5.6.2"
+    "vite": "^6.4.4"
+  },
+  "license": "MIT",
+  "pnpm": {
+    "overrides": {
+      "source-map-js@<1.2.2": "^1.2.2"
+    }
   }
 }

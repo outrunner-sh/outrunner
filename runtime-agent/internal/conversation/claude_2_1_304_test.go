@@ -8,7 +8,8 @@ import (
 	"testing"
 )
 
-// A whole session of a real Claude Code 2.1.304 (testdata/claude-2.1.304.jsonl):
+// A Claude Code 2.1.304 session (testdata/claude-2.1.304.jsonl), with ignored
+// API metadata and provider system prompts replaced by synthetic fixtures:
 // a plan asked for in plan mode, declined with Escape, revised, approved in
 // Claude's own menu and built; a turn stopped with Escape; then /compact with
 // instructions.
