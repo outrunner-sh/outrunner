@@ -68,6 +68,12 @@ test("off call: cards close before the binding ends, which is before the Mission
   const failing = world([], { dropFails: true });
   assert.equal(await takeMissionOffCall(mission, "wes", "archived", failing.deps), true);
   assert.deepEqual(failing.calls.filter((c) => !c.startsWith("log:")), ["unbind", "dropPending", "tell", "audit"]);
+  // Unwired (as on this branch: takeOffCall passes none), nothing is dropped
+  // and the rest goes on; pending requests are refused by revision instead.
+  const unwired = world([ask("1")]);
+  delete unwired.deps.dropPending;
+  assert.equal(await takeMissionOffCall(mission, "wes", "off_call", unwired.deps), true);
+  assert.deepEqual(unwired.calls, ["update:1731400005.001", "unbind", "tell", "audit"]);
   // Not on call: nothing is touched.
   const off = world([ask("1")]);
   off.deps.binding = async () => null;

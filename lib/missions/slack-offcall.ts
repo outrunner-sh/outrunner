@@ -4,11 +4,15 @@
  * The wiring is lib/missions/slack-binding.ts (takeOffCall).
  *
  * The order is the point: cards close first (once the binding row is gone a
- * click can't tell what it was under), the binding ends before anything
- * pending is dropped (an in-flight Ship start or post is refused once its
- * revision is gone, lib/missions/slack-tools.ts recheckStart, so nothing new
- * can begin under the ended binding while pending work is dropped), and
- * the Mission hears of it last.
+ * click can't tell what it was under), then the binding ends, and the
+ * Mission hears of it last.
+ *
+ * Requests the ended binding left without a Ship are refused, not dropped:
+ * a Ship start or message for one is checked against the binding's revision
+ * right before it acts (lib/missions/slack-tools.ts recheckStart,
+ * recheckMessage), and that revision is gone. dropPending is the hook to
+ * cancel them outright once the binding has ended; nothing wires it yet
+ * (PR #422 does).
  */
 
 import type { MissionAsk, MissionChannel, MissionThread } from "@/lib/missions/slack-store";
@@ -24,7 +28,8 @@ export type OffCallDeps = {
   update(binding: MissionChannel, ts: string, text: string, blocks: Record<string, unknown>[]): Promise<void>;
   /** End the binding; true when it was on. */
   unbind(missionId: string): Promise<boolean>;
-  /** Drop what the ended binding left pending (requests with no Ship). */
+  /** Cancel what the ended binding left pending (requests with no Ship).
+   *  Optional: unwired, they're refused by the revision checks instead. */
   dropPending?(missionId: string, binding: MissionChannel, why: CardEnd): Promise<unknown>;
   /** Tell the Mission it's off call. */
   tell(mission: Workspace, binding: MissionChannel): Promise<void>;

@@ -105,6 +105,15 @@ test("going on call tells the Mission how; its instructions say so when it's set
   assert.ok(!missionInstructions(null).includes("On call in Slack"));
 });
 
+test("going off call tells the Mission its pending requests are refused, not dropped: nothing cancels them on this side", () => {
+  const unbound: MissionEvent = { id: "e3", runnerId: null, kind: "slack_channel", createdAt: at(1), payload: { slack: { channel: "C1", bound: false, channelName: "web-oncall" } } };
+  const text = formatDelivery([unbound]);
+  assert.ok(text.includes("You are no longer on call in the Slack channel #web-oncall (C1)."));
+  assert.ok(text.includes("Requests from it that hadn't started a Ship are refused: start nothing for them."));
+  assert.ok(!/dropped/.test(text));
+  assert.ok(!text.includes("## On call in Slack"));
+});
+
 /** The Mission's conversation as Claude Code writes it, read part by part
  *  as the watch does (as test/mission-midturn.test.ts does for a Ship's news). */
 function jsonl(lines: object[]): string {

@@ -149,7 +149,7 @@ function body(event: MissionEvent): string {
     case "slack_channel":
       return p.slack?.bound
         ? `You are now on call in the Slack channel ${channelLabel(p.slack)}.\n\n${ON_CALL_PROMPT}`
-        : `You are no longer on call in the Slack channel ${channelLabel(p.slack)}. Its threads don't reach you any more, and your slack_* tools are off. Don't post in Slack. Requests from it that hadn't started a Ship are dropped: start nothing for them. Ships already started go on with their owner in Outrunner.`;
+        : `You are no longer on call in the Slack channel ${channelLabel(p.slack)}. Its threads don't reach you any more, and your slack_* tools are off. Don't post in Slack. Requests from it that hadn't started a Ship are refused: start nothing for them. Ships already started go on with their owner in Outrunner.`;
   }
 }
 
