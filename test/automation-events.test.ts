@@ -258,6 +258,7 @@ function startDeps(over: Partial<StartDeps> = {}) {
   const checks: string[] = [];
   const deps: StartDeps = {
     orgConnector: async () => null,
+    automationsOnHarness: async () => false,
     runNeighbours: async () => ({ earlierSessions: ["w-old"], superseded: false }),
     archiveServerSessions: async (_userId, ids) => {
       archived.push(ids);

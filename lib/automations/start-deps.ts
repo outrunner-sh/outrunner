@@ -9,6 +9,7 @@ import { closeRunCheckWithout, openRunCheck } from "@/lib/automations/checks.dep
 import { orgConnector } from "@/lib/automations/connector";
 import type { StartDeps } from "@/lib/automations/runs";
 import { claimQueuedRuns, queuedUntil, reusableSession, runNeighbours, settleRun } from "@/lib/db/automation-runs";
+import { getAutomationSettings } from "@/lib/db/automation-settings";
 import { archiveServerSessions, startServerSession } from "@/lib/session/server-session";
 import { wakeAndSend } from "@/lib/slack/research";
 
@@ -43,6 +44,7 @@ async function waitOutWindow(runId: string): ReturnType<StartDeps["waitOutWindow
 export function startDeps(): StartDeps {
   return {
     startServerSession,
+    automationsOnHarness: async (orgId) => (await getAutomationSettings(orgId)).onHarness,
     settleRun,
     runNeighbours,
     archiveServerSessions,

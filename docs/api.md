@@ -686,7 +686,10 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 The fields are the Automations page's: `name`, `prompt`, `template`,
 `triggers`, `schedules`, `project_ids`, `enabled`, `reviewers`, `labels`,
 `max_runs`, `archive_when_done`, `debounce_seconds`, `session_mode`,
-`archived`. Any member lists them and their runs; making, changing and
+`cover_new_repos`, `archived`. With `cover_new_repos`, each GitHub
+repository connected to the org later joins `project_ids`; it takes GitHub
+triggers only, and isn't held to the 50-repository cap when sent with
+`project_ids`. Any member lists them and their runs; making, changing and
 deleting one is the org's admins' (an org key's maker is one). An
 automation runs as whoever last set what it does.
 

@@ -6,9 +6,10 @@
  * the automation's limits (record_automation_runs: how many times it runs,
  * and a debounce window that combines triggers into one run, which waits it
  * out), and answers; then each run's session starts as the automation's runner
- * (startServerSession): on Outrunner's models, on the user's allowance,
- * working on GitHub as the App (reading code, commenting on pull requests),
- * so what it posts is the App's and it can't push.
+ * (startServerSession): on Outrunner's models, on the user's allowance (or
+ * the runner's own default model and coding agent, where the org set its
+ * automations to), working on GitHub as the App (reading code, commenting on
+ * pull requests), so what it posts is the App's and it can't push.
  */
 
 import { eventDedupeKey, filtersTake, type IssueEvent, readIssueEvent } from "@/lib/automations/github-events";
@@ -243,6 +244,9 @@ export async function planQueuedRuns(now: Date, deps: QueuedDeps, appSlug?: stri
 
 export type StartDeps = {
   startServerSession(start: ServerSessionStart): Promise<ServerSessionResult>;
+  /** Whether the org's automations run on their runner's default model and
+   *  coding agent rather than Outrunner's models (Settings → Org). */
+  automationsOnHarness(orgId: string): Promise<boolean>;
   settleRun(
     runId: string,
     outcome: { status: "started" | "ready" | "failed" | "refused"; workspaceId?: string | null; reason?: string | null },
@@ -374,6 +378,13 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
       console.error(`Run ${run.runId}: couldn't reuse the automation's session`, error);
     }
   }
+  let onHarness = false;
+  try {
+    onHarness = await deps.automationsOnHarness(candidate.orgId);
+  } catch (error) {
+    // Read again on the next run; this one on Outrunner's models, as before.
+    console.error(`Run ${run.runId}: couldn't read the org's automation settings`, error);
+  }
   const result = await deps.startServerSession({
     userId: runner,
     projectId: candidate.projectId,
@@ -383,6 +394,7 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
     // As the App, reading code and commenting, with tokens its box asks for
     // as it goes (#187's git-credential), so none expires on it mid-review.
     reviewAsApp: true,
+    onHarness,
     source: "automation",
     // Linked to the run as soon as it's made: its box's token requests are
     // answered as the App's from the first.
@@ -393,7 +405,8 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
   await settle({
     status: result.status,
     workspaceId: result.workspaceId,
-    reason: result.status === "ready" ? null : (result.errorMessage ?? null),
+    // Started, but not on what the org asked: said on the run, with why.
+    reason: result.status === "ready" ? ("fellBack" in result ? (result.fellBack ?? null) : null) : (result.errorMessage ?? null),
   });
   if (checked && result.status !== "ready") {
     await deps.closeCheck(run.runId, result.errorMessage ?? "Its session didn't start.");

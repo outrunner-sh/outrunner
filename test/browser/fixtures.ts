@@ -225,6 +225,7 @@ export const automations: Automation[] = [
   archiveWhenDone: false,
   debounceSeconds: 60,
   sessionMode: "new",
+  coverNewRepos: i === 0,
   archived: false,
   runsUsed: 0,
   runsAs: null,
