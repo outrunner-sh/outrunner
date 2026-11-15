@@ -208,10 +208,10 @@ Slack's retries, timeouts and rebinds
 A bound Mission no human talks to for 2 weeks pauses itself
 (`20261114210100_mission_idle_pause.sql`, `lib/missions/idle-pause.ts`):
 
-- **Heard.** Any human message the Mission hears moves `last_human_at`: a
-  mention in its channel, any reply in a thread it owns or under its offer,
-  `!aside` and `!mute` included, linked or not, paused or not. Bots and
-  Outrunner never count. It also calls off a pending offer.
+- **Heard.** A human message meant for the Mission moves `last_human_at`: a
+  mention of Outrunner, a reply in a thread it owns that isn't muted, or a
+  reply under its offer; linked or not, paused or not. `!aside`, a muted
+  thread, bots and Outrunner never count. It also calls off a pending offer.
 - **Offer.** On the Missions tick, a binding not paused with no human for 14
   days gets a channel post: "No one has replied here for 2 weeks. I'll pause
   in 24 hours unless someone replies. @Outrunner resume any time after."

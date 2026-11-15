@@ -18,9 +18,10 @@
  *   bots      the bot's own messages never; other bots' only with
  *             allow_bot_messages, when they mention Outrunner, vouched for
  *             by whoever bound the channel
- *   idle      any human message the Mission hears, whatever comes of it
- *             (`!aside`, `!mute`, unlinked, paused), moves its last human
- *             reply and calls off an idle offer (lib/missions/idle-pause.ts)
+ *   idle      a human message meant for the Mission (a mention, a reply in
+ *             its unmuted thread or under its idle offer; linked or not,
+ *             paused or not; never `!aside`) moves its last human reply and
+ *             calls off an idle offer (lib/missions/idle-pause.ts)
  *
  * What touches the world comes in as `deps` (slack-route.deps.ts).
  */
@@ -149,7 +150,12 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
 
   const thread = message.threadTs ? await deps.thread(message.teamId, message.channel, message.threadTs) : null;
   const owned = thread !== null && thread.missionId === binding.missionId;
-  if (!message.botId) {
+  // A human reply (lib/missions/idle-pause.ts) is one meant for the
+  // Mission: a mention, or a reply in a thread of its that isn't muted, or
+  // under its idle offer. `!aside` and a muted thread are people talking to
+  // each other.
+  const aside = threadKeyword(withoutMention(message.text, deps.botUserId)) === "aside";
+  if (!message.botId && !aside && !(owned && thread.muted)) {
     if (message.mention || owned) await heard(binding, deps);
     // A reply under its idle offer answers it: heard, and the Mission's.
     else if (message.threadTs && binding.idleWarnedAt && (await offerThread(binding, message.threadTs, deps))) {

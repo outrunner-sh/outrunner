@@ -4,10 +4,11 @@
  * pause, and pauses 24 hours later if still no human has. On the Missions
  * tick (lib/missions/tick.ts).
  *
- *   heard      a human's mention in the channel, or any human message in a
- *              thread it owns (or under its offer), `!aside` and `!mute`
- *              included, linked or not: last_human_at is now, and a pending
- *              offer is called off (slack-route.ts, slack-store.ts heardHuman)
+ *   heard      a human message meant for the Mission: a mention, a reply in
+ *              a thread it owns that isn't muted, or under its offer; linked
+ *              or not. Never `!aside` or a muted thread (people talking to
+ *              each other): last_human_at is now, and a pending offer is
+ *              called off (slack-route.ts, slack-store.ts heardHuman)
  *   offer      not paused, no offer pending, last_human_at 14 days ago or
  *              more: the offer posted in the channel, idle_warned_at now
  *   pause      offered 24 hours ago or more, no human since: paused and

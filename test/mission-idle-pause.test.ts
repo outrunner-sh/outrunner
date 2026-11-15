@@ -216,11 +216,13 @@ function mission(id: string): Workspace {
 }
 
 /** C1 bound to m1 (an offer pending); Alice linked with read, Wes with
- *  write, Una not linked. Thread 100.1 is m1's; 200.1 is its idle offer. */
+ *  write, Una not linked. Threads 100.1 and 110.1 (muted) are m1's; 200.1
+ *  is its idle offer. */
 function world(patch: Partial<MissionChannel> = {}) {
   const b = binding({ idleWarnedAt: iso(14 * DAY), ...patch });
   const threads: MissionThread[] = [
     { id: "t1", missionId: "m1", teamId: "T1", channelId: "C1", threadTs: "100.1", permalink: null, startedBy: "alice", startedBySlack: "UALICE", lastRequestTs: "100.1", muted: false },
+    { id: "t2", missionId: "m1", teamId: "T1", channelId: "C1", threadTs: "110.1", permalink: null, startedBy: "alice", startedBySlack: "UALICE", lastRequestTs: "110.1", muted: true },
   ];
   const heard: string[] = [];
   const paused: boolean[] = [];
@@ -281,20 +283,33 @@ test("a human's mention, or reply in the Mission's thread, is heard and calls of
   assert.deepEqual(v.heard, ["m1"]);
 });
 
-test("any human message it hears counts: !aside, !mute, someone unlinked, while paused", async () => {
-  for (const m of [
-    msg({ mention: false, text: "!aside just us", threadTs: "100.1" }),
-    msg({ mention: false, text: "!mute", threadTs: "100.1" }),
-    msg({ user: "UUNA" }),
-  ]) {
+test("a mention counts, linked or not, paused or not; a mention alone doesn't resume", async () => {
+  for (const m of [msg(), msg({ user: "UUNA" }), msg({ threadTs: "100.1" })]) {
     const w = world();
     await routeToMission(m, w.deps);
-    assert.deepEqual(w.heard, ["m1"], m.text);
+    assert.deepEqual(w.heard, ["m1"], m.user);
+    assert.equal(w.b.idleWarnedAt, null, "the offer is called off");
   }
   const p = world({ paused: true, idlePaused: true });
   await routeToMission(msg(), p.deps);
   assert.deepEqual(p.heard, ["m1"]);
   assert.equal(p.b.paused, true, "a mention alone doesn't resume it");
+});
+
+test("!aside and a muted thread are people talking to each other: the offer stands", async () => {
+  for (const m of [
+    msg({ mention: false, text: "!aside just us", threadTs: "100.1" }),
+    msg({ text: `<@${BOT}> !aside not for you` }),
+    msg({ mention: false, text: "!aside under the offer", threadTs: "200.1" }),
+    msg({ mention: false, text: "talking among ourselves", threadTs: "110.1" }),
+    msg({ text: `<@${BOT}> are you there?`, threadTs: "110.1" }),
+    msg({ mention: false, text: "!unmute", threadTs: "110.1", user: "UWES" }),
+  ]) {
+    const w = world();
+    await routeToMission(m, w.deps);
+    assert.deepEqual(w.heard, [], m.text);
+    assert.equal(w.b.idleWarnedAt, iso(14 * DAY), m.text);
+  }
 });
 
 test("a reply under the idle offer answers it, and isn't passed on to the Slack agent", async () => {
