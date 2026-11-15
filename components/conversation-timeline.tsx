@@ -29,6 +29,7 @@ import { ImageBoxContext, Markdown } from "@/components/markdown";
 import { type PlanActions, PlanCard } from "@/components/plan-card";
 import { TickingFact } from "@/components/ui/notice";
 import { DotMatrix, ThinkingIcon } from "@/components/ui/loaders";
+import { StartupStatus, type SessionStartup } from "@/components/workspace-creating";
 import { useStreamedText } from "@/hooks/use-streamed-text";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import {
@@ -77,6 +78,7 @@ const JUMP_MS = 1500;
 export function ConversationTimeline({
   events,
   placeholder = null,
+  startup,
   agentLabel = "Claude Code",
   working = claudeIsWorking(events),
   compacting = false,
@@ -85,6 +87,8 @@ export function ConversationTimeline({
   onEdit,
 }: {
   events: AgentEvent[];
+  /** Startup uses the same in-conversation position as the working indicator. */
+  startup?: SessionStartup;
   /** The actual selected harness, including before its first reply. */
   agentLabel?: string;
   /** Whether Claude is mid-turn, for the working indicator; read from the
@@ -274,7 +278,7 @@ export function ConversationTimeline({
               <NodeRow node={node} plan={node.kind === "plan" && plan?.id === node.id ? plan : undefined} onEdit={onEdit} />
             </div>
           ))}
-          {(working || compacting) && (
+          {startup ? <StartupStatus startup={startup} /> : (working || compacting) && (
             // A compaction counts from when it began here: the last prompt's
             // time may be long before it (a typed /compact is no prompt row).
             <WorkingIndicator

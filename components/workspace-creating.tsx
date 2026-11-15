@@ -2,7 +2,7 @@
 
 import { Check, Clock } from "lucide-react";
 import { attachmentFiles, MessageAttachments } from "@/components/attachment-thumbnails";
-import { Spinner } from "@/components/ui/loaders";
+import { Spinner, ThinkingIcon } from "@/components/ui/loaders";
 import { useNow } from "@/hooks/use-now";
 import type { ProvisionPhase } from "@/lib/runtime/types";
 import type { FirstPrompt } from "@/lib/session/first-prompt";
@@ -21,32 +21,35 @@ function elapsed(startedAt: string, now: number): string {
 }
 
 /** An honest queue echo, never an agent message or a delivery receipt. */
-export function QueuedFirstPrompt({ first }: { first: FirstPrompt }) {
+export function QueuedFirstPrompt({ first, startup }: { first: FirstPrompt; startup: SessionStartup }) {
   return (
     // Scrolls on its own: the conversation body around it clips.
     <div className="timeline-scroll min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto w-full max-w-3xl px-5 py-4">
-        <div className="timeline-prompt">
-          <MessageAttachments files={attachmentFiles(first.attachmentIds)} />
-          {first.prompt.trim() && <div>{first.prompt.trim()}</div>}
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-10 pb-16">
+        <div>
+          <div className="timeline-prompt">
+            <MessageAttachments files={attachmentFiles(first.attachmentIds)} />
+            {first.prompt.trim() && <div>{first.prompt.trim()}</div>}
+          </div>
+          <p className="mt-1 text-right text-[11px] text-muted-foreground">Queued · sends when ready</p>
         </div>
-        <p className="mt-1 text-right text-[11px] text-muted-foreground">Queued · sends when ready</p>
+        <StartupStatus startup={startup} />
       </div>
     </div>
   );
 }
 
-/** Startup stays beside the input; its infrastructure belongs in Session info. */
+/** Startup occupies the conversation's activity row; details open Session info. */
 export function StartupStatus({ startup }: { startup: SessionStartup }) {
   const now = useNow(1000);
   return (
-    <div role="status" className="flex items-center gap-2 px-4 py-2 text-xs text-muted-foreground">
-      {startup.stalled ? <Clock className="size-3.5 shrink-0" /> : <Spinner className="size-3.5 shrink-0" />}
-      <span className="min-w-0 flex-1">
+    <div role="status" className="flex flex-wrap items-center gap-x-2.5 gap-y-1 py-1 text-[13px] text-muted-foreground">
+      {startup.stalled ? <Clock className="size-3.5 shrink-0" /> : <ThinkingIcon />}
+      <span>
         {startup.stalled ? "Startup is taking longer than expected" : "Starting your session"}
-        <span aria-hidden className="ml-2 tabular-nums" suppressHydrationWarning>{elapsed(startup.startedAt, now)}</span>
       </span>
-      <button type="button" onClick={startup.onDetails} className="shrink-0 underline underline-offset-2">Session info</button>
+      <span aria-hidden className="font-mono text-[11px] tabular-nums text-muted-foreground/70" suppressHydrationWarning>{elapsed(startup.startedAt, now)}</span>
+      <button type="button" onClick={startup.onDetails} className="shrink-0 text-xs underline underline-offset-2">Session info</button>
     </div>
   );
 }

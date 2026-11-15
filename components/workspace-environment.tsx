@@ -165,6 +165,7 @@ export function WorkspaceEnvironment({
             take. Review shows under the pull request once there is one. */}
         {!local && summary.branch && !workspace.checkouts && (
           <PullRequestRow
+            key={`${workspace.id}:${summary.branch}`}
             workspaceId={workspace.id}
             provider={workspace.provider}
             branch={summary.branch}
@@ -182,7 +183,7 @@ export function WorkspaceEnvironment({
           summary.branch &&
           workspace.checkouts?.map((c) => (
             <PullRequestRow
-              key={c.projectId}
+              key={`${workspace.id}:${c.projectId}:${summary.branch}`}
               workspaceId={workspace.id}
               provider={workspace.provider}
               branch={summary.branch!}
@@ -309,9 +310,8 @@ function PortRows({ workspaceId, active }: { workspaceId: string; active: boolea
   );
 }
 
-/** How often, and for how long, the row looks for the pull request the agent
- *  was asked to open. Long enough for an agent that commits, pushes and writes
- *  a description; the page looking again on its next load covers the rest. */
+/** How often the row checks for a pull request, including one opened by the
+ *  agent without Create PR, and how long a Create PR request stays busy. */
 const PR_POLL_MS = 15_000;
 const PR_WAIT_MS = 10 * 60_000;
 
@@ -477,21 +477,20 @@ function PullRequestRow({
     if (phase === "waiting" && prWaitLeft(waitKey) === 0) setPrAsk(waitKey, null);
   }, [phase, waitKey]);
   const [error, setError] = useState<RowError | null>(null);
-  // A repository's row of a session of several starts without its pull
-  // request (the page loads the session's own one's): until the first look
-  // says whether it has one, Create PR waits, so it can't ask for a second.
-  const [looked, setLooked] = useState(!repo);
-  // When the last answer was applied: an effect re-run by it (looked turning
-  // true changes the poll) doesn't look again at once.
+  // Until the branch has been checked, Create PR waits so it can't ask for
+  // another pull request that already exists outside this page's saved data.
+  const [looked, setLooked] = useState(false);
+  // When the last answer was applied: changing the polling interval after
+  // finding a PR doesn't immediately repeat the same request.
   const lastLook = useRef(0);
   const opened = found ?? pullRequest;
   const hasPullRequest = opened !== null;
   const openedNumber = opened?.number ?? null;
-  // Looked for every PR_POLL_MS while the agent is at it, re-read every
+  // Looked for every PR_POLL_MS even when opened without Create PR, re-read every
   // PR_STATUS_POLL_MS while open, and left alone once merged. One closed
   // unmerged is still read, less often (PR_CLOSED_POLL_MS): the agent may open
   // another from the branch, which takes its place.
-  const settled = status !== null && status.state !== "open";
+  const settled = (status?.state ?? opened?.state ?? "open") !== "open";
   // A first look that didn't get an answer is tried again, so Create PR
   // isn't offered blind.
   const pollMs = hasPullRequest
@@ -500,9 +499,7 @@ function PullRequestRow({
       : status?.state === "closed"
         ? PR_CLOSED_POLL_MS
         : PR_STATUS_POLL_MS
-    : phase === "waiting" || (!looked && !error?.reconnect)
-      ? PR_POLL_MS
-      : null;
+    : error?.reconnect || error?.settingsHref ? null : PR_POLL_MS;
 
   // Also looks once on opening: the agent may have opened one since the page
   // loaded, or without being asked. Only a sign-in GitHub refused is worth
@@ -510,8 +507,12 @@ function PullRequestRow({
   // couldn't be read keeps the last one.
   useEffect(() => {
     let live = true;
+    let checking = false;
     const look = async () => {
+      if (document.hidden || checking) return;
+      checking = true;
       const result = await lookUpPullRequest(workspaceId, repo?.projectId);
+      checking = false;
       // Only an answer applied counts: one thrown away (the effect torn down
       // mid-look) leaves the re-run to look itself.
       if (!live) return;
@@ -536,15 +537,23 @@ function PullRequestRow({
       }
     };
     if (Date.now() - lastLook.current > PR_POLL_MS / 2) void look();
-    if (pollMs === null) return () => void (live = false);
-    const poll = setInterval(() => void look(), pollMs);
-    const giveUp = hasPullRequest ? undefined : setTimeout(() => setPrAsk(waitKey, null), prWaitLeft(waitKey) || PR_WAIT_MS);
+    const poll = pollMs === null ? undefined : setInterval(() => void look(), pollMs);
+    const giveUp = !hasPullRequest && phase === "waiting"
+      ? setTimeout(() => setPrAsk(waitKey, null), prWaitLeft(waitKey))
+      : undefined;
+    const onVisible = () => {
+      if (!document.hidden && status?.state !== "merged") void look();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
     return () => {
       live = false;
       clearInterval(poll);
       clearTimeout(giveUp);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
     };
-  }, [hasPullRequest, openedNumber, pollMs, workspaceId, router, repo?.projectId, waitKey]);
+  }, [hasPullRequest, openedNumber, pollMs, phase, workspaceId, router, repo?.projectId, waitKey, status?.state]);
 
   const errorLine = error && (
     <p aria-live="polite" className="studio-env-unfold text-destructive pt-0 text-xs">
@@ -566,7 +575,7 @@ function PullRequestRow({
         />
         {errorLine}
         {/* While it's open: a merged or closed one has nothing left to review. */}
-        {!settled && <ReviewRow baseBranch={baseBranch} pullRequestNumber={opened.number} sender={sender} repo={repo} />}
+        {!settled && <ReviewRow baseBranch={opened.baseBranch} pullRequestNumber={opened.number} sender={sender} repo={repo} />}
       </>
     );
   }
@@ -660,6 +669,7 @@ function OpenedPullRequestRow({
   const [merging, setMerging] = useState(false);
   const verdict = status ? pullRequestVerdict(status) : null;
   const merged = verdict?.tone === "merged";
+  const open = (status?.state ?? pullRequest.state ?? "open") === "open";
   const gitlab = pullRequest.url.startsWith("https://gitlab.com/");
   const codeHost = gitlab ? "GitLab" : "GitHub";
 
@@ -670,7 +680,7 @@ function OpenedPullRequestRow({
   }, [confirming]);
 
   async function merge() {
-    if (!status || merging) return;
+    if (!status || !verdict?.canMerge || merging) return;
     if (!confirming) {
       setConfirming(true);
       return;
@@ -709,13 +719,14 @@ function OpenedPullRequestRow({
       icon={merged ? <GitMerge /> : <GitPullRequest />}
       merged={merged}
       right={
-        verdict?.canMerge && (
+        open && (
           <button
             type="button"
             onClick={() => void merge()}
+            disabled={!verdict?.canMerge || merging}
             aria-busy={merging || undefined}
-            className="studio-env-merge"
-            title={`Merge #${pullRequest.number} into ${pullRequest.baseBranch} on ${codeHost}`}
+            className="studio-env-merge disabled:cursor-not-allowed disabled:opacity-50"
+            title={verdict?.why ?? (!status ? "Checking whether the pull request can be merged" : `Merge #${pullRequest.number} into ${pullRequest.baseBranch} on ${codeHost}`)}
           >
             {merging ? <Spinner label="Merging" /> : <GitMerge />}
             {/* The confirm step keeps its words while the merge runs. */}
