@@ -26,6 +26,13 @@ export type MissionChannel = {
   /** New each time it's bound: what's queued under one never goes under
    *  another. */
   revision: string;
+  /** Idle pause (docs/missions.md, "Idle pause"): when a human last posted
+   *  something it hears, when it offered to pause (null: no offer pending),
+   *  and whether it's paused because no one replied. Absent before
+   *  20261114210100_mission_idle_pause.sql. */
+  lastHumanAt?: string;
+  idleWarnedAt?: string | null;
+  idlePaused?: boolean;
 };
 
 /** A thread the Mission took a request in. */
@@ -52,6 +59,9 @@ type ChannelRow = {
   allow_bot_messages: boolean;
   paused: boolean;
   revision?: string;
+  last_human_at?: string;
+  idle_warned_at?: string | null;
+  idle_paused?: boolean;
 };
 
 type ThreadRow = {
@@ -79,6 +89,9 @@ function toChannel(row: ChannelRow): MissionChannel {
     paused: row.paused,
     // Before the reliability migration, one revision for the binding's life.
     revision: row.revision ?? `${row.mission_id}:${row.slack_team_id}:${row.channel_id}`,
+    ...(row.last_human_at !== undefined && { lastHumanAt: row.last_human_at }),
+    ...(row.idle_warned_at !== undefined && { idleWarnedAt: row.idle_warned_at }),
+    ...(row.idle_paused !== undefined && { idlePaused: row.idle_paused }),
   };
 }
 
@@ -145,10 +158,72 @@ export async function unbindChannel(missionId: string): Promise<boolean> {
   return (data?.length ?? 0) > 0;
 }
 
+/** Paused or resumed by a person (Slack's `pause` / `resume`, or the
+ *  header's): never idle-paused after, and no offer pending. A resume starts
+ *  the 2 weeks again (docs/missions.md, "Idle pause"). */
 export async function setChannelPaused(missionId: string, paused: boolean): Promise<boolean> {
-  const { data, error } = await db().from("mission_channels").update({ paused }).eq("mission_id", missionId).select("mission_id");
+  const idle = { idle_paused: false, idle_warned_at: null, ...(!paused && { last_human_at: new Date().toISOString() }) };
+  let { data, error } = await db().from("mission_channels").update({ paused, ...idle }).eq("mission_id", missionId).select("mission_id");
+  // Before the idle-pause migration: pause as before.
+  if (error && missingColumn(error)) ({ data, error } = await db().from("mission_channels").update({ paused }).eq("mission_id", missionId).select("mission_id"));
   if (error) throw error;
   return (data?.length ?? 0) > 0;
+}
+
+/** A column isn't there: its migration isn't applied yet (Postgres's
+ *  undefined_column, or PostgREST's schema cache saying so). */
+function missingColumn(error: { code?: string }): boolean {
+  return error.code === "42703" || error.code === "PGRST204";
+}
+
+/** How stale last_human_at may get before a human's message writes it
+ *  again: against 2 weeks, a few minutes is nothing, and it saves a write
+ *  per message in a busy channel. */
+const HUMAN_TOUCH_SLACK_MS = 5 * 60_000;
+
+/** A human posted something the binding's Mission hears: last_human_at is
+ *  now, and a pending idle offer is called off. A no-op (no write) when it
+ *  was moved minutes ago and no offer is pending. */
+export async function heardHuman(binding: Pick<MissionChannel, "missionId" | "teamId" | "channelId">, now = new Date()): Promise<void> {
+  const { error } = await db()
+    .from("mission_channels")
+    .update({ last_human_at: now.toISOString(), idle_warned_at: null })
+    .eq("mission_id", binding.missionId)
+    .eq("slack_team_id", binding.teamId)
+    .eq("channel_id", binding.channelId)
+    .or(`idle_warned_at.not.is.null,last_human_at.lt."${new Date(now.getTime() - HUMAN_TOUCH_SLACK_MS).toISOString()}"`);
+  if (error && missingColumn(error)) return;
+  if (error) throw error;
+}
+
+/** Whether `threadTs` is the binding's idle offer, as posted: a reply under
+ *  it is a reply to the Mission. */
+export async function isIdleOfferThread(binding: Pick<MissionChannel, "missionId" | "revision">, threadTs: string): Promise<boolean> {
+  const { data, error } = await db()
+    .from("mission_slack_posts")
+    .select("id")
+    .eq("mission_id", binding.missionId)
+    .eq("binding_revision", binding.revision)
+    .like("op_key", "idle_offer:%")
+    .contains("posted_ts", [threadTs])
+    .limit(1);
+  if (error) throw error;
+  return (data?.length ?? 0) > 0;
+}
+
+/** The idle sweep's two steps (20261114210100_mission_idle_pause.sql): the
+ *  bindings each marks, its post queued with it. Each binding once however
+ *  many ticks race. */
+export async function offerIdlePauses(idleSeconds: number, text: string, max: number): Promise<MissionChannel[]> {
+  const { data, error } = await db().rpc("offer_mission_idle_pauses", { idle_seconds: idleSeconds, offer_text: text, max_rows: max });
+  if (error) throw error;
+  return (data ?? []).map(toChannel);
+}
+
+export async function pauseIdleMissions(graceSeconds: number, text: string, max: number): Promise<MissionChannel[]> {
+  const { data, error } = await db().rpc("pause_idle_missions", { grace_seconds: graceSeconds, pause_text: text, max_rows: max });
+  if (error) throw error;
+  return (data ?? []).map(toChannel);
 }
 
 /** A thread in a channel, whichever Mission's. */

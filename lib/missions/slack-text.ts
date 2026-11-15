@@ -148,9 +148,22 @@ export function limitText(refused: "hour" | "day", limit: number): string {
     : `I've started ${ships} for this channel in the last 24 hours, which is my limit, so I didn't start one for this. Ask again later.`;
 }
 
+/** Idle pause (docs/missions.md, "Idle pause"): the channel's offer after 2
+ *  weeks with no human, and the pause 24 hours after it. */
+export const IDLE_OFFER_TEXT = "No one has replied here for 2 weeks. I'll pause in 24 hours unless someone replies. @Outrunner resume any time after.";
+export const IDLE_PAUSE_TEXT = "Paused: no one has replied for 2 weeks. @Outrunner resume to continue.";
+
 /** A Mission's Slack channel as its header shows it (GET /api/missions/[id]/slack). */
 export type MissionSlackView = {
-  binding: { teamId: string; channelId: string; channelName: string | null; paused: boolean; listen: string } | null;
+  binding: {
+    teamId: string;
+    channelId: string;
+    channelName: string | null;
+    paused: boolean;
+    /** Paused by the idle sweep (no human for 2 weeks), not by a person. */
+    idlePaused?: boolean;
+    listen: string;
+  } | null;
   /** Channels it could go on call in: those Outrunner is in, of the Slack
    *  workspaces the owner has linked into the Mission's org. Unbound only. */
   channels: { teamId: string; teamName: string | null; id: string; name: string }[];
