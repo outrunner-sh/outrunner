@@ -5,7 +5,6 @@
  */
 
 import type { Interval } from "@/lib/billing/hours";
-import { allRows } from "@/lib/billing/metering-store";
 import { costBasisExtension } from "@/lib/missions/cost-basis";
 import {
   callsFromEvents,
@@ -22,6 +21,7 @@ import {
   type UsageCall,
   writeCallsIsolating,
 } from "@/lib/missions/spend";
+import { familyIntervalsWith } from "@/lib/missions/spend-intervals";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import type { WorkspaceStatus } from "@/lib/runtime/types";
 import { SETTING_UP } from "@/lib/session/provisioning";
@@ -181,28 +181,8 @@ async function familyIds(missionId: string): Promise<string[]> {
 }
 
 /** The family's boxes' compute intervals that may fall in the period. */
-async function familyIntervals(ids: string[], period: { start: Date; end: Date }): Promise<Interval[]> {
-  const { data: computers, error } = await db().from("runtime_computers").select("id").in("workspace_id", ids);
-  if (error) throw error;
-  const computerIds = (computers ?? []).map((c) => c.id);
-  if (!computerIds.length) return [];
-  const rows = await allRows((from, to) =>
-    db()
-      .from("compute_intervals")
-      .select("id, sandbox_id, cpu, started_at, last_seen_at, ended_at")
-      .in("computer_id", computerIds)
-      .lt("started_at", period.end.toISOString())
-      .or(`ended_at.is.null,ended_at.gt.${period.start.toISOString()}`)
-      .order("id")
-      .range(from, to),
-  );
-  return rows.map((r) => ({
-    sandboxId: r.sandbox_id,
-    cpu: Number(r.cpu),
-    startedAt: new Date(r.started_at),
-    lastSeenAt: new Date(r.last_seen_at),
-    endedAt: r.ended_at ? new Date(r.ended_at) : null,
-  }));
+function familyIntervals(ids: string[], period: { start: Date; end: Date }): Promise<Interval[]> {
+  return familyIntervalsWith(db(), ids, period);
 }
 
 /** Sessions that never ran an agent: still being set up, or failed (only
