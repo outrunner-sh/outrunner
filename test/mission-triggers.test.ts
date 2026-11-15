@@ -312,6 +312,9 @@ test("cancelled before it was told: never told afterwards as new work, by a late
   await createRequest(newRequest, w.deps);
   await createRequest({ ...newRequest, key: "run:r2" }, w.deps);
   assert.equal(w.events.length, 0, "both root posts still trying");
+  // The tick's sweep read r1 BEFORE the cancel landed: open, untold.
+  const readBeforeCancel = { ...w.rows.get("run:r1")! };
+  assert.deepEqual([readBeforeCancel.status, readBeforeCancel.announcedAt], ["open", null]);
   assert.equal(await cancelRequest(MISSION, "run:r1", "the issue closed", w.deps), true);
   // The tick's sweep (unannouncedRequests): open and untold only.
   const sweep = () => [...w.rows.values()].filter((r) => !r.announcedAt && r.status === "open").map((r) => r.requestKey);
@@ -320,6 +323,8 @@ test("cancelled before it was told: never told afterwards as new work, by a late
   assert.equal(await announceLate(w.rows.get("run:r1")!, null, w.deps, now), false);
   // Even as a sweep read before the cancel's mark would have handed it over.
   assert.equal(await announceLate({ ...w.rows.get("run:r1")!, announcedAt: null }, null, w.deps, now), false);
+  // And as read before the cancel itself (open, untold): announceLate reads the row again.
+  assert.equal(await announceLate(readBeforeCancel, null, w.deps, now), false);
   await onRootSettled({ ...w.queued[0], requestKey: "run:r1" }, "1731400500.000100", w.deps);
   // A retry of the trigger, after the cancel, is the same request: still not news.
   assert.equal(await createRequest(newRequest, w.deps), "exists");
