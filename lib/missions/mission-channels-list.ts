@@ -42,6 +42,16 @@ export type ChannelListDeps = {
   now(): number;
 };
 
+/** Who bound a channel, as Settings shows it: their GitHub login or name,
+ *  else their email (an email-only account has no name), else their id;
+ *  never the "Someone" placeholder. */
+export function boundByName(person: { login: string; name: string; email: string | null } | undefined, userId: string, noName: string): string {
+  if (!person) return userId;
+  if (person.login) return person.login;
+  if (person.name && person.name !== noName) return person.name;
+  return person.email || userId;
+}
+
 export const channelKey = (teamId: string, channelId: string) => `${teamId}:${channelId}`;
 
 /** The org's bound channels `viewerId` may see. The route has checked

@@ -4,10 +4,10 @@
  * on a Mission's project, and Slack's names through each installation's bot.
  */
 
-import { people } from "@/lib/db/org-members";
+import { NO_NAME, people } from "@/lib/db/org-members";
 import { getInstallation } from "@/lib/db/slack-agent";
 import { toWorkspace } from "@/lib/db/mappers";
-import { channelKey, type ChannelListDeps, type DisconnectDeps } from "@/lib/missions/mission-channels-list";
+import { boundByName, channelKey, type ChannelListDeps, type DisconnectDeps } from "@/lib/missions/mission-channels-list";
 import { takeOffCall } from "@/lib/missions/slack-binding";
 import { missionLevel, projectNameOf } from "@/lib/missions/slack-route.deps";
 import { missionBinding, orgBoundChannels } from "@/lib/missions/slack-store";
@@ -27,7 +27,7 @@ export const channelListDeps: ChannelListDeps = {
   projectName: projectNameOf,
   people: async (ids) => {
     const found = await people(ids);
-    return new Map([...found].map(([id, p]) => [id, p.login || p.name || p.email || id]));
+    return new Map([...found].map(([id, p]) => [id, boundByName(p, id, NO_NAME)]));
   },
   slackNames: async (channels) => {
     const teams = new Map<string, string>();

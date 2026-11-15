@@ -18,7 +18,7 @@ export type OnCallCommand =
   | { action: "help" };
 
 export const ON_CALL_HELP =
-  "To put a Mission on call here: `@Outrunner be on call here for <project>` (it needs write on the project). Then mention me with a task. `!help` shows this; `@Outrunner !new <task>` starts a fresh thread for a task. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread, `!assign @person` assigns the thread's work to them, `@Outrunner stop` stops its turn. `@Outrunner pause` / `resume` pauses it here, `@Outrunner stop being on call here` takes it off.";
+  "To put a Mission on call here: `@Outrunner be on call here for <project>` (it needs write on the project). Then mention me with a task. `!help` shows this; `@Outrunner !new <task>` starts a fresh thread for a task. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread, `!assign @person` assigns the thread's work to them, `@Outrunner stop` stops that thread's work (its open requests and its Ships' turns). `@Outrunner pause` / `resume` pauses it here, `@Outrunner stop being on call here` takes it off.";
 
 export const NEW_USAGE = "Say `!new <task>` to start a fresh thread for a task.";
 export const ASSIGN_USAGE = "Say `!assign @person` in a thread the Mission is in: one person, nothing else.";
@@ -112,7 +112,7 @@ export function newRequestRootText(slackUserId: string, task: string, max = 600)
 /** What the system posts when a Mission goes on call in a channel. */
 export function introText(input: { mission: string; project: string; url: string | null }): string {
   const name = input.url ? `<${input.url}|${input.mission.replace(/[<>|]/g, "")}>` : input.mission;
-  return `:wave: Mission ${name} is on call here for *${input.project}*. Mention @Outrunner with a task: it answers in the thread, and starts Ships (cloud sessions that open pull requests) for work. Replies in its threads reach it without a mention; \`!aside\` keeps one from it, \`!mute\` silences a thread. \`@Outrunner stop\` stops its turn; \`@Outrunner pause\` pauses it here.`;
+  return `:wave: Mission ${name} is on call here for *${input.project}*. Mention @Outrunner with a task: it answers in the thread, and starts Ships (cloud sessions that open pull requests) for work. Replies in its threads reach it without a mention; \`!aside\` keeps one from it, \`!mute\` silences a thread. \`@Outrunner stop\` stops that thread's work (its open requests and its Ships' turns); \`@Outrunner pause\` pauses it here.`;
 }
 
 /** Slack's buttons for a question card. Each option's value names the card

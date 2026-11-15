@@ -72,6 +72,10 @@ function refusal(error: { message?: string } | null): Error | null {
   return Object.hasOwn(REFUSALS, word) ? new MemberChangeError(word) : (error as Error);
 }
 
+/** The name a person with none gets: a placeholder, not a name to show
+ *  where an email would say more. */
+export const NO_NAME = "Someone";
+
 function personFrom(user: User | null | undefined, userId: string): Person {
   const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;
   const login = (user && githubLogin(user)) ?? "";
@@ -80,7 +84,7 @@ function personFrom(user: User | null | undefined, userId: string): Person {
   return {
     userId,
     login,
-    name: name || "Someone",
+    name: name || NO_NAME,
     email: user?.email ?? null,
     avatarUrl: typeof meta.avatar_url === "string" ? meta.avatar_url : null,
   };

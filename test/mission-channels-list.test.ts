@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type ChannelListDeps, type DisconnectDeps, disconnectBoundChannel, listBoundChannels } from "@/lib/missions/mission-channels-list";
+import { boundByName, type ChannelListDeps, type DisconnectDeps, disconnectBoundChannel, listBoundChannels } from "@/lib/missions/mission-channels-list";
 import {
   ON_CALL_STATE_LABEL,
   type OnCallFacts,
@@ -266,4 +266,16 @@ test("disconnect: no access, another org's binding, no binding or no Mission rea
     assert.equal(await disconnectBoundChannel("viewer", "org1", "m1", deps), "not_found", JSON.stringify(c));
     assert.deepEqual(offCall, []);
   }
+});
+
+test("Bound by: a login or a real name, else the account's email, never the \"Someone\" placeholder", () => {
+  const NO = "Someone";
+  assert.equal(boundByName({ login: "wes", name: "Wes", email: "w@x.dev" }, "u1", NO), "wes");
+  assert.equal(boundByName({ login: "", name: "Ana Lima", email: "ana@x.dev" }, "u1", NO), "Ana Lima");
+  // An email-only account: personFrom names it the placeholder; the email says who.
+  assert.equal(boundByName({ login: "", name: NO, email: "liverun-a@example.com" }, "u1", NO), "liverun-a@example.com");
+  assert.equal(boundByName({ login: "", name: "", email: "liverun-a@example.com" }, "u1", NO), "liverun-a@example.com");
+  // Nothing to go on: the id, still not "Someone".
+  assert.equal(boundByName({ login: "", name: NO, email: null }, "u1", NO), "u1");
+  assert.equal(boundByName(undefined, "u1", NO), "u1");
 });

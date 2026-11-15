@@ -380,6 +380,9 @@ test("!help: the on-call help, told to the sender alone, whoever asks", async ()
   assert.equal(await routeToMission(msg({ user: "UUNA", text: `<@${BOT}> !help`, eventId: "Eh2" }), w.deps), true);
   assert.deepEqual(w.said, [`tell: ${ON_CALL_HELP}`, `tell: ${ON_CALL_HELP}`]);
   for (const keyword of ["!help", "!new <task>", "!assign @person"]) assert.ok(ON_CALL_HELP.includes(keyword), keyword);
+  // stop is the thread's, as docs/missions.md has it, not "its turn".
+  assert.ok(ON_CALL_HELP.includes("`@Outrunner stop` stops that thread's work (its open requests and its Ships' turns)"));
+  assert.ok(!ON_CALL_HELP.includes("stops its turn"));
   assert.equal(w.events.length, 0);
   assert.equal(w.threads.length, 0);
 });
