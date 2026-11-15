@@ -15,6 +15,7 @@ import { memberRole } from "@/lib/db/orgs";
 import type { SlackInstallation } from "@/lib/db/slack-agent";
 import { slackLinkTarget } from "@/lib/db/slack-links";
 import { toWorkspace } from "@/lib/db/mappers";
+import { budgetPause } from "@/lib/missions/budget.deps";
 import { sessionById } from "@/lib/missions/store";
 import { stopThreadWork } from "@/lib/missions/requests";
 import { requestDeps } from "@/lib/missions/requests.deps";
@@ -209,6 +210,7 @@ export function slackRouteDeps(
       const mission = await sessionById(binding.missionId);
       if (mission) await takeOffCall(mission, by.userId);
     },
+    budgetPause: async (missionId) => (await budgetPause(missionId))?.period ?? null,
     enqueue: recordMissionEvent,
     heardHuman: (binding) => heardHuman(binding),
     idleOfferThread: isIdleOfferThread,

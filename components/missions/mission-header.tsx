@@ -3,13 +3,14 @@
 /**
  * A Mission's page header: its icon (click to pick another), its name (click
  * to rename), its project, how many Ships it has out of how many, and the
- * Slack channel it's on call in (connect, pause, disconnect).
+ * Slack channel it's on call in (connect, pause, disconnect), and its budget.
  */
 
 import { FolderGit2, Users, Zap } from "lucide-react";
 import Link from "next/link";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 
+import { MissionBudgetChip } from "@/components/missions/mission-budget-chip";
 import { MissionGlyph, StatusDot } from "@/components/missions/mission-parts";
 import { MissionSlackChip } from "@/components/missions/mission-slack-chip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -175,6 +176,7 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
         </span>
       )}
       {mission && <MissionSlackChip missionId={missionId} onError={setFailed} />}
+      {mission && <MissionBudgetChip missionId={missionId} />}
       {mission && (
         <Link
           href={`/missions/${missionId}/triggers`}

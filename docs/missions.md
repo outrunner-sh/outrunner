@@ -251,6 +251,58 @@ Slack's retries, timeouts and rebinds
     Otherwise its owner carries on with it in Outrunner. Pause and mute
     don't stop these: they're about Slack, and work already started goes on.
 
+### Budgets
+
+A Mission can have a daily and a weekly dollar budget
+(`mission_budgets`, `20261114210000_mission_budgets.sql`). No row, no
+budget: a plain Mission has none unless one is set.
+
+- **What counts.** The family's spend as [mission spend](mission-spend.md)
+  has it: models plus compute at the plan's included rate, in its UTC day
+  and ISO week (`spendPeriod`). Against a limit counts what's known
+  (`total.knownUsd`) plus what reservations hold and left uncertain. It's
+  **reached** only when that already reaches the limit: an unknown cost is
+  never $0, but never stops a Mission on a guess either. A period whose
+  spend isn't all known shows as **partly unknown**.
+- **Reached,** the whole Mission is budget-paused until the period ends
+  (`paused_until`), on the Mission, not its binding: no Mission turn and no
+  Ship start, by any way in.
+  - **Slack:** a mention or a thread reply gets one fixed reply ("The
+    Mission's budget for today is reached, so it didn't take that. It goes
+    on when the day rolls over or someone raises its budget.", or this
+    week), never a dollar figure. Nothing is recorded for the Mission.
+  - **Triggers** (watched channels, webhooks, schedules, Linear): the run is
+    recorded as skipped and says why, as a pause's are. No request is made.
+  - **Events** (a Ship's turn ended, a pull request, an answer): held in the
+    outbox, never dropped, and delivered once the pause lifts. The tick
+    doesn't list a budget-paused Mission, so it can't crowd out others.
+  - **Ship starts** (`spawn_runner`, on call or not): refused with "the
+    Mission's budget for today is reached", and on call the thread is told
+    so, apart from "the owner's plan has no room" (the plan's own refusal).
+  - **What goes on:** Ships already running, messages to them, and the
+    system's posts (pull request cards).
+- **Lifted** when `paused_until` passes (the next check finds the new
+  period under its limits, or pauses it again for the week), or when a limit
+  is raised above what's counted: the change decides the pause with the new
+  limits in the same write, and delivers what was held at once. Lowered to
+  what's counted, it pauses at once. Every check settles a pause only while
+  the limits are the ones it read (`settle_mission_budget_pause`), so a
+  stale check can't pause a Mission whose limit was just raised.
+- **Setting it.** The header's **Budget** item: spent today and this week
+  (partly unknown when so), the limits, and "budget reached". Its owner, or
+  anyone with write on its project, can change them. The API:
+  `GET /api/missions/[id]/budget` (limits, `day` and `week` spend with
+  `partlyUnknown`, `paused`), and `PUT` with
+  `{ "dailyUsd": number | null, "weeklyUsd": number | null }` (both null: no
+  budget). In code, `setMissionBudget(missionId, { dailyUsd, weeklyUsd },
+  userId)` (`lib/missions/budget.deps.ts`). Hire's templates default to
+  $100 a day and $1000 a week.
+- **Not done yet:** the owner's own messages to the Mission in the app still
+  start its turn (it can't start a Ship); a turn already running finishes.
+- **Tests:** `test/mission-budget.test.ts` (the decision, rollover at the
+  period's edge, every way in held, events delivered once after) and
+  `test/mission-budget-sql.test.ts` (needs `MISSIONS_PG`).
+
 ### Idle pause
 
 A bound Mission no human talks to for 2 weeks pauses itself

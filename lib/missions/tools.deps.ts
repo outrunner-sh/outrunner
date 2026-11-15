@@ -8,6 +8,7 @@ import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route
 import { getEnvironment } from "@/lib/db/environments";
 import { environmentLevel, projectLevel } from "@/lib/db/org-access";
 import { boxSummary, sessionWorking, writeBoxFile } from "@/lib/missions/box";
+import { budgetPause } from "@/lib/missions/budget.deps";
 import { NOTES_FILE } from "@/lib/missions/rules";
 import { runnerPullRequests } from "@/lib/missions/pulls";
 import { startRunner } from "@/lib/missions/spawn";
@@ -169,6 +170,7 @@ export function missionToolDeps(): MissionToolDeps {
     latestResponse: async (session) => (await boxSummary(session))?.lastAssistantMessage ?? (await lastRecordedResponse(session.id)),
     pullRequests: runnerPullRequests,
     startRunner,
+    budgetPause: async (missionId) => (await budgetPause(missionId))?.period ?? null,
     // Its turn is watched, so the Mission hears when it ends.
     send: sendToRunner,
     queue: queueMessage,

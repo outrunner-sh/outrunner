@@ -2669,6 +2669,23 @@ export type Database = {
         Args: { max_missions: number };
         Returns: { mission_id: string }[];
       };
+      // supabase/migrations/20261114210000_mission_budgets.sql
+      set_mission_budget: {
+        Args: {
+          target: string;
+          target_org: string;
+          daily: number | null;
+          weekly: number | null;
+          by_user: string | null;
+          pause_period: "day" | "week" | null;
+          pause_until: string | null;
+        };
+        Returns: undefined;
+      };
+      settle_mission_budget_pause: {
+        Args: { target: string; expect_daily: number | null; expect_weekly: number | null; pause_period: "day" | "week" | null; pause_until: string | null };
+        Returns: boolean;
+      };
       // supabase/migrations/20261114150000_mission_spend.sql
       record_mission_usage: {
         Args: { calls: Json };

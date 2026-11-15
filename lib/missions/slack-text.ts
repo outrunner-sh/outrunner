@@ -171,3 +171,11 @@ export type MissionSlackView = {
   /** Why there's nothing to pick, when there isn't. */
   hint: string | null;
 };
+
+/** A Slack request to a budget-paused Mission: one fixed reply, never a
+ *  dollar figure (docs/missions.md, "Budgets"). */
+export function budgetReachedText(period: "day" | "week"): string {
+  return period === "day"
+    ? "The Mission's budget for today is reached, so it didn't take that. It goes on when the day rolls over or someone raises its budget."
+    : "The Mission's budget for this week is reached, so it didn't take that. It goes on when the week rolls over or someone raises its budget.";
+}

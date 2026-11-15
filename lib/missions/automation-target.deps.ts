@@ -10,6 +10,7 @@ import { settleRun } from "@/lib/db/automation-runs";
 import { delegationApproved } from "@/lib/db/automations";
 import { watchModelKey } from "@/lib/db/slack-agent";
 import { type MissionRunDeps, startMissionRun } from "@/lib/missions/automation-target";
+import { budgetPause } from "@/lib/missions/budget.deps";
 import { makeRequest } from "@/lib/missions/requests.deps";
 import { missionLevel } from "@/lib/missions/slack-route.deps";
 import { claimSlackMessage, missionBinding } from "@/lib/missions/slack-store";
@@ -26,6 +27,7 @@ export function missionRunDeps(): MissionRunDeps {
     filter: async (orgId, system, user) => oneShot(await watchModelKey(orgId), system, user),
     claimMessage: (input) => claimSlackMessage({ ...input, source: "slack_watch" }),
     createRequest: makeRequest,
+    budgetPause: async (missionId) => (await budgetPause(missionId))?.period ?? null,
     settleRun: (runId, outcome) =>
       settleRun(runId, { status: outcome.status, reason: outcome.reason, ...(outcome.requestKey && { missionRequestKey: outcome.requestKey }) }),
   };
