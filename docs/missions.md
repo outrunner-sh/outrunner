@@ -152,6 +152,10 @@ channel, one channel a Mission.
   **Disconnect** needs write on the project, owner or not, as `stop being on
   call here` does (`DELETE /api/orgs/[id]/mission-channels/[missionId]`); it
   goes through `takeOffCall`, as the header's does.
+- **Known difference.** The Mission header's Disconnect
+  (`DELETE /api/missions/[id]/slack`) stays owner-only, while Settings and
+  Slack (`stop being on call here`) let anyone with write on the project
+  take the Mission off call.
 
 ### Reliability
 
