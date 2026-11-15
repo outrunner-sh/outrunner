@@ -1655,6 +1655,12 @@ export type Database = {
         Update: { gitlab_user_id?: number; gitlab_login?: string; token_ciphertext?: string; updated_at?: string };
         Relationships: [];
       };
+      user_github_tokens: {
+        Row: { user_id: string; github_user_id: number; github_login: string; token_kind: "classic" | "fine_grained"; scopes: string[] | null; expires_at: string | null; token_ciphertext: string; updated_at: string };
+        Insert: { user_id: string; github_user_id: number; github_login: string; token_kind: "classic" | "fine_grained"; scopes?: string[] | null; expires_at?: string | null; token_ciphertext: string; updated_at?: string };
+        Update: { github_user_id?: number; github_login?: string; token_kind?: "classic" | "fine_grained"; scopes?: string[] | null; expires_at?: string | null; token_ciphertext?: string; updated_at?: string };
+        Relationships: [];
+      };
       projects: {
         Row: ProjectRow;
         Insert: Insert<
