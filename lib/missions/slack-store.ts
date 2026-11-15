@@ -653,8 +653,15 @@ export async function unannouncedRequests(before: Date, max = 25): Promise<Missi
     db().rpc("unannounced_new_requests", { made_before: before.toISOString(), max_rows: max }),
   ]);
   if (triggers.error) throw triggers.error;
-  // Before the migration that adds it, there are no `!new` requests.
   if (fresh.error && !["PGRST202", "42883"].includes(fresh.error.code ?? "")) throw fresh.error;
+  // Missing (the migration not applied): trigger requests still go, but a
+  // `!new` a crash left untold isn't recovered. Said once a tick, so a
+  // missed migration can't turn recovery off quietly.
+  if (fresh.error) {
+    console.error(
+      "Missions: unannounced_new_requests is missing (is 20261114210200_mission_assign.sql applied?): !new requests a crash left untold aren't recovered.",
+    );
+  }
   return [...(triggers.data ?? []), ...((fresh.error ? [] : fresh.data) ?? [])].map(toRequest);
 }
 
