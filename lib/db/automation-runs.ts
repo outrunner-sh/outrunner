@@ -682,6 +682,25 @@ export async function reopenRun(runId: string): Promise<boolean> {
   return (data ?? []).length > 0;
 }
 
+/**
+ * A Mission's run under `dedupeKey` that made nothing (refused, failed or
+ * skipped), taken back to start again for a new event: its id, or null when
+ * there's none to take (none, or it made its request, or another caller took
+ * it first). So a key is spent only by a run that made something.
+ */
+export async function retakeRun(automationId: string, projectId: string, dedupeKey: string, event: RunEvent): Promise<string | null> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .update({ status: "started", workspace_id: null, reason: null, context: event as unknown as Json, updated_at: new Date().toISOString() })
+    .eq("automation_id", automationId)
+    .eq("project_id", projectId)
+    .eq("dedupe_key", dedupeKey)
+    .in("status", ["failed", "refused", "skipped"])
+    .select("id");
+  if (error) throw error;
+  return data?.[0]?.id ?? null;
+}
+
 /** Who a session is: its owner, as whom it's archived; null when it's gone. */
 export async function sessionOwner(workspaceId: string): Promise<string | null> {
   const { data, error } = await createSupabaseAdminClient()

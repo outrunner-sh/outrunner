@@ -474,7 +474,9 @@ The four inputs:
    instead. What's said later in the issue's agent session reaches the same
    request (`<request_update>`), never a fresh Ship. A stop there, the issue
    taken back, or the issue closing cancels that issue's request only
-   (`<request_cancelled>`): its Ships take no more work for it. The Mission
+   (`<request_cancelled>`): its Ships take no more work for it. Delegated
+   again after its request was stopped (there, in Slack, or by going off
+   call), the issue is a new request the Mission is told of, once. The Mission
    answers with `linear_reply`, posted as Outrunner's app in the agent
    session, once per text; Linear's webhook drops its own app's events, and
    a prompt by the app is ignored too. In v1 a route is by team; its labels

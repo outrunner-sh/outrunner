@@ -454,7 +454,7 @@ test("the thread hears 'budget reached' apart from 'plan has no room', never a d
   const queued: string[] = [];
   const binding: MissionChannel = { missionId: "m1", orgId: "o1", teamId: "T1", channelId: "C1", boundBy: "wes", listen: "mentions", allowBotMessages: false, paused: false, revision: "rev1" };
   const thread: MissionThread = { id: "t1", missionId: "m1", teamId: "T1", channelId: "C1", threadTs: "1.1", permalink: null, startedBy: "alice", startedBySlack: null, lastRequestTs: null, muted: false };
-  await tellStartRefused({ reservation: "s1", binding, thread, request: null }, budgetStartRefusal("day"), {
+  await tellStartRefused({ spawnKey: "k1", binding, thread, request: null }, budgetStartRefusal("day"), {
     queue: async (post) => {
       queued.push(...(post.payload as { chunks: string[] }).chunks);
       return "queued";

@@ -62,6 +62,10 @@ export type RequestDeps = {
   /** Mark it told; true for the first only. */
   markAnnounced(missionId: string, key: string): Promise<boolean>;
   cancel(missionId: string, key: string): Promise<boolean>;
+  /** A cancelled request's outside end let go: a Linear request's agent
+   *  session marked stopped, so delegating the issue again starts it over
+   *  (handleRedelegated, lib/trackers/linear-agent.ts), whoever stopped it. */
+  release?(request: MissionRequest): Promise<void>;
   /** A thread's requests still open. */
   openInThread(threadId: string): Promise<MissionRequest[]>;
   /** The Mission's open requests of one binding that started no Ship. */
@@ -190,7 +194,7 @@ export async function onRootSettled(
     await deps.setThread(post.missionId, post.requestKey, thread.id);
     threadTs = ts;
   }
-  if (request.announcedAt) return;
+  if (request.announcedAt || request.status === "cancelled") return;
   await announce(request, threadTs, deps);
 }
 
@@ -306,7 +310,7 @@ export async function announceLate(
   deps: RequestDeps,
   now = Date.now(),
 ): Promise<boolean> {
-  if (request.announcedAt) return false;
+  if (request.announcedAt || request.status === "cancelled") return false;
   if (request.source === "slack") {
     if (!isNewThreadRequest(request) || request.status !== "open") return false;
     if (request.threadId) {
@@ -362,6 +366,9 @@ export async function cancelRequest(missionId: string, key: string, reason: stri
   if (!request) return false;
   const cancelled = await deps.cancel(missionId, key);
   if (!cancelled) return false;
+  // Cancelled counts as told: neither the tick's sweep nor a late root post
+  // announces it after this as new work.
+  await deps.markAnnounced(missionId, key);
   await deps.enqueue({
     missionId,
     runnerId: null,
@@ -369,6 +376,8 @@ export async function cancelRequest(missionId: string, key: string, reason: stri
     payload: { request: { source: (request.source ?? "linear") as RequestSource, key, reason } },
     key: eventKey.requestCancelled(missionId, key),
   });
+  // Best effort: the cancel stands either way.
+  await deps.release?.(request).catch((error: unknown) => console.error(`Mission ${missionId}: request ${key} was cancelled, but its outside end wasn't let go`, error));
   return true;
 }
 

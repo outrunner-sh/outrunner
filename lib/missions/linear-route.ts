@@ -16,6 +16,9 @@
  *              same request (a `request_update`), never a fresh Ship
  *   stop       a stop, the issue taken back, or the issue closed cancels
  *              that request only: its Ships take no more work for it
+ *   again      delegated again after its request was stopped (anywhere),
+ *              it's a new request under a fresh key, so the Mission is told
+ *              again; a delivery again of the same delegation is still one
  *   replies    the Mission's linear_reply posts in the agent session as
  *              Outrunner's app, whose own events Linear's webhook drops
  *              (isOwnLinearEvent); a prompt by the app is ignored here too
@@ -35,8 +38,12 @@ export type LinearMissionDeps = {
   missionTitle(missionId: string): Promise<string | null>;
   /** Whether a person can read the Mission's project. */
   canRead(userId: string, missionId: string): Promise<boolean>;
-  /** Record the automation's run for the issue and run it: its request. */
+  /** Record the automation's run for the delegation's key and run it: its
+   *  request. Null when that key's run made its request already. A run under
+   *  the key that made nothing (refused, failed, skipped) is run again for
+   *  this delegation: only a request spends a key. */
   run(automationId: string, event: LinearIssueEvent): Promise<MissionRunOutcome | null>;
+  /** The agent session's latest request. */
   forSession(agentSessionId: string): Promise<MissionRequest | null>;
   update(request: MissionRequest, update: { id: string; text: string; from: string | null }): Promise<"sent" | "cancelled" | "missing">;
   cancel(request: MissionRequest, reason: string): Promise<boolean>;
@@ -44,13 +51,38 @@ export type LinearMissionDeps = {
   forIssue(installationId: string, issueId: string): Promise<MissionRequest[]>;
 };
 
+/** The request key a delegation runs under, which its run dedupes on too
+ *  (nextDelegation picks it). */
+export function delegationKey(event: Pick<LinearIssueEvent, "agentSessionId" | "delegation">): string {
+  return event.delegation ?? `linear:${event.agentSessionId}`;
+}
+
+/**
+ * The key for a delegation of this agent session, given its latest request:
+ * the session's own while that request stands. Linear keeps one agent session
+ * through every delegation of an issue, so once its request was cancelled
+ * the next delegation takes the next key and is new work. A delivery again
+ * of that delegation finds the same cancelled request, or its own open one,
+ * so takes the same key: one run.
+ */
+export function nextDelegation(agentSessionId: string, latest: Pick<MissionRequest, "requestKey" | "status"> | null): string {
+  const base = `linear:${agentSessionId}`;
+  if (!latest) return base;
+  if (latest.status !== "cancelled") return latest.requestKey;
+  const n = latest.requestKey.startsWith(`${base}:`) ? Number(latest.requestKey.slice(base.length + 1)) : 1;
+  return `${base}:${(Number.isInteger(n) && n > 0 ? n : 1) + 1}`;
+}
+
 /** The route an issue's team takes: the oldest naming it. */
 export function pickRoute(routes: readonly LinearRoute[], teamId: string | null): LinearRoute | null {
   if (!teamId) return null;
   return [...routes].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).find((r) => r.teamIds.includes(teamId)) ?? null;
 }
 
-export type RouteOutcome = { routed: false } | { routed: true; said: string };
+/** Routed: what to say, and whether the Mission has it (a request), so the
+ *  agent session is under way, or not, so it's stopped and delegating the
+ *  issue again tries again. */
+export type RouteOutcome = { routed: false } | { routed: true; taken: boolean; said: string };
 
 /** An issue delegated: a Mission's request, if a route takes it; what to
  *  say in Linear. */
@@ -62,12 +94,13 @@ export async function routeIssue(
   if (!route) return { routed: false };
   const title = (await deps.missionTitle(route.missionId)) ?? "Mission";
   if (input.event.requestedBy && !(await deps.canRead(input.event.requestedBy, route.missionId))) {
-    return { routed: true, said: `This team's issues go to the Mission "${title}", whose project you can't read in Outrunner, so it didn't take this.` };
+    return { routed: true, taken: false, said: `This team's issues go to the Mission "${title}", whose project you can't read in Outrunner, so it didn't take this.` };
   }
-  const outcome = await deps.run(route.automationId, input.event);
-  if (!outcome) return { routed: true, said: `The Mission "${title}" has this already.` };
-  if (outcome.status === "ready") return { routed: true, said: `Sent to the Mission "${title}". It answers here.` };
-  return { routed: true, said: `The Mission "${title}" didn't take this: ${outcome.reason ?? "it couldn't."}` };
+  const delegation = nextDelegation(input.event.agentSessionId, await deps.forSession(input.event.agentSessionId));
+  const outcome = await deps.run(route.automationId, { ...input.event, delegation });
+  if (!outcome) return { routed: true, taken: true, said: `The Mission "${title}" has this already.` };
+  if (outcome.status === "ready") return { routed: true, taken: true, said: `Sent to the Mission "${title}". It answers here.` };
+  return { routed: true, taken: false, said: `The Mission "${title}" didn't take this: ${outcome.reason ?? "it couldn't."}` };
 }
 
 /** Something said in the issue's agent session, for a Mission's request:

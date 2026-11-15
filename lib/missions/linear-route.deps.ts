@@ -1,10 +1,10 @@
 /** Linear issues routed to a Mission, wired (lib/missions/linear-route.ts). */
 
 import { recordOf } from "@/lib/automations/runs";
-import { automationCandidates, recordRuns } from "@/lib/db/automation-runs";
+import { automationCandidates, recordRuns, retakeRun } from "@/lib/db/automation-runs";
 import { startMissionRun } from "@/lib/missions/automation-target";
 import { missionRunDeps } from "@/lib/missions/automation-target.deps";
-import type { LinearMissionDeps } from "@/lib/missions/linear-route";
+import { delegationKey, type LinearMissionDeps } from "@/lib/missions/linear-route";
 import { cancelMissionRequest, sendRequestUpdate } from "@/lib/missions/requests.deps";
 import { missionLevel } from "@/lib/missions/slack-route.deps";
 import { requestByKey, requestForExternalSession, type MissionRequest } from "@/lib/missions/slack-store";
@@ -41,10 +41,12 @@ export function linearMissionDeps(): LinearMissionDeps {
     run: async (automationId, event) => {
       const [candidate] = await automationCandidates([automationId]);
       if (!candidate) return { status: "refused", reason: "its automation is off." };
-      const recorded = await recordRuns([recordOf(candidate, event, `linear:${event.agentSessionId}`)]);
-      const run = recorded.get(`${candidate.automationId}:${candidate.projectId}`);
-      if (!run) return null;
-      return startMissionRun({ runId: run.runId, candidate, event }, missionRunDeps());
+      const key = delegationKey(event);
+      const recorded = await recordRuns([recordOf(candidate, event, key)]);
+      // A key whose run made nothing wasn't spent: this delegation takes it.
+      const runId = recorded.get(`${candidate.automationId}:${candidate.projectId}`)?.runId ?? (await retakeRun(candidate.automationId, candidate.projectId, key, event));
+      if (!runId) return null;
+      return startMissionRun({ runId, candidate, event }, missionRunDeps());
     },
     forSession: (agentSessionId) => requestForExternalSession("linear", agentSessionId),
     update: (request, update) => sendRequestUpdate(request.missionId, request.requestKey, update),

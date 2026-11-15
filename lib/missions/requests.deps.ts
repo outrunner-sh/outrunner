@@ -33,6 +33,7 @@ import {
   unannouncedRequests,
 } from "@/lib/missions/slack-store";
 import { recordMissionEvent } from "@/lib/missions/watch.deps";
+import { stopAgentRow } from "@/lib/db/linear-agent";
 
 export function requestDeps(): RequestDeps {
   return {
@@ -55,6 +56,9 @@ export function requestDeps(): RequestDeps {
     thread: threadById,
     markAnnounced,
     cancel: cancelRequestRow,
+    release: async (request) => {
+      if (request.source === "linear" && request.externalSession) await stopAgentRow(request.externalSession);
+    },
     openInThread: openThreadRequests,
     pending: pendingRequests,
     enqueue: recordMissionEvent,

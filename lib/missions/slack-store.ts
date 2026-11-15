@@ -639,13 +639,15 @@ export async function cancelRequestRow(missionId: string, requestKey: string): P
 /** Requests the Mission hasn't been told of, made before `before`: for the
  *  tick. Triggers' requests, and `!new`'s while open (unannounced_new_requests,
  *  20261114210200_mission_assign.sql; the tick decides by its root post).
- *  Never a mention's: it's told as it's taken (and never marked told). */
+ *  Never a mention's: it's told as it's taken (and never marked told). A
+ *  cancelled one is never news, and mustn't hold the window. */
 export async function unannouncedRequests(before: Date, max = 25): Promise<MissionRequest[]> {
   const [triggers, fresh] = await Promise.all([
     db()
       .from("mission_slack_requests")
       .select("*")
       .is("announced_at", null)
+      .eq("status", "open")
       .neq("source", "slack")
       .lt("created_at", before.toISOString())
       .order("created_at", { ascending: true })
