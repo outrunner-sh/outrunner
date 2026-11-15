@@ -11,7 +11,7 @@ import { type AgentEvent, ChangesResponse, FilesResponse, PlanActionResponse, Re
 import { ConversationTimeline } from "@/components/conversation-timeline";
 import { ImageBoxContext } from "@/components/markdown";
 import { QueuedPrompts } from "@/components/queued-prompts";
-import { QueuedFirstPrompt, StartupStatus, type SessionStartup } from "@/components/workspace-creating";
+import { QueuedFirstPrompt, type SessionStartup } from "@/components/workspace-creating";
 import { useQueuedFirstPrompt } from "@/hooks/use-queued-first-prompt";
 import { QuestionCard } from "@/components/question-card";
 import { pendingSecretRequest, type PendingSecretRequest } from "@/lib/runtime/pending-secrets";
@@ -1346,9 +1346,10 @@ export function WorkspaceSession({
           {/* Images Claude shows by path are on a cloud session's box; this
               Mac's are out of the server's reach. */}
           <ImageBoxContext value={local ? null : workspaceId}>
-            {startup && firstQueued ? <QueuedFirstPrompt first={firstQueued} /> : <ConversationTimeline
+            {startup && firstQueued ? <QueuedFirstPrompt first={firstQueued} startup={startup} /> : <ConversationTimeline
               agentLabel={AGENTS[agent].label}
               events={timelineEvents}
+              startup={startup}
               working={working && !compacting}
               compacting={compacting}
               plansInProse={agent === "codex"}
@@ -1368,7 +1369,6 @@ export function WorkspaceSession({
         </div>
       </section>
 
-      {startup && <StartupStatus startup={startup} />}
       {question && (
         <QuestionCard
           key={question.toolUseId}

@@ -366,10 +366,10 @@
 .studio-env-row.is-merged .studio-env-icon,
 .studio-env-row.is-merged .studio-env-pr-link,
 .studio-env-row.is-merged .studio-env-pr-link svg { color: var(--color-merged); }
-.studio-env-merge { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border: 1px solid color-mix(in oklab, var(--color-positive) 40%, transparent); border-radius: 4px; color: var(--color-positive); background: color-mix(in oklab, var(--color-positive) 8%, transparent); font-size: 12px; cursor: pointer; transition: background-color .15s, border-color .15s; }
-.studio-env-merge:hover { border-color: color-mix(in oklab, var(--color-positive) 65%, transparent); background: color-mix(in oklab, var(--color-positive) 16%, transparent); }
-.studio-env-merge svg { width: 13px; height: 13px; }
-.studio-env-merge:focus-visible { outline: 2px solid color-mix(in oklab, var(--color-positive) 60%, transparent); outline-offset: 2px; }
+.studio-env-merge { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border: 1px solid var(--studio-border); border-radius: 4px; color: var(--studio-text); background: var(--studio-panel); font-size: 12px; cursor: pointer; transition: background-color .15s, border-color .15s; }
+.studio-env-merge:hover:not(:disabled) { border-color: #3a3a3a; background: var(--studio-hover); }
+.studio-env-merge svg { width: 13px; height: 13px; color: var(--color-positive); }
+.studio-env-merge:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: 2px; }
 .studio-env-merge[aria-busy="true"] { cursor: progress; }
 /* A fixed toolbar above the independently scrolling panel. Only the active
    tab shows its label; every icon keeps its accessible name and tooltip. */
