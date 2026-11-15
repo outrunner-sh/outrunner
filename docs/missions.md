@@ -251,6 +251,32 @@ Slack's retries, timeouts and rebinds
     Otherwise its owner carries on with it in Outrunner. Pause and mute
     don't stop these: they're about Slack, and work already started goes on.
 
+### Idle pause
+
+A bound Mission no human talks to for 2 weeks pauses itself
+(`20261114210100_mission_idle_pause.sql`, `lib/missions/idle-pause.ts`):
+
+- **Heard.** A human message meant for the Mission moves `last_human_at`: a
+  mention of Outrunner, a reply in a thread it owns that isn't muted, or a
+  reply under its offer; linked or not, paused or not. `!aside`, a muted
+  thread, bots and Outrunner never count. It also calls off a pending offer.
+- **Offer.** On the Missions tick, a binding not paused with no human for 14
+  days gets a channel post: "No one has replied here for 2 weeks. I'll pause
+  in 24 hours unless someone replies. @Outrunner resume any time after."
+  (`idle_warned_at` set).
+- **Pause.** 24 hours on with no human since: paused, `idle_paused`, the post
+  "Paused: no one has replied for 2 weeks. @Outrunner resume to continue.",
+  and `mission.slack_idle_paused` in the org's audit log. The header's chip
+  shows **idle-paused**.
+- **Resume.** `@Outrunner resume` or the chip's **Resume** clears it and
+  restarts the 2 weeks. A person's pause is never swept; a rebind starts
+  fresh.
+- **Once.** Each step is one statement that marks the binding and queues its
+  post (`offer_mission_idle_pauses`, `pause_idle_missions`), so racing or
+  retried ticks post once.
+- Tests: `test/mission-idle-pause.test.ts`, and
+  `test/mission-idle-pause-sql.test.ts` on a real Postgres (`MISSIONS_PG`).
+
 ## Triggers
 
 Besides you and its Slack channel, a Mission takes work from **triggers**:

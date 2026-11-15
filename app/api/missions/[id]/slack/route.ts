@@ -59,6 +59,7 @@ export async function GET(request: Request, context: RouteContext) {
       channelId: binding.channelId,
       channelName: install ? await channelName(install.botToken, binding.channelId) : null,
       paused: binding.paused,
+      idlePaused: binding.paused && binding.idlePaused === true,
       listen: binding.listen,
     };
   } else if (manage && new URL(request.url).searchParams.get("channels") === "1") {

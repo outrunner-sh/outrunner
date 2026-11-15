@@ -2,7 +2,8 @@
 
 /**
  * A Mission's Slack channel in its header (docs/missions.md, "On call in
- * Slack"): the channel it's on call in, with pause/resume and disconnect;
+ * Slack"): the channel it's on call in, with pause/resume and disconnect
+ * (paused by a person, or idle-paused: no one replied for 2 weeks);
  * or, when it's in none, Connect Slack channel, picking one Outrunner is in.
  * Changing it needs write on the Mission's project; without it, the chip
  * only shows.
@@ -72,21 +73,30 @@ export function MissionSlackChip({ missionId, onError }: { missionId: string; on
   const binding = view.binding;
   if (binding) {
     const label = `#${binding.channelName ?? binding.channelId}`;
+    const idle = binding.paused && binding.idlePaused === true;
     return (
       <DropdownMenu>
         <DropdownMenuTrigger
           className={cn(chip, binding.paused && "text-[#8f8f8f]")}
-          aria-label={`On call in Slack ${label}${binding.paused ? ", paused" : ""}`}
-          title={binding.paused ? `Paused in ${label}: it takes nothing from Slack` : `On call in ${label}: mentions there reach this Mission`}
+          aria-label={`On call in Slack ${label}${idle ? ", idle-paused" : binding.paused ? ", paused" : ""}`}
+          title={
+            idle
+              ? `Idle-paused in ${label}: no one replied for 2 weeks, so it takes nothing from Slack`
+              : binding.paused
+                ? `Paused in ${label}: it takes nothing from Slack`
+                : `On call in ${label}: mentions there reach this Mission`
+          }
           disabled={busy}
         >
           <SlackIcon className="size-3" />
           <span className="max-w-[140px] truncate">{label}</span>
-          {binding.paused && <span className="text-[11px] text-[#d29922]">paused</span>}
+          {binding.paused && <span className="text-[11px] text-[#d29922]">{idle ? "idle-paused" : "paused"}</span>}
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-[240px]">
           <DropdownMenuLabel className="text-[11.5px] font-normal text-muted-foreground">
-            On call in {label}. Mentions there, and replies in its threads, reach this Mission.
+            {idle
+              ? `Idle-paused in ${label}: no one replied for 2 weeks. Resume, or @Outrunner resume there, to continue.`
+              : `On call in ${label}. Mentions there, and replies in its threads, reach this Mission.`}
           </DropdownMenuLabel>
           {view.canManage && (
             <>

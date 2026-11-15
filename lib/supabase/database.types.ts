@@ -2632,6 +2632,14 @@ export type Database = {
         Args: { target: string | null; max_posts: number; lease_seconds: number };
         Returns: MissionSlackPostRow[];
       };
+      offer_mission_idle_pauses: {
+        Args: { idle_seconds: number; offer_text: string; max_rows: number };
+        Returns: MissionChannelRow[];
+      };
+      pause_idle_missions: {
+        Args: { grace_seconds: number; pause_text: string; max_rows: number };
+        Returns: MissionChannelRow[];
+      };
       reserve_mission_slack_ship: {
         Args: { target: string; thread: string | null; requester: string | null; slack_user: string | null };
         Returns: { ship_id: string | null; refusal: "hour" | "day" | null; refused_at_limit: number | null }[];

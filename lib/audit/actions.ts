@@ -16,6 +16,7 @@ export type AuditAction =
   | "slack_channel.lookup"
   | "mission.slack_bound"
   | "mission.slack_unbound"
+  | "mission.slack_idle_paused"
   | "mission.slack_ship_started"
   | "org.renamed"
   | "member.invited"
@@ -122,6 +123,8 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `put the Mission ${what} on call in Slack channel ${text(d.slack_channel_id) ?? "?"}`;
     case "mission.slack_unbound":
       return `took the Mission ${what} off call in Slack channel ${text(d.slack_channel_id) ?? "?"}`;
+    case "mission.slack_idle_paused":
+      return `paused the Mission ${what} in Slack channel ${text(d.slack_channel_id) ?? "?"}: no one had replied for 2 weeks`;
     case "mission.slack_ship_started":
       return `started a Ship from Slack for the Mission ${what}${text(d.requested_by_slack) ? `, asked by Slack user ${text(d.requested_by_slack)}` : ""}`;
     case "org.renamed":

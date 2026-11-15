@@ -25,6 +25,8 @@ import {
   channelBinding,
   channelThread,
   claimSlackMessage,
+  heardHuman,
+  isIdleOfferThread,
   recordRequest,
   setChannelPaused,
   setThreadMuted,
@@ -208,6 +210,8 @@ export function slackRouteDeps(
       if (mission) await takeOffCall(mission, by.userId);
     },
     enqueue: recordMissionEvent,
+    heardHuman: (binding) => heardHuman(binding),
+    idleOfferThread: isIdleOfferThread,
     stopThread: (mission, threadId) =>
       stopThreadWork(mission.id, threadId, { ...requestDeps(), shipRunners: shipRunnersOfThread, interrupt: (runnerId) => interruptRunner(mission.ownerId, runnerId) }),
     name: async (slackUserId) => (await userNames(install.botToken, [slackUserId])).get(slackUserId) ?? slackUserId,

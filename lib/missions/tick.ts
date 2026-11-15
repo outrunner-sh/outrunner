@@ -11,9 +11,14 @@
  *   failures    Runners that failed between turns, with no watch to tell
  *   deliveries  events waiting for their Mission, retried with backoff
  *   slack in    Slack events saved for a Mission and never processed
+ *   idle        bindings no human has replied to for 2 weeks: offered a
+ *               pause, then paused (lib/missions/idle-pause.ts); their posts
+ *               queued for slack out
  *   slack out   Slack posts queued for a Mission, due (lib/missions/slack-outbox.ts)
  */
 
+import { sweepIdle } from "@/lib/missions/idle-pause";
+import { idleSweepDeps } from "@/lib/missions/idle-pause.deps";
 import { deliverNow, missionsWithPendingEvents } from "@/lib/missions/outbox.deps";
 import { announceUntold } from "@/lib/missions/requests.deps";
 import { processDueInbound } from "@/lib/missions/slack-inbound.deps";
@@ -39,14 +44,17 @@ export async function runMissionTick(): Promise<{
   slackInbound: number;
   slackPosts: number;
   untold: number;
+  idleOffered: number;
+  idlePaused: number;
 }> {
-  const [turns, pullRequests, queued, failures, slackInbound, untold] = await Promise.all([
+  const [turns, pullRequests, queued, failures, slackInbound, untold, idle] = await Promise.all([
     quietly("turns", () => checkStaleWatches()),
     quietly("pull requests", () => settleDueRunners()),
     quietly("queued messages", () => sendWaitingQueued()),
     quietly("failures", () => reportFailedRunners()),
     quietly("saved Slack events", () => processDueInbound()),
     quietly("untold requests", () => announceUntold()),
+    quietly("idle pause", () => sweepIdle(idleSweepDeps())),
   ]);
   // Last: what the parts above recorded goes in the same tick.
   const delivered = await quietly("deliveries", async () => {
@@ -65,5 +73,7 @@ export async function runMissionTick(): Promise<{
     slackInbound: slackInbound ?? 0,
     slackPosts: slackPosts ?? 0,
     untold: untold ?? 0,
+    idleOffered: idle?.offered ?? 0,
+    idlePaused: idle?.paused ?? 0,
   };
 }

@@ -18,6 +18,10 @@
  *   bots      the bot's own messages never; other bots' only with
  *             allow_bot_messages, when they mention Outrunner, vouched for
  *             by whoever bound the channel
+ *   idle      a human message meant for the Mission (a mention, a reply in
+ *             its unmuted thread or under its idle offer; linked or not,
+ *             paused or not; never `!aside`) moves its last human reply and
+ *             calls off an idle offer (lib/missions/idle-pause.ts)
  *
  * What touches the world comes in as `deps` (slack-route.deps.ts).
  */
@@ -87,6 +91,10 @@ export type SlackRouteDeps = {
    *  running turns interrupted (lib/missions/requests.ts stopThreadWork),
    *  no other thread's. */
   stopThread(mission: Workspace, threadId: string): Promise<{ requests: number; ships: number }>;
+  /** A human posted something the Mission hears (lib/missions/idle-pause.ts). */
+  heardHuman?(binding: MissionChannel): Promise<void>;
+  /** Whether the thread is the binding's idle offer, as posted. */
+  idleOfferThread?(binding: MissionChannel, threadTs: string): Promise<boolean>;
   /** A Slack user's name, as Slack shows it. */
   name(slackUserId: string): Promise<string>;
   permalink(ts: string): Promise<string | null>;
@@ -126,6 +134,7 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
   const threadTs = message.threadTs ?? message.ts;
   const binding = await deps.binding(message.teamId, message.channel);
   if (command?.action === "bind") {
+    if (binding) await heard(binding, deps);
     await bindHere(command.project, message, binding, deps);
     return true;
   }
@@ -141,6 +150,19 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
 
   const thread = message.threadTs ? await deps.thread(message.teamId, message.channel, message.threadTs) : null;
   const owned = thread !== null && thread.missionId === binding.missionId;
+  // A human reply (lib/missions/idle-pause.ts) is one meant for the
+  // Mission: a mention, or a reply in a thread of its that isn't muted, or
+  // under its idle offer. `!aside` and a muted thread are people talking to
+  // each other.
+  const aside = threadKeyword(withoutMention(message.text, deps.botUserId)) === "aside";
+  if (!message.botId && !aside && !(owned && thread.muted)) {
+    if (message.mention || owned) await heard(binding, deps);
+    // A reply under its idle offer answers it: heard, and the Mission's.
+    else if (message.threadTs && binding.idleWarnedAt && (await offerThread(binding, message.threadTs, deps))) {
+      await heard(binding, deps);
+      return true;
+    }
+  }
   // v1 listens to mentions and its own threads only (listen = 'mentions').
   if (!message.mention && !owned) return false;
   // A bot is heard only when the channel takes bots' messages, and only
@@ -266,6 +288,16 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
     key: eventKey.slackRequest(requestKey),
   });
   return true;
+}
+
+/** A human was heard: never in the way of the message, whatever fails. */
+async function heard(binding: MissionChannel, deps: SlackRouteDeps): Promise<void> {
+  await deps.heardHuman?.(binding).catch((error: unknown) => console.error(`Mission ${binding.missionId}: couldn't note a human reply`, error));
+}
+
+async function offerThread(binding: MissionChannel, threadTs: string, deps: SlackRouteDeps): Promise<boolean> {
+  if (!deps.idleOfferThread) return false;
+  return deps.idleOfferThread(binding, threadTs).catch(() => false);
 }
 
 async function runCommand(
