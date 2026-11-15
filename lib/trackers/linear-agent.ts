@@ -709,9 +709,10 @@ async function delegate(context: Context): Promise<boolean> {
       deps.mission,
     );
     if (routed.routed) {
-      // A row, so Linear's later events find it; no session, no slot.
+      // A row, so Linear's later events find it; no session, no slot. Not
+      // taken (refused), it's stopped, so delegating again tries again.
       const written = await deps.saveRow(
-        rowOf(context, { orgId: scope.orgId, teamId: scope.externalTeamId, itemId: item?.id ?? null, ownerId: runner.actor.userId, stage: "working", prompt, ruleStarted: runner.ruleStarted, ask: askOf(payload) }),
+        rowOf(context, { orgId: scope.orgId, teamId: scope.externalTeamId, itemId: item?.id ?? null, ownerId: runner.actor.userId, stage: routed.taken ? "working" : "stopped", prompt, ruleStarted: runner.ruleStarted, ask: askOf(payload) }),
         existing,
         { restart: context.restart },
       );

@@ -1790,6 +1790,9 @@ import type { LinearIssueEvent } from "@/lib/automations/run-event";
 function missionRoutes(over: Partial<LinearMissionDeps> = {}) {
   const requests: MissionRequest[] = [];
   const log = { runs: [] as LinearIssueEvent[], updates: [] as { key: string; id: string; text: string }[], cancelled: [] as string[] };
+  // The automation runs by key, and why the next is refused (none: it's taken).
+  const runRows = new Map<string, "ready" | "refused">();
+  const state = { refuse: null as string | null };
   const mission: LinearMissionDeps = {
     routes: async () => [
       { automationId: "route-b", missionId: "mission-b", teamIds: [TEAM], createdAt: "2026-11-02T00:00:00Z" },
@@ -1798,11 +1801,16 @@ function missionRoutes(over: Partial<LinearMissionDeps> = {}) {
     missionTitle: async (id) => (id === "mission-a" ? "On call: web" : "Other"),
     canRead: async (userId) => userId === "ana-user",
     // As the real one: the run dedupes on the delegation's key, and its
-    // request is under that key.
+    // request is under that key. A key whose run made nothing is run again.
     run: async (_automationId, event) => {
       log.runs.push(event);
       const key = delegationKey(event);
-      if (requests.some((r) => r.requestKey === key)) return null;
+      if (runRows.get(key) === "ready") return null;
+      if (state.refuse) {
+        runRows.set(key, "refused");
+        return { status: "refused", reason: state.refuse };
+      }
+      runRows.set(key, "ready");
       requests.push({
         missionId: "mission-a",
         requestKey: key,
@@ -1835,7 +1843,7 @@ function missionRoutes(over: Partial<LinearMissionDeps> = {}) {
     forIssue: async (_i, issueId) => requests.filter((r) => r.externalRef === issueId && r.status === "open"),
     ...over,
   };
-  return { mission, requests, log };
+  return { mission, requests, log, runRows, state };
 }
 
 test("a team routed to a Mission: the issue is its request, never a session; the oldest route picks one Mission", async () => {
@@ -1960,4 +1968,47 @@ test("a delegation's key: the agent session's while its request stands, the next
   assert.deepEqual([first, second].map((o) => (o.routed ? o.said : "")), ['Sent to the Mission "On call: web". It answers here.', 'The Mission "On call: web" has this already.']);
   assert.deepEqual(m.log.runs.map((r) => r.delegation), ["linear:s1", "linear:s1"]);
   assert.equal(m.requests.length, 1);
+});
+
+test("delegated again but refused: the session's stopped and the key unspent, so the next delegation is picked up under it and the Mission told once", async () => {
+  const m = missionRoutes();
+  const h = harness({ mission: m.mission }, { scope: scope({ defaultProjectId: WEB.id }) });
+  const send = async (payload: AgentPayload) => {
+    await handleAgentEvent(INSTALL, payload, h.deps);
+    await h.run();
+    h.log.deferred.length = 0;
+  };
+  await send(created());
+  await send({ ...prompted(""), agentActivity: { signal: "stop" } } as AgentPayload);
+  // The owner withdrew the approval meanwhile: refused.
+  m.state.refuse = "Waiting for the Mission's owner to approve this automation sending it work.";
+  await handleRedelegated(INSTALL, again, h.deps);
+  assert.deepEqual(said(h.log).at(-1), { type: "response", body: `The Mission "On call: web" didn't take this: ${m.state.refuse}` });
+  assert.equal(h.current()?.stage, "stopped", "not under way: delegating again tries again");
+  assert.deepEqual(m.requests.map((r) => `${r.requestKey}:${r.status}`), [`linear:${AGENT}:cancelled`]);
+  // Approved again, and delegated again: picked up, under the key the refused run didn't spend.
+  m.state.refuse = null;
+  await handleRedelegated(INSTALL, again, h.deps);
+  assert.deepEqual(said(h.log).at(-1), { type: "response", body: 'Sent to the Mission "On call: web". It answers here.' });
+  assert.equal(h.current()?.stage, "working");
+  assert.deepEqual(m.requests.map((r) => `${r.requestKey}:${r.status}`), [`linear:${AGENT}:cancelled`, `linear:${AGENT}:2:open`], "one new request: the Mission told once");
+  assert.deepEqual(m.log.runs.map((r) => r.delegation), [`linear:${AGENT}`, `linear:${AGENT}:2`, `linear:${AGENT}:2`]);
+  assert.deepEqual([...m.runRows], [[`linear:${AGENT}`, "ready"], [`linear:${AGENT}:2`, "ready"]], "one run a key: the refused one taken back");
+  // That delegation delivered again: nothing more.
+  await handleRedelegated(INSTALL, again, h.deps);
+  assert.equal(m.requests.length, 2);
+  assert.equal(m.log.runs.length, 3);
+});
+
+test("a first delegation refused by its Mission leaves the session stopped, and delegating again tries again", async () => {
+  const m = missionRoutes();
+  m.state.refuse = "Its Mission is archived.";
+  const h = harness({ mission: m.mission }, { scope: scope({ defaultProjectId: WEB.id }) });
+  await send(created(), h);
+  assert.equal(h.current()?.stage, "stopped");
+  assert.equal(m.requests.length, 0);
+  m.state.refuse = null;
+  await handleRedelegated(INSTALL, again, h.deps);
+  assert.deepEqual(m.requests.map((r) => `${r.requestKey}:${r.status}`), [`linear:${AGENT}:open`]);
+  assert.equal(h.current()?.stage, "working");
 });

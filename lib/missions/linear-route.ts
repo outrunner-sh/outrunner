@@ -38,7 +38,10 @@ export type LinearMissionDeps = {
   missionTitle(missionId: string): Promise<string | null>;
   /** Whether a person can read the Mission's project. */
   canRead(userId: string, missionId: string): Promise<boolean>;
-  /** Record the automation's run for the issue and run it: its request. */
+  /** Record the automation's run for the delegation's key and run it: its
+   *  request. Null when that key's run made its request already. A run under
+   *  the key that made nothing (refused, failed, skipped) is run again for
+   *  this delegation: only a request spends a key. */
   run(automationId: string, event: LinearIssueEvent): Promise<MissionRunOutcome | null>;
   /** The agent session's latest request. */
   forSession(agentSessionId: string): Promise<MissionRequest | null>;
@@ -76,7 +79,10 @@ export function pickRoute(routes: readonly LinearRoute[], teamId: string | null)
   return [...routes].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).find((r) => r.teamIds.includes(teamId)) ?? null;
 }
 
-export type RouteOutcome = { routed: false } | { routed: true; said: string };
+/** Routed: what to say, and whether the Mission has it (a request), so the
+ *  agent session is under way, or not, so it's stopped and delegating the
+ *  issue again tries again. */
+export type RouteOutcome = { routed: false } | { routed: true; taken: boolean; said: string };
 
 /** An issue delegated: a Mission's request, if a route takes it; what to
  *  say in Linear. */
@@ -88,13 +94,13 @@ export async function routeIssue(
   if (!route) return { routed: false };
   const title = (await deps.missionTitle(route.missionId)) ?? "Mission";
   if (input.event.requestedBy && !(await deps.canRead(input.event.requestedBy, route.missionId))) {
-    return { routed: true, said: `This team's issues go to the Mission "${title}", whose project you can't read in Outrunner, so it didn't take this.` };
+    return { routed: true, taken: false, said: `This team's issues go to the Mission "${title}", whose project you can't read in Outrunner, so it didn't take this.` };
   }
   const delegation = nextDelegation(input.event.agentSessionId, await deps.forSession(input.event.agentSessionId));
   const outcome = await deps.run(route.automationId, { ...input.event, delegation });
-  if (!outcome) return { routed: true, said: `The Mission "${title}" has this already.` };
-  if (outcome.status === "ready") return { routed: true, said: `Sent to the Mission "${title}". It answers here.` };
-  return { routed: true, said: `The Mission "${title}" didn't take this: ${outcome.reason ?? "it couldn't."}` };
+  if (!outcome) return { routed: true, taken: true, said: `The Mission "${title}" has this already.` };
+  if (outcome.status === "ready") return { routed: true, taken: true, said: `Sent to the Mission "${title}". It answers here.` };
+  return { routed: true, taken: false, said: `The Mission "${title}" didn't take this: ${outcome.reason ?? "it couldn't."}` };
 }
 
 /** Something said in the issue's agent session, for a Mission's request:
