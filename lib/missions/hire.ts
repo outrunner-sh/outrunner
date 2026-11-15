@@ -52,7 +52,7 @@ function why(result: { response: Response | null; json: Record<string, unknown> 
   return typeof result.json?.error === "string" ? result.json.error : fallback;
 }
 
-export async function hireMission(plan: HirePlan, fetcher: Fetch, log: (message: string) => void = () => undefined): Promise<HireOutcome> {
+export async function hireMission(plan: HirePlan, fetcher: Fetch): Promise<HireOutcome> {
   const steps: HireStep[] = [];
 
   const created = await call(fetcher, "/api/missions", "POST", plan.create);
@@ -71,13 +71,7 @@ export async function hireMission(plan: HirePlan, fetcher: Fetch, log: (message:
   const budgetLabel = `Set budgets: ${budgetText(plan.budget)}`;
   let error: string | undefined;
   if (budget.response?.ok) steps.push({ kind: "budget", label: budgetLabel, status: "done" });
-  else if (budget.response?.status === 404) {
-    // TODO(phase-3): remove once budgets merge
-    // Budgets aren't in this deployment at all: not a failed hire, and
-    // triggers still go ahead.
-    log(`Mission ${id}: budgets aren't available here (404); hired without them.`);
-    steps.push({ kind: "budget", label: budgetLabel, status: "skipped", detail: "Budgets aren't available yet." });
-  } else {
+  else {
     error = BUDGET_FAILED;
     steps.push({ kind: "budget", label: budgetLabel, status: "failed", detail: BUDGET_FAILED });
   }

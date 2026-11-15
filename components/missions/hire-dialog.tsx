@@ -98,7 +98,7 @@ export function HireDialog({
       prompt: prompt ?? undefined,
       budget: { dailyUsd: dailyUsd.value, weeklyUsd: weeklyUsd.value },
     });
-    const outcome = await hireMission(plan, (url, init) => fetch(url, init), (m) => console.info(m));
+    const outcome = await hireMission(plan, (url, init) => fetch(url, init));
     setBusy(false);
     if (!outcome.missionId) {
       setError(outcome.steps[0]?.detail ?? "The Mission didn't start. Try again.");

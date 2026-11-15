@@ -89,8 +89,7 @@ Mission (`POST /api/missions`, the instructions its first message), sets the
 budgets (`PUT /api/missions/[id]/budget`), names it and sets its icon
 (`PATCH /api/missions/[id]`), and makes each trigger
 (`POST /api/missions/[id]/triggers`). If the budgets aren't saved, no
-trigger is made and the hire fails, saying so. Until budgets are deployed, a
-404 there is skipped and the triggers go ahead. The page moves to the
+trigger is made and the hire fails, saying so. The page moves to the
 Mission while the dialog lists each step, and offers its Slack channel. Once
 the Mission is made it's kept: a step that fails after is shown as failed,
 with where to finish it.
@@ -98,7 +97,7 @@ with where to finish it.
 Tests: `test/mission-templates.test.ts` (the templates, their triggers as
 the route parses them, budget fields) and `test/mission-hire.test.ts` (the
 order, failed budgets adding no triggers, other failures after the Mission
-is made, a budget 404).
+is made, a budget 404 failing like any other).
 
 ## On call in Slack
 
@@ -272,7 +271,11 @@ budget: a plain Mission has none unless one is set.
     on when the day rolls over or someone raises its budget.", or this
     week), never a dollar figure. Nothing is recorded for the Mission.
   - **Triggers** (watched channels, webhooks, schedules, Linear): the run is
-    recorded as skipped and says why, as a pause's are. No request is made.
+    recorded as skipped and says why ("The Mission's budget for today is
+    reached"), as a pause's are. No request is made, and it is **not
+    delivered later**: a Sentry or PagerDuty alert that arrives during a
+    budget pause shows in the trigger's runs as skipped, and nothing acts on
+    it when the pause lifts.
   - **Events** (a Ship's turn ended, a pull request, an answer): held in the
     outbox, never dropped, and delivered once the pause lifts. The tick
     doesn't list a budget-paused Mission, so it can't crowd out others.
@@ -281,6 +284,11 @@ budget: a plain Mission has none unless one is set.
     so, apart from "the owner's plan has no room" (the plan's own refusal).
   - **What goes on:** Ships already running, messages to them, and the
     system's posts (pull request cards).
+- **A stop, not a hard cap.** The check is "already reached": Ships already
+  running go on, and starts racing just under the limit can both go, so a
+  period can end over its limit. That over-run counts in the period's spend
+  and keeps the Mission paused until the period ends or the limit is raised
+  above it.
 - **Lifted** when `paused_until` passes (the next check finds the new
   period under its limits, or pauses it again for the week), or when a limit
   is raised above what's counted: the change decides the pause with the new

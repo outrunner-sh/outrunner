@@ -140,18 +140,14 @@ for (const [what, answer] of [
   });
 }
 
-// TODO(phase-3): remove once budgets merge
-test("budgets answered 404 (not in this deployment) are skipped and logged, and triggers still go ahead", async () => {
-  const logged: string[] = [];
+test("budgets answered 404 are a failed hire like any other: no triggers, the Mission kept", async () => {
   const { calls, fetcher } = fakeFetch({ ...created, [`PUT /api/missions/${MISSION}/budget`]: { status: 404, body: { error: "Not found" } } });
-  const outcome = await hireMission(plan("release-manager"), fetcher, (m) => logged.push(m));
-  assert.equal(outcome.failed, false);
-  assert.equal(outcome.error, undefined);
-  assert.equal(outcome.steps[1].status, "skipped");
-  assert.equal(calls.filter((c) => c.url.endsWith("/triggers")).length, 1);
-  assert.equal(outcome.steps.at(-1)?.status, "done");
-  assert.equal(logged.length, 1);
-  assert.match(logged[0], /404/);
+  const outcome = await hireMission(plan("release-manager"), fetcher);
+  assert.equal(outcome.missionId, MISSION);
+  assert.equal(outcome.failed, true);
+  assert.equal(outcome.error, BUDGET_FAILED);
+  assert.equal(outcome.steps[1].status, "failed");
+  assert.equal(calls.filter((c) => c.url.endsWith("/triggers")).length, 0);
 });
 
 test("a rename that fails is a failed step with a reason; the triggers still go ahead", async () => {
