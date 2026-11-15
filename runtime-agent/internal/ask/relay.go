@@ -298,7 +298,10 @@ func (r *relay) startCall(ctx context.Context, msg rpcMessage) {
 // whether it is an error.
 func (r *relay) call(ctx context.Context, raw json.RawMessage) (string, bool) {
 	var params struct {
-		Name      string `json:"name"`
+		Name string `json:"name"`
+		// Meta is the call's MCP _meta: Claude's names the transcript's
+		// tool_use (claudecode/toolUseId).
+		Meta      map[string]json.RawMessage `json:"_meta"`
 		Arguments struct {
 			Questions json.RawMessage `json:"questions"`
 			Reason    json.RawMessage `json:"reason"`
@@ -319,6 +322,9 @@ func (r *relay) call(ctx context.Context, raw json.RawMessage) (string, bool) {
 			return "ask_user needs questions", true
 		}
 		route, request = "ask", map[string]any{"questions": params.Arguments.Questions}
+		if id := toolUseHint(params.Meta); id != "" {
+			request["toolUseId"] = id
+		}
 	case SecretsToolName:
 		if len(params.Arguments.Keys) == 0 {
 			return "request_secrets needs keys", true
@@ -445,6 +451,27 @@ func readTrimmed(path string) (string, error) {
 		return "", fmt.Errorf("%s is empty", path)
 	}
 	return value, nil
+}
+
+// toolUseHintKey is where Claude's CLI names, in a tools/call's _meta, the
+// transcript's tool_use the call is: a hint the agent checks against the
+// transcript before trusting.
+const toolUseHintKey = "claudecode/toolUseId"
+
+// MaxToolUseHint bounds the hint: a transcript id is far shorter.
+const MaxToolUseHint = 200
+
+// MaxIdentityField bounds an answer's callId, launchEpoch and
+// answerOperationId, as lib/runtime/agent-protocol.ts does (CallIdentity,
+// AnswerOperationId: .max(200)).
+const MaxIdentityField = 200
+
+func toolUseHint(meta map[string]json.RawMessage) string {
+	var id string
+	if raw, ok := meta[toolUseHintKey]; !ok || json.Unmarshal(raw, &id) != nil || len(id) > MaxToolUseHint {
+		return ""
+	}
+	return id
 }
 
 // newRequestID names one tool call, across the relay's tries.

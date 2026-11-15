@@ -427,21 +427,79 @@ const CredentialToken = z.string().regex(/^[\x21-\x26\x28-\x5b\x5d-\x7e]{20,400}
  * a credential on an engine that runs sessions on its own login (jcode),
  * 409 UNSUPPORTED.
  */
+/** The agent names each ask_user call it waits on (GET
+ *  /workspaces/{id}/question, PendingQuestionsResponse) and delivers an
+ *  answer that names one (AnswerRequest's callId, launchEpoch and
+ *  answerOperationId) to that call alone. An older agent matches an answer to
+ *  the waiting call by its questions' text, and ignores the identity: never
+ *  send one an answer meant for a particular call. */
+export const AGENT_FEATURE_ASK_CALL_IDENTITY = "ask-call-identity";
+
+/** An ask_user call's identity: the relay's request id (`callId`) and the
+ *  launch of the agent that holds it (`launchEpoch`, new each time the agent
+ *  starts). A relay that reconnects keeps it within a launch; asked again of a
+ *  restarted agent, the same callId has a new launchEpoch. */
+export const CallIdentity = z.object({
+  callId: z.string().min(1).max(200),
+  launchEpoch: z.string().min(1).max(200),
+});
+export type CallIdentity = z.infer<typeof CallIdentity>;
+
+/** One answer's operation: the same id again (a retry after a timeout) is
+ *  that answer's receipt, never a second delivery. */
+export const AnswerOperationId = z.string().min(1).max(200);
+
 /**
  * POST /workspaces/{id}/answer: the user's reply to the questions the session
- * is waiting on (runtime-agent/internal/ask). `questions` are the ask_user
- * call's, as the transcript has them; the agent checks the reply against them.
+ * is waiting on (runtime-agent/internal/ask). Either names the call
+ * (`callId`, `launchEpoch` and `answerOperationId` together:
+ * AGENT_FEATURE_ASK_CALL_IDENTITY), `questions` then optional and checked if
+ * sent; or names none, and `questions` are the ask_user call's, as the
+ * transcript has them, matched by text (an older agent, an older client).
  * A dismissed card carries no answers.
  */
-export const AnswerRequest = z.object({
-  questions: z.array(z.unknown()).min(1).max(4),
-  answers: z
-    .array(z.object({ selected: z.array(z.string().max(500)).max(4), other: z.string().max(4000) }))
-    .max(4)
-    .optional(),
-  dismissed: z.boolean().optional(),
-});
+export const AnswerRequest = z
+  .object({
+    questions: z.array(z.unknown()).min(1).max(4).optional(),
+    answers: z
+      .array(z.object({ selected: z.array(z.string().max(500)).max(4), other: z.string().max(4000) }))
+      .max(4)
+      .optional(),
+    dismissed: z.boolean().optional(),
+    callId: CallIdentity.shape.callId.optional(),
+    launchEpoch: CallIdentity.shape.launchEpoch.optional(),
+    answerOperationId: AnswerOperationId.optional(),
+  })
+  .refine(
+    (req) => {
+      const named = [req.callId, req.launchEpoch, req.answerOperationId].filter((v) => v !== undefined).length;
+      return named === 3 || (named === 0 && req.questions !== undefined);
+    },
+    { message: "An answer names its call (callId, launchEpoch, answerOperationId) or its questions." },
+  );
 export type AnswerRequest = z.infer<typeof AnswerRequest>;
+
+/** An answer's result: `replayed` where it is the receipt of an earlier
+ *  delivery of the same answerOperationId. An agent from before
+ *  AGENT_FEATURE_ASK_CALL_IDENTITY says only "answered". */
+export const AnswerResponse = z.object({ result: z.literal("answered"), replayed: z.boolean().optional() });
+export type AnswerResponse = z.infer<typeof AnswerResponse>;
+
+/** An ask_user call a chat waits on, as the agent holds it: listed only once
+ *  the agent can take its answer. `toolUseId` is the transcript's tool_use
+ *  for it, present only where the agent verified the transcript's pending
+ *  call is this one; the two ids are never the same thing. */
+export const PendingQuestionSummary = CallIdentity.extend({
+  workspaceId: z.string(),
+  chat: z.string(),
+  toolUseId: z.string().optional(),
+  questions: z.array(z.unknown()),
+});
+export type PendingQuestionSummary = z.infer<typeof PendingQuestionSummary>;
+
+/** GET /workspaces/{id}/question: the calls a chat waits on (none or one). */
+export const PendingQuestionsResponse = z.object({ questions: z.array(PendingQuestionSummary) });
+export type PendingQuestionsResponse = z.infer<typeof PendingQuestionsResponse>;
 
 /** The agent serves request_secrets and takes its answer
  *  (POST /workspaces/{id}/secrets). */
@@ -1024,6 +1082,9 @@ export const PROTOCOL_SCHEMAS = {
   WarmRequest,
   WarmStatus,
   ProvideSecretsRequest,
+  AnswerRequest,
+  AnswerResponse,
+  PendingQuestionsResponse,
   SetEnvironmentRequest,
   SetAgentConfigRequest,
   SetSkillsRequest,

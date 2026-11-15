@@ -121,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/editor", s.authed(s.openEditor))
 	mux.HandleFunc("GET /workspaces/{id}/ports", s.authed(s.listPorts))
 	mux.HandleFunc("POST /workspaces/{id}/answer", s.authed(s.answer))
+	mux.HandleFunc("GET /workspaces/{id}/question", s.authed(s.pendingQuestion))
 	mux.HandleFunc("POST /workspaces/{id}/chats", s.authed(s.createChat))
 	mux.HandleFunc("POST /workspaces/{id}/rewind", s.authed(s.rewind))
 	mux.HandleFunc("POST /workspaces/{id}/chats/{chat}/delete", s.authed(s.deleteChat))
@@ -176,7 +177,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{featureHarnessSwitch, protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureCodexSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureGitLabCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots, protocol.FeatureRewind, protocol.FeatureCodexAccessToken, protocol.FeatureCodexAccount, protocol.FeatureClaudeAccount, protocol.FeatureSnapshotPatchIntegrity},
+		Features: []string{featureHarnessSwitch, protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureCodexSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureGitLabCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots, protocol.FeatureRewind, protocol.FeatureCodexAccessToken, protocol.FeatureCodexAccount, protocol.FeatureClaudeAccount, protocol.FeatureSnapshotPatchIntegrity, protocol.FeatureAskCallIdentity},
 	})
 }
 
@@ -902,6 +903,7 @@ func (s *Server) ask(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		RequestID string         `json:"requestId"`
+		ToolUseID string         `json:"toolUseId"`
 		Questions []ask.Question `json:"questions"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -912,10 +914,13 @@ func (s *Server) ask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "ask requires a requestId")
 		return
 	}
+	if len(req.ToolUseID) > ask.MaxToolUseHint {
+		req.ToolUseID = "" // not a transcript id: no hint
+	}
 	// Read to the end: only then does the server watch the connection, so a
 	// relay giving the call up (its agent interrupted) ends the wait.
 	_, _ = io.Copy(io.Discard, r.Body)
-	text, err := s.ws.Ask(r.Context(), id, req.RequestID, req.Questions)
+	text, err := s.ws.Ask(r.Context(), id, req.RequestID, req.ToolUseID, req.Questions)
 	switch {
 	case r.Context().Err() != nil:
 		return // the relay gave the call up: nobody to answer
@@ -930,7 +935,9 @@ func (s *Server) ask(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// answer gives the user's reply to the questions the session is waiting on.
+// answer gives the user's reply to the questions the session is waiting on:
+// to the call it names (callId, launchEpoch, answerOperationId), or, from a
+// client that names none, to the call asking these questions.
 func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
@@ -940,21 +947,74 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Questions []ask.Question `json:"questions"`
+		Questions         []ask.Question `json:"questions"`
+		CallID            string         `json:"callId"`
+		LaunchEpoch       string         `json:"launchEpoch"`
+		AnswerOperationID string         `json:"answerOperationId"`
 		ask.Reply
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	err := s.ws.Answer(key, req.Questions, req.Reply)
+	named := req.CallID != "" || req.LaunchEpoch != "" || req.AnswerOperationID != ""
+	if !named {
+		err := s.ws.Answer(key, req.Questions, req.Reply)
+		switch {
+		case errors.Is(err, ask.ErrNotWaiting):
+			writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+		case errors.Is(err, ask.ErrInvalid):
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		default:
+			respond(w, "answered", err)
+		}
+		return
+	}
+	if len(req.CallID) > ask.MaxIdentityField || len(req.LaunchEpoch) > ask.MaxIdentityField || len(req.AnswerOperationID) > ask.MaxIdentityField {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("callId, launchEpoch and answerOperationId are at most %d characters", ask.MaxIdentityField))
+		return
+	}
+	result, err := s.ws.AnswerCall(key, ask.CallIdentity{CallID: req.CallID, LaunchEpoch: req.LaunchEpoch}, req.AnswerOperationID, req.Questions, req.Reply)
 	switch {
-	case errors.Is(err, ask.ErrNotWaiting):
+	case errors.Is(err, ask.ErrNotWaiting), errors.Is(err, ask.ErrOperationConflict):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
 	case errors.Is(err, ask.ErrInvalid):
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 	default:
-		respond(w, "answered", err)
+		writeJSON(w, http.StatusOK, protocol.AnswerResponse{Result: "answered", Replayed: result.Replayed})
 	}
+}
+
+// pendingQuestion lists the ask_user call the chat waits on, if any, named
+// as an answer names it, with the transcript's tool_use where it is verified
+// to be that call (workspace.PendingQuestion).
+func (s *Server) pendingQuestion(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireWorkspace(w, r, id) {
+		return
+	}
+	key, ok := s.chatOf(w, r, id)
+	if !ok {
+		return
+	}
+	out := protocol.PendingQuestionsResponse{Questions: []protocol.PendingQuestion{}}
+	if call, toolUseID, waiting := s.ws.PendingQuestion(key); waiting {
+		questions, err := json.Marshal(call.Questions)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			return
+		}
+		chat := r.URL.Query().Get("chat")
+		if chat == "" {
+			chat = workspace.MainChat
+		}
+		out.Questions = append(out.Questions, protocol.PendingQuestion{
+			CallID: call.CallID, LaunchEpoch: call.LaunchEpoch, WorkspaceID: id, Chat: chat,
+			ToolUseID: toolUseID, Questions: questions,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // createPreview makes a preview of a server the session runs, for its

@@ -11,6 +11,9 @@ import {
   Activity,
   AgentHealth,
   AnswerRequest,
+  AnswerResponse,
+  type PendingQuestionSummary,
+  PendingQuestionsResponse,
   ProvideSecretsRequest,
   WarmRequest,
   WarmStatus,
@@ -295,8 +298,16 @@ export class AgentClient {
   /** Answer the questions the workspace's session is waiting on (its agent's
    *  ask_user call). `questions` are the call's, as the transcript has them:
    *  the agent refuses an answer to any it isn't waiting on (409 CONFLICT). */
-  answer(identity: WorkspaceIdentity, req: AnswerRequest, chat?: string): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/answer${chatQuery(chat)}`, identity, AnswerRequest.parse(req));
+  async answer(identity: WorkspaceIdentity, req: AnswerRequest, chat?: string): Promise<AnswerResponse> {
+    const out = await this.post(`/workspaces/${identity.workspaceId}/answer${chatQuery(chat)}`, identity, AnswerRequest.parse(req));
+    const parsed = AnswerResponse.safeParse(out);
+    return parsed.success ? parsed.data : { result: "answered" };
+  }
+
+  /** The ask_user call a chat waits on, named as an answer names it
+   *  (AGENT_FEATURE_ASK_CALL_IDENTITY): none, or one. */
+  async pendingQuestions(identity: WorkspaceIdentity, chat?: string): Promise<PendingQuestionSummary[]> {
+    return PendingQuestionsResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/question${chatQuery(chat)}`, identity)).questions;
   }
 
   /** Answer the request for secrets the workspace's session is waiting on

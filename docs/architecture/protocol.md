@@ -82,6 +82,41 @@ restore reset the counter, the frame adds `reset: true`, `at: 0`, and an empty
 `uuid`: discard cached history and replay from zero. A reset may carry
 `rewinds: 0`; clients replace their counter even when it decreases.
 
+## Answering a question's exact call
+
+An agent that advertises `ask-call-identity` names each `ask_user` call it
+waits on, and answers only the call an answer names.
+
+- **Identity.** A call is `{ callId, launchEpoch }`, paired with its session
+  and chat. `callId` is the relay's request id; `launchEpoch` is new each time
+  the runtime-agent starts. A relay that reconnects within a launch keeps the
+  identity. Asked again of a restarted agent, the same `callId` has a new
+  `launchEpoch`.
+- **Listing.** `GET /workspaces/{id}/question` (`?chat=`) answers
+  `PendingQuestionsResponse`: none or one `PendingQuestion` (`callId`,
+  `launchEpoch`, `workspaceId`, `chat`, `questions`). A call is listed only
+  once the broker holds its waiter. `toolUseId` is the transcript's `tool_use`
+  for the call, set only when the agent verified it: the transcript's pending
+  `ask_user` call asks the same questions and, where Claude named its
+  `tool_use` to the relay (`_meta["claudecode/toolUseId"]`), is that one. The
+  two ids are never assumed equal.
+- **Answering.** `POST /workspaces/{id}/answer` (`AnswerRequest`) takes
+  `callId`, `launchEpoch` and `answerOperationId` together (`questions` then
+  optional, and checked if sent). The identity is compared under the broker's
+  lock before delivery. Another call, a call that is over, or an old
+  `launchEpoch` is `409 CONFLICT`. It is never delivered to a newer call that
+  asks the same text. The answer is `AnswerResponse`.
+- **Retries.** The agent keeps receipts of the last 256 delivered operations
+  (for its launch). The same `answerOperationId` and the same answer again is
+  `{ "result": "answered", "replayed": true }` and is not delivered twice. The
+  same id for a different answer is `409`. A client whose answer timed out
+  retries with the same id to learn whether it was delivered.
+- **Compatibility.** An answer naming no call is matched by `questions`' text,
+  as before, by every agent. An agent without the feature ignores the identity
+  fields, so a caller must not send one an answer meant for a particular call.
+  Outrunner's answer route refuses that with 409. The secret-request contract
+  (`POST /workspaces/{id}/secrets`) is unchanged.
+
 ## Conversation events (agent → Next/browser)
 
 Derived by the ConversationWatcher from Claude Code's session JSONL. **Not** parsed from the PTY.

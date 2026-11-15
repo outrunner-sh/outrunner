@@ -826,3 +826,54 @@ type ChangedFile struct {
 	Additions int    `json:"additions"`
 	Deletions int    `json:"deletions"`
 }
+
+// FeatureAskCallIdentity marks an agent that names each ask_user call it
+// waits on: GET /workspaces/{id}/question lists the call (PendingQuestion),
+// and POST /workspaces/{id}/answer takes its callId, launchEpoch and an
+// answerOperationId (AnswerRequest), refusing an answer for any other call
+// with 409. Without it, an answer is matched to the waiting call by its
+// questions' text alone.
+const FeatureAskCallIdentity = "ask-call-identity"
+
+// PendingQuestion is an ask_user call a chat's agent waits on (GET
+// /workspaces/{id}/question): its identity, as an answer names it, the chat
+// it is in, and its questions as the agent asked them. ToolUseID is the
+// transcript's tool_use for the call, set only where the transcript's
+// pending ask_user call has these questions (and, where Claude named its
+// tool_use to the relay, that one): absent, the call isn't verified to be
+// the one the transcript shows.
+type PendingQuestion struct {
+	CallID      string          `json:"callId"`
+	LaunchEpoch string          `json:"launchEpoch"`
+	WorkspaceID string          `json:"workspaceId"`
+	Chat        string          `json:"chat"`
+	ToolUseID   string          `json:"toolUseId,omitempty"`
+	Questions   json.RawMessage `json:"questions"`
+}
+
+// PendingQuestionsResponse lists the calls a chat waits on: none or one, as a
+// chat waits on one set of questions at a time.
+type PendingQuestionsResponse struct {
+	Questions []PendingQuestion `json:"questions"`
+}
+
+// AnswerRequest is the user's reply to the questions a chat waits on (POST
+// /workspaces/{id}/answer). A client that knows the call names it: CallID,
+// LaunchEpoch and AnswerOperationID together, Questions then optional (and
+// checked if sent). One that names none is matched by Questions, as before
+// FeatureAskCallIdentity.
+type AnswerRequest struct {
+	Questions         json.RawMessage `json:"questions,omitempty"`
+	Answers           json.RawMessage `json:"answers,omitempty"`
+	Dismissed         bool            `json:"dismissed,omitempty"`
+	CallID            string          `json:"callId,omitempty"`
+	LaunchEpoch       string          `json:"launchEpoch,omitempty"`
+	AnswerOperationID string          `json:"answerOperationId,omitempty"`
+}
+
+// AnswerResponse is an answer's result: "answered", Replayed where it is an
+// earlier delivery of the same answerOperationId (a retry).
+type AnswerResponse struct {
+	Result   string `json:"result"`
+	Replayed bool   `json:"replayed,omitempty"`
+}

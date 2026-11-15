@@ -673,11 +673,14 @@ export async function answerApi(context: ApiContext, id: string): Promise<Respon
   const pending = await waitingOn(workspace, chat, "question", raw.tool_use_id);
   if (pending instanceof Response) return pending;
   const questions = pending.questions as unknown[];
-  let body: Record<string, unknown> = { questions, dismissed: true };
+  // Named for the transcript call it answers: an agent that names its calls
+  // answers that one, never a later one asking the same questions.
+  const toolUseId = pending.tool_use_id;
+  let body: Record<string, unknown> = { questions, toolUseId, dismissed: true };
   if (raw.dismissed !== true) {
     const answers = parseAnswers(raw.answers, questions);
     if (typeof answers === "string") return apiError(400, answers);
-    body = { questions, answers };
+    body = { questions, toolUseId, answers };
   }
   const answered = await answerPOST(
     appRequest(context.base, `/api/workspaces/${id}/answer${chatParam(chat)}`, { body }),

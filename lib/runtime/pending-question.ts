@@ -7,7 +7,13 @@
  */
 import { z } from "zod";
 
-import type { AgentEvent } from "@/lib/runtime/agent-protocol";
+import {
+  AnswerOperationId,
+  CallIdentity,
+  type AgentEvent,
+  type AnswerRequest,
+  type PendingQuestionSummary,
+} from "@/lib/runtime/agent-protocol";
 import { messageText } from "@/lib/runtime/conversation-events";
 
 /** The tool as Claude names it: mcp__<server>__<tool>. */
@@ -114,4 +120,58 @@ export const QUESTION_EXPIRED_MESSAGE = "this question is no longer waiting for 
  *  goes for good rather than being offered again. */
 export function isExpiredQuestionError(message: string): boolean {
   return message.toLowerCase().includes(QUESTION_EXPIRED_MESSAGE);
+}
+
+/**
+ * The question card's answer, as the browser sends it to Outrunner
+ * (/api/workspaces/[id]/answer): the agent's AnswerRequest, plus the
+ * transcript's `toolUseId` the card shows, which the server resolves to the
+ * call the agent holds (answerTarget). A caller that already knows the call
+ * (callId, launchEpoch) names it itself. `answerOperationId` is one per
+ * answer: sent again, a retry is that answer's receipt.
+ */
+export const CardAnswer = z.object({
+  questions: z.array(z.unknown()).min(1).max(4).optional(),
+  answers: z
+    .array(z.object({ selected: z.array(z.string().max(500)).max(4), other: z.string().max(4000) }))
+    .max(4)
+    .optional(),
+  dismissed: z.boolean().optional(),
+  toolUseId: z.string().min(1).max(200).optional(),
+  callId: CallIdentity.shape.callId.optional(),
+  launchEpoch: CallIdentity.shape.launchEpoch.optional(),
+  answerOperationId: AnswerOperationId.optional(),
+});
+export type CardAnswer = z.infer<typeof CardAnswer>;
+
+/** Where an answer to the card for a transcript call goes, from the calls the
+ *  agent says it waits on (PendingQuestionSummary):
+ *   - call    the agent verified that call is the card's: name it;
+ *   - gone    it waits on none, or on another verified call: the card's
+ *             question is over (QUESTION_EXPIRED_MESSAGE);
+ *   - legacy  it waits on a call it couldn't tie to the transcript (not
+ *             written yet): matched by the questions' text, as before. */
+export type AnswerTarget = { kind: "call"; identity: CallIdentity } | { kind: "gone" } | { kind: "legacy" };
+
+export function answerTarget(waiting: readonly PendingQuestionSummary[], toolUseId: string): AnswerTarget {
+  const call = waiting.find((q) => q.toolUseId === toolUseId);
+  if (call) return { kind: "call", identity: { callId: call.callId, launchEpoch: call.launchEpoch } };
+  if (waiting.length === 0 || waiting.some((q) => q.toolUseId !== undefined)) return { kind: "gone" };
+  return { kind: "legacy" };
+}
+
+/** The agent's AnswerRequest for a card's answer: naming `identity`'s call
+ *  under `operationId`, or, with none (an agent without
+ *  AGENT_FEATURE_ASK_CALL_IDENTITY, a call it couldn't verify), the legacy
+ *  one matched by the questions alone. */
+export function agentAnswer(
+  answer: CardAnswer,
+  identity: CallIdentity | null,
+  operationId: string,
+): AnswerRequest {
+  const reply = answer.dismissed ? { dismissed: true } : { answers: answer.answers };
+  if (identity) {
+    return { questions: answer.questions, ...reply, ...identity, answerOperationId: operationId };
+  }
+  return { questions: answer.questions, ...reply };
 }
