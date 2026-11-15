@@ -68,9 +68,29 @@ test("off call: cards close before the binding ends, which is before the Mission
   const failing = world([], { dropFails: true });
   assert.equal(await takeMissionOffCall(mission, "wes", "archived", failing.deps), true);
   assert.deepEqual(failing.calls.filter((c) => !c.startsWith("log:")), ["unbind", "dropPending", "tell", "audit"]);
+  // Unwired (the pure flow without the hook), nothing is dropped and the
+  // rest goes on; the revision checks are still the backstop.
+  const unwired = world([ask("1")]);
+  delete unwired.deps.dropPending;
+  assert.equal(await takeMissionOffCall(mission, "wes", "off_call", unwired.deps), true);
+  assert.deepEqual(unwired.calls, ["update:1731400005.001", "unbind", "tell", "audit"]);
   // Not on call: nothing is touched.
   const off = world([ask("1")]);
   off.deps.binding = async () => null;
   assert.equal(await takeMissionOffCall(mission, "wes", "off_call", off.deps), false);
   assert.deepEqual(off.calls, []);
+});
+
+test("off call edits only the ending binding's cards: an earlier binding's open asks are skipped before any thread read", async () => {
+  const w = world([ask("1"), ask("2", { bindingRevision: "rev0" }), ask("3", { bindingRevision: null }), ask("4", { bindingRevision: "rev-old" })]);
+  const reads: string[] = [];
+  const read = w.deps.thread;
+  w.deps.thread = async (id) => {
+    reads.push(id);
+    return read(id);
+  };
+  assert.equal(await takeMissionOffCall(mission, "wes", "off_call", w.deps), true);
+  // rev1's card and one from before revisions were kept; rev0's and rev-old's untouched.
+  assert.deepEqual(w.calls.filter((c) => c.startsWith("update:")), ["update:1731400005.001", "update:1731400005.003"]);
+  assert.equal(reads.length, 2, "a skipped card costs no thread read");
 });

@@ -4,11 +4,14 @@
  * The wiring is lib/missions/slack-binding.ts (takeOffCall).
  *
  * The order is the point: cards close first (once the binding row is gone a
- * click can't tell what it was under), the binding ends before anything
- * pending is dropped (an in-flight Ship start or post is refused once its
- * revision is gone, lib/missions/slack-tools.ts recheckStart, so nothing new
- * can begin under the ended binding while pending work is dropped), and
- * the Mission hears of it last.
+ * click can't tell what it was under), then the binding ends, and the
+ * Mission hears of it last.
+ *
+ * Requests the ended binding left without a Ship are dropped: dropPending
+ * cancels them once the binding has ended (lib/missions/slack-binding.ts
+ * wires it to cancelPendingRequests). The revision checks
+ * (lib/missions/slack-tools.ts recheckStart, recheckMessage) stay as the
+ * backstop for anything in flight.
  */
 
 import type { MissionAsk, MissionChannel, MissionThread } from "@/lib/missions/slack-store";
@@ -24,7 +27,8 @@ export type OffCallDeps = {
   update(binding: MissionChannel, ts: string, text: string, blocks: Record<string, unknown>[]): Promise<void>;
   /** End the binding; true when it was on. */
   unbind(missionId: string): Promise<boolean>;
-  /** Drop what the ended binding left pending (requests with no Ship). */
+  /** Cancel what the ended binding left pending (requests with no Ship).
+   *  Wired by takeOffCall; optional so the pure flow can run without it. */
   dropPending?(missionId: string, binding: MissionChannel, why: CardEnd): Promise<unknown>;
   /** Tell the Mission it's off call. */
   tell(mission: Workspace, binding: MissionChannel): Promise<void>;
@@ -32,12 +36,16 @@ export type OffCallDeps = {
   log(message: string, error: unknown): void;
 };
 
-/** Every open question card of the Mission says nothing is waiting on it.
- *  Best effort, one at a time: a card that can't be edited is still refused
- *  when clicked (lib/missions/slack-ask.ts). How many were closed. */
+/** Every open question card of the binding that's ending says nothing is
+ *  waiting on it. Best effort, one at a time: a card that can't be edited is
+ *  still refused when clicked (lib/missions/slack-ask.ts). Cards asked under
+ *  an earlier binding are skipped: closed when it ended (nothing marks them
+ *  so), and a click on one is refused by revision anyway. How many were
+ *  closed. */
 export async function closeOpenCards(missionId: string, binding: MissionChannel, why: CardEnd, deps: OffCallDeps): Promise<number> {
   let closed = 0;
   for (const ask of await deps.openAsks(missionId)) {
+    if (ask.bindingRevision !== null && ask.bindingRevision !== binding.revision) continue;
     const thread = await deps.thread(ask.threadId).catch(() => null);
     if (!ask.messageTs || !thread || thread.channelId !== binding.channelId) continue;
     try {
