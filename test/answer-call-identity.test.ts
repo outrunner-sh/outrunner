@@ -46,6 +46,7 @@ function fakeAgent(opts: {
 }
 
 const NAMES = [AGENT_FEATURE_ASK_CALL_IDENTITY];
+const WS = { workspaceId: "ws" };
 
 test("the answer request names a call fully, or names its questions", () => {
   assert.equal(AnswerRequest.safeParse({ questions, answers }).success, true);
@@ -83,7 +84,7 @@ test("the agent's request carries the identity, or only the questions", () => {
 
 test("a card's answer goes to its verified call, under one operation", async () => {
   const agent = fakeAgent({ features: NAMES, listed: [waiting()] });
-  const out = await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1" }, () => "op-1");
+  const out = await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1" }, { workspaceId: "ws", newOperationId: () => "op-1" });
   assert.deepEqual(out, { ok: true, replayed: false, named: true });
   assert.equal(agent.sent[0].callId, "c1");
   assert.equal(agent.sent[0].launchEpoch, "e1");
@@ -92,7 +93,7 @@ test("a card's answer goes to its verified call, under one operation", async () 
 
 test("a card for a call that is over is refused, not given to the next one asking the same", async () => {
   const agent = fakeAgent({ features: NAMES, listed: [waiting({ toolUseId: "toolu_2", callId: "c2" })] });
-  const out = await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1" });
+  const out = await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1" }, WS);
   assert.deepEqual(out, { ok: false, status: 409, error: QUESTION_EXPIRED_MESSAGE });
   assert.equal(agent.sent.length, 0);
 });
@@ -104,7 +105,7 @@ test("a stale identity the agent refuses is a 409", async () => {
       throw new AgentRequestError(409, { code: "CONFLICT", message: "this question is no longer waiting for an answer (stale)" });
     },
   });
-  const out = await deliverAnswer(agent, { answers, callId: "c1", launchEpoch: "old", answerOperationId: "op" });
+  const out = await deliverAnswer(agent, { answers, callId: "c1", launchEpoch: "old", answerOperationId: "op" }, WS);
   assert.equal(out.ok, false);
   assert.equal(!out.ok && out.status, 409);
 });
@@ -118,50 +119,54 @@ test("an answer lost on the way is retried once under the same operation, and re
       return { result: "answered", replayed: true };
     },
   });
-  const out = await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1", answerOperationId: "op-9" });
+  const out = await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1", answerOperationId: "op-9" }, WS);
   assert.deepEqual(out, { ok: true, replayed: true, named: true });
   assert.equal(agent.sent.length, 2);
   assert.equal(agent.sent[0].answerOperationId, "op-9");
   assert.equal(agent.sent[1].answerOperationId, "op-9");
 });
 
-test("legacy: an agent without call identity is answered by text, and never retried", async () => {
+test("legacy: an agent without call identity is answered by text, and never retried", async (t) => {
+  const logged = t.mock.method(console, "error", () => {});
   const agent = fakeAgent({
     features: ["request-secrets"],
     answer: async () => {
       throw new TypeError("fetch failed");
     },
   });
-  const out = await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1", answerOperationId: "op" });
+  const out = await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1", answerOperationId: "op" }, WS);
   assert.deepEqual(out, { ok: false, status: 502, error: "Couldn't send your answer. Please try again." });
   assert.deepEqual(agent.sent, [{ questions, answers }]);
+  // The failure names the session it was for.
+  assert.equal(logged.mock.callCount(), 1);
+  assert.equal(logged.mock.calls[0].arguments[0], "Answer: failed for ws");
 });
 
 test("legacy: a client naming nothing is answered by text, even by an agent that names calls", async () => {
   const agent = fakeAgent({ features: NAMES, listed: [waiting()] });
-  const out = await deliverAnswer(agent, { questions, answers });
+  const out = await deliverAnswer(agent, { questions, answers }, WS);
   assert.deepEqual(out, { ok: true, replayed: false, named: false });
   assert.deepEqual(agent.sent, [{ questions, answers }]);
 });
 
 test("legacy: a call the agent hasn't tied to the transcript is answered by text", async () => {
   const agent = fakeAgent({ features: NAMES, listed: [waiting({ toolUseId: undefined })] });
-  const out = await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1" });
+  const out = await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1" }, WS);
   assert.deepEqual(out, { ok: true, replayed: false, named: false });
   assert.deepEqual(agent.sent, [{ questions, answers }]);
 });
 
 test("a named call is refused by an agent that can't take one, rather than answered by text", async () => {
   const agent = fakeAgent({ features: [] });
-  const out = await deliverAnswer(agent, { answers, callId: "c1", launchEpoch: "e1" });
+  const out = await deliverAnswer(agent, { answers, callId: "c1", launchEpoch: "e1" }, WS);
   assert.deepEqual(out, { ok: false, status: 409, error: CANT_NAME_CALLS_MESSAGE });
   assert.equal(agent.sent.length, 0);
 });
 
 test("half an identity, or no questions and no call, is refused", async () => {
   const agent = fakeAgent({ features: NAMES });
-  assert.equal((await deliverAnswer(agent, { answers, callId: "c1" })).ok, false);
-  assert.equal((await deliverAnswer(agent, { answers })).ok, false);
+  assert.equal((await deliverAnswer(agent, { answers, callId: "c1" }, WS)).ok, false);
+  assert.equal((await deliverAnswer(agent, { answers }, WS)).ok, false);
   assert.equal(agent.sent.length, 0);
 });
 
@@ -170,9 +175,9 @@ test("a named call whose box doesn't answer its health check is a retryable 502,
   agent.health = async () => {
     throw new TypeError("fetch failed");
   };
-  const out = await deliverAnswer(agent, { answers, callId: "c1", launchEpoch: "e1", answerOperationId: "op" });
+  const out = await deliverAnswer(agent, { answers, callId: "c1", launchEpoch: "e1", answerOperationId: "op" }, WS);
   assert.deepEqual(out, { ok: false, status: 502, error: UNREACHABLE_MESSAGE });
   assert.equal(agent.sent.length, 0);
   // Unnamed, it falls back to the text-matched answer, as before.
-  assert.deepEqual(await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1" }), { ok: true, replayed: false, named: false });
+  assert.deepEqual(await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1" }, WS), { ok: true, replayed: false, named: false });
 });

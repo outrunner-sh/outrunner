@@ -55,6 +55,7 @@ export async function POST(request: Request, context: RouteContext) {
       answer: (req) => agent.answer(identity, req, chat),
     },
     parsed.data,
+    { workspaceId: workspace.id },
   );
   if (!outcome.ok) {
     return NextResponse.json({ error: outcome.error }, { status: outcome.status });
