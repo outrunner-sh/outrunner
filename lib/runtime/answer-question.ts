@@ -45,12 +45,12 @@ export const UNREACHABLE_MESSAGE = "Couldn't reach the session's box. Please try
  * yet, an agent from before call identity, or a caller naming nothing, is
  * answered by the questions' text, as before. An answer to a named call
  * lost on the way is sent once more under the same operation id, which the
- * agent delivers at most once.
+ * agent delivers at most once. A failure is logged under `workspaceId`.
  */
 export async function deliverAnswer(
   agent: AnswerAgent,
   answer: CardAnswer,
-  newOperationId: () => string = () => crypto.randomUUID(),
+  { workspaceId, newOperationId = () => crypto.randomUUID() }: { workspaceId: string; newOperationId?: () => string },
 ): Promise<AnswerOutcome> {
   const named = answer.callId !== undefined || answer.launchEpoch !== undefined;
   if (named && (answer.callId === undefined || answer.launchEpoch === undefined)) {
@@ -95,7 +95,7 @@ export async function deliverAnswer(
     if (error instanceof AgentRequestError && error.error?.code === "INVALID_REQUEST") {
       return { ok: false, status: 400, error: error.error.message };
     }
-    console.error("Answer: failed", error);
+    console.error(`Answer: failed for ${workspaceId}`, error);
     return { ok: false, status: 502, error: "Couldn't send your answer. Please try again." };
   }
 }
