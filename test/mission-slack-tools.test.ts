@@ -64,6 +64,8 @@ function world() {
     beforeStart: null as null | (() => void),
   };
   let n = 0;
+  /** As the SQL's new uuids: never the same id twice, even after a release. */
+  let reservations = 0;
   const slack: MissionSlackDeps = {
     binding: async (missionId) => bindings.find((b) => b.missionId === missionId) ?? null,
     thread: async (missionId, ts) => threads.find((t) => t.missionId === missionId && t.threadTs === ts) ?? null,
@@ -88,13 +90,14 @@ function world() {
       const found = ledger.find((l) => l.missionId === input.missionId && l.requestKey === input.requestKey && l.spawnKey === input.spawnKey);
       if (found) return { id: found.id, plannedRunnerId: found.plannedRunnerId, runnerId: found.runnerId, existing: true };
       if (ledger.filter((l) => l.missionId === input.missionId).length >= state.perHour) return { refused: "hour", limit: state.perHour };
+      reservations++;
       const row: Ledger = {
-        id: `s${ledger.length + 1}`,
+        id: `s${reservations}`,
         missionId: input.missionId,
         requestKey: input.requestKey,
         spawnKey: input.spawnKey,
         threadId: input.threadId,
-        plannedRunnerId: `planned-${ledger.length + 1}`,
+        plannedRunnerId: `planned-${reservations}`,
         runnerId: null,
         requestedBy: input.requester,
         revision: input.revision,
@@ -341,13 +344,23 @@ test("a refused start gives its place back, only when this call took it and no S
 });
 
 test("a Ship the platform refuses (the plan's cloud sessions, say) is said in the thread by the server, once; an unknown outcome says nothing", async () => {
-  const { deps, state, queue } = world();
-  state.next = "refused";
+  const { deps, state, queue, ledger } = world();
   const args = { prompt: "x", request_id: "Ev1", spawn_key: "a" };
+  const reserved: string[] = [];
+  const reserve = deps.slack!.reserveSpawn;
+  deps.slack!.reserveSpawn = async (input) => {
+    const got = await reserve(input);
+    if ("id" in got) reserved.push(got.id);
+    return got;
+  };
+  state.next = "refused";
   await call(deps, "m1", "spawn_runner", args);
+  state.next = "refused";
   await call(deps, "m1", "spawn_runner", args);
+  assert.deepEqual(reserved, ["s1", "s2"], "each refusal gave its place back, so the retry got a new reservation");
+  assert.equal(ledger.length, 0);
   const posts = [...queue.values()].filter((p) => p.opKey.startsWith("refused:"));
-  assert.equal(posts.length, 1, "the post is keyed by the reservation, so a repeat of it is one post");
+  assert.equal(posts.length, 1, "the post is keyed by the start (request and spawn key), so a retry of it is one post");
   assert.equal(posts[0].threadTs, "1731400000.000100");
   assert.equal(posts[0].kind, "card");
   assert.match((posts[0].payload as { chunks: string[] }).chunks[0], /A Ship couldn't start for this request\. Outrunner couldn't start it right now\./);
