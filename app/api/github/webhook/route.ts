@@ -21,6 +21,7 @@ import {
   forgetInstallation,
   installationHolder,
   recordInstalled,
+  refreshInstallationProjectNames,
   setInstallationSuspended,
   updateInstallation,
 } from "@/lib/db/github-installations";
@@ -271,9 +272,19 @@ export async function POST(request: Request) {
       if (selection === "all" || selection === "selected") {
         await updateInstallation(installationId, { repositorySelection: selection });
       }
+      await refreshInstallationProjectNames(installationId);
     } else if (event === "installation_target" && payload.action === "renamed") {
       const login = payload.account?.login ?? payload.installation?.account?.login;
       if (login) await updateInstallation(installationId, { accountLogin: login });
+      await refreshInstallationProjectNames(installationId);
+    } else if (event === "repository" && (payload.action === "renamed" || payload.action === "transferred")) {
+      const repository = payload.repository;
+      if (typeof repository?.id === "number" && repository.full_name) {
+        await refreshInstallationProjectNames(installationId, [{
+          githubRepoId: repository.id,
+          fullName: repository.full_name,
+        }]);
+      }
     }
     return new NextResponse(null, { status: 204 });
   } catch (error) {

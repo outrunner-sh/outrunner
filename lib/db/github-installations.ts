@@ -1,7 +1,9 @@
 /** Global GitHub installation metadata and independent organization links.
  * Only trusted server routes and signed GitHub webhooks call these helpers. */
 
-import { githubAppConfig, type Installation } from "@/lib/github/app";
+import { githubAppConfig, installationToken, type Installation } from "@/lib/github/app";
+import { listInstallationRepositoryRecords } from "@/lib/github/client";
+import { refreshConnectedGitHubNames, type ConnectedGitHubProject, type GitHubRepositoryName } from "@/lib/github/project-renames";
 import { appOwnership, type GitHubOwnership, linkIdentity } from "@/lib/github/installation-owner";
 import { isUuid } from "@/lib/ids";
 import type { GithubLinkAuthority } from "@/lib/supabase/database.types";
@@ -228,7 +230,56 @@ export async function refreshInstallation(orgId: string, installation: Installat
     suspended_at: installation.suspendedAt,
   }).eq("installation_id", installation.id);
   if (error) throw error;
+  if (!installation.suspendedAt) await refreshInstallationProjectNames(installation.id);
   return true;
+}
+
+/** Keep connected projects in step with GitHub after a rename or transfer.
+ * A reconnect refreshes the installation AND its existing projects. Signed
+ * repository webhooks may supply the changed name directly; other callers
+ * read the installation's repositories from GitHub. Never creates projects,
+ * changes project ownership or grants, or reaches outside this installation's org links. */
+export async function refreshInstallationProjectNames(
+  installationId: number,
+  changed?: readonly GitHubRepositoryName[],
+): Promise<number> {
+  const holder = await installationHolder(installationId);
+  if (!holder || holder.orgIds.length === 0) return 0;
+  let repositories = changed;
+  if (!repositories) {
+    const config = githubAppConfig();
+    if (!config) throw new Error("The GitHub App isn't configured.");
+    const token = await installationToken(config, installationId);
+    repositories = (await listInstallationRepositoryRecords(token)).repositories;
+  }
+  const db = createSupabaseAdminClient();
+  return refreshConnectedGitHubNames(holder.orgIds, repositories, {
+    projects: async (orgIds) => {
+      const projects: ConnectedGitHubProject[] = [];
+      for (let offset = 0; ; offset += 1000) {
+        const { data, error } = await db.from("projects")
+          .select("id, org_id, github_repo_id, full_name").in("org_id", [...orgIds])
+          .order("id").range(offset, offset + 999);
+        if (error) throw error;
+        projects.push(...(data ?? []).map((project) => ({
+          id: project.id, orgId: project.org_id,
+          githubRepoId: project.github_repo_id, fullName: project.full_name,
+        })));
+        if ((data?.length ?? 0) < 1000) return projects;
+      }
+    },
+    rename: async (project, canonical) => {
+      const { data, error } = await db.from("projects").update({
+        full_name: canonical.fullName,
+        owner: canonical.owner,
+        name: canonical.name,
+        html_url: canonical.htmlUrl,
+      }).eq("id", project.id).eq("org_id", project.orgId)
+        .eq("github_repo_id", project.githubRepoId!).select("id");
+      if (error) throw error;
+      return (data?.length ?? 0) > 0;
+    },
+  });
 }
 
 /** Forget an installation: GitHub says it was uninstalled. */
