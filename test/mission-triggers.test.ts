@@ -12,10 +12,10 @@ import { test } from "node:test";
 
 import type { PendingRun, StartDeps } from "@/lib/automations/runs";
 import { startRun } from "@/lib/automations/runs";
-import type { ScheduleEvent, SlackWatchEvent } from "@/lib/automations/run-event";
+import { type LinearIssueEvent, readRunEvent, type ScheduleEvent, type SlackWatchEvent } from "@/lib/automations/run-event";
 import { parseAutomationInput } from "@/lib/automations/rules";
 import type { RunCandidate } from "@/lib/db/automation-runs";
-import { filterSystemPrompt, type MissionRunDeps, type MissionRunOutcome, parseFilterAnswer, startMissionRun } from "@/lib/missions/automation-target";
+import { filterSystemPrompt, type MissionRunDeps, type MissionRunOutcome, parseFilterAnswer, requestOf, startMissionRun } from "@/lib/missions/automation-target";
 import { parseRunnerEvents, formatDelivery, type MissionEvent } from "@/lib/missions/events";
 import { checkMissionTarget } from "@/lib/missions/mission-automations";
 import { announceLate, cancelPendingRequests, cancelRequest, stopThreadWork, createRequest, type NewRequest, onRootSettled, type RequestDeps, rootText, updateRequest } from "@/lib/missions/requests";
@@ -187,6 +187,7 @@ function requestWorld(bound: boolean) {
   const events: RecordedEvent[] = [];
   const threads: MissionThread[] = [];
   const shipped = new Set<string>();
+  const released: string[] = [];
   const binding: MissionChannel = { missionId: MISSION, orgId: "o1", teamId: "T1", channelId: "C100", boundBy: "w", listen: "mentions", allowBotMessages: false, paused: false, revision: "rev1" };
   const deps: RequestDeps = {
     binding: async () => (bound ? binding : null),
@@ -225,6 +226,9 @@ function requestWorld(bound: boolean) {
       row.status = "cancelled";
       return true;
     },
+    release: async (request) => {
+      released.push(request.requestKey);
+    },
     openInThread: async (threadId) => [...rows.values()].filter((r) => r.threadId === threadId && r.status === "open"),
     pending: async (_m, revision) => [...rows.values()].filter((r) => r.status === "open" && r.bindingRevision === revision && !shipped.has(r.requestKey)),
     enqueue: async (event) => {
@@ -233,7 +237,7 @@ function requestWorld(bound: boolean) {
       return true;
     },
   };
-  return { deps, rows, queued, events, threads, shipped };
+  return { deps, rows, queued, events, threads, shipped, released };
 }
 
 const newRequest: NewRequest = {
@@ -323,6 +327,27 @@ test("cancelled before it was told: never told afterwards as new work, by a late
   // The other is told as ever.
   await onRootSettled({ ...w.queued[1], requestKey: "run:r2" }, "1731400600.000100", w.deps);
   assert.deepEqual(w.events.map((e) => `${e.kind}:${(e.payload.request as { key: string }).key}`), ["request_cancelled:run:r1", "request:run:r2"]);
+});
+
+test("a Linear issue delegated again after its request was stopped is a new request: the Mission told again, once; its first's agent session let go whoever stopped it", async () => {
+  const w = requestWorld(false);
+  const linear: NewRequest = { ...newRequest, source: "linear", key: "linear:s1", externalRef: "issue-1", externalSession: "s1", installationId: "inst-1" };
+  await createRequest(linear, w.deps);
+  // Stopped from Slack (or Linear, or off call): the agent session is let go, so delegating again restarts it.
+  assert.equal(await cancelRequest(MISSION, "linear:s1", "stopped in Slack", w.deps), true);
+  assert.deepEqual(w.released, ["linear:s1"]);
+  assert.equal(await cancelRequest(MISSION, "linear:s1", "again", w.deps), false);
+  assert.deepEqual(w.released, ["linear:s1"], "let go once");
+  // The next delegation's key (lib/missions/linear-route.ts, nextDelegation).
+  assert.equal(await createRequest({ ...linear, key: "linear:s1:2" }, w.deps), "created");
+  assert.equal(await createRequest({ ...linear, key: "linear:s1:2" }, w.deps), "exists", "that delegation again is the same request");
+  assert.deepEqual(w.events.map((e) => e.key), [`request:${MISSION}:linear:s1`, `request_cancelled:${MISSION}:linear:s1`, `request:${MISSION}:linear:s1:2`]);
+  // The run carries its delegation's key into its request, and keeps it when read back.
+  const event: LinearIssueEvent = { trigger: "linear.issue", installationId: "inst-1", agentSessionId: "s1", issueId: "issue-1", title: "Checkout breaks", prompt: "fix it", requestedBy: "ana", delegation: "linear:s1:2" };
+  const target = { kind: "mission" as const, missionId: MISSION, watch: null, linearTeamIds: ["team-1"] };
+  assert.equal(requestOf(candidate(), run(event), target).key, "linear:s1:2");
+  assert.equal(requestOf(candidate(), run({ ...event, delegation: null }), target).key, "linear:s1", "a run from before delegations had keys");
+  assert.equal((readRunEvent(JSON.parse(JSON.stringify(event))) as LinearIssueEvent).delegation, "linear:s1:2");
 });
 
 test("stop in a thread cancels its open requests and interrupts its Ships, and no other thread's or Mission's; one failing interrupt doesn't stop the rest", async () => {

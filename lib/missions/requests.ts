@@ -60,6 +60,10 @@ export type RequestDeps = {
   /** Mark it told; true for the first only. */
   markAnnounced(missionId: string, key: string): Promise<boolean>;
   cancel(missionId: string, key: string): Promise<boolean>;
+  /** A cancelled request's outside end let go: a Linear request's agent
+   *  session marked stopped, so delegating the issue again starts it over
+   *  (handleRedelegated, lib/trackers/linear-agent.ts), whoever stopped it. */
+  release?(request: MissionRequest): Promise<void>;
   /** A thread's requests still open. */
   openInThread(threadId: string): Promise<MissionRequest[]>;
   /** The Mission's open requests of one binding that started no Ship. */
@@ -247,6 +251,8 @@ export async function cancelRequest(missionId: string, key: string, reason: stri
     payload: { request: { source: (request.source ?? "linear") as RequestSource, key, reason } },
     key: eventKey.requestCancelled(missionId, key),
   });
+  // Best effort: the cancel stands either way.
+  await deps.release?.(request).catch((error: unknown) => console.error(`Mission ${missionId}: request ${key} was cancelled, but its outside end wasn't let go`, error));
   return true;
 }
 

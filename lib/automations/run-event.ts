@@ -53,6 +53,10 @@ export type LinearIssueEvent = {
   /** The person who delegated it, linked to Outrunner (null: a rule). */
   requestedBy: string | null;
   from?: string | null;
+  /** This delegation's request key (lib/missions/linear-route.ts,
+   *  delegationKey): the agent session's, and a fresh one each time the
+   *  issue is delegated again after its request was stopped. */
+  delegation?: string | null;
 };
 
 export type RunEvent = PullRequestEvent | IssueEvent | ScheduleEvent | WebhookEvent | SlackWatchEvent | LinearIssueEvent;
@@ -197,6 +201,7 @@ export function readRunEvent(value: unknown): RunEvent | null {
       prompt: text("prompt") ?? "",
       requestedBy: text("requestedBy"),
       from: text("from"),
+      delegation: text("delegation"),
     };
   }
   if (v.trigger === "issues.opened" || v.trigger === "issues.labeled") {
