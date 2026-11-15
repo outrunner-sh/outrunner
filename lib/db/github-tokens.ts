@@ -23,7 +23,7 @@ export async function githubTokenStatus(userId: string): Promise<PersonalTokenVi
     : null;
 }
 
-/** The table not there yet (migration 20261114140000 unapplied): Postgres's
+/** The table not there yet (migration 20261114130000 unapplied): Postgres's
  *  undefined_table, or PostgREST not finding it in its schema cache. */
 function tableMissing(error: { code?: string }): boolean {
   return error.code === "42P01" || error.code === "PGRST205";
@@ -40,7 +40,7 @@ export async function githubTokenSecret(userId: string): Promise<{ token: string
     .eq("user_id", userId)
     .maybeSingle();
   if (error && tableMissing(error)) {
-    console.error("user_github_tokens is missing: apply migration 20261114140000");
+    console.error("user_github_tokens is missing: apply migration 20261114130000");
     return null;
   }
   if (error) throw error;

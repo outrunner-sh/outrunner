@@ -48,7 +48,7 @@ Some organizations restrict third-party access, so a member can't use their repo
 until an owner approves it. **Settings → Connections → GitHub → Personal access token** skips that: paste
 a fine-grained (`github_pat_`) or classic (`ghp_`) token, and Outrunner uses it for everything it would
 have used your own GitHub connection for (`lib/github/personal-choice.ts`). It's stored sealed in
-`user_github_tokens` (migration `20261114140000`). Other kinds of GitHub tokens are refused.
+`user_github_tokens` (migration `20261114130000`). Other kinds of GitHub tokens are refused.
 
 - **Where it works:** your personal org only. Its repository picker lists everything the token's account
   can reach, ahead of the App connection and the org's installations. Team orgs still list only what

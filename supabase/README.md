@@ -56,15 +56,14 @@ first. A migration applied this way also needs recording: `pnpm db:repair
 
 Earlier checkouts assigned `20261114130000` to both
 `automation_cover_new_repos` and `github_personal_tokens`. Fresh installations
-now run the automation migration at `20261114130000` and the personal-token
-migration at `20261114140000`. The latter tolerates an already-created token
-table and reapplies its access restrictions.
+now run the personal-token migration at `20261114130000` and the automation
+migration at `20261114140000`.
 
 If your database used the old checkout, inspect `pnpm db:status` and your schema
 before continuing. In particular, check both `public.user_github_tokens` and
 `public.automations.cover_new_repos`. If version `20261114130000` was recorded
-for personal tokens while the automation changes are absent, apply
-`20261114130000_automation_cover_new_repos.sql` through the SQL editor before
+for the automation migration while the personal-token table is absent, apply
+`20261114130000_github_personal_tokens.sql` through the SQL editor before
 running `pnpm db:migrate`. Do not mark a migration applied until all of its SQL
 has actually run. Back up the database before reconciling its history.
 

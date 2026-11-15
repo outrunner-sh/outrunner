@@ -1,6 +1,6 @@
 /**
  * An org's settings for all its automations (organization_settings,
- * 20261114130000_automation_cover_new_repos.sql): whether they run on their
+ * 20261114140000_automation_cover_new_repos.sql): whether they run on their
  * runner's default model and coding agent rather than Outrunner's models.
  *
  * The server's alone: the route has checked the caller is the org's admin.
