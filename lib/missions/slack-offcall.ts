@@ -37,12 +37,16 @@ export type OffCallDeps = {
   log(message: string, error: unknown): void;
 };
 
-/** Every open question card of the Mission says nothing is waiting on it.
- *  Best effort, one at a time: a card that can't be edited is still refused
- *  when clicked (lib/missions/slack-ask.ts). How many were closed. */
+/** Every open question card of the binding that's ending says nothing is
+ *  waiting on it. Best effort, one at a time: a card that can't be edited is
+ *  still refused when clicked (lib/missions/slack-ask.ts). Cards asked under
+ *  an earlier binding are skipped: closed when it ended (nothing marks them
+ *  so), and a click on one is refused by revision anyway. How many were
+ *  closed. */
 export async function closeOpenCards(missionId: string, binding: MissionChannel, why: CardEnd, deps: OffCallDeps): Promise<number> {
   let closed = 0;
   for (const ask of await deps.openAsks(missionId)) {
+    if (ask.bindingRevision !== null && ask.bindingRevision !== binding.revision) continue;
     const thread = await deps.thread(ask.threadId).catch(() => null);
     if (!ask.messageTs || !thread || thread.channelId !== binding.channelId) continue;
     try {
