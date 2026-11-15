@@ -226,8 +226,11 @@ gets a card in that request's thread (`lib/missions/ship-ask.ts`,
   "No longer waiting" reply. When the watch sees the Ship working again,
   waiting on something else, or done, it edits the card to "No longer
   waiting: answered in Outrunner, or the Ship moved on". Going off call
-  doesn't edit Ship cards (only the Mission's own): clicks on them are
-  refused, and the watch closes them once the call is over.
+  (or archiving) closes the binding's Ship cards with the Mission's own:
+  "No longer waiting: the Mission went off call" (or "was archived"). A card
+  a click has already claimed is left to that click.
+- **After an answer** the Ship's turn is watched again (`watchSent`), as
+  after an answer in the app, so its session shows as working.
 
 ### Reliability
 

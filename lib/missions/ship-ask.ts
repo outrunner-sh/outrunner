@@ -233,6 +233,9 @@ export type ShipAskClickDeps = {
   close(askId: string, claimedBy?: string): Promise<boolean>;
   /** Deliver `label` to the card's exact call (deliverAnswer). */
   answer(runner: Workspace, ask: ShipAsk, label: string): Promise<AnswerOutcome>;
+  /** After an answer went: watch the Ship's turn, as the app's answer route
+   *  does, so its session shows as working again. Best effort. */
+  sent?(runner: Workspace): void;
   name(slackUserId: string): Promise<string>;
   edit(teamId: string, channelId: string, ts: string, text: string, blocks: Record<string, unknown>[]): Promise<void>;
   /** Said to the person who clicked alone. */
@@ -299,6 +302,7 @@ export async function answerShipAsk(click: ShipAskClick, deps: ShipAskClickDeps)
     return { ok: false, status: 502, error: "Couldn't send your answer. Please try again." };
   });
   if (outcome.ok) {
+    deps.sent?.(runner);
     const name = await deps.name(click.user).catch(() => click.user);
     if (ts) await deps.edit(thread.teamId, thread.channelId, ts, `${ask.question}: ${label}`, shipAnsweredBlocks(ask.title, ask.question, label, name)).catch(() => undefined);
     return "answered";

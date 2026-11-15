@@ -14,7 +14,7 @@ import { recordAudit } from "@/lib/audit/record";
 import { getInstallation } from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";
 import { eventKey } from "@/lib/missions/events";
-import { missionBinding, type MissionChannel, openAsks, threadById, unbindChannel } from "@/lib/missions/slack-store";
+import { closeShipAsk, missionBinding, type MissionChannel, openAsks, openShipAsksOfBinding, threadById, unbindChannel } from "@/lib/missions/slack-store";
 import { cancelPending } from "@/lib/missions/requests.deps";
 import { takeMissionOffCall } from "@/lib/missions/slack-offcall";
 import { type CardEnd, introText } from "@/lib/missions/slack-text";
@@ -75,6 +75,8 @@ export async function takeOffCall(mission: Workspace, userId: string, why: CardE
   return takeMissionOffCall(mission, userId, why, {
     binding: missionBinding,
     openAsks,
+    openShipAsks: openShipAsksOfBinding,
+    closeShipAsk: (id) => closeShipAsk(id),
     thread: threadById,
     update: async (binding, ts, text, blocks) => {
       const install = await getInstallation(binding.teamId);

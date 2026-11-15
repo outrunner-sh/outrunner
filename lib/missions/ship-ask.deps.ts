@@ -3,6 +3,7 @@
 
 import { getInstallation } from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";
+import { after } from "@/lib/observability/after";
 import {
   answerShipAsk,
   postShipAsk,
@@ -33,6 +34,7 @@ import { AGENT_FEATURE_ASK_CALL_IDENTITY } from "@/lib/runtime/agent-protocol";
 import { deliverAnswer, UNREACHABLE_MESSAGE } from "@/lib/runtime/answer-question";
 import type { Workspace } from "@/lib/runtime/types";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { watchSent } from "@/lib/session/watch";
 import { signLinkToken } from "@/lib/slack/slack";
 import { postEphemeral, updateMessage, userNames } from "@/lib/slack/web";
 
@@ -109,6 +111,7 @@ export async function handleShipAsk(click: ShipAskClick): Promise<void> {
     claim: claimShipAnswer,
     release: releaseShipAnswer,
     close: closeShipAsk,
+    sent: (runner) => after(() => watchSent(runner.id, runner.ownerId), { where: "watch-sent", workspaceId: runner.id }),
     answer: async (runner, ask, label) => {
       const reached = await shipAgent(runner);
       if (!reached) return { ok: false, status: 502, error: UNREACHABLE_MESSAGE };

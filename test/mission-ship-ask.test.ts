@@ -107,7 +107,11 @@ function clicks(w: ReturnType<typeof world>, opts: { binding?: MissionChannel | 
   const said: string[] = [];
   const edits: { ts: string; blocks: Record<string, unknown>[] }[] = [];
   const sent: AnswerRequestType[] = [];
+  const watched: string[] = [];
   const deps: ShipAskClickDeps = {
+    sent: (runner) => {
+      watched.push(runner.id);
+    },
     ask: async (id) => w.asks.get(id) ?? null,
     thread: async () => thread,
     binding: async () => (opts.binding === undefined ? binding : opts.binding),
@@ -155,7 +159,7 @@ function clicks(w: ReturnType<typeof world>, opts: { binding?: MissionChannel | 
       said.push("connect");
     },
   };
-  return { deps, said, edits, sent };
+  return { deps, said, edits, sent, watched };
 }
 
 const click = (user: string, value: string) => ({ teamId: "T1", user, value, channel: "C1" });
@@ -260,6 +264,8 @@ test("a click answers that exact call through #421's path, once, and the card sa
     { callId: "c1", launchEpoch: "e1", answerOperationId: shipAnswerOperation(ask.id), answers: [{ selected: ["production"], other: "" }] },
   );
   assert.deepEqual(c.sent[0].questions, questions);
+  // The Ship's turn is watched again, as after an answer in the app.
+  assert.equal(c.watched.length, 1);
   // The card: no buttons, the pick and who.
   assert.equal(c.edits.length, 1);
   assert.equal(c.edits[0].ts, ask.messageTs);
@@ -271,6 +277,7 @@ test("a click answers that exact call through #421's path, once, and the card sa
   assert.equal(await answerShipAsk(click("UANA", `${ask.id}:0`), c.deps), "stale");
   assert.equal(await answerShipAsk(click("UANA", `${ask.id}:1`), c.deps), "stale");
   assert.equal(c.sent.length, 1);
+  assert.equal(c.watched.length, 1, "a stale click watches nothing");
   assert.deepEqual(c.said, [SHIP_ASK_STALE, SHIP_ASK_STALE]);
   // Junk, an option that isn't there, another channel's click: ignored.
   assert.equal(await answerShipAsk(click("UANA", "junk"), c.deps), "ignored");
@@ -294,6 +301,7 @@ test("unlinked people get the connect prompt; people who can't read the project,
   assert.equal(await answerShipAsk(click("UNORA", `${ask.id}:0`), c.deps), "refused");
   assert.deepEqual(c.said, ["connect", SHIP_ASK_NO_ACCESS, SHIP_ASK_NO_ACCESS]);
   assert.equal(c.sent.length, 0);
+  assert.equal(c.watched.length, 0);
   assert.equal(c.edits.length, 0);
   assert.equal(w.asks.get(ask.id)!.answeredAt, null);
 });

@@ -11,8 +11,8 @@
  * the Mission hears of it last.
  */
 
-import type { MissionAsk, MissionChannel, MissionThread } from "@/lib/missions/slack-store";
-import { type CardEnd, cardEndText, closedBlocks } from "@/lib/missions/slack-text";
+import type { MissionAsk, MissionChannel, MissionThread, ShipAsk } from "@/lib/missions/slack-store";
+import { type CardEnd, cardEndText, closedBlocks, shipClosedBlocks } from "@/lib/missions/slack-text";
 import type { Workspace } from "@/lib/runtime/types";
 
 export type OffCallDeps = {
@@ -20,6 +20,11 @@ export type OffCallDeps = {
   /** The Mission's question cards on screen and not answered. */
   openAsks(missionId: string): Promise<MissionAsk[]>;
   thread(id: string): Promise<MissionThread | null>;
+  /** Its Ships' question cards posted under this binding, open (none when
+   *  unwired). */
+  openShipAsks?(missionId: string, bindingRevision: string): Promise<ShipAsk[]>;
+  /** Close a Ship card: true when this closed it (a click's claim wins). */
+  closeShipAsk?(id: string): Promise<boolean>;
   /** Edit a card; rejects when it can't. */
   update(binding: MissionChannel, ts: string, text: string, blocks: Record<string, unknown>[]): Promise<void>;
   /** End the binding; true when it was on. */
@@ -45,6 +50,20 @@ export async function closeOpenCards(missionId: string, binding: MissionChannel,
       closed++;
     } catch (error) {
       deps.log(`Mission ${missionId}: couldn't close its question card ${ask.id}`, error);
+    }
+  }
+  // Its Ships' cards of this binding too: nothing will answer them now.
+  if (deps.openShipAsks && deps.closeShipAsk) {
+    for (const ask of await deps.openShipAsks(missionId, binding.revision)) {
+      if (!(await deps.closeShipAsk(ask.id))) continue; // a click claimed it first
+      const thread = ask.messageTs ? await deps.thread(ask.threadId).catch(() => null) : null;
+      if (!ask.messageTs || !thread || thread.channelId !== binding.channelId) continue;
+      try {
+        await deps.update(binding, ask.messageTs, `${ask.question}: ${cardEndText(why)}`, shipClosedBlocks(ask.title, ask.question, why));
+        closed++;
+      } catch (error) {
+        deps.log(`Mission ${missionId}: couldn't close Ship question card ${ask.id}`, error);
+      }
     }
   }
   return closed;

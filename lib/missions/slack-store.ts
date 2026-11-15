@@ -1032,6 +1032,21 @@ export async function shipAskForTool(runnerId: string, toolUseId: string): Promi
   return data ? toShipAsk(data) : null;
 }
 
+/** The Mission's Ship cards posted under this binding revision, neither
+ *  answered nor closed: what going off call closes. */
+export async function openShipAsksOfBinding(missionId: string, bindingRevision: string): Promise<ShipAsk[]> {
+  const { data, error } = await db()
+    .from("mission_ship_asks")
+    .select("*")
+    .eq("mission_id", missionId)
+    .eq("binding_revision", bindingRevision)
+    .is("answered_at", null)
+    .is("closed_at", null);
+  if (error && missingTable(error)) return [];
+  if (error) throw error;
+  return (data ?? []).map(toShipAsk);
+}
+
 /** A Ship's cards neither answered nor closed. */
 export async function openShipAsks(runnerId: string): Promise<ShipAsk[]> {
   const { data, error } = await db().from("mission_ship_asks").select("*").eq("runner_id", runnerId).is("answered_at", null).is("closed_at", null);
