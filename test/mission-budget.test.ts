@@ -269,6 +269,8 @@ function slackWorld(budget: SpendPeriodKind | null) {
   };
   const deps: SlackRouteDeps = {
     botUserId: BOT,
+    newThreadRequest: async () => "queued",
+    assignThread: async () => 0,
     binding: async () => binding,
     thread: async (_t, _c, ts) => (ts === thread.threadTs ? thread : null),
     mission: async () => mission,

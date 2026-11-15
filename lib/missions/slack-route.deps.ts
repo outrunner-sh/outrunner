@@ -18,10 +18,11 @@ import { toWorkspace } from "@/lib/db/mappers";
 import { budgetPause } from "@/lib/missions/budget.deps";
 import { sessionById } from "@/lib/missions/store";
 import { stopThreadWork } from "@/lib/missions/requests";
-import { requestDeps } from "@/lib/missions/requests.deps";
+import { makeNewThreadRequest, requestDeps } from "@/lib/missions/requests.deps";
 import { announceBinding, takeOffCall } from "@/lib/missions/slack-binding";
 import {
   acceptThread,
+  assignThreadRequests,
   bindChannel,
   channelBinding,
   channelThread,
@@ -198,6 +199,8 @@ export function slackRouteDeps(
     linked: (slackUserId) => linkedAccount(teamId, slackUserId),
     level: missionLevel,
     projectName: projectNameOf,
+    newThreadRequest: makeNewThreadRequest,
+    assignThread: assignThreadRequests,
     acceptThread: (input) => acceptThread({ ...input, teamId, channelId: channel }),
     recordRequest,
     claimMessage: (ts, missionId, requestKey) =>

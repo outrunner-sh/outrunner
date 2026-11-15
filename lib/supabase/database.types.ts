@@ -2640,6 +2640,11 @@ export type Database = {
         Args: { grace_seconds: number; pause_text: string; max_rows: number };
         Returns: MissionChannelRow[];
       };
+      // 20261114210200_mission_assign.sql
+      unannounced_new_requests: {
+        Args: { made_before: string; max_rows: number };
+        Returns: MissionSlackRequestRow[];
+      };
       reserve_mission_slack_ship: {
         Args: { target: string; thread: string | null; requester: string | null; slack_user: string | null };
         Returns: { ship_id: string | null; refusal: "hour" | "day" | null; refused_at_limit: number | null }[];

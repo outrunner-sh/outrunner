@@ -11,7 +11,8 @@
  *
  *   commands  `be on call here for <project>`, `stop being on call here`,
  *             `pause`, `resume`, `stop` (its turn), exact, on a mention
- *   keywords  `!aside` (ignored), `!mute` / `!unmute` (the thread)
+ *   keywords  `!aside` (ignored), `!mute` / `!unmute` (the thread),
+ *             `!help`, `!new <task>` (a fresh thread), `!assign @person`
  *   gate      a linked Outrunner account in the Mission's org that can read
  *             its project; anyone else is asked to connect, or refused
  *   paused    says so, and takes nothing
@@ -29,7 +30,23 @@
 
 import { eventKey, type SlackEventPayload } from "@/lib/missions/events";
 import type { MissionChannel, MissionRequest, MissionThread, BindOutcome } from "@/lib/missions/slack-store";
-import { budgetReachedText, ON_CALL_HELP, onCallCommand, threadKeyword, withoutMention, type OnCallCommand } from "@/lib/missions/slack-text";
+import {
+  ASSIGN_ELSEWHERE,
+  ASSIGN_USAGE,
+  assignTarget,
+  assignedNote,
+  assignedText,
+  assigneeNotLinkedText,
+  budgetReachedText,
+  NEW_KEY_PREFIX,
+  NEW_USAGE,
+  newTask,
+  ON_CALL_HELP,
+  onCallCommand,
+  threadKeyword,
+  withoutMention,
+  type OnCallCommand,
+} from "@/lib/missions/slack-text";
 import type { RecordedEvent } from "@/lib/missions/watch";
 import { allows, type AccessLevel } from "@/lib/orgs/access";
 import type { Workspace } from "@/lib/runtime/types";
@@ -65,6 +82,18 @@ export type SlackRouteDeps = {
   mission(id: string): Promise<Workspace | null>;
   /** The sender's linked, active account; null when they have none. */
   linked(slackUserId: string): Promise<Requester | null>;
+  /** `!new <task>`: record a fresh request and queue its root post in the
+   *  bound channel (lib/missions/requests.ts newThreadRequest). */
+  newThreadRequest(input: {
+    missionId: string;
+    key: string;
+    task: string;
+    requestedBy: string;
+    requestedBySlack: string;
+    author: string;
+  }): Promise<"queued" | "off_call">;
+  /** `!assign @person`: the thread's open requests assigned to them. How many. */
+  assignThread(input: { missionId: string; threadId: string; assignee: string; by: string }): Promise<number>;
   /** Their level on the Mission's project. */
   level(userId: string, mission: Workspace): Promise<AccessLevel | null>;
   /** The Mission's project's name, for what's said in Slack. */
@@ -177,9 +206,15 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
   // Neither needs who's speaking: dropped quietly, before the gate, so
   // someone unlinked isn't told off on every reply in a busy thread.
   const text = withoutMention(message.text, deps.botUserId);
-  const keyword = threadKeyword(text);
+  // `!help`, `!new` and `!assign` are people's: a bot's are its text.
+  const typed = threadKeyword(text);
+  const keyword = message.botId && (typed === "help" || typed === "new" || typed === "assign") ? null : typed;
   if (keyword === "aside") return true;
   if (owned && thread.muted && !message.mention && keyword !== "unmute") return true;
+  if (keyword === "help") {
+    await deps.tell(threadTs, ON_CALL_HELP);
+    return true;
+  }
 
   // A bot is vouched for by whoever put the Mission on call here.
   const requester = message.botId
@@ -243,6 +278,14 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
   if (PUT_AWAY.includes(mission.status)) {
     const said = "The Mission on call here is archived, so it didn't take that. Its owner can open it in Outrunner to bring it back.";
     await (message.mention ? deps.reply(threadTs, said) : deps.tell(threadTs, said));
+    return true;
+  }
+  if (keyword === "new") {
+    await newThread(newTask(text), { message, mission, requester }, deps);
+    return true;
+  }
+  if (keyword === "assign") {
+    await assign(text, { message, binding, mission, requester, thread: owned ? thread : null, threadTs }, deps);
     return true;
   }
   if (!text && !message.files?.length) {
@@ -309,6 +352,82 @@ async function heard(binding: MissionChannel, deps: SlackRouteDeps): Promise<voi
 async function offerThread(binding: MissionChannel, threadTs: string, deps: SlackRouteDeps): Promise<boolean> {
   if (!deps.idleOfferThread) return false;
   return deps.idleOfferThread(binding, threadTs).catch(() => false);
+}
+
+/** `!new <task>`: a fresh request in a new thread of the bound channel, by
+ *  the same gate as any request (passed by now). Nothing of the thread it
+ *  was typed in goes with it. */
+async function newThread(
+  task: string,
+  at: { message: SlackRouteMessage; mission: Workspace; requester: Requester },
+  deps: SlackRouteDeps,
+): Promise<void> {
+  const { message, mission, requester } = at;
+  const threadTs = message.threadTs ?? message.ts;
+  if (!task) {
+    await deps.tell(threadTs, NEW_USAGE);
+    return;
+  }
+  const key = `${NEW_KEY_PREFIX}${message.eventId ?? `${message.teamId}:${message.channel}:${message.ts}`}`;
+  if (deps.claimMessage && !(await deps.claimMessage(message.ts, mission.id, key))) return;
+  const outcome = await deps.newThreadRequest({
+    missionId: mission.id,
+    key,
+    task: task.slice(0, REQUEST_MAX_CHARS),
+    requestedBy: requester.userId,
+    requestedBySlack: message.user,
+    author: await deps.name(message.user),
+  });
+  if (outcome === "off_call") await deps.tell(threadTs, "The Mission went off call here, so it didn't take that.");
+}
+
+/** `!assign @person` in one of the Mission's threads: its open requests
+ *  (and so their Ships) assigned to someone with an Outrunner account in
+ *  the Mission's org. Nothing stops: the Mission keeps working, its Ships
+ *  still run as its owner, and it's told in a note. */
+async function assign(
+  text: string,
+  at: { message: SlackRouteMessage; binding: MissionChannel; mission: Workspace; requester: Requester; thread: MissionThread | null; threadTs: string },
+  deps: SlackRouteDeps,
+): Promise<void> {
+  const { message, binding, mission, requester, thread, threadTs } = at;
+  if (!thread) {
+    await deps.tell(threadTs, ASSIGN_ELSEWHERE);
+    return;
+  }
+  const slackUserId = assignTarget(text);
+  if (!slackUserId) {
+    await deps.tell(threadTs, ASSIGN_USAGE);
+    return;
+  }
+  const assignee = await deps.linked(slackUserId);
+  if (!assignee || assignee.orgId !== binding.orgId) {
+    await deps.tell(threadTs, assigneeNotLinkedText(slackUserId, assignee !== null));
+    return;
+  }
+  const assigned = await deps.assignThread({ missionId: mission.id, threadId: thread.id, assignee: assignee.userId, by: requester.userId });
+  if (assigned === 0) {
+    await deps.tell(threadTs, "Nothing is open in this thread to assign.");
+    return;
+  }
+  const [name, by] = await Promise.all([deps.name(slackUserId), deps.name(message.user)]);
+  await deps.reply(threadTs, assignedText(name));
+  const key = message.eventId ?? `${message.teamId}:${message.channel}:${message.ts}`;
+  await deps.enqueue({
+    missionId: mission.id,
+    runnerId: null,
+    kind: "slack_request",
+    payload: {
+      slack: {
+        channel: message.channel,
+        thread: threadTs,
+        ts: message.ts,
+        author: "Outrunner",
+        text: assignedNote(name, by),
+      },
+    },
+    key: eventKey.slackRequest(`assign:${key}`),
+  });
 }
 
 async function runCommand(

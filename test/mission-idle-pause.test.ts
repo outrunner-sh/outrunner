@@ -230,6 +230,8 @@ function world(patch: Partial<MissionChannel> = {}) {
   const levels: Record<string, AccessLevel> = { alice: "read", wes: "write" };
   const deps: SlackRouteDeps = {
     botUserId: BOT,
+    newThreadRequest: async () => "queued",
+    assignThread: async () => 0,
     binding: async (team, channel) => (team === b.teamId && channel === b.channelId ? b : null),
     thread: async (_team, _channel, ts) => threads.find((t) => t.threadTs === ts) ?? null,
     mission: async (id) => mission(id),

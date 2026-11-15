@@ -18,7 +18,30 @@ export type OnCallCommand =
   | { action: "help" };
 
 export const ON_CALL_HELP =
-  "To put a Mission on call here: `@Outrunner be on call here for <project>` (it needs write on the project). Then mention me with a task. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread, `@Outrunner stop` stops its turn. `@Outrunner pause` / `resume` pauses it here, `@Outrunner stop being on call here` takes it off.";
+  "To put a Mission on call here: `@Outrunner be on call here for <project>` (it needs write on the project). Then mention me with a task. `!help` shows this; `@Outrunner !new <task>` starts a fresh thread for a task. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread, `!assign @person` assigns the thread's work to them, `@Outrunner stop` stops its turn. `@Outrunner pause` / `resume` pauses it here, `@Outrunner stop being on call here` takes it off.";
+
+export const NEW_USAGE = "Say `!new <task>` to start a fresh thread for a task.";
+export const ASSIGN_USAGE = "Say `!assign @person` in a thread the Mission is in: one person, nothing else.";
+export const ASSIGN_ELSEWHERE = "`!assign` works in a thread the Mission is in.";
+
+export const assignedText = (name: string): string => `Assigned this thread to ${name.replace(/[<>|*]/g, "")}.`;
+
+/** `!assign` naming someone with no Outrunner account in the Mission's org.
+ *  No connect link: a link is signed for the Slack user it's sent to, so
+ *  they get their own when they mention Outrunner. */
+export function assigneeNotLinkedText(slackUserId: string, otherOrg: boolean): string {
+  return otherOrg
+    ? `<@${slackUserId}>'s Slack account is connected to a different Outrunner org than the Mission on call here, so nothing was assigned.`
+    : `<@${slackUserId}> hasn't connected Slack to Outrunner, so nothing was assigned. They can mention me here to get a link to connect.`;
+}
+
+/** What the Mission is told when a thread is assigned: a note, not a task. */
+export const assignedNote = (assignee: string, by: string): string =>
+  `Note, not a new task: ${assignee} was assigned to this thread by ${by}. Keep going as before. Ships still run as the Mission's owner; nothing to reply.`;
+
+/** `!new`'s requests' keys start so: how the tick tells them from a
+ *  mention's (told inline, never by the tick). */
+export const NEW_KEY_PREFIX = "new:";
 
 /** The message without the bot's mention, trimmed. */
 export function withoutMention(text: string, botUserId: string): string {
@@ -41,13 +64,49 @@ export function onCallCommand(text: string, botUserId: string): OnCallCommand | 
   return null;
 }
 
+export type ThreadKeyword = "aside" | "mute" | "unmute" | "help" | "new" | "assign";
+
 /** A thread keyword at the start of a message: handled before the Mission
  *  hears anything. */
-export function threadKeyword(text: string): "aside" | "mute" | "unmute" | null {
+export function threadKeyword(text: string): ThreadKeyword | null {
   if (/^(!aside\b|\(aside\))/i.test(text)) return "aside";
   if (/^!mute\b/i.test(text)) return "mute";
   if (/^!unmute\b/i.test(text)) return "unmute";
+  if (/^!help\b/i.test(text)) return "help";
+  if (/^!new\b/i.test(text)) return "new";
+  if (/^!assign\b/i.test(text)) return "assign";
   return null;
+}
+
+/** `!new <task>`: the task, trimmed; empty when there's none. */
+export function newTask(text: string): string {
+  return text.replace(/^!new\b/i, "").trim();
+}
+
+const USER_MENTION = /<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g;
+
+/** `!assign @person` (Outrunner's own mention already taken out): the one
+ *  Slack user named, or null when it's none, several, or another keyword
+ *  comes along. */
+export function assignTarget(text: string): string | null {
+  const rest = text.replace(/^!assign\b/i, "");
+  const mentioned = [...rest.matchAll(USER_MENTION)].map((m) => m[1]);
+  if (mentioned.length !== 1) return null;
+  if (/(^|\s)(!\w+|\(aside\))/i.test(rest.replace(USER_MENTION, " "))) return null;
+  return mentioned[0];
+}
+
+/** A task's text for a root post the system makes: no channel-wide pings. */
+export function quietText(text: string): string {
+  return text
+    .replace(/<!subteam\^[A-Z0-9]+(?:\|([^>]*))?>/g, (_m, label: string | undefined) => label ?? "@group")
+    .replace(/<!(\w+)(?:\|[^>]*)?>/g, "@$1");
+}
+
+/** `!new`'s root post: who asked, and what. */
+export function newRequestRootText(slackUserId: string, task: string, max = 600): string {
+  const text = quietText(task.trim());
+  return `:inbox_tray: New request from <@${slackUserId}>: ${text.length > max ? `${text.slice(0, max)}…` : text}`;
 }
 
 /** What the system posts when a Mission goes on call in a channel. */

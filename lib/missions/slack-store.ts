@@ -445,8 +445,13 @@ export type MissionRequest = {
   installationId?: string | null;
   automationId?: string | null;
   announcedAt?: string | null;
-  /** What the Mission is told of it (a trigger's request). */
+  /** What the Mission is told of it (a trigger's request, or `!new`'s). */
   details?: RequestDetails | null;
+  /** `!assign @person` (20261114210200_mission_assign.sql): who the thread's
+   *  work is assigned to, by whom, when. Ships still run as the owner. */
+  assigneeUserId?: string | null;
+  assignedBy?: string | null;
+  assignedAt?: string | null;
 };
 
 export type RequestDetails = { text: string; from?: string | null; link?: string | null; automationName?: string | null };
@@ -468,6 +473,9 @@ type RequestRow = {
   automation_id?: string | null;
   announced_at?: string | null;
   details?: unknown;
+  assignee_user_id?: string | null;
+  assigned_by?: string | null;
+  assigned_at?: string | null;
 };
 
 function toRequest(row: RequestRow): MissionRequest {
@@ -488,6 +496,9 @@ function toRequest(row: RequestRow): MissionRequest {
     automationId: row.automation_id ?? null,
     announcedAt: row.announced_at ?? null,
     details: (row.details as RequestDetails | null | undefined) ?? null,
+    assigneeUserId: row.assignee_user_id ?? null,
+    assignedBy: row.assigned_by ?? null,
+    assignedAt: row.assigned_at ?? null,
   };
 }
 
@@ -513,6 +524,8 @@ export async function recordRequest(request: MissionRequest): Promise<boolean> {
           automation_id: request.automationId ?? null,
           details: (request.details ?? null) as Json,
         }),
+        // `!new`'s: what the Mission is told once its root post goes.
+        ...((!request.source || request.source === "slack") && request.details && { details: request.details as Json }),
       },
       { onConflict: "mission_id,request_key", ignoreDuplicates: true },
     )
@@ -521,10 +534,51 @@ export async function recordRequest(request: MissionRequest): Promise<boolean> {
   return (data ?? []).length > 0;
 }
 
-/** A request's thread, once its root post went. */
-export async function setRequestThread(missionId: string, requestKey: string, threadId: string): Promise<void> {
-  const { error } = await db().from("mission_slack_requests").update({ thread_id: threadId }).eq("mission_id", missionId).eq("request_key", requestKey);
+/** A request's thread, once its root post went (and, for `!new`, the root
+ *  post as its message, for slack_react). */
+export async function setRequestThread(missionId: string, requestKey: string, threadId: string, messageTs?: string): Promise<void> {
+  const { error } = await db()
+    .from("mission_slack_requests")
+    .update({ thread_id: threadId, ...(messageTs && { message_ts: messageTs }) })
+    .eq("mission_id", missionId)
+    .eq("request_key", requestKey);
   if (error) throw error;
+}
+
+/** `!assign @person`: the thread's open requests (and so their Ships)
+ *  assigned to them. How many. */
+export async function assignThreadRequests(input: { missionId: string; threadId: string; assignee: string; by: string }): Promise<number> {
+  const { data, error } = await db()
+    .from("mission_slack_requests")
+    .update({ assignee_user_id: input.assignee, assigned_by: input.by, assigned_at: new Date().toISOString() })
+    .eq("mission_id", input.missionId)
+    .eq("thread_id", input.threadId)
+    .eq("status", "open")
+    .select("request_key");
+  if (error) throw error;
+  return (data ?? []).length;
+}
+
+/** Each of these Ships' assignee, through its request, for the Ships pane. */
+export async function shipAssignees(runnerIds: string[]): Promise<Map<string, string>> {
+  const assignees = new Map<string, string>();
+  if (runnerIds.length === 0) return assignees;
+  const { data, error } = await db().from("mission_slack_ships").select("runner_id, mission_id, request_key").in("runner_id", runnerIds).not("request_key", "is", null);
+  if (error) throw error;
+  const keys = [...new Set((data ?? []).flatMap((r) => (r.request_key ? [r.request_key] : [])))];
+  if (keys.length === 0) return assignees;
+  const { data: requests, error: requestsError } = await db()
+    .from("mission_slack_requests")
+    .select("mission_id, request_key, assignee_user_id")
+    .in("request_key", keys)
+    .not("assignee_user_id", "is", null);
+  if (requestsError) throw requestsError;
+  const of = new Map((requests ?? []).map((r) => [`${r.mission_id}:${r.request_key}`, r.assignee_user_id]));
+  for (const row of data ?? []) {
+    const who = row.runner_id && row.request_key ? of.get(`${row.mission_id}:${row.request_key}`) : null;
+    if (row.runner_id && who) assignees.set(row.runner_id, who);
+  }
+  return assignees;
 }
 
 /** The Mission was told of the request: true for the first only. */
@@ -582,19 +636,26 @@ export async function cancelRequestRow(missionId: string, requestKey: string): P
   return (data ?? []).length > 0;
 }
 
-/** Requests from triggers the Mission hasn't been told of, made before
- *  `before`: for the tick. */
+/** Requests the Mission hasn't been told of, made before `before`: for the
+ *  tick. Triggers' requests, and `!new`'s while open (unannounced_new_requests,
+ *  20261114210200_mission_assign.sql; the tick decides by its root post).
+ *  Never a mention's: it's told as it's taken (and never marked told). */
 export async function unannouncedRequests(before: Date, max = 25): Promise<MissionRequest[]> {
-  const { data, error } = await db()
-    .from("mission_slack_requests")
-    .select("*")
-    .is("announced_at", null)
-    .neq("source", "slack")
-    .lt("created_at", before.toISOString())
-    .order("created_at", { ascending: true })
-    .limit(max);
-  if (error) throw error;
-  return (data ?? []).map(toRequest);
+  const [triggers, fresh] = await Promise.all([
+    db()
+      .from("mission_slack_requests")
+      .select("*")
+      .is("announced_at", null)
+      .neq("source", "slack")
+      .lt("created_at", before.toISOString())
+      .order("created_at", { ascending: true })
+      .limit(max),
+    db().rpc("unannounced_new_requests", { made_before: before.toISOString(), max_rows: max }),
+  ]);
+  if (triggers.error) throw triggers.error;
+  // Before the migration that adds it, there are no `!new` requests.
+  if (fresh.error && !["PGRST202", "42883"].includes(fresh.error.code ?? "")) throw fresh.error;
+  return [...(triggers.data ?? []), ...((fresh.error ? [] : fresh.data) ?? [])].map(toRequest);
 }
 
 /** The request a Linear agent session is, if one is. */
@@ -611,17 +672,24 @@ export async function requestForExternalSession(source: "linear", externalSessio
   return data ? toRequest(data) : null;
 }
 
+/** A request's root post as the tick needs it: its status, and once sent,
+ *  where it went (a `!new` whose thread a crash left unset is settled from
+ *  it). */
+export type RootPost = { status: string; createdAt: string; postedTs?: string[]; teamId?: string; channelId?: string; requester?: string | null };
+
 /** A root post's status, for a request the tick finds untold. */
-export async function rootPostStatus(missionId: string, requestKey: string): Promise<{ status: string; createdAt: string } | null> {
+export async function rootPostStatus(missionId: string, requestKey: string): Promise<RootPost | null> {
   const { data, error } = await db()
     .from("mission_slack_posts")
-    .select("status, created_at")
+    .select("status, created_at, posted_ts, team_id, channel_id, requester")
     .eq("mission_id", missionId)
     .eq("request_key", requestKey)
     .eq("kind", "root")
     .maybeSingle();
   if (error) throw error;
-  return data ? { status: data.status, createdAt: data.created_at } : null;
+  return data
+    ? { status: data.status, createdAt: data.created_at, postedTs: data.posted_ts ?? [], teamId: data.team_id, channelId: data.channel_id, requester: data.requester }
+    : null;
 }
 
 /** Claim one Slack message for one request, anywhere: true when this claim
