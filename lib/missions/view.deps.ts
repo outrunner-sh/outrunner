@@ -7,6 +7,7 @@
  * its Ships' pull requests and groups.
  */
 
+import type { OnCallFacts } from "@/lib/missions/on-call-state";
 import { runnerState } from "@/lib/missions/rules";
 import {
   briefSummary,
@@ -19,7 +20,7 @@ import {
 } from "@/lib/missions/view";
 import { toWorkspace, toWorkspacePullRequest } from "@/lib/db/mappers";
 import { readStandings } from "@/lib/db/session-standing";
-import { shipThreadLinks } from "@/lib/missions/slack-store";
+import { onCallFactsOf, shipThreadLinks } from "@/lib/missions/slack-store";
 import type { Workspace } from "@/lib/runtime/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -107,6 +108,12 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
   });
   // Each Ship's Slack thread, on call: shown, never needed.
   const threadOf = await shipThreadLinks(runnerIds).catch(() => new Map<string, string>());
+  // Each Mission's channel and budget pause, for the sidebar's badge: shown,
+  // never needed.
+  const onCallOf = await onCallFactsOf(ids).catch((error: unknown) => {
+    console.error("Missions: couldn't read where they stand on call", error);
+    return new Map<string, OnCallFacts>();
+  });
   const views = await Promise.all(
     missions.map(async (mission): Promise<MissionView & { position: number | null }> => {
       const own = runners.filter((r) => r.parentMissionId === mission.id);
@@ -173,6 +180,7 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
         standing: standings[mission.id] ?? null,
         runners: runnerViews.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
         createdAt: mission.createdAt,
+        ...(onCallOf.has(mission.id) && { onCall: onCallOf.get(mission.id) }),
       };
     }),
   );

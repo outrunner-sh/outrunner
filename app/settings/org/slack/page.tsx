@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { SlackIcon } from "@/components/brand-icons";
+import { MissionChannelsSettings } from "@/components/missions/mission-channels-settings";
 import { SettingsLoading } from "@/components/settings-loading";
 import { Button } from "@/components/ui/button";
 import { getOwnerSafe } from "@/lib/auth/owner";
@@ -19,7 +20,8 @@ export const unstable_instant = { prefetch: "static" };
 /**
  * Settings → Org → Integrations → Slack: the Slack workspaces the org works
  * from (and whether Outrunner's bot is installed in each), who has connected
- * their Slack account to the org, and what the agent does in each channel.
+ * their Slack account to the org, what the agent does in each channel, and
+ * the channels its Missions are on call in.
  */
 export default function OrgSlackSettings() {
   return (
@@ -149,6 +151,8 @@ async function SlackSection() {
           </div>
         </>
       )}
+
+      {org && <MissionChannelsSettings orgId={org.id} />}
     </section>
   );
 }

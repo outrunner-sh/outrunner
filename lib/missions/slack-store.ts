@@ -6,6 +6,7 @@
  * tools and its routes).
  */
 
+import type { OnCallFacts } from "@/lib/missions/on-call-state";
 import type { Json } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -677,4 +678,89 @@ export async function saveAskOnce(input: { missionId: string; threadId: string; 
   const { data: found, error: findError } = await db().from("mission_slack_asks").select("id").eq("op_key", input.opKey).single();
   if (findError) throw findError;
   return found.id;
+}
+
+// Read helpers for the sidebar's on-call badge and Settings' list of bound
+// channels (lib/missions/on-call-state.ts, lib/missions/mission-channels-list.ts).
+
+/** A bound channel as Settings lists it. */
+export type BoundChannelRow = {
+  missionId: string;
+  orgId: string;
+  teamId: string;
+  channelId: string;
+  boundBy: string | null;
+  boundAt: string;
+  paused: boolean;
+  idlePaused: boolean;
+};
+
+type BudgetPause = { until: string | null; period: "day" | "week" | null };
+
+/** Each of these Missions' budget pause still running, if any (none before
+ *  the budgets migration is applied). */
+async function budgetPauses(missionIds: string[]): Promise<Map<string, BudgetPause>> {
+  const pauses = new Map<string, BudgetPause>();
+  if (missionIds.length === 0) return pauses;
+  const { data, error } = await db()
+    .from("mission_budgets")
+    .select("mission_id, paused_until, paused_period")
+    .in("mission_id", missionIds)
+    .gt("paused_until", new Date().toISOString());
+  if (error && missingTable(error)) return pauses;
+  if (error) throw error;
+  for (const row of data ?? []) pauses.set(row.mission_id, { until: row.paused_until, period: row.paused_period });
+  return pauses;
+}
+
+/** Each of these Missions' on-call facts, for those on call or
+ *  budget-paused; the rest are left out. Two reads, however many. */
+export async function onCallFactsOf(missionIds: string[]): Promise<Map<string, OnCallFacts>> {
+  const facts = new Map<string, OnCallFacts>();
+  if (missionIds.length === 0) return facts;
+  const [{ data, error }, pauses] = await Promise.all([
+    db().from("mission_channels").select("mission_id, paused, idle_paused").in("mission_id", missionIds),
+    budgetPauses(missionIds),
+  ]);
+  if (error && !missingTable(error)) throw error;
+  for (const row of error ? [] : (data ?? [])) {
+    const pause = pauses.get(row.mission_id);
+    facts.set(row.mission_id, {
+      bound: true,
+      paused: row.paused,
+      idlePaused: row.idle_paused ?? false,
+      budgetPausedUntil: pause?.until ?? null,
+      budgetPausedPeriod: pause?.period ?? null,
+    });
+  }
+  for (const [missionId, pause] of pauses) {
+    if (!facts.has(missionId)) {
+      facts.set(missionId, { bound: false, paused: false, idlePaused: false, budgetPausedUntil: pause.until, budgetPausedPeriod: pause.period });
+    }
+  }
+  return facts;
+}
+
+/** The org's bound channels, oldest first, each with its Mission's budget
+ *  pause (none before the on-call migration is applied). */
+export async function orgBoundChannels(orgId: string): Promise<{ row: BoundChannelRow; budget: BudgetPause | null }[]> {
+  const { data, error } = await db()
+    .from("mission_channels")
+    .select("mission_id, org_id, slack_team_id, channel_id, bound_by, created_at, paused, idle_paused")
+    .eq("org_id", orgId)
+    .order("created_at", { ascending: true });
+  if (error && missingTable(error)) return [];
+  if (error) throw error;
+  const rows: BoundChannelRow[] = (data ?? []).map((r) => ({
+    missionId: r.mission_id,
+    orgId: r.org_id,
+    teamId: r.slack_team_id,
+    channelId: r.channel_id,
+    boundBy: r.bound_by,
+    boundAt: r.created_at,
+    paused: r.paused,
+    idlePaused: r.idle_paused ?? false,
+  }));
+  const pauses = await budgetPauses(rows.map((r) => r.missionId));
+  return rows.map((row) => ({ row, budget: pauses.get(row.missionId) ?? null }));
 }

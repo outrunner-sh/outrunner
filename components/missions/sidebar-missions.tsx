@@ -10,9 +10,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, ChevronRight, Ellipsis, GitPullRequest, Plus, Rocket, UserPlus } from "lucide-react";
+import { Archive, ChevronRight, CircleDollarSign, CirclePause, Ellipsis, GitPullRequest, Plus, Rocket, UserPlus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { SlackIcon } from "@/components/brand-icons";
 import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
 import { HireDialog } from "@/components/missions/hire-dialog";
 import { MissionGlyph, PullRequestChip, RunnerGlyph, UnreadDot } from "@/components/missions/mission-parts";
@@ -21,6 +22,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { SkeletonRows } from "@/components/ui/skeleton-swap";
 import { refreshMissions, useMissions } from "@/hooks/use-missions";
 import { missionArchiveOffer, unarchivedShipCount } from "@/lib/missions/archive";
+import { onCallBadge } from "@/lib/missions/on-call-state";
 import { recentProjects, type NavProject } from "@/lib/nav/workspace-nav-groups";
 import { MISSION_STATUS_LABEL, type MissionView, type RunnerView } from "@/lib/missions/view";
 import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
@@ -46,6 +48,35 @@ function savedFolded(): string[] {
 function nestedRunners(mission: MissionView): RunnerView[] {
   const order = { needs_you: 0, ready_to_merge: 1, ready_to_review: 2, working: 3, shipping: 4, done: 5 } as const;
   return mission.runners.filter((r) => r.group !== "done").sort((a, b) => order[a.group] - order[b.group]);
+}
+
+/** On call in Slack: its mark; paused there (by someone, or idle), or out
+ *  of budget, a badge naming which (lib/missions/on-call-state.ts). */
+function OnCallMark({ mission }: { mission: MissionView }) {
+  const badge = onCallBadge(mission.onCall);
+  if (!badge) return null;
+  if (!badge.attention) {
+    return (
+      <span role="img" aria-label={badge.tooltip} title={badge.tooltip} className="inline-flex shrink-0 opacity-60">
+        <SlackIcon className="size-3" />
+      </span>
+    );
+  }
+  const Icon = badge.state === "budget_paused" ? CircleDollarSign : CirclePause;
+  return (
+    <span
+      role="img"
+      aria-label={badge.tooltip}
+      title={badge.tooltip}
+      className={cn(
+        "inline-flex h-[18px] shrink-0 items-center gap-1 rounded-full px-1.5",
+        badge.state === "budget_paused" ? "bg-[#f85149]/12 text-[#ff7b72]" : "bg-[#d29922]/12 text-[#e3b341]",
+      )}
+    >
+      {mission.onCall?.bound && <SlackIcon className="size-2.5" />}
+      <Icon className="size-3" />
+    </span>
+  );
 }
 
 export function SidebarMissions({
@@ -244,6 +275,7 @@ export function SidebarMissions({
                     >
                       <MissionGlyph id={mission.id} icon={mission.icon} status={mission.status} />
                       <span className={cn("min-w-0 flex-1 truncate", archived && "text-muted-foreground")}>{mission.title}</span>
+                      {!archived && <OnCallMark mission={mission} />}
                       {archived ? (
                         <Archive aria-label="Archived" className="size-3 shrink-0 text-muted-foreground" />
                       ) : mission.readyCount > 0 ? (
