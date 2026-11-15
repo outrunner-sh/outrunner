@@ -48,7 +48,7 @@ function world(bound = true) {
   const queued: QueuedPost[] = [];
   const events: RecordedEvent[] = [];
   const threads: MissionThread[] = [];
-  const crash = { enqueue: false };
+  const crash = { enqueue: false, setThread: false };
   const binding: MissionChannel = { missionId: MISSION, orgId: "o1", teamId: "T1", channelId: "C1", boundBy: "w", listen: "mentions", allowBotMessages: false, paused: false, revision: "rev1" };
   const deps: RequestDeps = {
     binding: async () => (bound ? binding : null),
@@ -71,6 +71,7 @@ function world(bound = true) {
       return thread;
     },
     setThread: async (_m, key, threadId, messageTs) => {
+      if (crash.setThread) throw new Error("crashed");
       const row = rows.get(key)!;
       row.threadId = threadId;
       if (messageTs) row.messageTs = messageTs;
@@ -200,4 +201,37 @@ test("the tick never tells a mention's request (told inline), nor a closed or th
   assert.equal(await announceLate({ ...fresh, threadId: null }, null, w.deps), false);
   assert.equal(await announceLate({ ...fresh, status: "cancelled" }, null, w.deps), false);
   assert.equal(w.events.length, 0);
+});
+
+test("!new: a crash after its root post was marked sent, before its thread was set: the tick settles it, once", async () => {
+  const w = world();
+  await newThreadRequest(input, w.deps);
+  const ts = "1731400500.000100";
+  w.crash.setThread = true;
+  await assert.rejects(onRootSettled({ ...w.queued[0], requestKey: "new:En" }, ts, w.deps));
+  w.crash.setThread = false;
+  const row = () => w.rows.get("new:En")!;
+  assert.equal(row().threadId, null);
+  assert.equal(w.events.length, 0);
+  const at = { createdAt: "2026-11-15T10:00:00Z", postedTs: [ts], teamId: "T1", channelId: "C1", requester: "alice" };
+  // A root still pending, or failed, or in doubt: left as it is.
+  for (const status of ["pending", "failed", "ambiguous"]) {
+    assert.equal(await announceLate(row(), { ...at, status, postedTs: [] }, w.deps), false, status);
+  }
+  assert.equal(await announceLate(row(), null, w.deps), false, "no root post");
+  assert.equal(row().threadId, null);
+  assert.equal(row().status, "open");
+  assert.equal(w.events.length, 0);
+  // Sent: the tick sets its thread, and tells the Mission.
+  assert.equal(await announceLate(row(), { ...at, status: "sent" }, w.deps), true);
+  assert.equal(row().threadId, "t1");
+  assert.equal(row().messageTs, ts);
+  assert.equal(w.threads.length, 1);
+  assert.equal(w.events.length, 1);
+  assert.equal(w.events[0].kind, "slack_request");
+  assert.equal(w.events[0].payload.slack?.thread, ts);
+  assert.equal(w.events[0].payload.slack?.channel, "C1");
+  // The next tick: nothing more.
+  assert.equal(await announceLate(row(), { ...at, status: "sent" }, w.deps), false);
+  assert.equal(w.events.length, 1);
 });

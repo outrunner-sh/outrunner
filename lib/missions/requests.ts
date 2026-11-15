@@ -24,7 +24,7 @@
 import { eventKey, type RequestEventPayload } from "@/lib/missions/events";
 import { NEW_KEY_PREFIX, newRequestRootText } from "@/lib/missions/slack-text";
 import type { QueueOutcome, QueuedPost } from "@/lib/missions/slack-outbox";
-import type { MissionChannel, MissionRequest, MissionThread } from "@/lib/missions/slack-store";
+import type { MissionChannel, MissionRequest, MissionThread, RootPost } from "@/lib/missions/slack-store";
 import type { RecordedEvent } from "@/lib/missions/watch";
 
 export type RequestSource = RequestEventPayload["source"];
@@ -296,20 +296,33 @@ export function isNewThreadRequest(request: Pick<MissionRequest, "source" | "req
 
 /** The tick's part: a request a crash left untold. One whose root post is
  *  still trying is left a while (ten minutes), then told without a thread.
- *  A `!new` one is told only once its root post settled into its thread,
- *  while it's open; a mention's never (it was told as it was taken). */
+ *  A `!new` one only while open, once its root post went: in its thread,
+ *  or, when a crash left that unset, settled from the post (its thread set,
+ *  then told). One whose root is pending, failed or in doubt is left. A
+ *  mention's never (it was told as it was taken). */
 export async function announceLate(
   request: MissionRequest,
-  root: { status: string; createdAt: string } | null,
+  root: RootPost | null,
   deps: RequestDeps,
   now = Date.now(),
 ): Promise<boolean> {
   if (request.announcedAt) return false;
   if (request.source === "slack") {
-    if (!isNewThreadRequest(request) || request.status !== "open" || !request.threadId) return false;
-    const thread = await deps.thread(request.threadId);
-    if (!thread) return false;
-    await announceNewThread(request, thread.channelId, thread.threadTs, deps);
+    if (!isNewThreadRequest(request) || request.status !== "open") return false;
+    if (request.threadId) {
+      const thread = await deps.thread(request.threadId);
+      if (!thread) return false;
+      await announceNewThread(request, thread.channelId, thread.threadTs, deps);
+      return true;
+    }
+    const ts = root?.status === "sent" ? root.postedTs?.[0] : undefined;
+    if (!ts || !root?.teamId || !root.channelId) return false;
+    await onNewThreadSettled(
+      { missionId: request.missionId, teamId: root.teamId, channelId: root.channelId, requester: root.requester ?? request.requestedBy, requestKey: request.requestKey },
+      request,
+      ts,
+      deps,
+    );
     return true;
   }
   if (root?.status === "pending" && now - Date.parse(root.createdAt) < 10 * 60_000) return false;
