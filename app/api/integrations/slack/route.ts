@@ -8,7 +8,7 @@ import { captureWorkItem, triageActor, WorkItemChangeError } from "@/lib/db/work
 import { optionalEnv } from "@/lib/env";
 import { isUuid } from "@/lib/ids";
 import { type CardAction, handleCardAction, handleProactiveAction, type ProactiveAction } from "@/lib/slack/agent-run";
-import { MISSION_ASK_ACTION, MISSION_ASK_OTHER } from "@/lib/missions/slack-text";
+import { MISSION_ASK_ACTION, MISSION_ASK_OTHER, SHIP_ASK_ACTION } from "@/lib/missions/slack-text";
 import { PROACTIVE_ACTIONS } from "@/lib/slack/proactive-text";
 import {
   captureFromCommand,
@@ -120,6 +120,22 @@ function cardAction(payload: string): NextResponse {
     after(async () => {
       const { handleMissionAsk } = await import("@/lib/missions/slack-ask.deps");
       await handleMissionAsk(click);
+    });
+    return new NextResponse(null, { status: 200 });
+  }
+  // A Ship's question card (lib/missions/ship-ask.ts). Its "Other" is a link,
+  // which carries no value and stops above.
+  if (clicked.action_id.startsWith(`${SHIP_ASK_ACTION}:`)) {
+    const click = {
+      teamId: action.team.id,
+      user: action.user.id,
+      value: clicked.value,
+      channel: action.channel?.id ?? null,
+      messageTs: action.container?.message_ts ?? action.message?.ts ?? null,
+    };
+    after(async () => {
+      const { handleShipAsk } = await import("@/lib/missions/ship-ask.deps");
+      await handleShipAsk(click);
     });
     return new NextResponse(null, { status: 200 });
   }

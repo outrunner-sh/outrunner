@@ -355,6 +355,29 @@ type MissionSlackAskRow = {
   binding_revision: string | null;
   created_at: string;
 };
+// supabase/migrations/20261114210300_mission_ship_asks.sql
+type MissionShipAskRow = {
+  id: string;
+  mission_id: string;
+  runner_id: string;
+  thread_id: string;
+  binding_revision: string;
+  op_key: string;
+  call_id: string;
+  launch_epoch: string;
+  tool_use_id: string | null;
+  title: string;
+  question: string;
+  options: string[];
+  questions: Json;
+  message_ts: string | null;
+  answer: string | null;
+  answered_by: string | null;
+  answered_by_slack: string | null;
+  answered_at: string | null;
+  closed_at: string | null;
+  created_at: string;
+};
 // supabase/migrations/20261102250000_mission_events.sql
 type TurnWatchRow = {
   workspace_id: string;
@@ -2243,6 +2266,15 @@ export type Database = {
         Row: MissionLinearReplyRow;
         Insert: Insert<MissionLinearReplyRow, "op_key" | "mission_id">;
         Update: Partial<MissionLinearReplyRow>;
+        Relationships: [];
+      };
+      mission_ship_asks: {
+        Row: MissionShipAskRow;
+        Insert: Insert<
+          MissionShipAskRow,
+          "mission_id" | "runner_id" | "thread_id" | "binding_revision" | "op_key" | "call_id" | "launch_epoch" | "title" | "question" | "options" | "questions"
+        >;
+        Update: Partial<MissionShipAskRow>;
         Relationships: [];
       };
       mission_slack_asks: {

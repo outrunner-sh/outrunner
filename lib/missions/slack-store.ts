@@ -678,3 +678,176 @@ export async function saveAskOnce(input: { missionId: string; threadId: string; 
   if (findError) throw findError;
   return found.id;
 }
+
+// ---------------------------------------------------------------------------
+// Ships' questions as cards (20261114210300_mission_ship_asks.sql)
+// ---------------------------------------------------------------------------
+
+/** A Ship's ask_user call as a card in its request's thread
+ *  (lib/missions/ship-ask.ts). */
+export type ShipAsk = {
+  id: string;
+  missionId: string;
+  runnerId: string;
+  threadId: string;
+  bindingRevision: string;
+  opKey: string;
+  callId: string;
+  launchEpoch: string;
+  toolUseId: string | null;
+  title: string;
+  question: string;
+  /** One button each; empty when the card only links to the Ship. */
+  options: string[];
+  /** The questions as the agent asked them. */
+  questions: unknown[];
+  messageTs: string | null;
+  answeredAt: string | null;
+  closedAt: string | null;
+};
+
+type ShipAskRow = {
+  id: string;
+  mission_id: string;
+  runner_id: string;
+  thread_id: string;
+  binding_revision: string;
+  op_key: string;
+  call_id: string;
+  launch_epoch: string;
+  tool_use_id: string | null;
+  title: string;
+  question: string;
+  options: string[];
+  questions: unknown;
+  message_ts: string | null;
+  answered_at: string | null;
+  closed_at: string | null;
+};
+
+function toShipAsk(row: ShipAskRow): ShipAsk {
+  return {
+    id: row.id,
+    missionId: row.mission_id,
+    runnerId: row.runner_id,
+    threadId: row.thread_id,
+    bindingRevision: row.binding_revision,
+    opKey: row.op_key,
+    callId: row.call_id,
+    launchEpoch: row.launch_epoch,
+    toolUseId: row.tool_use_id,
+    title: row.title,
+    question: row.question,
+    options: row.options,
+    questions: Array.isArray(row.questions) ? row.questions : [],
+    messageTs: row.message_ts,
+    answeredAt: row.answered_at,
+    closedAt: row.closed_at,
+  };
+}
+
+export type NewShipAsk = Omit<ShipAsk, "id" | "messageTs" | "answeredAt" | "closedAt">;
+
+/** A Ship's question card under its key: the one there already, if this call
+ *  was seen before. */
+export async function saveShipAskOnce(input: NewShipAsk): Promise<ShipAsk> {
+  const { error } = await db()
+    .from("mission_ship_asks")
+    .upsert(
+      {
+        mission_id: input.missionId,
+        runner_id: input.runnerId,
+        thread_id: input.threadId,
+        binding_revision: input.bindingRevision,
+        op_key: input.opKey,
+        call_id: input.callId,
+        launch_epoch: input.launchEpoch,
+        tool_use_id: input.toolUseId,
+        title: input.title,
+        question: input.question,
+        options: input.options,
+        questions: input.questions as Json,
+      },
+      { onConflict: "op_key", ignoreDuplicates: true },
+    );
+  if (error) throw error;
+  const { data, error: findError } = await db().from("mission_ship_asks").select("*").eq("op_key", input.opKey).single();
+  if (findError) throw findError;
+  return toShipAsk(data);
+}
+
+export async function shipAskById(id: string): Promise<ShipAsk | null> {
+  const { data, error } = await db().from("mission_ship_asks").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data ? toShipAsk(data) : null;
+}
+
+/** The card for the transcript call the watch saw waiting, if one was made. */
+export async function shipAskForTool(runnerId: string, toolUseId: string): Promise<ShipAsk | null> {
+  const { data, error } = await db()
+    .from("mission_ship_asks")
+    .select("*")
+    .eq("runner_id", runnerId)
+    .eq("tool_use_id", toolUseId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toShipAsk(data) : null;
+}
+
+/** A Ship's cards neither answered nor closed. */
+export async function openShipAsks(runnerId: string): Promise<ShipAsk[]> {
+  const { data, error } = await db().from("mission_ship_asks").select("*").eq("runner_id", runnerId).is("answered_at", null).is("closed_at", null);
+  if (error) throw error;
+  return (data ?? []).map(toShipAsk);
+}
+
+export async function setShipAskMessage(id: string, messageTs: string): Promise<void> {
+  const { error } = await db().from("mission_ship_asks").update({ message_ts: messageTs }).eq("id", id);
+  if (error) throw error;
+}
+
+/** The card's answer, claimed before it goes: true for the first only, and
+ *  never on a closed card. */
+export async function claimShipAnswer(id: string, answer: { text: string; userId: string; slackUserId: string }): Promise<boolean> {
+  const { data, error } = await db()
+    .from("mission_ship_asks")
+    .update({ answer: answer.text, answered_by: answer.userId, answered_by_slack: answer.slackUserId, answered_at: new Date().toISOString() })
+    .eq("id", id)
+    .is("answered_at", null)
+    .is("closed_at", null)
+    .select("id");
+  if (error) throw error;
+  return (data?.length ?? 0) > 0;
+}
+
+/** Give back a claim whose answer didn't go (the box didn't answer): only
+ *  that person's. */
+export async function releaseShipAnswer(id: string, slackUserId: string): Promise<void> {
+  const { error } = await db()
+    .from("mission_ship_asks")
+    .update({ answer: null, answered_by: null, answered_by_slack: null, answered_at: null })
+    .eq("id", id)
+    .eq("answered_by_slack", slackUserId)
+    .is("closed_at", null);
+  if (error) throw error;
+}
+
+/** Close the card: nothing waits on it. Unanswered ones only, or the one
+ *  `claimedBy` claimed for an answer the agent refused as over. True when
+ *  this closed it. */
+export async function closeShipAsk(id: string, claimedBy?: string): Promise<boolean> {
+  let query = db().from("mission_ship_asks").update({ closed_at: new Date().toISOString(), answer: null, answered_by: null, answered_by_slack: null, answered_at: null }).eq("id", id).is("closed_at", null);
+  query = claimedBy ? query.eq("answered_by_slack", claimedBy) : query.is("answered_at", null);
+  const { data, error } = await query.select("id");
+  if (error) throw error;
+  return (data?.length ?? 0) > 0;
+}
+
+/** Whether a post was queued under the key (whatever came of it). */
+export async function postQueued(opKey: string): Promise<boolean> {
+  const { data, error } = await db().from("mission_slack_posts").select("id").eq("op_key", opKey).maybeSingle();
+  if (error) throw error;
+  return data !== null;
+}

@@ -10,7 +10,7 @@ import { after } from "@/lib/observability/after";
 
 import { getInstallation } from "@/lib/db/slack-agent";
 import { missionLevel } from "@/lib/missions/slack-route.deps";
-import { missionBinding, setAskMessage, threadMuted } from "@/lib/missions/slack-store";
+import { missionBinding, setAskMessage, setShipAskMessage, threadMuted } from "@/lib/missions/slack-store";
 import {
   type ClaimedPost,
   deliverPost,
@@ -84,6 +84,7 @@ export function postDeps(): OutboxPostDeps {
       if (error) throw error;
     },
     askPosted: setAskMessage,
+    shipAskPosted: setShipAskMessage,
   };
 }
 

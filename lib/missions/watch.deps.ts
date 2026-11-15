@@ -229,6 +229,12 @@ export function watchDeps(): WatchDeps {
     returnQueued: returnQueuedMessage,
     sendAndWatch: sendToRunner,
     now: Date.now,
+    // A Ship's questions as Slack cards (lib/missions/ship-ask.ts): their
+    // failures are logged, never the watch's.
+    shipAsks: {
+      waiting: (runner, toolUseId) => import("@/lib/missions/ship-ask.deps").then((m) => m.shipAskWaiting(runner, toolUseId)).catch(() => undefined),
+      settled: (runner, keep) => import("@/lib/missions/ship-ask.deps").then((m) => m.shipAsksSettled(runner, keep)).catch(() => undefined),
+    },
   };
 }
 
