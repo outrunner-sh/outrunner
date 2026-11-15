@@ -37,6 +37,8 @@ export type PostPayload =
   | { chunks: string[] }
   /** A question card, and its row (mission_slack_asks). */
   | { text: string; blocks: SlackBlocks; askId: string }
+  /** A Ship's question card, and its row (mission_ship_asks). */
+  | { text: string; blocks: SlackBlocks; shipAskId: string }
   /** A reaction on a message of the thread. */
   | { ts: string; name: string };
 
@@ -89,6 +91,9 @@ export type OutboxPostDeps = {
   progressed(post: ClaimedPost, progress: number, postedTs: string[]): Promise<void>;
   /** A question card posted: its message, for the click to update. */
   askPosted?(askId: string, ts: string): Promise<void>;
+  /** A Ship's question card posted: its message, for the click and the
+   *  watch to update. */
+  shipAskPosted?(shipAskId: string, ts: string): Promise<void>;
 };
 
 /** What queueing a post came to: queued now (new, or one that had failed or
@@ -207,6 +212,7 @@ export async function deliverPost(post: ClaimedPost, deps: OutboxPostDeps): Prom
     }
   }
   if ("askId" in post.payload && postedTs[0]) await deps.askPosted?.(post.payload.askId, postedTs[0]).catch(() => undefined);
+  if ("shipAskId" in post.payload && postedTs[0]) await deps.shipAskPosted?.(post.payload.shipAskId, postedTs[0]).catch(() => undefined);
   return { status: "sent", postedTs };
 }
 

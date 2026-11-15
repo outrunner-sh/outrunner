@@ -49,6 +49,13 @@ export type WatchDeps = {
   /** Send to the Runner (waking it), and open a watch on that turn. */
   sendAndWatch(runner: Workspace, content: string): Promise<boolean>;
   now(): number;
+  /** A Ship's questions as cards in its Slack thread (lib/missions/ship-ask.ts):
+   *  `waiting` its card for the call it waits on, `settled` its cards for
+   *  any other call closed. Never throw. */
+  shipAsks?: {
+    waiting(runner: Workspace, toolUseId: string): Promise<void>;
+    settled(runner: Workspace, keepToolUseId: string | null): Promise<void>;
+  };
 };
 
 const ms = (iso: string | null) => (iso ? Date.parse(iso) : null);
@@ -92,6 +99,8 @@ export async function checkRunnerWatch(row: WatchRow, deps: WatchDeps): Promise<
   const name = runner.title ?? runner.branch;
   switch (verdict.kind) {
     case "waiting": {
+      // Working again: whatever it asked was answered (in Outrunner, say).
+      if (up && look.reachable && look.working === true && !look.waiting) await deps.shipAsks?.settled(runner, null);
       const s = verdict.state;
       await deps.save({
         ...row,
@@ -106,6 +115,7 @@ export async function checkRunnerWatch(row: WatchRow, deps: WatchDeps): Promise<
       return "waiting";
     }
     case "closed":
+      await deps.shipAsks?.settled(runner, null);
       await deps.close(row.workspaceId, row.sentAt);
       return "closed";
     case "waiting_on_user": {
@@ -118,6 +128,10 @@ export async function checkRunnerWatch(row: WatchRow, deps: WatchDeps): Promise<
         payload: { runner: name, reason: WAITING_REASON[verdict.waiting] },
         key: eventKey.needsAttention(runner.id, "waiting", verdict.toolId),
       });
+      // A question: its card in the Ship's Slack thread, if it has one; any
+      // card of an earlier call is over.
+      await deps.shipAsks?.settled(runner, verdict.waiting === "question" ? verdict.toolId : null);
+      if (verdict.waiting === "question") await deps.shipAsks?.waiting(runner, verdict.toolId);
       const s = verdict.state;
       await deps.save({
         ...row,
@@ -139,6 +153,7 @@ export async function checkRunnerWatch(row: WatchRow, deps: WatchDeps): Promise<
         payload: { runner: name, reason: verdict.cause },
         key: eventKey.needsAttention(runner.id, "turn", row.sentAt),
       });
+      await deps.shipAsks?.settled(runner, null);
       await deps.close(row.workspaceId, row.sentAt);
       return "needs_attention";
     case "over": {
@@ -149,6 +164,7 @@ export async function checkRunnerWatch(row: WatchRow, deps: WatchDeps): Promise<
         payload: { runner: name, response: verdict.message, ...(verdict.asleep && { asleep: true }) },
         key: eventKey.finished(runner.id, row.sentAt),
       });
+      await deps.shipAsks?.settled(runner, null);
       await deps.close(row.workspaceId, row.sentAt);
       await sendNextQueued(runner, deps);
       return "finished";

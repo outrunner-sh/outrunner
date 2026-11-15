@@ -169,6 +169,66 @@ export function parseAskValue(value: string): { askId: string; option: number | 
   return { askId: match[1], option: match[2] === "other" ? "other" : Number(match[2]) };
 }
 
+/** Slack's buttons for a Ship's question card (lib/missions/ship-ask.ts):
+ *  each option's value names the card and the option; "Other" is a link to
+ *  the Ship, which Slack sends no value for. Not `mission_ask…`: the route
+ *  tells the two apart by prefix. */
+export const SHIP_ASK_ACTION = "ship_ask";
+export const SHIP_ASK_OPEN = "ship_ask_open";
+
+/** What a Ship's card says it's working on: one line. */
+export function workingLine(title: string): Record<string, unknown> {
+  const one = title.replace(/\s+/g, " ").trim().slice(0, 150) || "Ship";
+  return { type: "context", elements: [{ type: "mrkdwn", text: `Working on: *${one.replace(/[*<>|]/g, "")}*` }] };
+}
+
+/** A Ship's question card: what it's working on, the question, a button an
+ *  option, then "Other" (or, for a question one click can't answer, "Answer
+ *  in Outrunner") linking to the Ship. */
+export function shipAskBlocks(input: { askId: string; title: string; question: string; options: readonly string[]; url: string | null }): Record<string, unknown>[] {
+  const buttons: Record<string, unknown>[] = input.options.map((option, i) => ({
+    type: "button",
+    action_id: `${SHIP_ASK_ACTION}:${i}`,
+    text: { type: "plain_text", text: option.slice(0, 75), emoji: true },
+    value: `${input.askId}:${i}`,
+  }));
+  if (input.url) {
+    buttons.push({ type: "button", action_id: SHIP_ASK_OPEN, text: { type: "plain_text", text: input.options.length > 0 ? "Other" : "Answer in Outrunner" }, url: input.url });
+  }
+  return [
+    workingLine(input.title),
+    { type: "section", text: { type: "mrkdwn", text: input.question.slice(0, 2900) } },
+    ...(buttons.length > 0 ? [{ type: "actions", block_id: `${SHIP_ASK_ACTION}:${input.askId}`, elements: buttons }] : []),
+  ];
+}
+
+/** A Ship's card once answered from Slack: who picked what. No buttons. */
+export function shipAnsweredBlocks(title: string, question: string, answer: string, by: string): Record<string, unknown>[] {
+  return [workingLine(title), ...answeredBlocks(question, answer, by)];
+}
+
+/** Why a Ship's card waits on nothing: the Mission's binding ended
+ *  (CardEnd), or the call is over (answered in Outrunner, the Ship moved
+ *  on). */
+export type ShipCardEnd = CardEnd | "moved_on";
+
+export const SHIP_CARD_MOVED_ON = "No longer waiting: answered in Outrunner, or the Ship moved on";
+
+export function shipClosedBlocks(title: string, question: string, why: ShipCardEnd): Record<string, unknown>[] {
+  if (why !== "moved_on") return [workingLine(title), ...closedBlocks(question, why)];
+  return [
+    workingLine(title),
+    { type: "section", text: { type: "mrkdwn", text: question.slice(0, 2900) } },
+    { type: "context", elements: [{ type: "mrkdwn", text: SHIP_CARD_MOVED_ON }] },
+  ];
+}
+
+/** A Ship card click's value read back: the card and the option. */
+export function parseShipAskValue(value: string): { askId: string; option: number } | null {
+  const match = /^([0-9a-f-]{36}):(\d{1,2})$/.exec(value);
+  return match ? { askId: match[1], option: Number(match[2]) } : null;
+}
+
 /** The reactions slack_react may add, by name (or the emoji itself). */
 const REACTIONS: Record<string, string> = {
   eyes: "eyes",

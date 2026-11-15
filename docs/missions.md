@@ -198,6 +198,37 @@ channel, one channel a Mission.
   Slack (`stop being on call here`) let anyone with write on the project
   take the Mission off call.
 
+### Ships' questions in Slack
+
+A Ship started for a Slack request that stops on an `ask_user` question
+gets a card in that request's thread (`lib/missions/ship-ask.ts`,
+`mission_ship_asks`, `20261114210300_mission_ship_asks.sql`):
+
+- **The card.** `Working on: <Ship title>`, the question, a button per
+  option, then **Other**, a link to the Ship in Outrunner (no free text in
+  Slack). Several questions, or a multi-pick one, get no option buttons,
+  only **Answer in Outrunner**.
+- **One card a call.** The Runner watch posts it when it sees the Ship
+  waiting on a question. Its key is the call's identity (`callId`,
+  `launchEpoch`, see protocol.md "Answering a question's exact call"), so a
+  re-read or retry posts nothing more. It goes through the post queue under
+  the Ship's binding, with the queue's checks. A muted thread, a Ship of an
+  earlier binding, or a box that can't name its calls gets no card.
+- **A click** has the same gate as a request: a linked account in the
+  Mission's org with read on the project (unlinked: the Connect prompt). The
+  first click is claimed, then answers that exact call through
+  `deliverAnswer`, under one operation id per card, so a retry lands once.
+  The card then shows the pick and who made it, with no buttons. The Ship
+  gets the answer as its owner, as Ships run.
+- **Stale cards answer nothing.** A card from an ended binding (off call,
+  archived, on call again), a Ship that ended or slept, or a call that's
+  over (answered in Outrunner, asked again, answered first) gets a private
+  "No longer waiting" reply. When the watch sees the Ship working again,
+  waiting on something else, or done, it edits the card to "No longer
+  waiting: answered in Outrunner, or the Ship moved on". Going off call
+  doesn't edit Ship cards (only the Mission's own): clicks on them are
+  refused, and the watch closes them once the call is over.
+
 ### Reliability
 
 Nothing said in Slack is lost, and nothing is done twice, through crashes,
