@@ -1,12 +1,12 @@
 /**
  * Hiring a Mission from a template (docs/missions.md, "Hire"), through the
- * app's own routes, in order: the Mission, its name and icon, each default
- * trigger, its budgets. Once the Mission is made it's kept whatever fails
- * after; each step says how it went, so nothing is left half-made unsaid.
+ * app's own routes, in order: the Mission, its budgets, its name and icon,
+ * each default trigger (none unless the budgets were saved). Once the
+ * Mission is made it's kept whatever fails after; each step says how it went, so nothing is left half-made unsaid.
  * `fetch` is passed in, so the order and the failures are tested.
  */
 
-import type { HirePlan } from "@/lib/missions/templates";
+import type { HirePlan, MissionBudget } from "@/lib/missions/templates";
 
 export type HireStepKind = "create" | "profile" | "trigger" | "budget";
 
@@ -26,7 +26,12 @@ export type HireOutcome = {
   steps: HireStep[];
   /** Whether any step failed. */
   failed: boolean;
+  /** What the hire as a whole couldn't do, when a failure stopped a later step. */
+  error?: string;
 };
+
+/** The hire's failure when its budgets aren't saved: no triggers follow. */
+export const BUDGET_FAILED = "Its budgets weren't saved, so no triggers were added. Set a budget, then add triggers.";
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -60,6 +65,23 @@ export async function hireMission(plan: HirePlan, fetcher: Fetch, log: (message:
   steps.push({ kind: "create", label: "Start the Mission", status: "done" });
   const base = `/api/missions/${encodeURIComponent(id)}`;
 
+  // Budgets first: a Mission with triggers sends itself work unattended, so
+  // none are added unless its budgets are saved.
+  const budget = await call(fetcher, `${base}/budget`, "PUT", plan.budget);
+  const budgetLabel = `Set budgets: ${budgetText(plan.budget)}`;
+  let error: string | undefined;
+  if (budget.response?.ok) steps.push({ kind: "budget", label: budgetLabel, status: "done" });
+  else if (budget.response?.status === 404) {
+    // TODO(phase-3): remove once budgets merge
+    // Budgets aren't in this deployment at all: not a failed hire, and
+    // triggers still go ahead.
+    log(`Mission ${id}: budgets aren't available here (404); hired without them.`);
+    steps.push({ kind: "budget", label: budgetLabel, status: "skipped", detail: "Budgets aren't available yet." });
+  } else {
+    error = BUDGET_FAILED;
+    steps.push({ kind: "budget", label: budgetLabel, status: "failed", detail: BUDGET_FAILED });
+  }
+
   const named = await call(fetcher, base, "PATCH", plan.profile);
   steps.push(
     named.response?.ok
@@ -68,8 +90,12 @@ export async function hireMission(plan: HirePlan, fetcher: Fetch, log: (message:
   );
 
   for (const trigger of plan.triggers) {
-    const made = await call(fetcher, `${base}/triggers`, "POST", trigger);
     const label = `Add trigger: ${trigger.name}`;
+    if (error) {
+      steps.push({ kind: "trigger", label, status: "skipped", detail: "Not added: its budgets weren't saved." });
+      continue;
+    }
+    const made = await call(fetcher, `${base}/triggers`, "POST", trigger);
     steps.push(
       made.response?.ok && typeof made.json?.id === "string"
         ? { kind: "trigger", label, status: "done", id: made.json.id }
@@ -77,18 +103,14 @@ export async function hireMission(plan: HirePlan, fetcher: Fetch, log: (message:
     );
   }
 
-  const budget = await call(fetcher, `${base}/budget`, "PUT", plan.budget);
-  const budgetLabel = `Set budgets: ${usd(plan.budget.dailyUsd)}/day, ${usd(plan.budget.weeklyUsd)}/week`;
-  if (budget.response?.ok) steps.push({ kind: "budget", label: budgetLabel, status: "done" });
-  else if (budget.response?.status === 404) {
-    // Budgets aren't in this deployment yet: not a failed hire.
-    log(`Mission ${id}: budgets aren't available here (404); hired without them.`);
-    steps.push({ kind: "budget", label: budgetLabel, status: "skipped", detail: "Budgets aren't available yet." });
-  } else {
-    steps.push({ kind: "budget", label: budgetLabel, status: "failed", detail: why(budget, "Its budgets weren't saved.") });
-  }
+  return { missionId: id, steps, failed: steps.some((s) => s.status === "failed"), ...(error && { error }) };
+}
 
-  return { missionId: id, steps, failed: steps.some((s) => s.status === "failed") };
+/** A budget as the page shows it: "$100/day, $1,000/week", or with no limit. */
+export function budgetText(budget: MissionBudget): string {
+  const daily = budget.dailyUsd === null ? "no daily limit" : `${usd(budget.dailyUsd)}/day`;
+  const weekly = budget.weeklyUsd === null ? "no weekly limit" : `${usd(budget.weeklyUsd)}/week`;
+  return `${daily}, ${weekly}`;
 }
 
 /** Dollars as the page shows them: $1,000; none, "no limit". */
