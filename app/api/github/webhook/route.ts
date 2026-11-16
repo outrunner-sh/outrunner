@@ -21,7 +21,7 @@ import {
   forgetInstallation,
   installationHolder,
   recordInstalled,
-  refreshInstallationProjectNames,
+  refreshProjectNamesLater,
   setInstallationSuspended,
   updateInstallation,
 } from "@/lib/db/github-installations";
@@ -266,25 +266,24 @@ export async function POST(request: Request) {
         await setInstallationSuspended(installationId, payload.installation?.suspended_at ?? new Date().toISOString());
       } else if (payload.action === "unsuspend") {
         await setInstallationSuspended(installationId, null);
+        // Renames while suspended were skipped: GitHub refused it a token.
+        refreshProjectNamesLater(installationId);
       }
     } else if (event === "installation_repositories") {
       const selection = payload.repository_selection ?? payload.installation?.repository_selection;
       if (selection === "all" || selection === "selected") {
         await updateInstallation(installationId, { repositorySelection: selection });
       }
-      await refreshInstallationProjectNames(installationId);
+      refreshProjectNamesLater(installationId);
     } else if (event === "installation_target" && payload.action === "renamed") {
       const login = payload.account?.login ?? payload.installation?.account?.login;
       if (login) await updateInstallation(installationId, { accountLogin: login });
-      await refreshInstallationProjectNames(installationId);
+      refreshProjectNamesLater(installationId);
     } else if (event === "repository" && (payload.action === "renamed" || payload.action === "transferred")) {
-      const repository = payload.repository;
-      if (typeof repository?.id === "number" && repository.full_name) {
-        await refreshInstallationProjectNames(installationId, [{
-          githubRepoId: repository.id,
-          fullName: repository.full_name,
-        }]);
-      }
+      // Only the repository's ID is taken from the payload: its current name
+      // is read from GitHub, so a late redelivery can't restore an old one.
+      const repositoryId = payload.repository?.id;
+      if (typeof repositoryId === "number") refreshProjectNamesLater(installationId, [repositoryId]);
     }
     return new NextResponse(null, { status: 204 });
   } catch (error) {
