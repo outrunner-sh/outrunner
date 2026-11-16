@@ -8,7 +8,47 @@ host. Cloudflare may continue to serve DNS.
 Keep the existing Supabase project and sandbox provider. Only the control
 plane moves; user data and existing Daytona/Neev computers stay in place.
 
-## Prepare the host
+## Google Cloud (Tokyo)
+
+Production Supabase is in Tokyo, so the host runs in `asia-northeast1`; every
+request makes several database round trips, and a same-region host keeps each
+one to about a millisecond. [`deploy/vm/gcp`](../deploy/vm/gcp) creates and
+updates it with `gcloud`:
+
+```sh
+gcloud auth login
+export GCP_PROJECT=<project-id>   # optional: GCP_ZONE, GCP_INSTANCE, GCP_MACHINE_TYPE
+deploy/vm/gcp/provision.sh
+```
+
+`provision.sh` is safe to re-run. It creates an `e2-standard-4` Ubuntu 24.04
+VM (4 vCPU, 16 GB, 100 GB disk) in `asia-northeast1-b` with a static IP, on a
+dedicated network whose firewall opens only 80/443 publicly and SSH through
+Identity-Aware Proxy. The VM has no service account, deletion protection is
+on, and its startup script installs Docker and Compose. The static IP is also
+the host's outbound address if a provider allowlists callers.
+
+Write the three configuration files described below locally, outside the
+repository, and move them into place over IAP SSH:
+
+```sh
+ssh_flags="--project $GCP_PROJECT --zone asia-northeast1-b --tunnel-through-iap"
+gcloud compute scp $ssh_flags runtime.env cron.env build.env outrunner-app:
+gcloud compute ssh $ssh_flags outrunner-app --command \
+  'sudo install -m 0600 -o root -g root runtime.env cron.env build.env /etc/outrunner/ && shred -u runtime.env cron.env build.env'
+```
+
+Then deploy:
+
+```sh
+deploy/vm/gcp/deploy.sh            # origin/main
+deploy/vm/gcp/deploy.sh <sha>      # a specific commit of main, or a rollback
+```
+
+`deploy.sh` archives the commit, copies it over IAP SSH, and runs
+`install-release.sh` on the host, as described in the following sections.
+
+## Prepare another host
 
 Use an x86-64 Linux VM with Docker Engine, Compose **2.30 or later**, Python 3,
 and curl. An on-host build should have 4 vCPUs, 8 GB RAM, and 40 GB disk. Node,
@@ -20,15 +60,13 @@ needs ports 80/443. The app is published only on `127.0.0.1:3000`, and cron has
 no published ports. Caddy removes client-supplied Cloudflare address headers,
 supplies forwarding headers, and supports streaming and WebSocket upgrades.
 
-Install the helpers from a reviewed checkout:
-
 ```sh
 sudo install -d -m 0755 /opt/outrunner/releases /usr/local/lib/outrunner
 sudo install -d -m 0700 /etc/outrunner
-sudo install -m 0755 deploy/vm/build-release.sh /usr/local/lib/outrunner/build-release.sh
-sudo install -m 0755 deploy/vm/activate-release.sh /usr/local/sbin/outrunner-activate-release
 sudo systemctl enable --now docker
 ```
+
+Each release installs its own build and activation helpers.
 
 ## Preserve production configuration
 
@@ -65,39 +103,37 @@ Use the existing production values. The hosted CLI pin is recorded in
 ## Build and activate an exact release
 
 Select a commit on `main` that passed CI. Archive that commit rather than
-copying a working directory containing local secrets:
+copying a working directory containing local secrets, and copy it with the
+installer from the same commit:
 
 ```sh
 sha=$(git rev-parse origin/main)
 git archive --format=tar "$sha" > /tmp/outrunner-source.tar
+git show "$sha:deploy/vm/install-release.sh" > /tmp/install-release.sh
+# copy both files to the host, then on the host:
+sudo bash install-release.sh outrunner-source.tar "$sha"
 ```
 
-Transfer the archive over SSH, create a **new** directory
-`/opt/outrunner/releases/$sha`, and extract it there. Do not overwrite a
-running or already-built release. Export only the public build settings:
-
-```sh
-set -a
-. /etc/outrunner/build.env
-set +a
-/usr/local/lib/outrunner/build-release.sh "/opt/outrunner/releases/$sha" "$sha"
-```
+The installer refuses to run until all three files under `/etc/outrunner`
+exist. It extracts the archive into a **new** directory
+`/opt/outrunner/releases/$sha`, installs that release's helpers, builds with
+the public settings from `build.env`, and activates. A release that is already
+built is activated without rebuilding, which is how rollback works.
 
 The image builds the Go agent, verifies the published CLI, and builds Next.
 Its tag is `outrunner-control-plane:<sha>`, with `OUTRUNNER_BUILD` baked in.
 Release metadata `.env.build` contains only public values; runtime secrets
-stay under `/etc/outrunner`. Apply pending migrations before activation;
+stay under `/etc/outrunner`. Apply pending migrations before installing;
 older installations should check the [migration recovery notes](../supabase/README.md).
-
-```sh
-sudo /usr/local/sbin/outrunner-activate-release "$sha"
-```
 
 Activation updates `/opt/outrunner/current`, starts the app, verifies local
 health and the exact build SHA, then starts Caddy. Failed activation restores
 the previous VM image and configuration when available. Previous source
 folders and image tags must remain available for rollback. Caddy persists
-certificates in named volumes; keep those volumes during updates.
+certificates in named volumes; keep those volumes during updates. Each
+release keeps its image; remove old release directories and their
+`outrunner-control-plane:<sha>` images (and run `docker builder prune`) when
+the disk fills, keeping the last few for rollback.
 
 Inspect the selected release:
 
