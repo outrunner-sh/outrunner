@@ -1,7 +1,15 @@
-name: Deploy to Cloudflare Containers
+name: Deploy production
 
-# Builds the control-plane container image and deploys it to
-# https://app.outrunner.sh (outrunner.neev.ai redirects there).
+# Deploys the control plane to https://app.outrunner.sh. The repository
+# variable PRODUCTION_TARGET picks the host: `vm` runs the `deploy-vm` job
+# (Docker Compose on the Compute Engine VM, docs/deploy-vm.md); anything else
+# runs `deploy` (Cloudflare Containers, below). Both share the plan job and the
+# health checks after the deploy.
+#
+# deploy-vm signs in to Google Cloud with Workload Identity Federation (no
+# stored key): repository variables GCP_PROJECT, GCP_WORKLOAD_IDENTITY_PROVIDER
+# and GCP_DEPLOY_SERVICE_ACCOUNT, from deploy/vm/gcp/github-deployer.sh. The
+# VM builds the image and keeps its runtime secrets in /etc/outrunner.
 #
 # Why this exists rather than deploying from a laptop: Cloudflare Containers has
 # no server-side build. `wrangler deploy` builds the image with a LOCAL Docker
@@ -57,11 +65,12 @@ jobs:
     # Resolves what to deploy, checks it, and writes the job summary. Fails,
     # and so deploys nothing, on anything it can't vouch for.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      github.repository == 'outrunner-sh/outrunner' &&
+      (github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
@@ -206,7 +215,7 @@ jobs:
 
   deploy:
     needs: plan
-    if: needs.plan.outputs.deploy == 'true'
+    if: needs.plan.outputs.deploy == 'true' && vars.PRODUCTION_TARGET != 'vm'
     # The `production` environment (Settings -> Environments) allows main
     # only and records each deploy. No required reviewers: main deploys.
     environment:
@@ -273,7 +282,8 @@ jobs:
           sed -i 's/"image_vars": {/"image_vars": {\n        "OUTRUNNER_BUILD": "'"$DEPLOY_SHA"'",/' wrangler.jsonc
           grep -q "\"OUTRUNNER_BUILD\": \"$DEPLOY_SHA\"" wrangler.jsonc
 
-      - name: Note the build live before this deploy
+      - &note-live-build
+        name: Note the build live before this deploy
         # The checks below accept a later commit containing this one as
         # served, but never the build that was already live: on a rollback
         # that build contains this commit and would pass without a deploy.
@@ -305,7 +315,8 @@ jobs:
           wranglerVersion: "4"
           command: deploy --var OUTRUNNER_BUILD:${{ env.DEPLOY_SHA }}
 
-      - name: Wait until users get this deploy
+      - &wait-for-users
+        name: Wait until users get this deploy
         # A deploy can succeed while the container keeps the image before it
         # (cloudflare/worker.ts): only /api/health reporting this commit says
         # users have it. The Worker replaces a container on an older build
@@ -332,7 +343,8 @@ jobs:
           echo "::error::app.outrunner.sh still isn't serving $DEPLOY_SHA after 10 minutes"
           exit 1
 
-      - name: Verify the deployment is actually usable
+      - &verify-usable
+        name: Verify the deployment is actually usable
         # A deploy that returns 200 can still be broken: without
         # CREDENTIALS_ENCRYPTION_KEY the site loads, sign-in works, and every
         # credential write fails. Fail the job rather than report success.
@@ -394,3 +406,50 @@ jobs:
               sys.exit("::error::Codex rollout incomplete: apply 20261103190000_codex_connections.sql and configure the verified CLI build version; " + str(codex))
           print("health OK:", c, codex)
           PY
+
+  deploy-vm:
+    needs: plan
+    if: needs.plan.outputs.deploy == 'true' && vars.PRODUCTION_TARGET == 'vm'
+    # Same environment and queue as the Cloudflare job: main only, one at a time.
+    environment:
+      name: production
+      url: https://app.outrunner.sh
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # The VM builds the image (several minutes) before activating it.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+      id-token: write # Workload Identity Federation
+    env:
+      DEPLOY_SHA: ${{ needs.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          # deploy.sh checks the commit is on origin/main and archives it.
+          fetch-depth: 0
+
+      - *note-live-build
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and activate on the VM
+        # Archives the commit, builds it on the VM, and activates it only if
+        # the VM's local /api/health reports this build; otherwise the VM
+        # restores the release before it and this step fails.
+        env:
+          GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+        run: deploy/vm/gcp/deploy.sh "$DEPLOY_SHA"
+
+      - *wait-for-users
+
+      - *verify-usable

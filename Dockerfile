@@ -48,6 +48,7 @@ ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 ENV NEXT_PUBLIC_CODEX_CLI_VERSION=$NEXT_PUBLIC_CODEX_CLI_VERSION
 RUN test -n "$NEXT_PUBLIC_SUPABASE_URL" -a -n "$NEXT_PUBLIC_SUPABASE_ANON_KEY" \
   || (echo "ERROR: NEXT_PUBLIC_SUPABASE_* build args are empty; the client bundle would ship without them" && exit 1)
+RUN node scripts/verify-codex-cli.mjs "$NEXT_PUBLIC_CODEX_CLI_VERSION"
 RUN pnpm build
 
 # ---- runtime: server.ts under tini + the built agent binary -------------------
