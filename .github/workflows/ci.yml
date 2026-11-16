@@ -72,16 +72,20 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: Read the supported Codex CLI version
+      - name: Check the image's public values and read the Codex CLI version
         run: |
           node -e '
             const ts = require("typescript");
             const file = "cloudflare/wrangler.jsonc";
             const { config, error } = ts.parseConfigFileTextToJson(file, require("fs").readFileSync(file, "utf8"));
             if (error) throw new Error(`${file}: ${ts.flattenDiagnosticMessageText(error.messageText, " ")}`);
-            const version = config.containers?.[0]?.image_vars?.NEXT_PUBLIC_CODEX_CLI_VERSION;
-            if (!version) throw new Error(`${file} has no image_vars.NEXT_PUBLIC_CODEX_CLI_VERSION`);
-            console.log(`NEXT_PUBLIC_CODEX_CLI_VERSION=${version}`);
+            const vars = config.containers?.[0]?.image_vars ?? {};
+            // The Dockerfile refuses a build without these; caught here, not
+            // as a failed deploy. CI builds with the synthetic values above.
+            for (const name of ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_CODEX_CLI_VERSION"]) {
+              if (!vars[name]) throw new Error(`${file} has no image_vars.${name}`);
+            }
+            console.log(`NEXT_PUBLIC_CODEX_CLI_VERSION=${vars.NEXT_PUBLIC_CODEX_CLI_VERSION}`);
           ' >> "$GITHUB_ENV"
       - name: Verify the pinned public Codex CLI
         run: node scripts/verify-codex-cli.mjs "$NEXT_PUBLIC_CODEX_CLI_VERSION"
