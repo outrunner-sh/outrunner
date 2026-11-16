@@ -87,7 +87,8 @@ test("VM scheduler container runs the jobs and shuts down cleanly during its int
   });
   const origin = await listen(server);
   const child = spawn(process.execPath, ["deploy/vm/cron.mjs"], {
-    env: { BILLING_CRON_SECRET: "vm-loop-key", OUTRUNNER_CRON_ORIGIN: origin },
+    // Next.js types make NODE_ENV a required ProcessEnv key.
+    env: { NODE_ENV: "test", BILLING_CRON_SECRET: "vm-loop-key", OUTRUNNER_CRON_ORIGIN: origin },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";

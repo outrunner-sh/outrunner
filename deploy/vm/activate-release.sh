@@ -26,7 +26,7 @@ healthy() {
     | python3 -c 'import json,sys; h=json.load(sys.stdin); sys.exit(0 if h.get("ok") is True and h.get("build")==sys.argv[1] else 1)' "$1"
 }
 ready() {
-  for attempt in {1..30}; do
+  for _ in {1..30}; do
     if healthy "$1" 2>/dev/null; then return 0; fi
     sleep 2
   done
