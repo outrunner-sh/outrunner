@@ -43,6 +43,7 @@ Then deploy:
 ```sh
 deploy/vm/gcp/deploy.sh            # origin/main
 deploy/vm/gcp/deploy.sh <sha>      # a specific commit of main, or a rollback
+OUTRUNNER_ALLOW_UNMERGED=1 deploy/vm/gcp/deploy.sh <sha>   # a pushed PR commit, for testing
 ```
 
 `deploy.sh` archives the commit, copies it over IAP SSH, and runs

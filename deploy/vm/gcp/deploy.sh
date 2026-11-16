@@ -4,14 +4,21 @@
 # the new one fails its health check. Passing an already-built SHA rolls back.
 #
 #   GCP_PROJECT=<project-id> deploy/vm/gcp/deploy.sh [SHA]   # default: origin/main
+#
+# OUTRUNNER_ALLOW_UNMERGED=1 also accepts a commit pushed to any branch on
+# origin, to try a pull request on the host before it merges.
 set -euo pipefail
 project="${GCP_PROJECT:?Set GCP_PROJECT to the Google Cloud project ID}"
 zone="${GCP_ZONE:-asia-northeast1-b}"
 instance="${GCP_INSTANCE:-outrunner-app}"
 
-git fetch --quiet origin main
+git fetch --quiet origin
 sha="$(git rev-parse --verify "${1:-origin/main}^{commit}")"
-git merge-base --is-ancestor "$sha" origin/main || { echo "$sha is not on origin/main" >&2; exit 1; }
+if ! git merge-base --is-ancestor "$sha" origin/main; then
+  [[ "${OUTRUNNER_ALLOW_UNMERGED:-}" = 1 ]] || { echo "$sha is not on origin/main (OUTRUNNER_ALLOW_UNMERGED=1 accepts a pushed branch)" >&2; exit 1; }
+  git branch -r --contains "$sha" | grep -q '^ *origin/' || { echo "$sha is not pushed to origin" >&2; exit 1; }
+  echo "Deploying $sha, which is not on main" >&2
+fi
 
 # Archive the commit, never the working tree, so local files and secrets stay here.
 work="$(mktemp -d)"
