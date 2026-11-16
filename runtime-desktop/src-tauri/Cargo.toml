@@ -3,7 +3,7 @@ name = "runtime-desktop"
 version = "0.1.0"
 description = "Outrunner macOS shell and local coding-agent sessions"
 license = "MIT"
-repository = "https://github.com/neevai-labs/outrunner"
+repository = "https://github.com/outrunner-sh/outrunner"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

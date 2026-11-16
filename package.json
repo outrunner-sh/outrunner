@@ -68,6 +68,6 @@
   "description": "Persistent coding-agent workspaces for the browser and Mac.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/neevai-labs/outrunner.git"
+    "url": "https://github.com/outrunner-sh/outrunner.git"
   }
 }

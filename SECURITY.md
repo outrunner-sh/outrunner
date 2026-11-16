@@ -3,7 +3,7 @@
 ## Report a vulnerability
 
 Please report security issues privately using
-[GitHub's vulnerability reporting](https://github.com/neevai-labs/outrunner/security/advisories/new).
+[GitHub's vulnerability reporting](https://github.com/outrunner-sh/outrunner/security/advisories/new).
 If that option is unavailable, email [support@outrunner.sh](mailto:support@outrunner.sh)
 with “Security” in the subject. Do not post credentials or exploit details in a
 public issue or pull request.

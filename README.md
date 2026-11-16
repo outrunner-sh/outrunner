@@ -44,7 +44,7 @@ Cloud sessions also need a configured sandbox provider and the Go toolchain
 pinned in [runtime-agent/go.mod](runtime-agent/go.mod).
 
 ```sh
-git clone https://github.com/neevai-labs/outrunner.git
+git clone https://github.com/outrunner-sh/outrunner.git
 cd outrunner
 corepack enable
 pnpm install --frozen-lockfile

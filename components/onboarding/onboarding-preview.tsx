@@ -64,8 +64,8 @@ const OPTIONS: { [K in keyof Scenario]: { label: string; values: [Scenario[K], s
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const REPOS: RepositoryListing[] = [
-  repo(1, "neevai-labs/outrunner", "Run coding agents in the cloud", true, "2026-10-25"),
-  repo(2, "neevai-labs/interface", "The marketing site", true, "2026-10-20"),
+  repo(1, "outrunner-sh/outrunner", "Run coding agents in the cloud", true, "2026-10-25"),
+  repo(2, "outrunner-sh/interface", "The marketing site", true, "2026-10-20"),
   repo(3, "sajdakabir/blog", null, false, "2026-10-01"),
   repo(4, "immadsahin/millerp", "Rice mill accounting", true, "2026-09-12"),
 ];
