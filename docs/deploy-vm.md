@@ -49,6 +49,24 @@ OUTRUNNER_ALLOW_UNMERGED=1 deploy/vm/gcp/deploy.sh <sha>   # a pushed PR commit,
 `deploy.sh` archives the commit, copies it over IAP SSH, and runs
 `install-release.sh` on the host, as described in the following sections.
 
+### Automatic deploys
+
+With the repository variable `PRODUCTION_TARGET=vm`, every merge to `main`
+deploys to the VM once CI passes: the `deploy-vm` job in
+[`deploy.yml`](../.github/workflows/deploy.yml) runs `deploy.sh` for that
+commit, then checks that `https://app.outrunner.sh/api/health` serves it and
+reports a usable configuration. Rollback is the same workflow run by hand with
+an earlier `ref`. The job signs in with Workload Identity Federation, so no
+Google key is stored in GitHub; set it up once with:
+
+```sh
+GCP_PROJECT=<project-id> deploy/vm/gcp/github-deployer.sh
+```
+
+It trusts only this repository's `production` environment (main only), and
+the deployer service account can only SSH with sudo into this one VM over
+IAP. Set the four repository variables it prints.
+
 ## Prepare another host
 
 Use an x86-64 Linux VM with Docker Engine, Compose **2.30 or later**, Python 3,
