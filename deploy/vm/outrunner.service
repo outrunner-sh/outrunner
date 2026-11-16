@@ -1,0 +1,30 @@
+[Unit]
+Description=Outrunner control plane
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=outrunner
+Group=outrunner
+WorkingDirectory=/opt/outrunner/current
+EnvironmentFile=/etc/outrunner/runtime.env
+EnvironmentFile=/opt/outrunner/current/.env.build
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=RUNTIME_AGENT_BINARY_PATH=bin/runtime-agent-linux-amd64
+ExecStart=/usr/bin/node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON server.ts
+Restart=always
+RestartSec=5
+TimeoutStopSec=45
+KillSignal=SIGTERM
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/outrunner/current/.next/cache
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

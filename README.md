@@ -186,3 +186,8 @@ threat model included.
 - Validation report — [`spike4-runtime-report.md`](docs/architecture/spike4-runtime-report.md)
 - GitHub App (`@outrunner` on issues and pull requests, its permissions and events) — [`docs/github-app.md`](docs/github-app.md)
 - GitLab code provider (repositories, personal tokens and merge requests) — [`docs/gitlab.md`](docs/gitlab.md)
+
+## VM hosting
+
+For direct Node/systemd hosting without Cloudflare Containers or Docker, see
+[the VM deployment guide](docs/deploy-vm.md).
