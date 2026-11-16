@@ -1,7 +1,7 @@
 # Replace the hostname for a separate installation. Keep the application's
 # RUNTIME_BASE_URL equal to this HTTPS origin.
-app.outrunner.sh {
-	reverse_proxy 127.0.0.1:3000 {
+{$APP_DOMAIN} {
+	reverse_proxy app:8080 {
 		# This origin is reached directly. Remove a client-supplied Cloudflare
 		# address; Caddy supplies X-Forwarded-For from the actual connection.
 		header_up -CF-Connecting-IP

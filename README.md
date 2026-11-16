@@ -189,5 +189,5 @@ threat model included.
 
 ## VM hosting
 
-For direct Node/systemd hosting without Cloudflare Containers or Docker, see
+For Docker Compose hosting on a VM without Cloudflare Containers, see
 [the VM deployment guide](docs/deploy-vm.md).

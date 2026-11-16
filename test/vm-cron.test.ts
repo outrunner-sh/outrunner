@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { test } from "node:test";
@@ -75,4 +76,38 @@ test("VM scheduler isolates failed and timed-out jobs and never forwards credent
 
 test("VM scheduler refuses an absent cron credential", async () => {
   await assert.rejects(tick(""), /BILLING_CRON_SECRET is required/);
+});
+
+test("VM scheduler container runs the jobs and shuts down cleanly during its interval", async () => {
+  const received: string[] = [];
+  const server = createServer((request, response) => {
+    received.push(request.url!);
+    assert.equal(request.headers.authorization, "Bearer vm-loop-key");
+    response.end("ok");
+  });
+  const origin = await listen(server);
+  const child = spawn(process.execPath, ["deploy/vm/cron.mjs"], {
+    env: { BILLING_CRON_SECRET: "vm-loop-key", OUTRUNNER_CRON_ORIGIN: origin },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  let errors = "";
+  child.stdout.on("data", (chunk) => {
+    output += chunk.toString();
+    if (output.trim().split("\n").length >= paths.length) child.kill("SIGTERM");
+  });
+  child.stderr.on("data", (chunk) => { errors += chunk.toString(); });
+  try {
+    const code = await new Promise<number | null>((resolve, reject) => {
+      const timeout = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("Scheduler did not shut down")); }, 5000);
+      child.once("error", (error) => { clearTimeout(timeout); reject(error); });
+      child.once("exit", (status) => { clearTimeout(timeout); resolve(status); });
+    });
+    assert.equal(code, 0, errors);
+    assert.deepEqual(new Set(received), new Set(paths));
+    assert.equal(output.includes("vm-loop-key"), false);
+  } finally {
+    child.kill("SIGKILL");
+    await close(server);
+  }
 });
