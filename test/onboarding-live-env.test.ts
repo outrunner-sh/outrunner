@@ -7,11 +7,14 @@ import {
   CLI_DEFAULT_URL,
   connectClaudeCommand,
   connectedAgent,
+  connectedSummary,
   filterRepositories,
   freeModelsOffer,
   newSessionAfterOnboarding,
   parseAgentPick,
   parseProgress,
+  pickedProjects,
+  pickSummary,
   resumeAt,
   sortRepositories,
   startingPick,
@@ -165,6 +168,36 @@ test("repositories show most recently pushed first, and filter by name or descri
   const list = [repo("acme/web", null, "Marketing site"), repo("acme/api", null)];
   assert.deepEqual(filterRepositories(list, "MARKET").map((r) => r.fullName), ["acme/web"]);
   assert.equal(filterRepositories(list, "  ").length, 2);
+});
+
+test("the picker counts new picks apart from repositories connected already", () => {
+  assert.equal(pickSummary(0, 0), "Pick at least one");
+  assert.equal(pickSummary(1, 0), "1 picked");
+  assert.equal(pickSummary(0, 31), "31 already connected");
+  assert.equal(pickSummary(1, 31), "1 picked · 31 already connected");
+});
+
+test("an org with repositories connected already is told how many, a few by name", () => {
+  assert.deepEqual(connectedSummary(["a/one"], 1), { title: "1 repository connected", detail: "a/one" });
+  assert.deepEqual(connectedSummary(["a/one", "a/two"], 2), { title: "2 repositories connected", detail: "a/one and a/two" });
+  assert.deepEqual(connectedSummary(["a/one", "a/two", "a/three"], 3).detail, "a/one, a/two and a/three");
+  // Counted, though the listing no longer has them.
+  assert.deepEqual(connectedSummary(["a/one", "a/two", "a/three", "a/four"], 32).detail, "a/one, a/two, a/three and 29 more");
+  assert.deepEqual(connectedSummary(["a/one"], 2).detail, "a/one and 1 more");
+  assert.deepEqual(connectedSummary([], 2), { title: "2 repositories connected", detail: "" });
+});
+
+test("the first session starts on the first repository ticked, not the most recently pushed", () => {
+  // As the connect routes return them: every project, most recently pushed first.
+  const projects = [
+    { id: "recent", githubRepoId: 3 },
+    { id: "gitlab", provider: "gitlab" as const, githubRepoId: null, repositoryId: 2 },
+    { id: "ticked-first", githubRepoId: 2 },
+    { id: "ticked-second", githubRepoId: 1 },
+  ];
+  assert.deepEqual(pickedProjects(projects, [2, 1], "github").map((p) => p.id), ["ticked-first", "ticked-second"]);
+  assert.deepEqual(pickedProjects(projects, [2], "gitlab").map((p) => p.id), ["gitlab"]);
+  assert.deepEqual(pickedProjects(projects, [9], "github"), []);
 });
 
 test("GitHub's refusal is carried as reconnect, and other errors aren't", async () => {

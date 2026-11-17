@@ -14,15 +14,19 @@ import { Spinner } from "@/components/ui/loaders";
 import { LoadingButton } from "@/components/ui/loading-button";
 import type { RepositoryListing } from "@/lib/github/listing";
 import { OnboardingError } from "@/lib/onboarding/live-env";
-import { filterRepositories, sortRepositories } from "@/lib/onboarding/rules";
+import { connectedSummary, filterRepositories, pickedProjects, pickSummary, sortRepositories } from "@/lib/onboarding/rules";
 import type { GitHubAccess, OnboardingEnv } from "@/lib/onboarding/types";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /**
  * Step 2, the last: GitHub or GitLab repositories to work on, connected as
- * projects. Those already connected start ticked. At least one is needed: a
- * session works in a repository. Done, onboarding ends (`onDone`).
+ * projects. An org with some connected already says so in place of the
+ * picker, which "Add more" opens: there, those show ticked and stay so, apart
+ * from the new picks. Only the new picks are connected and counted, and the
+ * first session starts on the first ticked. At least one repository is
+ * needed, new or already connected: a session works in one. Done, onboarding
+ * ends (`onDone`).
  *
  * They're added to the active org, from its Outrunner GitHub App, or from the
  * user's own GitHub account in an org without it. One with neither (a Google
@@ -44,7 +48,11 @@ export function ReposStep({
   const [gitlabError, setGitlabError] = useState<string | null>(null);
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const [list, setList] = useState<RepositoryListing[] | null>(null);
+  // The new picks, in the order ticked; those already projects apart.
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [connected, setConnected] = useState<Set<number>>(new Set());
+  // The picker opened ("Add more") where some are connected already.
+  const [browsing, setBrowsing] = useState(false);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; reconnect: boolean } | null>(null);
@@ -113,7 +121,8 @@ export function ReposStep({
         if (stale) return;
         setListError(null);
         setList(sortRepositories(repositories));
-        setPicked(new Set(connected));
+        setConnected(new Set(connected));
+        setPicked(new Set());
       })
       .catch((e: unknown) => {
         if (stale) return;
@@ -140,6 +149,8 @@ export function ReposStep({
     setProvider(next);
     setList(null);
     setPicked(new Set());
+    setConnected(new Set());
+    setBrowsing(false);
     setQuery("");
     setError(null);
     setListError(null);
@@ -151,6 +162,7 @@ export function ReposStep({
     if (currentProvider.current !== "gitlab") return;
     setGitlab(connection);
     setPicked(new Set());
+    setConnected(new Set());
     retryList();
   }
 
@@ -166,11 +178,25 @@ export function ReposStep({
     setError(null);
     setListError(null);
     setPicked(new Set());
+    setConnected(new Set());
+    setBrowsing(false);
     setAccess({ ...access, activeOrgId: orgId });
     setAttempt((n) => n + 1);
   }
 
   const shown = useMemo(() => filterRepositories(list ?? [], query), [list, query]);
+  // Read, and some connected already: said so, rather than the list to pick from.
+  const settled = list !== null && !listError && connected.size > 0 && !browsing;
+  const summary = useMemo(
+    () => connectedSummary(
+      (list ?? []).flatMap((repo) => {
+        const id = repo.repositoryId ?? repo.githubRepoId;
+        return id !== null && connected.has(id) ? [repo.fullName] : [];
+      }),
+      connected.size,
+    ),
+    [list, connected],
+  );
   const toggle = (id: number) =>
     setPicked((current) => {
       const next = new Set(current);
@@ -184,9 +210,9 @@ export function ReposStep({
     setError(null);
     try {
       const ids = [...picked];
-      const projects = await env.connect(ids, provider);
-      const selected = new Set(ids.map((id) => `${provider}:${id}`));
-      await onDone(projects.filter((project) => selected.has(repositoryKey(project))));
+      // Nothing new: the new-session screen picks among those connected.
+      const projects = ids.length > 0 ? await env.connect(ids, provider) : [];
+      await onDone(pickedProjects(projects, ids, provider));
       // Still busy: the page is on its way out.
     } catch (e) {
       setError({
@@ -234,6 +260,16 @@ export function ReposStep({
           ownRepositories={active.personal}
           orgName={active.name}
         />
+      ) : settled ? (
+        <DashedPanel className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 text-sm">
+          <div className="min-w-0 space-y-0.5">
+            <p className="text-foreground font-medium">{summary.title}</p>
+            {summary.detail && <p className="text-muted-foreground truncate font-mono text-xs">{summary.detail}</p>}
+          </div>
+          <button type="button" disabled={busy} onClick={() => setBrowsing(true)} className="text-foreground shrink-0 underline underline-offset-4">
+            Add more
+          </button>
+        </DashedPanel>
       ) : (provider === "github" || gitlab) && (
       <DashedPanel>
         <div className="relative">
@@ -274,23 +310,27 @@ export function ReposStep({
             <ul className="space-y-0.5">
               {shown.map((repo) => {
                 const id = repo.repositoryId ?? repo.githubRepoId;
-                const on = id !== null && picked.has(id);
+                const already = id !== null && connected.has(id);
+                const on = already || (id !== null && picked.has(id));
                 return (
                   <li key={repositoryKey(repo)}>
                     <button
                       type="button"
                       role="checkbox"
                       aria-checked={on}
+                      disabled={already}
                       onClick={() => id !== null && toggle(id)}
                       className={cn(
                         "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors",
-                        on ? "bg-accent/40" : "hover:bg-accent/20",
+                        already ? "cursor-default" : on ? "bg-accent/40" : "hover:bg-accent/20",
                       )}
                     >
                       <span
                         className={cn(
                           "flex size-4 shrink-0 items-center justify-center rounded border transition-colors",
-                          on ? "border-foreground bg-foreground text-background" : "border-border",
+                          already
+                            ? "border-muted-foreground/60 bg-muted-foreground/60 text-background"
+                            : on ? "border-foreground bg-foreground text-background" : "border-border",
                         )}
                       >
                         {on && <Check className="size-3" strokeWidth={3} />}
@@ -302,6 +342,7 @@ export function ReposStep({
                         </span>
                         {repo.description && <span className="text-muted-foreground block truncate text-xs">{repo.description}</span>}
                       </span>
+                      {already && <span className="text-muted-foreground shrink-0 text-xs">Connected</span>}
                     </button>
                   </li>
                 );
@@ -319,11 +360,11 @@ export function ReposStep({
       )}
 
       <div className="flex items-center justify-between">
-        <span className="text-muted-foreground text-xs">{picked.size === 0 ? "Pick at least one" : `${picked.size} picked`}</span>
+        <span className="text-muted-foreground text-xs">{settled ? "" : pickSummary(picked.size, connected.size)}</span>
         <LoadingButton
           size="default"
           status={busy ? "pending" : "idle"}
-          disabled={picked.size === 0}
+          disabled={picked.size === 0 && connected.size === 0}
           onClick={() => void next()}
           labels={{ idle: "Finish", pending: "Connecting" }}
         />
