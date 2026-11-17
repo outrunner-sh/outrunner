@@ -244,12 +244,12 @@ export async function followUpApi(context: ApiContext, agentId: string): Promise
   // The send named its run: its place, as the log has it now (another
   // message sent at the same moment may have come first).
   const after = runId || before.from === "none" ? await agentRuns(context, id) : null;
-  const now = after && !(after instanceof Response) ? after.runs : [];
-  const logged = runId ? now.find((r) => r.id === runId) : undefined;
+  const logNow = after && !(after instanceof Response) ? after.runs : [];
+  const logged = runId ? logNow.find((r) => r.id === runId) : undefined;
   // A session read as nothing before it was woken (paused, its log on its
   // box): counted now, its newest run this one when it says what was sent.
   const sentText = String(parsed.body.content ?? "").trim();
-  const woken = before.from === "none" ? (now.at(-1)?.prompt.trim() === sentText ? now.length : now.length + 1) : undefined;
+  const woken = before.from === "none" ? (logNow.at(-1)?.prompt.trim() === sentText ? logNow.length : logNow.length + 1) : undefined;
   const number = logged?.number ?? woken ?? before.runs.length + 1;
   const now = new Date().toISOString();
   const run = { id: cursorRunId(number), agentId: id, status: "CREATING", createdAt: now, updatedAt: now };
