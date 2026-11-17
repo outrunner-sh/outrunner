@@ -55,6 +55,18 @@ export function abandonedBefore(now: Date): string {
   return new Date(now.getTime() - FIRST_PROMPT_SENDING_MS).toISOString();
 }
 
+/**
+ * How long a page waits before asking again, its first prompt found on its way
+ * from another sender (FIRST_PROMPT_SENDING): a moment at first, longer as it
+ * goes on. Null once it has waited past the time a claim may go unrenewed, by
+ * when the last ask has taken an abandoned claim over (sending it) or found it
+ * sent: still refused then, the page says so, and the user can try again.
+ */
+export function firstPromptRetryMs(attempt: number, waitedMs: number): number | null {
+  if (waitedMs > FIRST_PROMPT_SENDING_MS + 10_000) return null;
+  return Math.min(1000 * Math.max(1, attempt), 5000);
+}
+
 const KEY_RE = /^[A-Za-z0-9_-]{1,100}$/;
 
 /** The request's first-prompt key, if it names a usable one (the browser's

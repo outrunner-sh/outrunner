@@ -158,3 +158,14 @@ test("a claim is abandoned only well after its send would have timed out", () =>
   assert.equal(abandonedBefore(now), new Date(now.getTime() - FIRST_PROMPT_SENDING_MS).toISOString());
   assert.ok(FIRST_PROMPT_SENDING_MS > 35_000 * 2);
 });
+
+test("a page told its first prompt is on its way asks again, a little later each time, until a claim would be abandoned", async () => {
+  const { firstPromptRetryMs } = await import("@/lib/session/first-prompt-claim");
+  assert.equal(firstPromptRetryMs(1, 0), 1000);
+  assert.equal(firstPromptRetryMs(3, 3000), 3000);
+  assert.equal(firstPromptRetryMs(20, 60_000), 5000);
+  // Past an abandoned claim's time, the last ask has taken it over or found
+  // it sent: refused still, the page says so.
+  assert.equal(typeof firstPromptRetryMs(30, FIRST_PROMPT_SENDING_MS), "number");
+  assert.equal(firstPromptRetryMs(30, FIRST_PROMPT_SENDING_MS + 10_001), null);
+});
