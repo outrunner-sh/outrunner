@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Compute Engine startup script. Runs as root on every boot, so it only
-# installs what is missing: Docker Engine with Compose from Docker's official
-# repository, and the directories the release helpers expect.
+# Prepare an Ubuntu host for the release helpers. Runs as root; safe to run
+# again, so Compute Engine also uses it as its startup script on every boot
+# (gcp/provision.sh). Installs what is missing: Docker Engine with Compose
+# from Docker's official repository, and the directories the helpers expect.
+# Elsewhere: ssh root@host 'bash -s' < deploy/vm/setup-host.sh
 set -euo pipefail
 if ! command -v docker >/dev/null || ! docker compose version >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive

@@ -51,10 +51,10 @@ if missing compute instances describe "$instance" --zone "$zone"; then
     --shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring \
     --no-service-account --no-scopes --deletion-protection \
     --metadata enable-oslogin=TRUE,block-project-ssh-keys=TRUE \
-    --metadata-from-file startup-script="$here/startup.sh"
+    --metadata-from-file startup-script="$here/../setup-host.sh"
 else
   gc compute instances add-metadata "$instance" --zone "$zone" \
-    --metadata-from-file startup-script="$here/startup.sh"
+    --metadata-from-file startup-script="$here/../setup-host.sh"
   echo "Instance $instance already exists; refreshed its startup script (applies on next boot)"
 fi
 
