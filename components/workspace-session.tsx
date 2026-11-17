@@ -87,7 +87,8 @@ import { editQueued, moveQueued, type QueuedPrompt, queueDrains, readQueue, writ
 import { runQueuedAction } from "@/lib/session/queue-actions";
 import { patchRowAhead } from "@/lib/session/rows-ahead";
 import { sendIsDeadEnd } from "@/lib/session/send-failure";
-import { BOX_GONE, BOX_RESTORE_FAILED, SESSION_ENDED, SESSION_NOT_STARTED } from "@/lib/session/session-codes";
+import { BOX_GONE, BOX_RESTORE_FAILED, FIRST_PROMPT_SENDING, SESSION_ENDED, SESSION_NOT_STARTED } from "@/lib/session/session-codes";
+import { firstPromptRetryMs } from "@/lib/session/first-prompt-claim";
 import type { OutrunnerModels } from "@/lib/desktop/local-runtime";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
@@ -363,13 +364,20 @@ export function WorkspaceSession({
         (error: unknown) => failed(localSendFailure(error)),
       );
     }
-    return fetch(chatRoute(workspaceId, chatId, "message"), {
+    const since = Date.now();
+    const post = (attempt: number): Promise<boolean> => fetch(chatRoute(workspaceId, chatId, "message"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content: text, attachmentIds, ...(firstPromptKey && { firstPromptKey }), ...(how.mode && { mode: how.mode }), ...(how.dismiss && { dismiss: true }), ...(how.queuedKey && { queuedKey: how.queuedKey }) }),
     }).then(
       async (res) => {
         const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string; code?: string; result?: string };
+        // The first prompt is on its way from another sender (setup handing
+        // over the kept copy, most often): it lands from there, so its bubble
+        // stays and this asks again shortly, answered "already" once it went,
+        // or sending it itself if that send failed. Not "Not sent".
+        const wait = body.code === FIRST_PROMPT_SENDING ? firstPromptRetryMs(attempt, Date.now() - since) : null;
+        if (wait !== null) return new Promise<boolean>((resolve) => setTimeout(() => resolve(post(attempt + 1)), wait));
         if (!res.ok) return failed(body.error ?? "Could not send that message.", body.code);
         if (body.result === "already") setPending((prev) => prev.filter((p) => p.id !== pendingId));
         else anchor(pendingId, sentAt);
@@ -381,6 +389,7 @@ export function WorkspaceSession({
       },
       () => failed("Couldn't reach Outrunner. Check your connection."),
     );
+    return post(1);
   };
 
   // Create PR, in the Environment panel, sends through here too: its prompt
