@@ -272,3 +272,15 @@ export function actorLabel(actor: AuditActor): string {
   if (actor === "system") return "Outrunner";
   return (actor.githubLogin || actor.name || actor.email || actor.id).slice(0, 200);
 }
+
+/** What an audit event's details hold at most (20261101115000_audit_events.sql
+ *  checks 8 KB), less room for its JSON's own. */
+export const MAX_DETAILS_BYTES = 7 * 1024;
+
+/** `details` as the log can keep them: scripts and hooks too large to are
+ *  left out, and said to be (the change itself is still recorded). */
+export function keepable(details: Record<string, unknown>): Record<string, unknown> {
+  if (new TextEncoder().encode(JSON.stringify(details)).length <= MAX_DETAILS_BYTES) return details;
+  const rest = Object.fromEntries(Object.entries(details).filter(([key]) => key !== "hooks" && key !== "scripts"));
+  return { ...rest, contents_omitted: true };
+}

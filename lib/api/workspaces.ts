@@ -112,15 +112,16 @@ export async function createWorkspace(
     if (!found) return apiError(404, await noRepository(context, input.repoFullName));
     projectId = found.id;
   }
+  let environmentId: string | undefined;
   if (input.environmentId) {
     const environment = await getEnvironment(owner.id, input.environmentId);
     if (!environment || environment.orgId !== caller.orgId) return apiError(404, "No project by that id that you can see.");
-    // A session starts from its repository's own project (the one it's the
-    // default of), which is what the new-session screen does too.
-    projectId = environment.defaultForProjectId;
-    if (!projectId) {
-      return apiError(409, "Sessions start from a repository's project. Name one of its repositories with `project_id`.");
-    }
+    // It works first in the repository the project is the default of, else
+    // its first: a project someone made has every one of them checked out,
+    // as the new-session screen starts it.
+    projectId = environment.defaultForProjectId ?? environment.repos[0]?.projectId ?? null;
+    if (!projectId) return apiError(409, "That project holds no repository to work in: add one first.");
+    environmentId = environment.id;
   }
   const project = projectId ? await getProject(projectId) : null;
   if (!project || project.orgId !== caller.orgId || !allows(await projectLevel(owner.id, project.id), "read")) {
@@ -159,6 +160,7 @@ export async function createWorkspace(
         firstAttachmentIds: attachmentIds,
         source: "api",
         boxSize: input.size && isBoxSizeId(input.size) ? input.size : undefined,
+        ...(environmentId && { environmentId }),
         // Kept before its box is set up, which reads them; a session asked
         // for them that couldn't keep them goes no further.
         ...(input.overrides && { onCreated: (id: string) => storeSessionOverrides(id, input.overrides!) }),

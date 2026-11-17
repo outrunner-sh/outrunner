@@ -9,6 +9,7 @@
 
 import { open, seal } from "@/lib/crypto/secret-box";
 import { coversRepos } from "@/lib/session/session-overrides";
+import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 export type SecretType = "runtime_secret" | "environment_variable";
@@ -98,6 +99,8 @@ export async function deleteScopedSecret(scope: SecretScope, name: string): Prom
 async function opened(scope: SecretScope, fullNames: readonly string[]): Promise<Record<string, string>> {
   const t = table(scope);
   const { data, error } = await t.db.from(t.name).select("name, repos, value_ciphertext").eq(t.key, t.value);
+  // Before the migration that adds them, there are none.
+  if (error && probeStatus(error) === "missing") return {};
   if (error) throw error;
   const env: Record<string, string> = {};
   for (const row of data ?? []) {

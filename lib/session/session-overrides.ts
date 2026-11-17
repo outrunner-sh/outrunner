@@ -13,7 +13,7 @@
 import type { AgentConfig } from "@/lib/db/agent-config";
 import type { EnvironmentSetup } from "@/lib/db/environments";
 import { claudeMcpServer, MAX_MCP_SERVERS, newMcpServer } from "@/lib/environments/mcp";
-import { EnvironmentRuleError, utf8Bytes } from "@/lib/environments/rules";
+import { EnvironmentRuleError, MAX_ENV_BYTES, utf8Bytes } from "@/lib/environments/rules";
 import { settableEnv } from "@/lib/imports/settable-env";
 
 /** A subagent the session's agent may hand work to (Claude Code's `--agents`). */
@@ -31,6 +31,9 @@ export type SessionOverrides = {
 export const MAX_SESSION_ENV = 50;
 const MAX_ENV_VALUE_BYTES = 4096;
 export const MAX_SUBAGENTS = 20;
+/** A session's subagents in all, as the box measures them: they ride on
+ *  Claude's command line (runtime-agent/internal/workspace/subagents.go). */
+export const MAX_SUBAGENTS_BYTES = 64 * 1024;
 const MAX_DESCRIPTION = 1_000;
 const MAX_SUBAGENT_PROMPT_BYTES = 32 * 1024;
 const SUBAGENT_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -122,7 +125,16 @@ function subagentsOf(value: unknown): Record<string, Subagent> | string {
     const model = subagentModel(raw.model);
     subagents[name] = { description, prompt, ...(model && { model }) };
   }
+  if (goJsonBytes(subagents) > MAX_SUBAGENTS_BYTES) return `A session's subagents take up to ${MAX_SUBAGENTS_BYTES / 1024} KB in all: shorten their prompts.`;
   return subagents;
+}
+
+/** `value`'s size as Go's encoding/json writes it, which also escapes <, >
+ *  and & (as \u003c: 6 bytes) and U+2028/U+2029. */
+export function goJsonBytes(value: unknown): number {
+  const json = JSON.stringify(value);
+  const escaped = (json.match(/[<>&]/g)?.length ?? 0) * 5 + (json.match(/[\u2028\u2029]/g)?.length ?? 0) * 3;
+  return utf8Bytes(json) + escaped;
 }
 
 /** A start request's `env`, `mcp_servers` and `subagents`, checked; null
@@ -184,4 +196,19 @@ export function coversRepos(repos: readonly string[], fullNames: readonly string
   if (repos.length === 0) return true;
   const wanted = new Set(fullNames.map((n) => n.toLowerCase()));
   return repos.some((r) => wanted.has(r.toLowerCase().replace(/^https?:\/\/(www\.)?github\.com\//, "").replace(/\.git$/, "")));
+}
+
+/** The size of the variables file a box writes for `env`: an `export
+ *  NAME='value'` line each (runtime-agent/internal/workspace/environment.go,
+ *  which takes at most MAX_ENV_BYTES). */
+export function envFileBytes(env: Record<string, string>): number {
+  return Object.entries(env).reduce((n, [name, value]) => n + utf8Bytes(`export ${name}='${value.replace(/'/g, "'\\''")}'\n`), 0);
+}
+
+/** Why a session's variables, all laid together, are more than its box
+ *  takes; null when they fit. */
+export function oversizedEnv(environment: EnvironmentSetup | null): string | null {
+  const bytes = environment ? envFileBytes(environment.env) : 0;
+  if (bytes <= MAX_ENV_BYTES) return null;
+  return `This session's variables come to ${Math.ceil(bytes / 1024)} KB, over the ${MAX_ENV_BYTES / 1024} KB a box takes: its project's, its org's secrets, yours and its own together. Remove some of them.`;
 }

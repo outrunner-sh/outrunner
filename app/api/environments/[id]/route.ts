@@ -105,9 +105,16 @@ export async function PATCH(request: Request, context: RouteContext) {
     // A new warm hook: the project's ready boxes are made again with it.
     if (patch.hooks?.warm !== undefined) after(() => refillAfterChange(owner, id), { where: "refill-pool", userId: owner.id });
     const now = await getEnvironment(owner.id, id);
-    // Its scripts and hooks are kept with the change: they're its history.
+    // Its hooks and scripts, when they changed, are kept with the change:
+    // they're its history (dropped by recordProjectChange when too large).
     if (now) {
-      await recordProjectChange(owner, id, "project.changed", { fields: Object.keys(patch), scripts: now.scripts, hooks: now.hooks }, now);
+      await recordProjectChange(
+        owner,
+        id,
+        "project.changed",
+        { fields: Object.keys(patch), ...(patch.hooks && { hooks: now.hooks }), ...(patch.scripts && { scripts: now.scripts }) },
+        now,
+      );
     }
     return NextResponse.json(now);
   });

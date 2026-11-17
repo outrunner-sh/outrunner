@@ -31,7 +31,7 @@ import { jsonBody, type ApiContext } from "@/lib/api/handler";
 import { readConversation } from "@/lib/api/live";
 import { paginate } from "@/lib/api/pagination";
 import { firstRunPending, runsFrom, sessionUsage, type Run } from "@/lib/api/runs";
-import { workspaceJson } from "@/lib/api/serialize";
+import { apiStatus, workspaceJson } from "@/lib/api/serialize";
 import { streamApi } from "@/lib/api/stream.deps";
 import { checkWebhookUrl, messageSent, webhookHooks } from "@/lib/api/webhooks.deps";
 import { cancelRunApi, createWorkspace, lifecycleApi, listWorkspaces, ownSession, sendMessageApi, type LifecycleVerb } from "@/lib/api/workspaces";
@@ -134,13 +134,34 @@ export async function createAgentApi(context: ApiContext): Promise<Response> {
     if (environment instanceof Response) return environment;
     parsed.body.environment_id = environment;
   }
-  const keyed = parsed.agentId && !context.request.headers.has("idempotency-key") ? { "idempotency-key": parsed.agentId } : undefined;
+  // `agentId` is the key: one header besides it would make the agent
+  // unreachable by its agentId later.
+  const header = context.request.headers.get("idempotency-key");
+  if (parsed.agentId && header !== null && header !== parsed.agentId) return apiError(400, "Send `agentId` or an `Idempotency-Key`, not two different ones.");
+  const keyed = parsed.agentId && header === null ? { "idempotency-key": parsed.agentId } : undefined;
   const call = asCall(context, { body: parsed.body, headers: keyed });
   const made = await createWorkspace(call, webhookHooks(call), async (input) => checkWebhookUrl(input.webhookUrl));
   if (!made.ok) return made;
   const session = (await made.json()) as Record<string, unknown>;
-  const workspace = await getWorkspace(String(session.id));
   const agentId = String(session.id);
+  // Sent again: the agent as it is now, and its first run.
+  if (made.headers.has("idempotent-replayed")) {
+    const read = await agentRuns(context, agentId);
+    if (read instanceof Response) return read;
+    const first = read.runs[0];
+    return Response.json(
+      {
+        agent: cursorAgentJson(workspaceJson(read.workspace, context.base), {
+          status: cursorAgentStatus(apiStatus(read.workspace.status), read.turn),
+          latestRunId: cursorRunId(read.runs.at(-1)?.number ?? 1),
+          repos: await reposOf(read.workspace),
+        }),
+        run: first ? cursorRunJson(first, agentId, await gitOf(read.workspace)) : pendingRunJson(1, agentId, workspaceJson(read.workspace, context.base) as { status: string }),
+      },
+      { status: 200, headers: { "idempotent-replayed": "true" } },
+    );
+  }
+  const workspace = await getWorkspace(agentId);
   return Response.json(
     {
       agent: cursorAgentJson(session, {
@@ -152,7 +173,7 @@ export async function createAgentApi(context: ApiContext): Promise<Response> {
       }),
       run: pendingRunJson(1, agentId, { status: "preparing", created_at: session.created_at, updated_at: session.updated_at }),
     },
-    { status: made.status === 202 ? 201 : 200, headers: made.headers.has("idempotent-replayed") ? { "idempotent-replayed": "true" } : undefined },
+    { status: 201 },
   );
 }
 
@@ -213,14 +234,23 @@ export async function followUpApi(context: ApiContext, agentId: string): Promise
   const parsed = followUpFromCursor(raw);
   if (typeof parsed === "string") return apiError(400, parsed);
   const id = await sessionOf(context, agentId);
+  // Its place among the runs is the one after those before it, counted
+  // before it's sent: a read after might already hold it, or not yet.
+  const before = await agentRuns(context, id);
+  if (before instanceof Response) return before;
   const sent = await sendMessageApi(asCall(context, { body: parsed.body }), id, messageSent);
   if (!sent.ok) return sent;
   const { run_id: runId } = (await sent.json()) as { run_id: string | null };
-  // Its place among the runs: found by the id the send answered; one the
-  // log doesn't show yet is the next.
-  const read = await agentRuns(context, id);
-  const runs = read instanceof Response ? [] : read.runs;
-  const number = runs.find((r) => r.id === runId)?.number ?? runs.length + 1;
+  // The send named its run: its place, as the log has it now (another
+  // message sent at the same moment may have come first).
+  const after = runId || before.from === "none" ? await agentRuns(context, id) : null;
+  const now = after && !(after instanceof Response) ? after.runs : [];
+  const logged = runId ? now.find((r) => r.id === runId) : undefined;
+  // A session read as nothing before it was woken (paused, its log on its
+  // box): counted now, its newest run this one when it says what was sent.
+  const sentText = String(parsed.body.content ?? "").trim();
+  const woken = before.from === "none" ? (now.at(-1)?.prompt.trim() === sentText ? now.length : now.length + 1) : undefined;
+  const number = logged?.number ?? woken ?? before.runs.length + 1;
   const now = new Date().toISOString();
   const run = { id: cursorRunId(number), agentId: id, status: "CREATING", createdAt: now, updatedAt: now };
   if (parsed.steer) return Response.json({ delivery: "steered", runId: run.id, run }, { status: 202 });

@@ -28,7 +28,7 @@ import { mintSnapshotDownloadUrl } from "@/lib/runtime/storage";
 import { syncEnvironmentSecrets } from "@/lib/secret-sync/sync.deps";
 import { sessionOverrides } from "@/lib/db/session-overrides";
 import { sessionScopedEnv } from "@/lib/db/scoped-secrets";
-import { withScopedSecrets, withSessionEnvironment, withSessionServers } from "@/lib/session/session-overrides";
+import { oversizedEnv, withScopedSecrets, withSessionEnvironment, withSessionServers } from "@/lib/session/session-overrides";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 
 /** Set the session up on its box before it launches. */
@@ -68,6 +68,9 @@ export async function setUpSession(
   const agentConfig = own ? withSessionServers(projectConfig, own) : projectConfig;
   const layered = withScopedSecrets(environment, scoped);
   const projectEnvironment = own ? withSessionEnvironment(layered, own) : layered;
+  // Said here, rather than as the box's "too large".
+  const tooLarge = oversizedEnv(projectEnvironment);
+  if (tooLarge) throw new Error(tooLarge);
   await deliverSessionSetup(
     {
       features: async () => (await agent.health(identity)).features ?? [],

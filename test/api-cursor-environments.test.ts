@@ -9,6 +9,7 @@ import {
   hooksFromEnvironmentJson,
   projectSecretJson,
   repoNamesOf,
+  reposPlan,
   secretPutOf,
   secretVersionJson,
 } from "@/lib/api/cursor-environments";
@@ -117,4 +118,12 @@ test("secrets list by name, never a value, with whose they are", () => {
   });
   assert.deepEqual(projectSecretJson(project, "STRIPE_KEY", true).owner, { type: "environment", environmentId: project.id });
   assert.equal("value" in projectSecretJson(project, "STRIPE_KEY"), false);
+});
+
+test("changing a project's repositories is checked before anything is changed", () => {
+  const p = { repos: project.repos, defaultForProjectId: null };
+  assert.deepEqual(reposPlan(p, ["p2", "p3"], 5), { add: ["p3"], remove: ["p1"] });
+  assert.match(reposPlan(p, [], 5) as string, /at least one/);
+  assert.match(reposPlan(p, ["a", "b", "c", "d", "e", "f"], 5) as string, /at most 5/);
+  assert.match(reposPlan({ ...p, defaultForProjectId: "p1" }, ["p2"], 5) as string, /keep that repository/);
 });

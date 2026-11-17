@@ -210,3 +210,20 @@ export function secretPutOf(body: Record<string, unknown>): { value: string; typ
   }
   return { value: body.value, ...(body.type !== undefined && { type: body.type as SecretType }), ...(repos && { repos }) };
 }
+
+/** What changing a project's repositories to `wanted` takes, or why it
+ *  can't: a project holds 1 to MAX_REPOS, and a repository's own project
+ *  keeps that repository. */
+export function reposPlan(
+  project: Pick<Environment, "repos" | "defaultForProjectId">,
+  wanted: readonly string[],
+  maxRepos: number,
+): { add: string[]; remove: string[] } | string {
+  if (wanted.length === 0) return "A project holds at least one repository.";
+  if (wanted.length > maxRepos) return `A project holds at most ${maxRepos} repositories.`;
+  if (project.defaultForProjectId && !wanted.includes(project.defaultForProjectId)) {
+    return "This project is its repository's own: keep that repository in `repos`.";
+  }
+  const have = project.repos.map((r) => r.projectId);
+  return { add: wanted.filter((p) => !have.includes(p)), remove: have.filter((p) => !wanted.includes(p)) };
+}

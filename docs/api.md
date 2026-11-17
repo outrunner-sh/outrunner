@@ -142,7 +142,7 @@ counted apart. The budget refills continuously: every answer carries
 | GET | `/api/v1/environments/{id}/secrets` | Its variables, by name |
 | PUT, DELETE | `/api/v1/environments/{id}/secrets/{name}` | Set (`value`) or remove one variable (org keys) |
 | GET | `/api/v1/secrets` | The org's secrets, yours and a project's, by name: `scope` (`team`, `user`, `environment`), `environmentId`, `name`, `repo` |
-| GET, PUT, DELETE | `/api/v1/team/secrets`, `/team/secrets/{name}` | The org's secrets, which every member's sessions get: `value`, `type`, `repos` (changed by org keys) |
+| GET, PUT, DELETE | `/api/v1/team/secrets`, `/team/secrets/{name}` | The org's secrets, which every member's sessions get: `value`, `type`, `repos` (changed by org keys; up to 50) |
 | GET, PUT, DELETE | `/api/v1/me/secrets`, `/me/secrets/{name}` | Your own, which your sessions get in any org |
 | POST | `/api/v1/projects` | Start a Mission from Cursor's project request (cursor-migration.md) |
 | GET | `/api/v1/missions`, `/api/v1/projects/{id}`, `…/agents` | Your Missions, one, and its agents, in Cursor's words |
@@ -193,7 +193,7 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 
 | Field | |
 | --- | --- |
-| `project_id` or `environment_id` | The repository to work on, or a project that's a repository's own |
+| `project_id` or `environment_id` | The repository to work on, or a project: one of several repositories has each checked out, its first the one it works in first |
 | `repo_url` | Or the repository by its address: `https://github.com/acme/web`, `acme/web`, an SSH remote, or a GitLab.com project's |
 | `pr_url` | Or a pull request (a GitLab merge request) to work on: the checkout starts at its head branch |
 | `prompt` | What to do. Sent once the session is ready |
@@ -212,13 +212,14 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 | `webhook_url` | An https URL told of this session's events (see Webhooks) |
 | `env` | Variables of this session's own, over its project's: `{ "STRIPE_KEY": "sk_test_…" }` (up to 50, each up to 4 KB) |
 | `mcp_servers` | MCP servers of its own, over its project's and yours: `[{ "name", "url", "headers" }]` (http, or `"type": "sse"`) or `[{ "name", "command", "args", "env" }]` (stdio); up to 20 |
-| `subagents` | Subagents Claude may hand work to: `[{ "name", "description", "prompt", "model"? }]` (`model`: sonnet, opus, haiku or inherit; an id naming one is read as it); up to 20 |
+| `subagents` | Subagents Claude may hand work to: `[{ "name", "description", "prompt", "model"? }]` (`model`: sonnet, opus, haiku or inherit; an id naming one is read as it); up to 20, 64 KB in all |
 
 `env`, `mcp_servers` and `subagents` are kept sealed with the session and
 given to its box at every setup (its start, and each restore). Its
 variables go over its org's secrets, its project's and your own
 (`/team/secrets`, `/environments/{id}/secrets`, `/me/secrets`), in that
-order; never read back out. Codex sessions take the variables and servers;
+order; never read back out. All of a session's variables together are held
+to the 256 KB its box takes: a session over it fails at setup, saying so. Codex sessions take the variables and servers;
 subagents are Claude Code's.
 
 `repo_url` and `pr_url` name a repository the org has in Outrunner (a

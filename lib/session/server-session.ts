@@ -105,7 +105,11 @@ async function startAs(start: ServerSessionStart, request: SessionRequest): Prom
       );
       const body = (await response.json().catch(() => null)) as { error?: unknown; workspace?: { id?: unknown } } | null;
       if (response.status !== 202) {
-        return refused(typeof body?.error === "string" ? body.error : `The session couldn't start (${response.status}).`);
+        const error = typeof body?.error === "string" ? body.error : `The session couldn't start (${response.status}).`;
+        // Made, then failed (its caller couldn't hear of it): that session's,
+        // not a refusal to try again on another model.
+        const id = typeof body?.workspace?.id === "string" ? body.workspace.id : null;
+        return id ? failed(id, error) : refused(error);
       }
       made = typeof body?.workspace?.id === "string" ? body.workspace.id : null;
       return outcome ?? failed(made, "The session's setup ended without saying how.");

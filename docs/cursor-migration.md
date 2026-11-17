@@ -128,7 +128,8 @@ What's Outrunner's own in it:
   to sessions of those repositories. `runtime_secret` and
   `environment_variable` both reach the agent as variables, masked in its
   terminal; `build_secret` isn't set over the API. Members' own secrets
-  are theirs alone: no `scope=members`.
+  are theirs alone: no `scope=members`. An org, and a person, keep up to
+  50 each.
 - **Builds** are the project's latest: earlier ones aren't kept, and
   `draft`/`refs` aren't taken.
 - **Projects**: one place each (`env.name`, `repos[0].url`, or

@@ -7,6 +7,7 @@
 
 import { open, seal } from "@/lib/crypto/secret-box";
 import type { SessionOverrides } from "@/lib/session/session-overrides";
+import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 export async function storeSessionOverrides(workspaceId: string, overrides: SessionOverrides): Promise<void> {
@@ -23,6 +24,8 @@ export async function sessionOverrides(workspaceId: string): Promise<SessionOver
     .select("overrides_ciphertext")
     .eq("workspace_id", workspaceId)
     .maybeSingle();
+  // Before the migration that adds them, no session has any.
+  if (error && probeStatus(error) === "missing") return null;
   if (error) throw error;
   if (!data) return null;
   const read = JSON.parse(open(data.overrides_ciphertext as string)) as Partial<SessionOverrides>;

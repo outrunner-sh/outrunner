@@ -323,3 +323,9 @@ test("models list as Cursor's items, an effort a parameter", () => {
     ],
   );
 });
+
+test("null is left out as absent, as a Python client's None", () => {
+  const read = createFromCursor({ prompt: { text: "Go" }, name: null, repos: [{ url: "acme/web", startingRef: null, prUrl: null }] });
+  assert.ok(typeof read !== "string");
+  assert.deepEqual(read.body, { prompt: "Go", repo_url: "acme/web" });
+});

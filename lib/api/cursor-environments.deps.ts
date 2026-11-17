@@ -35,9 +35,11 @@ import { archiveEnvironment, createEnvironment, EnvironmentAccessError, getEnvir
 import { getOrg } from "@/lib/db/orgs";
 import { getProjectByFullName } from "@/lib/db/repositories";
 import { deleteScopedSecret, listScopedSecrets, putScopedSecret, type SecretScope } from "@/lib/db/scoped-secrets";
-import { EnvironmentRuleError } from "@/lib/environments/rules";
+import { EnvironmentRuleError, MAX_REPOS, script } from "@/lib/environments/rules";
 import { settableEnv } from "@/lib/imports/settable-env";
 import { isUuid } from "@/lib/ids";
+import { repoFullName } from "@/lib/api/repo-ref";
+import { coversRepos } from "@/lib/session/session-overrides";
 
 const notFound = () => apiError(404, "No project by that id that you can see.");
 
@@ -89,6 +91,15 @@ export async function createEnvironmentApi(context: ApiContext): Promise<Respons
   if (hooks && (hooks.warm || hooks.start)) {
     const refused = boxSetupRefused(context);
     if (refused) return refused;
+    // Checked as the settings route will, before the project is made.
+    try {
+      script(hooks.warm, "install command");
+      script(hooks.start, "start command, with its terminals");
+    } catch (error) {
+      const said = ruleError(error);
+      if (said) return said;
+      throw error;
+    }
   }
   let ids: string[] | Response;
   if (Array.isArray(body.project_ids)) {
@@ -108,7 +119,11 @@ export async function createEnvironmentApi(context: ApiContext): Promise<Respons
   await recordProjectChange(context.owner, id, "project.created");
   if (hooks && (hooks.warm || hooks.start)) {
     const set = await environmentPATCH(appRequest(context.base, `/api/environments/${id}`, { method: "PATCH", body: { hooks } }), routeParams({ id }));
-    if (!set.ok) return errorFromRoute(set, context.base);
+    if (!set.ok) {
+      // Not left behind without its setup: a retry would make another.
+      await archiveEnvironment(context.caller.userId, id).catch((error: unknown) => console.error(`API: couldn't take back project ${id}`, error));
+      return errorFromRoute(set, context.base);
+    }
   }
   const made = await getEnvironment(context.caller.userId, id);
   if (!made) return apiError(500, "The project was made, but couldn't be read back.");
@@ -136,15 +151,14 @@ export async function deleteEnvironmentApi(context: ApiContext, id: string): Pro
 /**
  * Cursor's PATCH fields, as Outrunner's: `environmentJson` its hooks,
  * `buildSettings` (nothing to set: ready boxes are made again on every
- * change), `repos` the repositories it holds, added and removed to match
- * (done here). Answers the body Outrunner's PATCH then takes, or the answer
- * to give.
+ * change), and `repos` the repositories it's to hold, as their ids. Checked
+ * only: nothing is changed here. Answers the body Outrunner's PATCH takes
+ * and the repositories wanted, or the answer to give.
  */
 export async function cursorPatchOf(
   context: ApiContext,
-  id: string,
   body: Record<string, unknown>,
-): Promise<{ rest: Record<string, unknown> } | Response> {
+): Promise<{ rest: Record<string, unknown>; repos: string[] | null } | Response> {
   const rest = { ...body };
   if (rest.buildSettings !== undefined) {
     const settings = rest.buildSettings;
@@ -158,25 +172,40 @@ export async function cursorPatchOf(
     delete rest.environmentJson;
     rest.hooks = hooks;
   }
+  let repos: string[] | null = null;
   if (rest.repos !== undefined) {
     const refused = boxSetupRefused(context);
     if (refused) return refused;
     const wanted = await repoIds(context, rest.repos);
     if (wanted instanceof Response) return wanted;
     delete rest.repos;
-    const project = await projectOf(context, id);
-    if (project instanceof Response) return project;
-    const have = new Set(project.repos.map((r) => r.projectId));
-    for (const projectId of wanted.filter((p) => !have.has(p))) {
+    repos = [...new Set(wanted)];
+  }
+  return { rest, repos };
+}
+
+/** Change the project's repositories to `wanted` (checked by reposPlan):
+ *  added while there's room, the rest removed, so it's never more than a
+ *  project holds, nor left with none. Null when done, else the answer. */
+export async function applyRepos(context: ApiContext, project: Environment, plan: { add: string[]; remove: string[] }): Promise<Response | null> {
+  const id = project.id;
+  const add = [...plan.add];
+  const remove = [...plan.remove];
+  let count = project.repos.length;
+  while (add.length || remove.length) {
+    if (add.length && (count < MAX_REPOS || !remove.length)) {
+      const projectId = add.shift()!;
       const added = await reposPOST(appRequest(context.base, `/api/environments/${id}/repos`, { body: { projectId } }), routeParams({ id }));
       if (!added?.ok) return added ? errorFromRoute(added, context.base) : apiError(500, "Outrunner couldn't add a repository. Try again.");
-    }
-    for (const projectId of [...have].filter((p) => !wanted.includes(p))) {
+      count++;
+    } else {
+      const projectId = remove.shift()!;
       const removed = await reposDELETE(appRequest(context.base, `/api/environments/${id}/repos?projectId=${projectId}`, { method: "DELETE" }), routeParams({ id }));
       if (!removed?.ok) return removed ? errorFromRoute(removed, context.base) : apiError(500, "Outrunner couldn't remove a repository. Try again.");
+      count--;
     }
   }
-  return { rest };
+  return null;
 }
 
 /** GET /environments/{id}/history: its changes, newest first (`limit`,
@@ -262,6 +291,9 @@ export async function setEnvironmentSecretApi(context: ApiContext, id: string, n
   return Response.json(projectSecretJson(now, name), { status: project.envNames.includes(name) ? 200 : 201 });
 }
 
+/** The most secrets an org, or a person, keeps. */
+const MAX_SCOPED_SECRETS = 50;
+
 /** The org's secrets (an org key's to change), or the caller's own. */
 function scopeOf(context: ApiContext, scope: "team" | "user"): SecretScope {
   return scope === "team" ? { kind: "team", orgId: context.caller.orgId } : { kind: "user", userId: context.caller.userId };
@@ -291,6 +323,11 @@ export async function setScopedSecretApi(context: ApiContext, scope: "team" | "u
   if (body instanceof Response) return body;
   const put = secretPutOf(body);
   if (typeof put === "string") return apiError(400, put);
+  // Every session gets them, laid with its project's variables, under what a box takes in all.
+  const kept = await listScopedSecrets(scopeOf(context, scope));
+  if (!kept.some((s) => s.name === name) && kept.length >= MAX_SCOPED_SECRETS) {
+    return apiError(400, `${scope === "team" ? "An org" : "A person"} keeps up to ${MAX_SCOPED_SECRETS} secrets: remove one first.`);
+  }
   const { secret, created } = await putScopedSecret(scopeOf(context, scope), name, { ...put, createdBy: context.caller.userId });
   return Response.json(secretVersionJson(secret), { status: created ? 201 : 200 });
 }
@@ -320,10 +357,11 @@ export async function listAllSecretsApi(context: ApiContext): Promise<Response> 
     for (const name of project.envNames) items.push(projectSecretJson(project, name, true));
   }
   const name = params.get("name");
-  const repo = params.get("repo")?.toLowerCase();
-  const filtered = items.filter(
-    (s) => (!name || s.name === name) && (!repo || (s.repos as string[]).length === 0 || (s.repos as string[]).some((r) => repo.endsWith(r))),
-  );
+  // The repository as sessions' secrets are matched to theirs (coversRepos).
+  const repoParam = params.get("repo");
+  const repo = repoParam === null ? null : repoFullName(repoParam);
+  if (repoParam !== null && !repo) return apiError(400, "`repo` is a repository's address.");
+  const filtered = items.filter((s) => (!name || s.name === name) && (!repo || coversRepos(s.repos as string[], [repo])));
   const from = (paging.page - 1) * paging.perPage;
   const page = filtered.slice(from, from + paging.perPage);
   return Response.json({ items: page, nextCursor: from + paging.perPage < filtered.length ? String(paging.page + 1) : null });

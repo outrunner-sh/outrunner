@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { coversRepos, parseSessionOverrides, subagentModel, withScopedSecrets, withSessionEnvironment, withSessionServers } from "@/lib/session/session-overrides";
+import { coversRepos, envFileBytes, goJsonBytes, oversizedEnv, parseSessionOverrides, subagentModel, withScopedSecrets, withSessionEnvironment, withSessionServers } from "@/lib/session/session-overrides";
 
 test("none of them is no overrides", () => {
   assert.equal(parseSessionOverrides({}), null);
@@ -82,4 +82,20 @@ test("a secret for some repositories is a session's when it works on one of them
   assert.equal(coversRepos(["Acme/Web"], ["acme/web", "acme/api"]), true);
   assert.equal(coversRepos(["https://github.com/acme/web.git"], ["acme/web"]), true);
   assert.equal(coversRepos(["acme/api"], ["acme/web"]), false);
+});
+
+test("subagents are held to what the box takes in all, measured as Go writes them", () => {
+  assert.equal(goJsonBytes({ a: "<b>&" }), JSON.stringify({ a: "<b>&" }).length + 15);
+  const prompt = "<step>Review it.</step>\n".repeat(900);
+  const many = Array.from({ length: 4 }, (_, i) => ({ name: `r${i}`, description: "Reviews", prompt }));
+  assert.match(parseSessionOverrides({ subagents: many }) as string, /64 KB in all/);
+  assert.ok(typeof parseSessionOverrides({ subagents: many.slice(0, 1) }) !== "string");
+});
+
+test("variables laid together over what a box takes are said, before the box refuses them", () => {
+  assert.equal(envFileBytes({ A: "it's" }), "export A='it'\\''s'\n".length);
+  const project = { env: {}, files: {}, setup: null, run: null, archive: null, instructions: null };
+  assert.equal(oversizedEnv(project), null);
+  const big = Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`V${i}`, "x".repeat(4000)]));
+  assert.match(oversizedEnv({ ...project, env: big }) as string, /over the 256 KB a box takes/);
 });

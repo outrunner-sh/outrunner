@@ -11,10 +11,11 @@ import { GET as environmentGET, PATCH as environmentPATCH } from "@/app/api/envi
 import { DELETE as reposDELETE, POST as reposPOST } from "@/app/api/environments/[id]/repos/route";
 import { PATCH as secretsPATCH } from "@/app/api/environments/[id]/secrets/route";
 import { boxSetupRefused } from "@/lib/api/auth";
-import { bothWays, cursorPatchOf } from "@/lib/api/cursor-environments.deps";
+import { reposPlan } from "@/lib/api/cursor-environments";
+import { applyRepos, bothWays, cursorPatchOf } from "@/lib/api/cursor-environments.deps";
+import { MAX_REPOS } from "@/lib/environments/rules";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
-import { environmentDetailJson } from "@/lib/api/serialize";
 import { type Environment, getEnvironment } from "@/lib/db/environments";
 import { isUuid } from "@/lib/ids";
 
@@ -31,7 +32,7 @@ async function projectOf(context: ApiContext, id: string): Promise<Environment |
 async function projectNow(context: ApiContext, id: string): Promise<Response> {
   const read = await environmentGET(appRequest(context.base, `/api/environments/${id}`, { method: "GET" }), routeParams({ id }));
   if (!read.ok) return errorFromRoute(read, context.base);
-  return Response.json(environmentDetailJson((await read.json()) as Environment));
+  return Response.json(await bothWays(context, (await read.json()) as Environment));
 }
 
 /** GET /environments/{id}: in Outrunner's words and Cursor's
@@ -49,26 +50,33 @@ const PROJECT_FIELDS = ["name", "description", "instructions", "scripts", "hooks
 export async function updateEnvironmentApi(context: ApiContext, id: string): Promise<Response> {
   const sent = await jsonBody(context.request);
   if (sent instanceof Response) return sent;
+  if (Object.keys(sent).length === 0) return apiError(400, `Name something to change: ${PROJECT_FIELDS.join(", ")}.`);
   // Cursor's `environmentJson`, `repos` and `buildSettings`, in Outrunner's words.
-  const cursor = await cursorPatchOf(context, id, sent);
+  const cursor = await cursorPatchOf(context, sent);
   if (cursor instanceof Response) return cursor;
   const body = cursor.rest;
-  // Only Cursor's, done above (or nothing to do: `buildSettings`).
-  if (Object.keys(sent).length > 0 && Object.keys(body).length === 0) return projectNow(context, id);
   const unknown = Object.keys(body).find((key) => !(PROJECT_FIELDS as readonly string[]).includes(key));
   if (unknown) return apiError(400, `A project has no \`${unknown}\` to change: ${PROJECT_FIELDS.join(", ")}.`);
-  if (Object.keys(body).length === 0) return apiError(400, `Name something to change: ${PROJECT_FIELDS.join(", ")}.`);
   // Scripts and hooks run on every member's box, and instructions steer every
   // member's agent there: a name or description changes neither.
   const refused = ["scripts", "hooks", "instructions"].some((key) => key in body) ? boxSetupRefused(context) : null;
   if (refused) return refused;
   const project = await projectOf(context, id);
   if (project instanceof Response) return project;
-  const changed = await environmentPATCH(
-    appRequest(context.base, `/api/environments/${id}`, { method: "PATCH", body }),
-    routeParams({ id }),
-  );
-  if (!changed.ok) return errorFromRoute(changed, context.base);
+  // Everything checked before anything is changed.
+  const plan = cursor.repos ? reposPlan(project, cursor.repos, MAX_REPOS) : null;
+  if (typeof plan === "string") return apiError(400, plan);
+  if (Object.keys(body).length > 0) {
+    const changed = await environmentPATCH(
+      appRequest(context.base, `/api/environments/${id}`, { method: "PATCH", body }),
+      routeParams({ id }),
+    );
+    if (!changed.ok) return errorFromRoute(changed, context.base);
+  }
+  if (plan) {
+    const failed = await applyRepos(context, project, plan);
+    if (failed) return failed;
+  }
   return projectNow(context, id);
 }
 

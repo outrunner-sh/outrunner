@@ -138,7 +138,8 @@ export function createFromCursor(
     if (typeof effort === "object") return effort.refused;
     if (effort) body.effort = effort;
   }
-  if (raw.name !== undefined) body.name = raw.name;
+  // null is left out, as absent (a Python client's None).
+  if (raw.name != null) body.name = raw.name;
 
   if (raw.repos !== undefined && raw.repos !== null) {
     if (!Array.isArray(raw.repos) || !raw.repos.every(isObject)) return "`repos` is a list of `{ url, startingRef?, prUrl? }`.";
@@ -147,9 +148,9 @@ export function createFromCursor(
     }
     const repo = raw.repos[0] as Record<string, unknown> | undefined;
     if (repo) {
-      if (repo.url !== undefined) body.repo_url = repo.url;
-      if (repo.startingRef !== undefined) body.base_branch = repo.startingRef;
-      if (repo.prUrl !== undefined) body.pr_url = repo.prUrl;
+      if (repo.url != null) body.repo_url = repo.url;
+      if (repo.startingRef != null) body.base_branch = repo.startingRef;
+      if (repo.prUrl != null) body.pr_url = repo.prUrl;
     }
   }
   if (raw.workOnCurrentBranch !== undefined) body.work_on_current_branch = raw.workOnCurrentBranch;

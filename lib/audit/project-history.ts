@@ -5,7 +5,7 @@
  * every audit record is.
  */
 
-import type { AuditAction, AuditActor } from "@/lib/audit/actions";
+import { keepable, type AuditAction, type AuditActor } from "@/lib/audit/actions";
 import { recordAudit } from "@/lib/audit/record";
 import { getEnvironment } from "@/lib/db/environments";
 
@@ -20,5 +20,5 @@ export async function recordProjectChange(
 ): Promise<void> {
   const project = known ?? (await getEnvironment(actor.id, id).catch(() => null));
   if (!project) return;
-  await recordAudit({ orgId: project.orgId, actor, action, resource: { type: PROJECT_RESOURCE, id, label: project.name }, details });
+  await recordAudit({ orgId: project.orgId, actor, action, resource: { type: PROJECT_RESOURCE, id, label: project.name }, details: keepable(details) });
 }
