@@ -1,0 +1,12 @@
+# Replace the hostname for a separate installation. Keep the application's
+# RUNTIME_BASE_URL equal to this HTTPS origin.
+{$APP_DOMAIN} {
+	reverse_proxy app:8080 {
+		# This origin is reached directly. Remove a client-supplied Cloudflare
+		# address; Caddy supplies X-Forwarded-For from the actual connection.
+		header_up -CF-Connecting-IP
+		# Deliver conversation streams as they arrive. WebSocket upgrades are
+		# handled by reverse_proxy automatically.
+		flush_interval -1
+	}
+}

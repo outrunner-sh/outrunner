@@ -67,8 +67,9 @@ architecture, and troubleshooting. Unit tests and browser fixtures can run
 without service credentials. The full app requires Supabase; a cloud agent
 must be able to reach the control plane at `RUNTIME_BASE_URL`.
 
-For deployment, see [Cloudflare Containers](docs/deploy-cloudflare.md) or
-[Railway](docs/deploy-railway.md). The checked-in Cloudflare config describes
+For deployment, see [Cloudflare Containers](docs/deploy-cloudflare.md),
+[Railway](docs/deploy-railway.md), or [a VM with Docker
+Compose](docs/deploy-vm.md). The checked-in Cloudflare config describes
 the hosted Outrunner deployment; replace its account, domains, and public
 Supabase values before deploying your own instance.
 

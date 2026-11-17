@@ -11,6 +11,7 @@ Start with the [project overview](../README.md),
 | [Supabase](../supabase/README.md) | Migrations, authentication, and schema verification |
 | [Cloudflare deployment](deploy-cloudflare.md) | Containers, secrets, domains, cron, and rollout |
 | [Railway deployment](deploy-railway.md) | An alternative control-plane host |
+| [VM deployment](deploy-vm.md) | Docker Compose hosting on a VM, without Cloudflare Containers |
 | [Desktop app](../runtime-desktop/README.md) | Building the Mac shell and running local sessions |
 | [Desktop installation](../runtime-desktop/INSTALL.md) | Installing and releasing a Mac build |
 | [Desktop onboarding](desktop-onboarding.md) | Browser sign-in and native handoff |

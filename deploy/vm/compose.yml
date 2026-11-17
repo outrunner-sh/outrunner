@@ -1,0 +1,77 @@
+name: outrunner
+
+services:
+  app:
+    image: outrunner-control-plane:${OUTRUNNER_BUILD:?Set the release SHA}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        OUTRUNNER_BUILD: ${OUTRUNNER_BUILD:?Set the release SHA}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?Set the public Supabase URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:?Set the public Supabase key}
+        NEXT_PUBLIC_CODEX_CLI_VERSION: ${NEXT_PUBLIC_CODEX_CLI_VERSION:?Set the supported CLI version}
+    restart: unless-stopped
+    env_file:
+      - path: /etc/outrunner/runtime.env
+        format: raw
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      RUNTIME_AGENT_BINARY_PATH: bin/runtime-agent-linux-amd64
+    ports:
+      - "127.0.0.1:3000:8080"
+    stop_grace_period: 45s
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/api/health', {signal: AbortSignal.timeout(5000)}).then(async r => {const h=await r.json(); process.exit(r.ok && h.ok && h.build===process.env.OUTRUNNER_BUILD ? 0 : 1)}).catch(() => process.exit(1))"
+      start_period: 60s
+      interval: 15s
+      timeout: 6s
+      retries: 5
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  caddy:
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set the public app hostname}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app: { condition: service_healthy }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  cron:
+    image: outrunner-control-plane:${OUTRUNNER_BUILD:?Set the release SHA}
+    profiles: [jobs]
+    restart: unless-stopped
+    entrypoint: [node, deploy/vm/cron.mjs]
+    env_file:
+      - path: /etc/outrunner/cron.env
+        format: raw
+    environment:
+      OUTRUNNER_CRON_ORIGIN: http://app:8080
+    stop_grace_period: 75s
+    depends_on:
+      app: { condition: service_healthy }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  caddy_data:
+  caddy_config:
