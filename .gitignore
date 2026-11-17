@@ -61,3 +61,6 @@ bin/runtime-agent-linux-amd64
 
 # macOS agent sidecars — build with scripts/build-agent-desktop.sh, not committed.
 /runtime-desktop/src-tauri/binaries/
+
+# Supabase CLI local cache (linked project, CLI version)
+supabase/.temp/
