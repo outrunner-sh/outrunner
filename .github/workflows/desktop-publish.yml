@@ -58,7 +58,7 @@ jobs:
   r2:
     name: Publish to downloads
     if: >-
-      github.repository == 'neevai-labs/outrunner' &&
+      github.repository == 'outrunner-sh/outrunner' &&
       (github.event_name != 'release' || startsWith(github.event.release.tag_name, 'desktop-v'))
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
