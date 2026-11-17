@@ -36,6 +36,8 @@ test("a whole automation is trimmed, deduplicated and kept in trigger order", ()
       debounceSeconds: 0,
       sessionMode: "new",
       coverNewRepos: false,
+      // Unsent, no model of its own: the org's choice.
+      model: null,
     },
   });
 });
@@ -45,6 +47,35 @@ test("a new automation is on unless it says otherwise, and needs no template", (
   assert.ok(parsed.ok);
   assert.equal(parsed.value.enabled, true);
   assert.equal(parsed.value.template, null);
+});
+
+test("its model is a session's choice: the provider worked out when left out, the effort one the model takes", () => {
+  const model = (sent: unknown) => {
+    const parsed = parseAutomationInput({ model: sent }, { full: false });
+    return parsed.ok ? parsed.value.model : parsed.error;
+  };
+  assert.deepEqual(model({ provider: "claude", id: "opus", effort: "max" }), { provider: "claude", id: "opus", effort: "max" });
+  // As a session's request: Claude's aliases are Claude's, anything else Outrunner's.
+  assert.deepEqual(model({ id: "sonnet" }), { provider: "claude", id: "sonnet", effort: null });
+  assert.deepEqual(model({ id: " z-ai/glm-5.3 " }), { provider: "outrunner", id: "z-ai/glm-5.3", effort: null });
+  assert.deepEqual(model({ provider: "openrouter", id: "qwen/qwen3-coder" }), { provider: "openrouter", id: "qwen/qwen3-coder", effort: null });
+  // Codex's efforts are its account's: any level, checked as the run starts.
+  assert.deepEqual(model({ provider: "codex", id: "gpt-5.5", effort: "low" }), { provider: "codex", id: "gpt-5.5", effort: "low" });
+  // Null clears it; unsent, a change leaves it.
+  assert.equal(model(null), null);
+  assert.deepEqual(parseAutomationInput({ name: "x" }, { full: false }), { ok: true, value: { name: "x" } });
+  for (const [what, sent] of [
+    ["a string", "opus"],
+    ["no id", { provider: "claude" }],
+    ["an unknown provider", { provider: "acme", id: "m" }],
+    ["not one of Outrunner's", { id: "gpt-4o" }],
+    ["not one of Claude's aliases", { provider: "claude", id: "claude-3" }],
+    ["an id no agent takes", { provider: "openrouter", id: "-rm" }],
+    ["an effort that isn't a level", { provider: "claude", id: "opus", effort: "huge" }],
+    ["an effort on a model that takes none", { id: "z-ai/glm-5.3", effort: "high" }],
+  ] as const) {
+    assert.equal(typeof model(sent), "string", what);
+  }
 });
 
 test("a change carries only what it sends", () => {

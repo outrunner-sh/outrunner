@@ -47,6 +47,7 @@ import { mainChatOf, orderedChats, type SessionChat } from "@/lib/session/chats"
 import { pageOf, pageRequest, paginate } from "@/lib/api/pagination";
 import { isApiSource, isApiStatus, snakeKeys, statusesFor, workspaceJson } from "@/lib/api/serialize";
 import { getEnvironment } from "@/lib/db/environments";
+import { storeSessionOverrides } from "@/lib/db/session-overrides";
 import { toWorkspace } from "@/lib/db/mappers";
 import { projectLevel } from "@/lib/db/org-access";
 import { getProject, getProjectByFullName, getWorkspace } from "@/lib/db/repositories";
@@ -154,6 +155,9 @@ export async function createWorkspace(
         firstAttachmentIds: attachmentIds,
         source: "api",
         boxSize: input.size && isBoxSizeId(input.size) ? input.size : undefined,
+        // Kept before its box is set up, which reads them; a session asked
+        // for them that couldn't keep them goes no further.
+        ...(input.overrides && { onCreated: (id: string) => storeSessionOverrides(id, input.overrides!) }),
         onSettled: async (outcome) => {
           release();
           await hooks.onSettled?.(outcome);

@@ -73,3 +73,13 @@ test("a preview's mode changing and its deletion read as what they let in", () =
   assert.equal(describeAudit(event("preview.deleted", "Web app")), "deleted the preview Web app");
   assert.equal(auditGroup("preview.made_public"), "access");
 });
+
+test("a project's changes read as its history says them, never a value", () => {
+  assert.equal(describeAudit(event("project.created", "Web + API")), "made the project Web + API");
+  assert.equal(describeAudit(event("project.changed", "Web", { fields: ["hooks", "name"] })), "changed the project Web's hooks, name");
+  assert.equal(describeAudit(event("project.secrets_changed", "Web", { set: ["STRIPE_KEY"], removed: ["OLD"] })), "changed the project Web's secrets: set STRIPE_KEY; removed OLD");
+  assert.equal(describeAudit(event("project.repos_changed", "Web", { added: "acme/api" })), "added acme/api to the project Web");
+  assert.equal(describeAudit(event("project.repos_changed", "Web", { removed: "acme/api" })), "took acme/api out of the project Web");
+  assert.equal(describeAudit(event("project.deleted", "Web")), "deleted the project Web");
+  assert.equal(auditGroup("project.changed"), "settings");
+});

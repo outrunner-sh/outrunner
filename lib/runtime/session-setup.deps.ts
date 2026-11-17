@@ -26,6 +26,9 @@ import type { SkillSource } from "@/lib/runtime/agent-protocol";
 import { deliverSessionSetup } from "@/lib/runtime/session-setup";
 import { mintSnapshotDownloadUrl } from "@/lib/runtime/storage";
 import { syncEnvironmentSecrets } from "@/lib/secret-sync/sync.deps";
+import { sessionOverrides } from "@/lib/db/session-overrides";
+import { sessionScopedEnv } from "@/lib/db/scoped-secrets";
+import { withScopedSecrets, withSessionEnvironment, withSessionServers } from "@/lib/session/session-overrides";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 
 /** Set the session up on its box before it launches. */
@@ -44,7 +47,9 @@ export async function setUpSession(
 ): Promise<void> {
   const project = await getProject(projectId);
   const id = environmentId ?? (await defaultEnvironmentId(ownerId, projectId));
-  const [environment, skills, projectServers, userConfig, githubIdentity, mission, agentContext] = await Promise.all([
+  const repos = id ? ((await getEnvironment(ownerId, id))?.repos ?? []) : [];
+  const fullNames = repos.length ? repos.map((r) => r.fullName) : project ? [project.fullName] : [];
+  const [environment, skills, projectServers, userConfig, githubIdentity, mission, agentContext, own, scoped] = await Promise.all([
     sessionEnvironment(ownerId, projectId, id),
     id ? sessionSkills(ownerId, id) : undefined,
     id ? projectMcpServers(ownerId, id) : {},
@@ -53,8 +58,16 @@ export async function setUpSession(
     // A Mission's box also gets its tools, notes and instructions.
     missionBoxSetup(identity.workspaceId),
     sessionAgentContext(ownerId, identity.workspaceId),
+    // What it was started with for itself (the API's `env`, `mcp_servers`,
+    // `subagents`): a session asked for them doesn't start without them.
+    sessionOverrides(identity.workspaceId),
+    // Its org's secrets and its user's own, for its repositories.
+    sessionScopedEnv(project?.orgId ?? null, ownerId, fullNames),
   ]);
-  const agentConfig = withProjectMcpServers(userConfig, projectServers);
+  const projectConfig = withProjectMcpServers(userConfig, projectServers);
+  const agentConfig = own ? withSessionServers(projectConfig, own) : projectConfig;
+  const layered = withScopedSecrets(environment, scoped);
+  const projectEnvironment = own ? withSessionEnvironment(layered, own) : layered;
   await deliverSessionSetup(
     {
       features: async () => (await agent.health(identity)).features ?? [],
@@ -65,13 +78,14 @@ export async function setUpSession(
       setSkills: (req) => agent.setSkills(identity, req),
     },
     {
-      environment: mission ? withMissionEnvironment(environment, mission) : environment,
+      environment: mission ? withMissionEnvironment(projectEnvironment, mission) : projectEnvironment,
       agentConfig: mission ? withMissionServer(agentConfig, mission) : agentConfig,
       skills,
       agentContext,
       agent: session.agent,
+      subagents: own?.subagents,
       appIdentity: session.appIdentity || githubIdentity === "app",
-      gitlab: Boolean(project && isGitLabRef(project.fullName)) || Boolean(id && (await getEnvironment(ownerId, id))?.repos?.some((repo) => isGitLabRef(repo.fullName))),
+      gitlab: Boolean(project && isGitLabRef(project.fullName)) || repos.some((repo) => isGitLabRef(repo.fullName)),
       downloadUrl: (path) => mintSnapshotDownloadUrl(supabaseSnapshotStorage(), path, ownerId),
     },
   );

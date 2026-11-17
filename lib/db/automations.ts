@@ -10,6 +10,7 @@
 import {
   type Automation,
   type AutomationInput,
+  type AutomationModel,
   type AutomationRepo,
   type AutomationTrigger,
   COVER_NEW_REPOS_TRIGGERS_ERROR,
@@ -18,6 +19,7 @@ import { nextRun, type Schedule, scheduleFromRow, scheduleSpec } from "@/lib/aut
 import { automationTemplate, CODE_REVIEW_TEMPLATE_ID } from "@/lib/automations/templates";
 import { webhookTokenSettings } from "@/lib/db/automation-webhooks";
 import { people } from "@/lib/db/org-members";
+import { recordedModel } from "@/lib/runtime/session-models";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** An org's repositories (its projects), by name: what an automation may run on. */
@@ -46,13 +48,31 @@ type AutomationRowRead = {
   debounce_seconds: number;
   session_mode: "new" | "reuse";
   cover_new_repos: boolean;
+  model_provider: string | null;
+  model_id: string | null;
+  model_effort: string | null;
   archived_at: string | null;
   runs_since: string;
   created_at: string;
 };
 
 const COLUMNS =
-  "id, name, template, prompt, triggers, enabled, runs_as, reviewers, labels, max_runs, archive_when_done, debounce_seconds, session_mode, cover_new_repos, archived_at, runs_since, created_at";
+  "id, name, template, prompt, triggers, enabled, runs_as, reviewers, labels, max_runs, archive_when_done, debounce_seconds, session_mode, cover_new_repos, model_provider, model_id, model_effort, archived_at, runs_since, created_at";
+
+/** A row's model (model_provider, model_id, model_effort), checked as a
+ *  session's request is: null with none, or one this release no longer
+ *  offers (it runs as the org set its automations to). */
+export function modelFromRow(row: { model_provider: string | null; model_id: string | null; model_effort: string | null }): AutomationModel | null {
+  if (!row.model_provider || !row.model_id) return null;
+  const recorded = recordedModel(row.model_provider, row.model_id, row.model_effort);
+  return recorded ? { provider: recorded.model.provider, id: recorded.model.id, effort: recorded.effort } : null;
+}
+
+/** An automation's model as create_automation and update_automation take
+ *  it (`settings.model`): null clears it. */
+export function modelSetting(model: AutomationModel | null): { provider: string; id: string; effort: string | null } | null {
+  return model ? { provider: model.provider, id: model.id, effort: model.effort } : null;
+}
 
 /** The times an automation has run since its count began: each key once,
  *  however many repositories it ran on, as its limit is held to
@@ -134,6 +154,7 @@ async function withDetails(orgId: string, rows: AutomationRowRead[]): Promise<Au
     debounceSeconds: r.debounce_seconds,
     sessionMode: r.session_mode,
     coverNewRepos: r.cover_new_repos,
+    model: modelFromRow(r),
     archived: r.archived_at !== null,
     runsUsed: used.get(r.id) ?? null,
     runsAs: r.runs_as && members.has(r.runs_as) ? { id: r.runs_as, login: runners.get(r.runs_as)?.login ?? "" } : null,
@@ -171,8 +192,8 @@ export function scheduleRows(schedules: readonly Schedule[], now = Date.now()) {
   });
 }
 
-/** What's given of its filters and limits, as update_automation's settings
- *  name them. */
+/** What's given of its filters, limits and model, as update_automation's
+ *  settings name them. */
 function limitSettings(change: Partial<AutomationInput>) {
   return {
     ...(change.reviewers !== undefined ? { reviewers: change.reviewers } : {}),
@@ -182,6 +203,7 @@ function limitSettings(change: Partial<AutomationInput>) {
     ...(change.debounceSeconds !== undefined ? { debounce_seconds: change.debounceSeconds } : {}),
     ...(change.sessionMode !== undefined ? { session_mode: change.sessionMode } : {}),
     ...(change.coverNewRepos !== undefined ? { cover_new_repos: change.coverNewRepos } : {}),
+    ...(change.model !== undefined ? { model: modelSetting(change.model) } : {}),
     ...(change.archived !== undefined ? { archived: change.archived } : {}),
   };
 }

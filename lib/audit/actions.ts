@@ -65,7 +65,13 @@ export type AuditAction =
   | "billing.plan_changed"
   | "preview.made_public"
   | "preview.made_login"
-  | "preview.deleted";
+  | "preview.deleted"
+  | "project.created"
+  | "project.changed"
+  | "project.secrets_changed"
+  | "project.repos_changed"
+  | "project.rebuilt"
+  | "project.deleted";
 
 export type AuditEvent = {
   id: number;
@@ -235,6 +241,24 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `made the preview ${what} sign-in only`;
     case "preview.deleted":
       return `deleted the preview ${what}`;
+    case "project.created":
+      return `made the project ${what}`;
+    case "project.changed": {
+      const fields = Array.isArray(d.fields) ? d.fields.map(text).filter(Boolean) : [];
+      return `changed the project ${what}${fields.length ? `'s ${fields.join(", ")}` : ""}`;
+    }
+    case "project.secrets_changed": {
+      const set = Array.isArray(d.set) ? d.set.map(text).filter(Boolean) : [];
+      const removed = Array.isArray(d.removed) ? d.removed.map(text).filter(Boolean) : [];
+      const parts = [set.length ? `set ${set.join(", ")}` : "", removed.length ? `removed ${removed.join(", ")}` : ""].filter(Boolean);
+      return `changed the project ${what}'s secrets${parts.length ? `: ${parts.join("; ")}` : ""}`;
+    }
+    case "project.repos_changed":
+      return text(d.added) ? `added ${text(d.added)} to the project ${what}` : `took ${text(d.removed) ?? "a repository"} out of the project ${what}`;
+    case "project.rebuilt":
+      return `made the project ${what}'s ready boxes again`;
+    case "project.deleted":
+      return `deleted the project ${what}`;
     default:
       return event.action;
   }

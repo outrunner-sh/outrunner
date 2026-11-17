@@ -91,6 +91,7 @@ counted apart. The budget refills continuously: every answer carries
 | POST | `/api/v1/environments/{id}/repos` | Add one of the org's repositories: `project_id` |
 | DELETE | `/api/v1/environments/{id}/repos/{project_id}` | Take one out |
 | GET | `/api/v1/projects` | The org's repositories the key's maker may start sessions on |
+| GET | `/api/v1/repositories` | The same, as Cursor's API lists them: `items` of `url` |
 | POST | `/api/v1/attachments` | Upload a file (multipart, `file`) to send with a prompt or a message |
 | GET | `/api/v1/workspaces` | Sessions, newest first: `status`, `source` (`app`, `slack`, `automation`, `github`, `api`), `user_id`, `project_id`, `pr_url`, `include_archived` |
 | POST | `/api/v1/workspaces` | Start a session: `preparing` at once (`Idempotency-Key` makes a retry safe) |
@@ -119,6 +120,18 @@ counted apart. The budget refills continuously: every answer carries
 | GET | `/api/v1/workspaces/{id}/pull-requests` | Its pull request in each of its repositories, with GitHub's status |
 | GET | `/api/v1/workspaces/{id}/artifacts` | The screenshots and recordings its agent uploaded |
 | GET | `/api/v1/workspaces/{id}/artifacts/{artifact_id}/download` | A link to one artifact's bytes, for 15 minutes |
+| GET, POST | `/api/v1/agents`, `/api/v1/agents/{id}/…` | Cursor's Cloud Agents API, in its own words: [cursor-migration.md](cursor-migration.md#drop-in-cursors-own-calls) |
+| POST | `/api/v1/environments` | Make a project of some of the org's repositories: `name`, `project_ids` (or Cursor's `repos` and `environmentJson`) |
+| DELETE | `/api/v1/environments/{id}` | Delete (archive) a project someone made (org keys); a repository's own goes with it |
+| GET | `/api/v1/environments/{id}/history` | Its changes, newest first, from the org's audit log |
+| GET, POST | `/api/v1/environments/{id}/builds` | Its build (its ready boxes, and how its warm hook went); make them again |
+| GET | `/api/v1/environments/{id}/secrets` | Its variables, by name |
+| PUT, DELETE | `/api/v1/environments/{id}/secrets/{name}` | Set (`value`) or remove one variable (org keys) |
+| GET | `/api/v1/secrets` | The org's secrets, yours and a project's, by name: `scope` (`team`, `user`, `environment`), `environmentId`, `name`, `repo` |
+| GET, PUT, DELETE | `/api/v1/team/secrets`, `/team/secrets/{name}` | The org's secrets, which every member's sessions get: `value`, `type`, `repos` (changed by org keys) |
+| GET, PUT, DELETE | `/api/v1/me/secrets`, `/me/secrets/{name}` | Your own, which your sessions get in any org |
+| POST | `/api/v1/projects` | Start a Mission from Cursor's project request (cursor-migration.md) |
+| GET | `/api/v1/missions`, `/api/v1/projects/{id}`, `…/agents` | Your Missions, one, and its agents, in Cursor's words |
 | GET | `/api/v1/environments/{id}/skills` | The skills.sh catalog skills enabled on a project |
 | POST | `/api/v1/environments/{id}/skills` | Enable a catalog skill: `name`, `slug`, `source` |
 | DELETE | `/api/v1/environments/{id}/skills/{skill_id}` | Disable one |
@@ -183,6 +196,16 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 | `branch`, `base_branch` | The branch to work on (made for it when left out) and the one it starts from |
 | `attachment_ids` | Files uploaded with `POST /attachments`, put on the box with the prompt (up to 10) |
 | `webhook_url` | An https URL told of this session's events (see Webhooks) |
+| `env` | Variables of this session's own, over its project's: `{ "STRIPE_KEY": "sk_test_…" }` (up to 50, each up to 4 KB) |
+| `mcp_servers` | MCP servers of its own, over its project's and yours: `[{ "name", "url", "headers" }]` (http, or `"type": "sse"`) or `[{ "name", "command", "args", "env" }]` (stdio); up to 20 |
+| `subagents` | Subagents Claude may hand work to: `[{ "name", "description", "prompt", "model"? }]` (`model`: sonnet, opus, haiku or inherit; an id naming one is read as it); up to 20 |
+
+`env`, `mcp_servers` and `subagents` are kept sealed with the session and
+given to its box at every setup (its start, and each restore). Its
+variables go over its org's secrets, its project's and your own
+(`/team/secrets`, `/environments/{id}/secrets`, `/me/secrets`), in that
+order; never read back out. Codex sessions take the variables and servers;
+subagents are Claude Code's.
 
 `repo_url` and `pr_url` name a repository the org has in Outrunner (a
 `404` otherwise). A pull request has to be open, and its branch in the
@@ -324,11 +347,11 @@ curl -N -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Accept: text/event-str
 
 ```text
 event: status
-data: {"state":"working","run_id":"48290"}
+data: {"state":"working","run_id":"48290","run_number":2}
 
 id: 48290
 event: prompt
-data: {"run_id":"48290","text":"Also add a test for it.","timestamp":"…"}
+data: {"run_id":"48290","run_number":2,"text":"Also add a test for it.","timestamp":"…"}
 
 id: 48733
 event: tool_call
@@ -343,11 +366,11 @@ event: assistant
 data: {"uuid":"…","text":"Added checkout.test.ts; all 41 pass."}
 
 event: status
-data: {"state":"idle","run_id":"48290"}
+data: {"state":"idle","run_id":"48290","run_number":2}
 
 id: 51877
 event: result
-data: {"run_id":"48290","status":"finished","text":"Added checkout.test.ts; all 41 pass.","error":null,"duration_ms":84120,"usage":{…}}
+data: {"run_id":"48290","run_number":2,"status":"finished","text":"Added checkout.test.ts; all 41 pass.","error":null,"duration_ms":84120,"usage":{…}}
 ```
 
 | Event | |
@@ -355,12 +378,14 @@ data: {"run_id":"48290","status":"finished","text":"Added checkout.test.ts; all 
 | `status` | Where the turn is: `working`, `needs_input`, `idle`; `preparing` while the session is set up or woken |
 | `prompt` | A run began |
 | `assistant` | What the agent said: each record's words, or what a growing one added |
+| `thinking` | What it thought before it said it, the same way (`{ "uuid", "text" }`), where its log keeps the words |
 | `tool_call` | A tool call: `running`, then `completed` with its `result` (`is_error` when it failed) |
 | `needs_input` | It asked a question or for secrets (`pending_input`, as on the session) |
 | `result` | A run ended: its status, last words, duration and tokens |
 | `heartbeat` | Every 15 seconds |
 | `error`, `done` | The stream failed, or ended |
 
+`run_number` is the run's place among the session's runs (its `number`).
 Without a start it begins at the newest run's prompt. Every event but
 `status` and `heartbeat` has an `id`: reconnect with it as `Last-Event-ID`
 (or `after_event`) to go on after it. `GET /runs/{run_id}/stream` sends that
@@ -692,6 +717,14 @@ triggers only, and isn't held to the 50-repository cap when sent with
 `project_ids`. Any member lists them and their runs; making, changing and
 deleting one is the org's admins' (an org key's maker is one). An
 automation runs as whoever last set what it does.
+
+`model` (`{ "provider"?, "id", "effort"? }`, an id from `GET /models`;
+`null` clears it) starts its runs on that model, as its runner's; Cursor's
+`modelSelection` (`{ "modelId", "parameters": [{ "id": "effort", "value" }] }`)
+is taken too. Changing it makes you its runner, as changing what it does
+does. A run its runner can't start on that model starts as it would
+without one (the org's setting), and says why. The list also answers
+Cursor's `items` and `nextCursor`, and takes `limit` and `cursor`.
 
 ## CLI
 

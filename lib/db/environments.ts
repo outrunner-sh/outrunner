@@ -86,6 +86,8 @@ export type Environment = {
    *  their own pool), or null for none yet. */
   warm: WarmRun | null;
   updatedAt: string;
+  /** When it was made; absent on one made in code rather than read. */
+  createdAt?: string;
   /** What the user asking may do with it: write, or only read. */
   access: AccessLevel;
 };
@@ -131,7 +133,7 @@ export async function getEnvironment(userId: string, id: string): Promise<Enviro
   const { data, error } = await supabase
     .from("environments")
     .select(
-      "id, org_id, name, description, instructions, env_names, file_paths, setup_script, run_script, archive_script, default_for_project_id, updated_at, warm_hook, start_hook, setup_generation, warm_runs",
+      "id, org_id, name, description, instructions, env_names, file_paths, setup_script, run_script, archive_script, default_for_project_id, updated_at, created_at, warm_hook, start_hook, setup_generation, warm_runs",
     )
     .eq("id", id)
     .is("archived_at", null)
@@ -153,6 +155,7 @@ export async function getEnvironment(userId: string, id: string): Promise<Enviro
     setupGeneration: data.setup_generation,
     warm: warmRunOf(data.warm_runs, userId),
     updatedAt: data.updated_at,
+    createdAt: data.created_at,
     access,
   };
 }
@@ -527,5 +530,71 @@ export async function removeEnvironmentRepo(userId: string, id: string, projectI
     .eq("org_id", environment.orgId)
     .eq("environment_id", id)
     .eq("project_id", projectId);
+  if (error) throw error;
+}
+
+/**
+ * A project the user makes, of some of the org's repositories (in the order
+ * given, each in a folder named after it), with no default repository: the
+ * API's (POST /environments). Needs write on every repository; each must be
+ * the org's.
+ */
+export async function createEnvironment(userId: string, orgId: string, name: string, projectIds: string[]): Promise<string> {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > 80) throw new EnvironmentRuleError("A project's name is 1 to 80 characters.");
+  const ids = [...new Set(projectIds)];
+  if (ids.length === 0) throw new EnvironmentRuleError("A project holds at least one repository.");
+  if (ids.length > MAX_REPOS) throw new EnvironmentRuleError(`A project holds at most ${MAX_REPOS} repositories.`);
+  const supabase = createSupabaseAdminClient();
+  const { data: projects, error } = await supabase.from("projects").select("id, name").eq("org_id", orgId).in("id", ids);
+  if (error) throw error;
+  const byId = new Map<string, string>((projects ?? []).map((p) => [String(p.id), String(p.name)]));
+  for (const id of ids) {
+    if (!byId.has(id)) throw new EnvironmentRuleError("That repository isn't connected to this organization.");
+    if (!allows(await projectLevel(userId, id), "write")) {
+      throw new EnvironmentRuleError("You can only make a project of repositories you can change. Ask an admin for write access.");
+    }
+  }
+  const { data: made, error: insertError } = await supabase
+    .from("environments")
+    .insert({ owner_id: userId, org_id: orgId, name: trimmed })
+    .select("id")
+    .single();
+  if (insertError) throw insertError;
+  const id = made.id as string;
+  const taken = new Set<string>();
+  const rows = ids.map((projectId, position) => {
+    const base = checkoutNameFor(byId.get(projectId)!);
+    let folder = base;
+    for (let n = 2; taken.has(folder); n++) folder = `${base.slice(0, 96)}-${n}`;
+    taken.add(folder);
+    return { owner_id: userId, environment_id: id, project_id: projectId, checkout_name: folder, position };
+  });
+  const { error: reposError } = await supabase.from("environment_repos").insert(rows);
+  if (reposError) {
+    // Not left half made: a project with none of its repositories.
+    await supabase.from("environments").delete().eq("id", id);
+    throw reposError;
+  }
+  return id;
+}
+
+/**
+ * Archive a project the user made: it's no longer listed or started from,
+ * and its sessions keep their own copy of its setup. A repository's own
+ * project isn't one to remove. Needs write (else EnvironmentAccessError).
+ */
+export async function archiveEnvironment(userId: string, id: string): Promise<void> {
+  const environment = await getEnvironment(userId, id);
+  if (!environment) throw new EnvironmentRuleError("Project not found.");
+  if (!allows(environment.access, "write")) throw new EnvironmentAccessError();
+  if (environment.defaultForProjectId) {
+    throw new EnvironmentRuleError("This project is its repository's own, and goes only with the repository.");
+  }
+  const { error } = await createSupabaseAdminClient()
+    .from("environments")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", id)
+    .is("archived_at", null);
   if (error) throw error;
 }

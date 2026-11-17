@@ -11,6 +11,7 @@ import { GET as environmentGET, PATCH as environmentPATCH } from "@/app/api/envi
 import { DELETE as reposDELETE, POST as reposPOST } from "@/app/api/environments/[id]/repos/route";
 import { PATCH as secretsPATCH } from "@/app/api/environments/[id]/secrets/route";
 import { boxSetupRefused } from "@/lib/api/auth";
+import { bothWays, cursorPatchOf } from "@/lib/api/cursor-environments.deps";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
 import { environmentDetailJson } from "@/lib/api/serialize";
@@ -33,10 +34,11 @@ async function projectNow(context: ApiContext, id: string): Promise<Response> {
   return Response.json(environmentDetailJson((await read.json()) as Environment));
 }
 
-/** GET /environments/{id}. */
+/** GET /environments/{id}: in Outrunner's words and Cursor's
+ *  (lib/api/cursor-environments.ts), for a script moved from it. */
 export async function getEnvironmentApi(context: ApiContext, id: string): Promise<Response> {
   const project = await projectOf(context, id);
-  return project instanceof Response ? project : Response.json(environmentDetailJson(project));
+  return project instanceof Response ? project : Response.json(await bothWays(context, project));
 }
 
 /** The fields PATCH /environments/{id} takes, as the app's route does. */
@@ -45,8 +47,14 @@ const PROJECT_FIELDS = ["name", "description", "instructions", "scripts", "hooks
 /** PATCH /environments/{id}: a field left out is left as it is; null (or
  *  empty) clears one. */
 export async function updateEnvironmentApi(context: ApiContext, id: string): Promise<Response> {
-  const body = await jsonBody(context.request);
-  if (body instanceof Response) return body;
+  const sent = await jsonBody(context.request);
+  if (sent instanceof Response) return sent;
+  // Cursor's `environmentJson`, `repos` and `buildSettings`, in Outrunner's words.
+  const cursor = await cursorPatchOf(context, id, sent);
+  if (cursor instanceof Response) return cursor;
+  const body = cursor.rest;
+  // Only Cursor's, done above (or nothing to do: `buildSettings`).
+  if (Object.keys(sent).length > 0 && Object.keys(body).length === 0) return projectNow(context, id);
   const unknown = Object.keys(body).find((key) => !(PROJECT_FIELDS as readonly string[]).includes(key));
   if (unknown) return apiError(400, `A project has no \`${unknown}\` to change: ${PROJECT_FIELDS.join(", ")}.`);
   if (Object.keys(body).length === 0) return apiError(400, `Name something to change: ${PROJECT_FIELDS.join(", ")}.`);

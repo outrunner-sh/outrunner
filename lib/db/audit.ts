@@ -43,3 +43,40 @@ export async function listAuditEvents(
     })),
   };
 }
+
+/** One resource's events in the org's log (a project's history), newest
+ *  first: `limit` of them older than `before`, and whether there are more. */
+export async function listResourceAuditEvents(
+  orgId: string,
+  resource: { type: string; id: string },
+  { limit, before }: { limit: number; before?: number },
+): Promise<{ events: AuditEvent[]; more: boolean }> {
+  let query = createSupabaseAdminClient()
+    .from("audit_events")
+    .select("id, actor_type, actor_id, actor_label, action, resource_type, resource_id, resource_label, details, created_at")
+    .eq("org_id", orgId)
+    .eq("resource_type", resource.type)
+    .eq("resource_id", resource.id)
+    .order("id", { ascending: false })
+    .limit(limit + 1);
+  if (before) query = query.lt("id", before);
+  const { data, error } = await query;
+  if (error && probeStatus(error) === "missing") return { events: [], more: false };
+  if (error) throw error;
+  const rows = data ?? [];
+  return {
+    more: rows.length > limit,
+    events: rows.slice(0, limit).map((row) => ({
+      id: Number(row.id),
+      actorType: row.actor_type as "user" | "system",
+      actorId: row.actor_id,
+      actorLabel: row.actor_label,
+      action: row.action,
+      resourceType: row.resource_type,
+      resourceId: row.resource_id,
+      resourceLabel: row.resource_label,
+      details: (row.details ?? {}) as Record<string, unknown>,
+      createdAt: row.created_at,
+    })),
+  };
+}
