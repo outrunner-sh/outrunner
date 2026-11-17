@@ -189,3 +189,19 @@ export function firstPrompt(
   const coda = input.autoCreatePr && !input.workOnCurrentBranch ? AUTO_PR_CODA : undefined;
   return [input.planMode ? PLAN_MODE_PREAMBLE : undefined, preamble ?? pushTo, input.prompt, coda].filter(Boolean).join("\n\n");
 }
+
+/** A message's words and images: `content`, or `prompt` (text, or
+ *  `{ text, images }`); or the reason they're refused. */
+export function messageOf(raw: Record<string, unknown>): { content: string; images: unknown } | string {
+  if (raw.prompt === undefined || raw.prompt === null) {
+    return { content: typeof raw.content === "string" ? raw.content.trim() : "", images: raw.images };
+  }
+  if (raw.content !== undefined && raw.content !== null) return "Send `content` or `prompt`, not both.";
+  if (typeof raw.prompt === "string") return { content: raw.prompt.trim(), images: raw.images };
+  const prompt = raw.prompt as { text?: unknown; images?: unknown };
+  if (typeof prompt !== "object" || Array.isArray(prompt) || (prompt.text !== undefined && typeof prompt.text !== "string")) {
+    return "`prompt` is the message's text, or `{ text, images }`.";
+  }
+  if (raw.images !== undefined && prompt.images !== undefined) return "Send `images` or `prompt.images`, not both.";
+  return { content: typeof prompt.text === "string" ? prompt.text.trim() : "", images: prompt.images ?? raw.images };
+}

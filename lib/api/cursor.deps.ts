@@ -30,7 +30,7 @@ import { apiError } from "@/lib/api/errors";
 import { jsonBody, type ApiContext } from "@/lib/api/handler";
 import { readConversation } from "@/lib/api/live";
 import { paginate } from "@/lib/api/pagination";
-import { runsFrom, sessionUsage, type Run } from "@/lib/api/runs";
+import { firstRunPending, runsFrom, sessionUsage, type Run } from "@/lib/api/runs";
 import { workspaceJson } from "@/lib/api/serialize";
 import { streamApi } from "@/lib/api/stream.deps";
 import { checkWebhookUrl, messageSent, webhookHooks } from "@/lib/api/webhooks.deps";
@@ -96,13 +96,13 @@ async function gitOf(workspace: Workspace): Promise<GitBranch[]> {
 async function agentRuns(
   context: ApiContext,
   agentId: string,
-): Promise<{ workspace: Workspace; runs: Run[]; turn: string | null; total: Run["usage"] } | Response> {
+): Promise<{ workspace: Workspace; runs: Run[]; turn: string | null; total: Run["usage"]; from: string } | Response> {
   const workspace = await ownSession(context, await sessionOf(context, agentId));
   if (workspace instanceof Response) return workspace;
   const conversation = await readConversation(workspace);
   const runs = runsFrom(conversation.entries, conversation.state);
   const turn = conversation.from === "live" ? turnState(conversation.entries.map((e) => e.event), conversation.state) : null;
-  return { workspace, runs, turn, total: sessionUsage(conversation.entries, runs).total };
+  return { workspace, runs, turn, total: sessionUsage(conversation.entries, runs).total, from: conversation.from };
 }
 
 /** The org's project named `name` (Cursor's named environment, `env.name`)
@@ -239,7 +239,7 @@ async function oneRun(
   const read = await agentRuns(context, agentId);
   if (read instanceof Response) return read;
   const run = findRun(read.runs, ref) ?? null;
-  if (!run && !("number" in ref && ref.number === 1 && read.runs.length === 0)) {
+  if (!run && !("number" in ref && ref.number === 1 && firstRunPending(read.workspace, read.runs, read.from))) {
     return apiError(404, "No run by that id on this agent.");
   }
   return { workspace: read.workspace, run, ref };
@@ -265,7 +265,7 @@ export async function listAgentRunsApi(context: ApiContext, agentId: string): Pr
   const git = await gitOf(workspace);
   const items: Record<string, unknown>[] = page.data.map((run) => cursorRunJson(run, workspace.id, git));
   // A session being set up has its first run already, as Cursor's has.
-  if (runs.length === 0 && paging.page === 1) items.push(pendingRunJson(1, workspace.id, workspaceJson(workspace, context.base) as { status: string }));
+  if (paging.page === 1 && firstRunPending(workspace, runs, read.from)) items.push(pendingRunJson(1, workspace.id, workspaceJson(workspace, context.base) as { status: string }));
   return Response.json(cursorPage(items, page));
 }
 

@@ -13,6 +13,15 @@ export OUTRUNNER_API_KEY=or_key_…
 Coming from Cursor's Cloud Agents API? [docs/cursor-migration.md](cursor-migration.md)
 maps its calls to these.
 
+For an agent (Claude Code, Codex, any that reads skills): the
+`outrunner-api` skill teaches it these calls. Install it from
+`$OUTRUNNER/skills/outrunner-api/SKILL.md` (no key needed):
+
+```sh
+mkdir -p ~/.claude/skills/outrunner-api
+curl -sS "$OUTRUNNER/skills/outrunner-api/SKILL.md" -o ~/.claude/skills/outrunner-api/SKILL.md
+```
+
 ## Keys
 
 Send a key with every call:
@@ -68,6 +77,11 @@ sentence for a person:
 | `upstream_unavailable` | 502/503: the session's box, GitHub or Supabase didn't answer |
 | `internal` | 500 |
 
+A path under `/api/v1` with no endpoint answers `404` in the same envelope.
+`GET /api/v1/openapi.json` lists every endpoint, with the bodies of the
+most used (starting, reading and messaging a session, its runs) as JSON
+Schema.
+
 ### Rate limits
 
 Each key may make 120 calls a minute, and start 10 sessions a minute,
@@ -97,7 +111,7 @@ counted apart. The budget refills continuously: every answer carries
 | POST | `/api/v1/workspaces` | Start a session: `preparing` at once (`Idempotency-Key` makes a retry safe) |
 | GET | `/api/v1/workspaces/{id}` | A session, and where its turn is |
 | DELETE | `/api/v1/workspaces/{id}` | Delete a session for good |
-| POST | `/api/v1/workspaces/{id}/messages` | Send it a message (waking it first if it was paused or archived): `content`, `attachment_ids`, `images`, `mode` |
+| POST | `/api/v1/workspaces/{id}/messages` | Send it a message (waking it first if it was paused or archived): `content` (or `prompt`), `attachment_ids`, `images`, `mode` |
 | POST | `/api/v1/workspaces/{id}/answer` | Answer the question its agent is waiting on: `answers`, or `dismissed` |
 | POST | `/api/v1/workspaces/{id}/secrets` | Give its agent the secrets it asked for: `values`, or `skipped` |
 | POST | `/api/v1/workspaces/{id}/plan/approve` | Approve the plan its agent is waiting on |
@@ -221,9 +235,12 @@ create safe to retry: the same key from the same person answers `200` with
 the session the first call made (`Idempotent-Replayed: true`), whatever the
 body says, and starts nothing new.
 
-It answers `202` straight away with the session, `"status": "preparing"`;
-its box is set up after (`setup_phase` says the step), and its prompt is
-sent once it's `ready`. The session is the key's maker's, and shows in their
+It answers `202` straight away with the session, `"status": "preparing"`,
+and its first run, `"run_id": "run-1"` (with `run`, `preparing`): its box is
+set up after (`setup_phase` says the step), and its prompt is sent once it's
+`ready`, 10 to 30 seconds on. `run-1` works at once with every run call, its
+stream waiting for it to begin, so there's nothing to retry: a client that
+does should send an `Idempotency-Key`. The session is the key's maker's, and shows in their
 sidebar like any other, with `"source": "api"`. A refusal before anything
 was made (no Claude connected, the plan's limit, a private repository and no
 GitHub connection) is a `409` saying why.
@@ -262,7 +279,8 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/wait?timeout=600"
 ```
 
-A send answers `{ "result": "sent", "after_event": "48213", "run_id": "48290" }`:
+The words are `content`; `prompt` is taken too, as text or Cursor's `{ "text",
+"images" }`. A send answers `{ "result": "sent", "after_event": "48213", "run_id": "48290" }`:
 where the conversation stood before this message, read once the send has
 gone, and the run it starts (see Runs). Pass `after_event` to `wait`:
 
@@ -324,12 +342,15 @@ curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces
 { "id": "48290", "number": 2, "prompt": "Also add a test for it.", "status": "finished", "started_at": "…", "ended_at": "…", "duration_ms": 84120, "result": "Added checkout.test.ts; all 41 pass.", "error": null, "pending_input": null, "usage": { "input_tokens": 3120, "output_tokens": 2210, "cache_creation_input_tokens": 18800, "cache_read_input_tokens": 96400, "total_tokens": 120530 }, "first_event": "48290", "last_event": "51877", "from": "live" }
 ```
 
-`status` is `running`, `needs_input` (it asked a question or for secrets:
+`status` is `preparing` (a session's first, before its prompt is in its
+log), `running`, `needs_input` (it asked a question or for secrets:
 `pending_input` says what), `finished`, `cancelled` (stopped, by `cancel` or
 `interrupt`), or `error` (an API error or usage limit ended it: `error` is
 what it said). `result` is the last thing it said, once it's over. A run's
 id is its prompt's event id: stable while the box is up, and counted from 1
-in an archived session's, as its events are. `GET /runs` lists them newest
+in an archived session's, as its events are. A run is also named by its
+place, `run-<number>` (`run-1` the first), in every run call, from the
+moment the session is started. `GET /runs` lists them newest
 first, a page at a time; each takes `chat_id`. `POST
 /runs/{run_id}/cancel` stops the run going on (`409` for one that's over).
 

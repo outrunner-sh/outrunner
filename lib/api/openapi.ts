@@ -7,6 +7,8 @@
  * agents to find them by.
  */
 
+import { OPERATION_SCHEMAS, SCHEMAS } from "@/lib/api/openapi-schemas";
+
 export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export type ApiOperation = {
@@ -165,6 +167,16 @@ export function openApiSpec(base: string): Record<string, unknown> {
   for (const op of API_OPERATIONS) {
     const params = [...op.path.matchAll(/\{(\w+)\}/g)].map(([, name]) => ({ name, in: "path", required: true, schema: { type: "string" } }));
     const query = (op.query ?? []).map((name) => ({ name, in: "query", required: false, schema: { type: "string" } }));
+    const described = OPERATION_SCHEMAS[`${op.method} ${op.path}`];
+    const bodySchema = described?.request ? { $ref: `#/components/schemas/${described.request}` } : { type: "object" };
+    const answers = described
+      ? Object.fromEntries(
+          Object.entries(described.responses).map(([status, name]) => [
+            status,
+            { description: name, content: { "application/json": { schema: { $ref: `#/components/schemas/${name}` } } } },
+          ]),
+        )
+      : { "2XX": { description: "Done: see docs/api.md for its shape", content: { "application/json": { schema: { type: "object" } } } } };
     paths[op.path] ??= {};
     paths[op.path][op.method.toLowerCase()] = {
       operationId: operationId(op),
@@ -181,11 +193,11 @@ export function openApiSpec(base: string): Record<string, unknown> {
           content:
             op.body === "multipart"
               ? { "multipart/form-data": { schema: { type: "object", properties: { file: { type: "string", format: "binary" } }, required: ["file"] } } }
-              : { "application/json": { schema: { type: "object" } } },
+              : { "application/json": { schema: bodySchema } },
         },
       }),
       responses: {
-        "2XX": { description: "Done: see docs/api.md for its shape", content: { "application/json": { schema: { type: "object" } } } },
+        ...answers,
         "4XX": ERROR_RESPONSE,
         "5XX": ERROR_RESPONSE,
       },
@@ -206,6 +218,7 @@ export function openApiSpec(base: string): Record<string, unknown> {
         basic: { type: "http", scheme: "basic", description: "The same key as the user name, with no password" },
       },
       schemas: {
+        ...SCHEMAS,
         Error: {
           type: "object",
           properties: {

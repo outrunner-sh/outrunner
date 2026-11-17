@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { ConversationEntry } from "@/lib/api/conversation";
-import { isPrompt, runsFrom, sessionUsage, usageOf } from "@/lib/api/runs";
+import { firstRunPending, FIRST_RUN, isPrompt, pendingFirstRun, runsFrom, sessionUsage, usageOf } from "@/lib/api/runs";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 
 const text = (t: string) => ({ type: "text", text: t });
@@ -98,4 +98,16 @@ test("usage an engine logs apart counts as it comes", () => {
 
 test("a conversation with no prompt has no runs", () => {
   assert.deepEqual(runsFrom([], null), []);
+});
+
+test("a session's first run is there before its prompt is logged: while it's set up, or just ready", () => {
+  const none: never[] = [];
+  assert.equal(firstRunPending({ status: "creating", errorMessage: null }, none, "none"), true);
+  assert.equal(firstRunPending({ status: "ready", errorMessage: null }, none, "live"), true);
+  assert.equal(firstRunPending({ status: "failed", errorMessage: "No box" }, none, "none"), true);
+  // Paused with nothing read: no run to make up.
+  assert.equal(firstRunPending({ status: "suspended", errorMessage: null }, none, "none"), false);
+  assert.equal(firstRunPending({ status: "creating", errorMessage: null }, runsFrom(twoRuns, "running"), "live"), false);
+  assert.equal(FIRST_RUN, "run-1");
+  assert.deepEqual([pendingFirstRun({ status: "creating", errorMessage: null }).status, pendingFirstRun({ status: "failed", errorMessage: "No box" }).error], ["preparing", "No box"]);
 });

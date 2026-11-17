@@ -36,11 +36,13 @@ import { checkAttachments } from "@/lib/api/attachments";
 import { parseImages } from "@/lib/api/images";
 import { imagesToAttachments } from "@/lib/api/images.deps";
 import { boxSetupRefusal } from "@/lib/api/auth";
-import { firstPrompt, idempotencyKey, idempotentId, MAX_PROMPT, parseAttachmentIds, parseCreate, type CreateInput } from "@/lib/api/create-request";
+import { firstPrompt, idempotencyKey, idempotentId, MAX_PROMPT, messageOf, parseAttachmentIds, parseCreate, type CreateInput } from "@/lib/api/create-request";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
 import { readConversation, readLiveConversation } from "@/lib/api/live";
-import { runsFrom, sessionUsage, type Run } from "@/lib/api/runs";
+import { findRun, runRef } from "@/lib/api/cursor";
+import { firstRunPending, FIRST_RUN, pendingFirstRun, runsFrom, sessionUsage, type Run } from "@/lib/api/runs";
+import { getOrg } from "@/lib/db/orgs";
 import { getChat, listChats } from "@/lib/db/chats";
 import { agentChat, chatNamed } from "@/lib/session/chat-target";
 import { mainChatOf, orderedChats, type SessionChat } from "@/lib/session/chats";
@@ -90,7 +92,9 @@ export async function createWorkspace(
   // uploaded or watched a second time.
   const replayed = askedId ? await getWorkspace(askedId) : null;
   if (replayed && replayed.ownerId === context.owner.id) {
-    return Response.json(workspaceJson(replayed, context.base), { status: 200, headers: { "idempotent-replayed": "true" } });
+    // A Mission made with the same key (POST /projects) is no session to answer with.
+    if (replayed.kind === "mission") return apiError(409, "That key started a project (a Mission), not a session: send another.");
+    return Response.json({ ...workspaceJson(replayed, context.base), run_id: FIRST_RUN }, { status: 200, headers: { "idempotent-replayed": "true" } });
   }
   const raw = await jsonBody(context.request);
   if (raw instanceof Response) return raw;
@@ -105,7 +109,7 @@ export async function createWorkspace(
   let projectId = input.projectId;
   if (input.repoFullName) {
     const found = await getProjectByFullName(caller.orgId, input.repoFullName);
-    if (!found) return apiError(404, "No repository at that address in this org that you can see. Add it to Outrunner first.");
+    if (!found) return apiError(404, await noRepository(context, input.repoFullName));
     projectId = found.id;
   }
   if (input.environmentId) {
@@ -176,7 +180,23 @@ export async function createWorkspace(
   const workspace = await getWorkspace(made.workspace.id);
   if (!workspace) return apiError(500, "The session was made, but couldn't be read back.");
   await hooks.onCreated?.(workspace, input);
-  return Response.json({ ...workspaceJson(workspace, context.base), status: "preparing" }, { status: 202 });
+  // Its first run is `run-1` from now, though its own id (its prompt's
+  // event) is only known once the box has logged it: every run call takes it.
+  return Response.json(
+    { ...workspaceJson(workspace, context.base), status: "preparing", run_id: FIRST_RUN, run: pendingFirstRun(workspace) },
+    { status: 202 },
+  );
+}
+
+/** Why a repository named by address wasn't found: which one, in which org,
+ *  and, for a key that names its org per call, how to name another. */
+async function noRepository(context: ApiContext, fullName: string): Promise<string> {
+  const org = await getOrg(context.caller.orgId).catch(() => null);
+  const where = org ? `the org ${org.name} (${org.id})` : `the org ${context.caller.orgId}`;
+  const which = context.caller.kind === "org_key"
+    ? "An org key acts in its own org alone."
+    : "A personal key or the CLI acts in your personal org unless the call names another (`?org=`, or the `Outrunner-Org` header).";
+  return `No repository ${fullName} in ${where} that you can see: add it to Outrunner, or check the org. ${which} GET /projects lists what this key sees.`;
 }
 
 /** Where a session on a pull request starts (its head branch, in the
@@ -390,14 +410,18 @@ export async function sendMessageApi(
 ): Promise<Response> {
   const raw = await jsonBody(context.request);
   if (raw instanceof Response) return raw;
-  const content = typeof raw.content === "string" ? raw.content.trim() : "";
+  // `prompt` is taken for `content`, as POST /workspaces names it (and as
+  // Cursor's `{ text, images }`).
+  const said = messageOf(raw);
+  if (typeof said === "string") return apiError(400, said);
+  const content = said.content;
   const uploaded = parseAttachmentIds(raw.attachment_ids);
   if (typeof uploaded === "string") return apiError(400, uploaded);
-  const images = parseImages(raw.images, uploaded.length);
+  const images = parseImages(said.images, uploaded.length);
   if (typeof images === "string") return apiError(400, images);
   // Files alone are a message too ("here's the log"), as in the composer.
   if (!content && uploaded.length === 0 && images.length === 0) {
-    return apiError(400, "Say something (`content`), or send files (`attachment_ids`) or `images`.");
+    return apiError(400, "Say something (`content`, or `prompt`), or send files (`attachment_ids`) or `images`.");
   }
   if (content.length > MAX_PROMPT) return apiError(400, "The message is too long.");
   if (raw.mode !== undefined && raw.mode !== "build" && raw.mode !== "plan") return apiError(400, "`mode` is build or plan.");
@@ -487,23 +511,33 @@ export async function listRunsApi(context: ApiContext, id: string): Promise<Resp
   if (typeof page === "string") return apiError(400, page);
   const read = await sessionRuns(context, id);
   if (read instanceof Response) return read;
-  return Response.json({ ...paginate([...read.runs].reverse(), page), from: read.from });
+  // A session just started has its first run already, `preparing`.
+  const runs: unknown[] = firstRunPending(read.workspace, read.runs, read.from) ? [pendingFirstRun(read.workspace)] : [...read.runs].reverse();
+  return Response.json({ ...paginate(runs, page), from: read.from });
 }
 
-/** GET /workspaces/{id}/runs/{run_id}: one run. */
+/** GET /workspaces/{id}/runs/{run_id}: one run, by its id or its place
+ *  (`run-2`). */
 export async function getRunApi(context: ApiContext, id: string, runId: string): Promise<Response> {
+  const ref = runRef(runId);
+  if (!ref) return apiError(404, "No run by that id in this session: a run's `id`, or its place (`run-1`).");
   const read = await sessionRuns(context, id);
   if (read instanceof Response) return read;
-  const run = read.runs.find((r) => r.id === runId);
-  return run ? Response.json({ ...run, from: read.from }) : apiError(404, "No run by that id in this session.");
+  const run = findRun(read.runs, ref);
+  if (run) return Response.json({ ...run, from: read.from });
+  if ("number" in ref && ref.number === 1 && firstRunPending(read.workspace, read.runs, read.from)) {
+    return Response.json({ ...pendingFirstRun(read.workspace), from: read.from });
+  }
+  return apiError(404, "No run by that id in this session.");
 }
 
 /** POST /workspaces/{id}/runs/{run_id}/cancel: stop the run, when it's the
  *  one going on (as interrupt does). */
 export async function cancelRunApi(context: ApiContext, id: string, runId: string): Promise<Response> {
+  const ref = runRef(runId);
   const read = await sessionRuns(context, id);
   if (read instanceof Response) return read;
-  const run = read.runs.find((r) => r.id === runId);
+  const run = ref ? findRun(read.runs, ref) : undefined;
   if (!run) return apiError(404, "No run by that id in this session.");
   if (run.status !== "running" && run.status !== "needs_input") return apiError(409, `That run is ${run.status}: only the one going on can be cancelled.`);
   const stopped = await interruptPOST(appRequest(context.base, `/api/workspaces/${id}/interrupt${chatParam(read.chat)}`), routeParams({ id }));
