@@ -41,9 +41,9 @@ gcloud compute ssh $ssh_flags outrunner-app --command \
 Then deploy:
 
 ```sh
-deploy/vm/gcp/deploy.sh            # origin/main
-deploy/vm/gcp/deploy.sh <sha>      # a specific commit of main, or a rollback
-OUTRUNNER_ALLOW_UNMERGED=1 deploy/vm/gcp/deploy.sh <sha>   # a pushed PR commit, for testing
+deploy/vm/deploy.sh            # origin/main
+deploy/vm/deploy.sh <sha>      # a specific commit of main, or a rollback
+OUTRUNNER_ALLOW_UNMERGED=1 deploy/vm/deploy.sh <sha>   # a pushed PR commit, for testing
 ```
 
 `deploy.sh` archives the commit, copies it over IAP SSH, and runs
@@ -67,7 +67,34 @@ It trusts only this repository's `production` environment (main only), and
 the deployer service account can only SSH with sudo into this one VM over
 IAP. Set the four repository variables it prints.
 
-## Prepare another host
+## Another host over SSH
+
+Any Ubuntu host reachable over SSH works the same way. Prepare it once as
+root, then give deploys their own user and key:
+
+```sh
+ssh -p <port> root@<host> 'bash -s' < deploy/vm/setup-host.sh
+# on the host: a `deploy` user whose authorized_keys holds a key made for
+# GitHub Actions, with passwordless sudo (the installer runs as root)
+```
+
+Copy the three configuration files below to `/etc/outrunner` (root, `0600`).
+Deploy with the same script:
+
+```sh
+OUTRUNNER_VM_SSH=deploy@<host> OUTRUNNER_VM_SSH_PORT=<port> deploy/vm/deploy.sh
+```
+
+For automatic deploys, set the repository variables `VM_SSH_HOST`,
+`VM_SSH_PORT`, `VM_SSH_USER` and `VM_SSH_KNOWN_HOSTS` (the host's key line
+from `ssh-keyscan`, checked against the host's own fingerprint) and the
+secret `VM_SSH_KEY`. With `VM_SSH_HOST` set, `deploy-vm` uses SSH instead
+of Google Cloud.
+
+Keep the host near the database: every request makes several database
+round trips, so a host in another region adds that distance to each one.
+
+## Prepare another host by hand
 
 Use an x86-64 Linux VM with Docker Engine, Compose **2.30 or later**, Python 3,
 and curl. An on-host build should have 4 vCPUs, 8 GB RAM, and 40 GB disk. Node,
