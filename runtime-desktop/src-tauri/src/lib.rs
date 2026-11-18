@@ -9,6 +9,7 @@
 // choice returns a short-lived, PKCE-bound grant to create a separate webview
 // session. Provider linking still uses the legacy loopback OAuth callback.
 
+mod browsing;
 mod claude_login;
 mod desktop_signin;
 mod import;
@@ -46,22 +47,6 @@ fn site() -> String {
     } else {
         "https://app.outrunner.sh".to_string()
     }
-}
-
-/// Whether `url` is on [`site`]'s origin, for the navigation check: its
-/// scheme, host and port (the spec's tuple origin), not its host alone, so
-/// `http://` or another port of the same host never loads in the window. A
-/// `file:` or `data:` URL's origin is opaque and equals none. Derived from the
-/// site rather than declared as a second constant, so the two cannot disagree.
-fn same_origin(url: &tauri::Url, site: &tauri::Url) -> bool {
-    url.origin() == site.origin()
-}
-
-/// Whether an off-site navigation may go to the system's opener: web pages
-/// and mail only. Any other scheme (`file:`, `smb:`, another app's own) would
-/// have macOS open a file or launch an app on a link's say.
-fn opens_externally(url: &tauri::Url) -> bool {
-    matches!(url.scheme(), "https" | "http" | "mailto")
 }
 
 /// What the browser tab is left showing after the redirect. Styled to match the
@@ -151,7 +136,7 @@ const INIT_JS: &str = "window.__RUNTIME_DESKTOP__ = true;";
 
 /// The app's dark background (globals.css `--background`, #060505), for the window
 /// behind the page and its title bar.
-const APP_BACKGROUND: Color = Color(6, 5, 5, 255);
+pub(crate) const APP_BACKGROUND: Color = Color(6, 5, 5, 255);
 
 /// Reveal + focus the main window (from the tray, dock, or a second launch).
 fn show_main(app: &tauri::AppHandle) {
@@ -181,6 +166,16 @@ pub fn run() {
         .manage(desktop_signin::DesktopSigninState::default())
         .manage(local_runtime::LocalRuntime::default())
         .manage(updater::UpdateState::default())
+        .manage(browsing::Downloads::default())
+        .menu(browsing::menu)
+        .on_menu_event(browsing::on_menu_event)
+        // Closing the main window quits, even with a window it opened still
+        // up: that one is a page's, and the app has no other way back.
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                window.app_handle().exit(0);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             desktop_signin::desktop_signin_start,
             desktop_signin::desktop_signin_poll,
@@ -222,7 +217,9 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Main window → hosted Runtime UI, flagged as the desktop shell, with
-            // off-site navigations (OAuth) bounced to the system browser.
+            // off-site links (OAuth) bounced to the system browser, the site's
+            // own new windows opened as the app's, and downloads saved
+            // (browsing.rs).
             let site = site();
             let site_url: tauri::Url = site.parse().unwrap();
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(site_url.clone()))
@@ -234,7 +231,7 @@ pub fn run() {
                 .background_color(APP_BACKGROUND);
             #[cfg(target_os = "macos")]
             let builder = builder.title_bar_style(tauri::TitleBarStyle::Transparent);
-            builder
+            browsing::browse(builder, app.handle(), &site_url)
                 // Leave room for the sidebar, conversation, and inspector.
                 .inner_size(1440.0, 900.0)
                 .min_inner_size(720.0, 480.0)
@@ -249,24 +246,6 @@ pub fn run() {
                     if payload.event() == PageLoadEvent::Started {
                         window.state::<local_runtime::LocalRuntime>().close_all_sockets();
                     }
-                })
-                .on_navigation(move |url| {
-                    // Allow the app's own pages and internal webview loads.
-                    if same_origin(url, &site_url) || matches!(url.scheme(), "about" | "data" | "blob") {
-                        return true;
-                    }
-                    // Web pages elsewhere (OAuth provider, external links) open
-                    // in the system browser instead of the embedded webview;
-                    // anything else goes nowhere.
-                    // Only the scheme is logged: a URL's query may hold a token.
-                    if opens_externally(url) {
-                        if let Err(error) = open::that(url.as_str()) {
-                            eprintln!("could not open a {}: URL externally: {error}", url.scheme());
-                        }
-                    } else {
-                        eprintln!("blocked navigation to a {}: URL", url.scheme());
-                    }
-                    false
                 })
                 .build()?;
 
@@ -391,30 +370,6 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn only_the_sites_own_origin_loads_in_the_window() {
-        let site: tauri::Url = "https://app.outrunner.sh".parse().unwrap();
-        let at = |u: &str| super::same_origin(&u.parse().unwrap(), &site);
-        assert!(at("https://app.outrunner.sh/sessions/1"));
-        assert!(at("https://app.outrunner.sh:443/"));
-        assert!(!at("http://app.outrunner.sh/"));
-        assert!(!at("https://app.outrunner.sh:8443/"));
-        assert!(!at("https://evil.example/"));
-        assert!(!at("file:///Users/x/app.outrunner.sh"));
-    }
-
-    #[test]
-    fn only_web_and_mail_links_go_to_the_systems_opener() {
-        let opens = |u: &str| super::opens_externally(&u.parse().unwrap());
-        assert!(opens("https://github.com/login/oauth/authorize"));
-        assert!(opens("http://example.com/"));
-        assert!(opens("mailto:hi@example.com"));
-        assert!(!opens("file:///Users/x/Downloads/evil.app"));
-        assert!(!opens("smb://attacker/share"));
-        assert!(!opens("vscode://file/etc/passwd"));
-        assert!(!opens("javascript:alert(1)"));
-    }
-
     #[test]
     fn http_clients_build_once_the_crypto_provider_is_installed() {
         super::install_crypto_provider();

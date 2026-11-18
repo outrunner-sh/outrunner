@@ -18,6 +18,11 @@ deploy. Local sessions are the one exception, below.
 - **Closing the window quits** the app. Claude sessions survive in tmux and
   reattach on the next launch.
 - **Single instance**: launching again focuses the existing window.
+- **Links, new windows and downloads** (`src-tauri/src/browsing.rs`): another
+  site's link or `window.open` opens in the system browser; one for the site
+  opens as a window of the app's own, signed in. Downloads save to
+  `~/Downloads` and show in Finder. **History** → Back / Forward (⌘[ / ⌘])
+  and Reload Page (⌘R) act on the focused window.
 - **Self-update** (`src-tauri/src/updater.rs`): release builds check for a new
   version shortly after launch and every 6 hours, install it in the background,
   and offer to restart. The tray also has *Check for Updates…*.
