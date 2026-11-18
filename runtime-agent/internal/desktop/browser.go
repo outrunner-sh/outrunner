@@ -49,6 +49,17 @@ type Browser struct {
 	target string
 }
 
+// NewBrowser is the box's browser for a user whose home is home: the one
+// the desktop tools drive and `outrunner browser state` reads sign-ins from,
+// so both see the same profile.
+func NewBrowser(home string) *Browser {
+	return &Browser{
+		Port:    DevToolsPort,
+		Profile: filepath.Join(home, ".outrunner", "desktop", "chromium"),
+		Display: Display,
+	}
+}
+
 func (b *Browser) base() string { return "http://127.0.0.1:" + strconv.Itoa(b.Port) }
 
 // browserBinaries are the names Chromium goes by, in the order looked for.
@@ -84,6 +95,15 @@ func (b *Browser) Open(ctx context.Context, rawURL string) error {
 		_ = b.activate(ctx, tab.ID)
 		return nil
 	}
+	if err := b.start(ctx, rawURL); err != nil {
+		return err
+	}
+	b.setTarget("")
+	return nil
+}
+
+// start launches the browser on rawURL and waits for its DevTools to answer.
+func (b *Browser) start(ctx context.Context, rawURL string) error {
 	if err := b.launch(rawURL); err != nil {
 		return err
 	}
@@ -98,7 +118,6 @@ func (b *Browser) Open(ctx context.Context, rawURL string) error {
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
-	b.setTarget("")
 	return nil
 }
 
@@ -267,6 +286,20 @@ func (c *cdp) Close() { _ = c.conn.Close() }
 // call sends one command and waits for its answer, passing over the events
 // the tab sends meanwhile.
 func (c *cdp) call(ctx context.Context, method string, params any, out any) error {
+	return c.callHandling(ctx, method, params, out, nil)
+}
+
+// send sends a command without waiting for its answer, which the next call
+// passes over: an answer to an event, from callHandling's onEvent.
+func (c *cdp) send(method string, params any) error {
+	c.next++
+	return c.conn.WriteJSON(map[string]any{"id": c.next, "method": method, "params": params})
+}
+
+// callHandling is call, giving each event that arrives before the answer to
+// onEvent (when not nil): a command whose answer waits on the caller's
+// answer to an event, as a navigation whose request is paused does.
+func (c *cdp) callHandling(ctx context.Context, method string, params any, out any, onEvent func(method string, params json.RawMessage) error) error {
 	c.next++
 	id := c.next
 	if params == nil {
@@ -282,6 +315,8 @@ func (c *cdp) call(ctx context.Context, method string, params any, out any) erro
 	for {
 		var msg struct {
 			ID     int             `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
 			Result json.RawMessage `json:"result"`
 			Error  *struct {
 				Message string `json:"message"`
@@ -290,6 +325,12 @@ func (c *cdp) call(ctx context.Context, method string, params any, out any) erro
 		}
 		if err := c.conn.ReadJSON(&msg); err != nil {
 			return fmt.Errorf("%s: %w", method, err)
+		}
+		if msg.ID == 0 && msg.Method != "" && onEvent != nil {
+			if err := onEvent(msg.Method, msg.Params); err != nil {
+				return fmt.Errorf("%s: %w", method, err)
+			}
+			continue
 		}
 		if msg.ID != id {
 			continue

@@ -274,12 +274,8 @@ func desktopServer(args []string) int {
 	}
 	err = desktop.Serve(context.Background(), os.Stdin, os.Stdout, desktop.Config{
 		Toolbox: toolbox,
-		Browser: &desktop.Browser{
-			Port:    desktop.DevToolsPort,
-			Profile: filepath.Join(home, ".outrunner", "desktop", "chromium"),
-			Display: desktop.Display,
-		},
-		Folder: desktop.FilesFolder(*folder),
+		Browser: desktop.NewBrowser(home),
+		Folder:  desktop.FilesFolder(*folder),
 		// In a session of its own, so it outlives this server and the
 		// session's CLI.
 		Watchdog: func(id string, until time.Time) error {
