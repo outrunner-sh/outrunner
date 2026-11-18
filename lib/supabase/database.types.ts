@@ -759,6 +759,8 @@ type OrganizationSettingsRow = {
   archive_on_close: boolean;
   // supabase/migrations/20261114140000_automation_cover_new_repos.sql.
   automations_on_harness: boolean;
+  // supabase/migrations/20261119100000_github_org_join.sql.
+  join_via_github: boolean;
   updated_by: string | null;
   updated_at: string;
 };
@@ -921,6 +923,9 @@ type OrganizationMemberRow = {
   user_id: string;
   role: OrgRoleDb;
   created_at: string;
+  /** The GitHub organization they joined through, by its login then
+   *  (20261119100000_github_org_join.sql); null otherwise. */
+  joined_via_github: string | null;
 };
 
 export type AutomationTriggerDb =
@@ -2515,6 +2520,11 @@ export type Database = {
       set_org_member_role: {
         Args: { target_org: string; member: string; member_role: OrgRoleDb };
         Returns: undefined;
+      };
+      // supabase/migrations/20261119100000_github_org_join.sql
+      join_org_via_github: {
+        Args: { target_org: string; member: string; github_org: string; target_installation: number };
+        Returns: "joined" | "member" | "personal" | "disabled" | "not_source" | "removed";
       };
       // supabase/migrations/20261019130000_move_claude_slot_key.sql
       move_claude_slot_key: {
