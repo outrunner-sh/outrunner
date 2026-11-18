@@ -77,7 +77,7 @@ jobs:
       # the signing certificate, the notarization key and a token that can
       # write releases, so a retargeted tag must not be able to run in it.
       # Update a pin by resolving the new tag (`gh api repos/OWNER/REPO/commits/TAG --jq .sha`).
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Resolve version
         id: version
