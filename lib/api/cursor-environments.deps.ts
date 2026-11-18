@@ -35,6 +35,7 @@ import { environmentDetailJson } from "@/lib/api/serialize";
 import { listResourceAuditEvents } from "@/lib/db/audit";
 import { archiveEnvironment, createEnvironment, EnvironmentAccessError, getEnvironment, type Environment } from "@/lib/db/environments";
 import { getOrg } from "@/lib/db/orgs";
+import { noRepository } from "@/lib/api/no-repository.deps";
 import { getProjectByFullName } from "@/lib/db/repositories";
 import { deleteScopedSecret, listScopedSecrets, putScopedSecret, type SecretScope } from "@/lib/db/scoped-secrets";
 import { EnvironmentRuleError, MAX_REPOS, script } from "@/lib/environments/rules";
@@ -62,7 +63,7 @@ async function repoIds(context: ApiContext, value: unknown): Promise<string[] | 
   const ids: string[] = [];
   for (const name of names) {
     const project = await getProjectByFullName(context.caller.orgId, name);
-    if (!project) return apiError(404, `${name} isn't connected to this org, or you can't see it. Add it to Outrunner first.`);
+    if (!project) return noRepository(context, name);
     ids.push(project.id);
   }
   return ids;
