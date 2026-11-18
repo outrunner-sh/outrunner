@@ -153,6 +153,7 @@ jobs:
         run: |
           docker pull --quiet "$REF"
           docker run -d --name smoke -p 127.0.0.1:8080:8080 \
+            -e NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co -e NEXT_PUBLIC_SUPABASE_ANON_KEY=placeholder \
             -e SUPABASE_SERVICE_ROLE_KEY=placeholder -e CREDENTIALS_ENCRYPTION_KEY=cGxhY2Vob2xkZXJwbGFjZWhvbGRlcnBsYWNlaG9sZGU= -e RUNTIME_BILLING=off \
             -e OUTRUNNER_BUILD="$GITHUB_SHA" "$REF"
           # As long as the VM's activation gives a new slot; a container that
