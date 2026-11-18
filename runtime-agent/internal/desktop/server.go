@@ -83,6 +83,11 @@ For web pages, use the browser tools: open_browser with a URL, then browser_snap
 
 Screenshots are saved under .context/desktop/ in the session's folder; embed one in your reply to show the user. To capture a flow as evidence (a before and after, a bug and its fix), call record_start before you go through it and record_stop after: record_stop gives the path of the MP4 it saved.`
 
+// BrowserStateInstructions tell the agent how the project's own browser
+// tests start signed in, where the session has `outrunner` (the orientation
+// adds them after Instructions).
+const BrowserStateInstructions = `The desktop browser stays signed in wherever the user or you signed in on it. For the project's own Playwright tests or scripts that need to be signed in, don't script a sign-in: run ` + "`outrunner browser state --origin <the app's URL, e.g. http://localhost:3000>`" + `, which writes the browser's sign-ins as a Playwright storageState file and prints its path. Run it once, in Playwright's globalSetup, with ` + "`-o playwright/.auth/state.json`" + ` (a path the repository ignores; add it to .gitignore if it isn't) and ` + "`use: { storageState: \"playwright/.auth/state.json\" }`" + ` in the config; for a one-off script, leave out -o and start the context from the printed path (` + "`browser.newContext({ storageState: path })`" + `). If the user hasn't signed in to the app there yet, ask them to, in the Desktop tab. $OUTRUNNER_BROWSER_CDP_URL is the browser's own DevTools, for Playwright's connectOverCDP when a script must drive that browser itself.`
+
 const serverInstructions = "Tools for this computer's desktop and its Chromium browser, which the user can watch in the Desktop tab. Prefer an API, a CLI or a test run; use these to see or use a graphical interface: a UI you changed, a site with no API. For web pages, read them with browser_snapshot and act by ref (browser_click, browser_fill) rather than clicking pixels. record_start and record_stop capture a flow as an MP4."
 
 // Config is what a server works with.
