@@ -82,7 +82,7 @@ export function HireSlackStep({ missionId, suggested }: { missionId: string; sug
         <>
           <p className="mt-1 text-[12.5px] leading-relaxed text-[#8f8f8f]">
             {view.channels.length === 0
-              ? (view.hint ?? "Outrunner isn't in a channel yet. In Slack: @Outrunner be on call here for <project>.")
+              ? (view.hint ?? "Outrunner isn't in a channel yet. In Slack: @Outrunner be on call here for <repository>.")
               : "Mentions of @Outrunner there reach this Mission; it replies in the thread."}
           </p>
           {view.channels.length > 0 && (

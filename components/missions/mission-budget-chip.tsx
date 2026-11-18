@@ -201,7 +201,7 @@ function BudgetDialog({
             <span className="block text-[12px] text-muted-foreground">{spentLine(view.week, view.limits.weeklyUsd, "this week")}</span>
           </label>
           {bad && <p className="text-[12px] text-muted-foreground">A limit is a dollar amount over $0, or blank for none.</p>}
-          {!view.canEdit && <p className="text-[12px] text-muted-foreground">Changing it needs write on the Mission&apos;s project.</p>}
+          {!view.canEdit && <p className="text-[12px] text-muted-foreground">Changing it needs write on the Mission&apos;s repository.</p>}
           {error && (
             <p role="alert" className="text-[13px] text-destructive">
               {error}

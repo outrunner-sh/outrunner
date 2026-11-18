@@ -71,7 +71,7 @@ export function MissionChannelsSettings({ orgId }: { orgId: string }) {
     <div className="space-y-3">
       <h2 className="text-sm font-medium text-foreground">Missions on call</h2>
       <p className="text-xs text-muted-foreground">
-        Channels a Mission is on call in. Disconnect needs write on its project.
+        Channels a Mission is on call in. Disconnect needs write on its repository.
       </p>
       {error && <p className="text-xs text-destructive">{error}</p>}
       {channels === null ? (

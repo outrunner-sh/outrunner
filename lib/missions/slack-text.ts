@@ -18,7 +18,7 @@ export type OnCallCommand =
   | { action: "help" };
 
 export const ON_CALL_HELP =
-  "To put a Mission on call here: `@Outrunner be on call here for <project>` (it needs write on the project). Then mention me with a task. `!help` shows this; `@Outrunner !new <task>` starts a fresh thread for a task. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread, `!assign @person` assigns the thread's work to them, `@Outrunner stop` stops that thread's work (its open requests and its Ships' turns). `@Outrunner pause` / `resume` pauses it here, `@Outrunner stop being on call here` takes it off.";
+  "To put a Mission on call here: `@Outrunner be on call here for <repository>` (it needs write on the repository). Then mention me with a task. `!help` shows this; `@Outrunner !new <task>` starts a fresh thread for a task. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread, `!assign @person` assigns the thread's work to them, `@Outrunner stop` stops that thread's work (its open requests and its Ships' turns). `@Outrunner pause` / `resume` pauses it here, `@Outrunner stop being on call here` takes it off.";
 
 export const NEW_USAGE = "Say `!new <task>` to start a fresh thread for a task.";
 export const ASSIGN_USAGE = "Say `!assign @person` in a thread the Mission is in: one person, nothing else.";

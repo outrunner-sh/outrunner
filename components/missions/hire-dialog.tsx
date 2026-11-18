@@ -192,10 +192,10 @@ export function HireDialog({
               </div>
               <div>
                 <label htmlFor="hire-project" className="mb-1.5 block text-[12px] text-[#8f8f8f]">
-                  Project
+                  Repository
                 </label>
                 {projects.length === 0 ? (
-                  <p className="text-[12.5px] text-[#8f8f8f]">Add a repository first, from Projects.</p>
+                  <p className="text-[12.5px] text-[#8f8f8f]">Add a repository first, from Environments.</p>
                 ) : (
                   <select
                     id="hire-project"
