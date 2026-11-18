@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -87,13 +88,17 @@ func TestStorageStateReadsARealBrowsersSignIns(t *testing.T) {
 	}
 
 	var requests atomic.Int32
+	var asked sync.Map // path → true, for the failure's message
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
+		asked.Store(r.URL.Path, true)
 		http.SetCookie(w, &http.Cookie{Name: "sid", Value: "signed-in", Path: "/", HttpOnly: true})
 		w.Header().Set("Content-Type", "text/html")
 		// Each run of the app's code writes a new value: one read by running
 		// it would differ from the one it wrote when the user signed in.
-		fmt.Fprint(w, `<!doctype html><script>localStorage.setItem("token", "t-" + Math.random())</script>`)
+		// Its icon is its own: the browser would fetch /favicon.ico for the
+		// app's tab when it pleases, a request the test would count.
+		fmt.Fprint(w, `<!doctype html><link rel="icon" href="data:,"><script>localStorage.setItem("token", "t-" + Math.random())</script>`)
 	}))
 	defer app.Close()
 
@@ -154,7 +159,9 @@ func TestStorageStateReadsARealBrowsersSignIns(t *testing.T) {
 		t.Errorf("origins = %+v, want %+v", state.Origins, want)
 	}
 	if got := requests.Load(); got != before {
-		t.Errorf("the app was asked for %d more pages: its code ran to read its sign-in", got-before)
+		var paths []string
+		asked.Range(func(k, _ any) bool { paths = append(paths, k.(string)); return true })
+		t.Errorf("the app was asked for %d more pages (of %v): its code ran to read its sign-in", got-before, paths)
 	}
 	// Chromium closes a tab after saying it will.
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(100 * time.Millisecond) {
