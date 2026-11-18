@@ -58,7 +58,8 @@ create schema if not exists auth;
 create table auth.users (id uuid primary key default gen_random_uuid());
 
 -- The automations tables, as much of them as 20261118110200_mission_inputs.sql
--- changes (their checks under the names the earlier migrations give them).
+-- changes or checks (their checks under the names the earlier migrations give
+-- them).
 create table automations (
   id uuid primary key default gen_random_uuid(),
   org_id uuid,
@@ -77,6 +78,12 @@ create table automations (
   archived_at timestamptz,
   webhook_token_hash text,
   webhook_token_sealed text,
+  -- What automations_mission_only_check reads: 20261114140000_automation_cover_new_repos.sql
+  -- and 20261117120000_automation_model.sql.
+  cover_new_repos boolean not null default false,
+  model_provider text,
+  model_id text,
+  model_effort text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
