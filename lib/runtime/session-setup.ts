@@ -22,6 +22,7 @@ import {
   AGENT_FEATURE_INSTRUCTIONS,
   AGENT_FEATURE_SKILLS,
   AGENT_FEATURE_SUBAGENTS,
+  AGENT_FEATURE_BROWSER_STATE,
   AGENT_FEATURE_WARM_HOOKS,
   type AgentName,
   type SetAgentConfigRequest,
@@ -71,6 +72,10 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
   if (setup.gitlab) await requireFeature(capabilities, AGENT_FEATURE_GITLAB_CREDENTIAL, "authenticate with GitLab");
   // First: an upgrade boots the agent again, asking with what it needs to.
   if (setup.appIdentity) await supports(capabilities, AGENT_FEATURE_GIT_CREDENTIAL, "work on GitHub as Outrunner's GitHub App");
+  // Every session's browser tests can start signed in from the desktop
+  // browser (`outrunner browser state`): a box from before is upgraded once,
+  // in place, where it can be; one that can't starts the session as it is.
+  await supports(capabilities, AGENT_FEATURE_BROWSER_STATE, "give browser tests the desktop browser's sign-ins");
 
   if (setup.agent === "codex") {
     await supports(capabilities, AGENT_FEATURE_CODEX_SECRETS, "let Codex request secrets through a form");

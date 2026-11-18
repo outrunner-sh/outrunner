@@ -349,6 +349,11 @@ type Subagent struct {
 // FeatureSubagents is SetEnvironmentRequest's Subagents.
 const FeatureSubagents = "subagents"
 
+// FeatureBrowserState is POST /workspaces/{id}/browser-state, the desktop
+// browser's sign-ins for `outrunner browser state` (a session's own browser
+// tests), and the session's OUTRUNNER_BROWSER_CDP_URL.
+const FeatureBrowserState = "browser-state"
+
 // FeatureWarmHooks is POST/GET /warm, a ready box's warming, and
 // SetEnvironmentRequest's WarmHook and StartHook.
 const FeatureWarmHooks = "warm-hooks"

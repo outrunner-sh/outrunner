@@ -37,7 +37,8 @@ const agentConfig: AgentConfig = {
   mcpServers: { tracker: { type: "http", url: "https://mcp.example" } },
   settings: {},
 };
-const all = ["session-environment", "agent-config"];
+// What a current agent says it does, of what these tests look at.
+const all = ["session-environment", "agent-config", "browser-state"];
 const downloadUrl = async (path: string) => `https://storage/${path}`;
 
 test("the user's setup and the project's environment reach a box that takes them", async () => {
@@ -110,7 +111,7 @@ test("a project's hooks go only to a box that runs them", async () => {
 });
 
 test("a box of a user who works as the App is upgraded first when its agent can't ask for tokens", async () => {
-  let features = ["session-environment", "agent-config"];
+  let features = ["session-environment", "agent-config", "browser-state"];
   const order: string[] = [];
   const b = box([]);
   const client = {
@@ -183,7 +184,7 @@ test("the learnings block reaches a box that takes it after setup; empty does no
 });
 
 test("a Codex session's box with MCP servers to load is upgraded first when its Codex wouldn't get them", async () => {
-  let features = ["session-environment", "agent-config", "codex-request-secrets"];
+  let features = ["session-environment", "agent-config", "codex-request-secrets", "browser-state"];
   const order: string[] = [];
   const b = box([]);
   const client = {
@@ -236,7 +237,7 @@ test("one setup reuses capabilities, and an upgrade invalidates the snapshot", a
   await deliverSessionSetup({
     features: async () => {
       reads++;
-      return upgrades ? ["git-credential", "agent-config", "skills", "agent-context", "project-instructions", "warm-hooks", "session-environment"] : [];
+      return upgrades ? ["git-credential", "agent-config", "skills", "agent-context", "project-instructions", "warm-hooks", "session-environment", "browser-state"] : [];
     },
     upgrade: async () => { upgrades++; },
     setAgentConfig: async () => { sent.push("config"); },
@@ -293,4 +294,24 @@ test("a session's own subagents go to a Claude session's box that takes them, an
   const codex = box([...all, "subagents", "codex-request-secrets"]);
   await deliverSessionSetup(codex.client, { environment, agentConfig: null, subagents, agent: "codex", downloadUrl });
   assert.equal((codex.sent.find(([kind]) => kind === "environment")?.[1] as { subagents?: unknown }).subagents, undefined);
+});
+
+// `outrunner browser state` needs the box's agent to read the desktop
+// browser's sign-ins: a box from before is upgraded once, at a session's
+// setup, and one that can't be still starts the session.
+test("a box from before browser sign-ins is upgraded for them; one that can't be starts as it is", async () => {
+  let features = ["session-environment", "agent-config"];
+  let upgrades = 0;
+  const b = box([]);
+  await deliverSessionSetup({
+    ...b.client,
+    features: async () => features,
+    upgrade: async () => { upgrades++; features = [...features, "browser-state"]; },
+  }, { environment, agentConfig: null, downloadUrl });
+  assert.equal(upgrades, 1);
+  assert.deepEqual(b.sent.map(([kind]) => kind), ["environment"]);
+
+  const cant = box(["session-environment", "agent-config"]);
+  await deliverSessionSetup(cant.client, { environment, agentConfig: null, downloadUrl });
+  assert.deepEqual(cant.sent.map(([kind]) => kind), ["environment"]);
 });
