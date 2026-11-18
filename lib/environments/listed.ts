@@ -1,7 +1,7 @@
 /**
  * Environments as people pick them: the Environments page and the
  * new-session picker list these (listed_environments,
- * 20261119100000_environments_model.sql). Pure, so the browser shares it.
+ * 20261119120000_environments_model.sql). Pure, so the browser shares it.
  *
  * Which are listed is the database's rule (environment_listed): every one
  * someone made, and a repository's own environment (made on its first

@@ -11,6 +11,7 @@ import {
 import { appOwnership, type GitHubOwnership, linkIdentity } from "@/lib/github/installation-owner";
 import { isUuid } from "@/lib/ids";
 import { after } from "@/lib/observability/after";
+import type { SourceOrg } from "@/lib/orgs/github-join";
 import type { GithubLinkAuthority } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -210,6 +211,54 @@ export async function listInstallationShares(orgId: string, installationId: numb
     linkedByEmail: r.linked_by_email,
     authority: r.authority,
   }));
+}
+
+/**
+ * Team orgs that are the source of these installations (or the source
+ * installations of this org), still connected to them, for joining an org
+ * through its GitHub organization (lib/orgs/github-join.ts): installations on
+ * a GitHub organization only, not suspended. join_org_via_github checks the
+ * same again, under its lock.
+ */
+export async function sourceOrgInstallations(
+  of: { installationIds: readonly number[] } | { orgId: string },
+): Promise<SourceOrg[]> {
+  if ("orgId" in of ? !isUuid(of.orgId) : of.installationIds.length === 0) return [];
+  const supabase = createSupabaseAdminClient();
+  const query = supabase
+    .from("github_installations")
+    .select("installation_id, account_login, source_org_id")
+    .eq("account_type", "Organization")
+    .is("suspended_at", null)
+    .not("source_org_id", "is", null);
+  const { data: installs, error } = await ("orgId" in of
+    ? query.eq("source_org_id", of.orgId)
+    : query.in("installation_id", [...of.installationIds]));
+  if (error) throw error;
+  if (!installs?.length) return [];
+
+  const orgIds = [...new Set(installs.map((i) => i.source_org_id!))];
+  const [links, orgs, settings] = await Promise.all([
+    supabase
+      .from("org_github_installations")
+      .select("org_id, installation_id")
+      .in("installation_id", installs.map((i) => i.installation_id))
+      .in("org_id", orgIds),
+    supabase.from("organizations").select("id, name").in("id", orgIds).is("personal_owner_id", null),
+    supabase.from("organization_settings").select("org_id, join_via_github").in("org_id", orgIds),
+  ]);
+  if (links.error) throw links.error;
+  if (orgs.error) throw orgs.error;
+  if (settings.error) throw settings.error;
+  const connected = new Set((links.data ?? []).map((l) => `${l.org_id}:${l.installation_id}`));
+  const names = new Map((orgs.data ?? []).map((o) => [o.id, o.name]));
+  const off = new Set((settings.data ?? []).filter((s) => !s.join_via_github).map((s) => s.org_id));
+  return installs.flatMap((i) => {
+    const orgId = i.source_org_id!;
+    const orgName = names.get(orgId);
+    if (orgName === undefined || !connected.has(`${orgId}:${i.installation_id}`)) return [];
+    return [{ orgId, orgName, installationId: i.installation_id, githubOrg: i.account_login, joinViaGithub: !off.has(orgId) }];
+  });
 }
 
 /** Why a share wasn't removed. */

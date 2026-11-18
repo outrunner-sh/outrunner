@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -12,7 +12,9 @@ const nextSha = "2".repeat(40);
 // dir, and fake docker / curl / sleep. The fake docker records which release
 // each compose project runs; the fake curl answers a slot's port with that
 // release's build, so the script's health check sees what a real slot would.
-function fixture({ live, legacy }: { live?: "blue" | "green"; legacy?: boolean }) {
+const nextTree = "3".repeat(40);
+
+function fixture({ live, legacy, tree }: { live?: "blue" | "green"; legacy?: boolean; tree?: string }) {
   // The real path: the script refuses a release that resolves elsewhere, and
   // macOS keeps its temp folder behind a symlink.
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "outrunner-vm-release-")));
@@ -25,7 +27,8 @@ function fixture({ live, legacy }: { live?: "blue" | "green"; legacy?: boolean }
     const release = join(root, "releases", sha);
     mkdirSync(join(release, "deploy", "vm"), { recursive: true });
     for (const file of ["compose.yml", "edge.yml", "jobs.yml", "Caddyfile"]) writeFileSync(join(release, "deploy", "vm", file), "fixture");
-    writeFileSync(join(release, ".env.build"), `OUTRUNNER_BUILD=${sha}\nAPP_DOMAIN=app.example.test\n`);
+    const releaseTree = sha === nextSha && tree ? `OUTRUNNER_TREE=${tree}\n` : "";
+    writeFileSync(join(release, ".env.build"), `OUTRUNNER_BUILD=${sha}\n${releaseTree}APP_DOMAIN=app.example.test\n`);
     writeFileSync(join(release, ".image-built"), `${sha}\n`);
   }
   writeFileSync(join(etc, "cron-enabled"), "");
@@ -62,9 +65,16 @@ exit 0
 case "$*" in *:3001/*) slot=blue ;; *) slot=green ;; esac
 sha="$(cat "$VM_TEST_STATE/outrunner-$slot" 2>/dev/null)" || exit 7
 if [ "$VM_TEST_WRONG_BUILD" = 1 ] && [ "$sha" = "${nextSha}" ]; then sha=wrong; fi
-printf '{"ok":true,"build":"%s"}\\n' "$sha"
+tree="$(sed -n 's/^OUTRUNNER_TREE=//p' "$VM_TEST_ROOT/releases/$sha/.env.build" 2>/dev/null)"
+if [ "$VM_TEST_WRONG_TREE" = 1 ]; then tree=wrong; fi
+printf '{"ok":true,"build":"%s","tree":"%s"}\\n' "$sha" "$tree"
 `, { mode: 0o755 });
-  writeFileSync(join(bin, "sleep"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  // What happens while the drain timer sleeps, when a test says.
+  writeFileSync(join(bin, "sleep"), '#!/bin/sh\n[ -z "$VM_TEST_DURING_SLEEP" ] || sh -c "$VM_TEST_DURING_SLEEP"\nexit 0\n', { mode: 0o755 });
+  // The lock is the VM's flock (Linux); the drain timer runs at once here,
+  // in the foreground, where setsid -f would detach it.
+  writeFileSync(join(bin, "flock"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  writeFileSync(join(bin, "setsid"), `#!/usr/bin/env bash\n[ "$1" = -f ] && shift\necho "setsid $*" >> "$VM_TEST_LOG"\nexec "$@"\n`, { mode: 0o755 });
 
   const script = join(dir, "activate.sh");
   writeFileSync(script, readFileSync("deploy/vm/activate-release.sh", "utf8")
@@ -72,12 +82,11 @@ printf '{"ok":true,"build":"%s"}\\n' "$sha"
     .replaceAll("/etc/outrunner", etc));
   const log = join(dir, "calls");
   writeFileSync(log, "");
-  const run = (extra: Record<string, string> = {}) => spawnSync("bash", [script, nextSha], {
-    encoding: "utf8",
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, VM_TEST_LOG: log, VM_TEST_STATE: state, ...extra },
-  });
+  const env = (extra: Record<string, string> = {}) =>
+    ({ ...process.env, PATH: `${bin}:${process.env.PATH}`, VM_TEST_LOG: log, VM_TEST_STATE: state, VM_TEST_ROOT: root, ...extra });
+  const run = (extra: Record<string, string> = {}, args = [nextSha]) => spawnSync("bash", [script, ...args], { encoding: "utf8", env: env(extra) });
   return {
-    dir, root, run,
+    dir, root, run, env, bin, etc, state,
     calls: () => readFileSync(log, "utf8"),
     liveSlot: () => readFileSync(join(root, "live-slot"), "utf8").trim(),
     upstream: () => readFileSync(join(root, "edge", "conf", "live.caddy"), "utf8"),
@@ -145,4 +154,74 @@ test("VM activation rejects invalid commit input before touching services", () =
   const result = spawnSync("bash", ["deploy/vm/activate-release.sh", "../../etc"], { encoding: "utf8" });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Invalid commit SHA/);
+});
+
+test("VM activation refuses a slot that reports the commit but not the release's tree", () => {
+  const f = fixture({ live: "blue", tree: nextTree });
+  try {
+    const ok = f.run();
+    assert.equal(ok.status, 0, ok.stderr);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+  const g = fixture({ live: "blue", tree: nextTree });
+  try {
+    const result = g.run({ VM_TEST_WRONG_TREE: "1" });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /failed its health check; live traffic was not touched/);
+    assert.equal(g.liveSlot(), "blue");
+  } finally { rmSync(g.dir, { recursive: true, force: true }); }
+});
+
+// The drain timer an activation leaves stops the old slot later; by then a
+// newer activation may have switched back to it, or put a release there.
+test("the drain timer stops the old slot only if it's still idle and still that release", () => {
+  const f = fixture({ live: "blue" });
+  try {
+    assert.equal(f.run().status, 0);
+    assert.equal(f.liveSlot(), "green");
+    const stops = () => (f.calls().match(/-p outrunner-blue .*down/g) ?? []).length;
+    const drain = (during: string) => {
+      writeFileSync(join(f.state, "outrunner-blue"), liveSha);
+      const before = stops();
+      const result = f.run({ VM_TEST_DURING_SLEEP: during }, ["--drain", "blue", "90"]);
+      assert.equal(result.status, 0, result.stderr);
+      return stops() - before;
+    };
+    assert.equal(drain(`echo blue > "${join(f.root, "live-slot")}"`), 0, "switched back to: live, never stopped");
+    writeFileSync(join(f.root, "live-slot"), "green\n");
+    assert.equal(drain(`echo "${join(f.root, "releases", nextSha)}" > "${join(f.root, "slot-blue")}"`), 0, "another release started there: left alone");
+    writeFileSync(join(f.root, "slot-blue"), join(f.root, "releases", liveSha) + "\n");
+    assert.equal(drain(""), 1, "still idle, still that release: stopped");
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("VM pruning keeps both slots' releases and the newest, up to five, and their images", () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "outrunner-vm-prune-")));
+  try {
+    const root = join(dir, "opt");
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    const shas = Array.from({ length: 8 }, (_, i) => "abcdef12"[i].repeat(40));
+    // Oldest first: release i was last activated at second i.
+    shas.forEach((sha, i) => {
+      const release = join(root, "releases", sha);
+      mkdirSync(release, { recursive: true });
+      const at = new Date(Date.UTC(2026, 0, 1, 0, 0, i));
+      utimesSync(release, at, at);
+    });
+    // The live slot runs the newest; the other slot an old one, kept anyway.
+    writeFileSync(join(root, "slot-blue"), join(root, "releases", shas[7]) + "\n");
+    writeFileSync(join(root, "slot-green"), join(root, "releases", shas[0]) + "\n");
+    const log = join(dir, "calls");
+    writeFileSync(join(bin, "docker"), `#!/bin/sh\necho "$*" >> "${log}"\n`, { mode: 0o755 });
+    const script = join(dir, "prune.sh");
+    writeFileSync(script, readFileSync("deploy/vm/prune-releases.sh", "utf8").replaceAll("/opt/outrunner", root));
+    const result = spawnSync("bash", [script], { encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+    assert.equal(result.status, 0, result.stderr);
+    const left = shas.filter((sha) => existsSync(join(root, "releases", sha)));
+    // Both slots' (7, 0) and the three newest others (6, 5, 4): five.
+    assert.deepEqual(left.sort(), [shas[0], shas[4], shas[5], shas[6], shas[7]].sort());
+    const calls = readFileSync(log, "utf8");
+    for (const sha of [shas[1], shas[2], shas[3]]) assert.match(calls, new RegExp(`image rm outrunner-control-plane:${sha}`));
+    for (const sha of left) assert.doesNotMatch(calls, new RegExp(`image rm outrunner-control-plane:${sha}`));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

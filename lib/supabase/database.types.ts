@@ -759,12 +759,14 @@ type OrganizationSettingsRow = {
   archive_on_close: boolean;
   // supabase/migrations/20261114140000_automation_cover_new_repos.sql.
   automations_on_harness: boolean;
-  // supabase/migrations/20261119100000_environments_model.sql: the
+  // supabase/migrations/20261119120000_environments_model.sql: the
   // environment the org's new sessions start from.
   default_environment_id: string | null;
-  // supabase/migrations/20261119110000_org_setup.sql: when its setup was
+  // supabase/migrations/20261119130000_org_setup.sql: when its setup was
   // finished or skipped (lib/orgs/setup.ts).
   setup_completed_at: string | null;
+  // supabase/migrations/20261119100000_github_org_join.sql.
+  join_via_github: boolean;
   updated_by: string | null;
   updated_at: string;
 };
@@ -927,6 +929,9 @@ type OrganizationMemberRow = {
   user_id: string;
   role: OrgRoleDb;
   created_at: string;
+  /** The GitHub organization they joined through, by its login then
+   *  (20261119100000_github_org_join.sql); null otherwise. */
+  joined_via_github: string | null;
 };
 
 export type AutomationTriggerDb =
@@ -2453,7 +2458,7 @@ export type Database = {
         Args: { target_project: string; maker: string; checkout: string };
         Returns: string;
       };
-      // supabase/migrations/20261119100000_environments_model.sql
+      // supabase/migrations/20261119120000_environments_model.sql
       environment_listed: {
         Args: { target: string };
         Returns: boolean | null;
@@ -2537,6 +2542,11 @@ export type Database = {
       set_org_member_role: {
         Args: { target_org: string; member: string; member_role: OrgRoleDb };
         Returns: undefined;
+      };
+      // supabase/migrations/20261119100000_github_org_join.sql
+      join_org_via_github: {
+        Args: { target_org: string; member: string; github_org: string; target_installation: number };
+        Returns: "joined" | "member" | "personal" | "disabled" | "not_source" | "removed";
       };
       // supabase/migrations/20261019130000_move_claude_slot_key.sql
       move_claude_slot_key: {

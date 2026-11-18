@@ -2,7 +2,7 @@
  * Setup's reads and writes (lib/orgs/setup.ts holds the rule): what the
  * database says of an org, and its setup recorded as done
  * (organization_settings.setup_completed_at,
- * 20261119110000_org_setup.sql). The server's alone.
+ * 20261119130000_org_setup.sql). The server's alone.
  */
 
 import { getOrgContext } from "@/lib/orgs/server";

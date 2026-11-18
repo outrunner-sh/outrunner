@@ -5,10 +5,13 @@ import { Suspense } from "react";
 
 import OrgDefaults from "@/app/settings/org/defaults/page";
 import { AutomationRunSettings } from "@/components/automation-run-settings";
+import { OrgJoinSettings } from "@/components/org-join-settings";
 import { OrgGeneralSettings } from "@/components/org-settings";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { automationSettingsOrDefault } from "@/lib/db/automation-settings";
+import { sourceOrgInstallations } from "@/lib/db/github-installations";
+import { getJoinViaGithub } from "@/lib/db/org-members";
 import { orgDomain } from "@/lib/db/orgs";
 import { getOrgContext } from "@/lib/orgs/server";
 
@@ -48,15 +51,29 @@ async function OrgSection() {
     );
   }
   const { active } = context;
-  const [domain, automations] = await Promise.all([
+  const [domain, automations, join] = await Promise.all([
     active.personal ? null : orgDomain(active.id).catch(() => null),
     automationSettingsOrDefault(active.id),
+    active.personal ? null : joinSettings(active.id),
   ]);
   return (
     <div className="space-y-10">
       <OrgGeneralSettings org={active} domain={domain} />
+      {join && <OrgJoinSettings org={active} initial={join.enabled} githubOrgs={join.githubOrgs} />}
       <AutomationRunSettings org={active} initial={automations} />
       {!active.personal && <OrgDefaults />}
     </div>
   );
+}
+
+/** A team org's joining through GitHub, as the page shows it: none, rather
+ *  than no page, when it can't be read. */
+async function joinSettings(orgId: string): Promise<{ enabled: boolean; githubOrgs: string[] } | null> {
+  try {
+    const [enabled, sources] = await Promise.all([getJoinViaGithub(orgId), sourceOrgInstallations({ orgId })]);
+    return { enabled, githubOrgs: [...new Set(sources.map((s) => s.githubOrg))].sort() };
+  } catch (error) {
+    console.error(`Settings → Org: could not read org ${orgId}'s join settings`, error);
+    return null;
+  }
 }

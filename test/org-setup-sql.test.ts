@@ -1,4 +1,4 @@
-/** Org setup's completion (20261119110000_org_setup.sql), and the read-only
+/** Org setup's completion (20261119130000_org_setup.sql), and the read-only
  *  query that dry-runs the rule (lib/orgs/setup.ts) on production before
  *  deploy, on a disposable Postgres database. */
 import assert from "node:assert/strict";
@@ -61,7 +61,7 @@ before(() => {
     create table organization_settings (org_id uuid primary key references organizations (id));
   `);
   const migrate = () =>
-    execFileSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-q", "-f", "supabase/migrations/20261119110000_org_setup.sql"], { stdio: "pipe" });
+    execFileSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-q", "-f", "supabase/migrations/20261119130000_org_setup.sql"], { stdio: "pipe" });
   migrate();
   // Run twice, as a deploy that retries would.
   migrate();

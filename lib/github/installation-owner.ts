@@ -67,14 +67,44 @@ export async function githubOwnership(
   // Logins can be renamed and reused; the id can't. Ask GitHub whose it is now.
   const user = await get<{ id?: unknown; login?: unknown }>(doFetch, `/user/${githubId}`, auth);
   if (!user || user.id !== githubId || typeof user.login !== "string") return null;
-  const membership = await get<{ state?: unknown; role?: unknown; user?: { id?: unknown } | null }>(
-    doFetch,
-    `/orgs/${encodeURIComponent(installation.accountLogin)}/memberships/${encodeURIComponent(user.login)}`,
-    auth,
-  );
+  const membership = await orgMembership(doFetch, installation.accountLogin, user.login, auth);
   if (!membership || membership.state !== "active" || membership.role !== "admin") return null;
   if (membership.user && membership.user.id !== githubId) return null;
   return "org_owner";
+}
+
+type Membership = { state?: unknown; role?: unknown; user?: { id?: unknown } | null };
+
+/** A user's membership of a GitHub organization, as `auth` sees it: null when
+ *  GitHub says none, or won't say (403: the App lacks Members: Read). */
+function orgMembership(doFetch: Fetch, org: string, login: string, auth: string): Promise<Membership | null> {
+  return get<Membership>(doFetch, `/orgs/${encodeURIComponent(org)}/memberships/${encodeURIComponent(login)}`, auth);
+}
+
+/**
+ * Whether GitHub user `user` is an active member (or owner) of the GitHub
+ * organization `org`, asked as an installation on it: what joining an
+ * Outrunner org through its GitHub organization needs (lib/orgs/github-join.ts).
+ * A pending invitation isn't membership. False when GitHub says no, or won't
+ * say (no Members: Read); throws when it can't be asked (a rate limit, an
+ * outage), which the caller takes as no all the same.
+ *
+ * The membership must be that user's by id, not only by login: a login
+ * renamed and taken by someone else is no one's membership.
+ */
+export async function activeOrgMember(
+  org: string,
+  user: { id: number; login: string },
+  token: () => Promise<string>,
+  doFetch: Fetch = fetch,
+): Promise<boolean> {
+  const membership = await orgMembership(doFetch, org, user.login, await token());
+  return (
+    membership !== null &&
+    membership.state === "active" &&
+    (membership.role === "admin" || membership.role === "member") &&
+    membership.user?.id === user.id
+  );
 }
 
 /**
@@ -95,6 +125,13 @@ export async function linkIdentity(
     if (owned) return { githubId: id, verifiedOwner: owned };
   }
   return { githubId: ids[0] ?? null, verifiedOwner: null };
+}
+
+/** {@link activeOrgMember} as the App, with installation `installationId`'s
+ *  own token (an installation on `org`). */
+export function appOrgMember(config: GitHubAppConfig, doFetch: Fetch = fetch) {
+  return (installationId: number, org: string, user: { id: number; login: string }) =>
+    activeOrgMember(org, user, () => installationToken(config, installationId, doFetch), doFetch);
 }
 
 /** {@link githubOwnership} as the App, with the installation's own token. */
