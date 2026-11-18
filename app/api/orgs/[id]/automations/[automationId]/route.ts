@@ -4,6 +4,7 @@ import { parseAutomationInput } from "@/lib/automations/rules";
 import { savingAutomation } from "@/lib/automations/routes";
 import { deleteAutomation, getAutomation, resetDelegation, updateAutomation } from "@/lib/db/automations";
 import { changesWhatItSends, checkMissionTarget } from "@/lib/missions/mission-automations";
+import { watchableChannel } from "@/lib/missions/slack-channels";
 import { missionLevel } from "@/lib/missions/slack-route.deps";
 import { sessionById } from "@/lib/missions/store";
 import { isUuid } from "@/lib/ids";
@@ -26,7 +27,7 @@ export async function PATCH(request: Request, { params }: Params) {
   return savingAutomation(async () => {
     const saved = await getAutomation(id, automationId);
     if (!saved) return NextResponse.json(NOT_FOUND, { status: 404 });
-    const target = await checkMissionTarget(id, caller.owner.id, parsed.value, saved.target, { mission: sessionById, level: missionLevel });
+    const target = await checkMissionTarget(id, caller.owner.id, parsed.value, saved.target, { mission: sessionById, level: missionLevel, channel: watchableChannel });
     if (!target.ok) return NextResponse.json({ error: target.error }, { status: target.status });
     // Someone other than the Mission's owner changing what it sends: the
     // owner approves it again (withdrawn before the change goes in).

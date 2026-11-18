@@ -4,6 +4,7 @@ import { savingAutomation } from "@/lib/automations/routes";
 import { parseAutomationInput } from "@/lib/automations/rules";
 import { createAutomation, requestDelegation } from "@/lib/db/automations";
 import { checkMissionTarget } from "@/lib/missions/mission-automations";
+import { watchableChannel } from "@/lib/missions/slack-channels";
 import { missionLevel } from "@/lib/missions/slack-route.deps";
 import { sessionById } from "@/lib/missions/store";
 import { orgCaller } from "@/lib/orgs/routes";
@@ -22,7 +23,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   return savingAutomation(async () => {
     // A Mission's destination: write on its project, its repository its
     // project's, and its owner's approval (lib/missions/mission-automations.ts).
-    const target = await checkMissionTarget(id, caller.owner.id, parsed.value, null, { mission: sessionById, level: missionLevel });
+    const target = await checkMissionTarget(id, caller.owner.id, parsed.value, null, { mission: sessionById, level: missionLevel, channel: watchableChannel });
     if (!target.ok) return NextResponse.json({ error: target.error }, { status: target.status });
     const automationId = await createAutomation(id, caller.owner.id, { ...parsed.value, ...target.input });
     if (target.mission) {

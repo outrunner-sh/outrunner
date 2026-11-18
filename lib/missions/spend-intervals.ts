@@ -6,7 +6,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { allRows } from "@/lib/billing/all-rows";
+import { allRows, inBatches } from "@/lib/billing/all-rows";
 import type { Interval } from "@/lib/billing/hours";
 import { LONGEST_INTERVAL_MS } from "@/lib/billing/reconcile";
 import type { Database } from "@/lib/supabase/database.types";
@@ -23,24 +23,31 @@ export async function familyIntervalsWith(
   ids: readonly string[],
   period: { start: Date; end: Date },
 ): Promise<Interval[]> {
-  const { data: computers, error } = await client.from("runtime_computers").select("id").in("workspace_id", [...ids]);
-  if (error) throw error;
-  const computerIds = (computers ?? []).map((c) => c.id);
+  // In batches of ids: a Mission's Ships grow without bound, and each id is
+  // in the request's URL.
+  const computers = await inBatches(ids, async (batch) => {
+    const { data, error } = await client.from("runtime_computers").select("id").in("workspace_id", batch);
+    if (error) throw error;
+    return data ?? [];
+  });
+  const computerIds = computers.map((c) => c.id);
   if (!computerIds.length) return [];
-  const before = () =>
+  const before = (batch: string[]) =>
     client
       .from("compute_intervals")
       .select("id, sandbox_id, cpu, started_at, last_seen_at, ended_at")
-      .in("computer_id", computerIds)
+      .in("computer_id", batch)
       .lt("started_at", period.end.toISOString());
-  const open = await allRows((from, to) => before().is("ended_at", null).order("id").range(from, to));
-  const closed = await allRows((from, to) =>
-    before()
-      .gte("started_at", new Date(period.start.getTime() - LONGEST_INTERVAL_MS).toISOString())
-      .not("ended_at", "is", null)
-      .gt("ended_at", period.start.toISOString())
-      .order("id")
-      .range(from, to),
+  const open = await inBatches(computerIds, (batch) => allRows((from, to) => before(batch).is("ended_at", null).order("id").range(from, to)));
+  const closed = await inBatches(computerIds, (batch) =>
+    allRows((from, to) =>
+      before(batch)
+        .gte("started_at", new Date(period.start.getTime() - LONGEST_INTERVAL_MS).toISOString())
+        .not("ended_at", "is", null)
+        .gt("ended_at", period.start.toISOString())
+        .order("id")
+        .range(from, to),
+    ),
   );
   const byId = new Map([...open, ...closed].map((r) => [r.id, r]));
   return [...byId.values()].map((r) => ({

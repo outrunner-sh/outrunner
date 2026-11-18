@@ -16,6 +16,9 @@ import type { Workspace } from "@/lib/runtime/types";
 export type TargetDeps = {
   mission(id: string): Promise<Workspace | null>;
   level(userId: string, mission: Workspace): Promise<AccessLevel | null>;
+  /** Why the person can't watch the Slack channel for a Mission of the org,
+   *  or null (lib/missions/slack-channels.ts). */
+  channel(userId: string, orgId: string, teamId: string, channelId: string): Promise<string | null>;
 };
 
 export type TargetCheck = { ok: true; mission: Workspace | null; input: Partial<AutomationInput> } | { ok: false; status: 400 | 403 | 404; error: string };
@@ -29,7 +32,7 @@ export async function checkMissionTarget(
   orgId: string,
   callerId: string,
   input: Partial<AutomationInput>,
-  existing: { kind: "session" } | { kind: "mission"; missionId: string } | null,
+  existing: { kind: "session" } | { kind: "mission"; missionId: string; watch?: { teamId: string; channelId: string } | null } | null,
   deps: TargetDeps,
 ): Promise<TargetCheck> {
   const sent = input.target;
@@ -53,6 +56,15 @@ export async function checkMissionTarget(
   // the Mission's own model (automations_mission_only_check).
   if (input.coverNewRepos) return { ok: false, status: 400, error: "A Mission's trigger stays on its project's repository: it can't add new ones." };
   if (input.model) return { ok: false, status: 400, error: "A Mission's trigger runs on the Mission's own model: it can't pick one." };
+  // A channel to watch: one the person could put the Mission on call in. A
+  // watch saved as it was isn't checked again (an admin renaming it needn't
+  // be in its channel).
+  const watch = sent?.kind === "mission" ? sent.watch : null;
+  const saved = existing?.kind === "mission" ? existing.watch : null;
+  if (watch && !(saved && saved.teamId === watch.teamId && saved.channelId === watch.channelId)) {
+    const refused = await deps.channel(callerId, orgId, watch.teamId, watch.channelId);
+    if (refused) return { ok: false, status: 403, error: refused };
+  }
   return {
     ok: true,
     mission,

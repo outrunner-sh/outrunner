@@ -109,9 +109,10 @@ export function callsFromEvents(
       : event.usage && event.callId
         ? `claude:${event.callId}`
         : `unattributed:${session.workspaceId}:${event.uuid}`;
-    const tokens = event.usage ?? NO_TOKENS;
+    // The 1-hour part prices the call; what's recorded is the four counts.
+    const { cache_creation_1h_input_tokens: oneHour, ...tokens } = event.usage ?? NO_TOKENS;
     const countable = Boolean(event.usage && (codex || event.callId));
-    const estimate = countable ? estimateCall(event.model, tokens, extension) : null;
+    const estimate = countable ? estimateCall(event.model, { ...tokens, cache_creation_1h_input_tokens: oneHour }, extension, event.speed) : null;
     const call: UsageCall = {
       usageRef: fitRef(usageRef),
       missionId: session.missionId,

@@ -52,6 +52,28 @@ export type CandidateTarget =
 
 type Admin = ReturnType<typeof createSupabaseAdminClient>;
 
+/** Where an automation's runs go, from its row's target columns. */
+function targetOf(a: {
+  target_kind: string;
+  target_mission_id: string | null;
+  watch_team_id: string | null;
+  watch_channel_id: string | null;
+  filter_prompt: string | null;
+  allowed_app_ids: string[];
+  linear_team_ids: string[];
+}): CandidateTarget {
+  if (a.target_kind !== "mission" || !a.target_mission_id) return { kind: "session" };
+  return {
+    kind: "mission",
+    missionId: a.target_mission_id,
+    watch:
+      a.watch_team_id && a.watch_channel_id && a.filter_prompt
+        ? { teamId: a.watch_team_id, channelId: a.watch_channel_id, filterPrompt: a.filter_prompt, allowedAppIds: a.allowed_app_ids }
+        : null,
+    linearTeamIds: a.linear_team_ids,
+  };
+}
+
 /**
  * The enabled automations of `orgId` among `automationIds`, as candidates on
  * each of their repositories (or those of them in `projectIds`). One whose
@@ -106,18 +128,7 @@ async function candidatesOf(
         reviewers: a.reviewers,
         labels: a.labels,
         sessionMode: a.session_mode,
-        target:
-          a.target_kind === "mission" && a.target_mission_id
-            ? {
-                kind: "mission" as const,
-                missionId: a.target_mission_id,
-                watch:
-                  a.watch_team_id && a.watch_channel_id && a.filter_prompt
-                    ? { teamId: a.watch_team_id, channelId: a.watch_channel_id, filterPrompt: a.filter_prompt, allowedAppIds: a.allowed_app_ids }
-                    : null,
-                linearTeamIds: a.linear_team_ids,
-              }
-            : { kind: "session" as const },
+        target: targetOf(a),
         model: modelFromRow(a),
       },
     ];
@@ -611,7 +622,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
   if (!run) return null;
   const { data: automation, error: automationError } = await supabase
     .from("automations")
-    .select("id, name, prompt, triggers, runs_as, enabled, max_runs, reviewers, labels, session_mode, model_provider, model_id, model_effort")
+    .select("id, name, prompt, triggers, runs_as, enabled, max_runs, reviewers, labels, session_mode, model_provider, model_id, model_effort, target_kind, target_mission_id, watch_team_id, watch_channel_id, filter_prompt, allowed_app_ids, linear_team_ids")
     .eq("id", run.automation_id)
     .eq("org_id", orgId)
     .maybeSingle();
@@ -663,6 +674,8 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
       reviewers: automation.reviewers,
       labels: automation.labels,
       sessionMode: automation.session_mode,
+      // A Mission's run runs again as a request to it, never a session.
+      target: targetOf(automation),
       model: modelFromRow(automation),
     },
     repoFullName: project.full_name,

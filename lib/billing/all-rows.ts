@@ -18,3 +18,14 @@ export async function allRows<Row>(
     if (!data || data.length < PAGE_ROWS) return rows;
   }
 }
+
+/** Ids per `.in()` filter: each is in the request's URL, which a gateway
+ *  caps, so a list that can grow without bound is read in batches. */
+const IN_BATCH = 100;
+
+/** Every row of `read` over `ids`, IN_BATCH ids at a time. */
+export async function inBatches<Id, Row>(ids: readonly Id[], read: (batch: Id[]) => Promise<Row[]>): Promise<Row[]> {
+  const rows: Row[] = [];
+  for (let i = 0; i < ids.length; i += IN_BATCH) rows.push(...(await read(ids.slice(i, i + IN_BATCH))));
+  return rows;
+}

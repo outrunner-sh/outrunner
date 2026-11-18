@@ -11,6 +11,7 @@ import { delegationApproved } from "@/lib/db/automations";
 import { watchModelKey } from "@/lib/db/slack-agent";
 import { type MissionRunDeps, startMissionRun } from "@/lib/missions/automation-target";
 import { budgetPause } from "@/lib/missions/budget.deps";
+import { recordClassifierCall } from "@/lib/missions/spend.deps";
 import { makeRequest } from "@/lib/missions/requests.deps";
 import { missionLevel } from "@/lib/missions/slack-route.deps";
 import { claimSlackMessage, missionBinding } from "@/lib/missions/slack-store";
@@ -24,7 +25,8 @@ export function missionRunDeps(): MissionRunDeps {
     binding: missionBinding,
     delegationApproved: (automationId, mission) => delegationApproved(automationId, { id: mission.id, ownerId: mission.ownerId }),
     ownerCanRead: async (mission) => allows(await missionLevel(mission.ownerId, mission), "read"),
-    filter: async (orgId, system, user) => oneShot(await watchModelKey(orgId), system, user),
+    filter: async (orgId, system, user, missionId) =>
+      oneShot(await watchModelKey(orgId), system, user, (answer) => recordClassifierCall(missionId, answer)),
     claimMessage: (input) => claimSlackMessage({ ...input, source: "slack_watch" }),
     createRequest: makeRequest,
     budgetPause: async (missionId) => (await budgetPause(missionId))?.period ?? null,

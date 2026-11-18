@@ -24,6 +24,8 @@ export type AskDeps = {
   linked(slackUserId: string): Promise<Requester | null>;
   level(userId: string, mission: Workspace): Promise<AccessLevel | null>;
   claim(askId: string, answer: { text: string; userId: string; slackUserId: string }): Promise<boolean>;
+  /** Undo a claim whose answer couldn't be passed on, so it can be answered again. */
+  release(askId: string, slackUserId: string): Promise<void>;
   enqueue(event: RecordedEvent): Promise<boolean>;
   name(slackUserId: string): Promise<string>;
   /** Replace the card. */
@@ -74,16 +76,23 @@ export async function answerAsk(click: AskClick, deps: AskDeps): Promise<"answer
     await deps.tell(binding, thread.threadTs, "Someone answered that question first.");
     return "refused";
   }
-  const name = await deps.name(click.user);
-  await deps.enqueue({
-    missionId: ask.missionId,
-    runnerId: null,
-    kind: "slack_answer",
-    payload: {
-      slack: { channel: binding.channelId, thread: thread.threadTs, author: name, slackUserId: click.user, userId: requester.userId, question: ask.question, answer },
-    },
-    key: eventKey.slackAnswer(ask.id),
-  });
+  const name = await deps.name(click.user).catch(() => click.user);
+  try {
+    await deps.enqueue({
+      missionId: ask.missionId,
+      runnerId: null,
+      kind: "slack_answer",
+      payload: {
+        slack: { channel: binding.channelId, thread: thread.threadTs, author: name, slackUserId: click.user, userId: requester.userId, question: ask.question, answer },
+      },
+      key: eventKey.slackAnswer(ask.id),
+    });
+  } catch (error) {
+    // Not passed on: the question stays open, or the Mission would wait on it for good.
+    await deps.release(ask.id, click.user).catch((cause: unknown) => console.error(`Slack: couldn't reopen question ${ask.id}`, cause));
+    await deps.tell(binding, thread.threadTs, "That answer didn't get through. Try again.").catch(() => undefined);
+    throw error;
+  }
   if (ask.messageTs) await deps.update(binding, ask.messageTs, `${ask.question}: ${answer}`, answeredBlocks(ask.question, answer, name)).catch(() => undefined);
   return "answered";
 }

@@ -16,6 +16,9 @@ function db() {
   return createSupabaseAdminClient();
 }
 
+/** A Mission in one of these takes no work. */
+const ENDED = new Set(["archiving", "archived", "destroying", "destroyed", "failed"]);
+
 export function linearMissionDeps(): LinearMissionDeps {
   return {
     routes: async (orgId) => {
@@ -29,8 +32,26 @@ export function linearMissionDeps(): LinearMissionDeps {
       // Before the migration that adds them: no routes, today's way.
       if (error && (error.code === "42703" || error.code === "PGRST204")) return [];
       if (error) throw error;
-      return (data ?? [])
-        .filter((a) => a.triggers.includes("linear.issue") && a.target_mission_id)
+      const linear = (data ?? []).filter((a) => a.triggers.includes("linear.issue") && a.target_mission_id);
+      if (linear.length === 0) return [];
+      // Only a route that can take work routes: its Mission live, and its
+      // owner's approval standing. Any other would take every issue of its
+      // teams only to refuse them, ahead of a route that works.
+      const [missions, delegations] = await Promise.all([
+        db().from("workspaces").select("id, owner_id, status").in("id", [...new Set(linear.map((a) => a.target_mission_id as string))]),
+        db().from("mission_delegations").select("automation_id, approved_by, approved_at, revoked_at").in("automation_id", linear.map((a) => a.id)),
+      ]);
+      if (missions.error) throw missions.error;
+      if (delegations.error) throw delegations.error;
+      const missionOf = new Map((missions.data ?? []).map((m) => [m.id, m]));
+      const delegationOf = new Map((delegations.data ?? []).map((d) => [d.automation_id, d]));
+      return linear
+        .filter((a) => {
+          const mission = missionOf.get(a.target_mission_id as string);
+          const d = delegationOf.get(a.id);
+          if (!mission || ENDED.has(mission.status)) return false;
+          return !!d?.approved_at && !d.revoked_at && d.approved_by === mission.owner_id;
+        })
         .map((a) => ({ automationId: a.id, missionId: a.target_mission_id as string, teamIds: a.linear_team_ids, createdAt: a.created_at }));
     },
     missionTitle: async (missionId) => (await sessionById(missionId))?.title ?? null,

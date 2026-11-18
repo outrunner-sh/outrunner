@@ -25,7 +25,7 @@ import { createHash } from "node:crypto";
 
 import type { QueueOutcome, QueuedPost, SlackBlocks } from "@/lib/missions/slack-outbox";
 import type { MissionChannel, MissionRequest, MissionThread, ShipLedger, SpawnReservation } from "@/lib/missions/slack-store";
-import { limitText, reactionName } from "@/lib/missions/slack-text";
+import { limitText, quietText, reactionName } from "@/lib/missions/slack-text";
 import type { Workspace } from "@/lib/runtime/types";
 import { markdownToSlack, slackChunks } from "@/lib/slack/research-text";
 
@@ -290,7 +290,8 @@ export async function callSlackTool(mission: Workspace, name: string, args: Reco
         postIn(binding, thread, {
           opKey: `reply:${mission.id}:${thread.threadTs}:${key}`,
           kind: "reply",
-          payload: { chunks: slackChunks(markdownToSlack(text), 3500) },
+          // No channel-wide pings from what the Mission writes (it reads text from outside).
+          payload: { chunks: slackChunks(quietText(markdownToSlack(text)), 3500) },
           requester,
         }),
       );
@@ -306,7 +307,7 @@ export async function callSlackTool(mission: Workspace, name: string, args: Reco
       const opKey = `ask:${mission.id}:${binding.revision}:${thread.threadTs}:${about}:${hash(question, ...options)}`;
       const askId = await deps.saveAsk({ missionId: mission.id, threadId: thread.id, question, options, opKey, bindingRevision: binding.revision });
       const outcome = await deps.queue(
-        postIn(binding, thread, { opKey, kind: "ask", payload: { text: question, blocks: deps.askBlocks(askId, question, options), askId }, requester }),
+        postIn(binding, thread, { opKey, kind: "ask", payload: { text: quietText(question), blocks: deps.askBlocks(askId, quietText(question), options), askId }, requester }),
       );
       const said = queued(outcome, "question card");
       return said.isError ? said : { text: `${said.text} The first answer comes back to you as a <slack_answer> block; end your turn until then.` };

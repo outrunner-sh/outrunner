@@ -68,6 +68,10 @@ export async function deliverAnswer(
       if (!health) return { ok: false, status: 502, error: UNREACHABLE_MESSAGE };
       if (!canName) return { ok: false, status: 409, error: CANT_NAME_CALLS_MESSAGE };
       call = { callId: answer.callId!, launchEpoch: answer.launchEpoch! };
+    } else if (!health && answer.toolUseId) {
+      // A card's answer to a box that didn't say what it can do: try again,
+      // rather than answer by the text, which could reach another call.
+      return { ok: false, status: 502, error: UNREACHABLE_MESSAGE };
     } else if (canName && answer.toolUseId) {
       const target = answerTarget(await agent.pendingQuestions(), answer.toolUseId);
       if (target.kind === "gone") return { ok: false, status: 409, error: QUESTION_EXPIRED_MESSAGE };

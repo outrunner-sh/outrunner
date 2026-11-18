@@ -292,6 +292,29 @@ func TestDecodeCarriesTheReplysUsageForTheContextRing(t *testing.T) {
 	}
 }
 
+// What a call cost depends on which cache it wrote and its speed: the
+// 1-hour cache's part of the writes and "fast" go beside the usage.
+func TestDecodeCarriesTheOneHourCacheWritesAndSpeed(t *testing.T) {
+	line := `{"type":"assistant","uuid":"a","timestamp":"t","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":2,"output_tokens":229,"cache_creation_input_tokens":18095,"cache_read_input_tokens":0,"speed":"fast","cache_creation":{"ephemeral_1h_input_tokens":18000,"ephemeral_5m_input_tokens":95}}}}`
+	ev, ok := decode([]byte(line))
+	if !ok || ev.Message.Usage == nil {
+		t.Fatalf("usage = %+v (ok %v), want the reply's", ev.Message, ok)
+	}
+	if got := ev.Message.Usage.CacheCreation1hInputTokens; got != 18000 {
+		t.Errorf("1-hour cache writes = %d, want 18000", got)
+	}
+	if ev.Message.Speed != "fast" {
+		t.Errorf("speed = %q, want fast", ev.Message.Speed)
+	}
+	// A log that doesn't say: nothing, and nothing in the frame.
+	line = `{"type":"assistant","uuid":"b","timestamp":"t","message":{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":4,"cache_creation_input_tokens":5}}}`
+	ev, _ = decode([]byte(line))
+	frame, _ := json.Marshal(ev.Message)
+	if strings.Contains(string(frame), "cache_creation_1h_input_tokens") || strings.Contains(string(frame), "speed") {
+		t.Errorf("frame %s says what the log didn't", frame)
+	}
+}
+
 // Each block of one reply is a record of its own, each with the reply's usage
 // so far: the call's id goes beside the usage, the same on every record, so a
 // reader counts the call once.

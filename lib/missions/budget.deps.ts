@@ -22,6 +22,7 @@ import {
   periodsToRead,
 } from "@/lib/missions/budget";
 import { sessionById } from "@/lib/missions/store";
+import { after } from "@/lib/observability/after";
 import { allows } from "@/lib/orgs/access";
 import type { Workspace } from "@/lib/runtime/types";
 import type { Database } from "@/lib/supabase/database.types";
@@ -91,7 +92,7 @@ async function settlePause(missionId: string, row: MissionBudgetRow, decision: B
   const limits = limitsOf(row);
   const stale = row.paused_period !== null || row.paused_until !== null;
   if (decision.pause || stale) {
-    const { error } = await db().rpc("settle_mission_budget_pause", {
+    const { data: settled, error } = await db().rpc("settle_mission_budget_pause", {
       target: missionId,
       expect_daily: limits.dailyUsd,
       expect_weekly: limits.weeklyUsd,
@@ -99,6 +100,12 @@ async function settlePause(missionId: string, row: MissionBudgetRow, decision: B
       pause_until: decision.pause?.until ?? null,
     });
     if (error) throw error;
+    // The limits changed under this decision (raised, say): it isn't acted
+    // on. The row as it is now says whether there's a pause.
+    if (settled === false) {
+      const fresh = await readBudget(missionId);
+      return { pause: activePause(fresh, new Date()), lifted: false };
+    }
   }
   return { pause: decision.pause, lifted: stale && !decision.pause };
 }
@@ -205,7 +212,9 @@ export async function missionBudgetView(missionId: string, userId: string): Prom
     if (!paused) {
       const settled = await settlePause(missionId, row, decision);
       paused = settled.pause;
-      if (settled.lifted) await deliverHeld(missionId);
+      // Delivered after the answer: the header needn't wait on waking a box
+      // (the tick would deliver them anyway).
+      if (settled.lifted) after(() => deliverHeld(missionId), { where: "mission-budget-lifted" });
     }
   }
   return { view: viewOf(limits, { ...decision, pause: paused }, spend, found.write) };

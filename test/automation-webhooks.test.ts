@@ -155,6 +155,48 @@ test("a webhook's run that failed starts again with the same payload", async () 
   assert.deepEqual(rerun.run.event, event);
 });
 
+test("a Mission's run that failed starts again as a request to the Mission, with no GitHub App needed", async () => {
+  const candidate: RunCandidate = {
+    automationId: "a1",
+    name: "Alerts",
+    prompt: "Triage.",
+    triggers: ["webhook"],
+    runsAs: "u1",
+    projectId: "p1",
+    repoFullName: "acme/web",
+    orgId: "o1",
+    reviewers: [],
+    labels: [],
+    sessionMode: "new",
+    target: { kind: "mission", missionId: "m1", watch: null, linearTeamIds: [] },
+  };
+  const rerun = await rerunRun("o1", "r1", {
+    rerunTarget: async () => ({
+      runId: "r1",
+      status: "failed",
+      trigger: "webhook",
+      event,
+      headSha: null,
+      prNumber: null,
+      enabled: true,
+      atLimit: false,
+      candidate,
+      repoFullName: "acme/web",
+      installationId: null,
+      installationSuspended: false,
+      covered: true,
+      workspaceId: null,
+    }),
+    pullRequest: async () => assert.fail("no pull request"),
+    reopenRun: async () => true,
+    recordRuns: async () => assert.fail("no new run"),
+  });
+  assert.ok(rerun.ok);
+  assert.equal(rerun.run.candidate.target?.kind, "mission");
+  assert.deepEqual(rerun.run.event, event);
+  assert.equal(rerun.staleSession, null);
+});
+
 test("requests are counted per key in each window, and refused past one, saying when to try again", () => {
   const limiter = new RateLimiter([
     { ms: 60_000, max: 2 },

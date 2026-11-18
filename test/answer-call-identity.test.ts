@@ -178,6 +178,9 @@ test("a named call whose box doesn't answer its health check is a retryable 502,
   const out = await deliverAnswer(agent, { answers, callId: "c1", launchEpoch: "e1", answerOperationId: "op" }, WS);
   assert.deepEqual(out, { ok: false, status: 502, error: UNREACHABLE_MESSAGE });
   assert.equal(agent.sent.length, 0);
-  // Unnamed, it falls back to the text-matched answer, as before.
-  assert.deepEqual(await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1" }, WS), { ok: true, replayed: false, named: false });
+  // A card's answer isn't sent by its text instead, which could reach another call: try again.
+  assert.deepEqual(await deliverAnswer(agent, { questions, answers, toolUseId: "toolu_1" }, WS), { ok: false, status: 502, error: UNREACHABLE_MESSAGE });
+  assert.equal(agent.sent.length, 0);
+  // Naming no call at all (an older client): the text-matched answer, as before.
+  assert.deepEqual(await deliverAnswer(agent, { questions, answers }, WS), { ok: true, replayed: false, named: false });
 });

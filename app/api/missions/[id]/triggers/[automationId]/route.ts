@@ -6,6 +6,7 @@ import { parseAutomationInput } from "@/lib/automations/rules";
 import { deleteAutomation, getAutomation, resetDelegation, setDelegation, updateAutomation } from "@/lib/db/automations";
 import { isUuid } from "@/lib/ids";
 import { changesWhatItSends, checkMissionTarget } from "@/lib/missions/mission-automations";
+import { watchableChannel } from "@/lib/missions/slack-channels";
 import { missionLevel } from "@/lib/missions/slack-route.deps";
 import { sessionById } from "@/lib/missions/store";
 
@@ -49,7 +50,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   );
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
   return savingAutomation(async () => {
-    const checked = await checkMissionTarget(caller.mission.orgId, caller.userId, parsed.value, automation.target, { mission: sessionById, level: missionLevel });
+    const checked = await checkMissionTarget(caller.mission.orgId, caller.userId, parsed.value, automation.target, { mission: sessionById, level: missionLevel, channel: watchableChannel });
     if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: checked.status });
     // Someone else changing what it sends: the owner approves it again.
     // Withdrawn first, so no run goes under the old approval with the new config.

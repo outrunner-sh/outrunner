@@ -410,6 +410,7 @@ test("pointing an automation at a Mission: write on its project, its repository 
   const deps = {
     mission: async (id: string) => (id === MISSION ? mission() : null),
     level: async (userId: string) => (userId === "writer" ? ("write" as const) : userId === "reader" ? ("read" as const) : null),
+    channel: async () => null,
   };
   const input = { target: { kind: "mission" as const, missionId: MISSION, watch: null, linearTeamIds: [] }, projectIds: ["other"] };
   const ok = await checkMissionTarget("o1", "writer", input, null, deps);
@@ -431,6 +432,31 @@ test("pointing an automation at a Mission: write on its project, its repository 
   // A session's automation as before; a signing secret is a Mission's.
   assert.equal((await checkMissionTarget("o1", "anyone", { name: "x" }, { kind: "session" }, deps)).ok, true);
   assert.equal((await checkMissionTarget("o1", "anyone", { webhookSecret: "0123456789abcdef" }, null, deps)).ok, false);
+});
+
+test("a watched channel must be one the person could put the Mission on call in; one saved as it was isn't checked again", async () => {
+  const asked: string[] = [];
+  const deps = {
+    mission: async (id: string) => (id === MISSION ? mission() : null),
+    level: async () => "write" as const,
+    channel: async (userId: string, orgId: string, teamId: string, channelId: string) => {
+      asked.push(`${userId}:${orgId}:${teamId}:${channelId}`);
+      return teamId === "TOTHER" ? "Connect your Slack account in that workspace to this org first." : null;
+    },
+  };
+  const watch = { teamId: "TOTHER", channelId: "C900", filterPrompt: "Everything", allowedAppIds: [] };
+  const target = { kind: "mission" as const, missionId: MISSION, watch, linearTeamIds: [] };
+  const refused = await checkMissionTarget("o1", "writer", { target }, null, deps);
+  assert.ok(!refused.ok && refused.status === 403, "another company's workspace");
+  assert.deepEqual(asked, ["writer:o1:TOTHER:C900"]);
+  assert.ok((await checkMissionTarget("o1", "writer", { target: { ...target, watch: { ...watch, teamId: "T1" } } }, null, deps)).ok);
+  asked.length = 0;
+  // Saved as it is: a rename by someone not in the channel goes through.
+  const saved = { kind: "mission" as const, missionId: MISSION, watch: { teamId: "TOTHER", channelId: "C900" } };
+  assert.ok((await checkMissionTarget("o1", "admin", { name: "renamed", target }, saved, deps)).ok);
+  assert.deepEqual(asked, []);
+  // Moved to another channel: checked.
+  assert.equal((await checkMissionTarget("o1", "admin", { target: { ...target, watch: { ...watch, channelId: "C901" } } }, saved, deps)).ok, false);
 });
 
 test("the editor's input: Mission-only triggers need a Mission; a Mission's take only its triggers", () => {

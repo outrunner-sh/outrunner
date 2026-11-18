@@ -108,8 +108,8 @@ test("a reply logged as several records, each with its usage so far, is one call
       ["claude:msg_2", 20, "2026-11-12T10:01:00.000Z"],
     ],
   );
-  // Sonnet 5.5: $2 in, $10 out, $2.5 cache writes, $0.10 cache reads per MTok.
-  assert.equal(calls[0].usdEstimated, (10 * 2 + 80 * 10 + 100 * 2.5 + 1000 * 0.1) / 1e6);
+  // Sonnet 5.5: $2 in, $10 out, $2.5 cache writes, $0.20 cache reads per MTok.
+  assert.equal(calls[0].usdEstimated, (10 * 2 + 80 * 10 + 100 * 2.5 + 1000 * 0.2) / 1e6);
   assert.equal(calls[0].coverage, "estimated");
   assert.equal(calls[0].costBasis, BUILTIN_COST_BASIS.version);
 });
@@ -295,6 +295,20 @@ test("a classifier call is reported where OpenRouter says its cost, under its ge
     [call.usageRef, call.source, call.workspaceId, call.coverage, call.usdReported, call.usdEstimated, call.input_tokens, call.cache_read_input_tokens],
     ["openrouter:gen-1", "classifier", null, "reported", 0.00042, null, 100, 20],
   );
+});
+
+test("a call's 1-hour cache writes cost 2× input and fast mode twice the price; the four counts are what's recorded", () => {
+  const events = [
+    reply({ callId: "msg_1h", usage: { ...tokens(10, 80, 1000, 0), cache_creation_1h_input_tokens: 600 } }),
+    reply({ callId: "msg_fast", model: "claude-opus-5-5", speed: "fast", usage: tokens(10, 80, 0, 0) }),
+  ];
+  const [oneHour, fast] = callsFromEvents(session, events, null, NOW);
+  // Sonnet 5.5: 400 written at the 5-minute $2.5, 600 at the 1-hour $4.
+  assert.equal(oneHour.usdEstimated, Math.round(((10 * 2 + 80 * 10 + 400 * 2.5 + 600 * 4) / 1e6) * 1e8) / 1e8);
+  assert.equal("cache_creation_1h_input_tokens" in oneHour, false);
+  assert.equal(oneHour.cache_creation_input_tokens, 1000);
+  // Opus 5.5 fast: $8 in, $40 out.
+  assert.equal(fast.usdEstimated, Math.round(((10 * 8 + 80 * 40) / 1e6) * 1e8) / 1e8);
 });
 
 test("a classifier call without its cost is estimated, or unavailable; without an id, not counted", () => {

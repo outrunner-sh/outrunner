@@ -557,6 +557,14 @@ export async function rerunRun(orgId: string, runId: string, deps: RerunDeps, ap
   if (!target.covered) {
     return { ok: false, status: 409, error: "The automation doesn't run on this repository any more." };
   }
+  // A Mission's run starts over as the same request to it, told the same
+  // event: startRun hands it to the Mission (delegation, pause, budget and
+  // filter checked again there), never to a session.
+  if (target.candidate.target?.kind === "mission") {
+    if (!target.event) return { ok: false, status: 409, error: "This run can't be started again." };
+    if (!(await deps.reopenRun(target.runId))) return { ok: false, status: 409, error: "It's running again already." };
+    return { ok: true, run: { runId: target.runId, candidate: target.candidate, event: target.event, appSlug }, staleSession: null };
+  }
   // Every run works on GitHub as the App: without it live on the
   // repository's account, its session couldn't get a token.
   if (target.installationSuspended) {

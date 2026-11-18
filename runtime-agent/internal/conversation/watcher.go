@@ -301,7 +301,10 @@ func decode(line []byte) (Event, bool) {
 				OutputTokens:             u.OutputTokens,
 				CacheCreationInputTokens: u.CacheCreationInputTokens,
 				CacheReadInputTokens:     u.CacheReadInputTokens,
+
+				CacheCreation1hInputTokens: u.CacheCreation1hInputTokens,
 			}
+			msg.Speed = u.Speed
 		}
 		msg.ContextWindow, msg.ContextTokens = rec.Message.ContextWindow, rec.Message.ContextTokens
 	}
@@ -408,6 +411,13 @@ func UsageFrom(raw map[string]json.RawMessage) *protocol.TokenUsage {
 	_ = json.Unmarshal(raw["cache_creation_input_tokens"], &u.CacheCreationInputTokens)
 	_ = json.Unmarshal(raw["cache_read_input_tokens"], &u.CacheReadInputTokens)
 	_ = json.Unmarshal(raw["service_tier"], &u.ServiceTier)
+	_ = json.Unmarshal(raw["speed"], &u.Speed)
+	var creation struct {
+		OneHour int `json:"ephemeral_1h_input_tokens"`
+	}
+	if json.Unmarshal(raw["cache_creation"], &creation) == nil && creation.OneHour > 0 && creation.OneHour <= u.CacheCreationInputTokens {
+		u.CacheCreation1hInputTokens = creation.OneHour
+	}
 	return u
 }
 

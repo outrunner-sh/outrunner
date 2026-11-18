@@ -623,6 +623,10 @@ type TokenUsageAmounts struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	// CacheCreation1hInputTokens is the part of CacheCreationInputTokens
+	// written to the 1-hour cache, which costs more than the 5-minute one,
+	// where a reply's log says it. Never in a Summary's sum.
+	CacheCreation1hInputTokens int `json:"cache_creation_1h_input_tokens,omitempty"`
 }
 
 // ContentBlock is one block inside a ConversationMessage.
@@ -680,6 +684,9 @@ type ConversationMessage struct {
 	// of a reply as its own record with the reply's usage so far, so records
 	// sharing a CallID are one call, counted once.
 	CallID string `json:"callId,omitempty"`
+	// Speed is the call's speed where the log says it ("fast" for fast
+	// mode, which costs more), beside Usage.
+	Speed string `json:"speed,omitempty"`
 	// ContextWindow is the model's context, in tokens, where the log says it
 	// (Codex's does; Claude's doesn't).
 	ContextWindow int `json:"contextWindow,omitempty"`
@@ -787,6 +794,10 @@ type TokenUsage struct {
 	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
 	ServiceTier              string `json:"service_tier,omitempty"`
+	// The 1-hour cache's part of CacheCreationInputTokens, and the call's
+	// speed, where the log says them.
+	CacheCreation1hInputTokens int    `json:"cache_creation_1h_input_tokens,omitempty"`
+	Speed                      string `json:"speed,omitempty"`
 }
 
 // FeatureSnapshotPatchIntegrity marks an agent whose archive fails, rather

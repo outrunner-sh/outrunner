@@ -43,8 +43,9 @@ export type MissionRunDeps = {
   delegationApproved(automationId: string, mission: Workspace): Promise<boolean>;
   /** The Mission's owner can still read its project. */
   ownerCanRead(mission: Workspace): Promise<boolean>;
-  /** The filter's model call: no tools, its answer's text. Throws on failure. */
-  filter(orgId: string, system: string, user: string): Promise<string>;
+  /** The filter's model call: no tools, its answer's text, its usage the
+   *  Mission's spend (docs/mission-spend.md). Throws on failure. */
+  filter(orgId: string, system: string, user: string, missionId: string): Promise<string>;
   claimMessage(input: { teamId: string; channelId: string; ts: string; missionId: string; claimKey: string }): Promise<boolean>;
   createRequest(input: NewRequest): Promise<"created" | "exists">;
   settleRun(runId: string, outcome: MissionRunOutcome): Promise<void>;
@@ -174,7 +175,7 @@ export async function startMissionRun(run: PendingRun, deps: MissionRunDeps): Pr
       let answer: ReturnType<typeof parseFilterAnswer>;
       try {
         answer = parseFilterAnswer(
-          await deps.filter(run.candidate.orgId, filterSystemPrompt(target.watch.filterPrompt), event.text.slice(0, FILTER_MESSAGE_MAX)),
+          await deps.filter(run.candidate.orgId, filterSystemPrompt(target.watch.filterPrompt), event.text.slice(0, FILTER_MESSAGE_MAX), mission.id),
         );
       } catch (error) {
         answer = { error: error instanceof Error ? error.message : String(error) };

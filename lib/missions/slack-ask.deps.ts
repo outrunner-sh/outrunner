@@ -4,7 +4,7 @@ import { getInstallation } from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";
 import { answerAsk, type AskClick, type AskDeps } from "@/lib/missions/slack-ask";
 import { linkedAccount, missionLevel } from "@/lib/missions/slack-route.deps";
-import { askById, claimAnswer, missionBinding, threadById } from "@/lib/missions/slack-store";
+import { askById, claimAnswer, missionBinding, releaseAnswer, threadById } from "@/lib/missions/slack-store";
 import { sessionById } from "@/lib/missions/store";
 import { recordMissionEvent } from "@/lib/missions/watch.deps";
 import { signLinkToken } from "@/lib/slack/slack";
@@ -21,6 +21,7 @@ export async function handleMissionAsk(click: AskClick): Promise<void> {
     linked: (slackUserId) => linkedAccount(click.teamId, slackUserId),
     level: missionLevel,
     claim: claimAnswer,
+    release: releaseAnswer,
     enqueue: recordMissionEvent,
     name: async (slackUserId) => (await userNames(install.botToken, [slackUserId])).get(slackUserId) ?? slackUserId,
     update: (binding, ts, text, blocks) => updateMessage(install.botToken, { channel: binding.channelId, ts, text, blocks }),

@@ -4,6 +4,7 @@
  * reservations. Service role throughout: callers check who may first.
  */
 
+import { allRows, inBatches } from "@/lib/billing/all-rows";
 import type { Interval } from "@/lib/billing/hours";
 import { costBasisExtension } from "@/lib/missions/cost-basis";
 import {
@@ -175,9 +176,9 @@ export async function recordClassifierCall(missionId: string, answer: OpenRouter
 /** The Mission and its Ships, archived ones included: what they spent stays
  *  spent. */
 async function familyIds(missionId: string): Promise<string[]> {
-  const { data, error } = await db().from("workspaces").select("id").eq("parent_mission_id", missionId);
-  if (error) throw error;
-  return [missionId, ...(data ?? []).map((w) => w.id)];
+  // Paged: an on-call Mission's Ships pass PostgREST's row cap in time.
+  const ships = await allRows((from, to) => db().from("workspaces").select("id").eq("parent_mission_id", missionId).order("id").range(from, to));
+  return [missionId, ...ships.map((w) => w.id)];
 }
 
 /** The family's boxes' compute intervals that may fall in the period. */
@@ -193,21 +194,27 @@ const NEVER_RAN: readonly WorkspaceStatus[] = [...SETTING_UP, "failed"];
  *  last_active_at) whose log hasn't been read since, for longer than the
  *  tick takes to read it. One that never ran an agent made no calls. */
 async function unreadSessions(ids: string[], period: { start: Date; end: Date }, now: Date): Promise<number> {
-  const { data: sessions, error } = await db()
-    .from("workspaces")
-    .select("id, last_active_at")
-    .in("id", ids)
-    .not("status", "in", `(${NEVER_RAN.join(",")})`)
-    .gte("last_active_at", period.start.toISOString())
-    .lt("last_active_at", new Date(Math.min(period.end.getTime(), now.getTime() - UNREAD_GRACE_MS)).toISOString());
-  if (error) throw error;
-  if (!sessions?.length) return 0;
-  const { data: reads, error: readError } = await db()
-    .from("session_activity")
-    .select("workspace_id, read_at")
-    .in("workspace_id", sessions.map((s) => s.id));
-  if (readError) throw readError;
-  const readAt = new Map((reads ?? []).map((r) => [r.workspace_id, r.read_at]));
+  const sessions = await inBatches(ids, async (batch) => {
+    const { data, error } = await db()
+      .from("workspaces")
+      .select("id, last_active_at")
+      .in("id", batch)
+      .not("status", "in", `(${NEVER_RAN.join(",")})`)
+      .gte("last_active_at", period.start.toISOString())
+      .lt("last_active_at", new Date(Math.min(period.end.getTime(), now.getTime() - UNREAD_GRACE_MS)).toISOString());
+    if (error) throw error;
+    return data ?? [];
+  });
+  if (!sessions.length) return 0;
+  const reads = await inBatches(
+    sessions.map((s) => s.id),
+    async (batch) => {
+      const { data, error } = await db().from("session_activity").select("workspace_id, read_at").in("workspace_id", batch);
+      if (error) throw error;
+      return data ?? [];
+    },
+  );
+  const readAt = new Map(reads.map((r) => [r.workspace_id, r.read_at]));
   return sessions.filter((s) => {
     const read = readAt.get(s.id);
     return !read || Date.parse(read) < Date.parse(s.last_active_at!);

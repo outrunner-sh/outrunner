@@ -1334,6 +1334,8 @@ fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
 /// session waits on and `compact` compacts its conversation, as the
 /// composer's Approve and /compact do. `auth` sets which
 /// credential the session's agent CLI runs on, like `model` sets its model.
+/// `question` names the exact `ask_user` call a session waits on, so a card's
+/// answer goes to that call (docs/architecture/protocol.md).
 fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest::Method, String> {
     let (route, query) = match path.split_once('?') {
         Some((route, query)) => (route, Some(query)),
@@ -1347,7 +1349,7 @@ fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest
         {
             Ok(reqwest::Method::POST)
         }
-        ("GET", ["workspaces", id, "summary" | "files"], None) if *id == workspace_id => Ok(reqwest::Method::GET),
+        ("GET", ["workspaces", id, "summary" | "files" | "question"], None) if *id == workspace_id => Ok(reqwest::Method::GET),
         ("GET", ["workspaces", id, "changes"], query)
             if *id == workspace_id && query.is_none_or(valid_changes_query) =>
         {
@@ -2177,6 +2179,9 @@ echo 'Logged in using ChatGPT' >&2"#,
         assert!(allowed_route("POST", "/workspaces/ws-2/model", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/model", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/summary", "ws-1").is_ok());
+        assert!(allowed_route("GET", "/workspaces/ws-1/question", "ws-1").is_ok());
+        assert!(allowed_route("GET", "/workspaces/ws-2/question", "ws-1").is_err());
+        assert!(allowed_route("POST", "/workspaces/ws-1/question", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/changes", "ws-1").is_ok());
         assert!(allowed_route("GET", "/workspaces/ws-1/files", "ws-1").is_ok());
         assert!(allowed_route("GET", "/workspaces/ws-2/files", "ws-1").is_err());

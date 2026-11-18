@@ -949,6 +949,8 @@ const ReplyUsage = z.object({
   output_tokens: z.number().int().nonnegative(),
   cache_creation_input_tokens: z.number().int().nonnegative(),
   cache_read_input_tokens: z.number().int().nonnegative(),
+  /** The 1-hour cache's part of cache_creation_input_tokens, where the log says it. */
+  cache_creation_1h_input_tokens: z.number().int().nonnegative().optional(),
 });
 
 export const ConversationMessage = z.object({
@@ -987,6 +989,8 @@ export const ConversationMessage = z.object({
   // the log names one: the same on every record of one reply, so a call's
   // usage counts once (lib/missions/spend.ts). Absent from agents before it.
   callId: z.string().optional(),
+  /** The call's speed beside usage, where the log says it ("fast": fast mode). */
+  speed: z.string().optional(),
   // The model's context, in tokens, where the log says it (Codex's does,
   // Claude's doesn't: the page then knows it by the model).
   contextWindow: z.number().int().positive().optional(),
@@ -1017,6 +1021,8 @@ export const TokenUsage = z.object({
   cache_creation_input_tokens: z.number().int().nonnegative(),
   cache_read_input_tokens: z.number().int().nonnegative(),
   service_tier: z.string().optional(),
+  cache_creation_1h_input_tokens: z.number().int().nonnegative().optional(),
+  speed: z.string().optional(),
 });
 export type TokenUsage = z.infer<typeof TokenUsage>;
 

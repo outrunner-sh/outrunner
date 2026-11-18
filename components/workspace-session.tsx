@@ -1720,9 +1720,14 @@ class ModelSwitchError extends Error {
  *  is answered by the questions' text, as before). */
 async function answerLocalQuestion(workspaceId: string, answer: CardAnswer): Promise<void> {
   const target = localTarget(workspaceId);
+  // Only an app from before the route (its relay refuses it) answers by the
+  // text; anything else failing is a failure, never an answer to another call.
   const listed = await localAgentRequest(target, "GET", `/workspaces/${workspaceId}/question`)
     .then((out) => PendingQuestionsResponse.safeParse(out))
-    .catch(() => null);
+    .catch((error: unknown) => {
+      if (error instanceof LocalRuntimeError && error.code === "route-not-allowed") return null;
+      throw error;
+    });
   let call: CallIdentity | null = null;
   if (listed?.success && answer.toolUseId) {
     const found = answerTarget(listed.data.questions, answer.toolUseId);

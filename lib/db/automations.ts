@@ -396,9 +396,13 @@ export async function updateAutomation(
   change: Partial<AutomationInput>,
 ): Promise<boolean> {
   const schedules = change.schedules ?? (change.enabled === true ? (await schedulesOf([automationId])).get(automationId) : undefined);
-  // A Mission's inputs first: a trigger turned on below may need them.
+  // A Mission's inputs first: a trigger turned on below may need them. An
+  // empty list of Linear teams goes last, once the Linear trigger is off
+  // (automations_inputs_check: the trigger needs a team while it's on).
   const inputs = missionInputs(change);
   delete inputs.mission_id;
+  const clearsTeams = Array.isArray(inputs.linear_team_ids) && inputs.linear_team_ids.length === 0;
+  if (clearsTeams) delete inputs.linear_team_ids;
   if (Object.keys(inputs).length > 0) {
     const { error } = await createSupabaseAdminClient().rpc("set_mission_automation_inputs", { target_org: orgId, automation: automationId, inputs: inputs as Json });
     if (error) throw refusal(error);
@@ -420,6 +424,14 @@ export async function updateAutomation(
     },
   });
   if (error) throw refusal(error);
+  if (data === true && clearsTeams) {
+    const { error: teamsError } = await createSupabaseAdminClient().rpc("set_mission_automation_inputs", {
+      target_org: orgId,
+      automation: automationId,
+      inputs: { linear_team_ids: [] },
+    });
+    if (teamsError) throw refusal(teamsError);
+  }
   return data === true;
 }
 

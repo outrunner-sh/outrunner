@@ -17,8 +17,8 @@ import { optionalEnv } from "@/lib/env";
 export type ModelPrice = {
   input: number;
   output: number;
-  /** Cache writes, at the 5-minute rate (1.25× input): the logs don't say
-   *  which TTL a write had. */
+  /** Cache writes at the 5-minute rate (1.25× input); a write the log says
+   *  went to the 1-hour cache is 2× input. */
   cacheWrite: number;
   cacheRead: number;
   /** A higher rate for prompts over `aboveTokens` (input, cached or not). */
@@ -33,7 +33,16 @@ export type CallTokens = {
   output_tokens: number;
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
+  /** The 1-hour cache's part of cache_creation_input_tokens, where the log
+   *  says it: 2× input, not the 5-minute 1.25×. */
+  cache_creation_1h_input_tokens?: number;
 };
+
+/** A 1-hour cache write, as a multiple of input. */
+const ONE_HOUR_WRITE = 2;
+
+/** Fast mode's prices, as a multiple of the model's standard ones. */
+const FAST = 2;
 
 const price = (input: number, output: number, cacheRead: number): ModelPrice => ({
   input,
@@ -48,19 +57,19 @@ const price = (input: number, output: number, cacheRead: number): ModelPrice => 
  * a new version: rows keep the version they were priced on.
  */
 export const BUILTIN_COST_BASIS: CostBasis = {
-  version: "anthropic-list-2026-11-03",
+  version: "anthropic-list-2026-11-18",
   models: {
     "claude-fable-5-2": price(8, 40, 0.2),
     "claude-mythos-5-2": price(8, 40, 0.2),
-    "claude-fable-5-1": price(10, 50, 1),
-    "claude-mythos-5-1": price(10, 50, 1),
+    "claude-fable-5-1": price(10, 50, 0.25),
+    "claude-mythos-5-1": price(10, 50, 0.25),
     "claude-fable-5": price(10, 50, 1),
     "claude-opus-5-5": price(4, 20, 0.2),
     "claude-opus-5": price(5, 25, 0.5),
     "claude-opus-4-8": price(5, 25, 0.5),
     "claude-opus-4-7": price(5, 25, 0.5),
     "claude-opus-4-6": price(5, 25, 0.5),
-    "claude-sonnet-5-5": price(2, 10, 0.1),
+    "claude-sonnet-5-5": price(2, 10, 0.2),
     "claude-sonnet-5": price(2, 10, 0.2),
     "claude-sonnet-4-6": price(3, 15, 0.3),
     "claude-haiku-5-5": {
@@ -136,6 +145,7 @@ export function estimateCall(
   model: string | null | undefined,
   tokens: CallTokens,
   extension: CostBasis | null = costBasisExtension(),
+  speed?: string,
 ): Estimate | null {
   if (!model) return null;
   const exact = model.trim().toLowerCase();
@@ -150,11 +160,14 @@ export function estimateCall(
   if (!found) return null;
   const prompt = tokens.input_tokens + tokens.cache_creation_input_tokens + tokens.cache_read_input_tokens;
   const p = found.price.longContext && prompt > found.price.longContext.aboveTokens ? found.price.longContext : found.price;
+  const oneHour = Math.min(tokens.cache_creation_1h_input_tokens ?? 0, tokens.cache_creation_input_tokens);
   const usd =
-    (tokens.input_tokens * p.input +
+    ((tokens.input_tokens * p.input +
       tokens.output_tokens * p.output +
-      tokens.cache_creation_input_tokens * p.cacheWrite +
-      tokens.cache_read_input_tokens * p.cacheRead) /
+      (tokens.cache_creation_input_tokens - oneHour) * p.cacheWrite +
+      oneHour * p.input * ONE_HOUR_WRITE +
+      tokens.cache_read_input_tokens * p.cacheRead) *
+      (speed === "fast" ? FAST : 1)) /
     1_000_000;
   return { usd: roundUsd(usd), basis: found.basis };
 }

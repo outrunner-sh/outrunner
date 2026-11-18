@@ -47,12 +47,13 @@ export function inboundDeps(): InboundDeps {
       return row ? { message: row.message as unknown as AgentMessage, attempt: row.attempt } : null;
     },
     handle: async (message, options) => {
-      // A watched channel's new message: the watches' (not the agent's).
+      // A watched channel's new message: the watches' first. The Slack
+      // agent's own watch of the channel (offering to file work), if it has
+      // one, still hears it below; a retry finds the watches' runs made.
       const { processWatchedMessage, watchable } = await import("@/lib/missions/slack-watch");
       if (watchable(message)) {
         const { watchDeps } = await import("@/lib/missions/slack-watch.deps");
         await processWatchedMessage(message, watchDeps());
-        return;
       }
       const { handleAgentMessage } = await import("@/lib/slack/agent-run");
       await handleAgentMessage(message, options);

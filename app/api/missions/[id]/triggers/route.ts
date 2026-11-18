@@ -5,6 +5,7 @@ import { parseAutomationInput } from "@/lib/automations/rules";
 import { listRuns } from "@/lib/db/automation-runs";
 import { createAutomation, missionAutomations, requestDelegation } from "@/lib/db/automations";
 import { checkMissionTarget } from "@/lib/missions/mission-automations";
+import { watchableChannel } from "@/lib/missions/slack-channels";
 import { missionLevel } from "@/lib/missions/slack-route.deps";
 import { sessionById } from "@/lib/missions/store";
 import { missionCaller } from "@/lib/missions/trigger-routes";
@@ -36,7 +37,7 @@ export async function POST(request: Request, context: RouteContext) {
   const parsed = parseAutomationInput({ ...body, target, projectIds: [caller.mission.projectId] }, { full: true });
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
   return savingAutomation(async () => {
-    const checked = await checkMissionTarget(caller.mission.orgId, caller.userId, parsed.value, null, { mission: sessionById, level: missionLevel });
+    const checked = await checkMissionTarget(caller.mission.orgId, caller.userId, parsed.value, null, { mission: sessionById, level: missionLevel, channel: watchableChannel });
     if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: checked.status });
     const automationId = await createAutomation(caller.mission.orgId, caller.userId, { ...parsed.value, ...checked.input });
     await requestDelegation(automationId, caller.mission.id, caller.userId, caller.isOwner);

@@ -68,8 +68,9 @@ counted as usual. A box that's really gone keeps its gap.
 **Classifier calls.** `oneShot` (`lib/slack/agent-model.ts`) takes an
 `onAnswer` that hears OpenRouter's answer; pass
 `(answer) => recordClassifierCall(missionId, answer)`
-(`lib/missions/spend.deps.ts`) where a classifier works for a Mission. No
-classifier works for a Mission yet: the Slack on-call one will.
+(`lib/missions/spend.deps.ts`) where a classifier works for a Mission. A
+watched channel's filter does (`lib/missions/automation-target.deps.ts`):
+each message it reads is one call on the Mission's spend.
 
 ## Coverage
 
@@ -93,9 +94,10 @@ A period with nothing in it and every session read is a known `reported` $0.
 ### The cost basis
 
 `lib/missions/cost-basis.ts`: Anthropic's first-party list prices per
-million tokens, versioned (`anthropic-list-2026-11-03`). Cache writes at the
-5-minute rate (1.25× input), since the log doesn't say the TTL; cache reads
-at the listed rate, or 0.1× input. Haiku 5.5's prompts over 100K tokens at its
+million tokens, versioned (`anthropic-list-2026-11-18`). Cache writes at the
+5-minute rate (1.25× input), and those the log says went to the 1-hour cache
+(`cache_creation.ephemeral_1h_input_tokens`) at 2× input; cache reads at the
+listed rate, or 0.1× input. A fast-mode call (`speed: "fast"`) costs twice. Haiku 5.5's prompts over 100K tokens at its
 higher rate. Model names are matched without `anthropic/`, `[1m]` or a date
 suffix. A price change is a new version; rows keep the version they were
 priced on.
@@ -171,7 +173,7 @@ owner only; `period` defaults to `day`, `at` to now.
       "coverage": "estimated", "usd": 3.41, "knownUsd": 3.41,
       "reportedUsd": 0.01, "estimatedUsd": 3.4,
       "calls": { "reported": 2, "estimated": 412, "unavailable": 0 },
-      "costBases": ["anthropic-list-2026-11-03"],
+      "costBases": ["anthropic-list-2026-11-18"],
       "tokens": { "input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 },
       "unreadSessions": 0
     },
