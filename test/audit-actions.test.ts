@@ -14,6 +14,15 @@ test("each kind of event reads as what happened", () => {
   assert.equal(describeAudit(event("invite.resent", "ada@acme.dev", { emailed: true })), "emailed ada@acme.dev a new invite link");
   assert.equal(describeAudit(event("invite.resent", "ada@acme.dev", { emailed: false })), "made a new invite link for ada@acme.dev");
   assert.equal(describeAudit(event("member.role_changed", "ada", { role: "admin" })), "made ada an admin");
+  assert.equal(describeAudit(event("member.joined", "ada", { role: "member" })), "joined as member");
+  assert.equal(
+    describeAudit(event("member.joined", "ada", { role: "member", via: "github", githubOrg: "acme" })),
+    "joined as member through the GitHub organization acme",
+  );
+  assert.equal(
+    describeAudit(event("org.github_join_changed", null, { joinViaGithub: false })),
+    "made members of the org's GitHub organization need an invite to join",
+  );
   assert.equal(describeAudit(event("member.roles_set", "ada", { roles: [] })), "took ada's roles away");
   assert.equal(
     describeAudit(event("access.changed", null, { role: "Backend", project: "acme/api", level: "write" })),

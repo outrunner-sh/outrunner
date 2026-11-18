@@ -15,6 +15,7 @@ export type AuditAction =
   | "slack_channel.asked"
   | "slack_channel.lookup"
   | "org.renamed"
+  | "org.github_join_changed"
   | "member.invited"
   | "invite.revoked"
   | "invite.resent"
@@ -124,6 +125,10 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `looked up ${text(d.tool) ?? "status"} in ${what}`;
     case "org.renamed":
       return `renamed the org from ${text(d.from) ?? "?"} to ${text(d.to) ?? what}`;
+    case "org.github_join_changed":
+      return d.joinViaGithub === true
+        ? "let members of the org's GitHub organization join without an invite"
+        : "made members of the org's GitHub organization need an invite to join";
     case "member.invited":
       return `invited ${what} as ${text(d.role) ?? "a member"}`;
     case "invite.revoked":
@@ -131,7 +136,9 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
     case "invite.resent":
       return d.emailed === true ? `emailed ${what} a new invite link` : `made a new invite link for ${what}`;
     case "member.joined":
-      return `joined as ${text(d.role) ?? "a member"}`;
+      return d.via === "github"
+        ? `joined as ${text(d.role) ?? "a member"} through the GitHub organization ${text(d.githubOrg) ?? "?"}`
+        : `joined as ${text(d.role) ?? "a member"}`;
     case "request.approved":
       return `let ${what} join as ${text(d.role) ?? "a member"}`;
     case "request.declined":

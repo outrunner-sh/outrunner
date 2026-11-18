@@ -13,6 +13,7 @@ import { hashSecret } from "@/lib/auth/cli-login";
 import { connectorsAmong } from "@/lib/automations/connector";
 import type { OrgRole } from "@/lib/orgs/active";
 import { INVITE_DAYS, newInviteToken } from "@/lib/orgs/invite-token";
+import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** How long after a declined request its asker may ask again. */
@@ -397,6 +398,29 @@ export async function joinStanding(
     memberOf: new Set((members.data ?? []).map((m) => m.org_id)),
     removedFrom: new Set((removals.data ?? []).filter((r) => r.removed_by !== userId).map((r) => r.org_id)),
   };
+}
+
+/** Whether a team org lets its GitHub organization's members join without an
+ *  invite (organization_settings.join_via_github): on with nothing saved.
+ *  Off before the migration, when no one can join that way anyway. */
+export async function getJoinViaGithub(orgId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("organization_settings")
+    .select("join_via_github")
+    .eq("org_id", orgId)
+    .maybeSingle();
+  const status = probeStatus(error);
+  if (status === "missing" || status === "outdated") return false;
+  if (error) throw error;
+  return data?.join_via_github ?? true;
+}
+
+/** Set it, as admin `by`; the org's other settings are left as they are. */
+export async function setJoinViaGithub(orgId: string, enabled: boolean, by: string): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("organization_settings")
+    .upsert({ org_id: orgId, join_via_github: enabled, updated_by: by }, { onConflict: "org_id" });
+  if (error) throw error;
 }
 
 /** An org's pending requests to join, oldest first. */
