@@ -30,12 +30,14 @@ const UPLOAD_PATH: &str = "/storage/v1/object/upload/sign/workspace-snapshots/ar
 /// Outrunner's own storage hosts. Pinned to its projects, not to
 /// `*.supabase.co`: anyone can create a Supabase project, so a suffix match
 /// would let a page that got into the window upload the user's code to a
-/// bucket of their own. Two while the database moves from Tokyo to Mumbai, so
-/// an app installed before the move keeps importing during it and after; drop
-/// the Tokyo one once the move is done. `OUTRUNNER_STORAGE_HOST` replaces
-/// them, for a custom domain or another project (a staging one, or a
-/// developer's).
-const STORAGE_HOSTS: [&str; 2] = [
+/// bucket of their own. `auth.outrunner.sh` is the project's own domain and
+/// stays put if the project moves again; the other two are the Mumbai
+/// project's Supabase address and the Tokyo project's, which installed apps
+/// used before the move. Drop Tokyo's once those apps have updated.
+/// `OUTRUNNER_STORAGE_HOST` replaces them, for another project (a staging
+/// one, or a developer's).
+const STORAGE_HOSTS: [&str; 3] = [
+    "auth.outrunner.sh",                // the project's custom domain
     "vidulqzirsthlshybwat.supabase.co", // Mumbai (ap-south-1)
     "butbnitdpiehgwqggowr.supabase.co", // Tokyo, before the move
 ];
