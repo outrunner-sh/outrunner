@@ -152,12 +152,12 @@ for migrations and sign-in.
 
 ```mermaid
 flowchart LR
-  you([Browser / Mac app / CLI]) --> web["Web app<br/>Next.js control plane"]
+  you(["Browser, Mac app, CLI, API"]) --> edge["Cloudflare Worker"]
+  edge --> web["Web app<br/>Next.js control plane"]
   web <--> db[("Supabase<br/>Postgres, auth, storage")]
   web <--> box["Cloud box<br/>runtime-agent + tmux"]
-  box --> agents["Claude Code / Codex<br/>one worktree per session"]
-  mac["Mac app<br/>Tauri"] --> local["Local runtime-agent"]
-  edge["Cloudflare Worker"] --> web
+  box --> agents["Claude Code / Codex<br/>a worktree per session"]
+  you -. "Mac local sessions" .-> local["Local runtime-agent"]
 ```
 
 | Component | Path | Docs |
