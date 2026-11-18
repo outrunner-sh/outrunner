@@ -14,6 +14,27 @@ import { commitDeps, importProvider, planDeps } from "@/lib/imports/deps";
 import { planImports } from "@/lib/imports/plan";
 import { connectRefusal } from "@/lib/orgs/connect-access";
 import type { ImportCommitRequest, ImportPlanRequest } from "@/lib/runtime/import-scan";
+import { ActAsUserError, actAsUserKept } from "@/lib/supabase/acting-user";
+
+/** The CLI's import routes' answer when its token signs no one in. */
+export function cliSignInFirst(): Response {
+  return NextResponse.json({ error: "Not signed in. Run `outrunner login`." }, { status: 401 });
+}
+
+/**
+ * Run a CLI import route's `work` signed in as `userId`, the user its token
+ * named (lib/supabase/acting-user.ts): the import reads and writes through
+ * their own client, under RLS, exactly as from their browser. The v1 API runs
+ * a CLI token's calls the same way (lib/api/handler.ts).
+ */
+export async function asCliUser(userId: string, work: () => Promise<Response>): Promise<Response> {
+  try {
+    return await actAsUserKept(userId, work);
+  } catch (error) {
+    if (error instanceof ActAsUserError) return NextResponse.json({ error: error.message }, { status: 401 });
+    throw error;
+  }
+}
 
 /**
  * Plan `request` for `ownerId`: each session gets a new workspace id and
