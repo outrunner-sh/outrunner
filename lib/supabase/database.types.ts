@@ -2354,6 +2354,15 @@ export type Database = {
         Args: { org_name: string; creator: string; claimed_domain: string | null };
         Returns: string;
       };
+      // supabase/migrations/20261118120000_abandoned_org_domains.sql
+      org_people: {
+        Args: { target_org: string };
+        Returns: number;
+      };
+      domain_orgs: {
+        Args: { domains: string[] };
+        Returns: { id: string; name: string; domain: string; member_count: number }[];
+      };
       // supabase/migrations/20261102120000_api_keys.sql
       // supabase/migrations/20261103170000_media.sql
       reserve_media_upload: {

@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 const lookup = "**/api/workspaces/pr-fixture/pull-request";
 const pullRequest = {
   id: "existing-pr", workspaceId: "pr-fixture", projectId: "project-1",
-  number: 343, url: "https://github.com/neevai-labs/outrunner/pull/343",
+  number: 343, url: "https://github.com/outrunner-sh/outrunner/pull/343",
   title: "Existing branch pull request", baseBranch: "main", headBranch: "runtime/fixture",
   state: "open", createdAt: "2026-11-15T00:00:00Z",
 };

@@ -6,7 +6,7 @@ import type { JoinRequestOutcome } from "@/lib/db/org-members";
 import { admitOnSignIn, type AdmissionDeps, isInvitePath } from "@/lib/orgs/admission";
 import type { VerifiedEmail } from "@/lib/orgs/domains";
 
-const zerotrail: DomainOrg = { id: "z", name: "Zerotrail", domain: "zerotrail.ai", memberCount: 3 };
+const initech: DomainOrg = { id: "z", name: "Initech", domain: "initech.dev", memberCount: 3 };
 
 function deps(opts: {
   emails: VerifiedEmail[];
@@ -42,13 +42,13 @@ test("an open invite to any verified email gets them to its page, and lets them 
   const { d, log } = deps({
     emails: [
       { email: "me@gmail.com", primary: true },
-      { email: "sahin@zerotrail.ai", primary: false },
+      { email: "dev@initech.dev", primary: false },
     ],
     invited: true,
-    claimed: [zerotrail],
+    claimed: [initech],
   });
   assert.deepEqual(await admitOnSignIn(d), { kind: "invited" });
-  assert.deepEqual(log, ["invites? me@gmail.com,sahin@zerotrail.ai"]);
+  assert.deepEqual(log, ["invites? me@gmail.com,dev@initech.dev"]);
 });
 
 test("already in a team org: let in, whatever their emails", async () => {
@@ -65,25 +65,25 @@ test("an invite's page is the one path an invitee may go to", () => {
 });
 
 test("a primary email on a claimed domain asks that org to join, and tells its admins", async () => {
-  const { d, log } = deps({ emails: [{ email: "new@zerotrail.ai", primary: true }], claimed: [zerotrail] });
-  assert.deepEqual(await admitOnSignIn(d), { kind: "requested", org: zerotrail, outcome: "requested" });
-  assert.deepEqual(log, ["invites? new@zerotrail.ai", "request z new@zerotrail.ai", "notify z"]);
+  const { d, log } = deps({ emails: [{ email: "new@initech.dev", primary: true }], claimed: [initech] });
+  assert.deepEqual(await admitOnSignIn(d), { kind: "requested", org: initech, outcome: "requested" });
+  assert.deepEqual(log, ["invites? new@initech.dev", "request z new@initech.dev", "notify z"]);
 });
 
 test("asking again while one waits tells the admins nothing new", async () => {
   const { d, log } = deps({
-    emails: [{ email: "new@zerotrail.ai", primary: true }],
-    claimed: [zerotrail],
+    emails: [{ email: "new@initech.dev", primary: true }],
+    claimed: [initech],
     outcome: "pending",
   });
-  assert.deepEqual(await admitOnSignIn(d), { kind: "requested", org: zerotrail, outcome: "pending" });
+  assert.deepEqual(await admitOnSignIn(d), { kind: "requested", org: initech, outcome: "pending" });
   assert.equal(log.includes("notify z"), false);
 });
 
 test("already a member of the domain's org: let in", async () => {
   const { d, log } = deps({
-    emails: [{ email: "new@zerotrail.ai", primary: true }],
-    claimed: [zerotrail],
+    emails: [{ email: "new@initech.dev", primary: true }],
+    claimed: [initech],
     outcome: "member",
   });
   assert.deepEqual(await admitOnSignIn(d), { kind: "admitted" });
@@ -94,11 +94,11 @@ test("a secondary email's claimed domain, or no claimed domain: not let in", asy
   for (const emails of [
     [
       { email: "me@gmail.com", primary: true },
-      { email: "old@zerotrail.ai", primary: false },
+      { email: "old@initech.dev", primary: false },
     ],
     [{ email: "someone@elsewhere.dev", primary: true }],
   ]) {
-    const { d, log } = deps({ emails, claimed: [zerotrail] });
+    const { d, log } = deps({ emails, claimed: [initech] });
     assert.deepEqual(await admitOnSignIn(d), { kind: "refused" });
     assert.equal(log.includes("admit"), false);
   }

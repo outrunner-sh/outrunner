@@ -33,12 +33,12 @@ jobs:
       CODEX_AUTH_PG: postgresql://postgres:postgres@localhost:5432/postgres
       USAGE_LIMITS_PG: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # No version pin: pnpm/action-setup reads the pnpm version from the
       # root package.json "packageManager" field (pnpm@10.x). Pinning here too
       # makes the action error on the mismatch.
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -64,9 +64,9 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
       NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_outrunner_ci_example
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -90,7 +90,7 @@ jobs:
       - name: Verify the pinned public Codex CLI
         run: node scripts/verify-codex-cli.mjs "$NEXT_PUBLIC_CODEX_CLI_VERSION"
       # next build's own cache: much of a repeat build is reused.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .next/cache
           key: next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
@@ -104,8 +104,8 @@ jobs:
       run:
         working-directory: runtime-agent
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with:
           go-version-file: runtime-agent/go.mod
           cache-dependency-path: runtime-agent/go.sum
@@ -123,9 +123,9 @@ jobs:
       run:
         working-directory: cloudflare
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       # Deliberately outside the app's pnpm workspace, and excluded from the

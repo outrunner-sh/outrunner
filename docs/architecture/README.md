@@ -2,7 +2,7 @@
 
 This directory preserves design plans, handoffs, and validation reports from
 Outrunner's development. Milestone completion and “next steps” in these
-snapshots may be outdated. Start with the [current repository map](../../README.md#repository-map)
+snapshots may be outdated. Start with the [current repository map](../development.md#repository-map)
 and [development guide](../development.md) for setup and component boundaries.
 
 Useful background:

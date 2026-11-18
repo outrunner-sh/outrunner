@@ -121,7 +121,7 @@ Operational measurements (2 vCPU / 4 GiB cgroup — the modest default tier):
 - tmux survives with no client attached ⇒ it will survive a `runtime-agent` restart (server is
   independent of the spawning process); PTY survives browser reconnect. Both confirmed.
 
-### Canonical image manifest — `runtime-computer-v1` (snapshot id a31131cc…, active)
+### Canonical image manifest — `runtime-computer-v1`
 Base ubuntu:24.04, non-root user. Installed & version-verified: tmux 3.4, node 24.19, npm, go 1.22.2,
 python 3.12.3, git + git-lfs 3.4.1, ripgrep 14.1, jq 1.7, docker CLI 29.1.3, unzip, curl, and
 **Claude Code 2.1.221**. Zero bootstrapping needed before launching a workspace. Playwright browser

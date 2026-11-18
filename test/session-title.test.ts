@@ -62,7 +62,7 @@ test("a prompt with no text gives no title", () => {
   assert.equal(titleToSet({ title: null }, "  \n  "), null);
 });
 
-test("a renamed title is made one line and trimmed, within the limit (NEE-243)", () => {
+test("a renamed title is made one line and trimmed, within the limit", () => {
   assert.equal(cleanTitle("  Fix the\n login   bug "), "Fix the login bug");
   assert.equal(cleanTitle("x".repeat(TITLE_MAX)), "x".repeat(TITLE_MAX));
   assert.equal(cleanTitle("x".repeat(TITLE_MAX + 1)), null);

@@ -20,6 +20,9 @@ projects. The Mac app uses Bun for its Tauri lifecycle commands; see its
 ## Start the web app
 
 ```sh
+git clone https://github.com/outrunner-sh/outrunner.git
+cd outrunner
+corepack enable
 pnpm install --frozen-lockfile
 cp .env.example .env.local
 ```
@@ -150,7 +153,22 @@ without publishing them, with `bash scripts/build-cli.sh <version>`.
 
 ## Architecture and changes
 
-The [repository map](../README.md#repository-map) shows component boundaries.
+### Repository map
+
+| Path | Contents |
+| --- | --- |
+| [`app/`](../app/) | Next.js pages, authentication, and API routes |
+| [`components/`](../components/) / [`hooks/`](../hooks/) | Web UI and React hooks |
+| [`lib/`](../lib/) | Session, provider, database, integration, and API logic |
+| [`runtime-agent/`](../runtime-agent/) | Go runtime-agent, CLI, and desktop tools |
+| [`runtime-desktop/`](../runtime-desktop/) | Tauri macOS shell and local sessions |
+| [`cli-npm/`](../cli-npm/) | npm launcher for the platform CLI binaries |
+| [`supabase/`](../supabase/) | SQL migrations, schema checks, and auth setup |
+| [`cloudflare/`](../cloudflare/) / [`box/`](../box/) | Control-plane deployment and cloud box image |
+| [`test/`](../test/) | TypeScript tests and isolated browser fixtures |
+| [`docs/`](README.md) | Feature, contributor, and operator documentation |
+
+The map shows component boundaries.
 The custom server adds WebSocket relays and preview routing around Next.js.
 API routes call `lib/` services, which enforce access and coordinate the
 runtime-agent. Supabase stores permissions, encrypted credentials, session
@@ -178,5 +196,5 @@ replace the browser bundle's configuration. Production also requires
 The checked-in `cloudflare/wrangler.jsonc` describes the hosted service. Copy
 and adapt its account, routes, and public build values for your deployment.
 See [Cloudflare](deploy-cloudflare.md) and [Railway](deploy-railway.md).
-Deployment, mirroring, signing, and npm publishing workflows are maintainer
+Deployment, signing, and npm publishing workflows are maintainer
 operations and require separately configured secrets.

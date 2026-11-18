@@ -24,7 +24,7 @@ checks the notarization ticket and opens it with no warning or extra step.
 Builds before 0.2.0 were ad-hoc signed and needed
 `xattr -dr com.apple.quarantine /Applications/Outrunner.app`; that is no longer
 necessary. Replacing one of those builds signs you out once, because the app's
-identifier changed (`ai.zerotrail.runtime` → `ai.neev.outrunner`).
+identifier changed.
 
 ## First run
 

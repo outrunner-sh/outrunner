@@ -105,7 +105,7 @@ test("a Mission's icon: the one picked, else one from its id, the same each time
 test("a Mission is named from its first sentence, short", () => {
   assert.equal(missionName("Own billing. Keep invoices right."), "Own billing");
   assert.equal(
-    missionName("Own the end-to-end test docs under e2e/missions/ in neevai-labs/outrunner. Start two Runners now."),
+    missionName("Own the end-to-end test docs under e2e/missions/ in outrunner-sh/outrunner. Start two Runners now."),
     "Own the end-to-end test docs under…",
   );
   assert.equal(missionName("**Onboarding**: first session under a minute"), "Onboarding");

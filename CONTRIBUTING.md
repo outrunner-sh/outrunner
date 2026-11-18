@@ -4,6 +4,9 @@ Bug fixes, documentation, and small improvements are welcome as pull requests.
 For a new feature or a large refactor, open an issue first to discuss the use
 case and approach. Report vulnerabilities privately through [SECURITY.md](SECURITY.md).
 
+Everyone taking part in this project is expected to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Set up a checkout
 
 Fork the repository, branch from `main`, and follow the
