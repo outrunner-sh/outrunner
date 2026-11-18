@@ -5,6 +5,7 @@
  * service-role only.
  */
 
+import { allRows } from "@/lib/billing/all-rows";
 import type { Interval, Period } from "@/lib/billing/hours";
 import { LONGEST_INTERVAL_MS } from "@/lib/billing/reconcile";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
@@ -41,23 +42,7 @@ export function isMetered(provider: ProviderName | null): boolean {
   return sandboxOf(provider ?? getRuntimeProvider().name) === "outrunner";
 }
 
-/** Rows per page: PostgREST answers at most its max-rows (1000 by default),
- *  so a read that could be longer is paged. */
-const PAGE_ROWS = 1000;
-
-/** Every row a query matches, a page at a time, in a stable order (`page`
- *  orders by id and takes the range). */
-export async function allRows<Row>(
-  page: (from: number, to: number) => PromiseLike<{ data: Row[] | null; error: unknown }>,
-): Promise<Row[]> {
-  const rows: Row[] = [];
-  for (let from = 0; ; from += PAGE_ROWS) {
-    const { data, error } = await page(from, from + PAGE_ROWS - 1);
-    if (error) throw error;
-    rows.push(...(data ?? []));
-    if (!data || data.length < PAGE_ROWS) return rows;
-  }
-}
+export { allRows };
 
 /** Postgres' unique_violation: the box already has an open interval. */
 const UNIQUE_VIOLATION = "23505";

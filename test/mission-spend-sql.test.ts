@@ -1,5 +1,5 @@
 /**
- * Mission spend's SQL (20261114150000_mission_spend.sql), run on a real
+ * Mission spend's SQL (20261118100100_mission_spend.sql), run on a real
  * Postgres: each call counted once however often and however concurrently
  * it's recorded, periods split at UTC midnight and Monday, and reservations
  * that are idempotent, serialized under the Mission's lock, and never drop

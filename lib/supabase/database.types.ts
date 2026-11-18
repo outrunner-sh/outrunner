@@ -464,7 +464,7 @@ type MissionQueuedMessageRow = {
   sent_at: string | null;
 };
 
-// supabase/migrations/20261114150000_mission_spend.sql
+// supabase/migrations/20261118100100_mission_spend.sql
 type MissionUsageRow = {
   usage_ref: string;
   mission_id: string;
@@ -2781,7 +2781,7 @@ export type Database = {
         Args: { target: string; expect_daily: number | null; expect_weekly: number | null; pause_period: "day" | "week" | null; pause_until: string | null };
         Returns: boolean;
       };
-      // supabase/migrations/20261114150000_mission_spend.sql
+      // supabase/migrations/20261118100100_mission_spend.sql
       record_mission_usage: {
         Args: { calls: Json };
         Returns: number;
