@@ -1,6 +1,13 @@
-# Weekly dependency updates. Minor and patch bumps arrive as one grouped PR per
-# ecosystem and directory; each major bump gets its own PR so it can be
-# reviewed on its own. Security updates are not limited by these groups.
+# Weekly dependency updates, kept small: one grouped minor-and-patch PR per
+# ecosystem and directory, at most 3 open at a time. Semver-major bumps are
+# ignored everywhere except GitHub Actions; take those on deliberately.
+# Docker base images also stay on their LTS line (no odd Node majors, no
+# Ubuntu interim releases).
+#
+# Security updates are separate: they are not grouped here, have their own
+# limit of 10 open PRs, and skip the update-types ignores below. The explicit
+# `versions` ignores (odd Node majors, Ubuntu interim releases) do apply to them.
+#
 # cli-npm is left out: its optional dependencies are this repo's own platform
 # packages, pinned to the launcher's version at publish time.
 version: 2
@@ -11,9 +18,12 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "Deps"
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -23,9 +33,12 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "Deps (desktop)"
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -35,9 +48,12 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "Deps (cloudflare)"
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -47,9 +63,12 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "Deps (runtime-agent)"
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -59,9 +78,12 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "Deps (desktop)"
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -74,9 +96,18 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "Deps (docker)"
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+      # Node: even (LTS) majors only.
+      - dependency-name: node
+        versions: [">= 23, < 24", ">= 25, < 26", ">= 27, < 28", ">= 29, < 30"]
+      # Ubuntu: LTS (YY.04 in even years) only.
+      - dependency-name: ubuntu
+        versions: [">= 24.05, < 26.04", ">= 26.05, < 28.04"]
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -89,16 +120,21 @@ updates:
     open-pull-requests-limit: 3
     commit-message:
       prefix: "Deps (docker)"
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
     groups:
       minor-and-patch:
         update-types: [minor, patch]
 
+  # Majors stay on here: action bumps are small, and staying current keeps
+  # workflows off deprecated runtimes.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "CI"
     groups:

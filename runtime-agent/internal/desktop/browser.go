@@ -43,13 +43,31 @@ type Browser struct {
 	// Display is the X display it opens on, the desktop's.
 	Display string
 
+	// stateMu has StorageState read one at a time (storage_state.go).
+	stateMu sync.Mutex
+
 	mu sync.Mutex
 	// target is the tab the agent last opened or navigated, which browser
 	// actions act on while it is open.
 	target string
 }
 
+// NewBrowser is the box's browser for a user whose home is home: the one
+// the desktop tools drive and `outrunner browser state` reads sign-ins from,
+// so both see the same profile.
+func NewBrowser(home string) *Browser {
+	return &Browser{
+		Port:    DevToolsPort,
+		Profile: filepath.Join(home, ".outrunner", "desktop", "chromium"),
+		Display: Display,
+	}
+}
+
 func (b *Browser) base() string { return "http://127.0.0.1:" + strconv.Itoa(b.Port) }
+
+// DevToolsURL is where the browser's DevTools answer, on the box alone: what
+// Playwright's connectOverCDP takes.
+func (b *Browser) DevToolsURL() string { return b.base() }
 
 // browserBinaries are the names Chromium goes by, in the order looked for.
 // Daytona's images have /usr/bin/chromium.
@@ -84,9 +102,23 @@ func (b *Browser) Open(ctx context.Context, rawURL string) error {
 		_ = b.activate(ctx, tab.ID)
 		return nil
 	}
-	if err := b.launch(rawURL); err != nil {
+	if err := b.start(ctx, rawURL); err != nil {
 		return err
 	}
+	b.setTarget("")
+	return nil
+}
+
+// start launches the browser on rawURL and waits for its DevTools to answer.
+// A box whose container can't give Chromium its sandbox (no user namespaces,
+// no setuid helper: Daytona's) has it quit at once saying so; there it is
+// launched again without one. Elsewhere it keeps its sandbox.
+func (b *Browser) start(ctx context.Context, rawURL string) error {
+	exited, err := b.launch(rawURL, false)
+	if err != nil {
+		return err
+	}
+	sandboxed := true
 	deadline := time.Now().Add(30 * time.Second)
 	for !b.running(ctx) {
 		if time.Now().After(deadline) {
@@ -95,19 +127,40 @@ func (b *Browser) Open(ctx context.Context, rawURL string) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case err := <-exited:
+			exited = nil
+			switch {
+			case sandboxed && b.noUsableSandbox():
+				fmt.Fprintln(os.Stderr, "desktop: Chromium has no usable sandbox on this box; launching it with --no-sandbox")
+				sandboxed = false
+				if exited, err = b.launch(rawURL, true); err != nil {
+					return err
+				}
+			case err != nil:
+				return fmt.Errorf("the browser quit as it started (%v): see %s", err, b.logPath())
+			}
+			// Quit cleanly: it handed the URL to a browser on the same
+			// profile that's starting up, whose DevTools are waited for.
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
-	b.setTarget("")
 	return nil
+}
+
+// noUsableSandbox is whether the browser's log says it quit for want of a
+// sandbox it can use.
+func (b *Browser) noUsableSandbox() bool {
+	data, err := os.ReadFile(b.logPath())
+	return err == nil && strings.Contains(string(data), "No usable sandbox")
 }
 
 func (b *Browser) logPath() string { return filepath.Join(filepath.Dir(b.Profile), "chromium.log") }
 
 // launch starts Chromium on the desktop, in a session of its own, so it
 // outlives this server: the agent's CLI restarts its MCP servers, and the
-// browser, its tabs and sign-ins should carry on through that.
-func (b *Browser) launch(rawURL string) error {
+// browser, its tabs and sign-ins should carry on through that. Its exit is
+// sent on the channel (nil for a clean one), and the log is a new one.
+func (b *Browser) launch(rawURL string, noSandbox bool) (<-chan error, error) {
 	var binary string
 	for _, name := range browserBinaries {
 		if path, err := exec.LookPath(name); err == nil {
@@ -116,25 +169,30 @@ func (b *Browser) launch(rawURL string) error {
 		}
 	}
 	if binary == "" {
-		return errors.New("no Chromium on this box (looked for " + strings.Join(browserBinaries, ", ") + ")")
+		return nil, errors.New("no Chromium on this box (looked for " + strings.Join(browserBinaries, ", ") + ")")
 	}
 	if err := os.MkdirAll(b.Profile, 0o700); err != nil {
-		return err
+		return nil, err
 	}
 	logFile, err := os.OpenFile(b.logPath(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer logFile.Close()
-	cmd := exec.Command(binary, BrowserArgs(b.Port, b.Profile, rawURL)...)
+	args := BrowserArgs(b.Port, b.Profile, rawURL)
+	if noSandbox {
+		args = append([]string{"--no-sandbox"}, args...)
+	}
+	cmd := exec.Command(binary, args...)
 	cmd.Env = append(withoutEnv(os.Environ(), "DISPLAY"), "DISPLAY="+b.Display)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start the browser: %w", err)
+		return nil, fmt.Errorf("start the browser: %w", err)
 	}
-	go func() { _ = cmd.Wait() }()
-	return nil
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	return exited, nil
 }
 
 // BrowserArgs are Chromium's flags: DevTools on the loopback, its own
@@ -267,6 +325,20 @@ func (c *cdp) Close() { _ = c.conn.Close() }
 // call sends one command and waits for its answer, passing over the events
 // the tab sends meanwhile.
 func (c *cdp) call(ctx context.Context, method string, params any, out any) error {
+	return c.callHandling(ctx, method, params, out, nil)
+}
+
+// send sends a command without waiting for its answer, which the next call
+// passes over: an answer to an event, from callHandling's onEvent.
+func (c *cdp) send(method string, params any) error {
+	c.next++
+	return c.conn.WriteJSON(map[string]any{"id": c.next, "method": method, "params": params})
+}
+
+// callHandling is call, giving each event that arrives before the answer to
+// onEvent (when not nil): a command whose answer waits on the caller's
+// answer to an event, as a navigation whose request is paused does.
+func (c *cdp) callHandling(ctx context.Context, method string, params any, out any, onEvent func(method string, params json.RawMessage) error) error {
 	c.next++
 	id := c.next
 	if params == nil {
@@ -282,6 +354,8 @@ func (c *cdp) call(ctx context.Context, method string, params any, out any) erro
 	for {
 		var msg struct {
 			ID     int             `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
 			Result json.RawMessage `json:"result"`
 			Error  *struct {
 				Message string `json:"message"`
@@ -290,6 +364,12 @@ func (c *cdp) call(ctx context.Context, method string, params any, out any) erro
 		}
 		if err := c.conn.ReadJSON(&msg); err != nil {
 			return fmt.Errorf("%s: %w", method, err)
+		}
+		if msg.ID == 0 && msg.Method != "" && onEvent != nil {
+			if err := onEvent(msg.Method, msg.Params); err != nil {
+				return fmt.Errorf("%s: %w", method, err)
+			}
+			continue
 		}
 		if msg.ID != id {
 			continue
