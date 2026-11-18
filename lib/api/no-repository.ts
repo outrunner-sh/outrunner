@@ -37,6 +37,6 @@ export function noRepositoryAnswer(input: NoRepositoryInput): Response {
     : "A personal key or the CLI acts in your personal org unless the call names another (`?org=`, or the `Outrunner-Org` header).";
   return apiError(
     404,
-    `No repository ${fullName} in ${where} that you can see: add it to Outrunner (Projects → Sync repositories), or check the org. ${which} GET /projects lists what this key sees.`,
+    `No repository ${fullName} in ${where} that you can see: add it to Outrunner (Environments → Pick repositories), or check the org. ${which} GET /projects lists what this key sees.`,
   );
 }

@@ -1,3 +1,4 @@
+import { ConnectError, connectRepositories } from "@/lib/client/repository-listing";
 import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { newSessionAfterOnboarding, parseProgress } from "@/lib/onboarding/rules";
@@ -10,7 +11,6 @@ import type {
   OnboardingUser,
   RepositoryList,
 } from "@/lib/onboarding/types";
-import type { Project } from "@/lib/runtime/types";
 import type { GitLabConnectionStatus } from "@/lib/gitlab/client";
 
 /** A failure the page can show, with where to fix it when there's a place. */
@@ -126,15 +126,12 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
     saveGitlabConnection: (token) => call<{ connection: GitLabConnectionStatus | null }>(token === null ? "DELETE" : "POST", "/api/gitlab/connection", token === null ? undefined : { token }).then((r) => r.connection),
     repositories: (provider = "github") => call<RepositoryList>("GET", `/api/${provider}/repositories`),
     async connect(repoIds, provider = "github") {
-      if (provider === "gitlab") {
-        let projects: Project[] = [];
-        for (const repoId of repoIds) {
-          ({ projects } = await call<{ projects: Project[] }>("POST", "/api/gitlab/projects", { repoId }));
-        }
-        return projects;
+      try {
+        return await connectRepositories(repoIds, provider);
+      } catch (error) {
+        if (error instanceof ConnectError) throw new OnboardingError(error.message, undefined, error.reconnect);
+        throw error;
       }
-      const { projects } = await call<{ projects: Project[] }>("POST", "/api/projects/sync", { repoIds });
-      return projects;
     },
 
     async finish(projectId, runOn) {

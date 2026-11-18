@@ -274,6 +274,12 @@ export function newSessionHref(start: NonNullable<SidebarGroup["start"]>): strin
   return `/new?${params}`;
 }
 
+/** The new-session form, starting from an environment someone made
+ *  (`?environment=`, read by components/new-session-route.tsx). */
+export function newSessionInEnvironmentHref(environmentId: string): string {
+  return `/new?${new URLSearchParams({ environment: environmentId })}`;
+}
+
 /** The session id an app path is showing, so the sidebar can mark it. */
 export function activeSessionId(pathname: string): string | undefined {
   return /^\/(?:workspaces|local)\/([^/]+)/.exec(pathname)?.[1];

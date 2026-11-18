@@ -1,5 +1,6 @@
 import { cache } from "react";
 
+import { listEnvironments } from "@/lib/db/environments";
 import { getProject, listProjects, listWorkspaces } from "@/lib/db/repositories";
 
 /**
@@ -11,3 +12,5 @@ import { getProject, listProjects, listWorkspaces } from "@/lib/db/repositories"
 export const listProjectsOnce = cache((orgId?: string) => listProjects(orgId));
 export const listWorkspacesOnce = cache((orgId?: string) => listWorkspaces({ orgId }));
 export const getProjectOnce = cache((id: string) => getProject(id));
+/** The org's listed environments the user may read (lib/environments/listed.ts). */
+export const listEnvironmentsOnce = cache((userId: string, orgId: string) => listEnvironments(userId, orgId));

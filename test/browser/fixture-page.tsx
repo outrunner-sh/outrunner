@@ -30,6 +30,7 @@ import type { ProviderKeys } from "@/components/api-key-card";
 import { OrgGeneralSettings } from "@/components/org-settings";
 import { PageLayout } from "@/components/page-layout";
 import { ProjectSettings } from "@/components/project-settings";
+import { ServedProjects } from "@/components/kept-projects";
 import { PullHeading, PullInfo } from "@/components/review/pull-detail";
 import { PullFiles } from "@/components/review/pull-files";
 import { ReviewChat } from "@/components/review/review-chat";
@@ -52,9 +53,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  acmeEnvironment,
   automations,
   environment,
   frame,
+  project,
   pull,
   pulls,
   runnerPull,
@@ -112,6 +115,15 @@ export function FixturePage() {
   else if (view === "web-onboarding") content = <OnboardingLive user={{ id: "desktop-browser-user", name: "Ada", login: "ada", avatarUrl: null }} outrunnerModels desktopReturn />;
   else if (view === "desktop-ready" || pathname === "/auth/desktop/ready") content = <DesktopWelcome email="ada@example.com" next={params.get("next") ?? "/new?project=p1&start=codex"} expired={state === "expired"} />;
   else if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} agent={params.get("harness") === "claude" ? "claude" : "codex"} />;
+  else if (view === "environments")
+    content = (
+      <ServedProjects
+        projects={[project]}
+        environments={state === "no-default" ? [] : [acmeEnvironment]}
+        access={{ canConnect: true, admin: params.get("role") !== "member", orgName: "neev ai" }}
+        scope={null}
+      />
+    );
   else if (view === "project")
     content = (
       <ProjectSettings

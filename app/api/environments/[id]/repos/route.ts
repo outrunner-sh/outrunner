@@ -9,28 +9,26 @@ import {
   getEnvironment,
   removeEnvironmentRepo,
 } from "@/lib/db/environments";
-import { orgProjectsLevel, projectLevel } from "@/lib/db/org-access";
-import { listProjects } from "@/lib/db/repositories";
-import { EnvironmentRuleError, MAX_REPOS } from "@/lib/environments/rules";
+import { EnvironmentRuleError } from "@/lib/environments/rules";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
-import { allows } from "@/lib/orgs/access";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**
- * A project's repositories. GET lists the repositories that can be added
- * (the owner's connected ones not in it yet); POST adds one, `{projectId}`;
- * DELETE removes one, `?projectId=`, never the last. The project as it is
- * after. New sessions get the change; running ones keep theirs.
+ * An environment's repositories. POST adds connected ones, `{projectId}` or
+ * several, `{projectIds}` (the repository picker's,
+ * components/repository-picker.tsx), in that order; DELETE removes one,
+ * `?projectId=`, never the last. The environment as it is after. New
+ * sessions get the change; running ones keep theirs.
  */
 
 function notFound() {
-  return NextResponse.json({ error: "Project not found." }, { status: 404 });
+  return NextResponse.json({ error: "Environment not found." }, { status: 404 });
 }
 
-async function context_(request: Request, context: RouteContext, write: boolean) {
-  if (write && !isSameOriginRequest(request)) {
+async function context_(request: Request, context: RouteContext) {
+  if (!isSameOriginRequest(request)) {
     return { response: NextResponse.json({ error: "Invalid request origin." }, { status: 403 }) };
   }
   const owner = await getOwner();
@@ -40,56 +38,50 @@ async function context_(request: Request, context: RouteContext, write: boolean)
   return { owner, id };
 }
 
-export async function GET(request: Request, context: RouteContext) {
-  const c = await context_(request, context, false);
-  if ("response" in c) return c.response;
-  const environment = await getEnvironment(c.owner.id, c.id);
-  if (!environment) return notFound();
-  const inIt = new Set(environment.repos.map((r) => r.projectId));
-  // Only the project's org's: a project's repositories are its org's. And
-  // only ones the user may write: a project's level is its repositories'
-  // lowest, so adding one they only read would leave them unable to change
-  // the project again (addEnvironmentRepo refuses it too).
-  const candidates = (await listProjects(environment.orgId)).filter((p) => !inIt.has(p.id));
-  // Write on all projects is write on each: one call, the default's case.
-  const writesAll = allows(await orgProjectsLevel(c.owner.id, environment.orgId), "write");
-  const levels = writesAll
-    ? candidates.map(() => "write" as const)
-    : await Promise.all(candidates.map((p) => projectLevel(c.owner.id, p.id)));
-  const repositories = candidates
-    .filter((_, i) => allows(levels[i], "write"))
-    .map((p) => ({ projectId: p.id, fullName: p.fullName, defaultBranch: p.defaultBranch, private: p.private }));
-  return NextResponse.json({ repositories, max: MAX_REPOS });
-}
+const Add = z.union([
+  z.object({ projectId: z.string().uuid() }).transform((b) => [b.projectId]),
+  z.object({ projectIds: z.array(z.string().uuid()).min(1) }).transform((b) => [...new Set(b.projectIds)]),
+]);
 
 export async function POST(request: Request, context: RouteContext) {
-  const c = await context_(request, context, true);
+  const c = await context_(request, context);
   if ("response" in c) return c.response;
-  const body = z.object({ projectId: z.string().uuid() }).safeParse(await request.json().catch(() => null));
+  const body = Add.safeParse(await request.json().catch(() => null));
   if (!body.success) return NextResponse.json({ error: "Pick a repository to add." }, { status: 400 });
-  return savingSettings("project repositories", async () => {
-    try {
-      await addEnvironmentRepo(c.owner.id, c.id, body.data.projectId);
-    } catch (error) {
-      if (error instanceof EnvironmentRuleError) return NextResponse.json({ error: error.message }, { status: 400 });
-      if (error instanceof EnvironmentAccessError) return NextResponse.json({ error: error.message }, { status: 403 });
-      throw error;
+  const projectIds = body.data;
+  return savingSettings("environment repositories", async () => {
+    // One at a time, each checked as it's added (addEnvironmentRepo): a
+    // refusal part way keeps those added before it, and says why.
+    const added: string[] = [];
+    let refusal: NextResponse | null = null;
+    for (const projectId of projectIds) {
+      try {
+        await addEnvironmentRepo(c.owner.id, c.id, projectId);
+        added.push(projectId);
+      } catch (error) {
+        if (error instanceof EnvironmentRuleError) refusal = NextResponse.json({ error: error.message }, { status: 400 });
+        else if (error instanceof EnvironmentAccessError) refusal = NextResponse.json({ error: error.message }, { status: 403 });
+        else throw error;
+        break;
+      }
     }
     const now = await getEnvironment(c.owner.id, c.id);
-    const added = now?.repos.find((r) => r.projectId === body.data.projectId);
-    if (now) await recordProjectChange(c.owner, c.id, "project.repos_changed", { added: added?.fullName ?? body.data.projectId }, now);
-    return NextResponse.json(now);
+    if (now && added.length > 0) {
+      const names = added.map((projectId) => now.repos.find((r) => r.projectId === projectId)?.fullName ?? projectId);
+      await recordProjectChange(c.owner, c.id, "project.repos_changed", { added: names.join(", ") }, now);
+    }
+    return refusal ?? NextResponse.json(now);
   });
 }
 
 export async function DELETE(request: Request, context: RouteContext) {
-  const c = await context_(request, context, true);
+  const c = await context_(request, context);
   if ("response" in c) return c.response;
   const projectId = new URL(request.url).searchParams.get("projectId");
   if (!projectId || !z.string().uuid().safeParse(projectId).success) {
     return NextResponse.json({ error: "Pick a repository to remove." }, { status: 400 });
   }
-  return savingSettings("project repositories", async () => {
+  return savingSettings("environment repositories", async () => {
     try {
       const before = await getEnvironment(c.owner.id, c.id);
       await removeEnvironmentRepo(c.owner.id, c.id, projectId);

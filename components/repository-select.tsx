@@ -1,108 +1,27 @@
 "use client";
 
-import { ChevronDown, Lock, RefreshCw, Search } from "lucide-react";
-import Link from "next/link";
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, Layers, Lock, RefreshCw, Search } from "lucide-react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { repositoryKey, type CodeProvider } from "@/lib/code-providers/repository";
-import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { ProjectAvatar } from "@/components/project-avatar";
+import { AppSourceNote, PickerErrorMessage } from "@/components/repository-source-note";
 import { Spinner } from "@/components/ui/loaders";
-import { InlineMessage } from "@/components/ui/notice";
 import { useCloseWhenHidden } from "@/hooks/use-close-when-hidden";
 import { useSharedResource } from "@/hooks/use-shared-resource";
 import { type Placement, placeMenu } from "@/lib/client/menu-placement";
-import { sharedResource } from "@/lib/client/shared-resource";
 import {
-  installationSettingsUrl,
-  projectToListing,
-  type ListingSource,
-  type RepositoryListing,
-  type SourceAccount,
-} from "@/lib/github/listing";
+  ConnectError,
+  connectRepositories,
+  type PickerError,
+  projectOf,
+  refreshListing,
+  repositoryListing,
+} from "@/lib/client/repository-listing";
+import type { ListedEnvironment } from "@/lib/environments/listed";
+import { projectToListing, type RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
-
-type Listing = {
-  repositories: RepositoryListing[];
-  connected: number[];
-  /** False when GitHub may have more than the list holds. */
-  complete: boolean;
-  /** Organizations whose repositories single sign-on held back. */
-  ssoPartialOrgIds: number[];
-  /** The org's GitHub App, or the user's own GitHub. */
-  source: ListingSource;
-};
-
-/** What went wrong, and for a repository GitHub withheld, which one. */
-type PickerError = { message: string; reconnect: boolean; repo?: string; noAccess?: boolean };
-
-// Where a user reviews which organizations an OAuth app may see.
-const GITHUB_APP_ACCESS_URL = "https://github.com/settings/applications";
-
-/** Read the API's error body: `reconnect` set when the token is the problem,
- *  `noAccess` when GitHub withheld a repository. */
-async function readError(res: Response, fallback: string): Promise<PickerError> {
-  const data = (await res.json().catch(() => ({}))) as { error?: string; reconnect?: boolean; code?: string };
-  return {
-    message: data.error ?? fallback,
-    reconnect: data.reconnect === true,
-    noAccess: data.code === "repo-no-access",
-  };
-}
-
-type ListingAnswer = { listing: Listing; error: null } | { listing: null; error: PickerError };
-
-/** The next look asks GitHub again rather than take the server's recent copy. */
-let askGitHubAgain = false;
-
-/**
- * Everything on the user's GitHub, one listing for the page: looked up as the
- * form mounts, so the picker opens on it at once, and again in the background
- * each time it opens. A failure is an answer too, said in the picker.
- */
-const GITHUB_REPOSITORIES = sharedResource<ListingAnswer | null>(async () => {
-  const fresh = askGitHubAgain;
-  askGitHubAgain = false;
-  try {
-    // Refresh asks GitHub again; otherwise a listing from the last few seconds
-    // is fine (app/api/github/repositories).
-    const res = await fetch(fresh ? "/api/github/repositories?fresh=1" : "/api/github/repositories");
-    if (!res.ok) return { listing: null, error: await readError(res, "Couldn't load your repositories from GitHub.") };
-    const data = (await res.json()) as Partial<Listing>;
-    return {
-      listing: {
-        repositories: data.repositories ?? [],
-        connected: data.connected ?? [],
-        complete: data.complete ?? true,
-        ssoPartialOrgIds: data.ssoPartialOrgIds ?? [],
-        source: data.source ?? { kind: "user" },
-      },
-      error: null,
-    };
-  } catch {
-    return {
-      listing: null,
-      error: { message: "Couldn't load your repositories from GitHub.", reconnect: false },
-    };
-  }
-}, null);
-
-/** Ask GitHub again (the picker's Refresh list). */
-function refreshRepositories(): Promise<unknown> {
-  askGitHubAgain = true;
-  GITHUB_REPOSITORIES.invalidate();
-  return GITHUB_REPOSITORIES.ensure();
-}
-
-const GITLAB_REPOSITORIES = sharedResource<ListingAnswer | null>(async () => {
-  try {
-    const res = await fetch("/api/gitlab/repositories");
-    if (!res.ok) return { listing: null, error: await readError(res, "Couldn't load your GitLab repositories.") };
-    const data = await res.json() as Partial<Listing>;
-    return { listing: { repositories: data.repositories ?? [], connected: data.connected ?? [], complete: data.complete ?? true, ssoPartialOrgIds: [], source: { kind: "user" } }, error: null };
-  } catch { return { listing: null, error: { message: "Couldn't load your GitLab repositories.", reconnect: false } }; }
-}, null);
 
 const BELOW: Placement = { side: "below" };
 
@@ -126,23 +45,38 @@ function placement(trigger: HTMLElement | null): Placement {
   return placeMenu(trigger.getBoundingClientRect(), room, MENU_HEIGHT);
 }
 
+
+/** One row of the menu: an environment, or a repository. */
+type Option = { kind: "environment"; environment: ListedEnvironment } | { kind: "repo"; repo: RepositoryListing };
+
+function optionKey(option: Option): string {
+  return option.kind === "environment" ? `environment:${option.environment.id}` : repositoryKey(option.repo);
+}
+
 /**
- * Pick the repository a session runs in — from everything on the user's GitHub,
- * not only what they connected earlier.
+ * Pick where a session starts: one of the org's environments (`environments`,
+ * lib/environments/listed.ts), or a repository — from everything on the
+ * user's GitHub, not only what they connected earlier — which starts from
+ * its own environment.
  *
- * Connecting is implicit: choosing a repository that has no project row creates
- * one, then selects it. Making "connect" a separate step people had to find
- * first meant the list only ever showed what you had already added, which is
- * backwards from how you actually reach for a repo.
+ * Connecting is implicit: choosing a repository that has no project row
+ * connects it (lib/client/repository-listing.ts connectRepositories, as the
+ * environments' picker does), then selects it. Making "connect" a separate
+ * step people had to find first meant the list only ever showed what you
+ * had already added, which is backwards from how you actually reach for a
+ * repo.
  *
- * The listing is fetched lazily on first open — it is a live GitHub call, and
- * paying for it on every page load would slow the composer down for the common
- * case of reusing the current project.
+ * The listing is fetched as the form mounts and again as it opens — it is a
+ * live GitHub call (reused for a few seconds by the server); environments
+ * and connected repositories show before it answers.
  */
 export function RepositorySelect({
   projects = [],
   selectedProjectId = null,
   onSelect,
+  environments = [],
+  selectedEnvironmentId = null,
+  onSelectEnvironment,
   onPick,
   label,
   extra,
@@ -157,6 +91,11 @@ export function RepositorySelect({
   /** Receives the project to run in, connecting the repository if needed: a
    *  just-connected one is not in `projects` yet. */
   onSelect?: (project: Project) => void;
+  /** The environments to offer above the repositories, picked with
+   *  `onSelectEnvironment`; the one selected shows on the trigger. */
+  environments?: ListedEnvironment[];
+  selectedEnvironmentId?: string | null;
+  onSelectEnvironment?: (environment: ListedEnvironment) => void;
   /** Instead of connecting it as a project, what picking a repository does
    *  (a session on this Mac clones it). The menu closes as it starts. */
   onPick?: (repo: RepositoryListing) => void;
@@ -179,7 +118,7 @@ export function RepositorySelect({
   }, [open, onClosed]);
   useCloseWhenHidden(useCallback(() => setOpen(false), []));
   const [provider, setProvider] = useState<CodeProvider>(() => projects.find((p) => p.id === selectedProjectId)?.provider ?? "github");
-  const resource = provider === "gitlab" ? GITLAB_REPOSITORIES : GITHUB_REPOSITORIES;
+  const resource = repositoryListing(provider);
   const repositories = useSharedResource(resource);
   const listing = repositories.value?.listing ?? null;
   const [refreshing, setRefreshing] = useState(false);
@@ -209,6 +148,7 @@ export function RepositorySelect({
     }
   }
 
+  const selectedEnvironment = environments.find((e) => e.id === selectedEnvironmentId);
   const selected = projects.find((p) => p.id === selectedProjectId);
 
   /** On opening, look again in the background (the last listing shows
@@ -220,8 +160,7 @@ export function RepositorySelect({
     }
     if (refreshing) return;
     setRefreshing(true);
-    if (provider === "github") await refreshRepositories();
-    else { resource.invalidate(); await resource.ensure(); }
+    await refreshListing(provider);
     setRefreshing(false);
     // Asked GitHub and answered: a reason left from connecting a repository
     // gives way to this look's own answer.
@@ -269,62 +208,66 @@ export function RepositorySelect({
     };
   }, [open]);
 
-  const visible = useMemo(() => {
+  // Environments first (matched by name or by a repository of theirs), then
+  // repositories: one list, so the arrow keys run through both.
+  const visible = useMemo((): Option[] => {
+    const q = query.trim().toLowerCase();
+    const shownEnvironments = environments.filter(
+      (e) => !q || e.name.toLowerCase().includes(q) || e.repos.some((r) => r.fullName.toLowerCase().includes(q)),
+    );
     const repos =
       listing?.repositories ??
       // Before the live list arrives, offer what is already connected so the
       // menu is never empty.
       projects.filter((p) => (p.provider ?? "github") === provider).map(projectToListing);
-    const q = query.trim().toLowerCase();
-    return q ? repos.filter((r) => r.fullName.toLowerCase().includes(q)) : repos;
-  }, [listing, projects, query, provider]);
+    return [
+      ...shownEnvironments.map((environment): Option => ({ kind: "environment", environment })),
+      ...(q ? repos.filter((r) => r.fullName.toLowerCase().includes(q)) : repos).map((repo): Option => ({ kind: "repo", repo })),
+    ];
+  }, [environments, listing, projects, query, provider]);
+  const firstRepo = visible.findIndex((o) => o.kind === "repo");
 
-  async function choose(repo: RepositoryListing) {
+  function close() {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
+
+  async function choose(option: Option) {
+    if (option.kind === "environment") {
+      onSelectEnvironment?.(option.environment);
+      close();
+      return;
+    }
+    const repo = option.repo;
     if (onPick) {
-      setOpen(false);
-      triggerRef.current?.focus();
+      close();
       onPick(repo);
       return;
     }
-    const existing = projects.find((p) => repositoryKey(p) === repositoryKey(repo));
+    const existing = projectOf(projects, repo);
     if (existing) {
       onSelect?.(existing);
-      setOpen(false);
-      triggerRef.current?.focus();
+      close();
       return;
     }
     // Not connected yet — connect just this one, then select it.
     setConnectingId(repositoryKey(repo));
     try {
-      const res = await fetch(provider === "gitlab" ? "/api/gitlab/projects" : "/api/projects/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(provider === "gitlab" ? { repoId: repo.repositoryId } : { repoIds: [repo.githubRepoId] }),
-      });
-      if (!res.ok) {
-        setError({ ...(await readError(res, "Couldn't connect this repository. Try again.")), repo: repo.fullName });
-        return;
-      }
-      const data = (await res.json()) as { projects?: Project[] };
-      const created = data.projects?.find((p) => repositoryKey(p) === repositoryKey(repo));
+      const id = provider === "gitlab" ? repo.repositoryId : repo.githubRepoId;
+      const created = id ? projectOf(await connectRepositories([id], provider), repo) : undefined;
       if (!created) {
-        setError({
-          message: "Connected it, but Outrunner couldn't find it afterwards. Refresh the list.",
-          reconnect: false,
-          repo: repo.fullName,
-        });
+        setError({ message: "Connected it, but Outrunner couldn't find it afterwards. Refresh the list.", reconnect: false, repo: repo.fullName });
         return;
       }
       setError(null);
       onSelect?.(created);
-      setOpen(false);
-      triggerRef.current?.focus();
-    } catch {
-      setError({
-        message: "Couldn't connect this repository. Try again.",
-        reconnect: false,
-        repo: repo.fullName,
-      });
+      close();
+    } catch (cause) {
+      setError(
+        cause instanceof ConnectError
+          ? { message: cause.message, reconnect: cause.reconnect, noAccess: cause.noAccess, repo: repo.fullName }
+          : { message: "Couldn't connect this repository. Try again.", reconnect: false, repo: repo.fullName },
+      );
     } finally {
       setConnectingId(null);
     }
@@ -356,10 +299,17 @@ export function RepositorySelect({
               {label.text}
             </span>
           </>
+        ) : selectedEnvironment ? (
+          <>
+            <Layers className="shrink-0" aria-hidden />
+            <span className="truncate" title={selectedEnvironment.repos.map((r) => r.fullName).join(", ")}>
+              {selectedEnvironment.name}
+            </span>
+          </>
         ) : (
           <>
             <ProjectAvatar name={selected?.name ?? "?"} className="size-5" />
-            {selected?.name ?? "Select repository…"}
+            {selected?.name ?? (environments.length > 0 ? "Select environment…" : "Select repository…")}
           </>
         )}
         <ChevronDown className="text-muted-foreground size-4" />
@@ -399,8 +349,8 @@ export function RepositorySelect({
                   setActive((i) => (i + step + visible.length) % visible.length);
                 } else if (event.key === "Enter") {
                   event.preventDefault();
-                  const repo = visible[active];
-                  if (repo && connectingId === null) void choose(repo);
+                  const option = visible[active];
+                  if (option && connectingId === null) void choose(option);
                 }
               }}
               role="combobox"
@@ -408,8 +358,8 @@ export function RepositorySelect({
               aria-controls={listId}
               aria-activedescendant={visible[active] ? `${listId}-${active}` : undefined}
               aria-autocomplete="list"
-              placeholder="Search repositories…"
-              aria-label="Search repositories"
+              placeholder={environments.length > 0 ? "Search environments and repositories…" : "Search repositories…"}
+              aria-label={environments.length > 0 ? "Search environments and repositories" : "Search repositories"}
               className="placeholder:text-muted-foreground w-full bg-transparent py-2.5 pl-9 pr-3 text-base outline-none sm:text-sm"
             />
           </div>
@@ -418,9 +368,50 @@ export function RepositorySelect({
           <div
             id={listId}
             role="listbox"
-            aria-label="Repositories"
+            aria-label={environments.length > 0 ? "Environments and repositories" : "Repositories"}
             className="max-h-72 min-h-0 overflow-y-auto py-1"
           >
+            {visible.map((option, i) => (
+              <Fragment key={optionKey(option)}>
+                {environments.length > 0 && (i === 0 || i === firstRepo) && (
+                  <p role="presentation" className="text-muted-foreground px-3 pb-1 pt-2 text-xs">
+                    {option.kind === "environment" ? "Environments" : "Repositories"}
+                  </p>
+                )}
+                <button
+                  id={`${listId}-${i}`}
+                  type="button"
+                  role="option"
+                  aria-selected={i === active}
+                  tabIndex={-1}
+                  disabled={connectingId !== null}
+                  onClick={() => void choose(option)}
+                  onMouseMove={() => setActive(i)}
+                  ref={i === active ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
+                  className={cn(
+                    "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm disabled:opacity-50",
+                    i === active && "bg-accent",
+                  )}
+                >
+                  {option.kind === "environment" ? (
+                    <>
+                      <Layers className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
+                      <span className="min-w-0 flex-1 truncate">{option.environment.name}</span>
+                      {option.environment.orgDefault && <span className="text-muted-foreground shrink-0 text-xs">Default</span>}
+                      <span className="text-muted-foreground shrink-0 text-xs">
+                        {option.environment.repos.length === 1 ? "1 repository" : `${option.environment.repos.length} repositories`}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex-1 truncate">{option.repo.fullName}</span>
+                      {option.repo.private && <Lock className="text-muted-foreground size-3 shrink-0" />}
+                      {connectingId === repositoryKey(option.repo) && <Spinner className="size-3 shrink-0" />}
+                    </>
+                  )}
+                </button>
+              </Fragment>
+            ))}
             {repositories.status === "loading" && (
               /* Only before the first answer: the page looks once as the form mounts. */
               <p className="text-muted-foreground flex items-center gap-2 px-3 py-2 text-sm">
@@ -429,33 +420,9 @@ export function RepositorySelect({
             )}
             {!loading && visible.length === 0 && (
               <p className="text-muted-foreground px-3 py-2 text-sm">
-                {query ? `No repositories match “${query}”.` : "No repositories found."}
+                {query ? `Nothing matches “${query}”.` : "No repositories found."}
               </p>
             )}
-            {visible.map((repo, i) => (
-              <button
-                key={repositoryKey(repo)}
-                id={`${listId}-${i}`}
-                type="button"
-                role="option"
-                aria-selected={i === active}
-                tabIndex={-1}
-                disabled={connectingId !== null}
-                onClick={() => void choose(repo)}
-                onMouseMove={() => setActive(i)}
-                ref={i === active ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
-                className={cn(
-                  "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm disabled:opacity-50",
-                  i === active && "bg-accent",
-                )}
-              >
-                <span className="flex-1 truncate">{repo.fullName}</span>
-                {repo.private && <Lock className="text-muted-foreground size-3 shrink-0" />}
-                {connectingId === repositoryKey(repo) && (
-                  <Spinner className="size-3 shrink-0" />
-                )}
-              </button>
-            ))}
           </div>
 
           {/* The list may be short: say why rather than let a missing
@@ -498,61 +465,11 @@ export function RepositorySelect({
 
           {error && (
             <div className="border-border shrink-0 border-t px-3 py-2">
-              {error.repo && <p className="mb-1 truncate font-mono text-xs">{error.repo}</p>}
-              <InlineMessage
-                tone={error.noAccess ? "warning" : "error"}
-                actions={
-                  error.noAccess
-                    ? listing?.source.kind === "app"
-                      ? [appAccessAction(listing.source, error.repo)]
-                      : [{ label: "Grant access on GitHub", href: GITHUB_APP_ACCESS_URL, external: true }]
-                    : undefined
-                }
-              >
-                {error.noAccess
-                  ? listing?.source.kind === "app"
-                    ? "Outrunner's GitHub App can't reach it. Add it to the App's repositories on GitHub."
-                    : "GitHub isn't giving Outrunner access to it. If an organization owns it, an owner may need to approve Outrunner."
-                  : error.message}
-                {provider === "github" && error.reconnect && <GitHubReconnectLink />}
-                {provider === "gitlab" && <Link href="/settings/connections" className="ml-1 underline">Connect GitLab</Link>}
-              </InlineMessage>
+              <PickerErrorMessage error={error} listing={listing} provider={provider} />
             </div>
           )}
         </div>
       )}
     </div>
   );
-}
-
-/** Where the list comes from, in an org with the GitHub App: its
- *  installations, and where to give the App more repositories. */
-function AppSourceNote({ accounts }: { accounts: SourceAccount[] }) {
-  const suspended = accounts.filter((a) => a.suspended).map((a) => a.login);
-  const only = accounts.length === 1 ? accounts[0] : null;
-  return (
-    <p className="text-muted-foreground border-border shrink-0 border-t px-3 py-2 text-xs">
-      {`From Outrunner's GitHub App on ${accounts.map((a) => a.login).join(", ")}. `}
-      {suspended.length > 0 && `It's suspended on ${suspended.join(", ")}. `}
-      {only ? (
-        <a href={installationSettingsUrl(only)} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">
-          Add repositories
-        </a>
-      ) : (
-        <Link href="/settings/org/github" className="text-foreground underline underline-offset-2">
-          Add repositories
-        </Link>
-      )}
-    </p>
-  );
-}
-
-/** Where to give the App a repository it can't reach: its owner's
- *  installation on GitHub, or the org's GitHub settings. */
-function appAccessAction(source: { accounts: SourceAccount[] }, repo: string | undefined) {
-  const owner = repo?.split("/")[0]?.toLowerCase();
-  const account = source.accounts.find((a) => a.login.toLowerCase() === owner);
-  return account
-    ? { label: "Add it on GitHub", href: installationSettingsUrl(account), external: true }
-    : { label: "Settings → Org → GitHub", href: "/settings/org/github" };
 }

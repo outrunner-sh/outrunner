@@ -17,13 +17,14 @@ const MAX_SELECTION = 100;
 /**
  * Connect repositories as projects of the active org (lib/orgs/active.ts).
  *
- * With `{ repoIds: [...] }`, only those repositories are connected — the picker
- * posts the user's selection, so browsing hundreds of repositories does not
- * turn all of them into projects. Each is looked up on GitHub by id rather than
- * trusting the posted ids: a repository that can't be seen must not become a
- * project row. With no body, every repository there is connected (the
- * original bulk behaviour, still used by the plain "Sync repositories"
- * button).
+ * `{ repoIds: [...] }`: only those repositories are connected — the
+ * repository picker (components/repository-picker.tsx) posts the user's
+ * selection, so browsing hundreds of repositories does not turn all of them
+ * into projects. Each is looked up on GitHub by id rather than trusting the
+ * posted ids: a repository that can't be seen must not become a project row.
+ *
+ * (A request with no body still connects every repository there, for older
+ * clients; nothing in the app sends one any more.)
  *
  * Seen as the org's GitHub App when it has one installed, else as the user
  * (lib/github/repository-source.ts).
@@ -41,8 +42,8 @@ export async function POST(request: Request) {
     );
   }
 
-  // An absent or unparseable body means "connect everything"; only an explicit
-  // array narrows the selection.
+  // An absent or unparseable body connects everything (older clients); an
+  // explicit array narrows the selection.
   let selection: number[] | null = null;
   const body = (await request.json().catch(() => null)) as { repoIds?: unknown } | null;
   if (body && Array.isArray(body.repoIds)) {

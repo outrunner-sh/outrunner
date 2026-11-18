@@ -759,6 +759,9 @@ type OrganizationSettingsRow = {
   archive_on_close: boolean;
   // supabase/migrations/20261114140000_automation_cover_new_repos.sql.
   automations_on_harness: boolean;
+  // supabase/migrations/20261119120000_environments_model.sql: the
+  // environment the org's new sessions start from.
+  default_environment_id: string | null;
   // supabase/migrations/20261119100000_github_org_join.sql.
   join_via_github: boolean;
   updated_by: string | null;
@@ -2451,6 +2454,22 @@ export type Database = {
       make_default_environment: {
         Args: { target_project: string; maker: string; checkout: string };
         Returns: string;
+      };
+      // supabase/migrations/20261119120000_environments_model.sql
+      environment_listed: {
+        Args: { target: string };
+        Returns: boolean | null;
+      };
+      listed_environments: {
+        Args: { member: string; target_org: string };
+        Returns: {
+          id: string;
+          name: string;
+          default_for_project_id: string | null;
+          org_default: boolean;
+          repos: Json;
+          updated_at: string;
+        }[];
       };
       // supabase/migrations/20261030130000_automations.sql, and its
       // `settings` from 20261102190000_automation_schedules.sql.
