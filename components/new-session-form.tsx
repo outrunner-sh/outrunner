@@ -1,11 +1,11 @@
 "use client";
 
 import { GitBranch, Inbox } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import Link from "next/link";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { useAppData, useViewerScope } from "@/components/app-data";
 import { ProjectEnvironmentPicker } from "@/components/import-setup-picker";
-import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
 import { Notice } from "@/components/ui/notice";
@@ -26,6 +26,7 @@ import {
   modelGroups,
   type SessionModel,
 } from "@/lib/runtime/session-models";
+import { type ListedEnvironment, workRepoId } from "@/lib/environments/listed";
 import type { StartingPick } from "@/lib/onboarding/rules";
 import type { Project } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
@@ -46,8 +47,10 @@ const CHIP_BUTTON = `${CHIP} transition-colors hover:bg-accent hover:text-foregr
  */
 export function NewSessionForm({
   projects: listed,
+  environments: listedEnvironments = [],
   projectsKnown = true,
   initialProjectId,
+  initialEnvironmentId,
   openPicker = false,
   focusComposer = false,
   initialPick,
@@ -55,10 +58,16 @@ export function NewSessionForm({
   children,
 }: {
   projects: Project[];
+  /** The environments to start from (lib/environments/listed.ts), offered
+   *  above the repositories. */
+  environments?: ListedEnvironment[];
   /** False until the list arrives (a cold start): it is not yet "none". */
   projectsKnown?: boolean;
   /** Repo to preselect (the last-used project). Falls back to the first. */
   initialProjectId?: string;
+  /** Environment to preselect, ahead of any repository (the org's default,
+   *  or the last used): see homeStart. */
+  initialEnvironmentId?: string;
   /** Opens the repository picker: as the form mounts, or as it turns true. */
   openPicker?: boolean;
   /** Focuses the composer: as the form mounts, or as it turns true. */
@@ -72,8 +81,18 @@ export function NewSessionForm({
   workItemId?: string;
   children?: React.ReactNode;
 }) {
-  const { projects, projectId, selectProject, selected, isCreating, message, messageAction, refusedPrompt, refusedAttachments, takeRefusedAttachments, create, createLocal } =
-    useCreateSession(listed, initialProjectId);
+  // Only those whose work repository the form has: a session of one works
+  // there, and one whose repository is hidden can't be started from here.
+  const environments = useMemo(
+    () => listedEnvironments.filter((e) => listed.some((p) => p.id === workRepoId(e))),
+    [listedEnvironments, listed],
+  );
+  const { projects, projectId, selectProject, environment: pickedEnvironment, selectEnvironment, selected, isCreating, message, messageAction, refusedPrompt, refusedAttachments, takeRefusedAttachments, create, createLocal } =
+    useCreateSession(
+      listed,
+      environments,
+      initialEnvironmentId !== undefined ? { environmentId: initialEnvironmentId } : initialProjectId !== undefined ? { projectId: initialProjectId } : undefined,
+    );
   const scope = useViewerScope();
   const data = useAppData();
   const keptSelection = RECENT_SELECTION.useKept(scope);
@@ -114,7 +133,10 @@ export function NewSessionForm({
   const where = useSessionLocation(agentOf((picked ?? recent ?? menu?.loadout.default)?.provider ?? "claude", askedAgent ?? recent?.agent));
   const local = where.location === "local";
   // A repository's first cloud session can bring its environment from this Mac.
-  const environment = useFirstSessionEnvironment(selected, !local);
+  // An environment someone made starts with its own setup: the repository's,
+  // from this Mac or a box warmed for it, is another environment's.
+  const madeEnvironment = pickedEnvironment !== undefined && pickedEnvironment.defaultForProjectId === null;
+  const environment = useFirstSessionEnvironment(madeEnvironment ? undefined : selected, !local);
   // A send is under way: the environment is being kept, or the session made.
   // What it was sent with must not change under it.
   const busy = isCreating || environment.keeping;
@@ -164,11 +186,13 @@ export function NewSessionForm({
 
         {noRepositories ? (
           <div className="mx-auto mb-4 flex w-full max-w-md flex-col items-center gap-4 rounded-2xl border border-dashed px-4 py-6 text-center">
-            <p className="text-sm font-medium">No repositories synchronized</p>
+            <p className="text-sm font-medium">No repositories yet</p>
             <p className="text-muted-foreground max-w-xs text-xs">
-              Pull in the repositories your GitHub token can access to start a session.
+              Pick the repositories this org works on to start a session.
             </p>
-            <ProjectsSyncButton align="center" />
+            <Link href="/environments?pick=1" className="bg-foreground text-background rounded-md px-3 py-1.5 text-xs font-medium">
+              Pick repositories
+            </Link>
             {LOCAL_SESSIONS && where.runtime.state === "ready" && (
               <button
                 type="button"
@@ -195,6 +219,9 @@ export function NewSessionForm({
                 projects={projects}
                 selectedProjectId={projectId}
                 onSelect={selectProject}
+                environments={environments}
+                selectedEnvironmentId={pickedEnvironment?.id ?? null}
+                onSelectEnvironment={selectEnvironment}
                 disabled={busy}
                 triggerClassName={CHIP_BUTTON}
                 autoOpen={pickAsked}
@@ -310,7 +337,9 @@ export function NewSessionForm({
               : !local && environment.secrets && !environment.consent
                 ? "Agree to store the environment above to start…"
                 : noRepositories
-                ? "Sync a repository to start…"
+                ? "Pick a repository to start…"
+                : environments.length > 0
+                ? "Pick an environment above to start…"
                 : "Pick a repository above to start…"
           }
           allowAttachments={!local}
@@ -323,7 +352,7 @@ export function NewSessionForm({
           // and however often "New Session" opens it, until it is sent; a
           // triage item's prompt has its own.
           draftKey={workItemId ? `new:triage:${workItemId}` : "new"}
-          onIntent={!local && selected ? () => warmNewSession(selected.id) : undefined}
+          onIntent={!local && selected && !madeEnvironment ? () => warmNewSession(selected.id) : undefined}
         />
         {children}
       </div>
