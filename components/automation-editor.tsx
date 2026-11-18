@@ -17,6 +17,7 @@ import {
   type AppCoverage,
   type AutomationRepo,
   type AutomationTrigger,
+  canCoverNewRepos,
   FILTER_PROMPT_MAX,
   GITHUB_TRIGGERS,
   type MissionInputs,
@@ -41,6 +42,8 @@ export type AutomationDraft = {
   triggers: AutomationTrigger[];
   schedules: Schedule[];
   projectIds: string[];
+  /** Repositories connected to the org later join it. */
+  coverNewRepos: boolean;
   enabled: boolean;
   /** Whose review requests, and which issue labels, start it. */
   reviewers: string[];
@@ -85,6 +88,7 @@ export function AutomationEditor({
   coverage,
   editable,
   byConnector,
+  onHarness,
   webhook,
   missions = [],
   fixedMission = null,
@@ -98,6 +102,9 @@ export function AutomationEditor({
   editable: boolean;
   /** A team org's: it runs as the org's connector, not whoever saves it. */
   byConnector: boolean;
+  /** The org's automations run on their runner's default model and coding
+   *  agent, not Outrunner's models (Settings → Org). */
+  onHarness: boolean;
   /** Its webhook's URL, for an admin; null for a member, or a new one. */
   webhook: WebhookUrl | null;
   /** The org's Missions it may send its runs to (a new one's choice). */
@@ -139,6 +146,11 @@ export function AutomationEditor({
   const [labels, setLabels] = useState(draft.labels.join(", "));
   const [limits, setLimits] = useState<Limits>(draft.limits);
   const [projectIds, setProjectIds] = useState<string[]>(draft.projectIds);
+  const [coverNewRepos, setCoverNewRepos] = useState(draft.coverNewRepos);
+  // Off whenever a trigger runs on every repository (a schedule, a webhook),
+  // and saved off: ticking one turns it off.
+  const canCover = canCoverNewRepos(triggers);
+  const covering = coverNewRepos && canCover;
   const [enabled, setEnabled] = useState(draft.enabled);
   const [filter, setFilter] = useState("");
   // Listed unless the App definitely can't post on it: "unknown" (its
@@ -205,6 +217,7 @@ export function AutomationEditor({
             labels: names(labels),
             ...limits,
             projectIds,
+            coverNewRepos: covering,
             enabled,
           }
         : {
@@ -216,7 +229,13 @@ export function AutomationEditor({
             ...timing,
             // With no runner, Save takes it on: sending its repositories is
             // what does (update_automation), unchanged as they may be.
-            ...(same(projectIds, draft.projectIds) && draft.runsAs !== null ? {} : { projectIds }),
+            // Sent with them too: one that covers new repositories isn't
+            // held to the cap on them.
+            ...(same(projectIds, draft.projectIds) && draft.runsAs !== null
+              ? covering !== draft.coverNewRepos
+                ? { coverNewRepos: covering }
+                : {}
+              : { projectIds, coverNewRepos: covering }),
             ...(enabled !== draft.enabled ? { enabled } : {}),
           };
       // A Mission's: its destination and inputs, its one repository its
@@ -291,9 +310,13 @@ export function AutomationEditor({
           <h1 className="text-lg font-semibold text-foreground">{creating ? "New automation" : draft.name}</h1>
           <p className="text-[13px] text-muted-foreground">
             {byConnector
-              ? `Runs as ${CONNECTOR_NAME}, the org's own runner on Outrunner's models (no member's account or allowance), and posts as the Outrunner GitHub App.`
+              ? onHarness
+                ? `Runs as ${CONNECTOR_NAME}, the org's own runner, on the org's default model and coding agent, and posts as the Outrunner GitHub App.`
+                : `Runs as ${CONNECTOR_NAME}, the org's own runner on Outrunner's models (no member's account or allowance), and posts as the Outrunner GitHub App.`
               : creating
-              ? "Runs as you, on Outrunner's models and your allowance of them, and posts as the Outrunner GitHub App."
+              ? onHarness
+                ? "Runs as you, on your default model and coding agent, and posts as the Outrunner GitHub App."
+                : "Runs as you, on Outrunner's models and your allowance of them, and posts as the Outrunner GitHub App."
               : `${
                   draft.runsAs === null
                     ? `Runs as no one: whoever last changed it is no longer in the org${editable ? ". Save it to run it as you" : ""}`
@@ -302,7 +325,7 @@ export function AutomationEditor({
                       : `Runs as @${draft.runsAs}`
                 }, and posts as the Outrunner GitHub App.${
                   editable
-                    ? " Changing its prompt, triggers or repositories makes it run as you, on your allowance of Outrunner's models."
+                    ? ` Changing its prompt, triggers or repositories makes it run as you, on ${onHarness ? "your default model and coding agent" : "your allowance of Outrunner's models"}.`
                     : ""
                 }`}
           </p>
@@ -542,6 +565,16 @@ export function AutomationEditor({
               )}
             </div>
           )}
+          <div className="space-y-1 pt-2">
+            <Check checked={covering} disabled={!editable || !canCover} onChange={() => setCoverNewRepos(!coverNewRepos)}>
+              Add new repositories automatically
+            </Check>
+            <p className="pl-5 text-xs text-muted-foreground">
+              {canCover
+                ? "Each repository connected to the org from now on is added here. Untick one to leave it out: it stays out."
+                : "Only with GitHub triggers: a schedule or a webhook runs on every repository it has."}
+            </p>
+          </div>
         </Field>
         )}
 

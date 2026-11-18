@@ -4,18 +4,10 @@
  * elsewhere.
  */
 export {
-  SNAPSHOT_BUCKET,
-  DEFAULT_DOWNLOAD_TTL_SECONDS,
-  planSnapshotUpload,
-  isWithinOwnerScope,
-  assertWithinOwnerScope,
-  mintSnapshotUploadUrls,
   mintSnapshotUpload,
   mintSnapshotDownloadUrl,
-  snapshotManifestPath,
   type SnapshotStorage,
   type SnapshotUploadTarget,
   type SnapshotUploadPlan,
   type SnapshotUploadUrl,
 } from "@/lib/runtime/storage/snapshots";
-export { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";

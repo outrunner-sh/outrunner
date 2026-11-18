@@ -3,7 +3,8 @@
   "version": "0.0.0",
   "description": "Start using Outrunner from your terminal: sign in, connect Claude, and continue in the browser.",
   "homepage": "https://app.outrunner.sh",
-  "license": "UNLICENSED",
+  "author": "Outrunner, Inc.",
+  "license": "MIT",
   "bin": {
     "outrunner": "bin/outrunner.mjs"
   },
@@ -19,5 +20,10 @@
     "outrunner-linux-arm64": "0.0.0",
     "outrunner-linux-x64": "0.0.0",
     "outrunner-windows-x64": "0.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/outrunner-sh/outrunner.git",
+    "directory": "cli-npm"
   }
 }

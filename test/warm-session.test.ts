@@ -37,3 +37,59 @@ test("a stalled sidebar warm-up cannot block opening a session", async () => {
     globalThis.fetch = original;
   }
 });
+
+/** A socket the test drives: it opens, sends frames, and records its close. */
+class FakeSocket extends EventTarget {
+  static last: FakeSocket | null = null;
+  closed = false;
+  constructor() {
+    super();
+    FakeSocket.last = this;
+  }
+  close() {
+    this.closed = true;
+  }
+  frame(id: string, data: unknown) {
+    this.dispatchEvent(Object.assign(new Event("message"), { data: JSON.stringify({ id, data }) }));
+  }
+}
+
+test("a prefetch takes the history in, then closes its socket once the stream goes quiet", async () => {
+  const { warmSession, WARM_QUIET_MS } = await import("@/lib/session/warm-session");
+  const { CONVERSATIONS } = await import("@/lib/session/conversation-cache");
+  const originalFetch = globalThis.fetch;
+  const originalSocket = globalThis.WebSocket;
+  globalThis.fetch = async () => Response.json(urls);
+  globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
+  try {
+    let done = false;
+    const warm = warmSession("prefetch-1", { settle: true }).then(() => {
+      done = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const socket = FakeSocket.last!;
+    socket.dispatchEvent(new Event("open"));
+    socket.frame("10", { t: "message", uuid: "u1", parentUuid: null, role: "assistant", timestamp: "t", content: [{ type: "text", text: "hello" }] });
+    await new Promise((resolve) => setTimeout(resolve, WARM_QUIET_MS / 2));
+    assert.equal(done, false, "still taking it in");
+    await warm;
+    assert.equal(socket.closed, true);
+    assert.equal(CONVERSATIONS.get("prefetch-1")?.events.length, 1);
+    // The URLs stand in for a click that follows, as a hover's do.
+    assert.deepEqual(await takeWarmUrls("prefetch-1"), urls);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.WebSocket = originalSocket;
+  }
+});
+
+test("a prefetch with nothing to warm is done at once", async () => {
+  const { warmSession } = await import("@/lib/session/warm-session");
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ error: "Its session isn't running to warm." }, { status: 409 });
+  try {
+    await warmSession("prefetch-asleep", { settle: true });
+  } finally {
+    globalThis.fetch = original;
+  }
+});

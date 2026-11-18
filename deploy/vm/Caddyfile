@@ -1,0 +1,6 @@
+# Replace the hostname for a separate installation. Keep the application's
+# RUNTIME_BASE_URL equal to this HTTPS origin.
+{$APP_DOMAIN} {
+	# Which app slot is live: written by activate-release.sh, then reloaded.
+	import /etc/caddy/live.caddy
+}

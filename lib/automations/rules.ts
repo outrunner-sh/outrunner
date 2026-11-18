@@ -11,6 +11,7 @@ import {
   SCHEDULES_MAX,
 } from "@/lib/automations/schedule";
 import { isUuid } from "@/lib/ids";
+import { type Effort, effortsFor, isEffort, type ModelProvider, requestedModel } from "@/lib/runtime/session-models";
 
 export const AUTOMATION_TRIGGERS = [
   "pull_request.opened",
@@ -105,8 +106,24 @@ export const DEBOUNCE_MAX_SECONDS = 3600;
 export const SESSION_MODES = ["new", "reuse"] as const;
 export type SessionMode = (typeof SESSION_MODES)[number];
 export const PROMPT_MAX = 20_000;
-/** Enough for any one workflow; a list past it is a mistake. */
+/** Enough for any one workflow; a list past it is a mistake. One that covers
+ *  new repositories isn't held to it: it grows with the org. */
 export const REPOS_MAX = 50;
+
+/** Whether an automation can cover new repositories with these triggers:
+ *  GitHub's alone, each run on its event's repository. A schedule or a
+ *  webhook runs on all of them, which an ever-growing list mustn't fan out
+ *  to (automations_cover_new_repos_check). */
+export function canCoverNewRepos(triggers: readonly AutomationTrigger[]): boolean {
+  return triggers.every((t) => (GITHUB_TRIGGERS as readonly AutomationTrigger[]).includes(t));
+}
+
+export const COVER_NEW_REPOS_TRIGGERS_ERROR = "An automation that adds new repositories runs on GitHub events only: untick Schedule and Webhook, or Add new repositories.";
+
+/** What an automation's runs start on, as a session's request names it: a
+ *  provider, its model, and the effort picked with it (null, the model's
+ *  own). An automation with none runs as the org set its automations to. */
+export type AutomationModel = { provider: ModelProvider; id: string; effort: Effort | null };
 
 /** A repository an automation can run on: one of the org's projects. */
 export type AutomationRepo = { projectId: string; fullName: string };
@@ -133,6 +150,11 @@ export type Automation = {
    *  for them all; 0, no wait. */
   debounceSeconds: number;
   sessionMode: SessionMode;
+  /** Each GitHub repository connected to the org from now on joins its
+   *  repositories (cover_new_project). */
+  coverNewRepos: boolean;
+  /** Its own model; null, the org's choice for its automations. */
+  model: AutomationModel | null;
   /** Done: archived, and off. */
   archived: boolean;
   /** The times it has run against its limit; null with none. */
@@ -174,6 +196,8 @@ export type AutomationInput = {
   archiveWhenDone: boolean;
   debounceSeconds: number;
   sessionMode: SessionMode;
+  coverNewRepos: boolean;
+  model: AutomationModel | null;
   /** A change only: archive it (done), or bring it back. */
   archived?: boolean;
   /** Where its runs go; a session's when not sent. */
@@ -280,6 +304,22 @@ export function parseAutomationInput(
     if (!(SESSION_MODES as readonly unknown[]).includes(mode)) return { ok: false, error: "A run's session is a new one, or reused." };
     value.sessionMode = mode as SessionMode;
   }
+  if (full || b.coverNewRepos !== undefined) {
+    if (b.coverNewRepos !== undefined && typeof b.coverNewRepos !== "boolean") {
+      return { ok: false, error: "Add new repositories is on or off." };
+    }
+    value.coverNewRepos = b.coverNewRepos ?? false;
+  }
+  // Checked here when both are sent; a change of one alone, against what's
+  // saved, by the database's check.
+  if (value.coverNewRepos && value.triggers && !canCoverNewRepos(value.triggers)) {
+    return { ok: false, error: COVER_NEW_REPOS_TRIGGERS_ERROR };
+  }
+  if (full || b.model !== undefined) {
+    const model = parseModel(b.model);
+    if (typeof model === "string") return { ok: false, error: model };
+    value.model = model;
+  }
   if (!full && b.archived !== undefined) {
     if (typeof b.archived !== "boolean") return { ok: false, error: "Archived is on or off." };
     value.archived = b.archived;
@@ -298,8 +338,10 @@ export function parseAutomationInput(
       return { ok: false, error: "Those aren't repositories of this org." };
     }
     const ids = [...new Set(b.projectIds as string[])];
-    if (ids.length === 0) return { ok: false, error: "Pick at least one repository." };
-    if (ids.length > REPOS_MAX) return { ok: false, error: `Pick at most ${REPOS_MAX} repositories.` };
+    // One that covers new repositories (sent with them) may start with none,
+    // and grows past the cap.
+    if (ids.length === 0 && !value.coverNewRepos) return { ok: false, error: "Pick at least one repository." };
+    if (ids.length > REPOS_MAX && !value.coverNewRepos) return { ok: false, error: `Pick at most ${REPOS_MAX} repositories.` };
     value.projectIds = ids;
   }
   if (b.target !== undefined) {
@@ -333,6 +375,32 @@ export function parseAutomationInput(
     value.enabled = b.enabled ?? true;
   }
   return { ok: true, value };
+}
+
+/**
+ * An automation's model as it's sent: `{ provider, id, effort }`, the
+ * provider and effort optional (as a session's request takes them: no
+ * provider is Claude's for its aliases, else Outrunner's). Null or absent
+ * clears it. Checked as a session's choice is (modelChoice); whether it's
+ * on the runner's menu is the run's to find out. An effort is one of the
+ * model's, where those are known: Codex's depend on the account.
+ */
+export function parseModel(value: unknown): AutomationModel | null | string {
+  if (value === undefined || value === null) return null;
+  const error = "`model` is `{ provider, id, effort }`, a model from GET /api/v1/models.";
+  if (typeof value !== "object" || Array.isArray(value)) return error;
+  const m = value as Record<string, unknown>;
+  const id = typeof m.id === "string" ? m.id.trim() : m.id;
+  const provider = m.provider === null || m.provider === "" ? undefined : m.provider;
+  if (typeof id !== "string" || !id) return error;
+  const choice = requestedModel({ provider, model: id });
+  if (!choice) return "That model isn't one a session can run: pick one from GET /api/v1/models.";
+  const effort = m.effort === undefined || m.effort === null || m.effort === "" ? null : m.effort;
+  if (effort !== null && !isEffort(effort)) return "An effort is low, medium, high, xhigh or max.";
+  if (effort !== null && choice.provider !== "codex" && !effortsFor(choice).includes(effort)) {
+    return "That model doesn't take an effort of its own: leave it out.";
+  }
+  return { provider: choice.provider, id: choice.id, effort };
 }
 
 /** A list of names, each matching `pattern`, trimmed and deduplicated (case

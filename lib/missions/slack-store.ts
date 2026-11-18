@@ -1,5 +1,5 @@
 /**
- * A Mission on call in Slack, in the database (20261114200000_mission_slack.sql),
+ * A Mission on call in Slack, in the database (20261118110000_mission_slack.sql),
  * with the service role: the channel it's bound to, the threads it took, the
  * Ships it started for them under its limits, and its question cards. The
  * callers have checked who may (lib/missions/slack-route.ts, the Mission's
@@ -345,7 +345,7 @@ export async function claimAnswer(id: string, answer: { text: string; userId: st
 }
 
 // ---------------------------------------------------------------------------
-// Requests, spawn keys, the post queue (20261114200100_mission_slack_reliability.sql)
+// Requests, spawn keys, the post queue (20261118110100_mission_slack_reliability.sql)
 // ---------------------------------------------------------------------------
 
 /** A Slack request a Mission took: its key, thread, who asked, and the

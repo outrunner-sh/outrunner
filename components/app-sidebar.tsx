@@ -51,6 +51,7 @@ import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { startNewSession } from "@/lib/session/new-session-reset";
+import { PREFETCH_AFTER_MS, prefetchSessions } from "@/lib/session/prefetch-sessions";
 import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
 import { cn } from "@/lib/utils";
 import { OrgSwitcher } from "@/components/org-switcher";
@@ -120,6 +121,20 @@ export function AppSidebar({
     refreshLocal();
   }, [pathname, refreshLocal]);
 
+  // The listed sessions' conversations, brought in once the page has settled
+  // (lib/session/prefetch-sessions.ts), so switching to one shows it at once
+  // rather than "Connecting to Claude". Not for a tab out of sight, nor a
+  // connection asked to save data.
+  useEffect(() => {
+    if (loading) return;
+    const timer = setTimeout(() => {
+      const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
+      if (document.visibilityState === "hidden" || saveData) return;
+      prefetchSessions(workspaces, active ?? null);
+    }, PREFETCH_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [loading, workspaces, active]);
+
   const groups = useMemo(
     // `now` too: a setup that stalls becomes deletable as the clock passes it.
     () => buildSidebarGroups(projects, workspaces, local.sessions, { now }),
@@ -139,7 +154,6 @@ export function AppSidebar({
   };
   const standings = useStandings();
   const sections = useMemo(() => buildStatusSections(shown, standings, now), [shown, standings, now]);
-  const needingYou = Object.values(standings).filter((s) => s.standing === "needs_you").length;
 
   // Projects folded shut with their chevron, remembered across visits.
   // Toggled here; else as the cookie had them, once read.
@@ -184,11 +198,12 @@ export function AppSidebar({
             icon={<Inbox />}
             active={pathname === "/triage"}
           />
+          {/* No count: the list below already groups the sessions that need
+              you, and every idle one without a pull request does, so a badge
+              here only repeated it, and was rarely zero. */}
           <HeaderActionLink
             href="/workspaces"
             label="Sessions"
-            count={needingYou}
-            countDescription="need you"
             icon={<LayoutList />}
             active={pathname === "/workspaces"}
           />
@@ -558,16 +573,16 @@ function NavLink({
 function HeaderActionLink({
   href,
   label,
-  count,
-  countDescription,
+  count = 0,
+  countDescription = "",
   shortcut,
   icon,
   active,
 }: {
   href: string;
   label: string;
-  count: number;
-  countDescription: string;
+  count?: number;
+  countDescription?: string;
   shortcut?: string;
   icon: React.ReactNode;
   active: boolean;

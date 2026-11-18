@@ -1,4 +1,5 @@
 import type { AgentId } from "@/lib/agents/registry";
+import { ensureCodeReview } from "@/lib/db/automations";
 import { storeAgentSecret, openAgentSecretOrNull } from "@/lib/db/computer-secret";
 import { isUuid } from "@/lib/ids";
 import { probeStatus } from "@/lib/supabase/probe";
@@ -104,7 +105,9 @@ export async function getProjects(ids: string[]): Promise<Project[]> {
  * Upsert the repositories returned by GitHub as projects of `orgId` (the
  * owner's personal org when not given), keyed on (org, repo id). A repository
  * another member connected to the org already is theirs: it's left as it is
- * (only its owner may change it) and not counted.
+ * (only its owner may change it) and not counted. The org gets Code Review on
+ * them when it has none yet (codeReviewOn); one it has takes in repositories
+ * new to the org as they're inserted (cover_new_project).
  */
 export async function upsertProjects(
   ownerId: string,
@@ -141,7 +144,7 @@ export async function upsertProjects(
     mine = repos.filter((r) => !taken.has(r.githubRepoId));
     if (mine.length === 0) return 0;
   }
-  const { error, count } = await supabase
+  const { data, error, count } = await supabase
     .from("projects")
     .upsert(
       mine.map((r) => ({
@@ -159,10 +162,27 @@ export async function upsertProjects(
         pushed_at: r.pushedAt,
       })),
       { onConflict: "org_id,github_repo_id", count: "exact" },
-    );
+    )
+    .select("id, org_id");
 
   if (error) throw error;
+  await codeReviewOn(ownerId, data ?? []);
   return count ?? mine.length;
+}
+
+/**
+ * Make the org's Code Review on the projects just connected, run as the
+ * member who connected them, when the org has none yet (ensureCodeReview).
+ * Never throws: connecting them stands without it, said in the log.
+ */
+async function codeReviewOn(ownerId: string, projects: readonly { id: string; org_id: string }[]): Promise<void> {
+  const orgId = projects[0]?.org_id;
+  if (!orgId) return;
+  try {
+    await ensureCodeReview(orgId, ownerId, projects.filter((p) => p.org_id === orgId).map((p) => p.id));
+  } catch (error) {
+    console.error(`Could not set up Code Review for org ${orgId}`, error);
+  }
 }
 
 /** GitLab repositories are verified by the caller against the user's token.

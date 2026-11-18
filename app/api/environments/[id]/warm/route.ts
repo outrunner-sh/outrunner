@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { after } from "@/lib/observability/after";
 import { z } from "zod";
 
+import { recordProjectChange } from "@/lib/audit/project-history";
 import { getOwner } from "@/lib/auth/owner";
 import { bumpGeneration, EnvironmentAccessError, getEnvironment } from "@/lib/db/environments";
 import { isSameOriginRequest } from "@/lib/http/guards";
@@ -36,6 +37,8 @@ export async function POST(request: Request, context: RouteContext) {
       throw error;
     }
     after(() => refillAfterChange(owner, id), { where: "refill-pool", userId: owner.id });
-    return NextResponse.json(await getEnvironment(owner.id, id));
+    const now = await getEnvironment(owner.id, id);
+    if (now) await recordProjectChange(owner, id, "project.rebuilt", { generation: now.setupGeneration }, now);
+    return NextResponse.json(now);
   });
 }

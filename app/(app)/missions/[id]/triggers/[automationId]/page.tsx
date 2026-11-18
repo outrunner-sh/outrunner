@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { AutomationEditor } from "@/components/automation-editor";
+import { automationSettingsOrDefault } from "@/lib/db/automation-settings";
 import { webhookPathOf } from "@/lib/db/automation-webhooks";
 import { getAutomation } from "@/lib/db/automations";
 import { isUuid } from "@/lib/ids";
@@ -40,6 +41,7 @@ export default async function MissionTriggerPage({ params }: { params: Params })
         archived: automation.archived,
         runsUsed: automation.runsUsed,
         projectIds: [mission.projectId],
+        coverNewRepos: automation.coverNewRepos,
         enabled: automation.enabled,
         runsAs: automation.runsAs ? automation.runsAs.login : null,
         target: automation.target,
@@ -47,6 +49,7 @@ export default async function MissionTriggerPage({ params }: { params: Params })
       repos={[]}
       coverage={{}}
       byConnector={!context.personal}
+      onHarness={(await automationSettingsOrDefault(context.mission.orgId)).onHarness}
       // Its URL is a secret: for whoever may change the trigger.
       webhook={context.canWrite && automation.triggers.includes("webhook") ? await webhookPathOf(context.mission.orgId, automation.id).catch(() => null) : null}
       fixedMission={mission}

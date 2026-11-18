@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { AutomationEditor } from "@/components/automation-editor";
+import { automationSettingsOrDefault } from "@/lib/db/automation-settings";
 import { triggerPageContext } from "@/lib/missions/trigger-pages";
 
 type Params = Promise<{ id: string }>;
@@ -30,6 +31,7 @@ export default async function NewMissionTriggerPage({ params }: { params: Params
         archived: false,
         runsUsed: null,
         projectIds: [mission.projectId],
+        coverNewRepos: false,
         enabled: true,
         runsAs: null,
         target: { kind: "mission", missionId: mission.id, watch: null, linearTeamIds: [] },
@@ -37,6 +39,7 @@ export default async function NewMissionTriggerPage({ params }: { params: Params
       repos={[]}
       coverage={{}}
       byConnector={!context.personal}
+      onHarness={(await automationSettingsOrDefault(context.mission.orgId)).onHarness}
       webhook={null}
       fixedMission={mission}
       place={{

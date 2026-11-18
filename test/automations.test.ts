@@ -35,6 +35,9 @@ test("a whole automation is trimmed, deduplicated and kept in trigger order", ()
       archiveWhenDone: false,
       debounceSeconds: 0,
       sessionMode: "new",
+      coverNewRepos: false,
+      // Unsent, no model of its own: the org's choice.
+      model: null,
     },
   });
 });
@@ -44,6 +47,35 @@ test("a new automation is on unless it says otherwise, and needs no template", (
   assert.ok(parsed.ok);
   assert.equal(parsed.value.enabled, true);
   assert.equal(parsed.value.template, null);
+});
+
+test("its model is a session's choice: the provider worked out when left out, the effort one the model takes", () => {
+  const model = (sent: unknown) => {
+    const parsed = parseAutomationInput({ model: sent }, { full: false });
+    return parsed.ok ? parsed.value.model : parsed.error;
+  };
+  assert.deepEqual(model({ provider: "claude", id: "opus", effort: "max" }), { provider: "claude", id: "opus", effort: "max" });
+  // As a session's request: Claude's aliases are Claude's, anything else Outrunner's.
+  assert.deepEqual(model({ id: "sonnet" }), { provider: "claude", id: "sonnet", effort: null });
+  assert.deepEqual(model({ id: " z-ai/glm-5.3 " }), { provider: "outrunner", id: "z-ai/glm-5.3", effort: null });
+  assert.deepEqual(model({ provider: "openrouter", id: "qwen/qwen3-coder" }), { provider: "openrouter", id: "qwen/qwen3-coder", effort: null });
+  // Codex's efforts are its account's: any level, checked as the run starts.
+  assert.deepEqual(model({ provider: "codex", id: "gpt-5.5", effort: "low" }), { provider: "codex", id: "gpt-5.5", effort: "low" });
+  // Null clears it; unsent, a change leaves it.
+  assert.equal(model(null), null);
+  assert.deepEqual(parseAutomationInput({ name: "x" }, { full: false }), { ok: true, value: { name: "x" } });
+  for (const [what, sent] of [
+    ["a string", "opus"],
+    ["no id", { provider: "claude" }],
+    ["an unknown provider", { provider: "acme", id: "m" }],
+    ["not one of Outrunner's", { id: "gpt-4o" }],
+    ["not one of Claude's aliases", { provider: "claude", id: "claude-3" }],
+    ["an id no agent takes", { provider: "openrouter", id: "-rm" }],
+    ["an effort that isn't a level", { provider: "claude", id: "opus", effort: "huge" }],
+    ["an effort on a model that takes none", { id: "z-ai/glm-5.3", effort: "high" }],
+  ] as const) {
+    assert.equal(typeof model(sent), "string", what);
+  }
 });
 
 test("a change carries only what it sends", () => {
@@ -68,12 +100,27 @@ test("what can't be saved is refused, saying why", () => {
     ],
     ["enabled not a boolean", { ...full, enabled: "yes" }],
     ["template not a string", { ...full, template: 3 }],
+    ["cover new repositories not a boolean", { ...full, coverNewRepos: "yes" }],
+    ["covering new repositories on a schedule", { ...full, coverNewRepos: true, triggers: ["pull_request.opened", "schedule"] }],
+    ["covering new repositories on a webhook", { ...full, coverNewRepos: true, triggers: ["webhook"] }],
   ];
   for (const [what, body] of refused) {
     const parsed = parseAutomationInput(body, { full: true });
     assert.equal(parsed.ok, false, what);
     if (!parsed.ok) assert.ok(parsed.error.length > 0, what);
   }
+});
+
+test("one that covers new repositories may start with none, and isn't held to the cap", () => {
+  const many = Array.from({ length: REPOS_MAX + 1 }, (_, i) => `${A.slice(0, -2)}${String(i).padStart(2, "0")}`);
+  const grown = parseAutomationInput({ ...full, coverNewRepos: true, projectIds: many }, { full: true });
+  assert.ok(grown.ok);
+  assert.equal(grown.value.projectIds?.length, REPOS_MAX + 1);
+  const none = parseAutomationInput({ ...full, coverNewRepos: true, projectIds: [] }, { full: true });
+  assert.ok(none.ok);
+  // A change: its repositories sent with it, as the editor does.
+  assert.ok(parseAutomationInput({ coverNewRepos: true, projectIds: many }, { full: false }).ok);
+  assert.equal(parseAutomationInput({ projectIds: many }, { full: false }).ok, false);
 });
 
 const all = { installationId: 1, accountLogin: "Acme", repositorySelection: "all" as const, suspendedAt: null };

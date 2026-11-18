@@ -21,7 +21,7 @@ outrunner triage     add a work item to your triage
 
 ## Sessions from a terminal, a script or CI
 
-The same commands drive cloud sessions through [the API](https://github.com/neevai-labs/outrunner/blob/main/docs/api.md),
+The same commands drive cloud sessions through [the API](https://github.com/outrunner-sh/outrunner/blob/main/docs/api.md),
 signed in with `outrunner login` or with `OUTRUNNER_API_KEY` set:
 
 ```
@@ -42,4 +42,4 @@ Run `npx outrunner@latest sandbox connect gcp` to connect a billing-enabled
 Google Cloud project. Requires gcloud and permission to configure IAM and
 networking. The wizard uses keyless federation, verifies a temporary VM,
 and asks before selecting GCP for new sessions. See
-[the setup and teardown guide](https://github.com/neevai-labs/outrunner/blob/main/docs/gcp-sandboxes.md).
+[the setup and teardown guide](https://github.com/outrunner-sh/outrunner/blob/main/docs/gcp-sandboxes.md).

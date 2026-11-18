@@ -65,7 +65,7 @@ jobs:
     name: macOS (universal, signed + notarized)
     # The mirror workflow pushes our tags to immadsahin/outrunner, which has
     # none of the signing secrets. Never build there.
-    if: github.repository == 'neevai-labs/outrunner'
+    if: github.repository == 'outrunner-sh/outrunner'
     runs-on: blacksmith-6vcpu-macos-15
     timeout-minutes: 75
     permissions:

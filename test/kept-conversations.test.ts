@@ -272,3 +272,17 @@ test("storage that fails keeps nothing and breaks nothing", async () => {
   assert.equal(await store.load("w1"), undefined);
   await store.clear();
 });
+
+test("which sessions a conversation is held for: this page's, or one kept from before it", async () => {
+  const storage = new FakeStorage();
+  const { store } = kept(storage);
+  store.save("kept", entry([message("m1")]));
+  store.save("empty", entry([state]));
+  await store.flush();
+  const cache = new ConversationCache(20, kept(storage).store);
+  cache.set("seen", entry([message("m2")]));
+  assert.deepEqual(
+    [...(await cache.held(["seen", "kept", "empty", "never"]))].sort(),
+    ["kept", "seen"],
+  );
+});

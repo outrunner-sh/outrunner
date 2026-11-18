@@ -38,5 +38,5 @@ test("a provider on the user's own key takes ids beyond its list", () => {
 });
 
 test("no model on offer is an empty list", () => {
-  assert.deepEqual(modelsJson([], EMPTY_LOADOUT), { data: [], custom_providers: [] });
+  assert.deepEqual(modelsJson([], EMPTY_LOADOUT), { data: [], custom_providers: [], items: [] });
 });

@@ -279,3 +279,18 @@ test("a Codex session upgrades for secret forms even without imported MCP server
   }, { environment: null, agentConfig: null, agent: "codex", downloadUrl });
   assert.equal(upgrades, 1);
 });
+
+test("a session's own subagents go to a Claude session's box that takes them, and to no Codex one", async () => {
+  const subagents = { reviewer: { description: "Reviews", prompt: "Review it.", model: "sonnet" as const } };
+  const takes = box([...all, "subagents"]);
+  await deliverSessionSetup(takes.client, { environment: { ...environment, env: {}, files: {}, setup: null }, agentConfig: null, subagents, downloadUrl });
+  assert.deepEqual(takes.sent, [["environment", { env: {}, subagents }]]);
+
+  const old = box(all);
+  await deliverSessionSetup(old.client, { environment: { ...environment, env: {}, files: {}, setup: null }, agentConfig: null, subagents, downloadUrl });
+  assert.deepEqual(old.sent, [], "a box that can't take them is sent nothing for them");
+
+  const codex = box([...all, "subagents", "codex-request-secrets"]);
+  await deliverSessionSetup(codex.client, { environment, agentConfig: null, subagents, agent: "codex", downloadUrl });
+  assert.equal((codex.sent.find(([kind]) => kind === "environment")?.[1] as { subagents?: unknown }).subagents, undefined);
+});

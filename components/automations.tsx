@@ -388,7 +388,8 @@ function AutomationList({
                   <TriggerChips triggers={automation.triggers} schedules={automation.schedules} />
                 </div>
                 {last && (
-                  <div className="space-y-1 text-xs sm:text-right">
+                  // Why it failed or didn't start, on hover: Recent runs says it in full.
+                  <div className="space-y-1 text-xs sm:text-right" title={last.reason ?? undefined}>
                     <RunStatus status={last.status} label={last.status === "ready" ? "Started" : undefined} />
                     <div className="text-muted-foreground"><Ago at={last.createdAt} now={now} /></div>
                   </div>

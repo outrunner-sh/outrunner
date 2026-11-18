@@ -4,7 +4,7 @@ const connection = { login: "ada", updatedAt: "2026-11-13T00:00:00Z" };
 const repo = { provider: "gitlab", repositoryId: 7, githubRepoId: null, fullName: "gitlab.com/acme/platform/app", owner: "acme/platform", name: "app", ownerType: null, avatarUrl: null, private: true, language: null, description: "Platform application", pushedAt: null };
 const gitlabProject = { ...repo, id: "gitlab-project", orgId: "personal", defaultBranch: "main", htmlUrl: "https://gitlab.com/acme/platform/app", linearIssueIds: [], createdAt: "", updatedAt: "" };
 
-async function setup(page: Page, options: { connected?: boolean; github?: boolean } = {}) {
+async function setup(page: Page, options: { connected?: boolean; github?: boolean; githubConnected?: boolean } = {}) {
   let connected = options.connected ?? false;
   const writes: { path: string; body: unknown }[] = [];
   await page.route("**/favicon.ico", (route) => route.fulfill({ status: 204 }));
@@ -23,7 +23,10 @@ async function setup(page: Page, options: { connected?: boolean; github?: boolea
       "/api/settings/providers": { keys: {} },
       "/api/settings/agents": { choices: { claude: null, codex: null } },
       "/api/onboarding/github": { access: { orgs: [{ id: "personal", name: "Personal", personal: true, admin: true, accounts: [] }], activeOrgId: "personal", personalGithub: options.github ?? false, appInstallable: true, installNeedsGithub: false, personalConnectable: true } },
-      "/api/github/repositories": { repositories: [{ ...repo, provider: "github", repositoryId: undefined, githubRepoId: 7, fullName: "acme/app" }], connected: [] },
+      "/api/github/repositories": options.githubConnected
+        // Connected already: acme/old, and one GitHub no longer lists.
+        ? { repositories: [{ ...repo, provider: "github", repositoryId: undefined, githubRepoId: 7, fullName: "acme/app" }, { ...repo, provider: "github", repositoryId: undefined, githubRepoId: 8, fullName: "acme/old" }], connected: [8, 9] }
+        : { repositories: [{ ...repo, provider: "github", repositoryId: undefined, githubRepoId: 7, fullName: "acme/app" }], connected: [] },
       "/api/gitlab/repositories": { repositories: [repo], connected: [] },
       // Same numeric id on GitHub comes first: Finish must select GitLab.
       "/api/gitlab/projects": { projects: [{ ...gitlabProject, id: "github-project", provider: "github", repositoryId: undefined, githubRepoId: 7 }, gitlabProject] },
@@ -118,4 +121,29 @@ test("a GitLab save that finishes after switching back leaves the GitHub selecti
   await complete!();
   await expect(github).toBeChecked();
   await expect(page.getByRole("button", { name: "Finish", exact: true })).toBeEnabled();
+});
+
+test("an org with repositories connected already is told so in place of the picker, and Finish needs no new pick", async ({ page }) => {
+  const writes = await setup(page, { github: true, githubConnected: true });
+  await expect(page.getByText("2 repositories connected", { exact: true })).toBeVisible();
+  await expect(page.getByText("acme/old and 1 more", { exact: true })).toBeVisible();
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await page.getByRole("button", { name: "Finish", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("/new?focus=composer&start=codex-outrunner");
+  expect(writes.some((write) => write.path === "/api/projects/sync")).toBe(false);
+});
+
+test("Add more opens the picker: those connected stay ticked apart from the new picks, which alone are connected", async ({ page }) => {
+  const writes = await setup(page, { github: true, githubConnected: true });
+  await page.getByRole("button", { name: "Add more", exact: true }).click();
+  const old = page.getByRole("checkbox", { name: /acme\/old/ });
+  await expect(old).toBeChecked();
+  await expect(old).toBeDisabled();
+  await expect(old).toContainText("Connected");
+  await expect(page.getByText("2 already connected", { exact: true })).toBeVisible();
+  await page.getByRole("checkbox", { name: /acme\/app/ }).check();
+  await expect(page.getByText("1 picked · 2 already connected", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Finish", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("/new?project=github-project&focus=composer&start=codex-outrunner");
+  expect(writes).toContainEqual({ path: "/api/projects/sync", body: { repoIds: [7] } });
 });

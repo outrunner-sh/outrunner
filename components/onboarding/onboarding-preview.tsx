@@ -64,10 +64,10 @@ const OPTIONS: { [K in keyof Scenario]: { label: string; values: [Scenario[K], s
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const REPOS: RepositoryListing[] = [
-  repo(1, "neevai-labs/outrunner", "Run coding agents in the cloud", true, "2026-10-25"),
-  repo(2, "neevai-labs/interface", "The marketing site", true, "2026-10-20"),
-  repo(3, "sajdakabir/blog", null, false, "2026-10-01"),
-  repo(4, "immadsahin/millerp", "Rice mill accounting", true, "2026-09-12"),
+  repo(1, "outrunner-sh/outrunner", "Run coding agents in the cloud", true, "2026-10-25"),
+  repo(2, "outrunner-sh/interface", "The marketing site", true, "2026-10-20"),
+  repo(3, "octocat/blog", null, false, "2026-10-01"),
+  repo(4, "octocat/ledger", "Bookkeeping", true, "2026-09-12"),
 ];
 
 function repo(id: number, fullName: string, description: string | null, isPrivate: boolean, pushedAt: string): RepositoryListing {
@@ -113,7 +113,7 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
       ? { ...status, claude: { ...status.claude, subscription: true, last4: "t3rm" } }
       : status;
   return {
-    user: { id: "preview", name: "Sajda", login: "sajdakabir", avatarUrl: null },
+    user: { id: "preview", name: "Mona", login: "octocat", avatarUrl: null },
     desktop: scenario.surface === "desktop",
     outrunnerModels: scenario.outrunnerModels === "yes",
     agentStatus: async () => (await wait(300), current()),
@@ -146,7 +146,7 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
     gitlabConnection: async () => gitlab,
     async saveGitlabConnection(token) {
       await wait(500);
-      gitlab = token === null ? null : { login: "sajdakabir", updatedAt: new Date().toISOString() };
+      gitlab = token === null ? null : { login: "octocat", updatedAt: new Date().toISOString() };
       return gitlab;
     },
     async repositories(provider = "github") {

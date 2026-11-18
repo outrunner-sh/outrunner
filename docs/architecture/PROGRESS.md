@@ -1,6 +1,8 @@
 # Runtime v1 — Progress Tracker
 
-Single source of truth for what's done and what's left. Update as milestones land.
+> Historical milestone tracker. This is a development snapshot, not current
+> product status. See the [documentation index](../README.md) and
+> [development guide](../development.md) for current setup.
 Detail lives in [`runtime-v1-plan.md`](./runtime-v1-plan.md) and [`spike4-runtime-report.md`](./spike4-runtime-report.md).
 
 Legend: ✅ done · 🟡 in progress · ⬜ not started

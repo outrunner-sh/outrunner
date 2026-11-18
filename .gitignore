@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -34,6 +34,12 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+.dev.vars*
+!.dev.vars.example
+
+# Cloudflare's local state and generated bundles
+/cloudflare/.wrangler/
 
 # vercel
 .vercel
@@ -61,3 +67,6 @@ bin/runtime-agent-linux-amd64
 
 # macOS agent sidecars — build with scripts/build-agent-desktop.sh, not committed.
 /runtime-desktop/src-tauri/binaries/
+
+# Supabase CLI local cache (linked project, CLI version)
+supabase/.temp/

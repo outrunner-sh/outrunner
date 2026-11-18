@@ -1,10 +1,15 @@
+import { Suspense } from "react";
+
 import { GitHubConnectionCard, type GitHubCardView } from "@/components/github-connection-card";
 import { GitHubIdentitySettings } from "@/components/github-identity-settings";
+import { GitHubTokenCard } from "@/components/github-token-card";
+import { GitHubTokenHealth } from "@/components/github-token-health";
 import { SignInButton } from "@/components/signin-button";
 import { hasGithubIdentity } from "@/lib/auth/identity";
 import { getAuthUser } from "@/lib/auth/owner";
 import { credentialStatus, getGithubIdentity } from "@/lib/db/credentials";
 import { githubConnectionStatus } from "@/lib/db/github-connections";
+import { githubTokenStatus } from "@/lib/db/github-tokens";
 import { listOrgInstallations } from "@/lib/db/github-installations";
 import { githubAppConfig } from "@/lib/github/app";
 import { githubSignInScopes, legacyTokenMode } from "@/lib/github/legacy-token";
@@ -18,7 +23,8 @@ import { getOrgContext } from "@/lib/orgs/server";
  * their repositories (the Outrunner GitHub App's user authorization,
  * lib/github/user-auth.ts), what it reaches, and how it's doing, with
  * Connect, Manage repositories, Reconnect and Disconnect in place (never a
- * sign-out); then who their sessions work on GitHub as.
+ * sign-out); a personal access token for what the App can't reach; then who
+ * their sessions work on GitHub as.
  */
 export async function GitHubConnectionSection({
   userId,
@@ -32,12 +38,18 @@ export async function GitHubConnectionSection({
 }) {
   const configured = userAuthConfigured();
   const mode = legacyTokenMode();
-  const [connection, credentials] = await Promise.all([
+  const [connection, credentials, token] = await Promise.all([
     githubConnectionStatus(userId).catch((error: unknown) => {
       console.error("Settings: could not read the GitHub connection", error);
       return null;
     }),
     credentialStatus(userId).catch(() => null),
+    // Shows as no token rather than failing the page (e.g. the table's
+    // migration not applied yet).
+    githubTokenStatus(userId).catch((error: unknown) => {
+      console.error("Settings: could not read the GitHub token", error);
+      return null;
+    }),
   ]);
 
   // What the connection reaches, from GitHub: its installations, live.
@@ -81,6 +93,7 @@ export async function GitHubConnectionSection({
   const user = mode === "store" && !configured ? await getAuthUser() : null;
   const linkInstead = user !== null && !hasGithubIdentity(user);
 
+  const identity = await getGithubIdentity(userId).catch(() => "personal" as const);
   const appConfigured = githubAppConfig() !== null;
   const org = appConfigured ? (await getOrgContext().catch(() => null))?.active : null;
   const orgInstallations = org ? await listOrgInstallations(org.id).catch(() => []) : [];
@@ -93,9 +106,21 @@ export async function GitHubConnectionSection({
           </div>
         )}
       </GitHubConnectionCard>
+      <GitHubTokenCard
+        initial={token}
+        health={
+          token && (
+            <Suspense fallback={null}>
+              <GitHubTokenHealth userId={userId} token={token} />
+            </Suspense>
+          )
+        }
+      />
       <GitHubIdentitySettings
-        initial={await getGithubIdentity(userId).catch(() => "personal" as const)}
-        login={connection?.login ?? login}
+        // Remounted when saving a token switches it (router.refresh).
+        key={identity}
+        initial={identity}
+        login={token?.login ?? connection?.login ?? login}
         appConfigured={appConfigured}
         org={
           org

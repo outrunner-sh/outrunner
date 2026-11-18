@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, ChevronsUpDown, Plus, Settings, Terminal, Users } from "lucide-react";
+import { Check, ChevronsUpDown, Plus, Settings, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { CreateOrgDialog } from "@/components/create-org-dialog";
+import { OutrunnerIcon } from "@/components/outrunner-icon";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -153,10 +154,10 @@ const ERROR_SHOWN_MS = 6000;
 /** The org's mark: Outrunner's, the same for every org. */
 function OrgMark({ size }: { size: "sm" | "lg" }) {
   return size === "sm" ? (
-    <Terminal aria-hidden className="size-4 shrink-0" />
+    <OutrunnerIcon className="size-4 shrink-0" />
   ) : (
     <span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-md bg-accent">
-      <Terminal className="size-4" />
+      <OutrunnerIcon className="size-5" />
     </span>
   );
 }
