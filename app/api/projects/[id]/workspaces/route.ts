@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { getEnvironment } from "@/lib/db/environments";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { isUuid } from "@/lib/ids";
 import { createCloudSession, type SessionRequest } from "@/lib/session/create-cloud-session";
 
 // Lazy provisioning boots a Daytona box + agent (~19s, about 4 from the warm
@@ -18,7 +20,13 @@ export const maxDuration = 60;
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-/** Create one session of a Runtime project (lib/session/create-cloud-session.ts). */
+/**
+ * Create one session of a repository (lib/session/create-cloud-session.ts),
+ * from the environment picked on the new-session screen (`environmentId`),
+ * or the repository's own. A picked one must be one the user can read that
+ * holds this repository: the session works in it, the environment's others
+ * beside it.
+ */
 export async function POST(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
@@ -39,5 +47,15 @@ export async function POST(request: Request, context: RouteContext) {
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
-  return createCloudSession(owner, id, body);
+  if (body.environmentId === undefined || body.environmentId === null) return createCloudSession(owner, id, body);
+  const environment = typeof body.environmentId === "string" && isUuid(body.environmentId)
+    ? await getEnvironment(owner.id, body.environmentId)
+    : null;
+  if (!environment) {
+    return NextResponse.json({ error: "That environment isn't there any more, or you can't see it. Pick another." }, { status: 404 });
+  }
+  if (!environment.repos.some((r) => r.projectId === id)) {
+    return NextResponse.json({ error: "That repository isn't in this environment. Pick the environment again." }, { status: 400 });
+  }
+  return createCloudSession(owner, id, body, { environmentId: environment.id });
 }

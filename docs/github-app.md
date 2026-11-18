@@ -239,8 +239,8 @@ repository reusing an old name does not take over the original project.
 The installation's repository list in Settings comes directly from GitHub;
 sessions use the stored project record. On older deployments, reconnecting can
 therefore show the new name in Settings while sessions still use the old one.
-**Projects → Sync repositories** can refresh projects connected by the current
-user. Deploy the rename refresh for installations with projects connected by
+Picking a repository again (**Environments → Pick repositories**) refreshes its
+record. Deploy the rename refresh for installations with projects connected by
 other members. Tools using a local checkout should use its current canonical
 GitHub URL after a move.
 

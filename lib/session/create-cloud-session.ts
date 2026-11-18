@@ -183,6 +183,11 @@ export type SessionRequest = {
   attachmentIds?: unknown;
   /** The triage item the session was started from (Start session). */
   workItemId?: unknown;
+  /** The environment picked on the new-session screen, one holding this
+   *  repository: checked by its route (app/api/projects/[id]/workspaces),
+   *  which passes it on as ServerSessionOptions.environmentId. None, the
+   *  repository's own. */
+  environmentId?: unknown;
   /** The id the screen made for it (a UUID), so its page opens at once, on
    *  the session as the screen holds it, while this request is answered
    *  (hooks/use-create-session.ts). The database's own when not given. */
