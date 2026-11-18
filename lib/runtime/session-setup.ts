@@ -21,6 +21,7 @@ import {
   AGENT_FEATURE_GITLAB_CREDENTIAL,
   AGENT_FEATURE_INSTRUCTIONS,
   AGENT_FEATURE_SKILLS,
+  AGENT_FEATURE_SUBAGENTS,
   AGENT_FEATURE_WARM_HOOKS,
   type AgentName,
   type SetAgentConfigRequest,
@@ -32,6 +33,7 @@ import {
 } from "@/lib/runtime/agent-protocol";
 import { cachedFeatures, requireFeature, type FeatureClient } from "@/lib/runtime/box-features";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
+import type { Subagent } from "@/lib/session/session-overrides";
 
 export type SetupClient = FeatureClient & {
   setEnvironment(req: SetEnvironmentRequest): Promise<unknown>;
@@ -56,6 +58,9 @@ export type SessionSetup = {
   gitlab?: boolean;
   /** The coding agent the session runs; Claude where not said. */
   agent?: AgentName;
+  /** The session's own subagents (lib/session/session-overrides.ts), by
+   *  name: Claude's alone, Codex has none. */
+  subagents?: Record<string, Subagent>;
   /** A signed download URL for the setup's archive. */
   downloadUrl(path: string): Promise<string>;
 };
@@ -138,7 +143,11 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
     if (hooks.warm) req.warmHook = hooks.warm;
     if (hooks.start) req.startHook = hooks.start;
   }
-  if (Object.keys(req.env).length === 0 && !req.files && !req.setup && !req.instructions && !req.warmHook && !req.startHook) {
+  const subagents = setup.subagents ?? {};
+  if (setup.agent !== "codex" && Object.keys(subagents).length > 0 && (await supports(capabilities, AGENT_FEATURE_SUBAGENTS, "give Claude the session's subagents"))) {
+    req.subagents = subagents;
+  }
+  if (Object.keys(req.env).length === 0 && !req.files && !req.setup && !req.instructions && !req.warmHook && !req.startHook && !req.subagents) {
     return;
   }
   if (await supports(capabilities, AGENT_FEATURE_ENVIRONMENT, "take a project's environment")) {

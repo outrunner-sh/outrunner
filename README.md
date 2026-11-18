@@ -113,7 +113,8 @@ Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-Outrunner's original source code is available under the [MIT License](LICENSE).
+Outrunner's original source code is copyright (c) 2026 Outrunner, Inc. and
+available under the [MIT License](LICENSE).
 You can use, modify, self-host, and redistribute it. Third-party dependencies
 and bundled assets keep their own licenses; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The MIT license does not

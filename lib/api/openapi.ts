@@ -7,6 +7,8 @@
  * agents to find them by.
  */
 
+import { OPERATION_SCHEMAS, SCHEMAS } from "@/lib/api/openapi-schemas";
+
 export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export type ApiOperation = {
@@ -36,10 +38,28 @@ export const API_OPERATIONS: ApiOperation[] = [
   { method: "GET", path: "/usage", summary: "The org's cloud usage and its controls", tag: "Org" },
   { method: "GET", path: "/models", summary: "The models the key's maker can start a session on, with their efforts", tag: "Account" },
 
+  { method: "GET", path: "/repositories", summary: "The org's repositories you may start agents on, as Cursor's API lists them", tag: "Projects" },
   { method: "GET", path: "/projects", summary: "The org's repositories the key's maker may start sessions on", tag: "Projects", query: PAGE },
-  { method: "GET", path: "/environments", summary: "The org's projects", tag: "Projects", query: PAGE },
+  { method: "GET", path: "/environments", summary: "The org's projects", tag: "Projects", query: [...PAGE, "limit", "cursor", "query", "owner", "named", "repo"] },
   { method: "GET", path: "/environments/{id}", summary: "A project in full", tag: "Projects" },
   { method: "PATCH", path: "/environments/{id}", summary: "Change a project's name, description, instructions, scripts or hooks (instructions, scripts and hooks: org keys only)", tag: "Projects", body: "json" },
+  { method: "POST", path: "/environments", summary: "Make a project of some of the org's repositories (`name`, `repos` or `project_ids`, Cursor's `environmentJson`)", tag: "Projects", body: "json" },
+  { method: "DELETE", path: "/environments/{id}", summary: "Delete (archive) a project someone made", tag: "Projects", orgKey: true },
+  { method: "GET", path: "/environments/{id}/history", summary: "A project's changes, newest first", tag: "Projects", query: ["limit", "cursor"] },
+  { method: "GET", path: "/environments/{id}/builds", summary: "A project's build: its ready boxes, and how its warm hook went", tag: "Projects", query: ["status"] },
+  { method: "POST", path: "/environments/{id}/builds", summary: "Make a project's ready boxes again", tag: "Projects", body: "json" },
+  { method: "GET", path: "/environments/{id}/builds/active", summary: "A project's current build", tag: "Projects" },
+  { method: "GET", path: "/environments/{id}/builds/{buildId}", summary: "One build of a project", tag: "Projects" },
+  { method: "GET", path: "/environments/{id}/secrets", summary: "A project's variables, by name", tag: "Secrets" },
+  { method: "PUT", path: "/environments/{id}/secrets/{name}", summary: "Set one of a project's variables", tag: "Secrets", body: "json", orgKey: true },
+  { method: "DELETE", path: "/environments/{id}/secrets/{name}", summary: "Remove one of a project's variables", tag: "Secrets", orgKey: true },
+  { method: "GET", path: "/secrets", summary: "The org's secrets, yours, and a project's, by name", tag: "Secrets", query: ["scope", "environmentId", "name", "repo", "limit", "cursor"] },
+  { method: "GET", path: "/team/secrets", summary: "The org's secrets, which every member's sessions get", tag: "Secrets", query: ["limit", "cursor"] },
+  { method: "PUT", path: "/team/secrets/{name}", summary: "Set one of the org's secrets", tag: "Secrets", body: "json", orgKey: true },
+  { method: "DELETE", path: "/team/secrets/{name}", summary: "Remove one of the org's secrets", tag: "Secrets", orgKey: true },
+  { method: "GET", path: "/me/secrets", summary: "Your own secrets, which your sessions get in any org", tag: "Secrets", query: ["limit", "cursor"] },
+  { method: "PUT", path: "/me/secrets/{name}", summary: "Set one of your own secrets", tag: "Secrets", body: "json" },
+  { method: "DELETE", path: "/me/secrets/{name}", summary: "Remove one of your own secrets", tag: "Secrets" },
   { method: "PATCH", path: "/environments/{id}/secrets", summary: "Set and remove a project's variables and files (write-only)", tag: "Projects", body: "json", orgKey: true },
   { method: "POST", path: "/environments/{id}/repos", summary: "Add a repository to a project", tag: "Projects", body: "json", orgKey: true },
   { method: "DELETE", path: "/environments/{id}/repos/{projectId}", summary: "Take a repository out of a project", tag: "Projects", orgKey: true },
@@ -89,7 +109,30 @@ export const API_OPERATIONS: ApiOperation[] = [
   { method: "PATCH", path: "/workspaces/{id}/previews/{previewId}", summary: "Change a preview link", tag: "Previews", body: "json" },
   { method: "DELETE", path: "/workspaces/{id}/previews/{previewId}", summary: "Take a preview link down", tag: "Previews" },
 
-  { method: "GET", path: "/automations", summary: "The org's automations", tag: "Automations", query: PAGE },
+  { method: "GET", path: "/agents", summary: "Your sessions, as Cursor's API lists agents", tag: "Cursor-compatible agents", query: ["limit", "cursor", "prUrl", "includeArchived"] },
+  { method: "POST", path: "/agents", summary: "Start a session from Cursor's create request (prompt.text, model.id, repos[])", tag: "Cursor-compatible agents", body: "json" },
+  { method: "GET", path: "/agents/{id}", summary: "An agent, as Cursor's API answers it", tag: "Cursor-compatible agents" },
+  { method: "DELETE", path: "/agents/{id}", summary: "Delete an agent's session for good", tag: "Cursor-compatible agents" },
+  { method: "POST", path: "/agents/{id}/archive", summary: "Archive an agent's session", tag: "Cursor-compatible agents" },
+  { method: "POST", path: "/agents/{id}/unarchive", summary: "Restore an agent's archived session", tag: "Cursor-compatible agents" },
+  { method: "GET", path: "/agents/{id}/stream", summary: "An agent's events across its runs, over SSE, in Cursor's words", tag: "Cursor-compatible agents", query: ["lastEventId"] },
+  { method: "GET", path: "/agents/{id}/usage", summary: "The tokens an agent spent, in all and by run", tag: "Cursor-compatible agents", query: ["runId"] },
+  { method: "GET", path: "/agents/{id}/artifacts", summary: "The screenshots and recordings an agent uploaded", tag: "Cursor-compatible agents" },
+  { method: "GET", path: "/agents/{id}/artifacts/download", summary: "A link to one artifact's bytes, for 15 minutes", tag: "Cursor-compatible agents", query: ["path"] },
+  { method: "GET", path: "/agents/{id}/runs", summary: "An agent's runs, newest first", tag: "Cursor-compatible agents", query: ["limit", "cursor"] },
+  { method: "POST", path: "/agents/{id}/runs", summary: "A follow-up in the agent's thread (or `delivery: steer`)", tag: "Cursor-compatible agents", body: "json" },
+  { method: "GET", path: "/agents/{id}/runs/{runId}", summary: "One run: its status, result and branch", tag: "Cursor-compatible agents" },
+  { method: "POST", path: "/agents/{id}/runs/{runId}/cancel", summary: "Stop the run going on", tag: "Cursor-compatible agents" },
+  { method: "GET", path: "/agents/{id}/runs/{runId}/stream", summary: "One run's events over SSE, in Cursor's words, ending with its result", tag: "Cursor-compatible agents", query: ["lastEventId"] },
+  { method: "GET", path: "/missions", summary: "Your Missions, as Cursor's API lists projects", tag: "Cursor-compatible projects", query: ["limit", "cursor", "includeArchived"] },
+  { method: "POST", path: "/projects", summary: "Start a Mission from Cursor's project create request (prompt, model, repos[] or env.name, appearance)", tag: "Cursor-compatible projects", body: "json" },
+  { method: "GET", path: "/projects/{id}", summary: "A project (a Mission), as Cursor's API answers it", tag: "Cursor-compatible projects" },
+  { method: "PATCH", path: "/projects/{id}", summary: "Rename a project, or give it another icon", tag: "Cursor-compatible projects", body: "json" },
+  { method: "GET", path: "/projects/{id}/agents", summary: "A project's agents: its coordinator, then its Ships", tag: "Cursor-compatible projects", query: ["limit", "cursor"] },
+  { method: "POST", path: "/projects/{id}/archive", summary: "Archive a project: the Mission with its Ships", tag: "Cursor-compatible projects" },
+  { method: "POST", path: "/projects/{id}/unarchive", summary: "Restore a project's Mission (its Ships stay archived)", tag: "Cursor-compatible projects" },
+
+  { method: "GET", path: "/automations", summary: "The org's automations", tag: "Automations", query: [...PAGE, "limit", "cursor"] },
   { method: "POST", path: "/automations", summary: "Make an automation", tag: "Automations", body: "json", admin: true },
   { method: "GET", path: "/automations/runs", summary: "The org's 50 most recent automation runs", tag: "Automations", query: ["automation_id", ...PAGE] },
   { method: "GET", path: "/automations/{id}", summary: "One automation", tag: "Automations" },
@@ -124,6 +167,16 @@ export function openApiSpec(base: string): Record<string, unknown> {
   for (const op of API_OPERATIONS) {
     const params = [...op.path.matchAll(/\{(\w+)\}/g)].map(([, name]) => ({ name, in: "path", required: true, schema: { type: "string" } }));
     const query = (op.query ?? []).map((name) => ({ name, in: "query", required: false, schema: { type: "string" } }));
+    const described = OPERATION_SCHEMAS[`${op.method} ${op.path}`];
+    const bodySchema = described?.request ? { $ref: `#/components/schemas/${described.request}` } : { type: "object" };
+    const answers = described
+      ? Object.fromEntries(
+          Object.entries(described.responses).map(([status, name]) => [
+            status,
+            { description: name, content: { "application/json": { schema: { $ref: `#/components/schemas/${name}` } } } },
+          ]),
+        )
+      : { "2XX": { description: "Done: see docs/api.md for its shape", content: { "application/json": { schema: { type: "object" } } } } };
     paths[op.path] ??= {};
     paths[op.path][op.method.toLowerCase()] = {
       operationId: operationId(op),
@@ -140,11 +193,11 @@ export function openApiSpec(base: string): Record<string, unknown> {
           content:
             op.body === "multipart"
               ? { "multipart/form-data": { schema: { type: "object", properties: { file: { type: "string", format: "binary" } }, required: ["file"] } } }
-              : { "application/json": { schema: { type: "object" } } },
+              : { "application/json": { schema: bodySchema } },
         },
       }),
       responses: {
-        "2XX": { description: "Done: see docs/api.md for its shape", content: { "application/json": { schema: { type: "object" } } } },
+        ...answers,
         "4XX": ERROR_RESPONSE,
         "5XX": ERROR_RESPONSE,
       },
@@ -165,6 +218,7 @@ export function openApiSpec(base: string): Record<string, unknown> {
         basic: { type: "http", scheme: "basic", description: "The same key as the user name, with no password" },
       },
       schemas: {
+        ...SCHEMAS,
         Error: {
           type: "object",
           properties: {

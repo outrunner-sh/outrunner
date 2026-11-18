@@ -2,6 +2,8 @@
  * What a server session (lib/session/server-session.ts) is asked to start
  * on: Outrunner's models, or, asked to (`onHarness`), the user's own default
  * model and coding agent, falling back on Outrunner's when that can't start.
+ * A model it names for itself (`choice`: an automation's own) comes first,
+ * falling back on those when it can't start.
  */
 
 import { OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
@@ -18,6 +20,42 @@ export function onOutrunner(start: Pick<ServerSessionStart, "model" | "prompt" |
  *  as their new session with none picked starts on. */
 export function onOwnDefault(start: Pick<ServerSessionStart, "prompt" | "branch">): SessionRequest {
   return { prompt: start.prompt, ...(start.branch && { branch: start.branch }) };
+}
+
+/** The model it names, as the new-session screen would ask for it: on
+ *  whoever serves it (Outrunner's allowance, the user's Claude or Codex, a
+ *  key of theirs), the effort with it. */
+export function onChoice(start: Pick<ServerSessionStart, "choice" | "prompt" | "branch">): SessionRequest {
+  const choice = start.choice!;
+  return {
+    provider: choice.provider,
+    model: choice.id,
+    ...(choice.effort && { effort: choice.effort }),
+    prompt: start.prompt,
+    ...(start.branch && { branch: start.branch }),
+  };
+}
+
+/**
+ * Start it on the model it names, when it names one: refused (not on the
+ * user's menu, an effort it doesn't take, signed out of its account), it
+ * starts as it would have with none (startOnChosen), its `fellBack` saying
+ * why. One made is that session, however it went.
+ */
+export async function startOnChoice(
+  start: Pick<ServerSessionStart, "choice" | "model" | "prompt" | "branch" | "onHarness">,
+  attempt: (request: SessionRequest) => Promise<ServerSessionResult>,
+): Promise<ServerSessionResult> {
+  if (!start.choice) return startOnChosen(start, attempt);
+  const chosen = await attempt(onChoice(start));
+  if (chosen.status !== "refused") return chosen;
+  const instead = await startOnChosen(start, attempt);
+  if (instead.status === "refused") return instead;
+  const why = `It couldn't start on ${start.choice.id}: ${chosen.errorMessage}`;
+  const then = "fellBack" in instead && instead.fellBack
+    ? instead.fellBack
+    : `Ran on ${start.onHarness ? "your default model" : "Outrunner's models"} instead.`;
+  return { ...instead, fellBack: `${why} ${then}` };
 }
 
 /**

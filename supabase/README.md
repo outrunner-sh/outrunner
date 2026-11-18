@@ -8,8 +8,7 @@ custom domain, use that domain everywhere in place of
 survives moving the project.
 
 The hosted outrunner.sh deployment uses project `vidulqzirsthlshybwat` (Mumbai,
-`ap-south-1`; moved from Tokyo `butbnitdpiehgwqggowr` in 2026-11 to sit next to
-the app host), served at its custom domain `https://auth.outrunner.sh` (Supabase
+`ap-south-1`, next to the app host), served at its custom domain `https://auth.outrunner.sh` (Supabase
 Custom Domain add-on; a CNAME in the outrunner.sh zone).
 
 ## Applying migrations

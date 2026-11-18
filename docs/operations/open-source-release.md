@@ -5,8 +5,9 @@ builds. Contributor setup is in [development](../development.md).
 
 ## Source and history
 
-- Confirm that the copyright holders have authorized MIT distribution of the
-  code being published, including earlier contributions.
+- Confirm that Outrunner, Inc., the copyright holder named in `LICENSE`, has
+  authorized MIT distribution of the code being published, including earlier
+  contributions.
 - Review tracked files **and Git history** for credentials, personal data,
   internal transcripts, and files that cannot be redistributed. A deletion in
   the latest commit does not remove earlier copies. Rotate any confirmed

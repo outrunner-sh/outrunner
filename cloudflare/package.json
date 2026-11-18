@@ -15,6 +15,7 @@
     "typescript": "^5.9.3",
     "wrangler": "^4"
   },
+  "author": "Outrunner, Inc.",
   "license": "MIT",
   "pnpm": {
     "overrides": {

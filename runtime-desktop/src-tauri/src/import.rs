@@ -31,15 +31,12 @@ const UPLOAD_PATH: &str = "/storage/v1/object/upload/sign/workspace-snapshots/ar
 /// `*.supabase.co`: anyone can create a Supabase project, so a suffix match
 /// would let a page that got into the window upload the user's code to a
 /// bucket of their own. `auth.outrunner.sh` is the project's own domain and
-/// stays put if the project moves again; the other two are the Mumbai
-/// project's Supabase address and the Tokyo project's, which installed apps
-/// used before the move. Drop Tokyo's once those apps have updated.
-/// `OUTRUNNER_STORAGE_HOST` replaces them, for another project (a staging
-/// one, or a developer's).
-const STORAGE_HOSTS: [&str; 3] = [
+/// stays put if the project moves again; the other is the Mumbai project's
+/// Supabase address. `OUTRUNNER_STORAGE_HOST` replaces them, for another
+/// project (a staging one, or a developer's).
+const STORAGE_HOSTS: [&str; 2] = [
     "auth.outrunner.sh",                // the project's custom domain
     "vidulqzirsthlshybwat.supabase.co", // Mumbai (ap-south-1)
-    "butbnitdpiehgwqggowr.supabase.co", // Tokyo, before the move
 ];
 
 /// The hosts uploads may go to.
@@ -355,7 +352,7 @@ mod tests {
         assert!(!allowed_upload_to(ok, &ours), "another project's bucket");
         assert!(!allowed_upload_to(ok, &[]), "no host configured");
         assert!(!allowed_upload_to(ok, &[String::new()]), "a blank host");
-        // During the move both projects take uploads, and only they do.
+        // Each of the project's hosts takes uploads, and only they do.
         for host in STORAGE_HOSTS {
             assert!(allowed_upload_to(&ok.replace("abc.supabase.co", host), &ours), "{host}");
         }

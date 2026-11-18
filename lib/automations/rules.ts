@@ -11,6 +11,7 @@ import {
   SCHEDULES_MAX,
 } from "@/lib/automations/schedule";
 import { isUuid } from "@/lib/ids";
+import { type Effort, effortsFor, isEffort, type ModelProvider, requestedModel } from "@/lib/runtime/session-models";
 
 export const AUTOMATION_TRIGGERS = [
   "pull_request.opened",
@@ -94,6 +95,11 @@ export function canCoverNewRepos(triggers: readonly AutomationTrigger[]): boolea
 
 export const COVER_NEW_REPOS_TRIGGERS_ERROR = "An automation that adds new repositories runs on GitHub events only: untick Schedule and Webhook, or Add new repositories.";
 
+/** What an automation's runs start on, as a session's request names it: a
+ *  provider, its model, and the effort picked with it (null, the model's
+ *  own). An automation with none runs as the org set its automations to. */
+export type AutomationModel = { provider: ModelProvider; id: string; effort: Effort | null };
+
 /** A repository an automation can run on: one of the org's projects. */
 export type AutomationRepo = { projectId: string; fullName: string };
 
@@ -122,6 +128,8 @@ export type Automation = {
   /** Each GitHub repository connected to the org from now on joins its
    *  repositories (cover_new_project). */
   coverNewRepos: boolean;
+  /** Its own model; null, the org's choice for its automations. */
+  model: AutomationModel | null;
   /** Done: archived, and off. */
   archived: boolean;
   /** The times it has run against its limit; null with none. */
@@ -148,6 +156,7 @@ export type AutomationInput = {
   debounceSeconds: number;
   sessionMode: SessionMode;
   coverNewRepos: boolean;
+  model: AutomationModel | null;
   /** A change only: archive it (done), or bring it back. */
   archived?: boolean;
 };
@@ -261,6 +270,11 @@ export function parseAutomationInput(
   if (value.coverNewRepos && value.triggers && !canCoverNewRepos(value.triggers)) {
     return { ok: false, error: COVER_NEW_REPOS_TRIGGERS_ERROR };
   }
+  if (full || b.model !== undefined) {
+    const model = parseModel(b.model);
+    if (typeof model === "string") return { ok: false, error: model };
+    value.model = model;
+  }
   if (!full && b.archived !== undefined) {
     if (typeof b.archived !== "boolean") return { ok: false, error: "Archived is on or off." };
     value.archived = b.archived;
@@ -290,6 +304,32 @@ export function parseAutomationInput(
     value.enabled = b.enabled ?? true;
   }
   return { ok: true, value };
+}
+
+/**
+ * An automation's model as it's sent: `{ provider, id, effort }`, the
+ * provider and effort optional (as a session's request takes them: no
+ * provider is Claude's for its aliases, else Outrunner's). Null or absent
+ * clears it. Checked as a session's choice is (modelChoice); whether it's
+ * on the runner's menu is the run's to find out. An effort is one of the
+ * model's, where those are known: Codex's depend on the account.
+ */
+export function parseModel(value: unknown): AutomationModel | null | string {
+  if (value === undefined || value === null) return null;
+  const error = "`model` is `{ provider, id, effort }`, a model from GET /api/v1/models.";
+  if (typeof value !== "object" || Array.isArray(value)) return error;
+  const m = value as Record<string, unknown>;
+  const id = typeof m.id === "string" ? m.id.trim() : m.id;
+  const provider = m.provider === null || m.provider === "" ? undefined : m.provider;
+  if (typeof id !== "string" || !id) return error;
+  const choice = requestedModel({ provider, model: id });
+  if (!choice) return "That model isn't one a session can run: pick one from GET /api/v1/models.";
+  const effort = m.effort === undefined || m.effort === null || m.effort === "" ? null : m.effort;
+  if (effort !== null && !isEffort(effort)) return "An effort is low, medium, high, xhigh or max.";
+  if (effort !== null && choice.provider !== "codex" && !effortsFor(choice).includes(effort)) {
+    return "That model doesn't take an effort of its own: leave it out.";
+  }
+  return { provider: choice.provider, id: choice.id, effort };
 }
 
 /** A list of names, each matching `pattern`, trimmed and deduplicated (case
