@@ -24,14 +24,12 @@
     },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJGNUVGMkYyMEVGRUUyMEEKUldRSzR2NE84dkplTCtGYkJLcTNWRjlLSlpaVlZXdXZ2cUtDenpFZ2Z0a1pDMVNTZEduYUVHeSsK",
-      "endpoints": [
-        "https://downloads.outrunner.sh/outrunner/latest.json",
-        "https://downloads.neev.ai/outrunner/latest.json"
-      ]
+      "endpoints": ["https://downloads.outrunner.sh/outrunner/latest.json"]
     }
   },
   "bundle": {
     "active": true,
+    "copyright": "Copyright (c) 2026 Outrunner, Inc.",
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -43,6 +41,12 @@
     "externalBin": [
       "binaries/runtime-agent",
       "binaries/tmux"
-    ]
+    ],
+    "resources": {
+      "../../LICENSE": "licenses/LICENSE",
+      "../../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
+      "../../licenses/": "licenses/licenses/",
+      "../../public/fonts/OFL.txt": "licenses/public/fonts/OFL.txt"
+    }
   }
 }

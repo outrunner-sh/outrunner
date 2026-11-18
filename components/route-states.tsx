@@ -87,7 +87,7 @@ export function RouteMessage({
 
 export const HOME_ACTION: NoticeAction = { label: "Back to home", href: "/" };
 
-export function HomeLink() {
+function HomeLink() {
   return (
     <Link href="/" className="route-state-button">
       Back to home

@@ -18,7 +18,7 @@ concurrency:
 jobs:
   mirror:
     # Guard so a mirrored copy never runs this against itself.
-    if: github.repository == 'neevai-labs/outrunner'
+    if: github.repository == 'outrunner-sh/outrunner'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Mirror outrunner -> immadsahin/outrunner

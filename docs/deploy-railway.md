@@ -1,112 +1,87 @@
-# Deploying Runtime to Railway
+# Deploy Outrunner to Railway
 
-Runtime's control plane (this Next.js app) runs well on Railway. Supabase (auth +
-Postgres + Storage) and Daytona (the Runtime Computers) are managed services, so
-Railway is the only thing you deploy.
+Railway hosts the control plane. Supabase supplies authentication, PostgreSQL,
+and object storage; a sandbox provider supplies cloud computers. Use accounts
+and credentials you control, and complete the [Supabase setup](../supabase/README.md)
+before deploying.
 
-Railway is a good fit: it runs a **long-lived container** (`next start`), not
-ephemeral serverless functions. That means no per-request duration cap to work
-around, and provisioning (boot a Daytona box + agent, ~15s, plus a repo mirror)
-just runs to completion inside the request.
+## Build and run
 
-The live terminal never touches Railway anyway: the browser opens a WebSocket
-**directly to the Daytona signed preview URL** (`docs/architecture/runtime-v1-plan.md`,
-decision 1A).
+Create a Railway service from your checkout and select the repository's
+`Dockerfile`. It builds the Linux runtime-agent from Go source, builds Next.js,
+and runs `server.ts` under `tini`. Keep that custom server: it handles preview
+routing and WebSocket relays around Next.js.
 
-## Build & run
+The image listens on port 8080 by default and respects Railway's injected
+`PORT`. Add an application domain, set `RUNTIME_BASE_URL` to that exact HTTPS
+origin, and configure `/api/health` as the health check.
 
-Railway (Nixpacks) auto-detects the Next.js app. The scripts already do the right
-things:
+The agent binary is generated during the Docker build and copied to
+`bin/runtime-agent-linux-amd64` in the image. Rebuild the image when agent source
+changes. Build artifacts belong outside Git; no committed agent binary is needed.
+For a non-Docker development build, use `scripts/build-agent.sh` as described
+in [development](development.md#cloud-sessions).
 
-- Build: `next build`
-- Start: `pnpm start` (server.ts: Next plus the Neev WebSocket relay) — already binds Railway's injected `$PORT`.
+## Configuration
 
-Set the package manager if Nixpacks guesses wrong (this repo uses **pnpm** — a
-`pnpm-lock.yaml` is present). No Dockerfile is needed. Add a **health check** on
-`/api/health` in the Railway service settings.
+Set these in Railway's service variables:
 
-## The agent binary (the one thing you must not miss)
-
-On each provision the Daytona provider reads the cross-compiled `runtime-agent`
-binary and uploads it to the box (`lib/runtime/daytona-provider.ts` →
-`lib/runtime/daytona/deploy.ts`). The default output path (`.context/build/…`) is
-gitignored, so a tracked copy is committed at **`bin/runtime-agent-linux-amd64`**
-and pointed at via `RUNTIME_AGENT_BINARY_PATH`. Under `next start` the whole repo
-is on disk, so the file is read directly — no bundling tricks needed (unlike a
-Vercel/standalone build).
-
-**Rebuild the committed binary whenever `runtime-agent/**` changes:**
-
-```bash
-bash scripts/build-agent.sh "$(pwd)/bin/runtime-agent-linux-amd64"
-git add bin/runtime-agent-linux-amd64
-```
-
-Requires a local Go toolchain (cross-compiles `GOOS=linux GOARCH=amd64`).
-
-> Long-term: bake the agent into the `runtime-computer-v2` image and delete the
-> committed binary entirely — see the pt2 spike report.
-
-## Environment variables (Railway → service → Variables)
-
-| Var | Value |
+| Variable | Value |
 | --- | --- |
-| `RUNTIME_PROVIDER` | `daytona` |
-| `RUNTIME_BASE_URL` | `https://<your-railway-domain>` (gates same-origin CSRF checks) |
-| `RUNTIME_BILLING` | `off` (everyone on Free) or `stripe`; required in production, or the server won't start |
-| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | with `RUNTIME_BILLING=stripe` (see deploy-cloudflare.md, Billing) |
-| `RUNTIME_OVERAGE_BILLING` | `on` to bill usage past a plan's included amount (docs/billing-overage.md); off by default |
-| `RUNTIME_OWNER_GITHUB_LOGIN` | the single GitHub login allowed to sign in |
-| `RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN` | optional comma-separated GitHub logins exempt from plan limits only; blank means none |
-| `NEXT_PUBLIC_SUPABASE_URL` | from Supabase |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | from Supabase |
-| `SUPABASE_SERVICE_ROLE_KEY` | from Supabase (server-only) |
-| `GITHUB_PAT` | fine-grained PAT owned by the owner login; Metadata:R, Contents:R/W, Pull requests:R/W |
-| `DAYTONA_API_KEY` | from Daytona |
-| `DAYTONA_SNAPSHOT` | `runtime-computer-v1` |
-| `RUNTIME_AGENT_BINARY_PATH` | `bin/runtime-agent-linux-amd64` |
-| `ANTHROPIC_API_KEY` **or** `CLAUDE_CODE_OAUTH_TOKEN` | exactly one |
+| `RUNTIME_PROVIDER` | `daytona` or another configured compute provider |
+| `RUNTIME_BASE_URL` | `https://<your-app-domain>` |
+| `RUNTIME_BILLING` | `off` for no Stripe billing, or `stripe` with Stripe configured; required in production |
+| `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project's API URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Its publishable or legacy anon key |
+| `NEXT_PUBLIC_CODEX_CLI_VERSION` | Supported CLI version; the hosted deployment's pin is in `cloudflare/wrangler.jsonc` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only Supabase service-role/secret key |
+| `CREDENTIALS_ENCRYPTION_KEY` | Generate with `openssl rand -base64 32`; keep stable and backed up |
+| `DAYTONA_API_KEY` | Required when the deployment uses Daytona |
+| `RUNTIME_OWNER_GITHUB_LOGIN` | Optional comma-separated sign-in allowlist; blank allows open sign-up |
+| `BILLING_CRON_SECRET` | Random bearer token for scheduled reconciliation and ticks |
 
-Optional: `DAYTONA_API_URL`, `DAYTONA_TARGET`. Railway injects `PORT` itself —
-don't set it.
+The Dockerfile consumes `NEXT_PUBLIC_*` as build arguments. Ensure Railway
+supplies them during the build as well as at runtime: Next.js embeds them in
+the browser bundle, so changing them requires a rebuild. Keep the Dockerfile's
+`RUNTIME_AGENT_BINARY_PATH=bin/runtime-agent-linux-amd64` setting.
 
-With Linear (docs/linear-app.md) or Jira (docs/jira-app.md) connected, an external cron has to call `POST /api/integrations/trackers/tick` with
-`BILLING_CRON_SECRET` as a bearer token.
+Optional Daytona settings are `DAYTONA_API_URL` and `DAYTONA_TARGET`. Other
+providers, email, integrations, and Stripe have their own variables in
+[`.env.example`](../.env.example). When enabling Stripe, use the billing and
+webhook setup in [the Cloudflare guide](deploy-cloudflare.md).
 
-## Auth callback wiring
+Users connect GitHub and their coding-agent credentials in Settings. Shared
+organization repositories need your own [GitHub App](github-app.md). Personal
+credentials are stored encrypted per user; do not configure a shared
+`GITHUB_PAT`, `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN` on the control plane.
 
-GitHub OAuth runs through Supabase, so:
+## Authentication and background work
 
-1. **Supabase → Authentication → URL Configuration:** add
-   `https://<your-railway-domain>` to the Site URL / redirect allowlist.
-2. **GitHub OAuth app:** callback stays Supabase's `.../auth/v1/callback`; ensure
-   it's authorized for any SSO orgs the `GITHUB_PAT` needs.
+In Supabase's URL Configuration, set the Site URL to the app origin and allow
+`https://<your-app-domain>/auth/callback`. The GitHub/Google provider's OAuth
+callback remains your Supabase project's `/auth/v1/callback`, as described in
+the [auth setup](../supabase/README.md#auth-configuration-dashboard-one-time).
 
-## Note on `maxDuration` and `outputFileTracingIncludes`
+Railway does not run the Cloudflare worker's cron. Configure an external
+scheduler for the reconciliation and tick endpoints used by your deployment;
+use `scheduled()` in [`cloudflare/worker.ts`](../cloudflare/worker.ts) as the
+reference for paths and frequency. Requests carry
+`Authorization: Bearer <BILLING_CRON_SECRET>`. Reconciliation is needed to meter
+usage and pause idle boxes; the other ticks drive sessions, automations,
+integrations, and notifications.
 
-Both are Vercel-serverless concepts and are **inert on Railway**:
+## Verify a deployment
 
-- The `maxDuration = 60` exports on the provisioning routes only bind a wall-clock
-  on serverless hosts; on a long-running `next start` server they do nothing.
-- `outputFileTracingIncludes` in `next.config.ts` only affects `output: 'standalone'`
-  bundles; `next start` serves the full build, so the binary is already present.
+Apply pending migrations before deploying code that needs them. For an older
+installation, follow the [migration collision upgrade notes](../supabase/README.md#upgrading-past-the-november-14-migration-collision).
 
-They're kept as harmless portability (a Vercel fallback still works). Remove them
-if you want a Railway-only build with no dead config.
+1. Check `/api/health`. Use the cron bearer token for the authenticated health
+   report; see [observability](operations/observability.md).
+2. Sign in, connect GitHub and a coding agent, and create a session.
+3. Confirm provisioning, the conversation stream, and the live terminal work.
+4. Close and reopen the session and confirm it resumes.
+5. Check that scheduled reconciliation is running and idle compute is paused.
 
-## Pre-deploy checklist
-
-- [ ] `bin/runtime-agent-linux-amd64` is committed and current with `runtime-agent/`.
-- [ ] All env vars above are set on the Railway service.
-- [ ] Supabase migrations applied (`supabase/migrations/*.sql` in order).
-- [ ] Railway domain added to Supabase redirect allowlist.
-- [ ] Health check set to `/api/health`.
-- [ ] `CLAUDE_CODE_OAUTH_TOKEN` rotated (the earlier one was shared — treat as exposed).
-
-## First-deploy smoke test
-
-1. Sign in as `RUNTIME_OWNER_GITHUB_LOGIN`.
-2. Create a workspace on a project → a Runtime Computer provisions (first one is
-   the slow ~15s path).
-3. Open the workspace → the terminal WS connects directly to Daytona.
-4. Close the tab, reopen → the session resumes (Claude kept running).
+Do not deploy the `local` provider for untrusted users. Cloud agents must be
+able to reach `RUNTIME_BASE_URL`; preview domains need a separate site from
+the control plane, as described in [previews](previews.md).
