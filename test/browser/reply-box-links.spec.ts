@@ -27,3 +27,26 @@ test("a reply's link to a file on the box downloads it, and says why when it can
   // Neither click left the session for a page the app doesn't have.
   await expect(page).toHaveURL(/\/workspaces\/preview-0$/);
 });
+
+test("a reply's localhost link opens the page through the port's preview", async ({ page }) => {
+  await stubSelectionApis(page, false, undefined, [{
+    t: "message", uuid: "server", parentUuid: null, role: "assistant", timestamp: new Date().toISOString(),
+    content: [{ type: "text", text: "It's up at [http://localhost:3210/icons/slack.png](http://localhost:3210/icons/slack.png)." }],
+  }]);
+  await page.route("**/api/workspaces/*/changes", (route) => route.fulfill({ json: { files: [] } }));
+  let asked = "";
+  await page.route("**/api/workspaces/*/ports/*", (route) => {
+    asked = new URL(route.request().url()).pathname;
+    return route.fulfill({ json: { url: "https://3210-tok.preview.invalid/" } });
+  });
+  await page.context().route("https://3210-tok.preview.invalid/**", (route) => route.fulfill({ contentType: "text/html", body: "<h1>slack.png</h1>" }));
+  await page.goto("/workspaces/preview-0");
+  await expect(page.getByTestId("fixture-ready")).toHaveAttribute("data-ready", "true", { timeout: 20000 });
+
+  const popup = page.waitForEvent("popup");
+  await page.getByRole("link", { name: "http://localhost:3210/icons/slack.png", exact: true }).click();
+  const tab = await popup;
+  await expect.poll(() => tab.url()).toBe("https://3210-tok.preview.invalid/icons/slack.png");
+  expect(asked).toBe("/api/workspaces/preview-0/ports/3210");
+  await expect(page).toHaveURL(/\/workspaces\/preview-0$/);
+});

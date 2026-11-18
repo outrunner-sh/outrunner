@@ -11,6 +11,7 @@ import ReactMarkdown, {
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 
+import { openBoxPort } from "@/lib/client/box-port";
 import { saveFile } from "@/lib/client/save-file";
 import { downloadName } from "@/lib/http/content-disposition";
 import { boxFileDownloadUrl } from "@/lib/runtime/box-file";
@@ -98,6 +99,12 @@ function MarkdownLink({ node, ...props }: ComponentProps<"a"> & ExtraProps) {
           <BoxFileLink {...props} workspaceId={link.workspaceId} path={link.path} />
         </InLink>
       );
+    case "box-server":
+      return (
+        <InLink value>
+          <BoxServerLink {...props} workspaceId={link.workspaceId} port={link.port} page={link.page} />
+        </InLink>
+      );
     case "no-box":
       return (
         <span className={props.className} title={link.path}>
@@ -119,10 +126,8 @@ function isModifiedClick(event: React.MouseEvent): boolean {
 
 /**
  * A reply's link to a file on the session's box: a click fetches it through
- * the download route and saves it (lib/client/save-file.ts), saying why
- * beside the link when it can't (not there, too large, the box asleep)
- * rather than saving the error as the file. A modified click is left to
- * the browser, which downloads it from the same URL.
+ * the download route and saves it (lib/client/save-file.ts), rather than
+ * saving an error (not there, too large, the box asleep) as the file.
  */
 function BoxFileLink({
   workspaceId,
@@ -131,38 +136,70 @@ function BoxFileLink({
 }: ComponentProps<"a"> & { workspaceId: string; path: string }) {
   const url = boxFileDownloadUrl(workspaceId, path);
   const name = downloadName(path);
-  const [state, setState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
-  async function download(event: React.MouseEvent<HTMLAnchorElement>) {
-    if (isModifiedClick(event)) return;
-    event.preventDefault();
-    if (state.busy) return;
-    setState({ busy: true, error: null });
+  async function download(): Promise<string | null> {
     try {
       const response = await fetch(url, { cache: "no-store" });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
-        throw new Error(typeof body?.error === "string" ? body.error : `Couldn't download ${name} (${response.status}).`);
+        return typeof body?.error === "string" ? body.error : `Couldn't download ${name} (${response.status}).`;
       }
       saveFile(await response.blob(), name);
-      setState({ busy: false, error: null });
-    } catch (error) {
-      setState({ busy: false, error: error instanceof Error ? error.message : `Couldn't download ${name}.` });
+      return null;
+    } catch {
+      return `Couldn't download ${name}. Check your connection and try again.`;
     }
+  }
+  return <ActionLink {...props} href={url} download={name} title={`Download ${path}`} action={download} />;
+}
+
+/**
+ * A reply's link to a server on the box's localhost: opened through the
+ * port's preview link, at the same page (lib/client/box-port.ts), as the
+ * user's own localhost has nothing of the box's.
+ */
+function BoxServerLink({
+  workspaceId,
+  port,
+  page,
+  ...props
+}: ComponentProps<"a"> & { workspaceId: string; port: number; page: string }) {
+  return (
+    <ActionLink
+      {...props}
+      title={`Open port ${port} of this session's box`}
+      action={() => openBoxPort(workspaceId, port, page)}
+    />
+  );
+}
+
+/**
+ * A link whose click runs `action` instead of following it (a modified
+ * click is left to the browser), busy until it's done, and saying beside
+ * the link what went wrong when it says so.
+ */
+function ActionLink({
+  action,
+  ...props
+}: ComponentProps<"a"> & { action: () => Promise<string | null> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function run(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (isModifiedClick(event)) return;
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    // Called within the click: an action may open a tab, which needs one.
+    const failed = await action();
+    setBusy(false);
+    setError(failed);
   }
   return (
     <>
-      <a
-        {...props}
-        href={url}
-        download={name}
-        title={`Download ${path}`}
-        aria-busy={state.busy || undefined}
-        className={cn(props.className, "md-file-link")}
-        onClick={download}
-      />
-      {state.error && (
+      <a {...props} aria-busy={busy || undefined} className={cn(props.className, "md-action-link")} onClick={run} />
+      {error && (
         <span className="md-link-error" role="alert">
-          {state.error}
+          {error}
         </span>
       )}
     </>
