@@ -22,7 +22,7 @@ RUN GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
     -o /out/runtime-agent-linux-amd64 ./cmd/runtime-agent
 
 # ---- base node ---------------------------------------------------------------
-FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS base
+FROM node:26-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS base
 RUN corepack enable
 WORKDIR /app
 
