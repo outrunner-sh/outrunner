@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useRouter } from "next/navigation";
 import { startTransition, useEffect } from "react";
 
@@ -12,6 +13,7 @@ export default function RouteError({ error, reset }: { error: Error & { digest?:
   const router = useRouter();
   useEffect(() => {
     console.error(error);
+    Sentry.captureException(error, { tags: { where: "route-error", digest: error.digest } });
   }, [error]);
   // reset() alone re-renders with the server's cached result; a server-side
   // failure needs the page fetched again.

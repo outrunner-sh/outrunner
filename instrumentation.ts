@@ -1,5 +1,6 @@
 /**
- * Next's startup hook: error tracking, when SENTRY_DSN is set
+ * Next's startup hook: error tracking, when SENTRY_DSN (or the browser's
+ * NEXT_PUBLIC_SENTRY_DSN) is set
  * (lib/observability/report.ts). Without it, nothing is initialised and
  * every report is a no-op.
  */
@@ -18,7 +19,7 @@ export async function register(): Promise<void> {
 /** Errors thrown by route handlers, pages and server actions, which Next
  *  otherwise only logs: reported with the route they came from. */
 export const onRequestError: Instrumentation.onRequestError = async (...args) => {
-  if (process.env.NEXT_RUNTIME !== "nodejs" || !process.env.SENTRY_DSN?.trim()) return;
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
   const Sentry = await import("@sentry/nextjs");
-  Sentry.captureRequestError(...args);
+  if (Sentry.isInitialized()) Sentry.captureRequestError(...args);
 };

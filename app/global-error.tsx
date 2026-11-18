@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import * as Sentry from "@sentry/nextjs";
+import { useEffect, useState } from "react";
 
 /**
  * The last resort, when the root layout itself fails: it replaces the whole
@@ -9,6 +10,9 @@ import { useState } from "react";
  */
 export default function GlobalError({ error }: { error: Error & { digest?: string }; reset: () => void }) {
   const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    Sentry.captureException(error, { tags: { where: "global-error", digest: error.digest } });
+  }, [error]);
   return (
     <html lang="en">
       <body

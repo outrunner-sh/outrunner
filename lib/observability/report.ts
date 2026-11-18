@@ -9,6 +9,8 @@
  */
 import * as Sentry from "@sentry/nextjs";
 
+import { baseSentryOptions, sentryEnvironment } from "./sentry-options.ts";
+
 /** Where an error came from, and whose it was when that's known. */
 export type ReportContext = {
   /** A short, stable name for the place: "after:message", "reconcile:orphans". */
@@ -43,30 +45,15 @@ export async function flushReports(timeoutMs: number): Promise<void> {
   await Sentry.flush(timeoutMs).catch(() => false);
 }
 
-/** Sentry's options for this deployment, or null when SENTRY_DSN is unset. */
+/** The server's Sentry options, or null when no DSN is set. */
 export function sentryOptions(env: Record<string, string | undefined> = process.env): Parameters<typeof Sentry.init>[0] | null {
-  const dsn = env.SENTRY_DSN?.trim();
+  // SENTRY_DSN, else the browser's own (built into the image from
+  // cloudflare/wrangler.jsonc image_vars): one project takes both halves.
+  const dsn = env.SENTRY_DSN?.trim() || env.NEXT_PUBLIC_SENTRY_DSN?.trim();
   if (!dsn) return null;
   return {
-    dsn,
-    environment: env.SENTRY_ENVIRONMENT || (env.NODE_ENV === "production" ? "production" : "development"),
     // The commit (Dockerfile OUTRUNNER_BUILD), so an event says which deploy.
-    release: env.OUTRUNNER_BUILD || undefined,
-    // Errors only: no performance tracing.
-    tracesSampleRate: 0,
-    // Nothing of a request but its method and path: its headers carry the
-    // cron's bearer secret, API keys and the Supabase session cookie, and its
-    // body a user's prompt or secrets. Who it was is the tags reportError sets.
-    dataCollection: {
-      userInfo: false,
-      cookies: false,
-      httpHeaders: false,
-      httpBodies: [],
-      urlQueryParams: false,
-      graphQL: { document: false, variables: false },
-      genAI: { inputs: false, outputs: false },
-      mcp: { inputs: false, outputs: false },
-    },
+    ...baseSentryOptions({ dsn, environment: sentryEnvironment(env.SENTRY_ENVIRONMENT, env.NODE_ENV), release: env.OUTRUNNER_BUILD }),
     // server.ts owns process-level errors (it logs, reports and, for an
     // uncaught exception, drains and exits); Sentry's own handlers would
     // report each twice and exit without draining.
