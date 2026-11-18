@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { AppFrame } from "@/components/app-frame";
 import { ServerAnswer } from "@/components/server-answer";
-import { frame, manyProjects } from "./fixtures";
+import { acmeEnvironment, frame, manyProjects } from "./fixtures";
 
 const chrome = {
   collapsed: false,
@@ -57,6 +57,9 @@ export function FixtureFrame({ children }: { children: React.ReactNode }) {
         },
       };
     }
+    if (state === "environments") {
+      return { ...frame, activeOrgId: "org-1", appData: { ...frame.appData, environments: [acmeEnvironment] } };
+    }
     if (state === "many-projects") {
       return { ...frame, activeOrgId: "org-1", appData: { ...frame.appData, projects: manyProjects } };
     }
@@ -66,7 +69,7 @@ export function FixtureFrame({ children }: { children: React.ReactNode }) {
     }
     return { ...frame, activeOrgId: "org-1" };
   }, [state]);
-  if (pathname === "/gitlab") return children;
+  if (pathname === "/gitlab" || pathname === "/setup") return children;
   if (["agent-keys", "settings", "sandbox", "desktop-signin", "web-onboarding", "desktop-ready"].includes(params.get("view") ?? "") || pathname.startsWith("/auth/desktop/")) return children;
   return (
     <AppFrame chrome={<ServerAnswer value={chrome} />} server={<ServerAnswer value={shownFrame} />}>

@@ -192,6 +192,9 @@ export const AGENT_FEATURE_WARM_HOOKS = "warm-hooks";
 /** The agent gives a session's Claude its own subagents
  *  (SetEnvironmentRequest's `subagents`). */
 export const AGENT_FEATURE_SUBAGENTS = "subagents";
+/** The agent gives a session's browser tests the desktop browser's sign-ins
+ *  (`outrunner browser state`, POST /workspaces/{id}/browser-state). */
+export const AGENT_FEATURE_BROWSER_STATE = "browser-state";
 
 /** The agent warms a ready box of a project of several repositories in a
  *  folder of their checkouts (WarmRequest's `repos`), and a session of the

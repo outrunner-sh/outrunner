@@ -12,32 +12,40 @@ export function initialProjectId(projects: { id: string }[], requested?: string)
   return projects.some((p) => p.id === requested) ? requested : "";
 }
 
-/**
- * The repository home starts the next session on: the most recent session's.
- * Ranked by `lastActiveAt ?? createdAt` (the sidebar's rule), so a brand-new
- * session still provisioning counts. Undefined (the form's first repository)
- * when there is no session yet, or its repository is no longer listed: home
- * must offer a repository either way, never leave the user to pick one.
- */
-export function lastSessionProjectId(
-  projects: { id: string }[],
-  workspaces: Pick<Workspace, "projectId" | "lastActiveAt" | "createdAt">[],
-): string | undefined {
-  if (workspaces.length === 0) return undefined;
-  const recent = workspaces.reduce((a, b) => (newestFirst(recency(a), recency(b)) > 0 ? b : a));
-  return projects.some((p) => p.id === recent.projectId) ? recent.projectId : undefined;
-}
+/** Where the new-session form starts: one of the listed environments
+ *  (lib/environments/listed.ts), or a repository, from its own environment. */
+export type StartOn = { environmentId: string; projectId?: undefined } | { projectId: string; environmentId?: undefined };
 
 /**
- * The repository home starts on: one a session was just refused in, while
- * the screen still says why (its reason is said only under that repository),
- * else the most recent session's (lastSessionProjectId).
+ * Where home (and a bare /new) starts the next session, in this order: where
+ * a session was just refused, while the screen still says why (its reason is
+ * said only there); the org's default environment; the most recent
+ * session's environment when it's listed, else its repository; the first
+ * environment. Each only while it's listed: never one nobody can pick.
+ * Undefined, with none of those, leaves the form on its first repository
+ * (initialProjectId), so home always offers one.
+ *
+ * The most recent session is ranked by `lastActiveAt ?? createdAt` (the
+ * sidebar's rule), so a brand-new session still provisioning counts.
  */
-export function homeProjectId(
-  projects: { id: string }[],
-  workspaces: Pick<Workspace, "projectId" | "lastActiveAt" | "createdAt">[],
-  refusedIn: string | undefined,
-): string | undefined {
-  if (refusedIn && projects.some((p) => p.id === refusedIn)) return refusedIn;
-  return lastSessionProjectId(projects, workspaces);
+export function homeStart(
+  environments: readonly { id: string; orgDefault: boolean }[],
+  projects: readonly { id: string }[],
+  workspaces: readonly Pick<Workspace, "projectId" | "environmentId" | "lastActiveAt" | "createdAt">[],
+  refused?: { projectId: string; environmentId?: string | null } | null,
+): StartOn | undefined {
+  const listedEnvironment = (id: string | null | undefined): id is string => !!id && environments.some((e) => e.id === id);
+  const listedProject = (id: string) => projects.some((p) => p.id === id);
+  if (refused) {
+    if (listedEnvironment(refused.environmentId)) return { environmentId: refused.environmentId };
+    if (listedProject(refused.projectId)) return { projectId: refused.projectId };
+  }
+  const orgDefault = environments.find((e) => e.orgDefault);
+  if (orgDefault) return { environmentId: orgDefault.id };
+  if (workspaces.length > 0) {
+    const recent = workspaces.reduce((a, b) => (newestFirst(recency(a), recency(b)) > 0 ? b : a));
+    if (listedEnvironment(recent.environmentId)) return { environmentId: recent.environmentId };
+    if (listedProject(recent.projectId)) return { projectId: recent.projectId };
+  }
+  return environments[0] ? { environmentId: environments[0].id } : undefined;
 }

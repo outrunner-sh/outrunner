@@ -202,7 +202,7 @@ channel, one channel a Mission.
 
 A Ship started for a Slack request that stops on an `ask_user` question
 gets a card in that request's thread (`lib/missions/ship-ask.ts`,
-`mission_ship_asks`, `20261119110700_mission_ship_asks.sql`):
+`mission_ship_asks`, `20261119140700_mission_ship_asks.sql`):
 
 - **The card.** `Working on: <Ship title>`, the question, a button per
   option, then **Other**, a link to the Ship in Outrunner (no free text in
@@ -236,7 +236,7 @@ gets a card in that request's thread (`lib/missions/ship-ask.ts`,
 
 Nothing said in Slack is lost, and nothing is done twice, through crashes,
 Slack's retries, timeouts and rebinds
-(`20261119110200_mission_slack_reliability.sql`):
+(`20261119140200_mission_slack_reliability.sql`):
 
 - **Saved before Slack hears back.** A message a Mission may take (a mention
   in a channel with a Mission on call, or a reply in a thread it took) is
@@ -300,7 +300,7 @@ Slack's retries, timeouts and rebinds
 ### Budgets
 
 A Mission can have a daily and a weekly dollar budget
-(`mission_budgets`, `20261119110400_mission_budgets.sql`). No row, no
+(`mission_budgets`, `20261119140400_mission_budgets.sql`). No row, no
 budget: a plain Mission has none unless one is set.
 
 - **What counts.** The family's spend as [mission spend](mission-spend.md)
@@ -361,7 +361,7 @@ budget: a plain Mission has none unless one is set.
 ### Idle pause
 
 A bound Mission no human talks to for 2 weeks pauses itself
-(`20261119110500_mission_idle_pause.sql`, `lib/missions/idle-pause.ts`):
+(`20261119140500_mission_idle_pause.sql`, `lib/missions/idle-pause.ts`):
 
 - **Heard.** A human message meant for the Mission moves `last_human_at`: a
   mention of Outrunner, a reply in a thread it owns that isn't muted, or a
@@ -498,14 +498,14 @@ The four inputs:
 | Outbox delivery | `lib/missions/outbox.ts` |
 | Tick | `lib/missions/tick.ts`, after the sessions tick's reads (`/api/sessions/tick`) |
 | Archiving a Mission with its Ships | `lib/missions/archive.ts`, `POST /api/missions/[id]/archive` |
-| On call in Slack: schema (bindings, threads, Ships' ledger and limits, question cards) | `supabase/migrations/20261119110100_mission_slack.sql` |
+| On call in Slack: schema (bindings, threads, Ships' ledger and limits, question cards) | `supabase/migrations/20261119140100_mission_slack.sql` |
 | Slack → Mission routing, commands and keywords | `lib/missions/slack-route.ts`, `lib/missions/slack-text.ts`, first in `lib/slack/agent-run.ts` |
 | The Slack tools, limits and thread posts | `lib/missions/slack-tools.ts`, `lib/missions/slack-announce.ts`, `lib/missions/slack-ask.ts` |
 | Binding from the app | `lib/missions/slack-binding.ts`, `/api/missions/[id]/slack`, `components/missions/mission-slack-chip.tsx` |
-| Reliability: saved events, spawn keys, the post queue, revisions | `supabase/migrations/20261119110200_mission_slack_reliability.sql` |
+| Reliability: saved events, spawn keys, the post queue, revisions | `supabase/migrations/20261119140200_mission_slack_reliability.sql` |
 | Saving and processing Slack's events | `lib/missions/slack-inbound.ts`, `app/api/integrations/slack/events` |
 | The post queue | `lib/missions/slack-outbox.ts` |
-| Triggers: schema (targets, inputs, delegations, request sources, message claims, root posts) | `supabase/migrations/20261119110300_mission_inputs.sql` |
+| Triggers: schema (targets, inputs, delegations, request sources, message claims, root posts) | `supabase/migrations/20261119140300_mission_inputs.sql` |
 | A Mission's run, and its request | `lib/missions/automation-target.ts`, `lib/missions/requests.ts`, `startRun` in `lib/automations/runs.ts` |
 | Watched channels | `lib/missions/slack-watch.ts`, `lib/missions/slack-inbound.ts` |
 | Webhooks | `lib/missions/webhook-target.ts`, `app/api/automations/webhook/[token]` |
@@ -652,9 +652,9 @@ twice records it once. Events are delivered in batches:
 ## Configuration
 
 - **Migrations:** `pnpm db:migrate`, including
-  `20261119110100_mission_slack.sql` and
-  `20261119110200_mission_slack_reliability.sql` for Missions on call in
-  Slack, and `20261119110300_mission_inputs.sql` for triggers. Until the first is applied, the Slack agent behaves as before (it
+  `20261119140100_mission_slack.sql` and
+  `20261119140200_mission_slack_reliability.sql` for Missions on call in
+  Slack, and `20261119140300_mission_inputs.sql` for triggers. Until the first is applied, the Slack agent behaves as before (it
   can't tell a channel has a Mission, so it treats none as having one). Apply
   both before the code that uses them is deployed.
 

@@ -718,7 +718,7 @@
         "rewind",
         "environment-skills",
         "codex-mcp",
-        "canvas", "codex-access-token", "codex-account", "claude-account", "codex-request-secrets", "snapshot-patch-integrity", "subagents",
+        "canvas", "codex-access-token", "codex-account", "claude-account", "codex-request-secrets", "snapshot-patch-integrity", "subagents", "browser-state",
         "ask-call-identity"
       ]
     }

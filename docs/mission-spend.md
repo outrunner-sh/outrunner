@@ -190,7 +190,7 @@ In code, `readMissionSpend(missionId, kind, at)`.
 
 | Piece | Where |
 | --- | --- |
-| Tables and functions | `supabase/migrations/20261119110000_mission_spend.sql` |
+| Tables and functions | `supabase/migrations/20261119140000_mission_spend.sql` |
 | Calls, periods, coverage (pure) | `lib/missions/spend.ts` |
 | Cost basis | `lib/missions/cost-basis.ts`; compute's rate is `lib/billing/usage.ts` |
 | Database side, reservations | `lib/missions/spend.deps.ts` |
@@ -203,7 +203,7 @@ nothing granted to `anon` or `authenticated`), as the other Missions tables.
 
 ## Setting it up
 
-1. Run `pnpm db:migrate` (`20261119110000_mission_spend.sql`).
+1. Run `pnpm db:migrate` (`20261119140000_mission_spend.sql`).
 2. Deploy. Boxes made after the deploy run a runtime-agent that names each
    reply's call (`callId`); a box from before goes on with its own agent, and
    its replies count as `unavailable` until it's rebuilt.

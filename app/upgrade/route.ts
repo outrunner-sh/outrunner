@@ -6,7 +6,7 @@ import { BILLING_PATH, checkoutDestination, requestedPlan } from "@/lib/billing/
 import { billingMode } from "@/lib/billing/mode";
 import { checkoutDeps } from "@/lib/billing/stripe-deps";
 import { requireEnv } from "@/lib/env";
-import { needsOnboarding } from "@/lib/onboarding/server";
+import { mustSetUpActiveOrg } from "@/lib/orgs/setup.deps";
 
 /**
  * A plan bought from a link: `/upgrade?plan=pro|max`, which
@@ -37,7 +37,7 @@ export async function GET(request: Request) {
     const back = plan ? `/upgrade?plan=${plan}` : "/upgrade";
     return to(`/signin?next=${encodeURIComponent(back)}`);
   }
-  const returnPath = (await needsOnboarding()) ? "/onboarding" : BILLING_PATH;
+  const returnPath = (await mustSetUpActiveOrg()) ? "/onboarding" : BILLING_PATH;
   if (!plan || billingMode() !== "stripe") return to(returnPath);
   // For the org they're looking at; Billing says why when they can't.
   const who = await billingBuyer(owner);

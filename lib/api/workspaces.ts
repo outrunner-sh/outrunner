@@ -49,6 +49,7 @@ import { mainChatOf, orderedChats, type SessionChat } from "@/lib/session/chats"
 import { pageOf, pageRequest, paginate } from "@/lib/api/pagination";
 import { isApiSource, isApiStatus, snakeKeys, statusesFor, workspaceJson } from "@/lib/api/serialize";
 import { getEnvironment } from "@/lib/db/environments";
+import { workRepoId } from "@/lib/environments/listed";
 import { storeSessionOverrides } from "@/lib/db/session-overrides";
 import { toWorkspace } from "@/lib/db/mappers";
 import { projectLevel } from "@/lib/db/org-access";
@@ -116,10 +117,10 @@ export async function createWorkspace(
   if (input.environmentId) {
     const environment = await getEnvironment(owner.id, input.environmentId);
     if (!environment || environment.orgId !== caller.orgId) return apiError(404, "No environment by that id that you can see.");
-    // It works first in the repository the project is the default of, else
-    // its first: a project someone made has every one of them checked out,
+    // It works first in the repository it is the own environment of, else
+    // its first (workRepoId): one someone made has every one checked out,
     // as the new-session screen starts it.
-    projectId = environment.defaultForProjectId ?? environment.repos[0]?.projectId ?? null;
+    projectId = workRepoId(environment);
     if (!projectId) return apiError(409, "That project holds no repository to work in: add one first.");
     environmentId = environment.id;
   }

@@ -23,6 +23,8 @@ import {
   type SessionModel,
   takesEffort,
 } from "@/lib/runtime/session-models";
+import { type ListedEnvironment, workRepoId } from "@/lib/environments/listed";
+import { newSessionHref, newSessionInEnvironmentHref } from "@/lib/nav/sidebar";
 import type { Project, Workspace } from "@/lib/runtime/types";
 import {
   firstPromptQuery,
@@ -32,7 +34,7 @@ import {
   rememberFirstPrompt,
   tabStorage,
 } from "@/lib/session/first-prompt";
-import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
+import { initialProjectId as pickInitialProject, type StartOn } from "@/lib/session/initial-project";
 import {
   failureFor,
   FAILED_CREATE,
@@ -74,16 +76,28 @@ function promptBranch(prompt: string): string {
 
 /**
  * The new-session creation logic: the fetch + navigate, apart from the screen
- * (NewSessionForm). Owns the selected project and the in-flight/error state;
- * the caller supplies the layout.
+ * (NewSessionForm). Owns where the session starts — an environment, or a
+ * repository from its own — and the in-flight/error state; the caller
+ * supplies the layout.
+ *
+ * An environment's session works in its work repository (workRepoId), the
+ * rest checked out beside it: that repository is `selected`, as a picked
+ * repository is, and the environment goes along with the create.
  */
-export function useCreateSession(projects: Project[], initialProjectId?: string) {
+export function useCreateSession(projects: Project[], environments: ListedEnvironment[], initial?: StartOn | { projectId?: undefined; environmentId?: undefined }) {
   const viewerScope = useViewerScope();
   const router = useRouter();
   // The one picked here; until then the one the form starts on, which follows
-  // the list as it arrives (a cold start streams it in).
-  const [pickedId, setProjectId] = useState<string | null>(null);
-  const projectId = pickedId ?? pickInitialProject(projects, initialProjectId);
+  // the lists as they arrive (a cold start streams them in).
+  const [picked, setPicked] = useState<StartOn | null>(null);
+  const start = picked ?? initial;
+  // An environment asked for that isn't listed (yet, or any more) selects
+  // nothing rather than another: the user picks.
+  const environment = start?.environmentId !== undefined ? environments.find((e) => e.id === start.environmentId) : undefined;
+  const projectId =
+    start?.environmentId !== undefined
+      ? (environment && workRepoId(environment)) ?? ""
+      : pickInitialProject(projects, start?.projectId);
   // Repositories connected from the picker on this screen: the page's own list
   // has them only after it reloads.
   const [connected, setConnected] = useState<Project[]>([]);
@@ -121,11 +135,16 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
 
   /** Run in `project`; one the page doesn't list yet was just connected. */
   function selectProject(project: Project) {
-    setProjectId(project.id);
+    setPicked({ projectId: project.id });
     if (known.some((p) => p.id === project.id)) return;
     setConnected((list) => [...list, project]);
     // So the rest of the page (and the next visit) lists it too.
     router.refresh();
+  }
+
+  /** Start from `picked`, one of the listed environments. */
+  function selectEnvironment(picked: ListedEnvironment) {
+    setPicked({ environmentId: picked.id });
   }
 
   /**
@@ -159,7 +178,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     // same — so a first send that landed after all is answered for rather
     // than made twice. Anything changed (the model, its effort, the item) is
     // a new session.
-    const request = JSON.stringify([model?.provider ?? null, model?.id ?? null, model ? (agent ?? null) : null, effort, workItemId ?? null]);
+    // The environment too: the same prompt from another is another session.
+    const environmentId = environment?.id ?? null;
+    const request = JSON.stringify([model?.provider ?? null, model?.id ?? null, model ? (agent ?? null) : null, effort, workItemId ?? null, environmentId]);
     const again = sendingAgain(FAILED_CREATE.get()?.unsent, selected.id, request);
     FAILED_CREATE.set(null);
     forgetRefusedSessions();
@@ -179,6 +200,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       branch,
       agent: agentOf(model?.provider ?? "claude", model ? agent : undefined),
       model: model ? { model, effort } : null,
+      environmentId,
       ownerId: ownSession?.ownerId ?? "",
       provider: ownSession?.provider ?? "daytona",
     });
@@ -198,11 +220,13 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     const failed = (error: string, action: FailedCreate["action"] = null, unsent: FailedCreate["unsent"] = null) => {
       refusePendingSession(id, error);
       forgetFirstPrompt(tabStorage(), id);
-      FAILED_CREATE.set({ projectId: selected.id, prompt, attachmentIds, message: error, action, unsent });
-      // Still on its page: back to this screen, on the repository it was
-      // refused in, which says why. Elsewhere, home opens on that repository
-      // while the refusal stands (homeProjectId) and says so there.
-      if (window.location.pathname === href) router.replace(`/new?project=${encodeURIComponent(selected.id)}`);
+      FAILED_CREATE.set({ projectId: selected.id, environmentId, prompt, attachmentIds, message: error, action, unsent });
+      // Still on its page: back to this screen, on the environment or
+      // repository it was refused in, which says why. Elsewhere, home opens
+      // there while the refusal stands (homeStart) and says so.
+      if (window.location.pathname === href) {
+        router.replace(environmentId ? newSessionInEnvironmentHref(environmentId) : newSessionHref({ kind: "cloud", projectId: selected.id }));
+      }
     };
     return (async () => {
       // The prompt goes along only to name the session, and its branch, at
@@ -225,6 +249,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           ...(effort && { effort }),
           ...(workItemId && { workItemId }),
           ...(model && agent && { agent }),
+          ...(environmentId && { environmentId }),
         }),
       );
       // The session may exist though no answer said so: the next Send of the
@@ -363,6 +388,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     projects: known,
     projectId,
     selectProject,
+    /** The environment picked, when one is: its work repository is `selected`. */
+    environment,
+    selectEnvironment,
     selected,
     isCreating,
     message: message ?? refusal?.message ?? null,

@@ -24,6 +24,7 @@
 import { open, seal } from "@/lib/crypto/secret-box";
 import type { ProjectEnvironment, ProjectScripts } from "@/lib/db/project-environment";
 import { environmentLevel, projectLevel } from "@/lib/db/org-access";
+import { type ListedEnvironment, listedFromRows } from "@/lib/environments/listed";
 import {
   applySecretsEdit,
   checkoutNameFor,
@@ -34,6 +35,7 @@ import {
 } from "@/lib/environments/rules";
 import { type AccessLevel, allows } from "@/lib/orgs/access";
 import type { SessionCheckout } from "@/lib/runtime/types";
+import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** The user may read the project but not change it. */
@@ -480,7 +482,7 @@ export async function addEnvironmentRepo(userId: string, id: string, projectId: 
   }
   if (environment.repos.some((r) => r.projectId === projectId)) return;
   if (environment.repos.length >= MAX_REPOS) {
-    throw new EnvironmentRuleError(`A project holds at most ${MAX_REPOS} repositories.`);
+    throw new EnvironmentRuleError(`An environment holds at most ${MAX_REPOS} repositories.`);
   }
   const supabase = createSupabaseAdminClient();
   const { data: project, error } = await supabase
@@ -504,7 +506,7 @@ export async function addEnvironmentRepo(userId: string, id: string, projectId: 
     position: Math.max(-1, ...environment.repos.map((r) => r.position)) + 1,
   });
   if (insertError?.message.includes("at most 5")) {
-    throw new EnvironmentRuleError(`A project holds at most ${MAX_REPOS} repositories.`);
+    throw new EnvironmentRuleError(`An environment holds at most ${MAX_REPOS} repositories.`);
   }
   // Another add at the same moment took the folder name, or the repository.
   if (insertError?.code === "23505") {
@@ -522,7 +524,7 @@ export async function removeEnvironmentRepo(userId: string, id: string, projectI
   if (!allows(environment.access, "write")) throw new EnvironmentAccessError();
   if (environment.repos.length <= 1) throw new EnvironmentRuleError("An environment keeps at least one repository.");
   if (environment.defaultForProjectId === projectId) {
-    throw new EnvironmentRuleError("This project is that repository's own: remove the others instead.");
+    throw new EnvironmentRuleError("This environment is that repository's own: remove the others instead.");
   }
   const { error } = await createSupabaseAdminClient()
     .from("environment_repos")
@@ -541,10 +543,10 @@ export async function removeEnvironmentRepo(userId: string, id: string, projectI
  */
 export async function createEnvironment(userId: string, orgId: string, name: string, projectIds: string[]): Promise<string> {
   const trimmed = name.trim();
-  if (!trimmed || trimmed.length > 80) throw new EnvironmentRuleError("A project's name is 1 to 80 characters.");
+  if (!trimmed || trimmed.length > 80) throw new EnvironmentRuleError("An environment's name is 1 to 80 characters.");
   const ids = [...new Set(projectIds)];
-  if (ids.length === 0) throw new EnvironmentRuleError("A project holds at least one repository.");
-  if (ids.length > MAX_REPOS) throw new EnvironmentRuleError(`A project holds at most ${MAX_REPOS} repositories.`);
+  if (ids.length === 0) throw new EnvironmentRuleError("An environment holds at least one repository.");
+  if (ids.length > MAX_REPOS) throw new EnvironmentRuleError(`An environment holds at most ${MAX_REPOS} repositories.`);
   const supabase = createSupabaseAdminClient();
   const { data: projects, error } = await supabase.from("projects").select("id, name").eq("org_id", orgId).in("id", ids);
   if (error) throw error;
@@ -552,7 +554,7 @@ export async function createEnvironment(userId: string, orgId: string, name: str
   for (const id of ids) {
     if (!byId.has(id)) throw new EnvironmentRuleError("That repository isn't connected to this organization.");
     if (!allows(await projectLevel(userId, id), "write")) {
-      throw new EnvironmentRuleError("You can only make a project of repositories you can change. Ask an admin for write access.");
+      throw new EnvironmentRuleError("You can only make an environment of repositories you can change. Ask an admin for write access.");
     }
   }
   const { data: made, error: insertError } = await supabase
@@ -589,12 +591,67 @@ export async function archiveEnvironment(userId: string, id: string): Promise<vo
   if (!environment) throw new EnvironmentRuleError("Environment not found.");
   if (!allows(environment.access, "write")) throw new EnvironmentAccessError();
   if (environment.defaultForProjectId) {
-    throw new EnvironmentRuleError("This project is its repository's own, and goes only with the repository.");
+    throw new EnvironmentRuleError("This environment is its repository's own, and goes only with the repository.");
   }
   const { error } = await createSupabaseAdminClient()
     .from("environments")
     .update({ archived_at: new Date().toISOString() })
     .eq("id", id)
     .is("archived_at", null);
+  if (error) throw error;
+}
+
+/** Before 20261119120000_environments_model.sql: its function or column
+ *  isn't there yet (PostgREST's and Postgres's codes for each). */
+function beforeEnvironmentsModel(error: { code?: string } | null): boolean {
+  if (!error) return false;
+  if (error.code === "PGRST202" || error.code === "42883") return true;
+  const status = probeStatus(error);
+  return status === "missing" || status === "outdated";
+}
+
+/**
+ * The org's listed environments the user may read (lib/environments/listed.ts:
+ * every one someone made, and a repository's own once someone has made it
+ * theirs), by name, the org's default marked. None before the migration that
+ * lists them.
+ */
+export async function listEnvironments(userId: string, orgId: string): Promise<ListedEnvironment[]> {
+  const { data, error } = await createSupabaseAdminClient().rpc("listed_environments", { member: userId, target_org: orgId });
+  if (beforeEnvironmentsModel(error)) return [];
+  if (error) throw error;
+  return listedFromRows(data ?? []);
+}
+
+/** The environment the org's new sessions start from, or null for none (or
+ *  before the migration that keeps it). */
+export async function orgDefaultEnvironmentId(orgId: string): Promise<string | null> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("organization_settings")
+    .select("default_environment_id")
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (beforeEnvironmentsModel(error)) return null;
+  if (error) throw error;
+  return data?.default_environment_id ?? null;
+}
+
+/** Make `environmentId`, one of the org's, its default, as `by` (the route
+ *  has checked they're the org's admin); the org's other settings are left
+ *  as they are. */
+export async function setOrgDefaultEnvironment(orgId: string, environmentId: string, by: string): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { data: environment, error: readError } = await supabase
+    .from("environments")
+    .select("id")
+    .eq("id", environmentId)
+    .eq("org_id", orgId)
+    .is("archived_at", null)
+    .maybeSingle();
+  if (readError) throw readError;
+  if (!environment) throw new EnvironmentRuleError("That environment isn't this organization's.");
+  const { error } = await supabase
+    .from("organization_settings")
+    .upsert({ org_id: orgId, default_environment_id: environmentId, updated_by: by }, { onConflict: "org_id" });
   if (error) throw error;
 }

@@ -6,11 +6,10 @@ import type {
   AgentStatus,
   GitHubAccess,
   OnboardingEnv,
+  OnboardingOrg,
   OnboardingProgress,
   OnboardingUser,
-  RepositoryList,
 } from "@/lib/onboarding/types";
-import type { Project } from "@/lib/runtime/types";
 import type { GitLabConnectionStatus } from "@/lib/gitlab/client";
 
 /** A failure the page can show, with where to fix it when there's a place. */
@@ -43,21 +42,21 @@ async function call<T>(method: "GET" | "POST" | "PUT" | "DELETE", url: string, b
   return json as T;
 }
 
-/** Mark onboarding done, so home stops sending the user here. A failure is
- *  logged only: onboarding just shows again. */
-async function markOnboarded(): Promise<void> {
+/** Mark the org's setup done, so home stops sending anyone here. A failure
+ *  is logged only: setup just shows again. */
+async function markSetUp(): Promise<void> {
   try {
     await call("POST", "/api/onboarding/complete");
   } catch (error) {
-    console.error("Could not mark onboarding done", error);
+    console.error("Could not mark setup done", error);
   }
 }
 
-/** Where this browser keeps the user's onboarding progress: localStorage,
- *  so a tab the CLI opens finds it too. Storage that fails (private mode,
- *  full) only means onboarding opens at its start. */
-function progressStore(userId: string) {
-  const key = `outrunner:onboarding:${userId}`;
+/** Where this browser keeps the user's progress setting up an org:
+ *  localStorage, so a tab the CLI opens finds it too. Storage that fails
+ *  (private mode, full) only means setup opens at its start. */
+function progressStore(userId: string, orgId: string) {
+  const key = `outrunner:onboarding:${userId}:${orgId}`;
   return {
     read(): OnboardingProgress | null {
       try {
@@ -79,11 +78,11 @@ function progressStore(userId: string) {
 }
 
 /**
- * Onboarding on the live app: the same APIs Settings → Providers, the
- * repository picker and the new-session form use, not copies of them.
+ * Setup on the live app: the same APIs Settings → Providers, Settings → Org
+ * → GitHub, the repository picker and Environments use, not copies of them.
  */
-export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean }): OnboardingEnv {
-  const progress = progressStore(user.id);
+export function liveEnv(user: OnboardingUser, org: OnboardingOrg, server: { outrunnerModels: boolean }): OnboardingEnv {
+  const progress = progressStore(user.id, org.id);
   const agentStatus = async (): Promise<AgentStatus> => {
     const [claude, providers] = await Promise.all([
       call<{ connected: boolean; last4: string | null }>("GET", "/api/settings/claude"),
@@ -97,6 +96,7 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
 
   return {
     user,
+    org,
     desktop: isDesktopApp(),
     outrunnerModels: server.outrunnerModels,
     agentStatus,
@@ -121,29 +121,22 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
     },
 
     githubAccess: () => call<{ access: GitHubAccess | null }>("GET", "/api/onboarding/github").then((r) => r.access),
-    useOrg: (orgId) => call("POST", "/api/orgs/active", { orgId }).then(() => undefined),
+    addInstallation: (installationId) =>
+      call("POST", `/api/orgs/${org.id}/github/installations`, { installationId }).then(() => undefined),
     gitlabConnection: () => call<{ connection: GitLabConnectionStatus | null }>("GET", "/api/gitlab/connection").then((r) => r.connection),
     saveGitlabConnection: (token) => call<{ connection: GitLabConnectionStatus | null }>(token === null ? "DELETE" : "POST", "/api/gitlab/connection", token === null ? undefined : { token }).then((r) => r.connection),
-    repositories: (provider = "github") => call<RepositoryList>("GET", `/api/${provider}/repositories`),
-    async connect(repoIds, provider = "github") {
-      if (provider === "gitlab") {
-        let projects: Project[] = [];
-        for (const repoId of repoIds) {
-          ({ projects } = await call<{ projects: Project[] }>("POST", "/api/gitlab/projects", { repoId }));
-        }
-        return projects;
-      }
-      const { projects } = await call<{ projects: Project[] }>("POST", "/api/projects/sync", { repoIds });
-      return projects;
-    },
 
-    async finish(projectId, runOn) {
-      await markOnboarded();
+    async createEnvironment(name, projectIds) {
+      const made = await call<{ id: string }>("POST", "/api/environments", { name, projectIds, orgDefault: true });
+      return made.id;
+    },
+    async finish(environmentId, runOn) {
+      await markSetUp();
       progress.write(null);
-      return newSessionAfterOnboarding(projectId, runOn);
+      return newSessionAfterOnboarding(environmentId, runOn);
     },
     async skip() {
-      await markOnboarded();
+      await markSetUp();
       progress.write(null);
       return "/";
     },

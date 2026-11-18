@@ -2,7 +2,7 @@
 -- destination is a Mission rather than a new session. A run of one makes a
 -- Mission request (mission_slack_requests, its outbox), never a session.
 -- Their triggers: a schedule, a webhook, a watched Slack channel, and Linear
--- issues routed to the Mission. On top of 20261119110200_mission_slack_
+-- issues routed to the Mission. On top of 20261119140200_mission_slack_
 -- reliability.sql, additive only: every existing automation is a session's,
 -- as before, and runs as before.
 -- ---------------------------------------------------------------------------

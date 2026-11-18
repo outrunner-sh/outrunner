@@ -125,6 +125,16 @@ test("the sidebar's list outlives the page", () => {
   assert.equal(back?.data.pullRequests.w1?.number, 7);
 });
 
+test("the environments are kept with it, so the new-session form starts on the org's default at once", () => {
+  const storage = new FakeStorage();
+  const acme = { id: "e1", name: "Acme", defaultForProjectId: null, orgDefault: true, repos: [{ projectId: "p1", fullName: "acme/p1" }] };
+  cache(storage).save("org-1", list({ environments: [acme] }));
+  assert.deepEqual(cache(storage).load()?.data.environments, [acme]);
+  // One kept before environments were: none, and the list still reads.
+  cache(storage).save("org-1", list());
+  assert.equal(cache(storage).load()?.data.environments, undefined);
+});
+
 test("where the kept sessions stood is kept with them, and nothing else a page reads", () => {
   const storage = new FakeStorage();
   const stood = { standing: "needs_you", reason: "question", moved: false, pinned: false, unread: true, replyPreview: null, at: "t" } as const;

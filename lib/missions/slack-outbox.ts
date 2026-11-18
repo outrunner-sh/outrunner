@@ -1,6 +1,6 @@
 /**
  * Posts in Slack for a Mission on call, through a stored queue
- * (mission_slack_posts, 20261119110200_mission_slack_reliability.sql): its
+ * (mission_slack_posts, 20261119140200_mission_slack_reliability.sql): its
  * replies and question cards, its reactions, and the cards the system posts
  * for it (a Ship's pull requests, a wait on its owner). Each post has a
  * stable key, so queueing it twice is one post; it's taken under a lease,

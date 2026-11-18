@@ -53,6 +53,9 @@ export function useStartOver(workspace: Workspace) {
             ...(workspace.environmentId ? { environmentId: workspace.environmentId } : { projectId: workspace.projectId }),
             prompt: workspace.title ?? "",
           }),
+          // A session: from the environment it was started from (the
+          // repository's own, unless one was picked).
+          ...(!isMission && workspace.environmentId && { environmentId: workspace.environmentId }),
           ...(workspace.model && {
             provider: workspace.model.model.provider,
             model: workspace.model.model.id,

@@ -1,21 +1,21 @@
 import { NextResponse } from "next/server";
 
-import { getOwner } from "@/lib/auth/owner";
-import { isSameOriginRequest } from "@/lib/http/guards";
-import { markOnboarded } from "@/lib/onboarding/server";
+import { activeOrgId } from "@/lib/orgs/server";
+import { orgCaller } from "@/lib/orgs/routes";
+import { markOrgSetUp } from "@/lib/orgs/setup.deps";
 
-/** Onboarding is done: the first session started, or the user skipped it. */
+/** The active org's setup is done: its first environment made, or an admin
+ *  skipped it. Recorded on the org, so no one is sent through it again
+ *  (lib/orgs/setup.ts). Its admins' to say. */
 export async function POST(request: Request) {
-  if (!isSameOriginRequest(request)) {
-    return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
-  }
-  if (!(await getOwner())) {
-    return NextResponse.json({ error: "Sign in first." }, { status: 401 });
-  }
+  const orgId = await activeOrgId().catch(() => undefined);
+  if (!orgId) return NextResponse.json({ error: "Make or join an org first." }, { status: 409 });
+  const caller = await orgCaller(request, orgId, { admin: true });
+  if (caller instanceof Response) return caller;
   try {
-    await markOnboarded();
+    await markOrgSetUp(orgId, caller.owner.id);
   } catch (error) {
-    console.error("Could not mark onboarding complete", error);
+    console.error(`Could not mark org ${orgId} set up`, error);
     return NextResponse.json({ error: "Could not save that. Please try again." }, { status: 500 });
   }
   return NextResponse.json({ ok: true });

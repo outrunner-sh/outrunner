@@ -51,6 +51,9 @@ export function optimisticSession(input: {
   branch: string;
   agent: AgentId;
   model?: RecordedModel | null;
+  /** The environment it starts from, when one was picked; null, the
+   *  repository's own (the server's row then names it). */
+  environmentId?: string | null;
   /** Who is starting it, as far as the screen knows; "" when it doesn't. */
   ownerId: string;
   /** Where the user's sessions run, as far as the screen knows. */
@@ -75,7 +78,7 @@ export function optimisticSession(input: {
     computerId: null,
     tmuxSession: null,
     agentWorkspaceId: null,
-    environmentId: null,
+    environmentId: input.environmentId ?? null,
     checkouts: null,
     agent: input.agent,
     model: input.model ?? null,
@@ -135,6 +138,9 @@ export function usePendingSessions(): Record<string, PendingSession> {
 export type FailedCreate = {
   /** The repository it was refused in: the reason is about that one only. */
   projectId: string;
+  /** The environment it was started from, when one was picked: home starts
+   *  there again while the reason stands (homeStart). */
+  environmentId?: string | null;
   prompt: string;
   /** The files it went with, given back to the composer with the prompt. */
   attachmentIds: string[];

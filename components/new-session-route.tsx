@@ -7,37 +7,61 @@ import { useAppData } from "@/components/app-data";
 import { NewSessionCreator } from "@/components/new-session-creator";
 import { RecentSessions } from "@/components/recent-sessions";
 import { useServerAnswer } from "@/components/server-answer";
+import { SetupWaiting } from "@/components/setup-waiting";
 import { parseAgentPick, startingPick } from "@/lib/onboarding/rules";
+import type { SetupGate } from "@/lib/orgs/setup";
 import type { Project } from "@/lib/runtime/types";
-import { homeProjectId } from "@/lib/session/initial-project";
+import { homeStart } from "@/lib/session/initial-project";
 import { useNewSessionCount } from "@/lib/session/new-session-reset";
 import { useFailedCreate } from "@/lib/session/pending-sessions";
 
 /**
- * Home: the new-session form, on the repository a session was just refused
- * in, else that of the most recent session, from what the sidebar holds. A
- * fresh form on each "New Session", the prompt's draft kept.
+ * Home: the new-session form, from what the sidebar holds, on where a session
+ * was just refused, else the org's default environment, else where the most
+ * recent session started (homeStart). A fresh form on each "New Session",
+ * the prompt's draft kept.
+ *
+ * `gate` is the server's word on the active org's setup (lib/orgs/setup.ts),
+ * arriving after the form shows: its admin goes through setup, and a member
+ * of an org not set up yet is told an admin is on it instead of the form.
  */
-export function HomeSessionRoute() {
+export function HomeSessionRoute({ gate }: { gate?: React.ReactNode }) {
   const data = useAppData();
   const projects = data?.projects ?? [];
+  const environments = data?.environments ?? [];
   const asked = useNewSessionCount();
   const refused = useFailedCreate();
+  const router = useRouter();
+  const [setup, slot] = useServerAnswer<SetupGate>(gate);
+  useEffect(() => {
+    if (setup?.kind === "setup") router.replace("/onboarding");
+  }, [setup, router]);
+  const start = homeStart(environments, projects, data?.workspaces ?? [], refused);
   return (
-    <NewSessionCreator
-      key={asked}
-      projects={projects}
-      projectsKnown={data !== null}
-      initialProjectId={homeProjectId(projects, data?.workspaces ?? [], refused?.projectId)}
-    >
-      <RecentSessions />
-    </NewSessionCreator>
+    <>
+      {setup?.kind === "waiting" ? (
+        <SetupWaiting orgName={setup.orgName} />
+      ) : (
+        <NewSessionCreator
+          key={asked}
+          projects={projects}
+          environments={environments}
+          projectsKnown={data !== null}
+          initialProjectId={start?.projectId}
+          initialEnvironmentId={start?.environmentId}
+        >
+          <RecentSessions />
+        </NewSessionCreator>
+      )}
+      {slot}
+    </>
   );
 }
 
 /**
- * /new: the form a sidebar "+" opens, on the repository (`?project=`) or Mac
- * folder (`?folder=`) it names, from what the sidebar holds. A repository the
+ * /new: the form a sidebar "+" opens, on the environment (`?environment=`),
+ * repository (`?project=`) or Mac folder (`?folder=`) it names, from what
+ * the sidebar holds; naming none, where home would start (homeStart). A repository the
  * list hides is still a valid place to start: the sidebar has it when a
  * session is in it, and otherwise the server's answer (`server`, a Project)
  * adds it, rather than the form falling back to some other repository.
@@ -49,6 +73,7 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
   const data = useAppData();
   const search = useSearchParams();
   const project = search.get("project") ?? undefined;
+  const environment = search.get("environment") ?? undefined;
   const folder = search.get("folder") ?? "";
   const pick = search.get("pick") === "repo";
   const focus = search.get("focus") === "composer";
@@ -73,6 +98,13 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
   const listed = data?.projects ?? [];
   const requested = [...(data?.hiddenProjects ?? []), ...(answered ? [answered] : [])].find((p) => p.id === project);
   const projects = requested && !listed.some((p) => p.id === requested.id) ? [requested, ...listed] : listed;
+  const environments = data?.environments ?? [];
+  // Named in the URL, that; a bare /new (no folder either), home's start.
+  const startOn: { environmentId?: string; projectId?: string } | undefined = environment !== undefined
+    ? { environmentId: environment }
+    : project !== undefined || folder
+      ? { projectId: project }
+      : homeStart(environments, listed, data?.workspaces ?? []);
 
   return (
     <>
@@ -80,12 +112,14 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
         // A new form per "New Session" and per target: arriving while already
         // on /new must not keep the repository, folder or cloud/Mac choice the
         // open form was switched to. The prompt's draft stays.
-        key={`${project ?? ""}\n${folder}\n${workItemId ?? ""}\n${asked}`}
+        key={`${environment ?? ""}\n${project ?? ""}\n${folder}\n${workItemId ?? ""}\n${asked}`}
         projects={projects}
+        environments={environments}
         // A hidden repository asked for may still be on its way from the
         // server: the form picks it up as it lands, until one is picked.
         projectsKnown={data !== null}
-        initialProjectId={project}
+        initialProjectId={startOn?.projectId}
+        initialEnvironmentId={startOn?.environmentId}
         openPicker={pick}
         focusComposer={focus}
         initialPick={start && startingPick(start)}

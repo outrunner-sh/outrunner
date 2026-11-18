@@ -9,6 +9,7 @@ services:
       - path: /etc/outrunner/cron.env
         format: raw
     environment:
+      OUTRUNNER_BUILD: ${OUTRUNNER_BUILD:?Set the release SHA}
       OUTRUNNER_CRON_ORIGIN: http://app-${SLOT:?Set the live slot}:8080
     networks: [edge]
     stop_grace_period: 75s

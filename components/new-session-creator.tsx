@@ -1,5 +1,6 @@
 import { BackButton } from "@/components/back-button";
 import { NewSessionForm } from "@/components/new-session-form";
+import type { ListedEnvironment } from "@/lib/environments/listed";
 import type { StartingPick } from "@/lib/onboarding/rules";
 import type { Project } from "@/lib/runtime/types";
 
@@ -10,8 +11,10 @@ import type { Project } from "@/lib/runtime/types";
  */
 export function NewSessionCreator({
   projects,
+  environments,
   projectsKnown = true,
   initialProjectId,
+  initialEnvironmentId,
   openPicker = false,
   focusComposer = false,
   initialPick,
@@ -20,9 +23,11 @@ export function NewSessionCreator({
   children,
 }: {
   projects: Project[];
+  environments?: ListedEnvironment[];
   /** False until the list arrives (a cold start). */
   projectsKnown?: boolean;
   initialProjectId?: string;
+  initialEnvironmentId?: string;
   /** Opens the repository (or folder) picker as the form mounts. */
   openPicker?: boolean;
   /** Focuses the composer as the form mounts. */
@@ -46,8 +51,10 @@ export function NewSessionCreator({
       )}
       <NewSessionForm
         projects={projects}
+        environments={environments}
         projectsKnown={projectsKnown}
         initialProjectId={initialProjectId}
+        initialEnvironmentId={initialEnvironmentId}
         openPicker={openPicker}
         focusComposer={focusComposer}
         initialPick={initialPick}

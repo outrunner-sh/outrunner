@@ -5,7 +5,8 @@ import { AppFrame, type FrameChrome, type FrameData } from "@/components/app-fra
 import { ServerAnswer } from "@/components/server-answer";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProjects, listWorkspacePullRequests } from "@/lib/db/repositories";
-import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
+import { listEnvironmentsOnce, listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
+import type { ListedEnvironment } from "@/lib/environments/listed";
 import { githubCoAuthor } from "@/lib/github/co-author";
 import { githubConnectionNotice } from "@/lib/github/connection-notice";
 import { countTriage, triageActor } from "@/lib/db/work-items";
@@ -101,9 +102,15 @@ async function SidebarData() {
       return 0;
     },
   );
-  const [listed, workspaces] = await Promise.all([
+  const [listed, environments, workspaces] = await Promise.all([
     listProjectsOnce(orgId).catch((error: unknown): Project[] => {
       console.error("Sidebar: could not load repositories", error);
+      return [];
+    }),
+    // The environments the new-session form starts from; none, it starts on
+    // a repository, as before.
+    (orgId ? listEnvironmentsOnce(owner.id, orgId) : Promise.resolve([])).catch((error: unknown): ListedEnvironment[] => {
+      console.error("Sidebar: could not load environments", error);
       return [];
     }),
     listWorkspacesOnce(orgId).catch((error: unknown): Workspace[] => {
@@ -136,6 +143,7 @@ async function SidebarData() {
         appData: {
           coAuthor: githubCoAuthor(owner),
           projects: listed,
+          environments,
           hiddenProjects: hidden,
           workspaces,
           pullRequests: picked,

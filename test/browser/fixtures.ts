@@ -1,6 +1,7 @@
 import type { FrameData } from "@/components/app-frame";
 import type { Automation } from "@/lib/automations/rules";
 import type { Environment } from "@/lib/db/environments";
+import type { ListedEnvironment } from "@/lib/environments/listed";
 import type { RunnerPullView } from "@/lib/missions/view";
 import type { PullDetail, PullSummary } from "@/lib/review/pulls";
 import type { Project, Workspace } from "@/lib/runtime/types";
@@ -22,6 +23,15 @@ export const project: Project = {
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
+/** The org's default environment, of the fixture repository. */
+export const acmeEnvironment: ListedEnvironment = {
+  id: "env-acme",
+  name: "Acme",
+  defaultForProjectId: null,
+  orgDefault: true,
+  repos: [{ projectId: "project-1", fullName: "outrunner-sh/outrunner" }],
+};
+
 export const environment: Environment = {
   id: "environment-1",
   orgId: "org-1",

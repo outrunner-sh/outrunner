@@ -4,8 +4,9 @@
  * working in at once rather than after the layout's queries answer
  * (app/(app)/layout.tsx).
  *
- * What is kept is the list itself: the projects, the sessions, the pull
- * requests the sidebar badges them with, and where each session stood — so a
+ * What is kept is the list itself: the repositories, the environments, the
+ * sessions, the pull requests the sidebar badges them with, and where each
+ * session stood — so a
  * sidebar grouped by status paints its groups at once too, rather than a
  * skeleton, and the frame reads where they stand now within seconds
  * (hooks/use-standings.ts), moving any that moved. Nothing of a session's own
@@ -23,6 +24,7 @@
 import { z } from "zod";
 
 import { store, useStore } from "@/lib/client/store";
+import type { ListedEnvironment } from "@/lib/environments/listed";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import type { AppData } from "@/lib/session/session-view";
 import type { SessionStanding } from "@/lib/session/standing";
@@ -65,6 +67,10 @@ function isProject(value: unknown): value is Project {
   return isRecord(value) && typeof value.id === "string" && typeof value.fullName === "string";
 }
 
+function isListedEnvironment(value: unknown): value is ListedEnvironment {
+  return isRecord(value) && typeof value.id === "string" && typeof value.name === "string" && Array.isArray(value.repos);
+}
+
 function isWorkspace(value: unknown): value is Workspace {
   return (
     isRecord(value) &&
@@ -103,6 +109,7 @@ const Stored = z.object({
   data: z.object({
     projects: z.array(z.custom<Project>(isProject)),
     hiddenProjects: z.array(z.custom<Project>(isProject)),
+    environments: z.array(z.custom<ListedEnvironment>(isListedEnvironment)).optional(),
     workspaces: z.array(z.custom<Workspace>(isWorkspace)),
     pullRequests: z.record(z.string(), z.custom<WorkspacePullRequest>(isPullRequest)),
     standings: z.record(z.string(), z.custom<SessionStanding>(isStanding)).optional(),
@@ -217,6 +224,7 @@ function trimmed(data: AppData): CachedAppData {
   return {
     projects: data.projects.slice(0, KEPT_PROJECTS),
     hiddenProjects: data.hiddenProjects.slice(0, KEPT_PROJECTS),
+    ...(data.environments && { environments: data.environments.slice(0, KEPT_PROJECTS) }),
     workspaces,
     pullRequests,
     ...(standings && { standings }),

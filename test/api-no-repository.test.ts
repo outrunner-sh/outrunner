@@ -32,7 +32,7 @@ test("connected, unknown, or a personal org (its own GitHub counts): add it, or 
     { ...base, org: { id: "org-1", name: "Harsh", personal: true } },
   ]) {
     const error = await body(noRepositoryAnswer(input));
-    assert.match(error.message, /that you can see: add it to Outrunner \(Projects → Sync repositories\), or check the org/);
+    assert.match(error.message, /that you can see: add it to Outrunner \(Environments → Pick repositories\), or check the org/);
     assert.match(error.message, /A personal key or the CLI acts in your personal org/);
     assert.equal(error.settings_url, undefined);
   }
