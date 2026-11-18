@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "description": "Start using Outrunner from your terminal: sign in, connect Claude, and continue in the browser.",
   "homepage": "https://app.outrunner.sh",
+  "author": "Outrunner, Inc.",
   "license": "MIT",
   "bin": {
     "outrunner": "bin/outrunner.mjs"

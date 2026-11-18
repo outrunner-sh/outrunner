@@ -2,6 +2,7 @@
 name = "runtime-desktop"
 version = "0.1.0"
 description = "Outrunner macOS shell and local coding-agent sessions"
+authors = ["Outrunner, Inc."]
 license = "MIT"
 repository = "https://github.com/outrunner-sh/outrunner"
 edition = "2021"

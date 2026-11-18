@@ -39,6 +39,7 @@ for target in $targets; do
   "name": "$pkg",
   "version": "$version",
   "description": "The outrunner CLI for $os $cpu. Install outrunner, not this.",
+  "author": "Outrunner, Inc.",
   "license": "MIT",
   "os": ["$os"],
   "cpu": ["$cpu"],

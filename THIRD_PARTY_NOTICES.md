@@ -1,7 +1,8 @@
 # Third-party notices
 
-The [MIT License](LICENSE) covers Outrunner's original source. Dependencies,
-fonts, and bundled tools retain their upstream licenses and copyright notices.
+The [MIT License](LICENSE), copyright (c) 2026 Outrunner, Inc., covers
+Outrunner's original source. Dependencies, fonts, and bundled tools retain
+their upstream licenses and copyright notices.
 
 ## Code and assets included with this repository or its builds
 
