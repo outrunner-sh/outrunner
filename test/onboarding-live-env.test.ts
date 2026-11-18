@@ -1,20 +1,19 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
+import { ConnectError, connectRepositories } from "@/lib/client/repository-listing";
 import type { RepositoryListing } from "@/lib/github/listing";
 import { liveEnv, OnboardingError } from "@/lib/onboarding/live-env";
 import {
   CLI_DEFAULT_URL,
   connectClaudeCommand,
   connectedAgent,
-  connectedSummary,
   filterRepositories,
   freeModelsOffer,
   newSessionAfterOnboarding,
   parseAgentPick,
   parseProgress,
   pickedProjects,
-  pickSummary,
   resumeAt,
   sortRepositories,
   startingPick,
@@ -43,7 +42,8 @@ function stubFetch(routes: Record<string, (body: unknown) => [number, unknown]>)
   return calls;
 }
 
-const env = () => liveEnv(user, { outrunnerModels: true });
+const org = { id: "o1", name: "Acme", personal: false };
+const env = () => liveEnv(user, org, { outrunnerModels: true });
 
 const statusRoutes = (claude: { connected: boolean; last4: string | null }, keys: Record<string, { connected: boolean }>) => ({
   "GET /api/settings/claude": () => [200, claude] as [number, unknown],
@@ -77,9 +77,9 @@ test("a pasted token and an API key are saved where Settings saves them, then re
   ]);
 });
 
-test("picking repositories connects just those, as the repository picker does", async () => {
+test("picking repositories connects just those, by their ids", async () => {
   const calls = stubFetch({ "POST /api/projects/sync": () => [200, { projects: [{ id: "p1", githubRepoId: 7 }] }] });
-  const projects = await env().connect([7]);
+  const projects = await connectRepositories([7], "github");
   assert.deepEqual(calls[0].body, { repoIds: [7] });
   assert.equal(projects[0].id, "p1");
 });
@@ -98,16 +98,26 @@ test("GitLab onboarding reads and saves its connection in place using the Settin
   assert.equal(calls[2].method, "DELETE");
 });
 
-test("GitLab onboarding lists and connects multiple selected repositories without calling GitHub", async () => {
+test("picked GitLab repositories are connected one at a time, without calling GitHub", async () => {
   const projects = [{ id: "gitlab-7", provider: "gitlab", repositoryId: 7, githubRepoId: null }, { id: "gitlab-8", provider: "gitlab", repositoryId: 8, githubRepoId: null }];
-  const calls = stubFetch({
-    "GET /api/gitlab/repositories": () => [200, { repositories: [], connected: [7] }],
-    "POST /api/gitlab/projects": () => [200, { projects }],
-  });
-  assert.deepEqual(await env().repositories("gitlab"), { repositories: [], connected: [7] });
-  assert.deepEqual(await env().connect([7, 8], "gitlab"), projects);
-  assert.deepEqual(calls.map((call) => call.url), ["/api/gitlab/repositories", "/api/gitlab/projects", "/api/gitlab/projects"]);
-  assert.deepEqual(calls.slice(1).map((call) => call.body), [{ repoId: 7 }, { repoId: 8 }]);
+  const calls = stubFetch({ "POST /api/gitlab/projects": () => [200, { projects }] });
+  assert.deepEqual(await connectRepositories([7, 8], "gitlab"), projects);
+  assert.deepEqual(calls.map((call) => call.url), ["/api/gitlab/projects", "/api/gitlab/projects"]);
+  assert.deepEqual(calls.map((call) => call.body), [{ repoId: 7 }, { repoId: 8 }]);
+});
+
+test("an installation on GitHub is added to the org being set up, as Settings → Org → GitHub adds it", async () => {
+  const calls = stubFetch({ "POST /api/orgs/o1/github/installations": () => [200, { claimed: 42 }] });
+  await env().addInstallation(42);
+  assert.deepEqual(calls, [{ method: "POST", url: "/api/orgs/o1/github/installations", body: { installationId: 42 } }]);
+});
+
+test("the org's first environment is made of the repositories picked, as its default", async () => {
+  const calls = stubFetch({ "POST /api/environments": () => [201, { id: "env-1" }] });
+  assert.equal(await env().createEnvironment("Acme", ["p1", "p2"]), "env-1");
+  assert.deepEqual(calls[0].body, { name: "Acme", projectIds: ["p1", "p2"], orgDefault: true });
+  stubFetch({ "POST /api/environments": () => [400, { error: "An environment holds at most 5 repositories." }] });
+  await assert.rejects(env().createEnvironment("Acme", ["p1"]), (e: unknown) => e instanceof OnboardingError && /at most 5/.test(e.message));
 });
 
 test("a rejected GitLab onboarding token stays an actionable error", async () => {
@@ -115,14 +125,14 @@ test("a rejected GitLab onboarding token stays an actionable error", async () =>
   await assert.rejects(env().saveGitlabConnection("expired"), (error: unknown) => error instanceof OnboardingError && error.message === "Your GitLab token expired." && error.href === "/settings/connections");
 });
 
-test("finishing marks onboarding done and opens the new-session screen on the repository and agent picked", async () => {
+test("finishing marks the org set up and opens the new-session screen on the environment and agent picked", async () => {
   const calls = stubFetch({ "POST /api/onboarding/complete": () => [200, { ok: true }] });
-  assert.equal(await env().finish("p1", "claude"), "/new?project=p1&focus=composer&start=claude");
+  assert.equal(await env().finish("env-1", "claude"), "/new?environment=env-1&focus=composer&start=claude");
   // No session is started from onboarding: the user starts it, with a prompt.
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), ["POST /api/onboarding/complete"]);
 });
 
-test("skipping marks onboarding done and goes home", async () => {
+test("skipping marks the org set up and goes home", async () => {
   stubFetch({ "POST /api/onboarding/complete": () => [200, { ok: true }] });
   assert.equal(await env().skip(), "/");
 });
@@ -137,9 +147,8 @@ test("the first session starts on the agent picked: the user's own at High, or O
 });
 
 test("the agent picked rides the new-session link and is read back; anything else is ignored", () => {
-  const href = newSessionAfterOnboarding(undefined, "codex-outrunner");
-  // No repository connected: the form picks its own.
-  assert.equal(href, "/new?focus=composer&start=codex-outrunner");
+  const href = newSessionAfterOnboarding("env-1", "codex-outrunner");
+  assert.equal(href, "/new?environment=env-1&focus=composer&start=codex-outrunner");
   assert.equal(parseAgentPick(new URL(href, "http://x").searchParams.get("start")), "codex-outrunner");
   assert.equal(parseAgentPick("gpt"), undefined);
   assert.equal(parseAgentPick(null), undefined);
@@ -170,24 +179,7 @@ test("repositories show most recently pushed first, and filter by name or descri
   assert.equal(filterRepositories(list, "  ").length, 2);
 });
 
-test("the picker counts new picks apart from repositories connected already", () => {
-  assert.equal(pickSummary(0, 0), "Pick at least one");
-  assert.equal(pickSummary(1, 0), "1 picked");
-  assert.equal(pickSummary(0, 31), "31 already connected");
-  assert.equal(pickSummary(1, 31), "1 picked · 31 already connected");
-});
-
-test("an org with repositories connected already is told how many, a few by name", () => {
-  assert.deepEqual(connectedSummary(["a/one"], 1), { title: "1 repository connected", detail: "a/one" });
-  assert.deepEqual(connectedSummary(["a/one", "a/two"], 2), { title: "2 repositories connected", detail: "a/one and a/two" });
-  assert.deepEqual(connectedSummary(["a/one", "a/two", "a/three"], 3).detail, "a/one, a/two and a/three");
-  // Counted, though the listing no longer has them.
-  assert.deepEqual(connectedSummary(["a/one", "a/two", "a/three", "a/four"], 32).detail, "a/one, a/two, a/three and 29 more");
-  assert.deepEqual(connectedSummary(["a/one"], 2).detail, "a/one and 1 more");
-  assert.deepEqual(connectedSummary([], 2), { title: "2 repositories connected", detail: "" });
-});
-
-test("the first session starts on the first repository ticked, not the most recently pushed", () => {
+test("picks keep the order they were ticked in, not the most recently pushed", () => {
   // As the connect routes return them: every project, most recently pushed first.
   const projects = [
     { id: "recent", githubRepoId: 3 },
@@ -200,17 +192,17 @@ test("the first session starts on the first repository ticked, not the most rece
   assert.deepEqual(pickedProjects(projects, [9], "github"), []);
 });
 
-test("GitHub's refusal is carried as reconnect, and other errors aren't", async () => {
-  stubFetch({ "GET /api/github/repositories": () => [409, { error: "Your GitHub connection has expired.", reconnect: true }] });
-  await assert.rejects(env().repositories(), (e: unknown) => e instanceof OnboardingError && e.reconnect);
-  stubFetch({ "GET /api/github/repositories": () => [502, { error: "GitHub could not list your repositories." }] });
-  await assert.rejects(env().repositories(), (e: unknown) => e instanceof OnboardingError && !e.reconnect);
+test("GitHub's refusal to connect is carried as reconnect, and other errors aren't", async () => {
+  stubFetch({ "POST /api/projects/sync": () => [409, { error: "Your GitHub connection has expired.", reconnect: true }] });
+  await assert.rejects(connectRepositories([7], "github"), (e: unknown) => e instanceof ConnectError && e.reconnect);
+  stubFetch({ "POST /api/projects/sync": () => [403, { error: "Outrunner's GitHub App can't reach this repository.", code: "repo-no-access" }] });
+  await assert.rejects(connectRepositories([7], "github"), (e: unknown) => e instanceof ConnectError && !e.reconnect && e.noAccess);
 });
 
 test("a refused onboarding mark is logged, and the new-session screen still opens", async (t) => {
   const logged = t.mock.method(console, "error", () => {});
   stubFetch({ "POST /api/onboarding/complete": () => [500, { error: "db down" }] });
-  assert.equal(await env().finish("p1", "outrunner"), "/new?project=p1&focus=composer&start=outrunner");
+  assert.equal(await env().finish("env-1", "outrunner"), "/new?environment=env-1&focus=composer&start=outrunner");
   assert.equal(logged.mock.callCount(), 1);
 });
 
@@ -238,27 +230,27 @@ test("an agent connected already is the user's pick when it's connected, else su
   });
 });
 
-test("onboarding opens past the Agent step once an agent is connected, as from the CLI in another tab", () => {
+test("setup opens past the Agent step once an agent is connected, as from the CLI in another tab", () => {
   assert.deepEqual(resumeAt(null, agents(), none), { step: "agent", done: [], runOn: "outrunner" });
   assert.deepEqual(resumeAt(null, agents({ subscription: true }), none), {
-    step: "repos",
+    step: "github",
     done: ["agent"],
     runOn: "claude",
     save: { agent: "claude", method: "subscription" },
   });
   // The tab that showed the command saved the Agent step before the CLI ran.
-  assert.equal(resumeAt({ step: "agent", done: [], runOn: "outrunner" }, agents({ subscription: true }), none).step, "repos");
+  assert.equal(resumeAt({ step: "agent", done: [], runOn: "outrunner" }, agents({ subscription: true }), none).step, "github");
 });
 
 test("passing the Agent step keeps a pick the user made, and makes none blind", () => {
   const picked = resumeAt(null, agents({ subscription: true, apiKey: true }), { claude: "api-key", codex: null });
-  assert.equal(picked.step, "repos");
+  assert.equal(picked.step, "github");
   assert.equal(picked.save, undefined);
   // Their picks unknown: the Agent step, where they pick.
   assert.deepEqual(resumeAt(null, agents({ subscription: true }), null), { step: "agent", done: [], runOn: "outrunner" });
 });
 
-test("onboarding opens where it was left, and a user gone back to the Agent step stays there", () => {
+test("setup opens where it was left, and a user gone back to the Agent step stays there", () => {
   // Back from installing the GitHub App.
   assert.deepEqual(resumeAt({ step: "repos", done: ["agent"], runOn: "outrunner" }, agents(), none), {
     step: "repos",
@@ -293,10 +285,16 @@ test("saved progress is only taken as it should be", () => {
     done: ["agent", "repos"],
     runOn: "codex",
   });
-  // Saved when there was a Start step: onboarding now ends on Repositories.
+  // Saved when there was a Start step: its Repositories step.
   assert.deepEqual(parseProgress({ step: "start", done: ["agent", "repos", "start"], runOn: "codex" }), {
     step: "repos",
     done: ["agent", "repos"],
+    runOn: "codex",
+  });
+  // The Environment step's picks aren't kept: they're picked again.
+  assert.deepEqual(parseProgress({ step: "environment", done: ["agent", "github", "repos"], runOn: "codex" }), {
+    step: "repos",
+    done: ["agent", "github", "repos"],
     runOn: "codex",
   });
   assert.equal(parseProgress(null), null);
@@ -306,7 +304,7 @@ test("saved progress is only taken as it should be", () => {
   assert.equal(parseProgress({ step: "repos", done: "agent", runOn: "claude" }), null);
 });
 
-test("progress is kept per account in this browser, and dropped once onboarding is done", async (t) => {
+test("progress is kept per account and org in this browser, and dropped once setup is done", async (t) => {
   const store = new Map<string, string>();
   const localStorage = {
     getItem: (key: string) => store.get(key) ?? null,
@@ -321,17 +319,19 @@ test("progress is kept per account in this browser, and dropped once onboarding 
   const progress = { step: "repos", done: ["agent"], runOn: "claude" } as const;
   env().saveProgress({ ...progress, done: [...progress.done] });
   assert.deepEqual(env().savedProgress(), progress);
-  assert.equal(liveEnv({ ...user, id: "u2" }, { outrunnerModels: true }).savedProgress(), null);
+  assert.equal(liveEnv({ ...user, id: "u2" }, org, { outrunnerModels: true }).savedProgress(), null);
+  // Another org of theirs is set up apart.
+  assert.equal(liveEnv(user, { ...org, id: "o2" }, { outrunnerModels: true }).savedProgress(), null);
 
   stubFetch({ "POST /api/onboarding/complete": () => [200, { ok: true }] });
   await env().skip();
   assert.equal(env().savedProgress(), null);
   env().saveProgress({ ...progress, done: [...progress.done] });
-  await env().finish("p1", "claude");
+  await env().finish("env-1", "claude");
   assert.equal(env().savedProgress(), null);
 });
 
-test("storage that fails only means onboarding opens at its start", (t) => {
+test("storage that fails only means setup opens at its start", (t) => {
   const failing = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("full"); }, removeItem: () => {} };
   Object.defineProperty(globalThis, "window", { value: { localStorage: failing }, configurable: true });
   t.after(() => {

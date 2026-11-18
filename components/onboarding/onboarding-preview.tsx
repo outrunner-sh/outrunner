@@ -4,17 +4,16 @@ import { RotateCcw } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { OnboardingFlow } from "@/components/onboarding/onboarding-flow";
-import type { RepositoryListing } from "@/lib/github/listing";
-import { OnboardingError } from "@/lib/onboarding/live-env";
 import { newSessionAfterOnboarding } from "@/lib/onboarding/rules";
 import type { AgentStatus, OnboardingEnv } from "@/lib/onboarding/types";
-import type { Project } from "@/lib/runtime/types";
 
 /**
- * The onboarding flow on mock data, with a panel to switch the situation it
- * meets: Claude already connected or not, the Mac app or a browser, repos or
- * none. For building the screens without an
- * account; served only with ONBOARDING_PREVIEW=1 outside production.
+ * The setup flow on mock data, with a panel to switch the situation it
+ * meets: Claude already connected or not, the Mac app or a browser, GitHub
+ * connected or not. For building the screens without an account; served
+ * only with ONBOARDING_PREVIEW=1 outside production. The Repositories step
+ * is the app's one repository picker, on the live listing: it shows no
+ * repositories here unless signed in.
  */
 export function OnboardingPreview() {
   const [scenario, setScenario] = useState<Scenario>(DEFAULT_SCENARIO);
@@ -35,14 +34,14 @@ export function OnboardingPreview() {
 type Scenario = {
   surface: "browser" | "desktop";
   claude: "none" | "subscription" | "api-key" | "connects-from-terminal";
-  repos: "some" | "none" | "github-error";
+  github: "app" | "available" | "none";
   outrunnerModels: "yes" | "no";
 };
 
 const DEFAULT_SCENARIO: Scenario = {
   surface: "browser",
   claude: "connects-from-terminal",
-  repos: "some",
+  github: "app",
   outrunnerModels: "yes",
 };
 
@@ -57,48 +56,15 @@ const OPTIONS: { [K in keyof Scenario]: { label: string; values: [Scenario[K], s
       ["api-key", "API key"],
     ],
   },
-  repos: { label: "GitHub", values: [["some", "Repositories"], ["none", "None"], ["github-error", "Token refused"]] },
+  github: { label: "GitHub", values: [["app", "App installed"], ["available", "Installed, not added"], ["none", "Not connected"]] },
   outrunnerModels: { label: "Outrunner models", values: [["yes", "On the server"], ["no", "Not set up"]] },
 };
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const REPOS: RepositoryListing[] = [
-  repo(1, "outrunner-sh/outrunner", "Run coding agents in the cloud", true, "2026-10-25"),
-  repo(2, "outrunner-sh/interface", "The marketing site", true, "2026-10-20"),
-  repo(3, "octocat/blog", null, false, "2026-10-01"),
-  repo(4, "octocat/ledger", "Bookkeeping", true, "2026-09-12"),
-];
-
-function repo(id: number, fullName: string, description: string | null, isPrivate: boolean, pushedAt: string): RepositoryListing {
-  const [owner, name] = fullName.split("/");
-  return { githubRepoId: id, fullName, name, owner, ownerType: "User", avatarUrl: null, private: isPrivate, language: "TypeScript", description, pushedAt };
-}
-
-function project(r: RepositoryListing): Project {
-  return {
-    id: r.provider === "gitlab" ? `p-gitlab-${r.repositoryId}` : `p-${r.githubRepoId}`,
-    githubRepoId: r.githubRepoId,
-    ...(r.provider ? { provider: r.provider, repositoryId: r.repositoryId } : {}),
-    fullName: r.fullName,
-    owner: r.owner,
-    name: r.name,
-    defaultBranch: "main",
-    private: r.private,
-    language: r.language,
-    description: r.description,
-    htmlUrl: r.provider === "gitlab" ? `https://${r.fullName}` : `https://github.com/${r.fullName}`,
-    pushedAt: r.pushedAt,
-    linearIssueIds: [],
-    orgId: "",
-    createdAt: "2026-10-25T00:00:00Z",
-    updatedAt: "2026-10-25T00:00:00Z",
-  };
-}
-
 function mockEnv(scenario: Scenario): OnboardingEnv {
   let gitlab: { login: string; updatedAt: string } | null = null;
-  const gitlabRepos: RepositoryListing[] = [{ ...REPOS[0], githubRepoId: null, provider: "gitlab", repositoryId: 1, fullName: "gitlab.com/acme/platform/app", owner: "acme/platform", name: "app" }];
+  let accounts = scenario.github === "app" ? ["octocat"] : [];
   const opened = Date.now();
   const status: AgentStatus = {
     claude: {
@@ -114,6 +80,7 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
       : status;
   return {
     user: { id: "preview", name: "Mona", login: "octocat", avatarUrl: null },
+    org: { id: "preview-org", name: "Acme", personal: false },
     desktop: scenario.surface === "desktop",
     outrunnerModels: scenario.outrunnerModels === "yes",
     agentStatus: async () => (await wait(300), current()),
@@ -134,33 +101,27 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
     async githubAccess() {
       await wait(200);
       return {
-        orgs: [{ id: "personal", name: "Personal", personal: true, admin: true, accounts: [] }],
-        activeOrgId: "personal",
-        personalGithub: scenario.repos !== "github-error",
+        admin: true,
+        accounts,
+        available: scenario.github === "available" && accounts.length === 0 ? [{ id: 42, accountLogin: "octocat" }] : [],
+        personalGithub: false,
         appInstallable: true,
         installNeedsGithub: false,
         personalConnectable: true,
       };
     },
-    useOrg: async () => void (await wait(200)),
+    addInstallation: async () => {
+      await wait(400);
+      accounts = ["octocat"];
+    },
     gitlabConnection: async () => gitlab,
     async saveGitlabConnection(token) {
       await wait(500);
       gitlab = token === null ? null : { login: "octocat", updatedAt: new Date().toISOString() };
       return gitlab;
     },
-    async repositories(provider = "github") {
-      await wait(700);
-      if (provider === "gitlab") return { repositories: scenario.repos === "none" ? [] : gitlabRepos, connected: [] };
-      if (scenario.repos === "github-error") throw new OnboardingError("Your GitHub connection has expired. Reconnect GitHub in Settings → Connections.");
-      return { repositories: scenario.repos === "none" ? [] : REPOS, connected: [1] };
-    },
-    async connect(ids, provider = "github") {
-      await wait(600);
-      if (provider === "gitlab") return gitlabRepos.filter((r) => ids.includes(r.repositoryId!)).map(project);
-      return REPOS.filter((r) => r.githubRepoId !== null && ids.includes(r.githubRepoId)).map(project);
-    },
-    finish: async (projectId, runOn) => (await wait(300), newSessionAfterOnboarding(projectId, runOn)),
+    createEnvironment: async () => (await wait(500), "preview-environment"),
+    finish: async (environmentId, runOn) => (await wait(300), newSessionAfterOnboarding(environmentId, runOn)),
     skip: async () => (await wait(300), "/"),
     // Each run starts over: the panel's restart is the preview's reload.
     savedProgress: () => null,

@@ -1,6 +1,6 @@
 /**
- * Onboarding's rules, apart from its screens (components/onboarding), so they
- * test on their own.
+ * Setup's rules, apart from its screens (components/onboarding), so they test
+ * on their own. Which org needs setup is lib/orgs/setup.ts.
  */
 
 import type { AgentId } from "@/lib/agents/registry";
@@ -29,27 +29,6 @@ export function filterRepositories(repositories: RepositoryListing[], query: str
   return repositories.filter(
     (r) => r.fullName.toLowerCase().includes(q) || (r.description ?? "").toLowerCase().includes(q),
   );
-}
-
-/** Under the repository picker: the new picks, and apart from them those
- *  connected already (some may not be in the list at all). */
-export function pickSummary(picked: number, connected: number): string {
-  if (picked === 0 && connected === 0) return "Pick at least one";
-  const already = `${connected} already connected`;
-  if (picked === 0) return already;
-  return connected === 0 ? `${picked} picked` : `${picked} picked · ${already}`;
-}
-
-/** In place of the picker when the org has repositories connected already:
- *  how many, and a few of them by name (`names`, those the listing has, in
- *  its order; `total` counts those it doesn't too). */
-export function connectedSummary(names: string[], total: number): { title: string; detail: string } {
-  const title = `${total} ${total === 1 ? "repository" : "repositories"} connected`;
-  const few = names.slice(0, 3);
-  const rest = total - few.length;
-  if (few.length === 0) return { title, detail: "" };
-  if (rest > 0) return { title, detail: `${few.join(", ")} and ${rest} more` };
-  return { title, detail: few.length === 1 ? few[0] : `${few.slice(0, -1).join(", ")} and ${few.at(-1)}` };
 }
 
 /** The projects of the repositories picked, in the order they were ticked:
@@ -93,7 +72,7 @@ export function connectClaudeCommand(runner: string, origin: string, account?: s
   return `${runner} outrunner@latest --url ${origin}${account ? ` --account ${account}` : ""} claude`;
 }
 
-const STEPS: readonly OnboardingStep[] = ["agent", "repos"];
+const STEPS: readonly OnboardingStep[] = ["agent", "github", "repos", "environment"];
 const PICKS: readonly AgentPick[] = ["claude", "codex", "outrunner", "codex-outrunner"];
 
 /** An agent pick from anywhere (a URL's `?start=`, storage); undefined for
@@ -104,11 +83,12 @@ export function parseAgentPick(raw: unknown): AgentPick | undefined {
 
 /** Saved progress as read back from storage, or null when it isn't any:
  *  storage is the browser's, anyone's to write. A Start step saved before
- *  there was none is its Repositories step, where onboarding now ends. */
+ *  there was none is its Repositories step; so is the Environment step,
+ *  whose picks aren't kept (they're picked again, connected already). */
 export function parseProgress(raw: unknown): OnboardingProgress | null {
   if (!raw || typeof raw !== "object") return null;
   const { step: savedStep, done, runOn } = raw as Record<string, unknown>;
-  const step = savedStep === "start" ? "repos" : savedStep;
+  const step = savedStep === "start" || savedStep === "environment" ? "repos" : savedStep;
   const pick = parseAgentPick(runOn);
   if (!STEPS.includes(step as OnboardingStep) || !pick || !Array.isArray(done)) return null;
   return { step: step as OnboardingStep, done: STEPS.filter((s) => done.includes(s)), runOn: pick };
@@ -138,7 +118,7 @@ function canRun(agent: "claude" | "codex", status: AgentStatus): boolean {
 }
 
 /**
- * Where onboarding opens: where it was left in this browser, and past the
+ * Where setup opens: where it was left in this browser, and past the
  * Agent step when that's not done but an agent is connected already (from
  * `npx outrunner … claude` in the terminal, say, seen from a tab the CLI
  * opened), on that agent. `save` is the way sessions sign in to save then,
@@ -164,7 +144,7 @@ export function resumeAt(
   const connected = connectedAgent(status, choices);
   if (!connected) return at;
   const { agent, method, chosen } = connected;
-  return { step: "repos", done: [...at.done, "agent"], runOn: agent, ...(!chosen && { save: { agent, method } }) };
+  return { step: "github", done: [...at.done, "agent"], runOn: agent, ...(!chosen && { save: { agent, method } }) };
 }
 
 /** What the new-session form starts on after onboarding: its model, the
@@ -184,10 +164,10 @@ export function startingPick(pick: AgentPick): StartingPick {
   return pick === "codex-outrunner" ? { ...outrunner, agent: "codex" } : outrunner;
 }
 
-/** Where onboarding ends: the new-session screen, on the first repository
- *  picked (none: the form's own choice), the composer focused, starting on
- *  the agent picked (`?start=`, read by components/new-session-route.tsx). */
-export function newSessionAfterOnboarding(projectId: string | undefined, runOn: AgentPick): string {
-  const query = new URLSearchParams({ ...(projectId && { project: projectId }), focus: "composer", start: runOn });
+/** Where setup ends: the new-session screen, on the environment it made,
+ *  the composer focused, starting on the agent picked (`?environment=` and
+ *  `?start=`, read by components/new-session-route.tsx). */
+export function newSessionAfterOnboarding(environmentId: string, runOn: AgentPick): string {
+  const query = new URLSearchParams({ environment: environmentId, focus: "composer", start: runOn });
   return `/new?${query}`;
 }
