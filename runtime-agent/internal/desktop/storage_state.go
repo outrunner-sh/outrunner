@@ -261,8 +261,10 @@ func (b *Browser) tabOrigins(ctx context.Context) ([]string, error) {
 	return origins, nil
 }
 
-// blankPage is what a background tab is served at the origin it reads.
-var blankPage = base64.StdEncoding.EncodeToString([]byte("<!doctype html><title></title>"))
+// blankPage is what a background tab is served at the origin it reads. Its
+// icon is its own: the browser fetches a page's /favicon.ico itself, past
+// DevTools' interception of the tab, which would ask the app after all.
+var blankPage = base64.StdEncoding.EncodeToString([]byte(`<!doctype html><link rel="icon" href="data:,"><title></title>`))
 
 // readLocalStorage is every item, in the page's localStorage.
 const readLocalStorage = `Object.keys(localStorage).map((name) => ({ name, value: localStorage.getItem(name) }))`
