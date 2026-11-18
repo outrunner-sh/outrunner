@@ -1,4 +1,4 @@
-/** Dropping the legacy app's tables (20261118100000), on a real Postgres: a
+/** Dropping the legacy app's tables (20261118180000), on a real Postgres: a
  *  no-op on a fresh install, every legacy table gone from a production-shaped
  *  database with Outrunner's own tables untouched, and nothing dropped when
  *  something outside the legacy set depends on them. Needs MISSIONS_PG (as
@@ -12,7 +12,7 @@ import { test } from "node:test";
 const server = process.env.MISSIONS_PG;
 const skip = server ? false : "MISSIONS_PG isn't set";
 const lock = readFileSync("supabase/migrations/20261104130000_lock_legacy_public_tables.sql", "utf8");
-const drop = readFileSync("supabase/migrations/20261118100000_drop_legacy_public_tables.sql", "utf8");
+const drop = readFileSync("supabase/migrations/20261118180000_drop_legacy_public_tables.sql", "utf8");
 
 /** The 43 names #387 locked, from its migration. */
 const LEGACY = [...lock.match(/foreach t in array array\[([\s\S]*?)\]/)![1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);

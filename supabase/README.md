@@ -39,9 +39,9 @@ Notes:
   setup. Use the verification scripts below for a disposable schema test.
 - `supabase db reset` is destructive. `db push` only applies what is pending.
 
-### Dropping the legacy app's tables (20261118100000)
+### Dropping the legacy app's tables (20261118180000)
 
-`20261118100000_drop_legacy_public_tables.sql` drops the 43 tables another app
+`20261118180000_drop_legacy_public_tables.sql` drops the 43 tables another app
 left in production's `public` schema when the project moved here (`auth`,
 `user`, `api_key`, `oauth_session`, `config`, `chat` and the rest;
 `20261104130000_lock_legacy_public_tables.sql` lists them). It deletes their
