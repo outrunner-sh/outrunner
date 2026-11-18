@@ -572,6 +572,9 @@
 .md-body .md-image-missing svg { width: 13px; height: 13px; flex-shrink: 0; }
 .md-body .md-image-missing button { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; padding: 1px 6px; border: 1px solid var(--studio-border); border-radius: 3px; color: #c8c8c8; background: transparent; font: inherit; cursor: pointer; }
 .md-body .md-image-missing button:hover { background: rgba(255,255,255,.06); }
+/* A reply's link to a file on the box: it downloads. */
+.md-body .md-file-link[aria-busy="true"] { opacity: .6; cursor: progress; }
+.md-body .md-link-error { margin-left: 6px; color: #e5866f; font-size: 12px; }
 /* A reply's image while it loads: its own size where it was shown before,
    else a placeholder's, so the reply doesn't jump as it arrives. */
 .md-body .md-image.is-loading { background: rgba(255,255,255,.04); animation: skeleton-pulse 1.6s ease-in-out infinite; }

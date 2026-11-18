@@ -11,6 +11,9 @@ import ReactMarkdown, {
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 
+import { saveFile } from "@/lib/client/save-file";
+import { downloadName } from "@/lib/http/content-disposition";
+import { boxFileDownloadUrl } from "@/lib/runtime/box-file";
 import { boxImageUrl, localImagePath } from "@/lib/runtime/chat-image";
 import {
   canvasFileError,
@@ -21,7 +24,7 @@ import {
   VISUAL_HEIGHT_MESSAGE,
   visualHeight,
 } from "@/lib/session/canvas";
-import { canvasLinkPath } from "@/lib/session/canvas-link";
+import { replyLink } from "@/lib/session/reply-link";
 import { cn } from "@/lib/utils";
 
 /**
@@ -72,24 +75,97 @@ const COMPONENTS: Components = { img: MarkdownImage, a: MarkdownLink };
 /** Inside a link: an image there opens the link, not itself. */
 const InLink = createContext(false);
 
+/** A link in a reply or a Canvas document, where lib/session/reply-link.ts
+ *  says it goes. */
 function MarkdownLink({ node, ...props }: ComponentProps<"a"> & ExtraProps) {
-  const workspaceId = useContext(ImageBoxContext);
+  const boxWorkspaceId = useContext(ImageBoxContext);
   const doc = useContext(CanvasDocContext);
   const openCanvas = useContext(OpenCanvasContext);
-  const canvasPath = canvasLinkPath(props.href, doc?.workspaceId ?? workspaceId, doc?.path);
-  if (canvasPath && (doc?.workspaceId || workspaceId)) {
-    props.href = canvasFileUrl((doc?.workspaceId || workspaceId)!, canvasPath);
-    if (openCanvas) props.onClick = (event) => {
-      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      event.preventDefault();
-      openCanvas(canvasPath);
-    };
-  }
   void node; // react-markdown's syntax node: not an attribute
+  const link = replyLink(props.href, boxWorkspaceId, doc);
+  switch (link.kind) {
+    case "canvas":
+      props.href = canvasFileUrl(link.workspaceId, link.path);
+      if (openCanvas) props.onClick = (event) => {
+        if (isModifiedClick(event)) return;
+        event.preventDefault();
+        openCanvas(link.path);
+      };
+      break;
+    case "box-file":
+      return (
+        <InLink value>
+          <BoxFileLink {...props} workspaceId={link.workspaceId} path={link.path} />
+        </InLink>
+      );
+    case "no-box":
+      return (
+        <span className={props.className} title={link.path}>
+          {props.children}
+        </span>
+      );
+  }
   return (
     <InLink value>
       <a {...props} />
     </InLink>
+  );
+}
+
+/** A click the browser gives its own meaning (a new tab, a window). */
+function isModifiedClick(event: React.MouseEvent): boolean {
+  return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+}
+
+/**
+ * A reply's link to a file on the session's box: a click fetches it through
+ * the download route and saves it (lib/client/save-file.ts), saying why
+ * beside the link when it can't (not there, too large, the box asleep)
+ * rather than saving the error as the file. A modified click is left to
+ * the browser, which downloads it from the same URL.
+ */
+function BoxFileLink({
+  workspaceId,
+  path,
+  ...props
+}: ComponentProps<"a"> & { workspaceId: string; path: string }) {
+  const url = boxFileDownloadUrl(workspaceId, path);
+  const name = downloadName(path);
+  const [state, setState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
+  async function download(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (isModifiedClick(event)) return;
+    event.preventDefault();
+    if (state.busy) return;
+    setState({ busy: true, error: null });
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
+        throw new Error(typeof body?.error === "string" ? body.error : `Couldn't download ${name} (${response.status}).`);
+      }
+      saveFile(await response.blob(), name);
+      setState({ busy: false, error: null });
+    } catch (error) {
+      setState({ busy: false, error: error instanceof Error ? error.message : `Couldn't download ${name}.` });
+    }
+  }
+  return (
+    <>
+      <a
+        {...props}
+        href={url}
+        download={name}
+        title={`Download ${path}`}
+        aria-busy={state.busy || undefined}
+        className={cn(props.className, "md-file-link")}
+        onClick={download}
+      />
+      {state.error && (
+        <span className="md-link-error" role="alert">
+          {state.error}
+        </span>
+      )}
+    </>
   );
 }
 
