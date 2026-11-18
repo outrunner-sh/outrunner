@@ -36,7 +36,7 @@ regex = "1"
 # HS256 tokens, and relay its HTTP calls and WebSockets for the webview.
 tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["sync", "macros", "time"] }
-tokio-tungstenite = "0.28"
+tokio-tungstenite = "0.30"
 futures-util = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 # The updater turns on reqwest's rustls without a crypto provider, for every
