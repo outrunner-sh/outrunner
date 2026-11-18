@@ -1,5 +1,5 @@
 /**
- * The idle pause's SQL (20261118120200_mission_idle_pause.sql) on a real
+ * The idle pause's SQL (20261119110500_mission_idle_pause.sql) on a real
  * Postgres, after the Missions migrations before it: the offer at 2 weeks
  * and not before, once under racing sweeps, its post queued with it; a
  * human's reply calling it off; the pause 24 hours on, with its words; a

@@ -1,6 +1,6 @@
 -- Phase 3: daily and weekly dollar budgets per Mission (docs/missions.md,
 -- "Budgets"). Spend comes from mission spend accounting
--- (20261118100100_mission_spend.sql, docs/mission-spend.md); compute is priced
+-- (20261119110000_mission_spend.sql, docs/mission-spend.md); compute is priced
 -- at the plan's included rate. No row: no budget.
 create table if not exists mission_budgets (
   mission_id uuid primary key references workspaces (id) on delete cascade,
