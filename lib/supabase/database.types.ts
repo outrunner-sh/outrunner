@@ -762,6 +762,9 @@ type OrganizationSettingsRow = {
   // supabase/migrations/20261119100000_environments_model.sql: the
   // environment the org's new sessions start from.
   default_environment_id: string | null;
+  // supabase/migrations/20261119110000_org_setup.sql: when its setup was
+  // finished or skipped (lib/orgs/setup.ts).
+  setup_completed_at: string | null;
   updated_by: string | null;
   updated_at: string;
 };
