@@ -39,7 +39,7 @@ import {
 const noopSubscribe = () => () => {};
 
 /** The latest Mac app (.github/workflows/desktop-publish.yml's Outrunner.dmg). */
-const MAC_APP_DOWNLOAD = "https://downloads.neev.ai/outrunner/Outrunner.dmg";
+const MAC_APP_DOWNLOAD = "https://downloads.outrunner.sh/outrunner/Outrunner.dmg";
 
 /**
  * Moving work from this Mac to the cloud: the desktop app finds sessions

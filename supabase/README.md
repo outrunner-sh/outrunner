@@ -2,7 +2,15 @@
 
 Use a Supabase project you control. Each deployment needs its own auth settings,
 database, and storage. Copy its API URL and keys into `.env.local` as described
-in [the development guide](../docs/development.md).
+in [the development guide](../docs/development.md). If the project has a Supabase
+custom domain, use that domain everywhere in place of
+`<your-project-ref>.supabase.co`, including the OAuth callback URL below: it
+survives moving the project.
+
+The hosted outrunner.sh deployment uses project `vidulqzirsthlshybwat` (Mumbai,
+`ap-south-1`; moved from Tokyo `butbnitdpiehgwqggowr` in 2026-11 to sit next to
+the app host), served at its custom domain `https://auth.outrunner.sh` (Supabase
+Custom Domain add-on; a CNAME in the outrunner.sh zone).
 
 ## Applying migrations
 
@@ -93,7 +101,9 @@ and always removes its container.
 1. **Authentication → Providers → GitHub**: enable it and paste the GitHub
    OAuth app's client ID and secret.
 2. Set the GitHub OAuth app's callback URL to:
-   `https://<your-project-ref>.supabase.co/auth/v1/callback`
+   `https://<your-project-ref>.supabase.co/auth/v1/callback`, or
+   `https://<your-custom-domain>/auth/v1/callback` with a custom domain
+   (`https://auth.outrunner.sh/auth/v1/callback` for outrunner.sh)
 3. **Authentication → URL Configuration**: set **Site URL** to your app origin
    and add `<app-origin>/auth/callback`
    (for example `http://localhost:3000/auth/callback`) to the Redirect URLs

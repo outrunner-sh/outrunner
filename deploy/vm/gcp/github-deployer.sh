@@ -43,6 +43,14 @@ gc compute instances add-iam-policy-binding "$instance" --zone "$zone" --role ro
   --member "serviceAccount:$account" >/dev/null
 gc projects add-iam-policy-binding "$project" --role roles/iap.tunnelResourceAccessor \
   --member "serviceAccount:$account" --condition None >/dev/null
+# `gcloud compute ssh` reads the project (OS Login, metadata) before connecting;
+# a custom role grants that one read instead of project-wide compute.viewer.
+if missing iam roles describe outrunnerDeployerProjectRead; then
+  gc iam roles create outrunnerDeployerProjectRead --project "$project" \
+    --title "Outrunner deployer: read project" --permissions compute.projects.get --stage GA
+fi
+gc projects add-iam-policy-binding "$project" --role "projects/$project/roles/outrunnerDeployerProjectRead" \
+  --member "serviceAccount:$account" --condition None >/dev/null
 
 echo "Set these repository variables (Settings -> Secrets and variables -> Actions -> Variables):"
 echo "  GCP_PROJECT=$project"

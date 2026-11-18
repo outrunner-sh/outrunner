@@ -25,7 +25,7 @@ import { attachmentsUnavailable } from "@/lib/runtime/worktree-access";
 import { abandonedBefore, firstPromptKey, gateFirstPrompt } from "@/lib/session/first-prompt-claim";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
 import { sendFailureMessage } from "@/lib/session/send-failure";
-import { BOX_GONE } from "@/lib/session/session-codes";
+import { BOX_GONE, FIRST_PROMPT_SENDING } from "@/lib/session/session-codes";
 import { FROM_HEADER } from "@/lib/slack/from";
 import { watchSent } from "@/lib/session/watch";
 
@@ -121,7 +121,7 @@ export async function POST(request: Request, context: RouteContext) {
   // Not "sent": that send may yet fail, and this page would think it went.
   const stillGoing = () =>
     NextResponse.json(
-      { error: "Your first message is still on its way. Try again in a moment if it doesn't show up." },
+      { error: "Your first message is still on its way. Try again in a moment if it doesn't show up.", code: FIRST_PROMPT_SENDING },
       { status: 409 },
     );
   if (gate.outcome === "sending") return stillGoing();

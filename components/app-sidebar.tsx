@@ -51,6 +51,7 @@ import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { startNewSession } from "@/lib/session/new-session-reset";
+import { PREFETCH_AFTER_MS, prefetchSessions } from "@/lib/session/prefetch-sessions";
 import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
 import { cn } from "@/lib/utils";
 import { OrgSwitcher } from "@/components/org-switcher";
@@ -119,6 +120,20 @@ export function AppSidebar({
   useEffect(() => {
     refreshLocal();
   }, [pathname, refreshLocal]);
+
+  // The listed sessions' conversations, brought in once the page has settled
+  // (lib/session/prefetch-sessions.ts), so switching to one shows it at once
+  // rather than "Connecting to Claude". Not for a tab out of sight, nor a
+  // connection asked to save data.
+  useEffect(() => {
+    if (loading) return;
+    const timer = setTimeout(() => {
+      const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
+      if (document.visibilityState === "hidden" || saveData) return;
+      prefetchSessions(workspaces, active ?? null);
+    }, PREFETCH_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [loading, workspaces, active]);
 
   const groups = useMemo(
     // `now` too: a setup that stalls becomes deletable as the clock passes it.
