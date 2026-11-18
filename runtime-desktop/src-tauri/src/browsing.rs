@@ -1,4 +1,5 @@
-// What the app's windows do with links, new windows and downloads.
+// What the app's windows do with links, new windows and downloads, and the
+// History menu that gets the user back from a page they landed on.
 //
 // A WKWebView on its own does none of what a browser's chrome does: it refuses
 // every `window.open` and `target="_blank"` link unless the app takes them,
@@ -11,6 +12,8 @@
 //   anywhere else goes to the browser, as a navigation would.
 // - A download is saved to ~/Downloads (numbered past a file already there,
 //   as a browser does) and shown in Finder when it's done.
+// - History → Back / Forward (⌘[ / ⌘]) and Reload Page (⌘R) act on the
+//   focused window.
 
 use std::{
     path::{Path, PathBuf},
@@ -21,6 +24,7 @@ use std::{
 };
 
 use tauri::{
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu, WINDOW_SUBMENU_ID},
     webview::{DownloadEvent, NewWindowFeatures, NewWindowResponse},
     AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry,
 };
@@ -187,6 +191,53 @@ fn saves_in(folder: &Path, destination: &Path) -> bool {
         return false;
     };
     destination.parent() == Some(folder) && !name.starts_with('.')
+}
+
+const BACK: &str = "history_back";
+const FORWARD: &str = "history_forward";
+const RELOAD: &str = "history_reload";
+
+/// The app's menu bar: the platform's default, with a History menu before
+/// Window, as in Safari.
+pub fn menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
+    let menu = Menu::default(app)?;
+    let history = Submenu::with_items(
+        app,
+        "History",
+        true,
+        &[
+            &MenuItem::with_id(app, BACK, "Back", true, Some("CmdOrCtrl+["))?,
+            &MenuItem::with_id(app, FORWARD, "Forward", true, Some("CmdOrCtrl+]"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, RELOAD, "Reload Page", true, Some("CmdOrCtrl+R"))?,
+        ],
+    )?;
+    let items = menu.items()?;
+    let at = items
+        .iter()
+        .position(|item| item.id() == WINDOW_SUBMENU_ID)
+        .unwrap_or(items.len());
+    menu.insert(&history, at)?;
+    Ok(menu)
+}
+
+/// Act on a History menu item, in the focused window (the main one when none
+/// is). Any other item is someone else's.
+pub fn on_menu_event(app: &AppHandle, event: MenuEvent) {
+    let script = match event.id().as_ref() {
+        BACK => "history.back()",
+        FORWARD => "history.forward()",
+        RELOAD => "location.reload()",
+        _ => return,
+    };
+    let windows = app.webview_windows();
+    let target = windows
+        .values()
+        .find(|window| window.is_focused().unwrap_or(false))
+        .or_else(|| windows.get("main"));
+    if let Some(window) = target {
+        let _ = window.eval(script);
+    }
 }
 
 #[cfg(test)]

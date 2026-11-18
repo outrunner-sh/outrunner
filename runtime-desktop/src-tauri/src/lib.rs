@@ -167,6 +167,15 @@ pub fn run() {
         .manage(local_runtime::LocalRuntime::default())
         .manage(updater::UpdateState::default())
         .manage(browsing::Downloads::default())
+        .menu(browsing::menu)
+        .on_menu_event(browsing::on_menu_event)
+        // Closing the main window quits, even with a window it opened still
+        // up: that one is a page's, and the app has no other way back.
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                window.app_handle().exit(0);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             desktop_signin::desktop_signin_start,
             desktop_signin::desktop_signin_poll,
