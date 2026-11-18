@@ -11,18 +11,18 @@ function comment(over: { body?: string; pull?: boolean; association?: string; gi
   return {
     action: "created",
     installation: { id: 42 },
-    repository: { full_name: "neevai-labs/outrunner" },
+    repository: { full_name: "outrunner-sh/outrunner" },
     issue: {
       number: 12,
       title: "Login is slow",
       body: "It takes 5 seconds.",
-      html_url: `https://github.com/neevai-labs/outrunner/${over.pull ? "pull" : "issues"}/12`,
+      html_url: `https://github.com/outrunner-sh/outrunner/${over.pull ? "pull" : "issues"}/12`,
       ...(over.pull && { pull_request: {} }),
     },
     comment: {
       id: 900,
       body: over.body ?? "@outrunner please fix",
-      html_url: "https://github.com/neevai-labs/outrunner/issues/12#issuecomment-900",
+      html_url: "https://github.com/outrunner-sh/outrunner/issues/12#issuecomment-900",
       author_association: over.association ?? "MEMBER",
       user: { id: over.githubId ?? 7, login: "ada", type: "User" },
     },
@@ -155,7 +155,7 @@ test("a mention on a pull request with no session starts one as the commenter, o
         target: "pull",
         number: 12,
         headRef: "feature/login",
-        url: "https://github.com/neevai-labs/outrunner/pull/12",
+        url: "https://github.com/outrunner-sh/outrunner/pull/12",
         title: "Login is slow",
         baseRef: "main",
       },
@@ -211,7 +211,7 @@ test("a member who can't read the repository steers nothing", async () => {
   assert.equal(await handleMention("issue_comment", comment({ pull: true }), deps, SLUG), "no_access");
   assert.equal(calls.sent.length, 0);
   assert.equal(calls.started.length, 0);
-  assert.match(calls.replies[0], /can't start sessions on neevai-labs\/outrunner/);
+  assert.match(calls.replies[0], /can't start sessions on outrunner-sh\/outrunner/);
 });
 
 test("bots, [skip outrunner], other repositories and plain comments are left alone", async () => {
@@ -254,19 +254,19 @@ test("closing an issue or pull request is read with what it closed and when", ()
     readClosed("pull_request", {
       action: "closed",
       installation: { id: 42 },
-      repository: { full_name: "neevai-labs/outrunner" },
+      repository: { full_name: "outrunner-sh/outrunner" },
       pull_request: { number: 30, closed_at: "2026-10-28T10:00:00Z", head: { ref: "feature/login" } },
     }),
-    { installationId: 42, repoFullName: "neevai-labs/outrunner", target: "pull", number: 30, headRef: "feature/login", closedAt: "2026-10-28T10:00:00Z" },
+    { installationId: 42, repoFullName: "outrunner-sh/outrunner", target: "pull", number: 30, headRef: "feature/login", closedAt: "2026-10-28T10:00:00Z" },
   );
   assert.deepEqual(
     readClosed("issues", {
       action: "closed",
       installation: { id: 42 },
-      repository: { full_name: "neevai-labs/outrunner" },
+      repository: { full_name: "outrunner-sh/outrunner" },
       issue: { number: 12, closed_at: "2026-10-28T10:00:00Z" },
     }),
-    { installationId: 42, repoFullName: "neevai-labs/outrunner", target: "issue", number: 12, headRef: null, closedAt: "2026-10-28T10:00:00Z" },
+    { installationId: 42, repoFullName: "outrunner-sh/outrunner", target: "issue", number: 12, headRef: null, closedAt: "2026-10-28T10:00:00Z" },
   );
   assert.equal(readClosed("issues", { action: "opened", installation: { id: 42 }, repository: { full_name: "a/b" }, issue: { number: 1 } }), null);
 });
@@ -275,7 +275,7 @@ function closedPull(closedAt = "2026-10-28T10:00:00Z") {
   return {
     action: "closed",
     installation: { id: 42 },
-    repository: { full_name: "neevai-labs/outrunner" },
+    repository: { full_name: "outrunner-sh/outrunner" },
     pull_request: { number: 30, closed_at: closedAt, merged: true, head: { ref: "feature/login" } },
   };
 }

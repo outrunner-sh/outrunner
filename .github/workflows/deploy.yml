@@ -22,8 +22,8 @@ name: Deploy production
 #
 # Required repo secrets (Settings -> Secrets and variables -> Actions):
 #   CLOUDFLARE_API_TOKEN   - Workers Scripts:Edit, Durable Objects:Edit,
-#                            Containers:Edit, and neev.ai Zone:DNS:Edit
-#   CLOUDFLARE_ACCOUNT_ID  - the Neevcloud account id
+#                            Containers:Edit, and DNS:Edit on the custom-domain zones
+#   CLOUDFLARE_ACCOUNT_ID  - the Cloudflare account id (matches wrangler.jsonc)
 # The public supported CLI version lives with the existing public build values
 # in cloudflare/wrangler.jsonc, and is verified against npm before every deploy.
 # Apply pending SQL migrations separately before deploying; the health gate

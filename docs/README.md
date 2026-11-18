@@ -54,6 +54,3 @@ spikes, and contracts. They explain design decisions and may describe features
 before later changes; consult current code and feature guides for behavior.
 The [Cursor migration](cursor-migration.md) is a proposal, not a supported
 installation path.
-
-Historical changelogs: [October 26 week](changelog/2026-10-26.md) and
-[October 29 rollout](changelog/2026-10-29-wave-2-rollout.md).

@@ -5,7 +5,7 @@ import { orgName, orgSummary, pickActiveOrg, sortOrgs, type Org } from "@/lib/or
 import { emailDomain, isPublicDomain, primaryDomain } from "@/lib/orgs/domains";
 
 const personal: Org = { id: "p", name: "Personal", personal: true, role: "admin" };
-const team: Org = { id: "t", name: "Zerotrail", personal: false, role: "member" };
+const team: Org = { id: "t", name: "Initech", personal: false, role: "member" };
 const other: Org = { id: "a", name: "Acme", personal: false, role: "admin" };
 
 test("the active org is the cookie's while the user is a member of it", () => {
@@ -38,9 +38,9 @@ test("an org's name is trimmed and 1 to 80 characters", () => {
 });
 
 test("an email's domain, lower case; not one for something else", () => {
-  assert.equal(emailDomain("Sahin@ZeroTrail.AI"), "zerotrail.ai");
+  assert.equal(emailDomain("Dev@Initech.DEV"), "initech.dev");
   assert.equal(emailDomain("no-at-sign"), null);
-  assert.equal(emailDomain("@zerotrail.ai"), null);
+  assert.equal(emailDomain("@initech.dev"), null);
   assert.equal(emailDomain("a@localhost"), null);
 });
 
@@ -62,16 +62,16 @@ test("free mail providers and GitHub's addresses are never claimed", () => {
   ]) {
     assert.equal(isPublicDomain(domain), true, domain);
   }
-  assert.equal(isPublicDomain("zerotrail.ai"), false);
+  assert.equal(isPublicDomain("initech.dev"), false);
 });
 
 test("the domain an org claims is the primary verified email's, never a secondary one's", () => {
   assert.equal(
     primaryDomain([
       { email: "me@side.dev", primary: false },
-      { email: "sahin@zerotrail.ai", primary: true },
+      { email: "dev@initech.dev", primary: true },
     ]),
-    "zerotrail.ai",
+    "initech.dev",
   );
   // A primary on free mail claims nothing, even beside a work email left
   // verified from an old job.

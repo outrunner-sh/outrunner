@@ -5,7 +5,7 @@ Each task gets a Git worktree, a terminal, and a conversation you can return to
 while the agent keeps working.
 
 [Use Outrunner](https://app.outrunner.sh) · [Documentation](docs/README.md) ·
-[Contributing](CONTRIBUTING.md) · [MIT License](LICENSE)
+[Contributing](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md) · [MIT License](LICENSE)
 
 ## What you can do
 
@@ -99,6 +99,7 @@ pnpm test:browser
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for component-specific checks and pull
 request guidelines. To report a vulnerability, follow [SECURITY.md](SECURITY.md).
+Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Documentation
 

@@ -82,11 +82,11 @@ test("an installation as GitHub sends it, or none without an account", () => {
   assert.deepEqual(
     toInstallation({
       id: 7,
-      account: { login: "zerotrail", type: "Organization" },
+      account: { login: "initech", type: "Organization" },
       repository_selection: "selected",
       suspended_at: "2026-10-27T12:00:00Z",
     }),
-    { id: 7, accountLogin: "zerotrail", accountType: "Organization", repositorySelection: "selected", suspendedAt: "2026-10-27T12:00:00Z", accountId: null },
+    { id: 7, accountLogin: "initech", accountType: "Organization", repositorySelection: "selected", suspendedAt: "2026-10-27T12:00:00Z", accountId: null },
   );
   assert.equal(toInstallation({ id: 8, account: { login: "ada", type: "User", id: 501 } })?.accountId, 501, "the account's id, when GitHub says it");
   assert.equal(toInstallation({ id: 7, account: null, repository_selection: "all", suspended_at: null }), null);

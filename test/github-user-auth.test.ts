@@ -142,7 +142,7 @@ test("the user's own installation is the one on their account, by id", async () 
   const doFetch = (async () =>
     Response.json({
       installations: [
-        { id: 1, account: { login: "zerotrail", type: "Organization", id: 10 }, repository_selection: "all", suspended_at: null },
+        { id: 1, account: { login: "initech", type: "Organization", id: 10 }, repository_selection: "all", suspended_at: null },
         { id: 2, account: { login: "md", type: "User", id: 42 }, repository_selection: "selected", suspended_at: null },
         { id: 3, account: null, repository_selection: "all", suspended_at: null },
       ],
@@ -151,7 +151,7 @@ test("the user's own installation is the one on their account, by id", async () 
   assert.deepEqual(
     installations.map((i) => [i.id, i.accountLogin, i.repositorySelection]),
     [
-      [1, "zerotrail", "all"],
+      [1, "initech", "all"],
       [2, "md", "selected"],
     ],
   );

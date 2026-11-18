@@ -1,7 +1,7 @@
 import { MAX_ATTACHMENT_BYTES } from "@/lib/runtime/attachments";
 
 /**
- * A screen recording from the composer (NEE-263): the video, attached as a
+ * A screen recording from the composer: the video, attached as a
  * file, and a few frames of it, attached as images the agent can see (it
  * can't watch a video). The browser side is hooks/use-screen-recorder.ts.
  */

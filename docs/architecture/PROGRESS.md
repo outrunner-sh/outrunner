@@ -127,8 +127,6 @@ close laptop → Claude keeps running → reconnect from another device → resu
 ## Housekeeping / follow-ups
 - ✅ Applied `20260804110000_runtime_computers.sql` + `20260805000000_runtime_computer_provision_timings.sql` to Supabase
   (`database.types.ts` hand-maintained in lockstep)
-- ⬜ Rotate the `CLAUDE_CODE_OAUTH_TOKEN` shared earlier (treat as exposed)
 - ⬜ Provision/configure Daytona credentials in the deployment secret manager,
   then complete the authenticated Phase 6 acceptance checklist.
-- ⬜ Review/merge PR #9
 - Known limitations (from Spike 4): interactive-TUI PTY input handling; heavy-workload/>30-min profiling; per-turn JSONL flush confirmation

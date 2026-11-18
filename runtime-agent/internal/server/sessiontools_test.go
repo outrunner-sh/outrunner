@@ -95,7 +95,7 @@ func TestSessionToolsReachTheControlPlane(t *testing.T) {
 		t.Fatalf("refused calls reached the control plane: %+v", got)
 	}
 
-	// A secret on the box is masked in what a tool sends out (NEE-268).
+	// A secret on the box is masked in what a tool sends out.
 	if code, _, errOut := run("ws-1", "suggest-learning", "--org", "--title", "Key", "It's", "canary-2682b7c55940"); code != 0 {
 		t.Fatalf("suggest-learning with a secret = %d, %q", code, errOut)
 	}

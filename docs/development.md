@@ -178,5 +178,5 @@ replace the browser bundle's configuration. Production also requires
 The checked-in `cloudflare/wrangler.jsonc` describes the hosted service. Copy
 and adapt its account, routes, and public build values for your deployment.
 See [Cloudflare](deploy-cloudflare.md) and [Railway](deploy-railway.md).
-Deployment, mirroring, signing, and npm publishing workflows are maintainer
+Deployment, signing, and npm publishing workflows are maintainer
 operations and require separately configured secrets.

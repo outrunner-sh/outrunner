@@ -37,7 +37,7 @@ function deps(over: Partial<IdentityDeps> = {}) {
     personalToken: async () => ({ token: "gho_mine", expiresAt: null }),
     personalConnected: async () => true,
     config: () => config,
-    installations: async () => [installation(7, "ZeroTrail")],
+    installations: async () => [installation(7, "Initech")],
     repoLevel: async () => "write",
     granted: async () => ({
       contents: "write",
@@ -59,7 +59,7 @@ function deps(over: Partial<IdentityDeps> = {}) {
   return { d, minted };
 }
 
-const ask = { userId: "u1", orgId: "o1", repo: "zerotrail/api" };
+const ask = { userId: "u1", orgId: "o1", repo: "initech/api" };
 
 test("working as themselves, a member gets their own token, whatever the repository", async () => {
   const { d, minted } = deps({ identity: async () => "personal" });
@@ -203,11 +203,11 @@ test("working as the App never falls back to the member's own token", async () =
     return true;
   });
 
-  const suspended = deps({ installations: async () => [installation(7, "zerotrail", { suspended: true })] });
+  const suspended = deps({ installations: async () => [installation(7, "initech", { suspended: true })] });
   await assert.rejects(resolveGitCredential(ask, suspended.d), (error: unknown) => {
     assert.ok(error instanceof GitIdentityError);
     assert.equal(error.reason, "suspended");
-    assert.equal(error.href, "https://github.com/organizations/zerotrail/settings/installations/7");
+    assert.equal(error.href, "https://github.com/organizations/initech/settings/installations/7");
     return true;
   });
 
@@ -231,7 +231,7 @@ test("working as the App never falls back to the member's own token", async () =
 });
 
 test("a box's request is its own only signed with its secret, over its sandbox, time and body, and recently", () => {
-  const body = '{"repo":"zerotrail/api"}';
+  const body = '{"repo":"initech/api"}';
   const signature = gitCredentialSignature("s3cret", "sb-1", "1000", body);
   const expected = createHmac("sha256", "s3cret").update(`git-credential\nsb-1\n1000\n${body}`).digest("hex");
   assert.equal(signature, `sha256=${expected}`);
@@ -240,7 +240,7 @@ test("a box's request is its own only signed with its secret, over its sandbox, 
   assert.equal(gitCredentialRequestValid("s3cret", request, 1000 + 60), true);
   assert.equal(gitCredentialRequestValid("other", request, 1000), false);
   assert.equal(gitCredentialRequestValid("s3cret", { ...request, sandboxId: "sb-2" }, 1000), false);
-  assert.equal(gitCredentialRequestValid("s3cret", { ...request, body: '{"repo":"zerotrail/web"}' }, 1000), false);
+  assert.equal(gitCredentialRequestValid("s3cret", { ...request, body: '{"repo":"initech/web"}' }, 1000), false);
   // More than five minutes either way.
   assert.equal(gitCredentialRequestValid("s3cret", request, 1000 + 301), false);
   assert.equal(gitCredentialRequestValid("s3cret", request, 1000 - 301), false);
