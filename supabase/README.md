@@ -1,6 +1,6 @@
 # Supabase
 
-Project ref: `butbnitdpiehgwqggowr`
+Project ref: `vidulqzirsthlshybwat` (Mumbai, `ap-south-1`; moved from Tokyo `butbnitdpiehgwqggowr` in 2026-11 to sit next to the app host)
 
 ## Applying migrations
 
@@ -75,7 +75,7 @@ and always removes its container.
 1. **Authentication → Providers → GitHub**: enable it and paste the GitHub
    OAuth app's client ID and secret.
 2. Set the GitHub OAuth app's callback URL to:
-   `https://butbnitdpiehgwqggowr.supabase.co/auth/v1/callback`
+   `https://vidulqzirsthlshybwat.supabase.co/auth/v1/callback`
 3. **Authentication → URL Configuration**: add `<app-origin>/auth/callback`
    (for example `http://localhost:3000/auth/callback`) to the Redirect URLs
    allowlist.

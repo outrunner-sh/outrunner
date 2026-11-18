@@ -5,6 +5,7 @@ import { requireEnv } from "@/lib/env";
 import { timeoutSignal } from "@/lib/http/timeout";
 import { actingUserClient } from "@/lib/supabase/acting-user";
 import type { Database } from "@/lib/supabase/database.types";
+import { SESSION_COOKIE_OPTIONS } from "@/lib/supabase/session-cookie";
 
 /**
  * Supabase client for Server Components, Route Handlers, and Server Actions.
@@ -24,6 +25,7 @@ export async function createSupabaseServerClient() {
     requireEnv("NEXT_PUBLIC_SUPABASE_URL"),
     requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
     {
+      cookieOptions: SESSION_COOKIE_OPTIONS,
       cookies: {
         getAll() {
           return cookieStore.getAll();
