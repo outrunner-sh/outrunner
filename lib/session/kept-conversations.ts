@@ -94,6 +94,10 @@ export class KeptConversations implements ConversationStore {
     }, undefined);
   }
 
+  ids(): Promise<string[]> {
+    return this.run(async (storage) => (this.forgotten ? [] : this.readIndex(storage)), []);
+  }
+
   save(id: string, entry: CachedConversation): void {
     if (this.forgotten) return;
     this.pending.set(id, entry);

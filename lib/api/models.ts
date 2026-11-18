@@ -6,6 +6,7 @@
  * the caller's menu.
  */
 
+import { cursorModelItems } from "@/lib/api/cursor";
 import type { ModelLoadout } from "@/lib/runtime/model-loadout";
 import { initialSelection } from "@/lib/runtime/selection";
 import { agentsFor, effortsFor, type ModelGroup } from "@/lib/runtime/session-models";
@@ -32,5 +33,6 @@ export function modelsJson(groups: ModelGroup[], loadout: ModelLoadout): Record<
   // A group that takes an id typed in (a provider on the user's own key)
   // runs more than its list: said, so a caller knows to try theirs.
   const custom = groups.filter((g) => g.custom).map((g) => g.provider);
-  return { data, custom_providers: custom };
+  // `items` as Cursor's GET /v1/models lists them, for scripts moved from it.
+  return { data, custom_providers: custom, items: cursorModelItems(data) };
 }

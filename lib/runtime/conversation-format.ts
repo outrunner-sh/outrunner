@@ -181,6 +181,8 @@ export function toolRow(name: string, input: unknown): ToolRowSummary {
     case ASK_TOOL:
       return { kind: "question", label: askedLabel(input), mono: false, title: null, stats: null };
   }
+  const mission = missionToolRow(name, input);
+  if (mission) return mission;
   const summary = describeToolUse(name, input);
   const kind: ToolKind =
     name === "Grep" || name === "Glob" || name === "LS"
@@ -200,6 +202,41 @@ export function toolRow(name: string, input: unknown): ToolRowSummary {
     title: null,
     stats: null,
   };
+}
+
+/** The Mission's own MCP server (lib/missions/setup.ts), named here so this
+ *  module stays free of server code. */
+const MISSION_SERVER = "outrunner-mission";
+
+/** A Mission's tools (lib/missions/tools.ts) in the words its UI uses for
+ *  Runners, Ships, rather than as mcp__outrunner-mission__spawn_runner.
+ *  Claude names them mcp__<server>__<tool>, Codex <server>.<tool>. */
+function missionToolRow(name: string, input: unknown): ToolRowSummary | null {
+  const tool = name.startsWith(`mcp__${MISSION_SERVER}__`)
+    ? name.slice(`mcp__${MISSION_SERVER}__`.length)
+    : name.startsWith(`${MISSION_SERVER}.`)
+      ? name.slice(MISSION_SERVER.length + 1)
+      : null;
+  const row = (kind: ToolKind, label: string): ToolRowSummary => ({ kind, label, mono: false, title: null, stats: null });
+  switch (tool) {
+    case "spawn_runner": {
+      const shipName = field(input, "name");
+      return row("agent", shipName ? `Spawn ship · ${shipName}` : "Spawn ship");
+    }
+    case "message_runner":
+      return row("agent", "Message ship");
+    case "list_runners":
+      return row("agent", "List ships");
+    case "read_runner":
+      return row("agent", "Check on ship");
+    case "archive_runner":
+      return row("agent", "Archive ship");
+    case "read_notes":
+      return row("read", "Read mission notes");
+    case "write_notes":
+      return row("edit", "Save mission notes");
+  }
+  return null;
 }
 
 /** An ask_user call by what it asked: its question, or how many. */

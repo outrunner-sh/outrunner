@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { after } from "@/lib/observability/after";
 import { z } from "zod";
 
+import { recordProjectChange } from "@/lib/audit/project-history";
 import { getOwner } from "@/lib/auth/owner";
 import { EnvironmentAccessError, getEnvironment, updateEnvironment, type EnvironmentPatch } from "@/lib/db/environments";
 import {
@@ -103,6 +104,18 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
     // A new warm hook: the project's ready boxes are made again with it.
     if (patch.hooks?.warm !== undefined) after(() => refillAfterChange(owner, id), { where: "refill-pool", userId: owner.id });
-    return NextResponse.json(await getEnvironment(owner.id, id));
+    const now = await getEnvironment(owner.id, id);
+    // Its hooks and scripts, when they changed, are kept with the change:
+    // they're its history (dropped by recordProjectChange when too large).
+    if (now) {
+      await recordProjectChange(
+        owner,
+        id,
+        "project.changed",
+        { fields: Object.keys(patch), ...(patch.hooks && { hooks: now.hooks }), ...(patch.scripts && { scripts: now.scripts }) },
+        now,
+      );
+    }
+    return NextResponse.json(now);
   });
 }

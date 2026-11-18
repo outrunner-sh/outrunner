@@ -18,8 +18,9 @@ import { activeOrgId } from "@/lib/orgs/server";
  *
  * The narrowest token that clones `{ fullName }`: a read-only one of the
  * org's Outrunner App for that repository alone, an hour long, for a project
- * they have access to in the org they're looking at; else their own GitHub
- * App user token (8 hours at most). An old sign-in token, which never expires
+ * they have access to in the org they're looking at; else their own: a
+ * personal access token they pasted, or their GitHub App user token (8 hours
+ * at most). An old sign-in token, which never expires
  * and reaches everything they can, only while those are still allowed
  * (GITHUB_LEGACY_TOKENS) and they have nothing narrower.
  */

@@ -36,17 +36,20 @@ import { checkAttachments } from "@/lib/api/attachments";
 import { parseImages } from "@/lib/api/images";
 import { imagesToAttachments } from "@/lib/api/images.deps";
 import { boxSetupRefusal } from "@/lib/api/auth";
-import { firstPrompt, idempotencyKey, idempotentId, MAX_PROMPT, parseAttachmentIds, parseCreate, type CreateInput } from "@/lib/api/create-request";
+import { firstPrompt, idempotencyKey, idempotentId, MAX_PROMPT, messageOf, parseAttachmentIds, parseCreate, type CreateInput } from "@/lib/api/create-request";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
 import { readConversation, readLiveConversation } from "@/lib/api/live";
-import { runsFrom, sessionUsage, type Run } from "@/lib/api/runs";
+import { findRun, runRef } from "@/lib/api/cursor";
+import { firstRunPending, FIRST_RUN, pendingFirstRun, runsFrom, sessionUsage, type Run } from "@/lib/api/runs";
+import { getOrg } from "@/lib/db/orgs";
 import { getChat, listChats } from "@/lib/db/chats";
 import { agentChat, chatNamed } from "@/lib/session/chat-target";
 import { mainChatOf, orderedChats, type SessionChat } from "@/lib/session/chats";
 import { pageOf, pageRequest, paginate } from "@/lib/api/pagination";
 import { isApiSource, isApiStatus, snakeKeys, statusesFor, workspaceJson } from "@/lib/api/serialize";
 import { getEnvironment } from "@/lib/db/environments";
+import { storeSessionOverrides } from "@/lib/db/session-overrides";
 import { toWorkspace } from "@/lib/db/mappers";
 import { projectLevel } from "@/lib/db/org-access";
 import { getProject, getProjectByFullName, getWorkspace } from "@/lib/db/repositories";
@@ -89,7 +92,9 @@ export async function createWorkspace(
   // uploaded or watched a second time.
   const replayed = askedId ? await getWorkspace(askedId) : null;
   if (replayed && replayed.ownerId === context.owner.id) {
-    return Response.json(workspaceJson(replayed, context.base), { status: 200, headers: { "idempotent-replayed": "true" } });
+    // A Mission made with the same key (POST /projects) is no session to answer with.
+    if (replayed.kind === "mission") return apiError(409, "That key started a project (a Mission), not a session: send another.");
+    return Response.json({ ...workspaceJson(replayed, context.base), run_id: FIRST_RUN }, { status: 200, headers: { "idempotent-replayed": "true" } });
   }
   const raw = await jsonBody(context.request);
   if (raw instanceof Response) return raw;
@@ -104,18 +109,19 @@ export async function createWorkspace(
   let projectId = input.projectId;
   if (input.repoFullName) {
     const found = await getProjectByFullName(caller.orgId, input.repoFullName);
-    if (!found) return apiError(404, "No repository at that address in this org that you can see. Add it to Outrunner first.");
+    if (!found) return apiError(404, await noRepository(context, input.repoFullName));
     projectId = found.id;
   }
+  let environmentId: string | undefined;
   if (input.environmentId) {
     const environment = await getEnvironment(owner.id, input.environmentId);
     if (!environment || environment.orgId !== caller.orgId) return apiError(404, "No project by that id that you can see.");
-    // A session starts from its repository's own project (the one it's the
-    // default of), which is what the new-session screen does too.
-    projectId = environment.defaultForProjectId;
-    if (!projectId) {
-      return apiError(409, "Sessions start from a repository's project. Name one of its repositories with `project_id`.");
-    }
+    // It works first in the repository the project is the default of, else
+    // its first: a project someone made has every one of them checked out,
+    // as the new-session screen starts it.
+    projectId = environment.defaultForProjectId ?? environment.repos[0]?.projectId ?? null;
+    if (!projectId) return apiError(409, "That project holds no repository to work in: add one first.");
+    environmentId = environment.id;
   }
   const project = projectId ? await getProject(projectId) : null;
   if (!project || project.orgId !== caller.orgId || !allows(await projectLevel(owner.id, project.id), "read")) {
@@ -154,6 +160,10 @@ export async function createWorkspace(
         firstAttachmentIds: attachmentIds,
         source: "api",
         boxSize: input.size && isBoxSizeId(input.size) ? input.size : undefined,
+        ...(environmentId && { environmentId }),
+        // Kept before its box is set up, which reads them; a session asked
+        // for them that couldn't keep them goes no further.
+        ...(input.overrides && { onCreated: (id: string) => storeSessionOverrides(id, input.overrides!) }),
         onSettled: async (outcome) => {
           release();
           await hooks.onSettled?.(outcome);
@@ -172,7 +182,23 @@ export async function createWorkspace(
   const workspace = await getWorkspace(made.workspace.id);
   if (!workspace) return apiError(500, "The session was made, but couldn't be read back.");
   await hooks.onCreated?.(workspace, input);
-  return Response.json({ ...workspaceJson(workspace, context.base), status: "preparing" }, { status: 202 });
+  // Its first run is `run-1` from now, though its own id (its prompt's
+  // event) is only known once the box has logged it: every run call takes it.
+  return Response.json(
+    { ...workspaceJson(workspace, context.base), status: "preparing", run_id: FIRST_RUN, run: pendingFirstRun(workspace) },
+    { status: 202 },
+  );
+}
+
+/** Why a repository named by address wasn't found: which one, in which org,
+ *  and, for a key that names its org per call, how to name another. */
+async function noRepository(context: ApiContext, fullName: string): Promise<string> {
+  const org = await getOrg(context.caller.orgId).catch(() => null);
+  const where = org ? `the org ${org.name} (${org.id})` : `the org ${context.caller.orgId}`;
+  const which = context.caller.kind === "org_key"
+    ? "An org key acts in its own org alone."
+    : "A personal key or the CLI acts in your personal org unless the call names another (`?org=`, or the `Outrunner-Org` header).";
+  return `No repository ${fullName} in ${where} that you can see: add it to Outrunner, or check the org. ${which} GET /projects lists what this key sees.`;
 }
 
 /** Where a session on a pull request starts (its head branch, in the
@@ -386,14 +412,18 @@ export async function sendMessageApi(
 ): Promise<Response> {
   const raw = await jsonBody(context.request);
   if (raw instanceof Response) return raw;
-  const content = typeof raw.content === "string" ? raw.content.trim() : "";
+  // `prompt` is taken for `content`, as POST /workspaces names it (and as
+  // Cursor's `{ text, images }`).
+  const said = messageOf(raw);
+  if (typeof said === "string") return apiError(400, said);
+  const content = said.content;
   const uploaded = parseAttachmentIds(raw.attachment_ids);
   if (typeof uploaded === "string") return apiError(400, uploaded);
-  const images = parseImages(raw.images, uploaded.length);
+  const images = parseImages(said.images, uploaded.length);
   if (typeof images === "string") return apiError(400, images);
   // Files alone are a message too ("here's the log"), as in the composer.
   if (!content && uploaded.length === 0 && images.length === 0) {
-    return apiError(400, "Say something (`content`), or send files (`attachment_ids`) or `images`.");
+    return apiError(400, "Say something (`content`, or `prompt`), or send files (`attachment_ids`) or `images`.");
   }
   if (content.length > MAX_PROMPT) return apiError(400, "The message is too long.");
   if (raw.mode !== undefined && raw.mode !== "build" && raw.mode !== "plan") return apiError(400, "`mode` is build or plan.");
@@ -427,6 +457,7 @@ export async function sendMessageApi(
       ...(chat && { chat_id: chat }),
       after_event: fence === null ? null : String(fence),
       run_id: logged ? String(logged.promptId) : null,
+      run_number: logged?.runNumber ?? null,
     },
     { status: 202 },
   );
@@ -443,12 +474,18 @@ const FENCE_RETRY_MS = 1_500;
  * message. Null when the log still doesn't show it: docs/api.md says what a
  * caller does then.
  */
-async function fenceAfterSend(workspace: Workspace, content: string, sentAt: number, chat?: string): Promise<{ fence: number; promptId: number } | null> {
+async function fenceAfterSend(
+  workspace: Workspace,
+  content: string,
+  sentAt: number,
+  chat?: string,
+): Promise<{ fence: number; promptId: number; runNumber: number | null } | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, FENCE_RETRY_MS));
     const live = await readLiveConversation(workspace, chat).catch(() => null);
     const sent = live ? sentPrompt(live.entries, content, sentAt) : null;
-    if (sent) return sent;
+    // Its run's place, from the same read: no second one to count runs.
+    if (sent && live) return { ...sent, runNumber: runsFrom(live.entries, live.state).find((r) => r.id === String(sent.promptId))?.number ?? null };
   }
   return null;
 }
@@ -483,23 +520,45 @@ export async function listRunsApi(context: ApiContext, id: string): Promise<Resp
   if (typeof page === "string") return apiError(400, page);
   const read = await sessionRuns(context, id);
   if (read instanceof Response) return read;
-  return Response.json({ ...paginate([...read.runs].reverse(), page), from: read.from });
+  // A session just started has its first run already, `preparing`.
+  const runs: unknown[] = firstRunPending(read.workspace, read.runs, read.from) ? [pendingFirstRun(read.workspace)] : [...read.runs].reverse();
+  return Response.json({ ...paginate(runs, page), from: read.from });
 }
 
-/** GET /workspaces/{id}/runs/{run_id}: one run. */
+/** GET /workspaces/{id}/runs/{run_id}: one run, by its id or its place
+ *  (`run-2`). */
 export async function getRunApi(context: ApiContext, id: string, runId: string): Promise<Response> {
+  const ref = runRef(runId);
+  if (!ref) return apiError(404, "No run by that id in this session: a run's `id`, or its place (`run-1`).");
   const read = await sessionRuns(context, id);
   if (read instanceof Response) return read;
-  const run = read.runs.find((r) => r.id === runId);
-  return run ? Response.json({ ...run, from: read.from }) : apiError(404, "No run by that id in this session.");
+  const run = findRun(read.runs, ref);
+  if (run) return Response.json({ ...run, from: read.from });
+  if ("number" in ref && ref.number === 1 && firstRunPending(read.workspace, read.runs, read.from)) {
+    return Response.json({ ...pendingFirstRun(read.workspace), from: read.from });
+  }
+  return apiError(404, "No run by that id in this session.");
+}
+
+/** Whether a run named by its place (`run-3`) is one to stream: there, or
+ *  the next on its way (the first while it's pending; one after the last,
+ *  which a message just sent starts). Null when it is, else the answer: a
+ *  stream for one that won't come would wait out its 15 minutes. */
+export async function runToFollow(context: ApiContext, id: string, number: number): Promise<Response | null> {
+  const read = await sessionRuns(context, id);
+  if (read instanceof Response) return read;
+  if (number <= read.runs.length) return null;
+  const coming = number === 1 ? firstRunPending(read.workspace, read.runs, read.from) : number === read.runs.length + 1;
+  return coming ? null : apiError(404, "No run by that id in this session, nor one on its way.");
 }
 
 /** POST /workspaces/{id}/runs/{run_id}/cancel: stop the run, when it's the
  *  one going on (as interrupt does). */
 export async function cancelRunApi(context: ApiContext, id: string, runId: string): Promise<Response> {
+  const ref = runRef(runId);
   const read = await sessionRuns(context, id);
   if (read instanceof Response) return read;
-  const run = read.runs.find((r) => r.id === runId);
+  const run = ref ? findRun(read.runs, ref) : undefined;
   if (!run) return apiError(404, "No run by that id in this session.");
   if (run.status !== "running" && run.status !== "needs_input") return apiError(409, `That run is ${run.status}: only the one going on can be cancelled.`);
   const stopped = await interruptPOST(appRequest(context.base, `/api/workspaces/${id}/interrupt${chatParam(read.chat)}`), routeParams({ id }));

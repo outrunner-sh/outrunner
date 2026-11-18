@@ -13,6 +13,8 @@ import { promptWithoutAttachments } from "@/lib/runtime/attachments";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { isErrorReply, isInterruption, isLocalCommand, messageText } from "@/lib/runtime/conversation-events";
 import { lastAssistantText, pendingInput, turnState, type ConversationEntry } from "@/lib/api/conversation";
+import { apiStatus } from "@/lib/api/serialize";
+import type { Workspace } from "@/lib/runtime/types";
 
 export type RunStatus = "running" | "needs_input" | "finished" | "cancelled" | "error";
 
@@ -157,4 +159,48 @@ export function runsFrom(entries: readonly ConversationEntry[], state: string | 
  *  prompt (none, in practice) or outside one, in `total`. */
 export function sessionUsage(entries: readonly ConversationEntry[], runs: readonly Run[]): { total: Usage; runs: { id: string; usage: Usage }[] } {
   return { total: usageOf(entries.map((e) => e.event)), runs: runs.map((r) => ({ id: r.id, usage: r.usage })) };
+}
+
+/** The first run's id from the start: runs are also named by their place. */
+export const FIRST_RUN = "run-1";
+
+/** How long after its start a session that's ready may still be about to
+ *  log its first prompt (sent once it's ready, a moment later). */
+export const FIRST_PROMPT_GRACE_MS = 10 * 60_000;
+
+/** Whether the session's first run is yet to show: none in its log while
+ *  it's set up, or ready just after its start, its prompt on the way; or its
+ *  setup failed before it could begin. A session started without a prompt
+ *  (a Mission can be) has none on the way: past the grace, it has no runs. */
+export function firstRunPending(
+  workspace: Pick<Workspace, "status" | "errorMessage" | "createdAt">,
+  runs: readonly Run[],
+  from: string,
+  now = Date.now(),
+): boolean {
+  if (runs.length > 0) return false;
+  const status = apiStatus(workspace.status);
+  if (status === "preparing" || status === "failed") return true;
+  return status === "ready" && from === "live" && now - Date.parse(workspace.createdAt) < FIRST_PROMPT_GRACE_MS;
+}
+
+/** The first run before its prompt is in the log: `run-1`, `preparing` (or
+ *  `error`, when the session's setup failed). */
+export function pendingFirstRun(workspace: Pick<Workspace, "status" | "errorMessage">): Record<string, unknown> {
+  const failed = workspace.status === "failed";
+  return {
+    id: FIRST_RUN,
+    number: 1,
+    prompt: null,
+    status: failed ? "error" : "preparing",
+    started_at: null,
+    ended_at: null,
+    duration_ms: null,
+    result: null,
+    error: failed ? (workspace.errorMessage ?? "The session's setup failed.") : null,
+    pending_input: null,
+    usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, total_tokens: 0 },
+    first_event: null,
+    last_event: null,
+  };
 }

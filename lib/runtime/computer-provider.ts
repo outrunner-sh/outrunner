@@ -11,12 +11,12 @@ import type { AgentTarget } from "@/lib/runtime/agent-client";
 import { AgentEndpointCache } from "@/lib/runtime/agent-endpoint-cache";
 import { ATTACHMENT_DIR } from "@/lib/runtime/attachments";
 import {
-  BOX_IMAGE_MAX_BYTES,
-  IMAGE_MISSING,
-  IMAGE_TOO_LARGE,
-  imageBase64,
-  imageReadCommand,
-} from "@/lib/runtime/chat-image";
+  BOX_FILE_MAX_BYTES,
+  BOX_FILE_MISSING,
+  BOX_FILE_TOO_LARGE,
+  boxFileBase64,
+  boxFileReadCommand,
+} from "@/lib/runtime/box-file";
 import {
   AGENT_PORT,
   deployClaude,
@@ -516,19 +516,20 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     return true;
   }
 
-  /** The file at `path` on the box (absolute), for the chat to show as an
-   *  image: its bytes, or why not. Its type is the caller's to check. */
-  async readBoxImage(sandboxId: string, path: string): Promise<Buffer | "missing" | "too-large"> {
+  /** The file at `path` on the box (as boxFilePath gives it), for the chat
+   *  to show or download: its bytes, or why not. Its type is the caller's to
+   *  check. */
+  async readBoxFile(sandboxId: string, path: string): Promise<Buffer | "missing" | "too-large"> {
     const box = await this.backend.get(sandboxId);
-    const { stdout, exitCode } = await box.io.exec(imageReadCommand(path));
-    if (exitCode === IMAGE_MISSING) return "missing";
-    if (exitCode === IMAGE_TOO_LARGE) return "too-large";
+    const { stdout, exitCode } = await box.io.exec(boxFileReadCommand(path));
+    if (exitCode === BOX_FILE_MISSING) return "missing";
+    if (exitCode === BOX_FILE_TOO_LARGE) return "too-large";
     if (exitCode !== 0) throw new Error(`Reading ${path} off the box exited ${exitCode}`);
-    const base64 = imageBase64(stdout);
-    if (base64 === null) throw new Error(`Reading ${path} off the box printed no image`);
+    const base64 = boxFileBase64(stdout);
+    if (base64 === null) throw new Error(`Reading ${path} off the box printed no file`);
     const bytes = Buffer.from(base64, "base64");
     // It grew past the cap between being measured and read.
-    return bytes.length > BOX_IMAGE_MAX_BYTES ? "too-large" : bytes;
+    return bytes.length > BOX_FILE_MAX_BYTES ? "too-large" : bytes;
   }
 
   /** Push an interactive worktree's persisted branch with a request-scoped token. */

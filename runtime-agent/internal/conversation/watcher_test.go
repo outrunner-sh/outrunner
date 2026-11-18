@@ -378,3 +378,23 @@ func TestDecodeDropsADocumentsSource(t *testing.T) {
 		t.Fatalf("only an image carries its source: %+v", ev.Message)
 	}
 }
+
+func TestDecodeKeepsWhatTheAgentThought(t *testing.T) {
+	// Claude logs a thinking block's words under `thinking`; Runtime's own
+	// logs (a Codex translation) under `text`. Both come through as its text.
+	line := `{"type":"assistant","uuid":"a","timestamp":"t","message":{"role":"assistant","content":[{"type":"thinking","thinking":"List the files first.","signature":"sig"},{"type":"thinking","text":"Then read them."},{"type":"thinking","thinking":"","signature":"sig"}]}}`
+	ev, ok := decode([]byte(line))
+	if !ok || len(ev.Message.Content) != 3 {
+		t.Fatalf("expected three thinking blocks, got %+v", ev.Message)
+	}
+	for i, want := range []string{"List the files first.", "Then read them.", ""} {
+		if got := ev.Message.Content[i]; got.Type != "thinking" || got.Text != want {
+			t.Errorf("block %d = %+v, want thinking %q", i, got, want)
+		}
+	}
+	// Only a thinking block's: a text block's `thinking` isn't its words.
+	line = `{"type":"assistant","uuid":"b","timestamp":"t","message":{"role":"assistant","content":[{"type":"text","thinking":"no"}]}}`
+	if ev, _ := decode([]byte(line)); ev.Message.Content[0].Text != "" {
+		t.Errorf("text block = %+v", ev.Message.Content[0])
+	}
+}

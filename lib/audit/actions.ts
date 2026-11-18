@@ -46,6 +46,7 @@ export type AuditAction =
   | "webhook.changed"
   | "webhook.secret_rotated"
   | "defaults.changed"
+  | "automations.settings_changed"
   | "learning.created"
   | "learning.suggested"
   | "learning.changed"
@@ -64,7 +65,13 @@ export type AuditAction =
   | "billing.plan_changed"
   | "preview.made_public"
   | "preview.made_login"
-  | "preview.deleted";
+  | "preview.deleted"
+  | "project.created"
+  | "project.changed"
+  | "project.secrets_changed"
+  | "project.repos_changed"
+  | "project.rebuilt"
+  | "project.deleted";
 
 export type AuditEvent = {
   id: number;
@@ -185,6 +192,10 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `revoked the API key ${what}${text(d.hint) ? ` (…${text(d.hint)})` : ""}`;
     case "defaults.changed":
       return `set the org's defaults: model ${text(d.defaultModel) ?? "Outrunner's"}, box ${text(d.boxSize) ?? "Outrunner's"}`;
+    case "automations.settings_changed":
+      return d.automationsOnHarness === true
+        ? "set automations to run on their runner's default model and coding agent"
+        : "set automations to run on Outrunner's models";
     case "learning.created":
       return `added the learning ${what}`;
     case "learning.suggested":
@@ -230,6 +241,24 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `made the preview ${what} sign-in only`;
     case "preview.deleted":
       return `deleted the preview ${what}`;
+    case "project.created":
+      return `made the project ${what}`;
+    case "project.changed": {
+      const fields = Array.isArray(d.fields) ? d.fields.map(text).filter(Boolean) : [];
+      return `changed the project ${what}${fields.length ? `'s ${fields.join(", ")}` : ""}`;
+    }
+    case "project.secrets_changed": {
+      const set = Array.isArray(d.set) ? d.set.map(text).filter(Boolean) : [];
+      const removed = Array.isArray(d.removed) ? d.removed.map(text).filter(Boolean) : [];
+      const parts = [set.length ? `set ${set.join(", ")}` : "", removed.length ? `removed ${removed.join(", ")}` : ""].filter(Boolean);
+      return `changed the project ${what}'s secrets${parts.length ? `: ${parts.join("; ")}` : ""}`;
+    }
+    case "project.repos_changed":
+      return text(d.added) ? `added ${text(d.added)} to the project ${what}` : `took ${text(d.removed) ?? "a repository"} out of the project ${what}`;
+    case "project.rebuilt":
+      return `made the project ${what}'s ready boxes again`;
+    case "project.deleted":
+      return `deleted the project ${what}`;
     default:
       return event.action;
   }
@@ -242,4 +271,16 @@ export type AuditActor = { id: string; githubLogin: string; name: string; email:
 export function actorLabel(actor: AuditActor): string {
   if (actor === "system") return "Outrunner";
   return (actor.githubLogin || actor.name || actor.email || actor.id).slice(0, 200);
+}
+
+/** What an audit event's details hold at most (20261101115000_audit_events.sql
+ *  checks 8 KB), less room for its JSON's own. */
+export const MAX_DETAILS_BYTES = 7 * 1024;
+
+/** `details` as the log can keep them: scripts and hooks too large to are
+ *  left out, and said to be (the change itself is still recorded). */
+export function keepable(details: Record<string, unknown>): Record<string, unknown> {
+  if (new TextEncoder().encode(JSON.stringify(details)).length <= MAX_DETAILS_BYTES) return details;
+  const rest = Object.fromEntries(Object.entries(details).filter(([key]) => key !== "hooks" && key !== "scripts"));
+  return { ...rest, contents_omitted: true };
 }

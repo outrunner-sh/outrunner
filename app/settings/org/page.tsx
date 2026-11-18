@@ -4,9 +4,11 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import OrgDefaults from "@/app/settings/org/defaults/page";
+import { AutomationRunSettings } from "@/components/automation-run-settings";
 import { OrgGeneralSettings } from "@/components/org-settings";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
+import { automationSettingsOrDefault } from "@/lib/db/automation-settings";
 import { orgDomain } from "@/lib/db/orgs";
 import { getOrgContext } from "@/lib/orgs/server";
 
@@ -46,6 +48,15 @@ async function OrgSection() {
     );
   }
   const { active } = context;
-  const domain = active.personal ? null : await orgDomain(active.id).catch(() => null);
-  return <div className="space-y-10"><OrgGeneralSettings org={active} domain={domain} />{!active.personal && <OrgDefaults />}</div>;
+  const [domain, automations] = await Promise.all([
+    active.personal ? null : orgDomain(active.id).catch(() => null),
+    automationSettingsOrDefault(active.id),
+  ]);
+  return (
+    <div className="space-y-10">
+      <OrgGeneralSettings org={active} domain={domain} />
+      <AutomationRunSettings org={active} initial={automations} />
+      {!active.personal && <OrgDefaults />}
+    </div>
+  );
 }

@@ -113,6 +113,9 @@ func beganAt(data []byte, at time.Time) []byte {
 // the user's Codex home in a temp folder.
 func localCodexSession(t *testing.T) (s *Service, id, link, sessions string) {
 	t.Helper()
+	// NewService snapshots the environment; a developer's CODEX_HOME must not
+	// take precedence over this fixture's temporary home.
+	t.Setenv("CODEX_HOME", "")
 	real := t.TempDir()
 	link = filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(real, link); err != nil {
