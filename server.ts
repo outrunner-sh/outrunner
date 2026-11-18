@@ -1,6 +1,6 @@
 /**
  * The web app's HTTP server: Next, plus the relay for Neev sessions' live
- * terminal and conversation (lib/runtime/sandbox/neev-relay.ts), which are
+ * terminal and conversation (lib/runtime/sandbox/relay.ts), which are
  * WebSockets and so can't be route handlers, and previews
  * (lib/previews/proxy.ts): any request, upgrade or not, to a preview's host
  * is the box's, never Next's. Every other upgrade (Next's HMR) goes to Next.
@@ -21,7 +21,9 @@ import { createPreviewProxy, loopbackGate } from "./lib/previews/proxy.ts";
 import { onForgetPreview } from "./lib/previews/forget.ts";
 import { edgeHostSigned, previewSigningKey, sessionUser } from "./lib/previews/tokens.ts";
 import { GATE_PATH, GATE_SECRET_ENV, GATE_SECRET_HEADER } from "./lib/previews/wire.ts";
-import { createNeevRelay, SERVICE_RESTART } from "./lib/runtime/sandbox/neev-relay.ts";
+import { createSandboxRelay, neevRelayDeps, SERVICE_RESTART } from "./lib/runtime/sandbox/relay.ts";
+import { E2B_RELAY_PREFIX, NEEV_RELAY_PREFIX, relayKey } from "./lib/runtime/sandbox/relay-ticket.ts";
+import { e2bRoute } from "./lib/runtime/sandbox/e2b-route.ts";
 import { GCP_RELAY_PREFIX, gcpRelayKey } from "./lib/runtime/gcp/relay-ticket.ts";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -66,8 +68,8 @@ billingMode();
 // whole list, at once, rather than a 500 on the first request to need it.
 checkStartupEnv();
 const upgradeNext = app.getUpgradeHandler();
-const relay = createNeevRelay();
-const gcpRelay = createNeevRelay({
+const neevRelay = createSandboxRelay(neevRelayDeps, NEEV_RELAY_PREFIX);
+const gcpRelay = createSandboxRelay({
   key: () => process.env.CREDENTIALS_ENCRYPTION_KEY ? gcpRelayKey(process.env.CREDENTIALS_ENCRYPTION_KEY) : undefined,
   tunnel: async (id, agentPort) => {
     const response = await fetch(`http://127.0.0.1:${port}/api/runtime/gcp-relay`, {
@@ -78,9 +80,16 @@ const gcpRelay = createNeevRelay({
     const result = await response.json() as { url: string };
     const url = new URL(result.url);
     if (url.protocol !== "http:" || url.hostname !== "127.0.0.1") throw new Error("Invalid GCP relay target.");
-    return url.origin;
+    return { base: url.origin, headers: {} };
   },
 }, GCP_RELAY_PREFIX);
+// E2B's proxy routes by headers, which the relay sets on its own connection,
+// with the box's traffic token from the ticket (sealed; the browser can't read it).
+const e2bRelay = createSandboxRelay({
+  key: () => process.env.CREDENTIALS_ENCRYPTION_KEY ? relayKey(process.env.CREDENTIALS_ENCRYPTION_KEY, "e2b") : undefined,
+  tunnel: async (id, agentPort, trafficToken) => e2bRoute(id, agentPort, undefined, trafficToken),
+}, E2B_RELAY_PREFIX);
+const relays = [neevRelay, gcpRelay, e2bRelay];
 const previews = createPreviewProxy({
   domain: () => previewDomain(),
   appHost: () => (process.env.RUNTIME_BASE_URL ? new URL(process.env.RUNTIME_BASE_URL).host : null),
@@ -115,7 +124,7 @@ server = createServer((req, res) => {
 })
   .on("upgrade", (req, socket, head) => {
     if (previews.upgrade(req, socket, head)) return;
-    if (!gcpRelay(req, socket, head) && !relay(req, socket, head)) void upgradeNext(req, socket, head);
+    if (!relays.some((relay) => relay(req, socket, head))) void upgradeNext(req, socket, head);
   })
   .listen(port, () => console.log(`> Ready on http://localhost:${port}`));
 
@@ -147,7 +156,7 @@ function shutdown(why: string, code = 0): Promise<void> {
     }
     server.close();
     server.closeIdleConnections();
-    const relayed = relay.closeAll(SERVICE_RESTART, "Server restarting") + gcpRelay.closeAll(SERVICE_RESTART, "Server restarting");
+    const relayed = relays.reduce((sum, each) => sum + each.closeAll(SERVICE_RESTART, "Server restarting"), 0);
     if (relayed) console.log(`> Closed ${relayed} relayed connection(s) for the browser to reconnect`);
     // Event streams never finish on their own; the browser's EventSource
     // reconnects, through the Worker, to the new container.

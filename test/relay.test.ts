@@ -5,13 +5,16 @@ import { after, test } from "node:test";
 
 import WebSocket, { WebSocketServer } from "ws";
 
-import { createNeevRelay, sendable, SERVICE_RESTART } from "@/lib/runtime/sandbox/neev-relay";
+import { EventEmitter } from "node:events";
+
+import { bridge, createSandboxRelay, sendable, SERVICE_RESTART, type RelayUpstream } from "@/lib/runtime/sandbox/relay";
 import {
   mintRelayTicket,
   NEEV_RELAY_PREFIX,
+  openRelayTicket,
   RELAY_TICKET_TTL_SECONDS,
   relayTicketValid,
-} from "@/lib/runtime/sandbox/neev-relay-ticket";
+} from "@/lib/runtime/sandbox/relay-ticket";
 
 const KEY = "sk-nc-test-key";
 const SANDBOX = "01a133a1-9738-7b65-89eb-96c1c2e9798b";
@@ -35,6 +38,48 @@ test("a tampered or malformed ticket opens nothing", () => {
   for (const bad of ["", ".", exp, `${exp}.`, `${ticket}.x`, `soon.${sig}`]) {
     assert.equal(relayTicketValid(bad, SANDBOX, 8080, KEY), false, bad);
   }
+});
+
+test("a ticket can carry a secret for the relay, sealed and signed", () => {
+  const now = Date.UTC(2026, 9, 13, 8, 0, 0);
+  const ticket = mintRelayTicket(SANDBOX, 8080, KEY, now, "traffic-token");
+  assert.ok(!ticket.includes("traffic-token"));
+  assert.deepEqual(openRelayTicket(ticket, SANDBOX, 8080, KEY, now), { secret: "traffic-token" });
+  assert.equal(relayTicketValid(ticket, SANDBOX, 8080, KEY, now), true);
+  assert.equal(openRelayTicket(ticket, "another-sandbox", 8080, KEY, now), null);
+  assert.equal(openRelayTicket(ticket, SANDBOX, 8080, "another-key", now), null);
+  const [exp, sig, sealed] = ticket.split(".");
+  // Another sealed secret under the same signature, or none at all, opens nothing.
+  const other = mintRelayTicket(SANDBOX, 8080, KEY, now, "someone-else").split(".")[2];
+  assert.equal(openRelayTicket(`${exp}.${sig}.${other}`, SANDBOX, 8080, KEY, now), null);
+  assert.equal(openRelayTicket(`${exp}.${sig}`, SANDBOX, 8080, KEY, now), null);
+  assert.equal(openRelayTicket(`${exp}.${sig}.`, SANDBOX, 8080, KEY, now), null);
+  assert.equal(openRelayTicket(`${exp}.${sig}.${sealed}x`, SANDBOX, 8080, KEY, now), null);
+  // A plain ticket carries nothing.
+  assert.deepEqual(openRelayTicket(mintRelayTicket(SANDBOX, 8080, KEY, now), SANDBOX, 8080, KEY, now), {});
+});
+
+test("the bridge pings both legs, so neither idles out behind a proxy", async () => {
+  class FakeSocket extends EventEmitter {
+    readyState: number = WebSocket.OPEN;
+    pings = 0;
+    ping() {
+      this.pings += 1;
+    }
+    send() {}
+    close() {}
+    terminate() {}
+  }
+  const client = new FakeSocket();
+  const upstream = new FakeSocket();
+  bridge(client as unknown as WebSocket, upstream as unknown as WebSocket, 10);
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  assert.ok(client.pings >= 2, `browser pinged ${client.pings} times`);
+  assert.ok(upstream.pings >= 2, `upstream pinged ${upstream.pings} times`);
+  upstream.emit("close", 1000, Buffer.alloc(0));
+  const after = upstream.pings;
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(upstream.pings, after, "stops once a leg closes");
 });
 
 test("close codes that can't go in a close frame become ones that can", () => {
@@ -79,8 +124,8 @@ async function fakeAgent(): Promise<string> {
   return `http://127.0.0.1:${await listen(server)}`;
 }
 
-async function relayServer(tunnel: (sandboxId: string, port: number) => Promise<string>): Promise<number> {
-  const relay = createNeevRelay({ key: () => KEY, tunnel });
+async function relayServer(tunnel: (sandboxId: string, port: number, secret?: string) => Promise<RelayUpstream>): Promise<number> {
+  const relay = createSandboxRelay({ key: () => KEY, tunnel }, NEEV_RELAY_PREFIX);
   const server = createServer((_req, res) => res.writeHead(404).end());
   server.on("upgrade", (req, socket, head) => {
     if (!relay(req, socket, head)) socket.end("HTTP/1.1 418 Not Relayed\r\n\r\n");
@@ -109,12 +154,27 @@ function nextMessage(ws: WebSocket): Promise<{ data: string; isBinary: boolean }
   return new Promise((resolve) => ws.once("message", (data, isBinary) => resolve({ data: data.toString(), isBinary })));
 }
 
+test("the relay hands its tunnel the secret sealed in the ticket", async () => {
+  const agent = await fakeAgent();
+  const secrets: Array<string | undefined> = [];
+  const port = await relayServer(async (_sandboxId, _port, secret) => {
+    secrets.push(secret);
+    return { base: agent, headers: {} };
+  });
+  for (const ticket of [mintRelayTicket(SANDBOX, 8080, KEY, Date.now(), "tat-1"), mintRelayTicket(SANDBOX, 8080, KEY)]) {
+    const ws = new WebSocket(relayUrl(port, "pty", ticket));
+    await new Promise((resolve) => ws.once("open", resolve));
+    ws.close();
+  }
+  assert.deepEqual(secrets, ["tat-1", undefined]);
+});
+
 test("the relay passes frames both ways, the token through, and the agent's close back", async () => {
   const agent = await fakeAgent();
   const asked: Array<[string, number]> = [];
   const port = await relayServer(async (sandboxId, sandboxPort) => {
     asked.push([sandboxId, sandboxPort]);
-    return agent;
+    return { base: agent, headers: {} };
   });
 
   const ws = new WebSocket(`${relayUrl(port, "events-ws")}?token=t0k&lastEventId=42`);
@@ -140,7 +200,7 @@ test("the relay refuses a bad ticket, an unknown path, and passes the agent's re
   let tunnels = 0;
   const port = await relayServer(async () => {
     tunnels += 1;
-    return agent;
+    return { base: agent, headers: {} };
   });
 
   const expired = mintRelayTicket(SANDBOX, 8080, KEY, Date.now() - 2 * RELAY_TICKET_TTL_SECONDS * 1000);
@@ -170,11 +230,30 @@ test("the relay leaves other upgrades to the server, and answers 502 when there 
 });
 
 test("a plain request to the relay prefix is not an upgrade the relay sees", async () => {
-  const port = await relayServer(async () => "http://127.0.0.1:1");
+  const port = await relayServer(async () => ({ base: "http://127.0.0.1:1", headers: {} }));
   const status = await new Promise<number>((resolve) => {
     request(`http://127.0.0.1:${port}${NEEV_RELAY_PREFIX}x`, (res) => resolve(res.statusCode ?? 0)).end();
   });
   assert.equal(status, 404);
+});
+
+test("the relay sends the provider's routing headers upstream, and a browser can't set its own", async () => {
+  // E2B's proxy routes by headers naming the sandbox and port: the relay's,
+  // never ones a browser sent, which would otherwise pick another box.
+  const server = createServer();
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (req, socket, head) => {
+    wss.handleUpgrade(req, socket, head, (ws) => ws.send(`${req.headers["e2b-sandbox-id"]} ${req.headers["e2b-sandbox-port"]}`));
+  });
+  const agent = `http://127.0.0.1:${await listen(server)}`;
+  const port = await relayServer(async (sandboxId, sandboxPort) => ({
+    base: agent,
+    headers: { "E2b-Sandbox-Id": sandboxId, "E2b-Sandbox-Port": String(sandboxPort) },
+  }));
+
+  const ws = new WebSocket(relayUrl(port, "pty"), { headers: { "E2b-Sandbox-Id": "someone-elses", "E2b-Sandbox-Port": "22" } });
+  assert.equal((await nextMessage(ws)).data, `${SANDBOX} 8080`);
+  ws.close();
 });
 
 test("closeAll closes every relayed connection with the code given, its agent side too", async () => {
@@ -188,7 +267,7 @@ test("closeAll closes every relayed connection with the code given, its agent si
     }),
   );
   const agent = `http://127.0.0.1:${await listen(agentServer)}`;
-  const relay = createNeevRelay({ key: () => KEY, tunnel: async () => agent });
+  const relay = createSandboxRelay({ key: () => KEY, tunnel: async () => ({ base: agent, headers: {} }) }, NEEV_RELAY_PREFIX);
   const server = createServer((_req, res) => res.writeHead(404).end());
   server.on("upgrade", (req, socket, head) => {
     if (!relay(req, socket, head)) socket.end("HTTP/1.1 418 Not Relayed\r\n\r\n");

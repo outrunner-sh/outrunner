@@ -11,7 +11,7 @@ export const MAX_LABEL = 80;
 /** Whether this server can reach a port on a box of `provider`'s:
  *  Daytona's preview proxy, or Neev's tunnel. Modal's and local boxes, no. */
 export function previewsSupported(provider: ProviderName): boolean {
-  return provider === "daytona" || provider === "user-daytona" || provider === "neev" || provider === "user-gcp";
+  return provider === "daytona" || provider === "user-daytona" || provider === "neev" || provider === "e2b" || provider === "user-gcp";
 }
 
 /** A label as given: trimmed, one line, 80 characters at most; null for

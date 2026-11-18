@@ -16,7 +16,7 @@ import WebSocket, { createWebSocketStream } from "ws";
  * its Runtime token on each of them.
  *
  * Next (the control calls) and the custom server (the browser relay,
- * neev-relay.ts) both use this, so it imports nothing from the app: Node runs
+ * relay.ts) both use this, so it imports nothing from the app: Node runs
  * it as is for the server.
  */
 

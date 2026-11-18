@@ -33,6 +33,8 @@ export type MeteredComputer = {
   workspaceId: string | null;
   sandboxId: string;
   agentSecret: string | null;
+  /** Which of Outrunner's backends made its box, to observe and pause it with. */
+  provider: ProviderName;
 };
 
 /** Whether Outrunner pays for boxes `provider` makes, so they're metered: the
@@ -245,6 +247,7 @@ export async function meteredReadyComputers(): Promise<MeteredComputer[]> {
       .order("id")
       .range(from, to),
   );
+  const deployment = getRuntimeProvider().name;
   return rows
     .filter((row) => isMetered(row.provider as ProviderName | null))
     .map((row) => ({
@@ -254,6 +257,8 @@ export async function meteredReadyComputers(): Promise<MeteredComputer[]> {
       workspaceId: row.workspace_id ?? null,
       sandboxId: row.daytona_sandbox_id as string,
       agentSecret: openAgentSecretOrNull(row.agent_secret, row.id),
+      // A row from before providers were recorded is the deployment's.
+      provider: (row.provider as ProviderName | null) ?? deployment,
     }));
 }
 

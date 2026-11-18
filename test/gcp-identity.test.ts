@@ -5,7 +5,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { gcpAssertion, gcpIssuer, gcpJwks } from "@/lib/runtime/gcp/identity";
 import { gcpNames, type GcpConnection } from "@/lib/runtime/gcp/config";
 import { gcpRelayKey } from "@/lib/runtime/gcp/relay-ticket";
-import { mintRelayTicket, relayTicketValid } from "@/lib/runtime/sandbox/neev-relay-ticket";
+import { mintRelayTicket, relayTicketValid } from "@/lib/runtime/sandbox/relay-ticket";
 const old = { key: process.env.CREDENTIALS_ENCRYPTION_KEY, base: process.env.RUNTIME_BASE_URL };
 beforeEach(() => { process.env.CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 42).toString("base64"); process.env.RUNTIME_BASE_URL = "https://app.example.com"; });
 afterEach(() => { for (const [name, value] of [["CREDENTIALS_ENCRYPTION_KEY", old.key], ["RUNTIME_BASE_URL", old.base]]) { if (value === undefined) delete process.env[name!]; else process.env[name!] = value; } });
