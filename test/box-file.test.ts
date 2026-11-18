@@ -21,6 +21,13 @@ test("a relative path is the worktree's; an absolute one is the box's", () => {
   assert.equal(boxFilePath("a\0.png", "/w"), null);
 });
 
+test("a path from ~ stays the box user's home's, and never climbs out of it", () => {
+  assert.equal(boxFilePath("~/Downloads/icon.png", "/w"), "~/Downloads/icon.png");
+  assert.equal(boxFilePath("~/a/../../etc/passwd", "/w"), "~/etc/passwd");
+  // Only `~/` is the home: `~user` and `x~` are names like any other.
+  assert.equal(boxFilePath("~other/a", "/w"), "/w/~other/a");
+});
+
 // The box's exec parses one command line, as sh -c does; a login shell's
 // banner can land in its output ahead of the image.
 function runOnBox(path: string, banner = "", env?: NodeJS.ProcessEnv): { output: string; code: number | null } {
@@ -54,6 +61,21 @@ test("an image comes off the box whole, whatever its path holds and whatever els
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a file under ~ is read from the box user's home", () => {
+  const home = mkdtempSync(join(tmpdir(), "box-file-home-"));
+  try {
+    mkdirSync(join(home, "Downloads"));
+    writeFileSync(join(home, "Downloads", "it's here.txt"), "hello");
+    const read = runOnBox(boxFilePath("~/Downloads/it's here.txt", "/w")!, "", { ...process.env, HOME: home });
+    assert.equal(read.code, 0);
+    assert.equal(Buffer.from(boxFileBase64(read.output) ?? "", "base64").toString(), "hello");
+    // A literal `~` folder in the worktree isn't the home.
+    assert.equal(runOnBox(join(home, "~", "Downloads", "it's here.txt"), "", { ...process.env, HOME: home }).code, BOX_FILE_MISSING);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

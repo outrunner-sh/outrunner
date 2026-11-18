@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { attachmentDisposition } from "@/lib/http/content-disposition";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { sniffImage } from "@/lib/runtime/chat-image";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
@@ -75,7 +76,7 @@ export async function GET(request: Request, context: RouteContext) {
     }
     case "other":
       headers["Content-Type"] = "application/octet-stream";
-      headers["Content-Disposition"] = `attachment; filename="${(path.split("/").pop() ?? "file").replace(/[^\w.-]/g, "_")}"`;
+      headers["Content-Disposition"] = attachmentDisposition(path);
       break;
     default:
       headers["Content-Type"] = "text/plain; charset=utf-8";
