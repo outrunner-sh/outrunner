@@ -61,7 +61,7 @@ export async function enableSkillApi(context: ApiContext, id: string): Promise<R
 export async function disableSkillApi(context: ApiContext, id: string, skillId: string): Promise<Response> {
   const refused = boxSetupRefused(context);
   if (refused) return refused;
-  if (!isUuid(id) || !isUuid(skillId)) return apiError(404, "No skill by that id on a project you can see.");
+  if (!isUuid(id) || !isUuid(skillId)) return apiError(404, "No skill by that id on an environment you can see.");
   const path = `/api/environments/${id}/skills/${skillId}`;
   return answer(context, await skillDELETE(appRequest(context.base, path, { method: "DELETE" }), routeParams({ id, skillId })), {
     none: true,
@@ -96,7 +96,7 @@ export async function addRegistryApi(context: ApiContext, id: string): Promise<R
 export async function removeRegistryApi(context: ApiContext, id: string, registryId: string): Promise<Response> {
   const refused = boxSetupRefused(context);
   if (refused) return refused;
-  if (!isUuid(id) || !isUuid(registryId)) return apiError(404, "No registry by that id on a project you can see.");
+  if (!isUuid(id) || !isUuid(registryId)) return apiError(404, "No registry by that id on an environment you can see.");
   const path = `/api/environments/${id}/skill-registries/${registryId}`;
   const response = await registryDELETE(appRequest(context.base, path, { method: "DELETE" }), routeParams({ id, registryId }));
   return answer(context, response, { none: true });

@@ -198,7 +198,7 @@ export function parseNewWorkItem(
   const title = givenTitle ? cutText(givenTitle.replace(/\s+/g, " "), MAX_TITLE) : titleFromText(body);
   if (!title) return "A title or a body is required.";
   const project = optionalText(raw.project, 200);
-  if (project === undefined) return "The project must be text.";
+  if (project === undefined) return "The repository must be text.";
   const source = raw.source === undefined ? allowed[0] : raw.source;
   if (typeof source !== "string" || !(allowed as readonly string[]).includes(source)) {
     return `The source must be one of: ${allowed.join(", ")}.`;

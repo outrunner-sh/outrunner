@@ -56,7 +56,7 @@ export function SkillsSection({ environment }: { environment: Environment }) {
     <section className="space-y-5">
       <SectionTitle
         title="Skills"
-        detail="Installed in every new session of the project, for Claude Code (~/.claude/skills) and Codex (~/.agents/skills). A skill of your own by the same name is kept instead."
+        detail="Installed in every new session of the environment, for Claude Code (~/.claude/skills) and Codex (~/.agents/skills). A skill of your own by the same name is kept instead."
       />
       {loadError && <InlineMessage>{loadError}</InlineMessage>}
       <Panel>

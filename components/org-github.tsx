@@ -48,7 +48,7 @@ const ERRORS: Record<string, string> = {
 /** Connected: its repositories are picked next, not all added (a picker
  *  opens from here once there is one; until then, Projects has it). */
 const addedMessage = (login: string) => `Added ${login}. Next, pick which of its repositories to work on.`;
-const PICK_REPOSITORIES = { label: "Pick repositories", href: "/projects" };
+const PICK_REPOSITORIES = { label: "Pick repositories", href: "/environments" };
 
 /** Where an installation is managed (its repositories, uninstalling) on GitHub. */
 function manageUrl(i: OrgInstallation): string {
@@ -170,7 +170,7 @@ export function OrgGitHubSettings({
             },
           ]}
         >
-          {`${offer.accountLogin} was changed on GitHub, but it isn't connected to ${org.name}. Add it, and its repositories become ${org.name}'s projects.`}
+          {`${offer.accountLogin} was changed on GitHub, but it isn't connected to ${org.name}. Add it, and you can pick which of its repositories ${org.name} works on.`}
         </InlineMessage>
       ) : null}
       {pending && others.length === 0 ? (

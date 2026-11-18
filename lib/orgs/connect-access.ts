@@ -11,7 +11,7 @@ export async function connectRefusal(userId: string, orgId: string | undefined):
   if (!orgId || allows(await orgProjectsLevel(userId, orgId), "write")) return null;
   return NextResponse.json(
     {
-      error: "Connecting repositories to this org needs write access on all its projects. Ask one of its admins.",
+      error: "Connecting repositories to this org needs write access on all its repositories. Ask one of its admins.",
       code: "needs_write",
     },
     { status: 403 },

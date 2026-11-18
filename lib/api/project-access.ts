@@ -8,7 +8,7 @@ import type { ApiContext } from "@/lib/api/handler";
 import { type Environment, getEnvironment } from "@/lib/db/environments";
 import { isUuid } from "@/lib/ids";
 
-export const projectNotFound = () => apiError(404, "No project by that id that you can see.");
+export const projectNotFound = () => apiError(404, "No environment by that id that you can see.");
 
 /** The project, if it's in the key's org and the caller may see it. */
 export async function projectOf(context: ApiContext, id: string): Promise<Environment | Response> {

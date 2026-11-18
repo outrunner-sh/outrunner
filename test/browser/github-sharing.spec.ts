@@ -11,7 +11,7 @@ test("an existing GitHub installation can be added to the active organization", 
   expect((await request).postDataJSON()).toEqual({ installationId: 42 });
   // Its repositories are picked next, not all added.
   await expect(page.getByText("Added outrunner-sh. Next, pick which of its repositories to work on.")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Pick repositories" })).toHaveAttribute("href", "/projects");
+  await expect(page.getByRole("link", { name: "Pick repositories" })).toHaveAttribute("href", "/environments");
   await expect(page.getByRole("button", { name: "Add to acme" })).toBeEnabled();
   await expect(page.getByText("Multiple Outrunner organizations can share the same GitHub App installation.", { exact: false })).toBeVisible();
 });

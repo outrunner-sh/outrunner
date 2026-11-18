@@ -38,7 +38,7 @@ export function switchFailure(error: unknown, model: SessionModel): { status: nu
   if (predatesSwitching(error)) {
     return {
       status: 409,
-      message: "This project's cloud computer runs an older Outrunner that can't switch models.",
+      message: "This environment's cloud computer runs an older Outrunner that can't switch models.",
     };
   }
   return { status: 502, message: "Couldn't switch models. Please try again." };
@@ -129,7 +129,7 @@ export async function startingModel(deps: {
 function startFailure(error: unknown, model: SessionModel): string {
   if (error instanceof EffortUnsupportedError) return error.message;
   if (predatesSwitching(error)) {
-    return "This project's cloud computer runs an older Outrunner that can't switch models. Connect Claude in Settings to use it.";
+    return "This environment's cloud computer runs an older Outrunner that can't switch models. Connect Claude in Settings to use it.";
   }
   if (error instanceof AgentRequestError && error.status === 400 && predatesProvider(error.error?.message)) {
     return predatesProviderMessage(model);

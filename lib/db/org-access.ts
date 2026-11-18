@@ -151,7 +151,7 @@ export async function setGrant(
     new_level: grant.level,
   });
   // A role or project of another org, or one deleted meanwhile.
-  if (error?.code === "23503") throw new AccessChangeError("That role or project isn't this org's.");
+  if (error?.code === "23503") throw new AccessChangeError("That role or repository isn't this org's.");
   if (error) throw error;
 }
 

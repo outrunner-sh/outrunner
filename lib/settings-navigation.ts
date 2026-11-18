@@ -1,5 +1,8 @@
 /** Canonical settings locations; redirects retain existing query strings and hashes. */
 export const SETTINGS_REDIRECTS = [
+  // Projects were renamed Environments (2026-11): old links keep working.
+  ["/projects", "/environments"],
+  ["/projects/:id", "/environments/:id"],
   ["/settings", "/settings/profile"],
   ["/settings/account", "/settings/profile"],
   ["/settings/general", "/help/about"],

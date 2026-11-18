@@ -41,7 +41,7 @@ async function MemorySection() {
       <div className="space-y-1">
         <PageHeader title={"Memory"} />
         <p className="max-w-prose text-sm text-muted-foreground">
-          Notes your agents kept to remember across sessions: how a project&apos;s tests really run, a decision and its
+          Notes your agents kept to remember across sessions: how a repository&apos;s tests really run, a decision and its
           reason, a pitfall worth avoiding. Every new session loads the newest of them, and an agent can read the rest.
           Agents add notes only when they decide one is worth keeping; nothing is collected from your conversations
           otherwise. Delete any note you don&apos;t want kept.

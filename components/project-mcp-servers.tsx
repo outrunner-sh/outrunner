@@ -69,7 +69,7 @@ export function McpServersSection({ environment }: { environment: Environment })
     <section className="space-y-5">
       <SectionTitle
         title="MCP servers"
-        detail="Loaded in every new session of the project, in Claude Code and Codex, beside your own MCP servers: yours win on a name both have. Values are encrypted and can't be read back once saved."
+        detail="Loaded in every new session of the environment, in Claude Code and Codex, beside your own MCP servers: yours win on a name both have. Values are encrypted and can't be read back once saved."
       />
       {loadError && <InlineMessage>{loadError}</InlineMessage>}
       <Panel>

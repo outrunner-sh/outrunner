@@ -112,7 +112,7 @@ function refuse(status: 401 | 403 | 404, message: string): ApiAuth {
  */
 export function boxSetupRefusal(kind: ApiCallerKind): string | null {
   if (kind === "org_key") return null;
-  return "Changing what runs on the project's boxes (setup scripts, hooks, instructions, variables, files, repositories, MCP servers, skills) takes an org key: an admin makes one under Settings → Org → API keys.";
+  return "Changing what runs on the environment's boxes (setup scripts, hooks, instructions, variables, files, repositories, MCP servers, skills) takes an org key: an admin makes one under Settings → Org → API keys.";
 }
 
 /** boxSetupRefusal as the API's 403, or null when the caller may. */

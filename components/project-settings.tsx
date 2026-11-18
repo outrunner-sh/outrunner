@@ -76,7 +76,7 @@ export function ProjectSettings({
 
   return (
     <PageLayout className="space-y-8">
-      <Link href="/projects" className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground">
+      <Link href="/environments" className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground">
         <ArrowLeft className="size-3.5" /> Projects
       </Link>
       <PageHeader
@@ -92,7 +92,7 @@ export function ProjectSettings({
       />
 
       <div className="grid gap-8 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-10">
-        <nav aria-label="Project settings" className="flex gap-1 overflow-x-auto border-b border-border/60 pb-3 lg:flex-col lg:self-start lg:border-0 lg:pb-0">
+        <nav aria-label="Environment settings" className="flex gap-1 overflow-x-auto border-b border-border/60 pb-3 lg:flex-col lg:self-start lg:border-0 lg:pb-0">
           {SECTIONS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -116,7 +116,7 @@ export function ProjectSettings({
               field and button in it. */}
           {readOnly && (
             <InlineMessage tone="info">
-              You can see this project and start sessions in it, but not change it. Ask an admin of its org for write
+              You can see this environment and start sessions in it, but not change it. Ask an admin of its org for write
               access.
             </InlineMessage>
           )}
@@ -286,11 +286,11 @@ function GeneralSection({ environment, onSaved }: { environment: Environment; on
 
   return (
     <section className="space-y-5">
-      <SectionTitle title="General" detail="The essentials for this project." />
+      <SectionTitle title="General" detail="The essentials for this environment." />
       <Panel>
         <div className="space-y-5 p-5">
           <div className="space-y-2">
-            <label htmlFor="project-name" className="text-[13px] font-medium">Project name</label>
+            <label htmlFor="project-name" className="text-[13px] font-medium">Environment name</label>
             <Input id="project-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} />
           </div>
           <div className="space-y-2">
@@ -371,7 +371,7 @@ function VariablesSection({
     <section className="space-y-5">
       <SectionTitle
         title="Environment variables"
-        detail="Encrypted, and exported in every new session of the project. Values can't be read back once saved."
+        detail="Encrypted, and exported in every new session of the environment. Values can't be read back once saved."
       />
       <Panel>
         <div className="space-y-3 p-4">
@@ -512,7 +512,7 @@ function SetupSection({ environment, onSaved }: { environment: Environment; onSa
       <Panel>
         <ScriptEditor
           title="Warm hook"
-          detail="Runs ahead of time on the project's ready boxes, in a checkout of the repository with the project's variables and files, before any session takes one: dependency installs, builds. Its work (node_modules, build output) is kept for the session. Up to an hour. Changing it makes the ready boxes again."
+          detail="Runs ahead of time on the environment's ready boxes, in a checkout of the repository with the environment's variables and files, before any session takes one: dependency installs, builds. Its work (node_modules, build output) is kept for the session. Up to an hour. Changing it makes the ready boxes again."
           placeholder={"#!/bin/bash\n# e.g. pnpm install"}
           value={environment.hooks.warm}
           save={(warm) => patchEnvironment(environment.id, { hooks: { warm } })}

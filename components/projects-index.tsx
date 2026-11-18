@@ -11,9 +11,9 @@ export function ProjectsIndex({ projects, canSync }: { projects: Project[]; canS
       <div className="mx-auto max-w-4xl space-y-6">
         <header className="flex items-start justify-between gap-4">
           <div className="min-w-0 space-y-1">
-            <h1 className="text-lg font-semibold text-foreground">Projects</h1>
+            <h1 className="text-lg font-semibold text-foreground">Environments</h1>
             <p className="text-[13px] text-muted-foreground">
-              Connected repositories and their project environments, setup, variables and files.
+              What sessions start with: repositories, setup, variables, files, skills and MCP servers.
             </p>
           </div>
           {canSync && <ProjectsSyncButton />}
@@ -21,7 +21,7 @@ export function ProjectsIndex({ projects, canSync }: { projects: Project[]; canS
 
         {projects.length === 0 ? (
           <p className="text-[13px] text-muted-foreground">
-            {canSync ? "No repositories connected yet. Sync repositories to add them here." : "No projects are available in this org yet."}
+            {canSync ? "No repositories connected yet. Sync repositories to add them here." : "No environments are available in this org yet."}
           </p>
         ) : (
           <section className="space-y-2" aria-labelledby="connected-repositories">
@@ -32,14 +32,14 @@ export function ProjectsIndex({ projects, canSync }: { projects: Project[]; canS
               {projects.map((project) => (
                 <li key={project.id}>
                   <Link
-                    href={`/projects/${project.id}`}
+                    href={`/environments/${project.id}`}
                     className="flex items-center gap-3 px-3 py-3 transition-colors hover:bg-accent/60 focus-visible:bg-accent/60"
                   >
                     <GitHubIcon className="size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13px] text-foreground">{project.fullName}</span>
                       <span className="block text-[11px] text-muted-foreground">
-                        {project.defaultBranch} · Project and environment settings
+                        {project.defaultBranch} · Environment settings
                       </span>
                     </span>
                     <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />

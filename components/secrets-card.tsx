@@ -143,7 +143,7 @@ export function SecretsCard({
       ) : null}
       <p className="studio-secrets-note">
         Sent straight to this session, never into the chat. {agentLabel} only learns which ones you gave.
-        {canSave && " Saved to this project for future sessions."}
+        {canSave && " Saved to this environment for future sessions."}
       </p>
       <div className="studio-question-foot">
         <span className="inline-flex items-center gap-3">

@@ -18,19 +18,19 @@ type PageProps = { params: Promise<{ id: string }> };
 export default async function ProjectPage({ params }: PageProps) {
   const { id } = await params;
   const owner = await getOwnerSafe();
-  if (!owner) redirect(`/signin?next=/projects/${id}`);
+  if (!owner) redirect(`/signin?next=/environments/${id}`);
   if (!z.string().uuid().safeParse(id).success) notFound();
 
   const environment = await getEnvironment(owner.id, id);
   if (environment) {
     // Secret sync failing to load leaves the rest of the page as it is.
     const secretSync = await environmentSecretSync(owner.id, id).catch((error: unknown) => {
-      console.error(`Couldn't load project ${id}'s secret sync`, error);
+      console.error(`Couldn't load environment ${id}'s secret sync`, error);
       return null;
     });
     return <ProjectSettings initial={environment} secretSync={secretSync} />;
   }
   const environmentId = await defaultEnvironmentId(owner.id, id);
   if (!environmentId) notFound();
-  redirect(`/projects/${environmentId}`);
+  redirect(`/environments/${environmentId}`);
 }
