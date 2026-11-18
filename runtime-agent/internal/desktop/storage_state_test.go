@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"slices"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -99,10 +100,21 @@ func TestStorageStateReadsARealBrowsersSignIns(t *testing.T) {
 	b := &Browser{Port: freePort(t), Profile: t.TempDir(), Display: Display}
 	args := append([]string{"--headless=new", "--no-sandbox"}, BrowserArgs(b.Port, b.Profile, app.URL+"/")...)
 	cmd := exec.Command(binary, args...)
+	// In a group of its own, so its helpers (renderers, the GPU process) are
+	// stopped with it: left running, they write to the profile as the test's
+	// folder is removed.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	t.Cleanup(func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+		// The helpers go a moment after the group is told to.
+		for i := 0; i < 50 && syscall.Kill(-cmd.Process.Pid, 0) == nil; i++ {
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	for !b.running(ctx) {
