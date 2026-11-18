@@ -153,7 +153,7 @@ jobs:
         run: |
           docker pull --quiet "$REF"
           docker run -d --name smoke -p 127.0.0.1:8080:8080 \
-            -e SUPABASE_SERVICE_ROLE_KEY=placeholder -e CREDENTIALS_ENCRYPTION_KEY=cGxhY2Vob2xkZXJwbGFjZWhvbGRlcnBsYWNlaG9sZGU= \
+            -e SUPABASE_SERVICE_ROLE_KEY=placeholder -e CREDENTIALS_ENCRYPTION_KEY=cGxhY2Vob2xkZXJwbGFjZWhvbGRlcnBsYWNlaG9sZGU= -e RUNTIME_BILLING=off \
             -e OUTRUNNER_BUILD="$GITHUB_SHA" "$REF"
           for _ in $(seq 60); do
             if body=$(curl -fsS --max-time 3 http://127.0.0.1:8080/api/health/live 2>/dev/null); then break; fi
