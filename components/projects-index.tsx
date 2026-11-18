@@ -1,9 +1,9 @@
 "use client";
 
-import { ChevronRight, Layers, Plus } from "lucide-react";
+import { ChevronRight, Layers, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { GitHubIcon } from "@/components/brand-icons";
 import { PageHeader, PageLayout } from "@/components/page-layout";
@@ -98,10 +98,7 @@ export function ProjectsIndex({
       />
 
       {panel?.kind === "add" && (
-        <section className="space-y-3" aria-labelledby="add-repositories">
-          <h2 id="add-repositories" className="text-sm font-medium">
-            Add repositories to {panel.environment.name}
-          </h2>
+        <PanelSection id="add-repositories" title={`Add repositories to ${panel.environment.name}`} onClose={close}>
           <RepositoryPicker
             inEnvironment={panel.environment.repos.map((r) => r.fullName)}
             max={MAX_REPOS - panel.environment.repos.length}
@@ -116,7 +113,7 @@ export function ProjectsIndex({
               done();
             }}
           />
-        </section>
+        </PanelSection>
       )}
       {panel?.kind === "new" && (
         <NewEnvironment
@@ -199,6 +196,49 @@ export function ProjectsIndex({
   );
 }
 
+/** A panel opened over the top of the page (picking repositories, a new
+ *  environment): the ×, Escape from within it, or the picker's Cancel
+ *  closes it. */
+function PanelSection({
+  id,
+  title,
+  note,
+  onClose,
+  children,
+}: {
+  id: string;
+  title: string;
+  note?: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      className="space-y-3"
+      aria-labelledby={id}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !e.defaultPrevented) {
+          e.preventDefault();
+          onClose();
+        }
+      }}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="space-y-1">
+          <h2 id={id} className="text-sm font-medium">
+            {title}
+          </h2>
+          {note && <p className="text-xs text-muted-foreground">{note}</p>}
+        </div>
+        <Button size="icon-sm" variant="ghost" onClick={onClose} aria-label="Close" title="Close (Esc)" className="-mr-2 -mt-1.5 text-muted-foreground">
+          <X />
+        </Button>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 /** A new environment: its name, then its repositories, picked (and
  *  connected) with the repository picker, which makes it. */
 function NewEnvironment({
@@ -215,13 +255,12 @@ function NewEnvironment({
 }) {
   const [name, setName] = useState(defaultName);
   return (
-    <section className="space-y-3" aria-labelledby="new-environment">
-      <div className="space-y-1">
-        <h2 id="new-environment" className="text-sm font-medium">
-          New environment
-        </h2>
-        {makeDefault && <p className="text-xs text-muted-foreground">The org&apos;s first: new sessions start from it unless another is picked.</p>}
-      </div>
+    <PanelSection
+      id="new-environment"
+      title="New environment"
+      note={makeDefault && "The org's first: new sessions start from it unless another is picked."}
+      onClose={onCancel}
+    >
       <label className="block max-w-sm space-y-1">
         <span className="text-xs text-muted-foreground">Name</span>
         <Input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} aria-label="Environment name" />
@@ -240,6 +279,6 @@ function NewEnvironment({
           onMade(made.id);
         }}
       />
-    </section>
+    </PanelSection>
   );
 }
