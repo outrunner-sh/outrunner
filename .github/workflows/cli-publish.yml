@@ -78,7 +78,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: runtime-agent/go.mod
           cache-dependency-path: runtime-agent/go.sum
