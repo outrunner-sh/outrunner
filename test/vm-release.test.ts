@@ -129,9 +129,13 @@ test("VM activation takes over a host on the single-project layout once", () => 
     assert.equal(result.status, 0, result.stderr);
     assert.equal(f.liveSlot(), "blue");
     const calls = f.calls();
-    // The new slot is healthy before the old project gives up the ports.
-    assert.ok(calls.indexOf("-p outrunner-blue") < calls.indexOf("-p outrunner down"));
-    assert.ok(calls.indexOf("-p outrunner down") < calls.search(/-p outrunner-edge .* up -d caddy/));
+    // The new slot is healthy before the old proxy gives up the ports, and
+    // the new proxy starts before the old app's slow shutdown, not after it.
+    const stopOldProxy = calls.indexOf("-p outrunner stop -t 5 caddy");
+    const startProxy = calls.search(/-p outrunner-edge .* up -d caddy/);
+    assert.ok(calls.indexOf("-p outrunner-blue") < stopOldProxy);
+    assert.ok(stopOldProxy < startProxy);
+    assert.ok(startProxy < calls.indexOf("-p outrunner down"));
     assert.equal(f.running("outrunner"), false);
     assert.equal(f.running("outrunner-edge"), true);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }

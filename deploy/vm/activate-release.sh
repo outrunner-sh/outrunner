@@ -94,12 +94,17 @@ if edge_compose ps -q caddy 2>/dev/null | grep -q .; then
   fi
 else
   # First activation on this host. A host on the earlier single-project
-  # layout (project "outrunner") hands its ports over here, once, with a
-  # gap of a few seconds; certificates carry over in the named volumes.
+  # layout (project "outrunner") hands its ports over here, once: only its
+  # proxy stops first, so the gap is the new proxy's start (about a second),
+  # not the old app's 45-second drain. Certificates carry over in the named
+  # volumes.
+  legacy=false
   if docker compose -p outrunner ps -q 2>/dev/null | grep -q .; then
-    docker compose -p outrunner down
+    legacy=true
+    docker compose -p outrunner stop -t 5 caddy
   fi
   edge_compose up -d caddy || abandon "The proxy failed to start"
+  if [[ "$legacy" = true ]]; then docker compose -p outrunner down; fi
 fi
 
 echo "$next" > "$root/.live-slot" && replace "$root/.live-slot" "$root/live-slot"
