@@ -87,6 +87,8 @@ jobs:
       contents: read
       actions: read
       packages: read
+      # Which pull request a merge came from (plan.mjs).
+      pull-requests: read
     outputs:
       sha: ${{ steps.plan.outputs.sha }}
       deploy: ${{ steps.plan.outputs.deploy }}
