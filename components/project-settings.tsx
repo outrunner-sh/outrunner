@@ -11,18 +11,19 @@ import { failedLinks, SecretSyncPanel } from "@/components/secret-sync-panel";
 import { McpServersSection } from "@/components/project-mcp-servers";
 import { DeleteButton, Panel, SectionTitle, useSave } from "@/components/project-section";
 import { SkillsSection } from "@/components/project-skills";
+import { RepositoryPicker } from "@/components/repository-picker";
 import { SectionHeader } from "@/components/settings-details";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
-import { SELECT_OPTIONS } from "@/components/ui/select-options";
 import { Textarea } from "@/components/ui/textarea";
 import type { Environment } from "@/lib/db/environments";
 import type { EnvironmentSecretSync } from "@/lib/db/secret-sync";
 import { MAX_REPOS, parseDotenv, type SecretsEdit } from "@/lib/environments/rules";
 import { requestJson } from "@/lib/http/request-json";
-import { newSessionHref } from "@/lib/nav/sidebar";
+import { newSessionHref, newSessionInEnvironmentHref } from "@/lib/nav/sidebar";
+import type { Project } from "@/lib/runtime/types";
 import { PROVIDER_LABELS } from "@/lib/secret-sync/rules";
 import { cn } from "@/lib/utils";
 
@@ -70,21 +71,26 @@ export function ProjectSettings({
   const tab = useSearchParams().get("tab");
   const section: SectionId = isSection(tab) ? tab : "general";
   const setSection = (id: SectionId) => router.replace(id === "general" ? pathname : `${pathname}?tab=${id}`, { scroll: false });
-  // Sessions start in a repository until a project can hold more than one.
-  const repo = environment.repos[0];
+  // A repository's own environment starts from the repository; one someone
+  // made, from itself.
+  const startHref = environment.defaultForProjectId
+    ? newSessionHref({ kind: "cloud", projectId: environment.defaultForProjectId })
+    : environment.repos.length > 0
+      ? newSessionInEnvironmentHref(environment.id)
+      : null;
   const readOnly = environment.access !== "write";
 
   return (
     <PageLayout className="space-y-8">
       <Link href="/environments" className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="size-3.5" /> Projects
+        <ArrowLeft className="size-3.5" /> Environments
       </Link>
       <PageHeader
         title={environment.name}
         description="Manage the environment and defaults for new sessions."
-        actions={repo && (
+        actions={startHref && (
           <Button asChild size="sm">
-            <Link href={newSessionHref({ kind: "cloud", projectId: repo.projectId })}>
+            <Link href={startHref}>
               <Plus /> New session
             </Link>
           </Button>
@@ -152,41 +158,43 @@ export function ProjectSettings({
   );
 }
 
-/** A connected repository that can be added to the project. */
-type Addable = { projectId: string; fullName: string; defaultBranch: string };
-
-/** The project's repositories: each cloned into its own folder of a new
- *  session's, added from the owner's connected repositories, up to MAX_REPOS. */
+/** The environment's repositories: each cloned into its own folder of a new
+ *  session's, added with the repository picker (connecting any not yet
+ *  connected), up to MAX_REPOS. */
 function RepositoriesEditor({ environment, onSaved }: { environment: Environment; onSaved: (e: Environment) => void }) {
   const [adding, setAdding] = useState(false);
-  const [addable, setAddable] = useState<Addable[] | null>(null);
-  const [picked, setPicked] = useState("");
   const save = useSave();
+  const router = useRouter();
   const several = environment.repos.length > 1;
-  const full = environment.repos.length >= MAX_REPOS;
+  const room = MAX_REPOS - environment.repos.length;
 
-  const open = async () => {
-    setAdding(true);
-    if (addable) return;
-    const answer = await save.run(() =>
-      requestJson<{ repositories: Addable[] }>(`/api/environments/${environment.id}/repos`, { has: (d) => Array.isArray(d.repositories) }),
-    );
-    if (answer) setAddable(answer.repositories);
-  };
-  const change = async (method: "POST" | "DELETE", projectId: string) => {
+  const remove = async (projectId: string) => {
     const saved = await save.run(() =>
-      requestJson<Environment>(
-        `/api/environments/${environment.id}/repos${method === "DELETE" ? `?projectId=${projectId}` : ""}`,
-        { method, body: method === "POST" ? { projectId } : undefined, has: (d) => d.id !== undefined },
-      ),
+      requestJson<Environment>(`/api/environments/${environment.id}/repos?projectId=${projectId}`, {
+        method: "DELETE",
+        has: (d) => d.id !== undefined,
+      }),
     );
-    if (!saved) return;
-    onSaved(saved);
-    // Removed, it can be added again: the list is fetched anew when opened.
-    setAddable((list) => (method === "DELETE" ? null : (list?.filter((r) => r.projectId !== projectId) ?? null)));
-    setPicked("");
-    // Closed on any change: opened again, it lists what can be added now.
-    setAdding(false);
+    if (saved) onSaved(saved);
+  };
+  const add = async (projects: Project[]) => {
+    try {
+      const saved = await requestJson<Environment>(`/api/environments/${environment.id}/repos`, {
+        method: "POST",
+        body: { projectIds: projects.map((p) => p.id) },
+        has: (d) => d.id !== undefined,
+      });
+      onSaved(saved);
+      setAdding(false);
+    } catch (error) {
+      // Some may have been added before the one refused: shown as they are.
+      const now = await requestJson<Environment>(`/api/environments/${environment.id}`, { has: (d) => d.id !== undefined }).catch(() => null);
+      if (now) onSaved(now);
+      throw error;
+    } finally {
+      // Newly connected repositories join the sidebar's list too.
+      router.refresh();
+    }
   };
 
   return (
@@ -202,8 +210,8 @@ function RepositoriesEditor({ environment, onSaved }: { environment: Environment
           </p>
         </div>
         {!adding && (
-          <Button size="sm" variant="outline" disabled={full} onClick={() => void open()}>
-            <Plus /> Add repository
+          <Button size="sm" variant="outline" disabled={room <= 0} onClick={() => setAdding(true)}>
+            <Plus /> Add repositories
           </Button>
         )}
       </div>
@@ -221,7 +229,7 @@ function RepositoriesEditor({ environment, onSaved }: { environment: Environment
                 className="text-muted-foreground"
                 aria-label={`Remove ${r.fullName}`}
                 title={`Remove ${r.fullName}`}
-                onClick={() => void change("DELETE", r.projectId)}
+                onClick={() => void remove(r.projectId)}
               >
                 <X />
               </Button>
@@ -230,25 +238,13 @@ function RepositoriesEditor({ environment, onSaved }: { environment: Environment
         ))}
       </ul>
       {adding && (
-        <div className="flex items-center gap-2">
-          <select
-            aria-label="Repository to add"
-            value={picked}
-            onChange={(e) => setPicked(e.target.value)}
-            className={cn("h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-[13px] text-foreground", SELECT_OPTIONS)}
-          >
-            <option value="">{addable === null ? "Loading repositories…" : addable.length ? "Pick a repository" : "No other connected repositories"}</option>
-            {addable?.map((r) => (
-              <option key={r.projectId} value={r.projectId}>
-                {r.fullName}
-              </option>
-            ))}
-          </select>
-          <LoadingButton status={save.status} disabled={!picked} labels={{ idle: "Add" }} onClick={() => void change("POST", picked)} />
-          <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>
-            Cancel
-          </Button>
-        </div>
+        <RepositoryPicker
+          inEnvironment={environment.repos.map((r) => r.fullName)}
+          max={room}
+          submitLabel="Add to environment"
+          onCancel={() => setAdding(false)}
+          onPicked={add}
+        />
       )}
       {several && (
         <p className="text-xs text-muted-foreground">
