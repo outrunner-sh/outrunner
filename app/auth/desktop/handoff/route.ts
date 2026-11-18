@@ -7,7 +7,7 @@ import { createDesktopTicket } from "@/lib/auth/desktop/session";
 import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { activeOrgId } from "@/lib/orgs/server";
-import { needsOnboarding } from "@/lib/onboarding/server";
+import { mustSetUpActiveOrg } from "@/lib/orgs/setup.deps";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 export async function POST(request: Request) {
@@ -17,7 +17,7 @@ export async function POST(request: Request) {
   if (!owner?.email) return reply({ error: "Sign in again to open the desktop app." }, 401);
   const context = readDesktopContext((await cookies()).get(DESKTOP_CONTEXT_COOKIE)?.value);
   if (!context) return reply({ error: "Desktop sign-in expired. Start again from the app." }, 410);
-  if (await needsOnboarding()) return reply({ error: "Finish onboarding before opening the desktop app." }, 409);
+  if (await mustSetUpActiveOrg()) return reply({ error: "Finish setting up your org before opening the desktop app." }, 409);
   const body = await request.json().catch(() => null);
   if (!body || (body.next !== undefined && typeof body.next !== "string")) return reply({ error: "Invalid destination." }, 400);
   const base = redirectBase(new URL(request.url));

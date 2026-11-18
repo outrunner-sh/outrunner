@@ -67,3 +67,10 @@ export async function markOrgSetUp(orgId: string, by: string): Promise<void> {
     .upsert({ org_id: orgId, setup_completed_at: new Date().toISOString(), updated_by: by }, { onConflict: "org_id" });
   if (error) throw error;
 }
+
+/** Whether the signed-in user is to be sent through the active org's setup
+ *  (its admin, the org not set up): where a new user lands after sign-in,
+ *  checkout or the desktop app's hand-off. A member waiting isn't. */
+export async function mustSetUpActiveOrg(): Promise<boolean> {
+  return (await activeOrgSetupGate())?.kind === "setup";
+}

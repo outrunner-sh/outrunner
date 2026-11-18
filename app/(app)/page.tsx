@@ -2,8 +2,10 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { HomeSessionRoute } from "@/components/new-session-route";
+import { ServerAnswer } from "@/components/server-answer";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { needsOnboarding } from "@/lib/onboarding/server";
+import type { SetupGate } from "@/lib/orgs/setup";
+import { activeOrgSetupGate } from "@/lib/orgs/setup.deps";
 
 /** Home never waits on the server: the build checks it. */
 export const unstable_instant = {
@@ -23,24 +25,27 @@ export const unstable_instant = {
 
 /**
  * Home starts the next session and offers the five most recent to resume.
- * It shows at once; a new user is sent through onboarding as the server's
- * check arrives.
+ * It shows at once; whether the active org still needs setup arrives from
+ * the server after (lib/orgs/setup.ts): its admin is sent through setup, a
+ * member is told an admin is on it.
  */
 export default function Home() {
   return (
-    <>
-      <HomeSessionRoute />
-      <Suspense fallback={null}>
-        <HomeGate />
-      </Suspense>
-    </>
+    <HomeSessionRoute
+      gate={
+        <Suspense fallback={null}>
+          <HomeGate />
+        </Suspense>
+      }
+    />
   );
 }
 
 /** A signed-in user who isn't the owner goes to sign-in (signed out is the
- *  proxy's to catch); a new one, to onboarding. Shows nothing. */
+ *  proxy's to catch). The active org's setup gate, for the page. */
 async function HomeGate() {
   if (!(await getOwnerSafe())) redirect("/signin");
-  if (await needsOnboarding()) redirect("/onboarding");
-  return null;
+  const gate = await activeOrgSetupGate();
+  if (gate?.kind === "setup") redirect("/onboarding");
+  return <ServerAnswer<SetupGate> value={gate} />;
 }
