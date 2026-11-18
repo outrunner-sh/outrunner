@@ -6,13 +6,42 @@
 #   1. start the release in the idle slot; the live slot keeps serving
 #   2. wait until the idle slot reports this exact build
 #   3. point the proxy at it with a graceful reload (open connections stay)
-#   4. move the scheduler to it, then stop the old slot after a drain period
+#   4. move the scheduler to it, and stop the old slot after a drain period,
+#      from a detached timer: this script (and the deploy) ends at the switch
 # A release that fails 2 or 3 never receives traffic; the live slot is left
 # as it was. Rolling back is activating an earlier, already-built release.
+# One activation at a time (a lock), which the drain timer takes too.
 set -euo pipefail
+root=/opt/outrunner
+
+port_of() { if [[ "$1" = blue ]]; then echo 3001; else echo 3002; fi; }
+slot() {
+  local name="$1" dir="$2"; shift 2
+  SLOT="$name" APP_PORT="$(port_of "$name")" \
+    docker compose -p "outrunner-$name" --env-file "$dir/.env.build" -f "$dir/deploy/vm/compose.yml" "$@"
+}
+lock() { exec 9>"$root/.activate.lock"; flock 9; }
+
+# `--drain SLOT SECONDS`: the timer an activation leaves behind for the slot
+# it took traffic from. After the drain, it stops the slot only if the slot is
+# still not live and still runs the release it ran then: an activation since
+# may have started a release there, or switched to it. It waits for any
+# activation under way (the lock) before it looks.
+if [[ "${1:-}" = --drain ]]; then
+  name="${2:?Usage: outrunner-activate-release --drain SLOT SECONDS}"
+  [[ "$name" = blue || "$name" = green ]] || { echo "Invalid slot" >&2; exit 1; }
+  dir="$(cat "$root/slot-$name")"
+  sleep "${3:?Usage: outrunner-activate-release --drain SLOT SECONDS}"
+  lock
+  if [[ "$(cat "$root/live-slot")" != "$name" && "$(cat "$root/slot-$name")" = "$dir" ]]; then
+    slot "$name" "$dir" down || { echo "Warning: slot $name did not stop" >&2; exit 1; }
+    echo "Stopped slot $name"
+  fi
+  exit 0
+fi
+
 release_sha="${1:?Usage: outrunner-activate-release SHA}"
 [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid commit SHA" >&2; exit 1; }
-root=/opt/outrunner
 release_dir="$root/releases/$release_sha"
 [[ "$(readlink -f "$release_dir")" = "$release_dir" ]] || { echo "Release must not resolve outside its directory" >&2; exit 1; }
 for file in deploy/vm/compose.yml deploy/vm/edge.yml deploy/vm/jobs.yml deploy/vm/Caddyfile .env.build .image-built; do
@@ -21,6 +50,14 @@ done
 grep -qx "OUTRUNNER_BUILD=$release_sha" "$release_dir/.env.build" || { echo "Build SHA does not match" >&2; exit 1; }
 grep -qx "$release_sha" "$release_dir/.image-built" || { echo "Image build did not complete" >&2; exit 1; }
 docker image inspect "outrunner-control-plane:$release_sha" >/dev/null
+# The tree the release was built from, where it says (a release from before
+# trees doesn't): the new slot must report it, not just the commit.
+release_tree="$(sed -n 's/^OUTRUNNER_TREE=//p' "$release_dir/.env.build")"
+[[ -z "$release_tree" || "$release_tree" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid release tree" >&2; exit 1; }
+
+lock
+# Its last activation, which pruning keeps the newest of (prune-releases.sh).
+touch "$release_dir"
 
 edge="$root/edge"
 drain_seconds="${OUTRUNNER_DRAIN_SECONDS:-90}"
@@ -31,16 +68,10 @@ case "$live" in
   *) live="" next=blue ;;
 esac
 
-port_of() { if [[ "$1" = blue ]]; then echo 3001; else echo 3002; fi; }
-slot() {
-  local name="$1" dir="$2"; shift 2
-  SLOT="$name" APP_PORT="$(port_of "$name")" \
-    docker compose -p "outrunner-$name" --env-file "$dir/.env.build" -f "$dir/deploy/vm/compose.yml" "$@"
-}
 edge_compose() { docker compose -p outrunner-edge --env-file "$edge/.env" -f "$edge/edge.yml" "$@"; }
 healthy() {
   curl --fail --silent --show-error --max-time 3 "http://127.0.0.1:$2/api/health" \
-    | python3 -c 'import json,sys; h=json.load(sys.stdin); sys.exit(0 if h.get("ok") is True and h.get("build")==sys.argv[1] else 1)' "$1"
+    | python3 -c 'import json,sys; h=json.load(sys.stdin); sys.exit(0 if h.get("ok") is True and h.get("build")==sys.argv[1] and (not sys.argv[2] or h.get("tree")==sys.argv[2]) else 1)' "$1" "$release_tree"
 }
 ready() {
   for _ in {1..45}; do
@@ -119,8 +150,10 @@ if [[ -f /etc/outrunner/cron-enabled ]]; then
 fi
 
 if [[ -n "$live" && -s "$root/slot-$live" ]]; then
-  # Requests already on the old slot (streams, terminals) get time to finish.
-  echo "Draining slot $live for ${drain_seconds}s"
-  sleep "$drain_seconds"
-  slot "$live" "$(cat "$root/slot-$live")" down || echo "Warning: slot $live did not stop" >&2
+  # Requests already on the old slot (streams, terminals) get time to finish,
+  # from a timer of its own (--drain, above), so the deploy is done at the
+  # switch.
+  echo "Draining slot $live for ${drain_seconds}s, then stopping it"
+  # Without this activation's lock (fd 9), or the next would wait it out.
+  setsid -f bash "$0" --drain "$live" "$drain_seconds" </dev/null >>"$root/drain.log" 2>&1 9>&-
 fi

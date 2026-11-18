@@ -5,10 +5,18 @@ name: CLI publish
 # scripts/build-cli.sh stages them. Platform packages go first, so the
 # launcher never names a version npm doesn't have yet.
 #
-#   Tag:     git tag cli-v0.1.2 && git push origin cli-v0.1.2
-#            publishes the tagged commit as 0.1.2.
+#   Merge:   a push to main that changes what goes into the CLI (the paths
+#            below) publishes it as the next patch after npm's latest, and
+#            tags the commit cli-v<that version>. A fix merged is a fix
+#            shipped: no one has to remember a tag.
+#   Tag:     git tag cli-v0.2.0 && git push origin cli-v0.2.0
+#            publishes the tagged commit as 0.2.0: for a minor or major bump.
 #   By hand: Actions -> CLI publish -> Run workflow, with a version, publishes
 #            the branch it's run on.
+#
+# The paths are what `go list -deps ./cmd/outrunner` reaches in this repo,
+# its modules, the npm launcher and the build. A CLI that starts importing
+# another runtime-agent package needs that package added here.
 #
 # A package already on npm at that version is skipped, so a rerun finishes
 # what a failed run started rather than failing on the first one done.
@@ -25,13 +33,25 @@ name: CLI publish
 on:
   push:
     tags: ["cli-v*"]
+    branches: [main]
+    # Only for main: GitHub doesn't apply paths to tag pushes.
+    paths:
+      - runtime-agent/cmd/outrunner/**
+      - runtime-agent/internal/cli/**
+      - "!runtime-agent/internal/cli/**/*_test.go"
+      - runtime-agent/go.mod
+      - runtime-agent/go.sum
+      - cli-npm/**
+      - scripts/build-cli.sh
   workflow_dispatch:
     inputs:
       version:
         description: "Version to publish, e.g. 0.1.2"
         required: true
 
-# One publish at a time: two would race to the same versions.
+# One publish at a time: two would race to the same versions. Merges close
+# together publish once, from the newest: GitHub keeps only the latest run
+# waiting, and it has every change before it.
 concurrency:
   group: cli-publish
   cancel-in-progress: false
@@ -44,11 +64,32 @@ jobs:
     name: Build and publish
     if: github.repository == 'outrunner-sh/outrunner'
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      # To tag what a merge publishes.
+      contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          # All of main's history, to tell whether this commit is on it.
+          fetch-depth: 0
+          # The tests and the build run this repo's code: no write token on
+          # disk for them. Only the Tag step gets one.
+          persist-credentials: false
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: runtime-agent/go.mod
+          cache-dependency-path: runtime-agent/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
       - name: Version
         id: version
         env:
           INPUT: ${{ inputs.version }}
+          REF: ${{ github.ref }}
           TAG: ${{ github.ref_name }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -56,17 +97,26 @@ jobs:
             echo "::error::NPM_TOKEN isn't set (Settings -> Secrets and variables -> Actions)."
             exit 1
           fi
-          if [ -n "$INPUT" ]; then version="$INPUT"; else version="${TAG#cli-v}"; fi
+          if [ -n "$INPUT" ]; then
+            version="$INPUT"
+          elif [ "$REF" = refs/heads/main ]; then
+            # A merge: the patch after what `npx outrunner@latest` runs now.
+            # A rerun of a half-done publish picks the same one, as the
+            # launcher, published last, is what moves latest.
+            latest="$(npm view outrunner@latest version)"
+            if ! [[ "$latest" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              echo "::error::npm's latest outrunner is '$latest', not a release to follow."
+              exit 1
+            fi
+            version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+          else
+            version="${TAG#cli-v}"
+          fi
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::Not a version: '$version' (want e.g. 0.1.2, from a cli-v0.1.2 tag)."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/checkout@v7
-        with:
-          # All of main's history, to tell whether this commit is on it.
-          fetch-depth: 0
 
       - name: Releases only from main
         env:
@@ -77,15 +127,6 @@ jobs:
             echo "::error::$VERSION is a release, and $GITHUB_SHA isn't on main. Merge it first, or publish a prerelease (e.g. $VERSION-beta.1), which goes to npm's next tag."
             exit 1
           fi
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: runtime-agent/go.mod
-          cache-dependency-path: runtime-agent/go.sum
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
 
       # The CLI's own tests, before anything goes out.
       - name: Test the CLI
@@ -116,3 +157,19 @@ jobs:
           }
           for dir in .context/cli-npm/outrunner-*/; do publish "${dir%/}"; done
           publish .context/cli-npm/outrunner
+
+      # What a merge or a run by hand published, findable by its version; a
+      # tag push is tagged already. GITHUB_TOKEN's push starts no new run.
+      - name: Tag
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="cli-v$VERSION"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag exists already; left as it is."
+          else
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" >/dev/null
+            echo "Tagged $GITHUB_SHA $tag."
+          fi

@@ -1,5 +1,5 @@
 /** Which environments are listed, and the org's default
- *  (20261119100000_environments_model.sql), on a disposable Postgres database. */
+ *  (20261119120000_environments_model.sql), on a disposable Postgres database. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -89,7 +89,7 @@ before(() => {
     grant usage on schema public to authenticated, service_role;
     grant all on all tables in schema public to service_role;
   `);
-  execFileSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-q", "-f", "supabase/migrations/20261119100000_environments_model.sql"], { stdio: "pipe" });
+  execFileSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-q", "-f", "supabase/migrations/20261119120000_environments_model.sql"], { stdio: "pipe" });
 });
 
 after(() => {

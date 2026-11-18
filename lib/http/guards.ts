@@ -17,3 +17,15 @@ export function isSameOriginRequest(request: Request): boolean {
     return false;
   }
 }
+
+/**
+ * Reject cross-site reads that cost something to answer (a GET that asks
+ * GitHub, say). Browsers send no `Origin` on a same-origin GET, so its
+ * absence is no refusal here: a request that says it comes from elsewhere
+ * (`Origin` another site's, or `Sec-Fetch-Site` other than same-origin) is.
+ */
+export function isSameOriginRead(request: Request): boolean {
+  const site = request.headers.get("sec-fetch-site");
+  if (site && site !== "same-origin") return false;
+  return request.headers.get("origin") === null || isSameOriginRequest(request);
+}

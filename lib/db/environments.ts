@@ -601,7 +601,7 @@ export async function archiveEnvironment(userId: string, id: string): Promise<vo
   if (error) throw error;
 }
 
-/** Before 20261119100000_environments_model.sql: its function or column
+/** Before 20261119120000_environments_model.sql: its function or column
  *  isn't there yet (PostgREST's and Postgres's codes for each). */
 function beforeEnvironmentsModel(error: { code?: string } | null): boolean {
   if (!error) return false;

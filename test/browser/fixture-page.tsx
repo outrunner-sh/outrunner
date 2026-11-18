@@ -310,8 +310,8 @@ export function FixturePage() {
             org={org}
             me="u-ada"
             members={[
-              { userId: "u-ada", login: "ada", name: "Ada Lovelace", email: "ada@acme.dev", avatarUrl: null, role: "admin", joinedAt: "2026-10-01T00:00:00Z" },
-              { userId: "u-alan", login: "alan", name: "Alan Turing", email: "alan@acme.dev", avatarUrl: null, role: "member", joinedAt: "2026-10-02T00:00:00Z" },
+              { userId: "u-ada", login: "ada", name: "Ada Lovelace", email: "ada@acme.dev", avatarUrl: null, role: "admin", joinedAt: "2026-10-01T00:00:00Z", joinedViaGithub: null },
+              { userId: "u-alan", login: "alan", name: "Alan Turing", email: "alan@acme.dev", avatarUrl: null, role: "member", joinedAt: "2026-10-02T00:00:00Z", joinedViaGithub: "acme" },
             ]}
             invites={[
               { id: "inv-1", email: "grace@acme.dev", role: "member", invitedBy: "u-ada", createdAt: INVITE_SENT_AT, expiresAt: INVITE_EXPIRES_AT, expired: false },

@@ -153,6 +153,18 @@ can manage them, so the page warns its admins before they remove it, and they ca
 can remove any share, including one GitHub's installer or an owner made: it's the org that brought the
 installation, and they can connect it again.
 
+**Joining a team org through its GitHub organization** (`20261119100000`, `lib/orgs/github-join.ts`). When a
+team org is the source org of an installation on a GitHub organization, that organization's active members
+(owners or members; a pending invitation doesn't count) can join the team org at once, as members, from **New
+team org**, with no admin's approval. Admins can turn this off in **Settings → Org** (`join_via_github`, on by
+default). Only the source org counts, so shares let no one in. Outrunner lists the user's installations with
+their own GitHub connection (`GET /user/installations`), then asks GitHub, as each installation, about the
+user's membership (`GET /orgs/{org}/memberships/{username}`), which also needs **Members: Read**. The check
+fails closed: an installation that hasn't granted the permission answers 403, and its members are told to ask an
+admin for an invite. Joining asks GitHub again on the server. Someone an admin removed can't rejoin this way.
+Leaving the GitHub organization later doesn't remove anyone from the team org. The members page shows admins
+who joined through GitHub, and the audit log records it (`member.joined`, `via: github`).
+
 Installation metadata is global (`github_installations`); access is an independent link per organization
 (`org_github_installations`). Existing links are preserved by migrations `20261104100000` and
 `20261112130000`; `supabase/review/github_installation_links.sql` lists, read-only, links to review against
@@ -259,6 +271,10 @@ then, GitHub refuses what needs them, and Outrunner logs that and goes on.
 | Checks | Read & write | Reading CI results (follow-ups); automation runs' checks (#238) write them |
 | Actions | Read | Reading failed jobs' logs (follow-ups) |
 
+| Permission (organization) | Access | For |
+| --- | --- | --- |
+| Members | Read | Who owns a GitHub organization (connecting its installation) and who's a member (joining a team org through it). Without it both fail closed |
+
 | Event | For |
 | --- | --- |
 | Pull request | Automations; closing archives |
@@ -300,7 +316,8 @@ authorization tokens** is on; new Apps have it on.
     "pull_requests": "write",
     "issues": "write",
     "checks": "write",
-    "actions": "read"
+    "actions": "read",
+    "members": "read"
   },
   "default_events": [
     "pull_request",
