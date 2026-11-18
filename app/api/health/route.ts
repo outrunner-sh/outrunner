@@ -5,6 +5,7 @@ import { emailStatus } from "@/lib/email/send";
 import { hasCronSecret } from "@/lib/cron/auth";
 import { readHeartbeats } from "@/lib/cron/heartbeat.deps";
 import { checkDaytona, checkOpenRouter } from "@/lib/health/dependencies";
+import { buildInfo } from "@/lib/observability/build";
 import { isDraining } from "@/lib/observability/drain";
 import { optionalEnv, providerName } from "@/lib/env";
 import { keySource } from "@/lib/openrouter/keys";
@@ -102,14 +103,15 @@ export async function GET(request: Request) {
   // Shutting down (server.ts, on SIGTERM): still up, but not to be sent work.
   const draining = isDraining();
   const ok = configured.supabase && configured.credentialEncryption && database.ok && !draining;
-  // The commit this server was built from (Dockerfile OUTRUNNER_BUILD), so
-  // the Worker and the deploy check can tell it's the one just deployed.
-  const build = process.env.OUTRUNNER_BUILD || null;
+  // The commit this server is deployed as and the tree its image was built
+  // from, so the Worker and the deploy check can tell it's the one just
+  // deployed, running the code that was tested.
+  const { build, tree } = buildInfo();
 
   // Not the deployment's operator: the check the Worker makes of a container
   // and the readiness a load balancer asks for, answered as thinly as that.
   if (!hasCronSecret(request)) {
-    return NextResponse.json({ ok, build, ...(draining ? { draining } : {}) }, { status: ok ? 200 : 503 });
+    return NextResponse.json({ ok, build, tree, ...(draining ? { draining } : {}) }, { status: ok ? 200 : 503 });
   }
 
   // Report optional feature rollout separately: a missing Codex migration
@@ -150,6 +152,7 @@ export async function GET(request: Request) {
       ...(draining ? { draining } : {}),
       ...(nextStep ? { nextStep } : {}),
       build,
+      tree,
       time: new Date().toISOString(),
     },
     { status: ok ? 200 : 503 },
