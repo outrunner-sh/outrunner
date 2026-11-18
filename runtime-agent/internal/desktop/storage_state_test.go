@@ -92,8 +92,10 @@ func TestStorageStateReadsARealBrowsersSignIns(t *testing.T) {
 		http.SetCookie(w, &http.Cookie{Name: "sid", Value: "signed-in", Path: "/", HttpOnly: true})
 		w.Header().Set("Content-Type", "text/html")
 		// Each run of the app's code writes a new value: one read by running
-		// it would differ from the one it wrote when the user signed in.
-		fmt.Fprint(w, `<!doctype html><script>localStorage.setItem("token", "t-" + Math.random())</script>`)
+		// it would differ from the one it wrote when the user signed in. Its
+		// icon is its own: the browser's fetch of /favicon.ico for this tab
+		// lands whenever it lands, before or after the count is taken.
+		fmt.Fprint(w, `<!doctype html><link rel="icon" href="data:,"><script>localStorage.setItem("token", "t-" + Math.random())</script>`)
 	}))
 	defer app.Close()
 
