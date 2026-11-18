@@ -37,7 +37,7 @@ jobs:
       # No version pin: pnpm/action-setup reads the pnpm version from the
       # root package.json "packageManager" field (pnpm@10.x). Pinning here too
       # makes the action error on the mismatch.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -65,7 +65,7 @@ jobs:
       NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_outrunner_ci_example
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -124,7 +124,7 @@ jobs:
         working-directory: cloudflare
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
