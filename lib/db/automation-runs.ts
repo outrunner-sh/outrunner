@@ -8,9 +8,9 @@
 
 import type { CheckOutcome } from "@/lib/automations/checks";
 import { readRunEvent, type RunEvent } from "@/lib/automations/run-event";
-import type { AutomationTrigger, RunStatus, SessionMode, TriggerKind } from "@/lib/automations/rules";
+import type { AutomationModel, AutomationTrigger, RunStatus, SessionMode, TriggerKind } from "@/lib/automations/rules";
 import { type Schedule, scheduleFromRow } from "@/lib/automations/schedule";
-import { currentRunners, timesRun } from "@/lib/db/automations";
+import { currentRunners, modelFromRow, timesRun } from "@/lib/db/automations";
 import { openChecksOfPullRequestWith, pullRequestAutomationLinksWith, pullRequestSessionsWith } from "@/lib/db/automation-pull-requests";
 import type { Json } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -33,6 +33,8 @@ export type RunCandidate = {
   labels: string[];
   /** A new session each run, or its last one on the repository. */
   sessionMode: SessionMode;
+  /** Its own model; null (or absent), the org's choice. */
+  model?: AutomationModel | null;
 };
 
 type Admin = ReturnType<typeof createSupabaseAdminClient>;
@@ -53,7 +55,7 @@ async function candidatesOf(
   if (links.length === 0) return [];
   let automationsQuery = supabase
     .from("automations")
-    .select("id, org_id, name, prompt, triggers, runs_as, reviewers, labels, session_mode")
+    .select("id, org_id, name, prompt, triggers, runs_as, reviewers, labels, session_mode, model_provider, model_id, model_effort")
     .in("id", [...new Set(links.map((l) => l.automation_id))])
     .eq("org_id", orgId);
   if (enabledOnly) automationsQuery = automationsQuery.eq("enabled", true);
@@ -91,6 +93,7 @@ async function candidatesOf(
         reviewers: a.reviewers,
         labels: a.labels,
         sessionMode: a.session_mode,
+        model: modelFromRow(a),
       },
     ];
   });
@@ -571,7 +574,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
   if (!run) return null;
   const { data: automation, error: automationError } = await supabase
     .from("automations")
-    .select("id, name, prompt, triggers, runs_as, enabled, max_runs, reviewers, labels, session_mode")
+    .select("id, name, prompt, triggers, runs_as, enabled, max_runs, reviewers, labels, session_mode, model_provider, model_id, model_effort")
     .eq("id", run.automation_id)
     .eq("org_id", orgId)
     .maybeSingle();
@@ -623,6 +626,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
       reviewers: automation.reviewers,
       labels: automation.labels,
       sessionMode: automation.session_mode,
+      model: modelFromRow(automation),
     },
     repoFullName: project.full_name,
     installationId: installation?.installation_id ?? null,

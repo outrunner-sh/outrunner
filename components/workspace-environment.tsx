@@ -28,7 +28,7 @@ import type { TrackerIssue } from "@/lib/trackers/issue-key";
 import type { SessionSender } from "@/components/workspace-session";
 import { uploadAttachment } from "@/hooks/use-attachments";
 import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-workspace-changes";
-import { openPendingTab, TAB_BLOCKED } from "@/lib/client/pending-tab";
+import { openBoxPort } from "@/lib/client/box-port";
 import { store, useStore } from "@/lib/client/store";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { PullRequestStatus } from "@/lib/github/client";
@@ -270,19 +270,9 @@ function PortRows({ workspaceId, active }: { workspaceId: string; active: boolea
   async function open(port: number) {
     setOpening(port);
     setError(null);
-    const tab = openPendingTab(`Opening port ${port}…`);
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/ports/${port}`, { method: "POST" });
-      const body = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
-      if (!res.ok || !body?.url) throw new Error(body?.error ?? "Couldn't open that preview. Please try again.");
-      if (tab.closed()) return;
-      if (!tab.go(body.url)) setError(TAB_BLOCKED);
-    } catch (e) {
-      tab.close();
-      setError(e instanceof Error ? e.message : "Couldn't open that preview. Please try again.");
-    } finally {
-      setOpening(null);
-    }
+    const error = await openBoxPort(workspaceId, port);
+    setOpening(null);
+    if (error) setError(error);
   }
 
   return (

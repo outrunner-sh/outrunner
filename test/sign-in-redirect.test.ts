@@ -63,3 +63,9 @@ test("the router prefetching a page's shell is told apart from a page load", () 
   assert.equal(isShellPrefetch(new Headers({ rsc: "1" })), false);
   assert.equal(isShellPrefetch(new Headers()), false);
 });
+
+test("the API's skill opens signed out, for an agent to install", () => {
+  assert.equal(page("/skills/outrunner-api/SKILL.md"), null);
+  // A path that only starts the same isn't one.
+  assert.equal(page("/skillset"), "/signin?next=%2Fskillset");
+});

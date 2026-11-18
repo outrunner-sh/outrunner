@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { after } from "@/lib/observability/after";
 import { z } from "zod";
 
+import { recordProjectChange } from "@/lib/audit/project-history";
 import { getOwner } from "@/lib/auth/owner";
 import {
   EnvironmentAccessError,
@@ -53,6 +54,12 @@ export async function PATCH(request: Request, context: RouteContext) {
       const kept = await editEnvironmentSecrets(owner.id, id, parsed.data);
       // Ready boxes were warmed with the old ones: made again.
       after(() => refillAfterChange(owner, id), { where: "refill-pool", userId: owner.id });
+      // Names and paths only: never a value.
+      const edit = parsed.data;
+      await recordProjectChange(owner, id, "project.secrets_changed", {
+        set: [...Object.keys(edit.setEnv ?? {}), ...Object.keys(edit.setFiles ?? {})],
+        removed: [...(edit.removeEnv ?? []), ...(edit.removeFiles ?? [])],
+      });
       return NextResponse.json(kept);
     } catch (error) {
       if (error instanceof EnvironmentRuleError) return NextResponse.json({ error: error.message }, { status: 400 });

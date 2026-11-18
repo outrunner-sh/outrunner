@@ -318,6 +318,7 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	if askArgs := s.claudeAskArgs(workspaceID); len(askArgs) > 0 {
 		argv = append(argv, askArgs...)
 	}
+	argv = append(argv, s.claudeSubagentArgs(workspaceID)...)
 	// Install the environment hook even without the ask relay when the
 	// session has project variables. This also applies to its other chats.
 	if s.RelayExecutable != "" || fileExists(s.envFiles().path(s.owner(workspaceID))) {

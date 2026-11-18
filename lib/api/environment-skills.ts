@@ -17,8 +17,9 @@ import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/ha
 import { paginate, pageRequest } from "@/lib/api/pagination";
 import { snakeKeys } from "@/lib/api/serialize";
 import { isUuid } from "@/lib/ids";
+import { projectNotFound } from "@/lib/api/project-access";
 
-const notFound = () => apiError(404, "No project by that id that you can see.");
+const notFound = projectNotFound;
 
 /** A route's answer as the API gives it: `pick` the record, or the list
  *  paged; a refusal in the API's envelope. */

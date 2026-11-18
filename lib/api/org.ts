@@ -8,10 +8,11 @@
 import { DELETE as automationDELETE, PATCH as automationPATCH } from "@/app/api/orgs/[id]/automations/[automationId]/route";
 import { POST as automationsPOST } from "@/app/api/orgs/[id]/automations/route";
 import { GET as usageGET } from "@/app/api/orgs/[id]/usage/route";
+import { automationBody, automationsList, automationsPage } from "@/lib/api/automations";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
 import { pageRequest, paginate } from "@/lib/api/pagination";
-import { snakeKeys, topLevelCamel } from "@/lib/api/serialize";
+import { snakeKeys } from "@/lib/api/serialize";
 import { getAutomation, listAutomations } from "@/lib/db/automations";
 import { listRuns } from "@/lib/db/automation-runs";
 import { listMembers } from "@/lib/db/org-members";
@@ -19,11 +20,13 @@ import { isUuid } from "@/lib/ids";
 
 const noAutomation = () => apiError(404, "No automation by that id in this org.");
 
-/** GET /automations: the org's automations, oldest first. */
+/** GET /automations: the org's automations, oldest first; in Cursor's
+ *  `items` and `nextCursor` too (`limit` and `cursor` taken for `per_page`
+ *  and `page`). */
 export async function listAutomationsApi(context: ApiContext): Promise<Response> {
-  const page = pageRequest(new URL(context.request.url).searchParams);
+  const page = automationsPage(new URL(context.request.url).searchParams);
   if (typeof page === "string") return apiError(400, page);
-  return Response.json(paginate((await listAutomations(context.caller.orgId)).map(snakeKeys), page));
+  return Response.json(automationsList((await listAutomations(context.caller.orgId)).map(snakeKeys), page));
 }
 
 /** GET /automations/{id}. */
@@ -33,13 +36,16 @@ export async function getAutomationApi(context: ApiContext, id: string): Promise
   return automation ? Response.json(snakeKeys(automation)) : noAutomation();
 }
 
-/** POST /automations: make one (an admin's). It runs as the key's maker. */
+/** POST /automations: make one (an admin's). It runs as the key's maker.
+ *  `model` (or Cursor's `modelSelection`) is the model its runs start on. */
 export async function createAutomationApi(context: ApiContext): Promise<Response> {
   const body = await jsonBody(context.request);
   if (body instanceof Response) return body;
+  const input = automationBody(body);
+  if (typeof input === "string") return apiError(400, input);
   const org = context.caller.orgId;
   const made = await automationsPOST(
-    appRequest(context.base, `/api/orgs/${org}/automations`, { body: topLevelCamel(body) }),
+    appRequest(context.base, `/api/orgs/${org}/automations`, { body: input }),
     routeParams({ id: org }),
   );
   if (!made.ok) return errorFromRoute(made, context.base);
@@ -48,15 +54,18 @@ export async function createAutomationApi(context: ApiContext): Promise<Response
   return automation ? Response.json(snakeKeys(automation), { status: 201 }) : apiError(500, "It was made, but couldn't be read back.");
 }
 
-/** PATCH /automations/{id}: change some of its fields (an admin's). */
+/** PATCH /automations/{id}: change some of its fields (an admin's), its
+ *  `model` among them (Cursor's `modelSelection` too; null clears it). */
 export async function updateAutomationApi(context: ApiContext, id: string): Promise<Response> {
   if (!isUuid(id)) return noAutomation();
   const body = await jsonBody(context.request);
   if (body instanceof Response) return body;
   if (Object.keys(body).length === 0) return apiError(400, "Name something to change.");
+  const input = automationBody(body);
+  if (typeof input === "string") return apiError(400, input);
   const org = context.caller.orgId;
   const changed = await automationPATCH(
-    appRequest(context.base, `/api/orgs/${org}/automations/${id}`, { method: "PATCH", body: topLevelCamel(body) }),
+    appRequest(context.base, `/api/orgs/${org}/automations/${id}`, { method: "PATCH", body: input }),
     routeParams({ id: org, automationId: id }),
   );
   if (!changed.ok) return errorFromRoute(changed, context.base);

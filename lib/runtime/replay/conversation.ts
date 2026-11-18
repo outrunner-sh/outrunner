@@ -52,6 +52,10 @@ function cleanBlock(raw: Record<string, unknown>): ContentBlock {
   }
   // A failed result, by either name (`omitempty`: only when true).
   if (raw.isError === true || raw.is_error === true) out.isError = true;
+  // A thinking block's words: Claude's `thinking`, Runtime's `text`.
+  if (raw.type === "thinking" && !("text" in out) && typeof raw.thinking === "string" && raw.thinking !== "") {
+    out.text = raw.thinking;
+  }
   // An image's picture, as the Go rawBlock keeps it: its source's string
   // fields, the data only up to the cap.
   if (raw.type === "image" && isObject(raw.source)) {

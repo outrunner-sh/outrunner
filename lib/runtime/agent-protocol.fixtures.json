@@ -718,7 +718,7 @@
         "rewind",
         "environment-skills",
         "codex-mcp",
-        "canvas", "codex-access-token", "codex-account", "claude-account", "codex-request-secrets", "snapshot-patch-integrity"
+        "canvas", "codex-access-token", "codex-account", "claude-account", "codex-request-secrets", "snapshot-patch-integrity", "subagents"
       ]
     }
   ],
@@ -773,7 +773,10 @@
       "setup": "bun install",
       "instructions": "Use pnpm. Run pnpm test before opening a PR.",
       "warmHook": "pnpm install",
-      "startHook": "docker compose up -d db"
+      "startHook": "docker compose up -d db",
+      "subagents": {
+        "reviewer": { "description": "Reviews a diff before it's pushed", "prompt": "You review code for bugs.", "model": "sonnet" }
+      }
     },
     {
       "env": {}

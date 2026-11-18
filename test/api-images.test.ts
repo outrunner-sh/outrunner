@@ -61,3 +61,11 @@ test("a create takes images beside its uploads", () => {
   assert.equal(typeof input !== "string" && input.images.length, 1);
   assert.equal(typeof parseCreate({ project_id: "11111111-1111-4111-8111-111111111111", prompt: "x", images: [{ url: "http://x" }] }), "string");
 });
+
+test("image/jpg is taken for image/jpeg, and a bad type names both spellings", () => {
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff]).toString("base64");
+  const read = parseImages([{ data: jpeg, mimeType: "image/jpg" }]);
+  assert.ok(Array.isArray(read));
+  assert.equal(read[0].kind === "data" && read[0].mimeType, "image/jpeg");
+  assert.match(parseImages([{ data: jpeg, mimeType: "image/bmp" }]) as string, /`mime_type` \(or `mimeType`\)/);
+});

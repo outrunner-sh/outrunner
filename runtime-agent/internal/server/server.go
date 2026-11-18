@@ -176,7 +176,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{featureHarnessSwitch, protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureCodexSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureGitLabCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots, protocol.FeatureRewind, protocol.FeatureCodexAccessToken, protocol.FeatureCodexAccount, protocol.FeatureClaudeAccount, protocol.FeatureSnapshotPatchIntegrity},
+		Features: []string{featureHarnessSwitch, protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureCodexSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureGitLabCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureFiles, protocol.FeatureMessageKeys, protocol.FeatureSkills, protocol.FeatureCodexMCP, protocol.FeatureCanvas, protocol.FeatureAgentContext, protocol.FeatureChats, protocol.FeatureChatSnapshots, protocol.FeatureRewind, protocol.FeatureCodexAccessToken, protocol.FeatureCodexAccount, protocol.FeatureClaudeAccount, protocol.FeatureSnapshotPatchIntegrity, protocol.FeatureSubagents},
 	})
 }
 
@@ -1252,6 +1252,9 @@ func (s *Server) setEnvironment(w http.ResponseWriter, r *http.Request) {
 		err = workspace.ValidHooks(req.WarmHook, req.StartHook)
 	}
 	if err == nil {
+		err = workspace.ValidSubagents(req.Subagents)
+	}
+	if err == nil {
 		err = s.ws.SetEnvironment(r.Context(), r.PathValue("id"), req.Env, req.Files, req.Setup)
 	}
 	if err == nil {
@@ -1259,6 +1262,9 @@ func (s *Server) setEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		err = s.ws.SetHooks(r.PathValue("id"), req.WarmHook, req.StartHook)
+	}
+	if err == nil {
+		err = s.ws.SetSubagents(r.PathValue("id"), req.Subagents)
 	}
 	if errors.Is(err, workspace.ErrInvalidEnvironment) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
