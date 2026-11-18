@@ -7,7 +7,6 @@ import { ClaimError, claimInstallation, installationHolder, refreshInstallation 
 import { memberRole, personalOrgId } from "@/lib/db/orgs";
 import { getInstallation, githubAppConfig, readInstallState, signInstallState } from "@/lib/github/app";
 import { returnWithoutState } from "@/lib/github/connect-installation";
-import { syncConnectedInstallation } from "@/lib/github/connect-installation.deps";
 import { appClientSecret, authorizeUrl } from "@/lib/github/installer";
 import { appUrl } from "@/lib/orgs/notify";
 import { getOrgContext, setActiveOrg } from "@/lib/orgs/server";
@@ -34,7 +33,6 @@ const WAIT_FOR_WEBHOOK_MS = 8_000;
  *   offered on its GitHub settings for them to add with a click, which checks
  *   GitHub's say as above; nothing is linked on this GET alone
  *   (lib/github/connect-installation.ts).
- * - Linked just now: its repositories become the org's projects at once.
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -73,12 +71,12 @@ export async function GET(request: Request) {
     }
     if (!orgId) return back("error=link_expired");
     // Their own connection's page, for their personal org's installations.
-    const done = (login: string, synced: number | null = null) =>
+    const done = (login: string) =>
       state?.next
         ? NextResponse.redirect(appUrl(state.next, origin))
         : orgId === personal
           ? NextResponse.redirect(appUrl("/settings/connections?github=updated", origin))
-          : back(`installed=${encodeURIComponent(login)}${synced === null ? "" : `&synced=${synced}`}`);
+          : back(`installed=${encodeURIComponent(login)}`);
     if ((await memberRole(orgId, owner.id)) !== "admin") return back("error=not_admin");
 
     const installation = await getInstallation(config, installationId);
@@ -120,13 +118,9 @@ export async function GET(request: Request) {
       action: "github.installed",
       resource: { type: "installation", id: String(installation.id), label: installation.accountLogin },
     });
-    // From the org's GitHub settings, its repositories are the org's projects
-    // at once. Onboarding has them pick which as it comes back, and their own
-    // connection's (a personal org's) leaves that to its picker.
-    const synced = state.next ? null : await syncConnectedInstallation(owner.id, orgId, installation.id);
     // Their own connection's page leaves the org they're looking at as it is.
     if (state.next !== "/settings/connections") await setActiveOrg(orgId).catch(() => {});
-    return done(installation.accountLogin, synced);
+    return done(installation.accountLogin);
   } catch (error) {
     if (error instanceof ClaimError) {
       const code = { unknown: "no_installation", not_installer: "not_installer", not_admin: "not_admin" };

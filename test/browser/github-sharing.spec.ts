@@ -2,15 +2,16 @@ import { expect, test } from "@playwright/test";
 
 test("an existing GitHub installation can be added to the active organization", async ({ page }) => {
   await page.route("**/api/**", (route) => route.fulfill({ json: { missions: [], notifications: [], standings: {}, ids: [], allowance: null } }));
-  await page.route("**/api/orgs/org-1/github/installations", (route) => route.fulfill({ json: { claimed: 42, synced: 3 } }));
+  await page.route("**/api/orgs/org-1/github/installations", (route) => route.fulfill({ json: { claimed: 42 } }));
   await page.goto("/settings/org/github?view=github");
   await expect(page.getByRole("heading", { name: "Available GitHub connections" })).toBeVisible();
   await expect(page.getByText("outrunner-sh", { exact: true })).toBeVisible();
   const request = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/api/orgs/org-1/github/installations"));
   await page.getByRole("button", { name: "Add to acme" }).click();
   expect((await request).postDataJSON()).toEqual({ installationId: 42 });
-  // Its repositories are the org's projects at once, and it says so.
-  await expect(page.getByText("Added outrunner-sh: 3 repositories are in Projects now.")).toBeVisible();
+  // Its repositories are picked next, not all added.
+  await expect(page.getByText("Added outrunner-sh. Next, pick which of its repositories to work on.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Pick repositories" })).toHaveAttribute("href", "/projects");
   await expect(page.getByRole("button", { name: "Add to acme" })).toBeEnabled();
   await expect(page.getByText("Multiple Outrunner organizations can share the same GitHub App installation.", { exact: false })).toBeVisible();
 });
@@ -50,7 +51,7 @@ test("an installation shared with no one says so", async ({ page }) => {
 
 test("an installation changed on GitHub, not yet the org's, is offered to add with a click", async ({ page }) => {
   await page.route("**/api/**", (route) => route.fulfill({ json: { missions: [], notifications: [], standings: {}, ids: [], allowance: null } }));
-  await page.route("**/api/orgs/org-1/github/installations", (route) => route.fulfill({ json: { claimed: 42, synced: null } }));
+  await page.route("**/api/orgs/org-1/github/installations", (route) => route.fulfill({ json: { claimed: 42 } }));
   await page.goto("/settings/org/github?view=github&offer=1");
   await expect(page.getByText("outrunner-sh was changed on GitHub, but it isn't connected to acme.", { exact: false })).toBeVisible();
   // Offered once: not listed again under Available.
@@ -58,6 +59,5 @@ test("an installation changed on GitHub, not yet the org's, is offered to add wi
   const request = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/api/orgs/org-1/github/installations"));
   await page.getByRole("button", { name: "Add to acme" }).click();
   expect((await request).postDataJSON()).toEqual({ installationId: 42 });
-  // Its repositories couldn't be added: where to try again.
-  await expect(page.getByText("couldn't be added to Projects just now: use Sync repositories there.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Added outrunner-sh. Next, pick which of its repositories to work on.")).toBeVisible();
 });

@@ -4,15 +4,12 @@ import { recordAudit } from "@/lib/audit/record";
 import { getGithubConnection } from "@/lib/db/github-connections";
 import { ClaimError, claimInstallation } from "@/lib/db/github-installations";
 import { getInstallation, githubAppConfig } from "@/lib/github/app";
-import { syncConnectedInstallation } from "@/lib/github/connect-installation.deps";
 import { orgCaller } from "@/lib/orgs/routes";
 
 /**
  * Connect an installation to the org, `{ installationId }`, including one
  * already connected to another org. GitHub must vouch for it: the admin is
- * its installer, or owns its GitHub account or organization. Its repositories
- * become the org's projects at once; `synced` says how many, null when they
- * couldn't be added (Sync repositories tries again).
+ * its installer, or owns its GitHub account or organization.
  */
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -43,8 +40,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       action: "github.installed",
       resource: { type: "installation", id: String(installation.id), label: installation.accountLogin },
     });
-    const synced = await syncConnectedInstallation(caller.owner.id, id, installation.id);
-    return NextResponse.json({ claimed: installationId, synced });
+    return NextResponse.json({ claimed: installationId });
   } catch (error) {
     if (error instanceof ClaimError) {
       const message =

@@ -22,7 +22,7 @@ const SHOWN = 12;
  * an installation go, and the org that first connected one sees, and can
  * remove, the other orgs it's shared with.
  */
-type Query = { installed?: string; synced?: string; connect?: string; error?: string; pending?: string };
+type Query = { installed?: string; connect?: string; error?: string; pending?: string };
 
 export default function OrgGitHub({ searchParams }: { searchParams: Promise<Query> }) {
   return (
@@ -35,7 +35,7 @@ export default function OrgGitHub({ searchParams }: { searchParams: Promise<Quer
 async function GitHubSection({ searchParams }: { searchParams: Promise<Query> }) {
   const owner = await getOwnerSafe();
   if (!owner) redirect("/signin?next=/settings/org/github");
-  const { installed, synced, connect, error, pending } = await searchParams;
+  const { installed, connect, error, pending } = await searchParams;
   const context = await getOrgContext().catch(() => undefined);
   const org = context?.active;
   const config = githubAppConfig();
@@ -61,7 +61,6 @@ async function GitHubSection({ searchParams }: { searchParams: Promise<Query> })
     config && org.role === "admin" && Number.isSafeInteger(connectId) && connectId > 0 && !kept.some((i) => i.id === connectId)
       ? (available.find((i) => i.id === connectId) ?? (await getInstallation(config, connectId).catch(() => null)))
       : null;
-  const syncedCount = synced !== undefined && /^\d+$/.test(synced) ? Number(synced) : null;
   const installations: InstallationView[] = await Promise.all(
     kept.map(async (kept) => {
       // Only its source org's admins see the other orgs it's shared with.
@@ -88,7 +87,6 @@ async function GitHubSection({ searchParams }: { searchParams: Promise<Query> })
       offered={offered ? { id: offered.id, accountLogin: offered.accountLogin } : null}
       pending={pending === "1"}
       installed={installed ?? null}
-      synced={syncedCount}
       error={error ?? null}
     />
   );

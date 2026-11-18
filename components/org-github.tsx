@@ -45,12 +45,10 @@ const ERRORS: Record<string, string> = {
   failed: "Couldn't keep the installation. Try again.",
 };
 
-/** What adding an installation did to the org's projects, said for the page. */
-function addedMessage(login: string, synced: number | null): string {
-  if (synced === null) return `Added ${login}. Its repositories couldn't be added to Projects just now: use Sync repositories there.`;
-  if (synced === 0) return `Added ${login}. It reaches no repositories yet: pick some on GitHub with Manage on GitHub.`;
-  return `Added ${login}: ${synced} ${synced === 1 ? "repository is" : "repositories are"} in Projects now.`;
-}
+/** Connected: its repositories are picked next, not all added (a picker
+ *  opens from here once there is one; until then, Projects has it). */
+const addedMessage = (login: string) => `Added ${login}. Next, pick which of its repositories to work on.`;
+const PICK_REPOSITORIES = { label: "Pick repositories", href: "/projects" };
 
 /** Where an installation is managed (its repositories, uninstalling) on GitHub. */
 function manageUrl(i: OrgInstallation): string {
@@ -70,7 +68,6 @@ export function OrgGitHubSettings({
   offered,
   pending,
   installed,
-  synced,
   error,
 }: {
   org: Org;
@@ -84,9 +81,6 @@ export function OrgGitHubSettings({
   /** Back from GitHub before its word of the install: say to wait. */
   pending: boolean;
   installed: string | null;
-  /** How many of its repositories installing it added to Projects; null when
-   *  none were tried, or they couldn't be. */
-  synced: number | null;
   error: string | null;
 }) {
   const router = useRouter();
@@ -103,13 +97,13 @@ export function OrgGitHubSettings({
     setFailure(null);
     setAdded(null);
     try {
-      const { synced } = await requestJson<{ claimed: number; synced: number | null }>(`/api/orgs/${org.id}/github/installations`, {
+      await requestJson<{ claimed: number }>(`/api/orgs/${org.id}/github/installations`, {
         method: "POST",
         body: { installationId: id },
         has: (data) => typeof data.claimed === "number",
         fallback: "Couldn't add it. Try again.",
       });
-      setAdded(addedMessage(login, synced ?? null));
+      setAdded(addedMessage(login));
       router.refresh();
     } catch (cause) {
       setFailure(cause instanceof Error ? cause.message : "Couldn't add it. Try again.");
@@ -159,10 +153,10 @@ export function OrgGitHubSettings({
         </p>
       </div>
 
-      {added ? (
-        <InlineMessage tone="info">{added}</InlineMessage>
-      ) : installed ? (
-        <InlineMessage tone="info">{synced === null ? `Installed on ${installed}.` : addedMessage(installed, synced)}</InlineMessage>
+      {added || installed ? (
+        <InlineMessage tone="info" actions={[PICK_REPOSITORIES]}>
+          {added ?? addedMessage(installed!)}
+        </InlineMessage>
       ) : null}
       {offer ? (
         <InlineMessage
