@@ -67,7 +67,7 @@ export async function commitImport(ownerId: string, req: ImportCommitRequest, de
     throw new ImportError("This import's plan has expired. Import the session again.", 409);
   }
   const project = await deps.getProject(req.projectId);
-  if (!project) throw new ImportError("That project isn't yours, or is gone.", 404);
+  if (!project) throw new ImportError("That repository isn't yours, or is gone.", 404);
   if (!isValidBranchName(req.branch)) throw new ImportError("That isn't a branch name Outrunner takes.", 400);
   if ((await deps.branchesInUse(project.id)).has(req.branch)) {
     throw new ImportError(`${req.branch} became another session's branch meanwhile. Import it again.`, 409);

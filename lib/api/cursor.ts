@@ -84,7 +84,7 @@ const OUTRUNNER_CREATE_FIELDS = [
  *  it's set instead. */
 const KEPT_ELSEWHERE: Record<string, string> = {
   mcpServers:
-    "A run can't add MCP servers to an agent already started: give them as it's created (`mcpServers`), or add them to its project (POST /api/v1/environments/{id}/mcp-servers).",
+    "A run can't add MCP servers to an agent already started: give them as it's created (`mcpServers`), or add them to its environment (POST /api/v1/environments/{id}/mcp-servers).",
 };
 
 /** Cursor's per-agent fields, as POST /workspaces names them. */
@@ -144,7 +144,7 @@ export function createFromCursor(
   if (raw.repos !== undefined && raw.repos !== null) {
     if (!Array.isArray(raw.repos) || !raw.repos.every(isObject)) return "`repos` is a list of `{ url, startingRef?, prUrl? }`.";
     if (raw.repos.length > 1) {
-      return "One repository per agent here: for several, make a project of them in Outrunner and send its `environment_id` instead of `repos`.";
+      return "One repository per agent here: for several, make an environment of them in Outrunner and send its `environment_id` instead of `repos`.";
     }
     const repo = raw.repos[0] as Record<string, unknown> | undefined;
     if (repo) {
@@ -170,7 +170,7 @@ export function createFromCursor(
     }
     if (raw.env.name !== undefined && raw.env.name !== null) {
       if (typeof raw.env.name !== "string" || !raw.env.name.trim()) return "`env.name` is a project's name.";
-      if (Array.isArray(raw.repos) && raw.repos.length) return "Name a project (`env.name`) or `repos`, not both.";
+      if (Array.isArray(raw.repos) && raw.repos.length) return "Name an environment (`env.name`) or `repos`, not both.";
       envName = raw.env.name.trim();
     }
   }

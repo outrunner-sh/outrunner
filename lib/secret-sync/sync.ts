@@ -101,7 +101,7 @@ export async function syncSecrets<L extends { provider: SecretProvider }>(
         : null);
     const warning =
       f.provider === "infisical" && cliSkipped && !error
-        ? "The infisical CLI wasn't installed: with its install, the project's start hook is over 64 KB. Its sign-in is in the environment."
+        ? "The infisical CLI wasn't installed: with its install, the environment's start hook is over 64 KB. Its sign-in is in the environment."
         : null;
     return { provider: f.provider, error, warning, names: m?.tooLarge ? [] : names, skipped: m?.skipped ?? [] };
   });

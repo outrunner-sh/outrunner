@@ -191,7 +191,7 @@ const SKIP_TEXT: Record<SkipReason, string> = {
   "no-repo-access": "Your GitHub account can't see its repository.",
   "worktree-missing": "Its folder is gone.",
   "branch-missing": "Its branch is gone.",
-  "branch-taken": "Its branch is already a session's in this project.",
+  "branch-taken": "Its branch is already a session's in this repository.",
   "too-large": "It's too large to import.",
   "already-imported": "It was imported already.",
   "unportable-mcp": "It needs something that only runs on this Mac.",

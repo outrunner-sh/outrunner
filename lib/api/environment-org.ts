@@ -20,5 +20,5 @@ export async function projectOutsideOrg(context: Pick<ApiContext, "caller">, id:
   if (!isUuid(id)) return null;
   const environment = await find(context.caller.userId, id);
   if (environment && environment.orgId === context.caller.orgId) return null;
-  return apiError(404, "No project by that id that you can see.");
+  return apiError(404, "No environment by that id that you can see.");
 }

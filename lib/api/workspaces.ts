@@ -115,7 +115,7 @@ export async function createWorkspace(
   let environmentId: string | undefined;
   if (input.environmentId) {
     const environment = await getEnvironment(owner.id, input.environmentId);
-    if (!environment || environment.orgId !== caller.orgId) return apiError(404, "No project by that id that you can see.");
+    if (!environment || environment.orgId !== caller.orgId) return apiError(404, "No environment by that id that you can see.");
     // It works first in the repository the project is the default of, else
     // its first: a project someone made has every one of them checked out,
     // as the new-session screen starts it.

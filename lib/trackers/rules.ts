@@ -129,7 +129,7 @@ export function parseRuleInput(
   }
   if (full || b.projectId !== undefined) {
     const project = b.projectId ?? null;
-    if (project !== null && (typeof project !== "string" || !isUuid(project))) return { ok: false, error: "That isn't a project." };
+    if (project !== null && (typeof project !== "string" || !isUuid(project))) return { ok: false, error: "That isn't a repository." };
     value.projectId = project as string | null;
   }
   if (full || b.enabled !== undefined) {
@@ -158,7 +158,7 @@ export function parseScopeSettings(body: unknown): Parsed<Partial<ScopeSettings>
   const value: Partial<ScopeSettings> = {};
   if (b.defaultProjectId !== undefined) {
     if (b.defaultProjectId !== null && (typeof b.defaultProjectId !== "string" || !isUuid(b.defaultProjectId))) {
-      return { ok: false, error: "That isn't a project." };
+      return { ok: false, error: "That isn't a repository." };
     }
     value.defaultProjectId = b.defaultProjectId as string | null;
   }

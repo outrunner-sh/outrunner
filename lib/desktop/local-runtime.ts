@@ -592,7 +592,7 @@ const NEEDS_NEWER_APP: Record<string, string> = {
   local_codex_login: "This version of the Outrunner app can't log Codex in. Update the app, then try again.",
   import_scan: "This version of the Outrunner app can't import sessions. Update the app, then try again.",
   import_session: "This version of the Outrunner app can't import sessions. Update the app, then try again.",
-  import_environment: "This version of the Outrunner app can't import a project's environment. Update the app, then try again.",
+  import_environment: "This version of the Outrunner app can't import a repository's environment. Update the app, then try again.",
   import_config: "This version of the Outrunner app can't import your agent setup. Update the app, then try again.",
 };
 

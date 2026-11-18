@@ -103,7 +103,7 @@ async function placeOf(context: ApiContext, create: ProjectCreate): Promise<{ en
     environmentId = await defaultEnvironmentId(owner.id, repo.id);
   }
   const environment = environmentId ? await getEnvironment(owner.id, environmentId) : null;
-  if (!environment || environment.orgId !== caller.orgId) return apiError(404, "No project by that id that you can see.");
+  if (!environment || environment.orgId !== caller.orgId) return apiError(404, "No environment by that id that you can see.");
   const projectId = environment.defaultForProjectId ?? environment.repos[0]?.projectId;
   const project = projectId ? await getProject(projectId) : null;
   if (!project || project.orgId !== caller.orgId || !allows(await projectLevel(owner.id, project.id), "read")) {

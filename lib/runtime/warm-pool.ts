@@ -60,7 +60,7 @@ export function warmRefusal(features: string[] | undefined, severalRepos: boolea
     return "This box's agent can't run warm hooks yet. Sessions run the warm hook themselves as they start.";
   }
   if (severalRepos && !features.includes(AGENT_FEATURE_MULTI_REPO_WARM)) {
-    return "This box's agent can't warm a project of several repositories yet. Sessions run the warm hook themselves as they start.";
+    return "This box's agent can't warm an environment of several repositories yet. Sessions run the warm hook themselves as they start.";
   }
   return null;
 }
