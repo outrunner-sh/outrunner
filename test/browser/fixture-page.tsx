@@ -16,6 +16,7 @@ import { CLAUDE_DEFAULT_MODEL } from "@/lib/runtime/session-models";
 import type { Workspace } from "@/lib/runtime/types";
 import { JiraFixture, LinearCardFixture, LinearFixture, TrackerItemFixture } from "./linear-fixture";
 import { StartupFixture } from "./startup-fixture";
+import { PullRequestFixture } from "./pull-request-fixture";
 import { Automations } from "@/components/automations";
 import { AutomationsLoading } from "@/components/automations-loading";
 import { Markdown } from "@/components/markdown";
@@ -258,6 +259,7 @@ export function FixturePage() {
   else if (view === "jira") content = <JiraFixture state={state} member={params.get("role") === "member"} />;
   else if (view === "linear-card") content = <LinearCardFixture state={state} />;
   else if (view === "tracker-item") content = <TrackerItemFixture source={params.get("source") ?? "linear"} />;
+  else if (view === "pr-sidebar") content = <PullRequestFixture />;
   else if (view === "startup") content = <StartupFixture agent={params.get("harness") === "codex" ? "codex" : "claude"} shared={params.get("shared") === "1"} mission={params.get("kind") === "mission"} legacy={params.get("legacy") === "1"} />;
   else content = pathname === "/new" ? <NewSessionRoute server={<ServerAnswer value={null} />} /> : <HomeSessionRoute />;
   return (

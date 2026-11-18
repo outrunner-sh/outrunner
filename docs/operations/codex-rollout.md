@@ -47,8 +47,8 @@ to work around an incomplete rollout.
 
 ## Applied production migrations
 
-Using the authenticated Supabase CLI against the documented production project
-`butbnitdpiehgwqggowr`, we read migration history and found exactly two pending
+Using the authenticated Supabase CLI against the production project documented
+at the time (since replaced), we read migration history and found exactly two pending
 main migrations. `supabase db push --linked --dry-run` confirmed the list, then
 `db push --linked --yes` executed the actual SQL in order:
 

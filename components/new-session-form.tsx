@@ -1,6 +1,6 @@
 "use client";
 
-import { GitBranch, GitFork, Inbox } from "lucide-react";
+import { GitBranch, Inbox } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import { useAppData, useViewerScope } from "@/components/app-data";
@@ -34,7 +34,7 @@ import { warmNewSession } from "@/lib/session/warm-new-session";
 import { RECENT_SELECTION } from "@/lib/session/kept-selection";
 import { lastSessionSelection, recentSelectionFor } from "@/lib/session/recent-selection";
 
-/** One item in the row above the composer: where, what, which branch, how. */
+/** One item in the row above the composer: location, repository, branch, or triage item. */
 const CHIP = "inline-flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground [&_svg]:size-3.5";
 const CHIP_BUTTON = `${CHIP} transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50`;
 
@@ -205,12 +205,6 @@ export function NewSessionForm({
               <span className={CHIP} title="The branch the session starts from">
                 <GitBranch className="shrink-0" />
                 <span className="truncate font-mono text-[13px]">{details.branch}</span>
-              </span>
-            )}
-            {details.worktree && (
-              <span className={CHIP} title={details.worktree.title}>
-                <GitFork className="shrink-0" />
-                {details.worktree.label}
               </span>
             )}
             {workItem && (

@@ -1094,6 +1094,9 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 	}
 	o += "\n\n" + s.environmentNote(workspaceID)
 	o += "\n\n" + s.canvasNote(workspaceID)
+	if note := s.handoffNote(); note != "" {
+		o += "\n\n" + note
+	}
 	switch {
 	case !f.Gateway.SpeaksAsOutrunner():
 	case f.Agent == AgentCodex:

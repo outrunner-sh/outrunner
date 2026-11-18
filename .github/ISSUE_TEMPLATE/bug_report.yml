@@ -1,0 +1,34 @@
+name: Bug report
+description: Report a reproducible problem in Outrunner.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For security vulnerabilities, follow [SECURITY.md](https://github.com/outrunner-sh/outrunner/blob/main/SECURITY.md). Remove credentials and personal information from logs and screenshots.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include a minimal example and screenshots or a recording if helpful.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Hosted or self-hosted, commit or release, OS, browser or desktop version, agent, and sandbox provider.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Optional. Remove tokens, email addresses, and other private data.
+      render: text

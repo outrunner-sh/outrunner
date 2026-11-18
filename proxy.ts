@@ -3,6 +3,7 @@ import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { isShellPrefetch, signInRedirect, type SignedIn } from "@/lib/auth/sign-in-redirect";
+import { SESSION_COOKIE_OPTIONS } from "@/lib/supabase/session-cookie";
 
 /**
  * Session refresh and the sign-in gate (Next.js 16 renamed `middleware` to
@@ -27,6 +28,7 @@ export async function proxy(request: NextRequest) {
 
   try {
     const supabase = createServerClient(url, key, {
+      cookieOptions: SESSION_COOKIE_OPTIONS,
       cookies: {
         getAll() {
           return request.cookies.getAll();

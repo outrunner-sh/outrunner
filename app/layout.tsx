@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 });
 
 // Geist Pixel (Square): the display face the landing page sets its accent
-// words in (neevai-labs/outrunner-landing), here for the wordmark.
+// words in (outrunner-sh/outrunner-landing), here for the wordmark.
 const geistPixel = localFont({
   src: "../public/fonts/GeistPixel_Square.woff2",
   variable: "--font-pixel",

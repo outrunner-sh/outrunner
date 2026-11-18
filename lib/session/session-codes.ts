@@ -23,3 +23,9 @@ export const SESSION_NOT_STARTED = "session-not-started";
  *  an automation, a Mission): it isn't attached again, and retrying can't
  *  help. app/api/workspaces/[id]/session/route.ts */
 export const SESSION_ENDED = "session-ended";
+
+/** A session's first prompt is on its way from another sender (setup
+ *  delivering the kept copy, or another tab), whose send hasn't finished: the
+ *  page waits and asks again rather than say its own didn't go.
+ *  app/api/workspaces/[id]/message/route.ts */
+export const FIRST_PROMPT_SENDING = "first-prompt-sending";

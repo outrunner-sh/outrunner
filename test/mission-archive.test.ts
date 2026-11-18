@@ -41,7 +41,7 @@ function world(ships: Workspace[], mission = runner()) {
   let clock = 0;
   let inFlight = 0;
   let mostAtOnce = 0;
-  const hooks = { onArchive: (_id: string) => {} };
+  const hooks: { onArchive: (id: string) => void } = { onArchive: () => {} };
   const deps: MissionArchiveDeps = {
     runners: async () => [...rows.values()].filter((s) => s.parentMissionId === "m1"),
     session: async (id) => rows.get(id) ?? null,

@@ -306,6 +306,7 @@ test("a scheduled run's session starts on the default branch, told when and wher
   const started: ServerSessionStart[] = [];
   const deps: StartDeps = {
     orgConnector: async () => null,
+    automationsOnHarness: async () => false,
     runNeighbours: async () => assert.fail("a schedule's run has no pull request"),
     archiveServerSessions: async () => assert.fail("nothing to archive"),
     startServerSession: async (start) => {

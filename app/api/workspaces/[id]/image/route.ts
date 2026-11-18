@@ -6,7 +6,8 @@ import { getOwner } from "@/lib/auth/owner";
 import { attachmentImageBytes, cacheBoxImage, cachedBoxImage } from "@/lib/db/chat-images";
 import { getWorkspace, getWorkspaceComputer } from "@/lib/db/repositories";
 import { ATTACHMENT_DIR } from "@/lib/runtime/attachments";
-import { boxImagePath, sniffImage } from "@/lib/runtime/chat-image";
+import { boxFilePath } from "@/lib/runtime/box-file";
+import { sniffImage } from "@/lib/runtime/chat-image";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { reachableWorktree } from "@/lib/runtime/worktree-access";
@@ -17,7 +18,7 @@ type RouteContext = { params: Promise<{ id: string }> };
  * An image on a cloud session's box that Claude showed in a reply, or a file
  * a prompt attached (`?path=`, absolute or from the worktree), for the chat
  * to load. Only images, by their bytes' signature (not SVG, which can carry
- * script), and only up to BOX_IMAGE_MAX_BYTES. Read only, so no Origin
+ * script), and only up to BOX_FILE_MAX_BYTES. Read only, so no Origin
  * check: a GET carries the owner's cookie, and answers only them.
  *
  * It shows whether or not the box is up: an attached file comes from
@@ -45,7 +46,7 @@ export async function GET(request: Request, context: RouteContext) {
   // Where it is on the box, as far as the session's record says: a paused
   // box keeps its worktree, so the copy kept of one of its images is found.
   const worktree = workspace.worktreePath;
-  const path = worktree || asked.startsWith("/") ? boxImagePath(asked, worktree ?? "/") : null;
+  const path = worktree || asked.startsWith("/") ? boxFilePath(asked, worktree ?? "/") : null;
 
   // A file a prompt attached: from storage, as uploaded. It never changes.
   const attached = path && worktree ? attachedName(path, worktree) : null;
@@ -59,12 +60,12 @@ export async function GET(request: Request, context: RouteContext) {
 
   const reach = reachableWorktree(await getWorkspaceComputer(workspace), worktree);
   if (!reach.ok) return (path ? await kept(id, path) : null) ?? NextResponse.json({ error: reach.error }, { status: 409 });
-  const onBox = boxImagePath(asked, reach.worktree);
+  const onBox = boxFilePath(asked, reach.worktree);
   if (!onBox) return NextResponse.json({ error: "Name an image." }, { status: 400 });
 
   let bytes;
   try {
-    bytes = await provider.readBoxImage(reach.sandboxId, onBox);
+    bytes = await provider.readBoxFile(reach.sandboxId, onBox);
   } catch (error) {
     console.error(`Workspace ${id}: could not read image ${onBox}`, error);
     return (await kept(id, onBox)) ?? NextResponse.json({ error: "Couldn't read that image off the box." }, { status: 502 });
@@ -88,7 +89,7 @@ export async function GET(request: Request, context: RouteContext) {
 
 /** The name in the worktree's `.attachments/` that `path` is, or null. */
 function attachedName(path: string, worktree: string): string | null {
-  const dir = `${boxImagePath(ATTACHMENT_DIR, worktree)}/`;
+  const dir = `${boxFilePath(ATTACHMENT_DIR, worktree)}/`;
   if (!path.startsWith(dir)) return null;
   const name = path.slice(dir.length);
   return name && !name.includes("/") ? name : null;

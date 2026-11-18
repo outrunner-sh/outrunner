@@ -3,9 +3,9 @@
  *
  * Runtime used to act as one server-wide `GITHUB_PAT` for everybody, then as
  * the token each user's GitHub sign-in minted. Now it's the user's own GitHub
- * connection (lib/github/personal.ts): the Outrunner GitHub App's user token
- * from Settings → Connections, or an old sign-in token while those are still
- * allowed. Routes call {@link requireGithubToken} and let
+ * connection (lib/github/personal.ts): a personal access token they pasted,
+ * else the Outrunner GitHub App's user token from Settings → Connections, else
+ * an old sign-in token while those are still allowed. Routes call {@link requireGithubToken} and let
  * {@link MissingGithubTokenError} become a 409 telling the user to connect.
  */
 
