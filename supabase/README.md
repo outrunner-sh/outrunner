@@ -29,6 +29,48 @@ Notes:
   `supabase/migrations`, and `init` would scaffold a competing config.
 - `supabase db reset` is destructive. `db push` only applies what is pending.
 
+### Dropping the legacy app's tables (20261118100000)
+
+`20261118100000_drop_legacy_public_tables.sql` drops the 43 tables another app
+left in production's `public` schema when the project moved here (`auth`,
+`user`, `api_key`, `oauth_session`, `config`, `chat` and the rest;
+`20261104130000_lock_legacy_public_tables.sql` lists them). It deletes their
+data for good, and `pnpm db:migrate` applies every pending migration, so this
+one goes with the first `db:migrate` after it merges.
+
+**Take a backup before applying.** Before that `db:migrate`, dump just those
+tables, schema and data, with a `pg_dump` at least as new as the server's
+Postgres. Use the Session pooler URI from `.env.local` without its password, and
+give the password in `PGPASSWORD`, so `ps` never shows it:
+
+```bash
+read -rsp 'Database password: ' PGPASSWORD && export PGPASSWORD && echo
+DB='postgresql://postgres.vidulqzirsthlshybwat@<session pooler host>:5432/postgres'
+pg_dump "$DB" --format=custom --strict-names --file="legacy-tables-$(date +%Y%m%d).dump" \
+  -t 'public."access_grant"' -t 'public."alembic_version"' -t 'public."api_key"' -t 'public."auth"' \
+  -t 'public."automation"' -t 'public."automation_run"' -t 'public."calendar"' -t 'public."calendar_event"' \
+  -t 'public."calendar_event_attendee"' -t 'public."channel"' -t 'public."channel_file"' -t 'public."channel_member"' \
+  -t 'public."channel_webhook"' -t 'public."chat"' -t 'public."chat_file"' -t 'public."chat_message"' \
+  -t 'public."chatidtag"' -t 'public."config"' -t 'public."config_old"' -t 'public."document"' \
+  -t 'public."feedback"' -t 'public."file"' -t 'public."folder"' -t 'public."function"' \
+  -t 'public."group"' -t 'public."group_member"' -t 'public."knowledge"' -t 'public."knowledge_directory"' \
+  -t 'public."knowledge_file"' -t 'public."memory"' -t 'public."message"' -t 'public."message_reaction"' \
+  -t 'public."model"' -t 'public."note"' -t 'public."oauth_session"' -t 'public."pinned_note"' \
+  -t 'public."prompt"' -t 'public."prompt_history"' -t 'public."shared_chat"' -t 'public."skill"' \
+  -t 'public."tag"' -t 'public."tool"' -t 'public."user"'
+pg_restore --list legacy-tables-*.dump | grep -c 'TABLE DATA public'   # 43
+```
+
+`--strict-names` makes the dump fail rather than skip a table that isn't there.
+Keep the file somewhere other than this machine. To bring a table back:
+`pg_restore --dbname "$DB" --table '<name>' legacy-tables-<date>.dump` (or all
+of them, without `--table`).
+
+The migration refuses to drop anything if a view, foreign key, policy, trigger,
+column or function outside those tables depends on one of them, and names it.
+On every database but production's, none of the tables exists and it does
+nothing.
+
 ### One-time: record migrations applied by hand
 
 Migrations pasted into the SQL editor aren't recorded, so `db push` would try to
