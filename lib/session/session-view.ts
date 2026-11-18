@@ -1,3 +1,4 @@
+import type { ListedEnvironment } from "@/lib/environments/listed";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import type { SessionStanding } from "@/lib/session/standing";
 
@@ -9,6 +10,10 @@ export type AppData = {
   coAuthor?: string | null;
   /** The repositories listed to start sessions in. */
   projects: Project[];
+  /** The environments listed to start sessions from (lib/environments/listed.ts),
+   *  the org's default marked. Optional: a list kept by an older app version
+   *  has none, and the form then starts on a repository, as it did. */
+  environments?: ListedEnvironment[];
   /** Hidden ones a session belongs to, only for naming it. */
   hiddenProjects: Project[];
   workspaces: Workspace[];
