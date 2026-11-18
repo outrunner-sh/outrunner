@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { firstPrompt, idempotencyKey, idempotentId, parseAttachmentIds, parseCreate, PLAN_MODE_PREAMBLE } from "@/lib/api/create-request";
+import { firstPrompt, idempotencyKey, idempotentId, messageOf, parseAttachmentIds, parseCreate, PLAN_MODE_PREAMBLE } from "@/lib/api/create-request";
 import { isUuid } from "@/lib/ids";
 import { MAX_ATTACHMENTS_PER_MESSAGE } from "@/lib/runtime/attachments";
 
@@ -55,4 +55,14 @@ test("an Idempotency-Key makes the same session id for its caller, and only thei
   assert.equal(idempotencyKey(new Headers({ "idempotency-key": "run-7" })), "run-7");
   assert.deepEqual(typeof idempotencyKey(new Headers({ "idempotency-key": "has space" })), "object");
   assert.deepEqual(typeof idempotencyKey(new Headers({ "idempotency-key": "x".repeat(256) })), "object");
+});
+
+test("a message's words are `content`, or `prompt` as a start names them (or Cursor's `{ text, images }`)", () => {
+  assert.deepEqual(messageOf({ content: " hi " }), { content: "hi", images: undefined });
+  assert.deepEqual(messageOf({ prompt: "Change of plan" }), { content: "Change of plan", images: undefined });
+  const image = { url: "https://example.com/a.png" };
+  assert.deepEqual(messageOf({ prompt: { text: "See this", images: [image] } }), { content: "See this", images: [image] });
+  assert.match(messageOf({ content: "a", prompt: "b" }) as string, /not both/);
+  assert.match(messageOf({ prompt: 3 }) as string, /`prompt` is/);
+  assert.match(messageOf({ prompt: { text: "x", images: [image] }, images: [image] }) as string, /not both/);
 });

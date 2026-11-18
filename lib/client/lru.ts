@@ -20,6 +20,11 @@ export class Lru<V> {
     return value;
   }
 
+  /** Whether it holds `key`, leaving it as recent as it was. */
+  has(key: string): boolean {
+    return this.entries.has(key);
+  }
+
   set(key: string, value: V): void {
     this.entries.delete(key);
     this.entries.set(key, value);

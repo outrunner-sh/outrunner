@@ -10,15 +10,19 @@
 import {
   type Automation,
   type AutomationInput,
+  type AutomationModel,
   type AutomationRepo,
   type AutomationTarget,
   type AutomationTrigger,
+  COVER_NEW_REPOS_TRIGGERS_ERROR,
 } from "@/lib/automations/rules";
 import { seal } from "@/lib/crypto/secret-box";
 import { nextRun, type Schedule, scheduleFromRow, scheduleSpec } from "@/lib/automations/schedule";
+import { automationTemplate, CODE_REVIEW_TEMPLATE_ID } from "@/lib/automations/templates";
 import { webhookTokenSettings } from "@/lib/db/automation-webhooks";
 import { people } from "@/lib/db/org-members";
 import type { Json } from "@/lib/supabase/database.types";
+import { recordedModel } from "@/lib/runtime/session-models";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** An org's repositories (its projects), by name: what an automation may run on. */
@@ -46,6 +50,10 @@ type AutomationRowRead = {
   archive_when_done: boolean;
   debounce_seconds: number;
   session_mode: "new" | "reuse";
+  cover_new_repos: boolean;
+  model_provider: string | null;
+  model_id: string | null;
+  model_effort: string | null;
   archived_at: string | null;
   runs_since: string;
   created_at: string;
@@ -60,7 +68,7 @@ type AutomationRowRead = {
 };
 
 const COLUMNS =
-  "id, name, template, prompt, triggers, enabled, runs_as, reviewers, labels, max_runs, archive_when_done, debounce_seconds, session_mode, archived_at, runs_since, created_at, target_kind, target_mission_id, watch_team_id, watch_channel_id, filter_prompt, allowed_app_ids, linear_team_ids, webhook_hmac_sealed";
+  "id, name, template, prompt, triggers, enabled, runs_as, reviewers, labels, max_runs, archive_when_done, debounce_seconds, session_mode, cover_new_repos, model_provider, model_id, model_effort, archived_at, runs_since, created_at, target_kind, target_mission_id, watch_team_id, watch_channel_id, filter_prompt, allowed_app_ids, linear_team_ids, webhook_hmac_sealed";
 
 /** Where a row's runs go, as the page shows it. */
 function targetOf(r: AutomationRowRead, missions: MissionsOf): AutomationTarget {
@@ -103,6 +111,21 @@ async function missionsOf(rows: readonly AutomationRowRead[]): Promise<MissionsO
     if (owner && d?.approved_at && !d.revoked_at && d.approved_by === owner) approved.add(r.id);
   }
   return { titles: new Map((missions.data ?? []).map((m) => [m.id, m.title])), approved };
+}
+
+/** A row's model (model_provider, model_id, model_effort), checked as a
+ *  session's request is: null with none, or one this release no longer
+ *  offers (it runs as the org set its automations to). */
+export function modelFromRow(row: { model_provider: string | null; model_id: string | null; model_effort: string | null }): AutomationModel | null {
+  if (!row.model_provider || !row.model_id) return null;
+  const recorded = recordedModel(row.model_provider, row.model_id, row.model_effort);
+  return recorded ? { provider: recorded.model.provider, id: recorded.model.id, effort: recorded.effort } : null;
+}
+
+/** An automation's model as create_automation and update_automation take
+ *  it (`settings.model`): null clears it. */
+export function modelSetting(model: AutomationModel | null): { provider: string; id: string; effort: string | null } | null {
+  return model ? { provider: model.provider, id: model.id, effort: model.effort } : null;
 }
 
 /** The times an automation has run since its count began: each key once,
@@ -185,6 +208,8 @@ async function withDetails(orgId: string, rows: AutomationRowRead[]): Promise<Au
     archiveWhenDone: r.archive_when_done,
     debounceSeconds: r.debounce_seconds,
     sessionMode: r.session_mode,
+    coverNewRepos: r.cover_new_repos,
+    model: modelFromRow(r),
     archived: r.archived_at !== null,
     runsUsed: used.get(r.id) ?? null,
     runsAs: r.runs_as && members.has(r.runs_as) ? { id: r.runs_as, login: runners.get(r.runs_as)?.login ?? "" } : null,
@@ -223,8 +248,8 @@ export function scheduleRows(schedules: readonly Schedule[], now = Date.now()) {
   });
 }
 
-/** What's given of its filters and limits, as update_automation's settings
- *  name them. */
+/** What's given of its filters, limits and model, as update_automation's
+ *  settings name them. */
 function limitSettings(change: Partial<AutomationInput>) {
   return {
     ...(change.reviewers !== undefined ? { reviewers: change.reviewers } : {}),
@@ -233,6 +258,8 @@ function limitSettings(change: Partial<AutomationInput>) {
     ...(change.archiveWhenDone !== undefined ? { archive_when_done: change.archiveWhenDone } : {}),
     ...(change.debounceSeconds !== undefined ? { debounce_seconds: change.debounceSeconds } : {}),
     ...(change.sessionMode !== undefined ? { session_mode: change.sessionMode } : {}),
+    ...(change.coverNewRepos !== undefined ? { cover_new_repos: change.coverNewRepos } : {}),
+    ...(change.model !== undefined ? { model: modelSetting(change.model) } : {}),
     ...(change.archived !== undefined ? { archived: change.archived } : {}),
   };
 }
@@ -277,11 +304,21 @@ export class NoReviewersError extends Error {
   }
 }
 
-/** The database's refusal (`foreign_repo`, SQLSTATE OR001; or its reviewers
- *  check) as its error; else the error. */
+/** Thrown when an automation would cover new repositories with a trigger
+ *  that runs on all of them (automations_cover_new_repos_check). */
+export class CoverNewReposTriggersError extends Error {
+  constructor() {
+    super(COVER_NEW_REPOS_TRIGGERS_ERROR);
+    this.name = "CoverNewReposTriggersError";
+  }
+}
+
+/** The database's refusal (`foreign_repo`, SQLSTATE OR001; or one of its
+ *  checks) as its error; else the error. */
 function refusal(error: { code?: string; message?: string }): Error {
   if (error.code === "OR001") return new ForeignRepoError();
   if (error.code === "23514" && error.message?.includes("automations_reviewers_check")) return new NoReviewersError();
+  if (error.code === "23514" && error.message?.includes("automations_cover_new_repos_check")) return new CoverNewReposTriggersError();
   return error as Error;
 }
 
@@ -384,6 +421,28 @@ export async function updateAutomation(
   });
   if (error) throw refusal(error);
   return data === true;
+}
+
+/**
+ * The org's Code Review automation, made on `projectIds` (and covering
+ * repositories connected after) as `runsAs`, when the org has none from its
+ * template in any state: off, archived, or not covering new ones is an
+ * admin's choice, kept. Its id, or null when the org had one.
+ */
+export async function ensureCodeReview(orgId: string, runsAs: string, projectIds: readonly string[]): Promise<string | null> {
+  const template = automationTemplate(CODE_REVIEW_TEMPLATE_ID);
+  if (!template) throw new Error(`The ${CODE_REVIEW_TEMPLATE_ID} template is missing.`);
+  const { data, error } = await createSupabaseAdminClient().rpc("ensure_code_review", {
+    target_org: orgId,
+    runner: runsAs,
+    automation_name: template.name,
+    automation_template: template.id,
+    automation_prompt: template.prompt,
+    automation_triggers: template.triggers,
+    project_ids: [...projectIds],
+  });
+  if (error) throw refusal(error);
+  return data;
 }
 
 export async function deleteAutomation(orgId: string, automationId: string): Promise<boolean> {

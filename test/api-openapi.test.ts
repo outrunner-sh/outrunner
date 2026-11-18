@@ -4,6 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { API_OPERATIONS, openApiSpec, operationId } from "@/lib/api/openapi";
+import { OPERATION_SCHEMAS } from "@/lib/api/openapi-schemas";
 
 const V1 = path.join(process.cwd(), "app/api/v1");
 
@@ -53,4 +54,22 @@ test("the document is OpenAPI 3.1 with path parameters, bodies and the key", () 
   assert.ok(answer.requestBody?.content["application/json"]);
   assert.ok(spec.paths["/attachments"].post.requestBody?.content["multipart/form-data"]);
   assert.deepEqual(spec.paths["/openapi.json"].get.security, []);
+});
+
+test("the most used calls have their bodies described, every reference to a schema there is", () => {
+  const spec = openApiSpec("https://app.outrunner.sh/") as {
+    paths: Record<string, Record<string, { requestBody?: { content: Record<string, { schema: { $ref?: string } }> }; responses: Record<string, { content?: Record<string, { schema: { $ref?: string } }> }> }>>;
+    components: { schemas: Record<string, unknown> };
+  };
+  const start = spec.paths["/workspaces"].post;
+  assert.equal(start.requestBody?.content["application/json"].schema.$ref, "#/components/schemas/WorkspaceCreate");
+  assert.equal(start.responses["202"].content?.["application/json"].schema.$ref, "#/components/schemas/WorkspaceStarted");
+  assert.equal(spec.paths["/workspaces/{id}/messages"].post.requestBody?.content["application/json"].schema.$ref, "#/components/schemas/Message");
+  assert.equal(spec.paths["/workspaces/{id}/runs/{runId}"].get.responses["200"].content?.["application/json"].schema.$ref, "#/components/schemas/Run");
+  // Every operation named in OPERATION_SCHEMAS is one the API has.
+  for (const key of Object.keys(OPERATION_SCHEMAS)) {
+    assert.ok(API_OPERATIONS.some((op) => `${op.method} ${op.path}` === key), `${key} isn't an operation`);
+  }
+  const refs = JSON.stringify(spec).match(/#\/components\/schemas\/\w+/g) ?? [];
+  for (const r of new Set(refs)) assert.ok(spec.components.schemas[r.split("/").pop()!], `${r} isn't defined`);
 });

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { recordProjectChange } from "@/lib/audit/project-history";
 import { getOwner } from "@/lib/auth/owner";
 import {
   addEnvironmentRepo,
@@ -74,7 +75,10 @@ export async function POST(request: Request, context: RouteContext) {
       if (error instanceof EnvironmentAccessError) return NextResponse.json({ error: error.message }, { status: 403 });
       throw error;
     }
-    return NextResponse.json(await getEnvironment(c.owner.id, c.id));
+    const now = await getEnvironment(c.owner.id, c.id);
+    const added = now?.repos.find((r) => r.projectId === body.data.projectId);
+    if (now) await recordProjectChange(c.owner, c.id, "project.repos_changed", { added: added?.fullName ?? body.data.projectId }, now);
+    return NextResponse.json(now);
   });
 }
 
@@ -87,7 +91,10 @@ export async function DELETE(request: Request, context: RouteContext) {
   }
   return savingSettings("project repositories", async () => {
     try {
+      const before = await getEnvironment(c.owner.id, c.id);
       await removeEnvironmentRepo(c.owner.id, c.id, projectId);
+      const removed = before?.repos.find((r) => r.projectId === projectId)?.fullName ?? projectId;
+      if (before) await recordProjectChange(c.owner, c.id, "project.repos_changed", { removed }, before);
     } catch (error) {
       if (error instanceof EnvironmentRuleError) return NextResponse.json({ error: error.message }, { status: 400 });
       if (error instanceof EnvironmentAccessError) return NextResponse.json({ error: error.message }, { status: 403 });

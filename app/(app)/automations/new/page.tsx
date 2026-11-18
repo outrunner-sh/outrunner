@@ -6,7 +6,8 @@ import { AutomationLoading } from "@/components/automations-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { orgAppCoverage } from "@/lib/automations/coverage";
 import type { AppCoverage } from "@/lib/automations/rules";
-import { automationTemplate } from "@/lib/automations/templates";
+import { automationTemplate, CODE_REVIEW_TEMPLATE_ID } from "@/lib/automations/templates";
+import { automationSettingsOrDefault } from "@/lib/db/automation-settings";
 import { listOrgRepos, orgMissionChoices } from "@/lib/db/automations";
 import { getOrgContext } from "@/lib/orgs/server";
 
@@ -59,7 +60,11 @@ async function NewAutomation({ searchParams }: { searchParams: SearchParams }) {
   if (!context || context.active.role !== "admin") redirect("/automations");
   const { active } = context;
   const template = automationTemplate((await searchParams).template);
-  const [repos, missions] = await Promise.all([listOrgRepos(active.id), orgMissionChoices(active.id).catch(() => [])]);
+  const [repos, settings, missions] = await Promise.all([
+    listOrgRepos(active.id),
+    automationSettingsOrDefault(active.id),
+    orgMissionChoices(active.id).catch(() => []),
+  ]);
   // Coverage only flags repositories: without it, the editor still works.
   const coverage: Record<string, AppCoverage> = await orgAppCoverage(active.id, repos).catch((error: unknown) => {
     console.error("Automation: could not read the GitHub App's coverage", error);
@@ -85,12 +90,15 @@ async function NewAutomation({ searchParams }: { searchParams: SearchParams }) {
         // ("installed"): with no coverage at all (no App, or it couldn't be
         // read) none is ticked, though the editor still lists them all.
         projectIds: template ? repos.filter((r) => coverage[r.fullName] === "installed").map((r) => r.projectId) : [],
+        // Code Review is every repository's, those to come too.
+        coverNewRepos: template?.id === CODE_REVIEW_TEMPLATE_ID,
         enabled: true,
         runsAs: null,
       }}
       repos={repos}
       coverage={coverage}
       byConnector={!active.personal}
+      onHarness={settings.onHarness}
       webhook={null}
       missions={missions}
       editable

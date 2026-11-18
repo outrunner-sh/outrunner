@@ -1,9 +1,16 @@
 /** Global GitHub installation metadata and independent organization links.
  * Only trusted server routes and signed GitHub webhooks call these helpers. */
 
-import { githubAppConfig, type Installation } from "@/lib/github/app";
+import { githubAppConfig, installationToken, type Installation } from "@/lib/github/app";
+import { getGitHubRepository, listInstallationRepositoryRecords } from "@/lib/github/client";
+import {
+  refreshInstallationProjectNames,
+  type ConnectedGitHubProject,
+  type InstallationRenameDeps,
+} from "@/lib/github/project-renames";
 import { appOwnership, type GitHubOwnership, linkIdentity } from "@/lib/github/installation-owner";
 import { isUuid } from "@/lib/ids";
+import { after } from "@/lib/observability/after";
 import type { GithubLinkAuthority } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -86,16 +93,20 @@ export async function listAvailableFor(githubId: number | null, orgId: string, u
 /** All linked organizations, plus the original GitHub installer. */
 export async function installationHolder(
   installationId: number,
-): Promise<{ orgIds: string[]; installerId: number | null } | null> {
+): Promise<{ orgIds: string[]; installerId: number | null; suspended: boolean } | null> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.from("github_installations")
-    .select("installer_id").eq("installation_id", installationId).maybeSingle();
+    .select("installer_id, suspended_at").eq("installation_id", installationId).maybeSingle();
   if (error) throw error;
   if (!data) return null;
   const { data: links, error: linksError } = await supabase.from("org_github_installations")
     .select("org_id").eq("installation_id", installationId);
   if (linksError) throw linksError;
-  return { orgIds: (links ?? []).map((l) => l.org_id), installerId: data.installer_id };
+  return {
+    orgIds: (links ?? []).map((l) => l.org_id),
+    installerId: data.installer_id,
+    suspended: data.suspended_at !== null,
+  };
 }
 
 /** Record a new installation, unclaimed, with who installed it (the webhook's
@@ -228,7 +239,69 @@ export async function refreshInstallation(orgId: string, installation: Installat
     suspended_at: installation.suspendedAt,
   }).eq("installation_id", installation.id);
   if (error) throw error;
+  refreshProjectNamesLater(installation.id);
   return true;
+}
+
+/** A `.in()` filter's values go in the request URL: read this many at a time. */
+const REPO_ID_CHUNK = 200;
+const PAGE = 1000;
+
+const renameDeps: InstallationRenameDeps = {
+  holder: installationHolder,
+  token: async (installationId) => {
+    const config = githubAppConfig();
+    if (!config) throw new Error("The GitHub App isn't configured.");
+    return installationToken(config, installationId);
+  },
+  listRepositories: async (token) => (await listInstallationRepositoryRecords(token)).repositories,
+  repository: getGitHubRepository,
+  projects: async (orgIds, githubRepoIds) => {
+    const db = createSupabaseAdminClient();
+    const projects: ConnectedGitHubProject[] = [];
+    for (let start = 0; start < githubRepoIds.length; start += REPO_ID_CHUNK) {
+      const ids = githubRepoIds.slice(start, start + REPO_ID_CHUNK);
+      for (let offset = 0; ; offset += PAGE) {
+        const { data, error } = await db.from("projects")
+          .select("id, org_id, github_repo_id, full_name")
+          .in("org_id", [...orgIds]).in("github_repo_id", ids)
+          .order("id").range(offset, offset + PAGE - 1);
+        if (error) throw error;
+        projects.push(...(data ?? []).map((project) => ({
+          id: project.id, orgId: project.org_id,
+          githubRepoId: project.github_repo_id, fullName: project.full_name,
+        })));
+        if ((data?.length ?? 0) < PAGE) break;
+      }
+    }
+    return projects;
+  },
+  rename: async (project, repository) => {
+    if (project.githubRepoId === null) return false;
+    const { data, error } = await createSupabaseAdminClient().from("projects").update({
+      full_name: repository.fullName,
+      owner: repository.owner,
+      name: repository.name,
+      html_url: repository.htmlUrl,
+      is_private: repository.private,
+      default_branch: repository.defaultBranch,
+    }).eq("id", project.id).eq("org_id", project.orgId)
+      .eq("github_repo_id", project.githubRepoId).select("id");
+    if (error) throw error;
+    return (data?.length ?? 0) > 0;
+  },
+};
+
+/** Bring the installation's connected projects in step with GitHub after a
+ * rename or transfer (lib/github/project-renames.ts), once the response is
+ * sent: listing a large installation outlasts GitHub's webhook timeout, and a
+ * failure here must not fail the connect or the delivery. A failure is
+ * reported; the next reconnect or rename event retries it. */
+export function refreshProjectNamesLater(installationId: number, githubRepoIds?: readonly number[]): void {
+  after(() => refreshInstallationProjectNames(installationId, githubRepoIds, renameDeps), {
+    where: "after:github-project-renames",
+    extra: { installationId },
+  });
 }
 
 /** Forget an installation: GitHub says it was uninstalled. */

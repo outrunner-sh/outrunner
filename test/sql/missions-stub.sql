@@ -51,14 +51,15 @@ insert into notification_preferences (user_id, kinds) values
   ('00000000-0000-0000-0000-0000000000a1', '{turn_done,pr_opened}'),
   ('00000000-0000-0000-0000-0000000000a2', '{turn_done}');
 
--- What the Slack binding tables point at (20261114200000_mission_slack.sql):
+-- What the Slack binding tables point at (20261118110000_mission_slack.sql):
 -- an org, and a person.
 create table organizations (id uuid primary key default gen_random_uuid());
 create schema if not exists auth;
 create table auth.users (id uuid primary key default gen_random_uuid());
 
--- The automations tables, as much of them as 20261114200200_mission_inputs.sql
--- changes (their checks under the names the earlier migrations give them).
+-- The automations tables, as much of them as 20261118110200_mission_inputs.sql
+-- changes or checks (their checks under the names the earlier migrations give
+-- them).
 create table automations (
   id uuid primary key default gen_random_uuid(),
   org_id uuid,
@@ -77,6 +78,12 @@ create table automations (
   archived_at timestamptz,
   webhook_token_hash text,
   webhook_token_sealed text,
+  -- What automations_mission_only_check reads: 20261114140000_automation_cover_new_repos.sql
+  -- and 20261117120000_automation_model.sql.
+  cover_new_repos boolean not null default false,
+  model_provider text,
+  model_id text,
+  model_effort text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

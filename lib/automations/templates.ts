@@ -112,9 +112,13 @@ Then one line per criterion: met / not met / couldn't check, and the evidence: t
 
 Say which criteria you checked and how, and post the comment.`;
 
+/** The template every org's Code Review is made from when it connects
+ *  repositories (ensureCodeReview). */
+export const CODE_REVIEW_TEMPLATE_ID = "code-review";
+
 export const AUTOMATION_TEMPLATES: readonly AutomationTemplate[] = [
   {
-    id: "code-review",
+    id: CODE_REVIEW_TEMPLATE_ID,
     name: "Code Review",
     description: "Comments on the lines a pull request changes, then one summary with an X/5 score.",
     category: "Code quality",

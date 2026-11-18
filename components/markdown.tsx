@@ -11,6 +11,10 @@ import ReactMarkdown, {
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 
+import { openBoxPort } from "@/lib/client/box-port";
+import { saveFile } from "@/lib/client/save-file";
+import { downloadName } from "@/lib/http/content-disposition";
+import { boxFileDownloadUrl } from "@/lib/runtime/box-file";
 import { boxImageUrl, localImagePath } from "@/lib/runtime/chat-image";
 import {
   canvasFileError,
@@ -21,7 +25,7 @@ import {
   VISUAL_HEIGHT_MESSAGE,
   visualHeight,
 } from "@/lib/session/canvas";
-import { canvasLinkPath } from "@/lib/session/canvas-link";
+import { replyLink } from "@/lib/session/reply-link";
 import { cn } from "@/lib/utils";
 
 /**
@@ -72,24 +76,133 @@ const COMPONENTS: Components = { img: MarkdownImage, a: MarkdownLink };
 /** Inside a link: an image there opens the link, not itself. */
 const InLink = createContext(false);
 
+/** A link in a reply or a Canvas document, where lib/session/reply-link.ts
+ *  says it goes. */
 function MarkdownLink({ node, ...props }: ComponentProps<"a"> & ExtraProps) {
-  const workspaceId = useContext(ImageBoxContext);
+  const boxWorkspaceId = useContext(ImageBoxContext);
   const doc = useContext(CanvasDocContext);
   const openCanvas = useContext(OpenCanvasContext);
-  const canvasPath = canvasLinkPath(props.href, doc?.workspaceId ?? workspaceId, doc?.path);
-  if (canvasPath && (doc?.workspaceId || workspaceId)) {
-    props.href = canvasFileUrl((doc?.workspaceId || workspaceId)!, canvasPath);
-    if (openCanvas) props.onClick = (event) => {
-      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      event.preventDefault();
-      openCanvas(canvasPath);
-    };
-  }
   void node; // react-markdown's syntax node: not an attribute
+  const link = replyLink(props.href, boxWorkspaceId, doc);
+  switch (link.kind) {
+    case "canvas":
+      props.href = canvasFileUrl(link.workspaceId, link.path);
+      if (openCanvas) props.onClick = (event) => {
+        if (isModifiedClick(event)) return;
+        event.preventDefault();
+        openCanvas(link.path);
+      };
+      break;
+    case "box-file":
+      return (
+        <InLink value>
+          <BoxFileLink {...props} workspaceId={link.workspaceId} path={link.path} />
+        </InLink>
+      );
+    case "box-server":
+      return (
+        <InLink value>
+          <BoxServerLink {...props} workspaceId={link.workspaceId} port={link.port} page={link.page} />
+        </InLink>
+      );
+    case "no-box":
+      return (
+        <span className={props.className} title={link.path}>
+          {props.children}
+        </span>
+      );
+  }
   return (
     <InLink value>
       <a {...props} />
     </InLink>
+  );
+}
+
+/** A click the browser gives its own meaning (a new tab, a window). */
+function isModifiedClick(event: React.MouseEvent): boolean {
+  return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+}
+
+/**
+ * A reply's link to a file on the session's box: a click fetches it through
+ * the download route and saves it (lib/client/save-file.ts), rather than
+ * saving an error (not there, too large, the box asleep) as the file.
+ */
+function BoxFileLink({
+  workspaceId,
+  path,
+  ...props
+}: ComponentProps<"a"> & { workspaceId: string; path: string }) {
+  const url = boxFileDownloadUrl(workspaceId, path);
+  const name = downloadName(path);
+  async function download(): Promise<string | null> {
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
+        return typeof body?.error === "string" ? body.error : `Couldn't download ${name} (${response.status}).`;
+      }
+      saveFile(await response.blob(), name);
+      return null;
+    } catch {
+      return `Couldn't download ${name}. Check your connection and try again.`;
+    }
+  }
+  return <ActionLink {...props} href={url} download={name} title={`Download ${path}`} action={download} />;
+}
+
+/**
+ * A reply's link to a server on the box's localhost: opened through the
+ * port's preview link, at the same page (lib/client/box-port.ts), as the
+ * user's own localhost has nothing of the box's.
+ */
+function BoxServerLink({
+  workspaceId,
+  port,
+  page,
+  ...props
+}: ComponentProps<"a"> & { workspaceId: string; port: number; page: string }) {
+  return (
+    <ActionLink
+      {...props}
+      title={`Open port ${port} of this session's box`}
+      action={() => openBoxPort(workspaceId, port, page)}
+    />
+  );
+}
+
+/**
+ * A link whose click runs `action` instead of following it (a modified
+ * click is left to the browser), busy until it's done, and saying beside
+ * the link what went wrong when it says so.
+ */
+function ActionLink({
+  action,
+  ...props
+}: ComponentProps<"a"> & { action: () => Promise<string | null> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function run(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (isModifiedClick(event)) return;
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    // Called within the click: an action may open a tab, which needs one.
+    const failed = await action();
+    setBusy(false);
+    setError(failed);
+  }
+  return (
+    <>
+      <a {...props} aria-busy={busy || undefined} className={cn(props.className, "md-action-link")} onClick={run} />
+      {error && (
+        <span className="md-link-error" role="alert">
+          {error}
+        </span>
+      )}
+    </>
   );
 }
 

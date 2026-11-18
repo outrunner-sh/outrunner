@@ -171,6 +171,31 @@ type WorkspaceRow = {
 type MissionTokenRow = { mission_id: string; token_hash: string; minted_at: string };
 type MissionRunnerBriefRow = { runner_id: string; mission_id: string; brief: string; created_at: string };
 type MissionNotesRow = { mission_id: string; body: string; updated_at: string };
+// supabase/migrations/20261117100000_session_overrides.sql
+type SessionOverridesRow = { workspace_id: string; overrides_ciphertext: string; created_at: string };
+// supabase/migrations/20261117110000_team_and_personal_secrets.sql
+type ScopedSecretType = "runtime_secret" | "environment_variable";
+type OrgSecretRow = {
+  id: string;
+  org_id: string;
+  name: string;
+  value_ciphertext: string;
+  type: ScopedSecretType;
+  repos: string[];
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+type UserSecretRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  value_ciphertext: string;
+  type: ScopedSecretType;
+  repos: string[];
+  created_at: string;
+  updated_at: string;
+};
 export type MissionEventKind =
   | "finished"
   | "ready"
@@ -178,11 +203,11 @@ export type MissionEventKind =
   | "merged"
   | "closed"
   | "archived"
-  // 20261114200000_mission_slack.sql: Slack's news, with no Ship.
+  // 20261118110000_mission_slack.sql: Slack's news, with no Ship.
   | "slack_request"
   | "slack_answer"
   | "slack_channel"
-  // 20261114200200_mission_inputs.sql: requests from automations and Linear.
+  // 20261118110200_mission_inputs.sql: requests from automations and Linear.
   | "request"
   | "request_update"
   | "request_cancelled";
@@ -198,7 +223,7 @@ type MissionEventRow = {
   delivery_id: string | null;
   delivered_at: string | null;
 };
-// supabase/migrations/20261114200000_mission_slack.sql
+// supabase/migrations/20261118110000_mission_slack.sql
 type MissionChannelRow = {
   mission_id: string;
   org_id: string;
@@ -208,7 +233,7 @@ type MissionChannelRow = {
   listen: "mentions" | "all";
   allow_bot_messages: boolean;
   paused: boolean;
-  /** 20261114200100: new each time it's bound. */
+  /** 20261118110100: new each time it's bound. */
   revision: string;
   /** 20261114210100_mission_idle_pause.sql */
   last_human_at: string;
@@ -257,7 +282,7 @@ type MissionSlackShipRow = {
   binding_revision: string | null;
   created_at: string;
 };
-// supabase/migrations/20261114200100_mission_slack_reliability.sql
+// supabase/migrations/20261118110100_mission_slack_reliability.sql
 type MissionSlackInboundRow = {
   event_id: string;
   team_id: string;
@@ -279,7 +304,7 @@ type MissionSlackRequestRow = {
   message_ts: string | null;
   requested_by: string | null;
   requested_by_slack: string | null;
-  /** 20261114200200_mission_inputs.sql */
+  /** 20261118110200_mission_inputs.sql */
   source: "slack" | "slack_watch" | "webhook" | "schedule" | "linear";
   status: "open" | "cancelled";
   title: string | null;
@@ -321,7 +346,7 @@ export type MissionSlackPostRow = {
   binding_revision: string;
   team_id: string;
   channel_id: string;
-  /** Null for a root post only (20261114200200). */
+  /** Null for a root post only (20261118110200). */
   thread_ts: string | null;
   kind: "reply" | "ask" | "reaction" | "card" | "root";
   payload: Json;
@@ -970,6 +995,8 @@ type OrganizationSettingsRow = {
   alert_thresholds: number[];
   // supabase/migrations/20261102100000_github_agent_loop.sql.
   archive_on_close: boolean;
+  // supabase/migrations/20261114140000_automation_cover_new_repos.sql.
+  automations_on_harness: boolean;
   updated_by: string | null;
   updated_at: string;
 };
@@ -1144,7 +1171,7 @@ export type AutomationTriggerDb =
   | "issues.labeled"
   | "schedule"
   | "webhook"
-  // 20261114200200_mission_inputs.sql: a Mission's own.
+  // 20261118110200_mission_inputs.sql: a Mission's own.
   | "slack.message"
   | "linear.issue";
 
@@ -1168,9 +1195,16 @@ type AutomationRow = {
   archive_when_done: boolean;
   debounce_seconds: number;
   session_mode: "new" | "reuse";
+  /** supabase/migrations/20261114140000_automation_cover_new_repos.sql */
+  cover_new_repos: boolean;
+  /** Its own model, all or none of provider and id
+   *  (supabase/migrations/20261117120000_automation_model.sql). */
+  model_provider: string | null;
+  model_id: string | null;
+  model_effort: string | null;
   archived_at: string | null;
   runs_since: string;
-  /** supabase/migrations/20261114200200_mission_inputs.sql */
+  /** supabase/migrations/20261118110200_mission_inputs.sql */
   target_kind: "session" | "mission";
   target_mission_id: string | null;
   watch_team_id: string | null;
@@ -1218,7 +1252,7 @@ type AutomationRunRow = {
   check_reviewed_at: string | null;
   /** How the review closes the check: { conclusion, output }. */
   check_review: Json | null;
-  /** The Mission request it made (20261114200200_mission_inputs.sql). */
+  /** The Mission request it made (20261118110200_mission_inputs.sql). */
   mission_request_key: string | null;
   created_at: string;
   updated_at: string;
@@ -1907,6 +1941,12 @@ export type Database = {
         Update: { gitlab_user_id?: number; gitlab_login?: string; token_ciphertext?: string; updated_at?: string };
         Relationships: [];
       };
+      user_github_tokens: {
+        Row: { user_id: string; github_user_id: number; github_login: string; token_kind: "classic" | "fine_grained"; scopes: string[] | null; expires_at: string | null; token_ciphertext: string; updated_at: string };
+        Insert: { user_id: string; github_user_id: number; github_login: string; token_kind: "classic" | "fine_grained"; scopes?: string[] | null; expires_at?: string | null; token_ciphertext: string; updated_at?: string };
+        Update: { github_user_id?: number; github_login?: string; token_kind?: "classic" | "fine_grained"; scopes?: string[] | null; expires_at?: string | null; token_ciphertext?: string; updated_at?: string };
+        Relationships: [];
+      };
       projects: {
         Row: ProjectRow;
         Insert: Insert<
@@ -2194,6 +2234,24 @@ export type Database = {
         Row: MissionNotesRow;
         Insert: Insert<MissionNotesRow, "mission_id">;
         Update: Partial<MissionNotesRow>;
+        Relationships: [];
+      };
+      session_overrides: {
+        Row: SessionOverridesRow;
+        Insert: Insert<SessionOverridesRow, "workspace_id" | "overrides_ciphertext">;
+        Update: Partial<SessionOverridesRow>;
+        Relationships: [];
+      };
+      org_secrets: {
+        Row: OrgSecretRow;
+        Insert: Insert<OrgSecretRow, "org_id" | "name" | "value_ciphertext">;
+        Update: Partial<OrgSecretRow>;
+        Relationships: [];
+      };
+      user_secrets: {
+        Row: UserSecretRow;
+        Insert: Insert<UserSecretRow, "user_id" | "name" | "value_ciphertext">;
+        Update: Partial<UserSecretRow>;
         Relationships: [];
       };
       mission_events: {
@@ -2886,6 +2944,19 @@ export type Database = {
           settings: Json;
         };
         Returns: boolean;
+      };
+      // supabase/migrations/20261114140000_automation_cover_new_repos.sql
+      ensure_code_review: {
+        Args: {
+          target_org: string;
+          runner: string;
+          automation_name: string;
+          automation_template: string;
+          automation_prompt: string;
+          automation_triggers: AutomationTriggerDb[];
+          project_ids: string[];
+        };
+        Returns: string | null;
       };
       // supabase/migrations/20261102198000_automation_limits.sql
       automation_times_run: {

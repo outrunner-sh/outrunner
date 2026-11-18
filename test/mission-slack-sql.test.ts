@@ -1,5 +1,5 @@
 /**
- * The on-call Missions migration's SQL (20261114200000_mission_slack.sql), run
+ * The on-call Missions migration's SQL (20261118110000_mission_slack.sql), run
  * on a real Postgres after the Missions migrations before it: Slack's events
  * with no Ship, one Mission a channel and one channel a Mission, threads, and
  * the limits on Ships under racing spawns. Needs MISSIONS_PG, as
@@ -183,7 +183,7 @@ test("a question is answered once", { skip }, () => {
 });
 
 // ---------------------------------------------------------------------------
-// 20261114200100_mission_slack_reliability.sql
+// 20261118110100_mission_slack_reliability.sql
 // ---------------------------------------------------------------------------
 
 test("a binding made again is a new revision", { skip }, () => {
@@ -324,7 +324,7 @@ test("an ambiguous or failed post doesn't hold its thread up; a question card is
 });
 
 // ---------------------------------------------------------------------------
-// 20261114200200_mission_inputs.sql
+// 20261118110200_mission_inputs.sql
 // ---------------------------------------------------------------------------
 
 function missionAutomation(m: string, triggers: string, inputs = "{}"): string {
@@ -337,6 +337,9 @@ test("existing automations are sessions' and stay so; a Mission's needs its Miss
   assert.equal(psql(`select string_agg(distinct target_kind, ',') from automations where target_mission_id is null`), "session");
   fails(`insert into automations (triggers, target_kind) values ('{schedule}', 'mission')`, /automations_target_check/);
   fails(`insert into automations (triggers, target_kind, target_mission_id) values ('{schedule}', 'session', '${mission()}')`, /automations_target_check/);
+  // A Mission's never takes on new repositories, nor a model of its own.
+  fails(`insert into automations (triggers, target_kind, target_mission_id, linear_team_ids, cover_new_repos) values ('{linear.issue}', 'mission', '${mission()}', '{T1}', true)`, /automations_mission_only_check/);
+  fails(`insert into automations (triggers, target_kind, target_mission_id, model_provider, model_id) values ('{schedule}', 'mission', '${mission()}', 'anthropic', 'm')`, /automations_mission_only_check/);
   // A watched channel or Linear are a Mission's only.
   fails(`insert into automations (triggers) values ('{slack.message}')`, /automations_inputs_check/);
   fails(`insert into automations (triggers) values ('{linear.issue}')`, /automations_inputs_check/);

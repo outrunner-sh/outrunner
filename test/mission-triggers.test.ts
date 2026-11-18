@@ -422,6 +422,12 @@ test("pointing an automation at a Mission: write on its project, its repository 
   assert.equal((await checkMissionTarget("o2", "writer", input, null, deps)).ok, false, "another org's Mission");
   const changed = await checkMissionTarget("o1", "writer", { target: { kind: "session" } }, { kind: "mission", missionId: MISSION }, deps);
   assert.ok(!changed.ok && changed.status === 400);
+  // Its one repository stays its project's, on the Mission's own model.
+  const covering = await checkMissionTarget("o1", "writer", { ...input, coverNewRepos: true }, null, deps);
+  assert.ok(!covering.ok && covering.status === 400);
+  const modelled = await checkMissionTarget("o1", "writer", { ...input, model: { provider: "anthropic", id: "m", effort: null } }, null, deps);
+  assert.ok(!modelled.ok && modelled.status === 400);
+  assert.ok((await checkMissionTarget("o1", "writer", { ...input, coverNewRepos: false, model: null }, null, deps)).ok);
   // A session's automation as before; a signing secret is a Mission's.
   assert.equal((await checkMissionTarget("o1", "anyone", { name: "x" }, { kind: "session" }, deps)).ok, true);
   assert.equal((await checkMissionTarget("o1", "anyone", { webhookSecret: "0123456789abcdef" }, null, deps)).ok, false);

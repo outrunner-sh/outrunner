@@ -5,6 +5,7 @@
 
 import type { AgentId } from "@/lib/agents/registry";
 import { PLANS } from "@/lib/billing/plans";
+import { repositoryKey, type CodeProvider } from "@/lib/code-providers/repository";
 import type { RepositoryListing } from "@/lib/github/listing";
 import type { AgentChoices, AgentMethod, AgentPick, AgentStatus, OnboardingProgress, OnboardingStep } from "@/lib/onboarding/types";
 import {
@@ -28,6 +29,38 @@ export function filterRepositories(repositories: RepositoryListing[], query: str
   return repositories.filter(
     (r) => r.fullName.toLowerCase().includes(q) || (r.description ?? "").toLowerCase().includes(q),
   );
+}
+
+/** Under the repository picker: the new picks, and apart from them those
+ *  connected already (some may not be in the list at all). */
+export function pickSummary(picked: number, connected: number): string {
+  if (picked === 0 && connected === 0) return "Pick at least one";
+  const already = `${connected} already connected`;
+  if (picked === 0) return already;
+  return connected === 0 ? `${picked} picked` : `${picked} picked · ${already}`;
+}
+
+/** In place of the picker when the org has repositories connected already:
+ *  how many, and a few of them by name (`names`, those the listing has, in
+ *  its order; `total` counts those it doesn't too). */
+export function connectedSummary(names: string[], total: number): { title: string; detail: string } {
+  const title = `${total} ${total === 1 ? "repository" : "repositories"} connected`;
+  const few = names.slice(0, 3);
+  const rest = total - few.length;
+  if (few.length === 0) return { title, detail: "" };
+  if (rest > 0) return { title, detail: `${few.join(", ")} and ${rest} more` };
+  return { title, detail: few.length === 1 ? few[0] : `${few.slice(0, -1).join(", ")} and ${few.at(-1)}` };
+}
+
+/** The projects of the repositories picked, in the order they were ticked:
+ *  the first session starts on the first. `projects` may hold others. */
+export function pickedProjects<P extends { githubRepoId: number | null; provider?: CodeProvider; repositoryId?: number }>(
+  projects: P[],
+  ids: number[],
+  provider: CodeProvider,
+): P[] {
+  const byKey = new Map(projects.map((project) => [repositoryKey(project), project]));
+  return ids.flatMap((id) => byKey.get(`${provider}:${id}`) ?? []);
 }
 
 /** What one credit is worth, in USD: the Free plan's allowance shown as

@@ -42,6 +42,33 @@ GitHub opens in the system browser, and the code comes back through the shell's 
 **Disconnect** revokes the App's authorization on GitHub. A user who revokes it on GitHub is marked
 disconnected by the `github_app_authorization` webhook.
 
+### A personal access token instead
+
+Some organizations restrict third-party access, so a member can't use their repositories through the App
+until an owner approves it. **Settings → Connections → GitHub → Personal access token** skips that: paste
+a fine-grained (`github_pat_`) or classic (`ghp_`) token, and Outrunner uses it for everything it would
+have used your own GitHub connection for (`lib/github/personal-choice.ts`). It's stored sealed in
+`user_github_tokens` (migration `20261114130000`). Other kinds of GitHub tokens are refused.
+
+- **Where it works:** your personal org only. Its repository picker lists everything the token's account
+  can reach, ahead of the App connection and the org's installations. Team orgs still list only what
+  their App installations reach (`lib/github/source-choice.ts`).
+- **What saving does:** GitHub checks the token (`GET /user`), which reports a classic token's scopes and
+  any token's expiry. Your GitHub identity is set to **My GitHub account**, because as the App the token
+  would be listed but never used. Pushes and pull requests show as the token's account, whoever that is.
+  The card always names it.
+- **Warnings on the card:** a classic token without `repo`, an expiry within 7 days or already past, and a
+  token that never expires. Whether GitHub still takes the token is checked as the page streams in, with a
+  3-second limit.
+- **Precedence:** the token, then the App connection, then an old sign-in token. A token that can't be
+  decrypted (a rotated `CREDENTIALS_ENCRYPTION_KEY`) is skipped, and the card asks you to replace it.
+- **On boxes:** a box's git gets the token with no expiry date, so it asks again every 10 minutes. A
+  removed or replaced token therefore stops being used within that time. A box that booted with it keeps
+  it as `GH_TOKEN` until the session ends, so revoke it on GitHub to cut it off entirely. Boxes run agent
+  code, which is why the card steers you toward a fine-grained token with an expiry date.
+- **SAML single sign-on:** authorize the token for the organization on GitHub. Until you do, the
+  repository list notes the organizations GitHub left out.
+
 ### Where each token goes
 
 | Who | Gets |
@@ -50,6 +77,9 @@ disconnected by the `github_app_authorization` webhook.
 | A box, as `personal` identity | The user's `ghu_` token, 8 hours at most, asked for as git needs it (`/api/runtime/git-credential`) and as the boot-time `GH_TOKEN` |
 | The browser (Mac clones, `/api/github/clone-token`) | The org's App's read-only token for that repository where it reaches it, else the user's `ghu_` |
 | The server (listing, merging) | The user's `ghu_` |
+
+With a personal access token saved, that token replaces the user's `ghu_` in every row above. On a box, it
+reaches everything the token's account can.
 
 A `ghu_` token can't be narrowed to one repository. A box working as you can use it for anything you and
 the App reach, for up to 8 hours. The `app` identity's per-repository tokens are narrower.
@@ -197,6 +227,23 @@ by the reconciler's cron for any that a restart cut short.
 Every act is claimed by what it's for: the comment's id, the review's id, the commit, or the close and its time.
 GitHub's redeliveries therefore never act twice.
 
+## Repository and account renames
+
+GitHub's numeric repository ID stays the same when a repository or organization
+is renamed, or a repository is transferred. Outrunner uses that ID to refresh
+the names of existing connected projects when an installation is reconnected,
+its repository selection changes, or GitHub sends a rename event. Project IDs,
+session links, ownership, hidden state, and access grants are preserved. A
+repository reusing an old name does not take over the original project.
+
+The installation's repository list in Settings comes directly from GitHub;
+sessions use the stored project record. On older deployments, reconnecting can
+therefore show the new name in Settings while sessions still use the old one.
+**Projects → Sync repositories** can refresh projects connected by the current
+user. Deploy the rename refresh for installations with projects connected by
+other members. Tools using a local checkout should use its current canonical
+GitHub URL after a move.
+
 ## Permissions and events
 
 Set these on the App (GitHub → Settings → Developer settings → GitHub Apps → outrunner-connector). After a
@@ -220,6 +267,7 @@ then, GitHub refuses what needs them, and Outrunner logs that and goes on.
 | Pull request review comment | Mentions on a line |
 | Pull request review | Review follow-ups; automation runs' checks (#238) |
 | Check suite, Check run, Workflow run | CI failure follow-ups |
+| Repository | Keep connected project names current after renames and transfers |
 
 `installation`, `installation_repositories` and `github_app_authorization` events come to every App without
 subscribing.
@@ -262,7 +310,8 @@ authorization tokens** is on; new Apps have it on.
     "pull_request_review_comment",
     "check_suite",
     "check_run",
-    "workflow_run"
+    "workflow_run",
+    "repository"
   ]
 }
 ```

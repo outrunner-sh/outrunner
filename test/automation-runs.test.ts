@@ -180,6 +180,7 @@ function startDeps(over: Partial<StartDeps> = {}) {
   const checks: string[] = [];
   const deps: StartDeps = {
     orgConnector: async () => null,
+    automationsOnHarness: async () => false,
     openCheck: async (run) => {
       checks.push(`open ${run.runId}`);
     },
@@ -236,6 +237,69 @@ test("a run starts its session as the runner, on the pull request's head, as the
     { status: "started", workspaceId: "w1" },
     { status: "ready", workspaceId: "w1", reason: null },
   ]);
+});
+
+test("a run starts on the runner's own harness where the org set it, and says when it fell back to Outrunner's models", async () => {
+  const off = startDeps();
+  await startRun(pending(), off.deps);
+  assert.equal(off.started[0].onHarness, false);
+
+  const on = startDeps({
+    automationsOnHarness: async (orgId) => orgId === "o1",
+    startServerSession: async (start) => {
+      on.started.push(start);
+      return { workspaceId: "w1", status: "ready", fellBack: "Ran on Outrunner's models: it couldn't start on your own. Connect Claude." };
+    },
+  });
+  await startRun(pending(), on.deps);
+  assert.equal(on.started[0].onHarness, true);
+  assert.deepEqual(on.settled.at(-1), {
+    status: "ready",
+    workspaceId: "w1",
+    reason: "Ran on Outrunner's models: it couldn't start on your own. Connect Claude.",
+  });
+
+  // Its setting unreadable: this run on Outrunner's models, as before.
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const unread = startDeps({
+      automationsOnHarness: async () => {
+        throw new Error("db down");
+      },
+    });
+    await startRun(pending(), unread.deps);
+    assert.equal(unread.started[0].onHarness, false);
+    assert.deepEqual(unread.settled.at(-1), { status: "ready", workspaceId: "w1", reason: null });
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test("an automation with a model of its own starts on it, and says when it couldn't", async () => {
+  const none = startDeps();
+  await startRun(pending(), none.deps);
+  assert.equal(none.started[0].choice, undefined);
+
+  const model = { provider: "claude" as const, id: "opus", effort: "max" as const };
+  const own = startDeps({ automationsOnHarness: async () => true });
+  await startRun(pending({ model }), own.deps);
+  assert.deepEqual(own.started[0].choice, model);
+  // What it falls back on, should that not start, is the org's choice.
+  assert.equal(own.started[0].onHarness, true);
+
+  const fell = startDeps({
+    startServerSession: async (start) => {
+      fell.started.push(start);
+      return { workspaceId: "w1", status: "ready", fellBack: "It couldn't start on opus: Choose one of the offered models." };
+    },
+  });
+  await startRun(pending({ model }), fell.deps);
+  assert.deepEqual(fell.settled.at(-1), {
+    status: "ready",
+    workspaceId: "w1",
+    reason: "It couldn't start on opus: Choose one of the offered models.",
+  });
 });
 
 test("once a run's session is ready, the earlier review sessions are archived as the runner", async () => {
