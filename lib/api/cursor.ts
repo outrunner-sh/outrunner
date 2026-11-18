@@ -16,6 +16,7 @@
 import type { Run, RunStatus, Usage } from "@/lib/api/runs";
 import type { StreamEvent } from "@/lib/api/stream";
 import { MEDIA_TYPES, type MediaContentType } from "@/lib/media/media";
+import { isObject } from "@/lib/is-object";
 
 export type CursorRunStatus = "CREATING" | "RUNNING" | "FINISHED" | "ERROR" | "CANCELLED";
 export type CursorAgentStatus = "ACTIVE" | "IDLE" | "ARCHIVED";
@@ -56,6 +57,9 @@ export function sessionIdOf(agentId: string): string {
   return agentId.replace(/^bc-/, "");
 }
 
+/** The ids Cursor names an effort by among a model's `params`. */
+export const EFFORT_PARAMETERS = ["effort", "reasoning_effort", "thinking"];
+
 /** Model ids of Cursor's own, with no model here: the session starts on
  *  the caller's default, as with none named. */
 export function isCursorOnlyModel(id: string): boolean {
@@ -86,10 +90,6 @@ const KEPT_ELSEWHERE: Record<string, string> = {
 /** Cursor's per-agent fields, as POST /workspaces names them. */
 const SESSION_OWN = { envVars: "env", mcpServers: "mcp_servers", customSubagents: "subagents" } as const;
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
 /** Cursor's `prompt` (`{ text, images }`, or plain text) as text and images,
  *  or the reason it's refused. */
 function promptOf(value: unknown): { text: string; images?: unknown } | string {
@@ -113,7 +113,7 @@ function refusedField(raw: Record<string, unknown>): string | null {
 function effortOf(params: unknown): string | undefined | { refused: string } {
   if (params === undefined || params === null) return undefined;
   if (!Array.isArray(params) || !params.every(isObject)) return { refused: "`model.params` is a list of `{ id, value }`." };
-  const effort = (params as Record<string, unknown>[]).find((p) => ["effort", "reasoning_effort", "thinking"].includes(String(p.id)));
+  const effort = (params as Record<string, unknown>[]).find((p) => EFFORT_PARAMETERS.includes(String(p.id)));
   if (!effort) return undefined;
   return typeof effort.value === "string" && effort.value ? effort.value : { refused: "The effort's `value` is one of the model's efforts, from GET /api/v1/models." };
 }

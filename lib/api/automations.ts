@@ -6,16 +6,10 @@
  * Cursor's PATCH /v1/automations/{id} and GET /v1/automations works as is.
  */
 
-import { cursorPage, cursorPaging, isCursorOnlyModel } from "@/lib/api/cursor";
+import { cursorPage, cursorPaging, EFFORT_PARAMETERS, isCursorOnlyModel } from "@/lib/api/cursor";
 import { type PageRequest, pageRequest, paginate } from "@/lib/api/pagination";
 import { topLevelCamel } from "@/lib/api/serialize";
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-/** The ids Cursor names an effort by among a model's `parameters`. */
-const EFFORT_PARAMETERS = ["effort", "reasoning_effort", "thinking"];
+import { isObject } from "@/lib/is-object";
 
 /**
  * Cursor's `modelSelection` (`{ modelId, parameters: [{ id: "effort",

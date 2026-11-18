@@ -15,6 +15,7 @@ import type { EnvironmentSetup } from "@/lib/db/environments";
 import { claudeMcpServer, MAX_MCP_SERVERS, newMcpServer } from "@/lib/environments/mcp";
 import { EnvironmentRuleError, MAX_ENV_BYTES, utf8Bytes } from "@/lib/environments/rules";
 import { settableEnv } from "@/lib/imports/settable-env";
+import { isObject } from "@/lib/is-object";
 
 /** A subagent the session's agent may hand work to (Claude Code's `--agents`). */
 export type Subagent = { description: string; prompt: string; model?: SubagentModel };
@@ -39,10 +40,6 @@ const MAX_SUBAGENT_PROMPT_BYTES = 32 * 1024;
 const SUBAGENT_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 /** Claude Code's own subagents, which a session's can't stand in for. */
 const BUILT_IN_SUBAGENTS = ["general-purpose", "explore", "plan", "statusline-setup", "claude-code-guide", "output-style-setup"];
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
 
 function envOf(value: unknown): Record<string, string> | string {
   if (value === undefined || value === null) return {};
@@ -211,4 +208,16 @@ export function oversizedEnv(environment: EnvironmentSetup | null): string | nul
   const bytes = environment ? envFileBytes(environment.env) : 0;
   if (bytes <= MAX_ENV_BYTES) return null;
   return `This session's variables come to ${Math.ceil(bytes / 1024)} KB, over the ${MAX_ENV_BYTES / 1024} KB a box takes: its project's, its org's secrets, yours and its own together. Remove some of them.`;
+}
+
+/** A team or personal secret, opened, and the repositories it's for (none: all). */
+export type ScopedValue = { name: string; value: string; repos: string[] };
+export type ScopedSecrets = { team: ScopedValue[]; personal: ScopedValue[] };
+
+/** The org's and the person's secrets a session of `fullNames` gets, as
+ *  withScopedSecrets lays them. */
+export function scopedEnvFor(scoped: ScopedSecrets, fullNames: readonly string[]): { team: Record<string, string>; personal: Record<string, string> } {
+  const kept = (values: readonly ScopedValue[]) =>
+    Object.fromEntries(values.filter((v) => coversRepos(v.repos, fullNames)).map((v) => [v.name, v.value]));
+  return { team: kept(scoped.team), personal: kept(scoped.personal) };
 }

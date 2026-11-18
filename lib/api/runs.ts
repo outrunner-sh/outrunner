@@ -164,13 +164,24 @@ export function sessionUsage(entries: readonly ConversationEntry[], runs: readon
 /** The first run's id from the start: runs are also named by their place. */
 export const FIRST_RUN = "run-1";
 
+/** How long after its start a session that's ready may still be about to
+ *  log its first prompt (sent once it's ready, a moment later). */
+export const FIRST_PROMPT_GRACE_MS = 10 * 60_000;
+
 /** Whether the session's first run is yet to show: none in its log while
- *  it's set up (or woken), or just ready, its prompt on the way; or its
- *  setup failed before it could begin. */
-export function firstRunPending(workspace: Pick<Workspace, "status" | "errorMessage">, runs: readonly Run[], from: string): boolean {
+ *  it's set up, or ready just after its start, its prompt on the way; or its
+ *  setup failed before it could begin. A session started without a prompt
+ *  (a Mission can be) has none on the way: past the grace, it has no runs. */
+export function firstRunPending(
+  workspace: Pick<Workspace, "status" | "errorMessage" | "createdAt">,
+  runs: readonly Run[],
+  from: string,
+  now = Date.now(),
+): boolean {
   if (runs.length > 0) return false;
   const status = apiStatus(workspace.status);
-  return ["preparing", "resuming", "restoring", "failed"].includes(status) || (status === "ready" && from === "live");
+  if (status === "preparing" || status === "failed") return true;
+  return status === "ready" && from === "live" && now - Date.parse(workspace.createdAt) < FIRST_PROMPT_GRACE_MS;
 }
 
 /** The first run before its prompt is in the log: `run-1`, `preparing` (or

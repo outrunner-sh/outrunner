@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { coversRepos, envFileBytes, goJsonBytes, oversizedEnv, parseSessionOverrides, subagentModel, withScopedSecrets, withSessionEnvironment, withSessionServers } from "@/lib/session/session-overrides";
+import { coversRepos, envFileBytes, scopedEnvFor, goJsonBytes, oversizedEnv, parseSessionOverrides, subagentModel, withScopedSecrets, withSessionEnvironment, withSessionServers } from "@/lib/session/session-overrides";
 
 test("none of them is no overrides", () => {
   assert.equal(parseSessionOverrides({}), null);
@@ -98,4 +98,13 @@ test("variables laid together over what a box takes are said, before the box ref
   assert.equal(oversizedEnv(project), null);
   const big = Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`V${i}`, "x".repeat(4000)]));
   assert.match(oversizedEnv({ ...project, env: big }) as string, /over the 256 KB a box takes/);
+});
+
+test("the org's and the person's secrets a session gets are those for its repositories", () => {
+  const scoped = {
+    team: [{ name: "NPM_TOKEN", value: "n", repos: [] }, { name: "API_KEY", value: "a", repos: ["acme/api"] }],
+    personal: [{ name: "MINE", value: "m", repos: ["acme/web"] }],
+  };
+  assert.deepEqual(scopedEnvFor(scoped, ["acme/web"]), { team: { NPM_TOKEN: "n" }, personal: { MINE: "m" } });
+  assert.deepEqual(scopedEnvFor(scoped, ["acme/api"]), { team: { NPM_TOKEN: "n", API_KEY: "a" }, personal: {} });
 });

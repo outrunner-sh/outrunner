@@ -12,7 +12,7 @@
 import { PATCH as missionPATCH } from "@/app/api/missions/[id]/route";
 import { checkAttachments } from "@/lib/api/attachments";
 import { cursorAgentJson, cursorAgentStatus, cursorPage, cursorPaging, pendingRunJson } from "@/lib/api/cursor";
-import { projectNamed } from "@/lib/api/cursor.deps";
+import { projectNamed, reposOf } from "@/lib/api/cursor.deps";
 import {
   cursorProjectJson,
   includeArchived,
@@ -245,13 +245,6 @@ export async function patchCursorProjectApi(context: ApiContext, ref: string): P
     if (!done.ok) return errorFromRoute(done, context.base);
   }
   return new Response(null, { status: 204 });
-}
-
-/** Its repositories, and the branch each started from. */
-async function reposOf(session: Workspace): Promise<{ fullName: string; startingRef: string | null }[]> {
-  if (session.checkouts?.length) return session.checkouts.map((c) => ({ fullName: c.fullName, startingRef: c.baseBranch ?? null }));
-  const project = await getProject(session.projectId);
-  return project ? [{ fullName: project.fullName, startingRef: session.baseBranch || null }] : [];
 }
 
 /**

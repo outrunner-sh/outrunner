@@ -102,12 +102,19 @@ test("a conversation with no prompt has no runs", () => {
 
 test("a session's first run is there before its prompt is logged: while it's set up, or just ready", () => {
   const none: never[] = [];
-  assert.equal(firstRunPending({ status: "creating", errorMessage: null }, none, "none"), true);
-  assert.equal(firstRunPending({ status: "ready", errorMessage: null }, none, "live"), true);
-  assert.equal(firstRunPending({ status: "failed", errorMessage: "No box" }, none, "none"), true);
-  // Paused with nothing read: no run to make up.
-  assert.equal(firstRunPending({ status: "suspended", errorMessage: null }, none, "none"), false);
-  assert.equal(firstRunPending({ status: "creating", errorMessage: null }, runsFrom(twoRuns, "running"), "live"), false);
+  const now = Date.parse("2026-11-18T10:00:00Z");
+  const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
+  const session = (status: string, minutesAgo = 1) => ({ status, errorMessage: status === "failed" ? "No box" : null, createdAt: at(minutesAgo) }) as never;
+  assert.equal(firstRunPending(session("creating"), none, "none", now), true);
+  assert.equal(firstRunPending(session("ready"), none, "live", now), true);
+  assert.equal(firstRunPending(session("failed"), none, "none", now), true);
+  // Ready long since with no runs: started without a prompt (a Mission can
+  // be), so none is coming.
+  assert.equal(firstRunPending(session("ready", 30), none, "live", now), false);
+  // Paused, or woken, with nothing read: no run to make up.
+  assert.equal(firstRunPending(session("suspended"), none, "none", now), false);
+  assert.equal(firstRunPending(session("resuming"), none, "none", now), false);
+  assert.equal(firstRunPending(session("creating"), runsFrom(twoRuns, "running"), "live", now), false);
   assert.equal(FIRST_RUN, "run-1");
   assert.deepEqual([pendingFirstRun({ status: "creating", errorMessage: null }).status, pendingFirstRun({ status: "failed", errorMessage: "No box" }).error], ["preparing", "No box"]);
 });

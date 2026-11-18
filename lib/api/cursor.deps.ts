@@ -34,7 +34,7 @@ import { firstRunPending, runsFrom, sessionUsage, type Run } from "@/lib/api/run
 import { apiStatus, workspaceJson } from "@/lib/api/serialize";
 import { streamApi } from "@/lib/api/stream.deps";
 import { checkWebhookUrl, messageSent, webhookHooks } from "@/lib/api/webhooks.deps";
-import { cancelRunApi, createWorkspace, lifecycleApi, listWorkspaces, ownSession, sendMessageApi, type LifecycleVerb } from "@/lib/api/workspaces";
+import { cancelRunApi, createWorkspace, lifecycleApi, listWorkspaces, ownSession, runToFollow, sendMessageApi, type LifecycleVerb } from "@/lib/api/workspaces";
 import { getEnvironment } from "@/lib/db/environments";
 import { listSessionMedia, signedMediaUrl } from "@/lib/db/media";
 import { getProject, getWorkspace, listWorkspacePullRequests } from "@/lib/db/repositories";
@@ -75,7 +75,7 @@ async function sessionOf(context: ApiContext, agentId: string): Promise<string> 
 }
 
 /** Its repositories, and the branch each started from. */
-async function reposOf(workspace: Workspace): Promise<{ fullName: string; startingRef: string | null }[]> {
+export async function reposOf(workspace: Workspace): Promise<{ fullName: string; startingRef: string | null }[]> {
   if (workspace.checkouts?.length) return workspace.checkouts.map((c) => ({ fullName: c.fullName, startingRef: c.baseBranch ?? null }));
   const project = await getProject(workspace.projectId);
   return project ? [{ fullName: project.fullName, startingRef: workspace.baseBranch || null }] : [];
@@ -108,15 +108,18 @@ async function agentRuns(
 /** The org's project named `name` (Cursor's named environment, `env.name`)
  *  that the caller can see, or the answer to give. */
 export async function projectNamed(context: ApiContext, name: string): Promise<string | Response> {
+  // Matched here, whole and ignoring case: a pattern (ilike) would read
+  // `*`, `%` and `_` in a name as wildcards.
+  const wanted = name.toLowerCase();
   const { data, error } = await createSupabaseAdminClient()
     .from("environments")
-    .select("id")
+    .select("id, name")
     .eq("org_id", context.caller.orgId)
-    .ilike("name", name.replace(/[\\%_]/g, "\\$&"))
     .is("archived_at", null);
   if (error) throw error;
+  const named = (data ?? []).filter((row) => String(row.name).toLowerCase() === wanted);
   // Each read as the caller: getEnvironment answers null for one they can't.
-  const seen = (await Promise.all((data ?? []).map((row) => getEnvironment(context.caller.userId, row.id as string)))).filter((e) => e !== null);
+  const seen = (await Promise.all(named.map((row) => getEnvironment(context.caller.userId, row.id as string)))).filter((e) => e !== null);
   if (seen.length === 0) return apiError(404, `No project named "${name}" in this org that you can see.`);
   if (seen.length > 1) return apiError(409, `More than one project is named "${name}": send its \`environment_id\` instead.`);
   return seen[0].id;
@@ -225,32 +228,30 @@ export async function agentLifecycleApi(context: ApiContext, agentId: string, ve
   return done.ok ? Response.json({ id }) : done;
 }
 
-/** POST /agents/{id}/runs: a follow-up, sent to the session (reaching the
- *  turn it's on, if it's on one, as `delivery: steer` asks), answered with
- *  the run it starts. */
+/** POST /agents/{id}/runs: a follow-up, sent to the session, answered with
+ *  the run it starts. Every follow-up steers: one sent while the agent works
+ *  reaches it as it goes, as the app's composer does, where Cursor's refuses
+ *  one without `delivery: steer` (agent_busy). `delivery: steer` is taken,
+ *  and answered as Cursor answers it. */
 export async function followUpApi(context: ApiContext, agentId: string): Promise<Response> {
   const raw = await jsonBody(context.request);
   if (raw instanceof Response) return raw;
   const parsed = followUpFromCursor(raw);
   if (typeof parsed === "string") return apiError(400, parsed);
   const id = await sessionOf(context, agentId);
-  // Its place among the runs is the one after those before it, counted
-  // before it's sent: a read after might already hold it, or not yet.
-  const before = await agentRuns(context, id);
-  if (before instanceof Response) return before;
   const sent = await sendMessageApi(asCall(context, { body: parsed.body }), id, messageSent);
   if (!sent.ok) return sent;
-  const { run_id: runId } = (await sent.json()) as { run_id: string | null };
-  // The send named its run: its place, as the log has it now (another
-  // message sent at the same moment may have come first).
-  const after = runId || before.from === "none" ? await agentRuns(context, id) : null;
-  const logNow = after && !(after instanceof Response) ? after.runs : [];
-  const logged = runId ? logNow.find((r) => r.id === runId) : undefined;
-  // A session read as nothing before it was woken (paused, its log on its
-  // box): counted now, its newest run this one when it says what was sent.
-  const sentText = String(parsed.body.content ?? "").trim();
-  const woken = before.from === "none" ? (logNow.at(-1)?.prompt.trim() === sentText ? logNow.length : logNow.length + 1) : undefined;
-  const number = logged?.number ?? woken ?? before.runs.length + 1;
+  // Its place, as the send read it from the log (the same read that found
+  // the message); only when the log didn't show it yet is the log read
+  // again, the run then the newest when it says what was sent, else the next.
+  const { run_number: logged } = (await sent.json()) as { run_number: number | null };
+  let number = logged;
+  if (number === null) {
+    const read = await agentRuns(context, id);
+    const runs = read instanceof Response ? [] : read.runs;
+    const sentText = String(parsed.body.content ?? "").trim();
+    number = runs.at(-1)?.prompt.trim() === sentText ? runs.length : runs.length + 1;
+  }
   const now = new Date().toISOString();
   const run = { id: cursorRunId(number), agentId: id, status: "CREATING", createdAt: now, updatedAt: now };
   if (parsed.steer) return Response.json({ delivery: "steered", runId: run.id, run }, { status: 202 });
@@ -315,6 +316,10 @@ export async function streamAgentRunApi(context: ApiContext, agentId: string, ru
   const ref = runRef(runId);
   if (!ref) return apiError(404, "No run by that id on this agent.");
   const id = await sessionOf(context, agentId);
+  if ("number" in ref) {
+    const refused = await runToFollow(context, id, ref.number);
+    if (refused) return refused;
+  }
   return streamApi(context, id, "number" in ref ? ref : ref.id, (event) => cursorStreamEvent(event, { run: ref }));
 }
 

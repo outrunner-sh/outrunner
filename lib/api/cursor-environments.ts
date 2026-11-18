@@ -18,10 +18,7 @@ import type { ScopedSecret, SecretType } from "@/lib/db/scoped-secrets";
 import { repoAddress } from "@/lib/api/cursor";
 import { repoFullName } from "@/lib/api/repo-ref";
 import { utf8Bytes } from "@/lib/environments/rules";
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
+import { isObject } from "@/lib/is-object";
 
 /** Shell-quoted, for a command line. */
 function quoted(value: string): string {

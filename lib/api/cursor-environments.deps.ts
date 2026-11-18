@@ -15,6 +15,7 @@ import { PATCH as secretsPATCH } from "@/app/api/environments/[id]/secrets/route
 import { describeAudit } from "@/lib/audit/actions";
 import { PROJECT_RESOURCE, recordProjectChange } from "@/lib/audit/project-history";
 import { boxSetupRefused } from "@/lib/api/auth";
+import { projectOf } from "@/lib/api/project-access";
 import { cursorPage, cursorPaging } from "@/lib/api/cursor";
 import {
   cursorBuildJson,
@@ -28,6 +29,7 @@ import {
   secretVersionJson,
 } from "@/lib/api/cursor-environments";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
+import { paginate } from "@/lib/api/pagination";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
 import { environmentDetailJson } from "@/lib/api/serialize";
 import { listResourceAuditEvents } from "@/lib/db/audit";
@@ -38,16 +40,10 @@ import { deleteScopedSecret, listScopedSecrets, putScopedSecret, type SecretScop
 import { EnvironmentRuleError, MAX_REPOS, script } from "@/lib/environments/rules";
 import { settableEnv } from "@/lib/imports/settable-env";
 import { isUuid } from "@/lib/ids";
+import { projectLevel } from "@/lib/db/org-access";
+import { allows } from "@/lib/orgs/access";
 import { repoFullName } from "@/lib/api/repo-ref";
 import { coversRepos } from "@/lib/session/session-overrides";
-
-const notFound = () => apiError(404, "No project by that id that you can see.");
-
-async function projectOf(context: ApiContext, id: string): Promise<Environment | Response> {
-  if (!isUuid(id)) return notFound();
-  const environment = await getEnvironment(context.caller.userId, id);
-  return environment && environment.orgId === context.caller.orgId ? environment : notFound();
-}
 
 async function personalOrg(context: ApiContext): Promise<boolean> {
   return (await getOrg(context.caller.orgId))?.personal ?? false;
@@ -184,6 +180,20 @@ export async function cursorPatchOf(
   return { rest, repos };
 }
 
+/** Why the caller can't make a repositories change, as the settings route
+ *  would refuse it part way: write on the project, and on each repository
+ *  it adds. Null when they may. Asked before anything is changed. */
+export async function reposRefused(context: ApiContext, project: Environment, plan: { add: string[]; remove: string[] }): Promise<Response | null> {
+  if (!plan.add.length && !plan.remove.length) return null;
+  if (!allows(project.access, "write")) return apiError(403, "You can see this project but not change it. Ask an admin of its org for write access.");
+  for (const projectId of plan.add) {
+    if (!allows(await projectLevel(context.caller.userId, projectId), "write")) {
+      return apiError(400, "You can only add a repository you can change. Ask an admin for write access on it.");
+    }
+  }
+  return null;
+}
+
 /** Change the project's repositories to `wanted` (checked by reposPlan):
  *  added while there's room, the rest removed, so it's never more than a
  *  project holds, nor left with none. Null when done, else the answer. */
@@ -299,23 +309,31 @@ function scopeOf(context: ApiContext, scope: "team" | "user"): SecretScope {
   return scope === "team" ? { kind: "team", orgId: context.caller.orgId } : { kind: "user", userId: context.caller.userId };
 }
 
+/** Your own secrets are yours to keep with your own credential: an org
+ *  key acts for its org, so it neither reads nor changes its maker's,
+ *  which reach their sessions in every org. Null when the caller may. */
+function ownSecretsRefused(context: ApiContext): Response | null {
+  return context.caller.kind === "org_key"
+    ? apiError(403, "An org key acts for its org, not as its maker: keep your own secrets with a personal key or the CLI.")
+    : null;
+}
+
 /** GET /team/secrets and /me/secrets: by name, never a value. */
 export async function listScopedSecretsApi(context: ApiContext, scope: "team" | "user"): Promise<Response> {
   const paging = cursorPaging(new URL(context.request.url).searchParams);
   if (typeof paging === "string") return apiError(400, paging);
-  const secrets = await listScopedSecrets(scopeOf(context, scope));
-  const from = (paging.page - 1) * paging.perPage;
-  return Response.json(cursorPage(secrets.slice(from, from + paging.perPage).map((s) => secretVersionJson(s)), { page: paging.page, has_more: from + paging.perPage < secrets.length }));
+  const refused = scope === "user" ? ownSecretsRefused(context) : null;
+  if (refused) return refused;
+  const page = paginate(await listScopedSecrets(scopeOf(context, scope)), paging);
+  return Response.json(cursorPage(page.data.map((s) => secretVersionJson(s)), page));
 }
 
 /** PUT and DELETE /team/secrets/{name} (an org key's: every member's
  *  sessions get them) and /me/secrets/{name} (the caller's own). */
 export async function setScopedSecretApi(context: ApiContext, scope: "team" | "user", name: string, remove: boolean): Promise<Response> {
   if (!SECRET_NAME.test(name) || !settableEnv(name)) return apiError(400, `${name} can't be set.`);
-  if (scope === "team") {
-    const refused = boxSetupRefused(context);
-    if (refused) return refused;
-  }
+  const refused = scope === "team" ? boxSetupRefused(context) : ownSecretsRefused(context);
+  if (refused) return refused;
   if (remove) {
     return (await deleteScopedSecret(scopeOf(context, scope), name)) ? Response.json({ name }) : apiError(404, `No secret named ${name}.`);
   }
@@ -342,16 +360,21 @@ export async function listAllSecretsApi(context: ApiContext): Promise<Response> 
   if (scope !== null && !["team", "user", "environment"].includes(scope)) return apiError(400, "`scope` is team, user or environment.");
   const environmentId = params.get("environmentId");
   if (scope === "environment" && !environmentId) return apiError(400, "Name the project (`environmentId`).");
+  if (scope === "user") {
+    const refused = ownSecretsRefused(context);
+    if (refused) return refused;
+  }
   const paging = cursorPaging(params);
   if (typeof paging === "string") return apiError(400, paging);
   const items: Record<string, unknown>[] = [];
   if (!scope || scope === "team") {
     for (const s of await listScopedSecrets(scopeOf(context, "team"))) items.push(secretVersionJson(s, { type: "team" }));
   }
-  if (!scope || scope === "user") {
+  // An org key's call lists the org's, never its maker's own.
+  if ((!scope && context.caller.kind !== "org_key") || scope === "user") {
     for (const s of await listScopedSecrets(scopeOf(context, "user"))) items.push(secretVersionJson(s, { type: "user", user: { email: context.owner.email } }));
   }
-  if (environmentId) {
+  if ((!scope || scope === "environment") && environmentId) {
     const project = await projectOf(context, environmentId);
     if (project instanceof Response) return project;
     for (const name of project.envNames) items.push(projectSecretJson(project, name, true));
@@ -362,7 +385,7 @@ export async function listAllSecretsApi(context: ApiContext): Promise<Response> 
   const repo = repoParam === null ? null : repoFullName(repoParam);
   if (repoParam !== null && !repo) return apiError(400, "`repo` is a repository's address.");
   const filtered = items.filter((s) => (!name || s.name === name) && (!repo || coversRepos(s.repos as string[], [repo])));
-  const from = (paging.page - 1) * paging.perPage;
-  const page = filtered.slice(from, from + paging.perPage);
-  return Response.json({ items: page, nextCursor: from + paging.perPage < filtered.length ? String(paging.page + 1) : null });
+  const page = paginate(filtered, paging);
+  // Cursor's /v1/secrets answers a null nextCursor on its last page.
+  return Response.json({ nextCursor: null, ...cursorPage(page.data, page) });
 }

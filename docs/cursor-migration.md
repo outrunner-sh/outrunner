@@ -56,7 +56,7 @@ curl "$OUTRUNNER/api/v1/agents/$AGENT_ID/runs" \
 | `GET /agents/{id}/stream` | Its events across its runs (`Last-Event-ID`, or `lastEventId`) |
 | `GET /agents/{id}/usage` | Its tokens, in all and by run: `runId` |
 | `GET /agents/{id}/artifacts`, `…/artifacts/download` | The screenshots and recordings it uploaded, by `path`; a 15-minute link to one (`path`) |
-| `GET /agents/{id}/runs`, `POST …/runs` | Its runs, newest first; a follow-up (`prompt`, `mode`, `delivery: "steer"`) |
+| `GET /agents/{id}/runs`, `POST …/runs` | Its runs, newest first; a follow-up (`prompt`, `mode`, `delivery: "steer"`): every follow-up steers here, reaching the agent as it works, where Cursor's refuses one without `steer` (`agent_busy`) |
 | `GET …/runs/{runId}`, `…/stream`, `POST …/cancel` | A run: with its `result`, `durationMs` and `git` (branch and pull request) once it's over |
 
 What's Outrunner's own in it:
@@ -128,8 +128,9 @@ What's Outrunner's own in it:
   to sessions of those repositories. `runtime_secret` and
   `environment_variable` both reach the agent as variables, masked in its
   terminal; `build_secret` isn't set over the API. Members' own secrets
-  are theirs alone: no `scope=members`. An org, and a person, keep up to
-  50 each.
+  are theirs alone: no `scope=members`, and an org key neither reads nor
+  changes its maker's own (they reach their sessions in every org). An org,
+  and a person, keep up to 50 each.
 - **Builds** are the project's latest: earlier ones aren't kept, and
   `draft`/`refs` aren't taken.
 - **Projects**: one place each (`env.name`, `repos[0].url`, or

@@ -17,6 +17,7 @@ import { repoFullName } from "@/lib/api/repo-ref";
 import { isUuid } from "@/lib/ids";
 import { missionName } from "@/lib/missions/rules";
 import { type BoxSizeId, isBoxSizeId } from "@/lib/runtime/box-sizes";
+import { isObject } from "@/lib/is-object";
 
 export type CursorProjectStatus = "ACTIVE" | "ARCHIVED";
 
@@ -51,10 +52,6 @@ export type ProjectCreate = {
   key: string | null;
   appearance: ProjectAppearance;
 };
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
 
 /** A project's status: archived with its session, else at work. */
 export function cursorProjectStatus(sessionStatus: string): CursorProjectStatus {

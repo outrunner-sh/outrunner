@@ -457,6 +457,7 @@ export async function sendMessageApi(
       ...(chat && { chat_id: chat }),
       after_event: fence === null ? null : String(fence),
       run_id: logged ? String(logged.promptId) : null,
+      run_number: logged?.runNumber ?? null,
     },
     { status: 202 },
   );
@@ -473,12 +474,18 @@ const FENCE_RETRY_MS = 1_500;
  * message. Null when the log still doesn't show it: docs/api.md says what a
  * caller does then.
  */
-async function fenceAfterSend(workspace: Workspace, content: string, sentAt: number, chat?: string): Promise<{ fence: number; promptId: number } | null> {
+async function fenceAfterSend(
+  workspace: Workspace,
+  content: string,
+  sentAt: number,
+  chat?: string,
+): Promise<{ fence: number; promptId: number; runNumber: number | null } | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, FENCE_RETRY_MS));
     const live = await readLiveConversation(workspace, chat).catch(() => null);
     const sent = live ? sentPrompt(live.entries, content, sentAt) : null;
-    if (sent) return sent;
+    // Its run's place, from the same read: no second one to count runs.
+    if (sent && live) return { ...sent, runNumber: runsFrom(live.entries, live.state).find((r) => r.id === String(sent.promptId))?.number ?? null };
   }
   return null;
 }
@@ -531,6 +538,18 @@ export async function getRunApi(context: ApiContext, id: string, runId: string):
     return Response.json({ ...pendingFirstRun(read.workspace), from: read.from });
   }
   return apiError(404, "No run by that id in this session.");
+}
+
+/** Whether a run named by its place (`run-3`) is one to stream: there, or
+ *  the next on its way (the first while it's pending; one after the last,
+ *  which a message just sent starts). Null when it is, else the answer: a
+ *  stream for one that won't come would wait out its 15 minutes. */
+export async function runToFollow(context: ApiContext, id: string, number: number): Promise<Response | null> {
+  const read = await sessionRuns(context, id);
+  if (read instanceof Response) return read;
+  if (number <= read.runs.length) return null;
+  const coming = number === 1 ? firstRunPending(read.workspace, read.runs, read.from) : number === read.runs.length + 1;
+  return coming ? null : apiError(404, "No run by that id in this session, nor one on its way.");
 }
 
 /** POST /workspaces/{id}/runs/{run_id}/cancel: stop the run, when it's the

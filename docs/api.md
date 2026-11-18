@@ -143,7 +143,7 @@ counted apart. The budget refills continuously: every answer carries
 | PUT, DELETE | `/api/v1/environments/{id}/secrets/{name}` | Set (`value`) or remove one variable (org keys) |
 | GET | `/api/v1/secrets` | The org's secrets, yours and a project's, by name: `scope` (`team`, `user`, `environment`), `environmentId`, `name`, `repo` |
 | GET, PUT, DELETE | `/api/v1/team/secrets`, `/team/secrets/{name}` | The org's secrets, which every member's sessions get: `value`, `type`, `repos` (changed by org keys; up to 50) |
-| GET, PUT, DELETE | `/api/v1/me/secrets`, `/me/secrets/{name}` | Your own, which your sessions get in any org |
+| GET, PUT, DELETE | `/api/v1/me/secrets`, `/me/secrets/{name}` | Your own, which your sessions get in any org (a personal key's or the CLI's: an org key acts for its org) |
 | POST | `/api/v1/projects` | Start a Mission from Cursor's project request (cursor-migration.md) |
 | GET | `/api/v1/missions`, `/api/v1/projects/{id}`, `…/agents` | Your Missions, one, and its agents, in Cursor's words |
 | GET | `/api/v1/environments/{id}/skills` | The skills.sh catalog skills enabled on a project |
@@ -281,7 +281,7 @@ curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces
 ```
 
 The words are `content`; `prompt` is taken too, as text or Cursor's `{ "text",
-"images" }`. A send answers `{ "result": "sent", "after_event": "48213", "run_id": "48290" }`:
+"images" }`. A send answers `{ "result": "sent", "after_event": "48213", "run_id": "48290", "run_number": 2 }`:
 where the conversation stood before this message, read once the send has
 gone, and the run it starts (see Runs). Pass `after_event` to `wait`:
 

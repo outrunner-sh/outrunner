@@ -27,8 +27,8 @@ import { deliverSessionSetup } from "@/lib/runtime/session-setup";
 import { mintSnapshotDownloadUrl } from "@/lib/runtime/storage";
 import { syncEnvironmentSecrets } from "@/lib/secret-sync/sync.deps";
 import { sessionOverrides } from "@/lib/db/session-overrides";
-import { sessionScopedEnv } from "@/lib/db/scoped-secrets";
-import { oversizedEnv, withScopedSecrets, withSessionEnvironment, withSessionServers } from "@/lib/session/session-overrides";
+import { sessionScopedSecrets } from "@/lib/db/scoped-secrets";
+import { oversizedEnv, scopedEnvFor, withScopedSecrets, withSessionEnvironment, withSessionServers } from "@/lib/session/session-overrides";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 
 /** Set the session up on its box before it launches. */
@@ -47,9 +47,7 @@ export async function setUpSession(
 ): Promise<void> {
   const project = await getProject(projectId);
   const id = environmentId ?? (await defaultEnvironmentId(ownerId, projectId));
-  const repos = id ? ((await getEnvironment(ownerId, id))?.repos ?? []) : [];
-  const fullNames = repos.length ? repos.map((r) => r.fullName) : project ? [project.fullName] : [];
-  const [environment, skills, projectServers, userConfig, githubIdentity, mission, agentContext, own, scoped] = await Promise.all([
+  const [environment, skills, projectServers, userConfig, githubIdentity, mission, agentContext, own, scoped, setUpFrom] = await Promise.all([
     sessionEnvironment(ownerId, projectId, id),
     id ? sessionSkills(ownerId, id) : undefined,
     id ? projectMcpServers(ownerId, id) : {},
@@ -61,12 +59,16 @@ export async function setUpSession(
     // What it was started with for itself (the API's `env`, `mcp_servers`,
     // `subagents`): a session asked for them doesn't start without them.
     sessionOverrides(identity.workspaceId),
-    // Its org's secrets and its user's own, for its repositories.
-    sessionScopedEnv(project?.orgId ?? null, ownerId, fullNames),
+    // Its org's secrets and its user's own, kept below for its repositories.
+    sessionScopedSecrets(project?.orgId ?? null, ownerId),
+    // Its repositories, for which of those it gets and whether one is GitLab's.
+    id ? getEnvironment(ownerId, id) : null,
   ]);
+  const repos = setUpFrom?.repos ?? [];
+  const fullNames = repos.length ? repos.map((r) => r.fullName) : project ? [project.fullName] : [];
   const projectConfig = withProjectMcpServers(userConfig, projectServers);
   const agentConfig = own ? withSessionServers(projectConfig, own) : projectConfig;
-  const layered = withScopedSecrets(environment, scoped);
+  const layered = withScopedSecrets(environment, scopedEnvFor(scoped, fullNames));
   const projectEnvironment = own ? withSessionEnvironment(layered, own) : layered;
   // Said here, rather than as the box's "too large".
   const tooLarge = oversizedEnv(projectEnvironment);

@@ -3,12 +3,12 @@
  * an org's ("team"), which every member's sessions in it get, and a person's
  * own, which their sessions get in any org; each for some repositories, or
  * all. Values are sealed (lib/crypto/secret-box.ts) and only ever opened for
- * a session's setup (sessionScopedEnv). Service role only: who may is the
+ * a session's setup (sessionScopedSecrets). Service role only: who may is the
  * caller's to check (lib/api/cursor-environments.deps.ts).
  */
 
 import { open, seal } from "@/lib/crypto/secret-box";
-import { coversRepos } from "@/lib/session/session-overrides";
+import type { ScopedSecrets, ScopedValue } from "@/lib/session/session-overrides";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -96,35 +96,26 @@ export async function deleteScopedSecret(scope: SecretScope, name: string): Prom
   return (data ?? []).length > 0;
 }
 
-async function opened(scope: SecretScope, fullNames: readonly string[]): Promise<Record<string, string>> {
+async function opened(scope: SecretScope): Promise<ScopedValue[]> {
   const t = table(scope);
   const { data, error } = await t.db.from(t.name).select("name, repos, value_ciphertext").eq(t.key, t.value);
   // Before the migration that adds them, there are none.
-  if (error && probeStatus(error) === "missing") return {};
+  if (error && probeStatus(error) === "missing") return [];
   if (error) throw error;
-  const env: Record<string, string> = {};
+  const values: ScopedValue[] = [];
   for (const row of data ?? []) {
-    if (!coversRepos((row.repos as string[] | null) ?? [], fullNames)) continue;
     try {
-      env[row.name as string] = open(row.value_ciphertext as string);
+      values.push({ name: row.name as string, value: open(row.value_ciphertext as string), repos: (row.repos as string[] | null) ?? [] });
     } catch (cause) {
       console.error(`A ${scope.kind} secret (${row.name as string}) couldn't be opened; the session starts without it`, cause);
     }
   }
-  return env;
+  return values;
 }
 
-/** The org's and the person's secrets for a session of these repositories,
- *  opened: `team` and `personal` apart, for the setup to lay around its
- *  project's. */
-export async function sessionScopedEnv(
-  orgId: string | null,
-  userId: string,
-  fullNames: readonly string[],
-): Promise<{ team: Record<string, string>; personal: Record<string, string> }> {
-  const [team, personal] = await Promise.all([
-    orgId ? opened({ kind: "team", orgId }, fullNames) : {},
-    opened({ kind: "user", userId }, fullNames),
-  ]);
+/** The org's and the person's secrets, opened, each with the repositories
+ *  it's for: the setup keeps those of its session's (scopedEnvFor). */
+export async function sessionScopedSecrets(orgId: string | null, userId: string): Promise<ScopedSecrets> {
+  const [team, personal] = await Promise.all([orgId ? opened({ kind: "team", orgId }) : [], opened({ kind: "user", userId })]);
   return { team, personal };
 }

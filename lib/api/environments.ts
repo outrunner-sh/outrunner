@@ -11,22 +11,14 @@ import { GET as environmentGET, PATCH as environmentPATCH } from "@/app/api/envi
 import { DELETE as reposDELETE, POST as reposPOST } from "@/app/api/environments/[id]/repos/route";
 import { PATCH as secretsPATCH } from "@/app/api/environments/[id]/secrets/route";
 import { boxSetupRefused } from "@/lib/api/auth";
+import { projectOf } from "@/lib/api/project-access";
 import { reposPlan } from "@/lib/api/cursor-environments";
-import { applyRepos, bothWays, cursorPatchOf } from "@/lib/api/cursor-environments.deps";
+import { applyRepos, bothWays, cursorPatchOf, reposRefused } from "@/lib/api/cursor-environments.deps";
 import { MAX_REPOS } from "@/lib/environments/rules";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
-import { type Environment, getEnvironment } from "@/lib/db/environments";
+import type { Environment } from "@/lib/db/environments";
 import { isUuid } from "@/lib/ids";
-
-const notFound = () => apiError(404, "No project by that id that you can see.");
-
-/** The project, if it's in the key's org and the caller may see it. */
-async function projectOf(context: ApiContext, id: string): Promise<Environment | Response> {
-  if (!isUuid(id)) return notFound();
-  const environment = await getEnvironment(context.caller.userId, id);
-  return environment && environment.orgId === context.caller.orgId ? environment : notFound();
-}
 
 /** The project as it is now, read through the app's route. */
 async function projectNow(context: ApiContext, id: string): Promise<Response> {
@@ -63,9 +55,15 @@ export async function updateEnvironmentApi(context: ApiContext, id: string): Pro
   if (refused) return refused;
   const project = await projectOf(context, id);
   if (project instanceof Response) return project;
-  // Everything checked before anything is changed.
+  // The repositories change is checked whole (its shape, and the caller's
+  // access to each it adds) before anything is changed; the fields are
+  // checked by the settings route before it saves them, and go first, so a
+  // change refused leaves the project as it was. What's left to fail after
+  // is the database itself.
   const plan = cursor.repos ? reposPlan(project, cursor.repos, MAX_REPOS) : null;
   if (typeof plan === "string") return apiError(400, plan);
+  const repoRefusal = plan ? await reposRefused(context, project, plan) : null;
+  if (repoRefusal) return repoRefusal;
   if (Object.keys(body).length > 0) {
     const changed = await environmentPATCH(
       appRequest(context.base, `/api/environments/${id}`, { method: "PATCH", body }),
