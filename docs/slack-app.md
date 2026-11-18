@@ -173,7 +173,7 @@ app's signing secret.
    - `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`: the **Client ID** and **Client Secret**. Connecting an account
      signs in with Slack, and while these are unset nobody can connect.
 4. Apply the database migrations (`pnpm db:migrate`), including `20261103180000_slack_channel_access.sql` and,
-   for Missions on call, `20261114200000_mission_slack.sql` and `20261114200100_mission_slack_reliability.sql`.
+   for Missions on call, `20261118110000_mission_slack.sql` and `20261118110100_mission_slack_reliability.sql`.
    Missions on call need no new scopes or events: they use `chat:write` (their posts carry a marker in Slack's
    message metadata, which needs no scope of its own), `reactions:write`, `channels:read` and `groups:read` (to
    list and check channels), `channels:history` and `groups:history` (to look for a post whose send went
