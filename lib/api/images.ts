@@ -60,8 +60,10 @@ export function parseImages(value: unknown, alongside = 0): ImageInput[] | strin
     }
     if (typeof data !== "string" || !data) return `${which}'s \`data\` is the image, base64.`;
     const dataUrl = /^data:([^;,]+);base64,([\s\S]*)$/.exec(data);
-    const mimeType = (item as { mime_type?: unknown; mimeType?: unknown }).mime_type ?? (item as { mimeType?: unknown }).mimeType ?? dataUrl?.[1];
-    if (!isImageType(mimeType)) return `${which}'s \`mime_type\` is one of ${IMAGE_TYPES.join(", ")}.`;
+    const given = (item as { mime_type?: unknown; mimeType?: unknown }).mime_type ?? (item as { mimeType?: unknown }).mimeType ?? dataUrl?.[1];
+    // image/jpg isn't a type, but clients send it for JPEGs.
+    const mimeType = typeof given === "string" && given.trim().toLowerCase() === "image/jpg" ? "image/jpeg" : given;
+    if (!isImageType(mimeType)) return `${which}'s \`mime_type\` (or \`mimeType\`) is one of ${IMAGE_TYPES.join(", ")}.`;
     const encoded = (dataUrl ? dataUrl[2] : data).replace(/\s+/g, "");
     // A length check first: a body far over the cap isn't decoded to find out.
     if (encoded.length > Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4) return `${which} is over ${mb} MB.`;

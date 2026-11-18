@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { actorLabel, auditGroup, describeAudit } from "@/lib/audit/actions";
+import { actorLabel, auditGroup, describeAudit, keepable } from "@/lib/audit/actions";
 
 const event = (action: string, resourceLabel: string | null, details: Record<string, unknown> = {}) => ({
   action,
@@ -72,4 +72,21 @@ test("a preview's mode changing and its deletion read as what they let in", () =
   assert.equal(describeAudit(event("preview.made_login", "port 3000")), "made the preview port 3000 sign-in only");
   assert.equal(describeAudit(event("preview.deleted", "Web app")), "deleted the preview Web app");
   assert.equal(auditGroup("preview.made_public"), "access");
+});
+
+test("a project's changes read as its history says them, never a value", () => {
+  assert.equal(describeAudit(event("project.created", "Web + API")), "made the project Web + API");
+  assert.equal(describeAudit(event("project.changed", "Web", { fields: ["hooks", "name"] })), "changed the project Web's hooks, name");
+  assert.equal(describeAudit(event("project.secrets_changed", "Web", { set: ["STRIPE_KEY"], removed: ["OLD"] })), "changed the project Web's secrets: set STRIPE_KEY; removed OLD");
+  assert.equal(describeAudit(event("project.repos_changed", "Web", { added: "acme/api" })), "added acme/api to the project Web");
+  assert.equal(describeAudit(event("project.repos_changed", "Web", { removed: "acme/api" })), "took acme/api out of the project Web");
+  assert.equal(describeAudit(event("project.deleted", "Web")), "deleted the project Web");
+  assert.equal(auditGroup("project.changed"), "settings");
+});
+
+test("a change's details the log can't keep in full leave out the scripts, and say so", () => {
+  const small = { fields: ["hooks"], hooks: { warm: "pnpm i", start: null } };
+  assert.equal(keepable(small), small);
+  const big = { fields: ["scripts"], scripts: { setup: "x".repeat(9000), run: null, archive: null } };
+  assert.deepEqual(keepable(big), { fields: ["scripts"], contents_omitted: true });
 });

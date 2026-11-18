@@ -1,6 +1,12 @@
 import type { RepositoryRecord } from "@/lib/code-providers/repository";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { isGitHubFullName } from "@/lib/github/listing";
+import {
+  parseTokenExpiry,
+  parseTokenScopes,
+  personalTokenKind,
+  type PersonalTokenInfo,
+} from "@/lib/github/personal-token";
 import type { VerifiedEmail } from "@/lib/orgs/domains";
 
 /**
@@ -78,7 +84,7 @@ export class MissingGithubTokenError extends Error {
  */
 export class GitHubReconnectError extends GitHubSyncError {
   constructor(
-    message = "Your GitHub connection has expired. Reconnect GitHub in Settings → Connections.",
+    message = "GitHub stopped accepting your connection or token. Fix it in Settings → Connections.",
     status?: number,
   ) {
     super(message, status);
@@ -446,6 +452,48 @@ export async function tokenOwner(token: string): Promise<TokenOwner> {
   } catch {
     return { kind: "unreachable" };
   }
+}
+
+/**
+ * What GitHub says about a personal access token a user pastes
+ * (lib/github/personal-token.ts): whose it is, its scopes (classic) and when
+ * it expires. Refuses a token that isn't a classic or fine-grained personal
+ * one, and one GitHub doesn't take, with a message the user can act on.
+ */
+export async function inspectPersonalToken(token: string): Promise<PersonalTokenInfo> {
+  const kind = personalTokenKind(token);
+  if (!kind) {
+    throw new GitHubSyncError(
+      "That isn't a GitHub personal access token. Paste a classic (ghp_…) or fine-grained (github_pat_…) token.",
+      400,
+    );
+  }
+  const response = await fetchGitHub(new URL("/user", GITHUB_API_URL), token);
+  if (!response.ok) {
+    const rateLimited =
+      response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after");
+    if (response.status === 401 || (response.status === 403 && !rateLimited)) {
+      throw new GitHubSyncError(
+        "GitHub didn't accept this token. Check it was copied whole and hasn't expired or been revoked.",
+        400,
+      );
+    }
+    console.error("GitHub token check was rejected", { status: response.status });
+    throw new GitHubSyncError("GitHub couldn't check this token right now. Try again.", 502);
+  }
+  const body = (await readJson(response)) as { id?: unknown; login?: unknown } | null;
+  if (typeof body?.id !== "number" || !Number.isSafeInteger(body.id) || !nonEmpty(body.login)) {
+    throw new GitHubSyncError(GITHUB_UNREADABLE, 502);
+  }
+  return {
+    githubUserId: body.id,
+    login: body.login,
+    kind,
+    // Fine-grained tokens get an empty header or none: their permissions
+    // aren't reported, so there's nothing to check.
+    scopes: kind === "classic" ? (parseTokenScopes(response.headers.get("x-oauth-scopes")) ?? []) : null,
+    expiresAt: parseTokenExpiry(response.headers.get("github-authentication-token-expiration")),
+  };
 }
 
 // ---------------------------------------------------------------------------

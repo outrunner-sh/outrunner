@@ -92,6 +92,14 @@ export const SetEnvironmentRequest = z
      *  at every launch (AGENT_FEATURE_WARM_HOOKS). */
     warmHook: z.string().max(64 * 1024).optional(),
     startHook: z.string().max(64 * 1024).optional(),
+    /** The session's own subagents, by name, as Claude Code's --agents takes
+     *  them (AGENT_FEATURE_SUBAGENTS). */
+    subagents: z
+      .record(
+        z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
+        z.object({ description: z.string(), prompt: z.string(), model: z.enum(["sonnet", "opus", "haiku", "inherit"]).optional() }).strict(),
+      )
+      .optional(),
   })
   .strict();
 export type SetEnvironmentRequest = z.infer<typeof SetEnvironmentRequest>;
@@ -180,6 +188,10 @@ export const AGENT_FEATURE_MULTI_REPO_SNAPSHOTS = "multi-repo-snapshots";
 /** The agent warms a ready box (POST/GET /warm) and runs a session's warm
  *  and start hooks. */
 export const AGENT_FEATURE_WARM_HOOKS = "warm-hooks";
+
+/** The agent gives a session's Claude its own subagents
+ *  (SetEnvironmentRequest's `subagents`). */
+export const AGENT_FEATURE_SUBAGENTS = "subagents";
 
 /** The agent warms a ready box of a project of several repositories in a
  *  folder of their checkouts (WarmRequest's `repos`), and a session of the
@@ -849,7 +861,9 @@ export type SessionUrls = z.infer<typeof SessionUrls>;
 
 export const ContentBlock = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
-  z.object({ type: z.literal("thinking") }),
+  // `text`: what the agent thought, where its log says (Claude often logs
+  // none); absent from an agent from before it.
+  z.object({ type: z.literal("thinking"), text: z.string().optional() }),
   z.object({
     type: z.literal("tool_use"),
     id: z.string(),

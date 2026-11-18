@@ -1,0 +1,77 @@
+/**
+ * What a server session (lib/session/server-session.ts) is asked to start
+ * on: Outrunner's models, or, asked to (`onHarness`), the user's own default
+ * model and coding agent, falling back on Outrunner's when that can't start.
+ * A model it names for itself (`choice`: an automation's own) comes first,
+ * falling back on those when it can't start.
+ */
+
+import { OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
+import type { SessionRequest } from "@/lib/session/create-cloud-session";
+import type { ServerSessionResult, ServerSessionStart } from "@/lib/session/server-session";
+
+/** Outrunner's models, on Outrunner's key (not `key: "own"`): the user's
+ *  allowance, not their Claude or their own OpenRouter key. */
+export function onOutrunner(start: Pick<ServerSessionStart, "model" | "prompt" | "branch">): SessionRequest {
+  return { provider: "outrunner", model: start.model ?? OUTRUNNER_MODELS[0].id, prompt: start.prompt, ...(start.branch && { branch: start.branch }) };
+}
+
+/** No model or provider: the user's own default (personal, then the org's),
+ *  as their new session with none picked starts on. */
+export function onOwnDefault(start: Pick<ServerSessionStart, "prompt" | "branch">): SessionRequest {
+  return { prompt: start.prompt, ...(start.branch && { branch: start.branch }) };
+}
+
+/** The model it names, as the new-session screen would ask for it: on
+ *  whoever serves it (Outrunner's allowance, the user's Claude or Codex, a
+ *  key of theirs), the effort with it. */
+export function onChoice(start: Pick<ServerSessionStart, "choice" | "prompt" | "branch">): SessionRequest {
+  const choice = start.choice!;
+  return {
+    provider: choice.provider,
+    model: choice.id,
+    ...(choice.effort && { effort: choice.effort }),
+    prompt: start.prompt,
+    ...(start.branch && { branch: start.branch }),
+  };
+}
+
+/**
+ * Start it on the model it names, when it names one: refused (not on the
+ * user's menu, an effort it doesn't take, signed out of its account), it
+ * starts as it would have with none (startOnChosen), its `fellBack` saying
+ * why. One made is that session, however it went.
+ */
+export async function startOnChoice(
+  start: Pick<ServerSessionStart, "choice" | "model" | "prompt" | "branch" | "onHarness">,
+  attempt: (request: SessionRequest) => Promise<ServerSessionResult>,
+): Promise<ServerSessionResult> {
+  if (!start.choice) return startOnChosen(start, attempt);
+  const chosen = await attempt(onChoice(start));
+  if (chosen.status !== "refused") return chosen;
+  const instead = await startOnChosen(start, attempt);
+  if (instead.status === "refused") return instead;
+  const why = `It couldn't start on ${start.choice.id}: ${chosen.errorMessage}`;
+  const then = "fellBack" in instead && instead.fellBack
+    ? instead.fellBack
+    : `Ran on ${start.onHarness ? "your default model" : "Outrunner's models"} instead.`;
+  return { ...instead, fellBack: `${why} ${then}` };
+}
+
+/**
+ * Start it with `attempt` on what it's asked to run. On the user's own, a
+ * refusal (no session made: signed out of Claude, say) starts it on
+ * Outrunner's models instead, its `fellBack` saying why; one made is that
+ * session, however it went, and never a second.
+ */
+export async function startOnChosen(
+  start: Pick<ServerSessionStart, "model" | "prompt" | "branch" | "onHarness">,
+  attempt: (request: SessionRequest) => Promise<ServerSessionResult>,
+): Promise<ServerSessionResult> {
+  if (!start.onHarness) return attempt(onOutrunner(start));
+  const own = await attempt(onOwnDefault(start));
+  if (own.status !== "refused") return own;
+  const outrunner = await attempt(onOutrunner(start));
+  if (outrunner.status === "refused") return outrunner;
+  return { ...outrunner, fellBack: `Ran on Outrunner's models: it couldn't start on your own. ${own.errorMessage}` };
+}

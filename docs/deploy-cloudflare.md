@@ -260,7 +260,7 @@ redirect). The first-time equivalent from a laptop with a working Docker is
    migrations. Its summary warns when they changed, but it deploys anyway.
 2. **Merge to main.** Each deploy restarts the single prod container and drops
    live sessions, so merge with that in mind.
-3. **CI goes green → it deploys.** *Deploy to Cloudflare Containers* starts
+3. **CI goes green → it deploys.** *Deploy production* starts
    when CI succeeds on the merge commit. CI runs for pull requests and forks
    never deploy. The run's summary shows the SHA, the commits since the live
    build, and any migrations.
@@ -276,7 +276,7 @@ is running, and one whose commit the live build already contains fails before
 deploying. That covers CI finishing out of order, or a re-run of an old
 commit's CI.
 
-**Rollback or redeploy:** Actions → *Deploy to Cloudflare Containers* →
+**Rollback or redeploy:** Actions → *Deploy production* →
 *Run workflow* on `main`, with `ref` set to the previous good SHA. The summary
 of the last good deploy shows it; leave `ref` empty for main's head. The
 commit must be on main and have passed CI there (a push run, not a PR's).

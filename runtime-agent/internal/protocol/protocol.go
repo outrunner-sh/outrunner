@@ -331,7 +331,23 @@ type SetEnvironmentRequest struct {
 	// launch (FeatureWarmHooks). Empty removes them.
 	WarmHook  string `json:"warmHook,omitempty"`
 	StartHook string `json:"startHook,omitempty"`
+	// Subagents are the session's own, by name, which Claude may hand work
+	// to (Claude Code's --agents), at every launch (FeatureSubagents). None
+	// removes them.
+	Subagents map[string]Subagent `json:"subagents,omitempty"`
 }
+
+// Subagent is one of a session's own subagents, as Claude Code's --agents
+// takes it.
+type Subagent struct {
+	Description string `json:"description"`
+	Prompt      string `json:"prompt"`
+	// Model is sonnet, opus, haiku or inherit; none inherits.
+	Model string `json:"model,omitempty"`
+}
+
+// FeatureSubagents is SetEnvironmentRequest's Subagents.
+const FeatureSubagents = "subagents"
 
 // FeatureWarmHooks is POST/GET /warm, a ready box's warming, and
 // SetEnvironmentRequest's WarmHook and StartHook.

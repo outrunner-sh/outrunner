@@ -171,6 +171,31 @@ type WorkspaceRow = {
 type MissionTokenRow = { mission_id: string; token_hash: string; minted_at: string };
 type MissionRunnerBriefRow = { runner_id: string; mission_id: string; brief: string; created_at: string };
 type MissionNotesRow = { mission_id: string; body: string; updated_at: string };
+// supabase/migrations/20261117100000_session_overrides.sql
+type SessionOverridesRow = { workspace_id: string; overrides_ciphertext: string; created_at: string };
+// supabase/migrations/20261117110000_team_and_personal_secrets.sql
+type ScopedSecretType = "runtime_secret" | "environment_variable";
+type OrgSecretRow = {
+  id: string;
+  org_id: string;
+  name: string;
+  value_ciphertext: string;
+  type: ScopedSecretType;
+  repos: string[];
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+type UserSecretRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  value_ciphertext: string;
+  type: ScopedSecretType;
+  repos: string[];
+  created_at: string;
+  updated_at: string;
+};
 export type MissionEventKind = "finished" | "ready" | "needs_attention" | "merged" | "closed" | "archived";
 type MissionEventRow = {
   id: string;
@@ -775,6 +800,8 @@ type OrganizationSettingsRow = {
   alert_thresholds: number[];
   // supabase/migrations/20261102100000_github_agent_loop.sql.
   archive_on_close: boolean;
+  // supabase/migrations/20261114140000_automation_cover_new_repos.sql.
+  automations_on_harness: boolean;
   updated_by: string | null;
   updated_at: string;
 };
@@ -970,6 +997,13 @@ type AutomationRow = {
   archive_when_done: boolean;
   debounce_seconds: number;
   session_mode: "new" | "reuse";
+  /** supabase/migrations/20261114140000_automation_cover_new_repos.sql */
+  cover_new_repos: boolean;
+  /** Its own model, all or none of provider and id
+   *  (supabase/migrations/20261117120000_automation_model.sql). */
+  model_provider: string | null;
+  model_id: string | null;
+  model_effort: string | null;
   archived_at: string | null;
   runs_since: string;
   created_at: string;
@@ -1698,6 +1732,12 @@ export type Database = {
         Update: { gitlab_user_id?: number; gitlab_login?: string; token_ciphertext?: string; updated_at?: string };
         Relationships: [];
       };
+      user_github_tokens: {
+        Row: { user_id: string; github_user_id: number; github_login: string; token_kind: "classic" | "fine_grained"; scopes: string[] | null; expires_at: string | null; token_ciphertext: string; updated_at: string };
+        Insert: { user_id: string; github_user_id: number; github_login: string; token_kind: "classic" | "fine_grained"; scopes?: string[] | null; expires_at?: string | null; token_ciphertext: string; updated_at?: string };
+        Update: { github_user_id?: number; github_login?: string; token_kind?: "classic" | "fine_grained"; scopes?: string[] | null; expires_at?: string | null; token_ciphertext?: string; updated_at?: string };
+        Relationships: [];
+      };
       projects: {
         Row: ProjectRow;
         Insert: Insert<
@@ -1985,6 +2025,24 @@ export type Database = {
         Row: MissionNotesRow;
         Insert: Insert<MissionNotesRow, "mission_id">;
         Update: Partial<MissionNotesRow>;
+        Relationships: [];
+      };
+      session_overrides: {
+        Row: SessionOverridesRow;
+        Insert: Insert<SessionOverridesRow, "workspace_id" | "overrides_ciphertext">;
+        Update: Partial<SessionOverridesRow>;
+        Relationships: [];
+      };
+      org_secrets: {
+        Row: OrgSecretRow;
+        Insert: Insert<OrgSecretRow, "org_id" | "name" | "value_ciphertext">;
+        Update: Partial<OrgSecretRow>;
+        Relationships: [];
+      };
+      user_secrets: {
+        Row: UserSecretRow;
+        Insert: Insert<UserSecretRow, "user_id" | "name" | "value_ciphertext">;
+        Update: Partial<UserSecretRow>;
         Relationships: [];
       };
       mission_events: {
@@ -2500,6 +2558,19 @@ export type Database = {
           settings: Json;
         };
         Returns: boolean;
+      };
+      // supabase/migrations/20261114140000_automation_cover_new_repos.sql
+      ensure_code_review: {
+        Args: {
+          target_org: string;
+          runner: string;
+          automation_name: string;
+          automation_template: string;
+          automation_prompt: string;
+          automation_triggers: AutomationTriggerDb[];
+          project_ids: string[];
+        };
+        Returns: string | null;
       };
       // supabase/migrations/20261102198000_automation_limits.sql
       automation_times_run: {

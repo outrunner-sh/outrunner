@@ -28,9 +28,10 @@ import { anthropicEnvVar, hasClaudeCredential } from "@/lib/runtime/anthropic-en
  * ({@link hasClaudeCredential}) rather than falling back to a shared credential.
  *
  * And their GitHub token as GH_TOKEN, so the agent can push its branch and run
- * `gh pr create` as its orientation tells it to: their GitHub App user token
- * (8 hours at most; the box's git asks for fresh ones as it goes,
- * app/api/runtime/git-credential), or an old sign-in token where those are
+ * `gh pr create` as its orientation tells it to: a personal access token
+ * they pasted, else their GitHub App user token (8 hours at most; the box's
+ * git asks for fresh ones as it goes, app/api/runtime/git-credential), or an
+ * old sign-in token where those are
  * still allowed (lib/github/personal.ts). The box is theirs alone (one
  * per user and project), so it reaches no one else's; the agent masks it in
  * the terminal and points git at it for github.com only. Not for a user who

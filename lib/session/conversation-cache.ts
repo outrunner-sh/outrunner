@@ -19,6 +19,8 @@ export type CachedConversation = {
  *  what was shown, without a cursor to resume from. */
 export type ConversationStore = {
   load(id: string): Promise<Pick<CachedConversation, "events" | "seenIds"> | undefined>;
+  /** The sessions it keeps a conversation for. */
+  ids(): Promise<string[]>;
   save(id: string, entry: CachedConversation): void;
   remove(id: string): unknown;
   clear(): unknown;
@@ -61,6 +63,15 @@ export class ConversationCache {
     const entry = { ...kept, lastEventId: null };
     this.entries.set(id, entry);
     return entry;
+  }
+
+  /** Which of `ids` there is a conversation for, this page's or one kept from
+   *  before it: opening any of those shows it at once. */
+  async held(ids: readonly string[]): Promise<Set<string>> {
+    const held = new Set(ids.filter((id) => this.entries.has(id)));
+    if (held.size === ids.length || !this.store) return held;
+    for (const id of await this.store.ids()) if (ids.includes(id)) held.add(id);
+    return held;
   }
 
   set(id: string, entry: CachedConversation): void {

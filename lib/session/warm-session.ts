@@ -15,6 +15,9 @@ export const WARM_URLS_FOR_MS = 45_000;
 export const WARM_WAIT_MS = 200;
 /** How long a warm-up streams the conversation in when no click follows. */
 const WARM_STREAM_FOR_MS = 20_000;
+/** How long a `settle` warm-up's stream may say nothing before its history is
+ *  taken as all in: a replay comes as fast as the box reads it. */
+export const WARM_QUIET_MS = 2_000;
 
 type Warm = { at: number; urls: Promise<SessionUrls | null>; stop: () => void };
 const warming = new Map<string, Warm>();
@@ -27,20 +30,36 @@ const warming = new Map<string, Warm>();
  * click shows it at once and the page attaches with the URLs already in hand.
  * Stops by itself when no click follows. Again within {@link WARM_URLS_FOR_MS}
  * does nothing.
+ *
+ * `settle` (a prefetch, lib/session/prefetch-sessions.ts) stops it as soon as
+ * its history is in, the stream quiet for {@link WARM_QUIET_MS}, rather than
+ * keep a socket open for a click that may never come. Done when it stops.
  */
-export function warmSession(workspaceId: string): void {
+export function warmSession(workspaceId: string, { settle = false }: { settle?: boolean } = {}): Promise<void> {
   const kept = warming.get(workspaceId);
-  if (kept && Date.now() - kept.at < WARM_URLS_FOR_MS) return;
+  if (kept && Date.now() - kept.at < WARM_URLS_FOR_MS) return Promise.resolve();
   kept?.stop();
 
   let stopped = false;
   let subscription: EventSubscription | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let quiet: ReturnType<typeof setTimeout> | null = null;
+  let done: () => void = () => {};
+  const finished = new Promise<void>((resolve) => {
+    done = resolve;
+  });
   const stop = () => {
     stopped = true;
     subscription?.dispose();
     subscription = null;
     if (timer) clearTimeout(timer);
+    if (quiet) clearTimeout(quiet);
+    done();
+  };
+  const settling = () => {
+    if (!settle || stopped) return;
+    if (quiet) clearTimeout(quiet);
+    quiet = setTimeout(stop, WARM_QUIET_MS);
   };
 
   const urls = fetch(`/api/workspaces/${workspaceId}/session?warm=1`, { method: "POST" })
@@ -49,16 +68,21 @@ export function warmSession(workspaceId: string): void {
     .catch(() => null);
 
   void urls.then((answer) => {
-    if (!answer?.eventsUrl || stopped) return;
+    if (stopped) return;
+    if (!answer?.eventsUrl) return stop();
     subscription = subscribeEventsWs(
       answer.eventsUrl,
-      (event, id) => CONVERSATIONS.append(workspaceId, event, id),
-      { lastEventId: CONVERSATIONS.get(workspaceId)?.lastEventId ?? null, onClose: stop },
+      (event, id) => {
+        CONVERSATIONS.append(workspaceId, event, id);
+        settling();
+      },
+      { lastEventId: CONVERSATIONS.get(workspaceId)?.lastEventId ?? null, onOpen: settling, onClose: stop },
     );
     timer = setTimeout(stop, WARM_STREAM_FOR_MS);
   });
 
   warming.set(workspaceId, { at: Date.now(), urls, stop });
+  return finished;
 }
 
 /**

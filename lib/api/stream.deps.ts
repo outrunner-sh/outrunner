@@ -30,9 +30,17 @@ const open = new Map<string, number>();
 
 const WAITED_FOR = new Set(["preparing", "resuming", "restoring"]);
 
-export async function streamApi(context: ApiContext, id: string, run?: string): Promise<Response> {
+/** `run` (by id, or by number) streams that run alone; `translate` says each
+ *  event in another API's words (lib/api/cursor.ts), or leaves it out (null). */
+export async function streamApi(
+  context: ApiContext,
+  id: string,
+  run?: string | { number: number },
+  translate?: (event: StreamEvent) => StreamEvent | null,
+): Promise<Response> {
   const params = new URL(context.request.url).searchParams;
-  const start = streamStart(context.request.headers.get("last-event-id"), params.get("after_event"));
+  // `lastEventId` is Cursor's name for it, for a client that can't set headers.
+  const start = streamStart(context.request.headers.get("last-event-id"), params.get("after_event") ?? params.get("lastEventId"));
   if (start === undefined) return apiError(400, "`Last-Event-ID` (or `after_event`) is an event's id.");
   const workspace = await ownSession(context, id);
   if (workspace instanceof Response) return workspace;
@@ -56,7 +64,8 @@ export async function streamApi(context: ApiContext, id: string, run?: string): 
     async start(controller) {
       const encoder = new TextEncoder();
       const send = (event: StreamEvent) => {
-        if (!ended()) controller.enqueue(encoder.encode(sseText(event)));
+        const said = translate ? translate(event) : event;
+        if (said && !ended()) controller.enqueue(encoder.encode(sseText(said)));
       };
       const deadline = Date.now() + MAX_STREAM_MS;
       const heartbeat = setInterval(() => send({ event: "heartbeat", id: null, data: {} }), HEARTBEAT_MS);

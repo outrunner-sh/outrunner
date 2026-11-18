@@ -1,0 +1,17 @@
+name: Feature request
+description: Propose an improvement to Outrunner.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe your workflow and what is difficult today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the behavior you want and any alternatives you considered.
+    validations:
+      required: true
