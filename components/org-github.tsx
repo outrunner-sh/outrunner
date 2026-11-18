@@ -45,6 +45,11 @@ const ERRORS: Record<string, string> = {
   failed: "Couldn't keep the installation. Try again.",
 };
 
+/** Connected: its repositories are picked next, not all added (a picker
+ *  opens from here once there is one; until then, Projects has it). */
+const addedMessage = (login: string) => `Added ${login}. Next, pick which of its repositories to work on.`;
+const PICK_REPOSITORIES = { label: "Pick repositories", href: "/projects" };
+
 /** Where an installation is managed (its repositories, uninstalling) on GitHub. */
 function manageUrl(i: OrgInstallation): string {
   return installationSettingsUrl({ installationId: i.id, login: i.accountLogin, type: i.accountType });
@@ -60,6 +65,7 @@ export function OrgGitHubSettings({
   configured,
   installations,
   available,
+  offered,
   pending,
   installed,
   error,
@@ -69,6 +75,9 @@ export function OrgGitHubSettings({
   installations: InstallationView[];
   /** Installations the admin may connect here, including shared ones. */
   available: OrgInstallation[];
+  /** Changed on GitHub and back without Outrunner's link (the setup route's
+   *  `connect`), not yet this org's: offered to add with a click. */
+  offered: { id: number; accountLogin: string } | null;
   /** Back from GitHub before its word of the install: say to wait. */
   pending: boolean;
   installed: string | null;
@@ -77,17 +86,24 @@ export function OrgGitHubSettings({
   const router = useRouter();
   const [failure, setFailure] = useState<string | null>(error ? (ERRORS[error] ?? ERRORS.failed) : null);
   const [busy, setBusy] = useState<number | null>(null);
+  const [added, setAdded] = useState<string | null>(null);
   const admin = org.role === "admin";
+  // Gone once added: the page's refresh finds it kept.
+  const offer = admin && offered && !added && !installations.some((i) => i.id === offered.id) ? offered : null;
+  const others = offer ? available.filter((i) => i.id !== offer.id) : available;
 
-  const claim = async (id: number) => {
+  const claim = async (id: number, login: string) => {
     setBusy(id);
     setFailure(null);
+    setAdded(null);
     try {
-      await requestJson(`/api/orgs/${org.id}/github/installations`, {
+      await requestJson<{ claimed: number }>(`/api/orgs/${org.id}/github/installations`, {
         method: "POST",
         body: { installationId: id },
+        has: (data) => typeof data.claimed === "number",
         fallback: "Couldn't add it. Try again.",
       });
+      setAdded(addedMessage(login));
       router.refresh();
     } catch (cause) {
       setFailure(cause instanceof Error ? cause.message : "Couldn't add it. Try again.");
@@ -137,20 +153,37 @@ export function OrgGitHubSettings({
         </p>
       </div>
 
-      {installed ? (
-        <InlineMessage tone="info">{`Installed on ${installed}.`}</InlineMessage>
+      {added || installed ? (
+        <InlineMessage tone="info" actions={[PICK_REPOSITORIES]}>
+          {added ?? addedMessage(installed!)}
+        </InlineMessage>
       ) : null}
-      {pending && available.length === 0 ? (
+      {offer ? (
+        <InlineMessage
+          tone="info"
+          actions={[
+            {
+              label: busy === offer.id ? "Adding…" : `Add to ${org.name}`,
+              primary: true,
+              disabled: busy !== null,
+              onClick: () => void claim(offer.id, offer.accountLogin),
+            },
+          ]}
+        >
+          {`${offer.accountLogin} was changed on GitHub, but it isn't connected to ${org.name}. Add it, and its repositories become ${org.name}'s projects.`}
+        </InlineMessage>
+      ) : null}
+      {pending && others.length === 0 ? (
         <InlineMessage tone="info" actions={[{ label: "Reload", onClick: () => router.refresh() }]}>
           GitHub hasn&apos;t confirmed the installation yet. It shows here in a moment, for you to add. If it
           doesn&apos;t within a minute, uninstall the App on GitHub and install it again from here.
         </InlineMessage>
       ) : null}
-      {admin && available.length > 0 ? (
+      {admin && others.length > 0 ? (
         <div className="max-w-2xl space-y-2">
           <h2 className="text-[13px] font-medium text-foreground">Available GitHub connections</h2>
           <ul className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border/60">
-            {available.map((i) => (
+            {others.map((i) => (
               <li key={i.id} className="flex items-center gap-3 px-3 py-2">
                 <GitHubIcon className="size-4 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{i.accountLogin}</span>
@@ -158,7 +191,7 @@ export function OrgGitHubSettings({
                   type="button"
                   className="route-state-button"
                   disabled={busy !== null}
-                  onClick={() => void claim(i.id)}
+                  onClick={() => void claim(i.id, i.accountLogin)}
                 >
                   {`Add to ${org.name}`}
                 </button>

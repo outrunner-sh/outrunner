@@ -6,6 +6,7 @@ import { getGithubConnection } from "@/lib/db/github-connections";
 import { ClaimError, claimInstallation, installationHolder, refreshInstallation } from "@/lib/db/github-installations";
 import { memberRole, personalOrgId } from "@/lib/db/orgs";
 import { getInstallation, githubAppConfig, readInstallState, signInstallState } from "@/lib/github/app";
+import { returnWithoutState } from "@/lib/github/connect-installation";
 import { appClientSecret, authorizeUrl } from "@/lib/github/installer";
 import { appUrl } from "@/lib/orgs/notify";
 import { getOrgContext, setActiveOrg } from "@/lib/orgs/server";
@@ -26,9 +27,12 @@ const WAIT_FOR_WEBHOOK_MS = 8_000;
  *   neither is, ask them to authorize the App once on GitHub
  *   (app/api/github/app/verify). Administering another org that uses it, or
  *   an installation id alone, grants no access.
- * - Without a state (an update, or an install begun on GitHub): only an
+ * - Without a state (an update, or an install begun on GitHub): an
  *   installation the org has already (the active one, or their personal
- *   org), refreshed. Anything else is sent back to start from Outrunner's link.
+ *   org) is refreshed. One the active org hasn't, which they administer, is
+ *   offered on its GitHub settings for them to add with a click, which checks
+ *   GitHub's say as above; nothing is linked on this GET alone
+ *   (lib/github/connect-installation.ts).
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -49,16 +53,22 @@ export async function GET(request: Request) {
     if (stateValue && (!state || state.userId !== owner.id)) return back("error=link_expired");
 
     let holder = await installationHolder(installationId);
-    // No state: only one the org has, from GitHub's "Redirect on update".
-    const activeOrg = state ? null : (await getOrgContext())?.active;
-    const personal = state ? null : await personalOrgId(owner.id).catch(() => null);
-    const orgId =
-      state?.orgId ??
-      (activeOrg && holder?.orgIds.includes(activeOrg.id)
-        ? activeOrg.id
-        : personal && holder?.orgIds.includes(personal)
-          ? personal
-          : null);
+    // No state: one the org has, from GitHub's "Redirect on update", or one
+    // to offer the org they're looking at.
+    let orgId = state?.orgId ?? null;
+    let personal: string | null = null;
+    if (!state) {
+      personal = await personalOrgId(owner.id).catch(() => null);
+      const next = returnWithoutState({
+        linkedOrgIds: holder?.orgIds ?? null,
+        activeOrg: (await getOrgContext())?.active ?? null,
+        personalOrgId: personal,
+      });
+      if (next.kind === "expired") return back("error=link_expired");
+      if (next.kind === "not_admin") return back("error=not_admin");
+      if (next.kind === "offer") return back(`connect=${installationId}`);
+      orgId = next.orgId;
+    }
     if (!orgId) return back("error=link_expired");
     // Their own connection's page, for their personal org's installations.
     const done = (login: string) =>
@@ -108,8 +118,7 @@ export async function GET(request: Request) {
       action: "github.installed",
       resource: { type: "installation", id: String(installation.id), label: installation.accountLogin },
     });
-    // Onboarding lists the App's repositories as it comes back; their own
-    // connection's page leaves the org they're looking at as it is.
+    // Their own connection's page leaves the org they're looking at as it is.
     if (state.next !== "/settings/connections") await setActiveOrg(orgId).catch(() => {});
     return done(installation.accountLogin);
   } catch (error) {
