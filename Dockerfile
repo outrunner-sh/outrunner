@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.10
+# syntax=docker/dockerfile:1
 
 # Control-plane image for Cloudflare Containers — the same `pnpm start` app as
 # the Railway setup. In this repo the cross-compiled runtime-agent binary is a
@@ -67,6 +67,10 @@ RUN test -n "$NEXT_PUBLIC_SUPABASE_URL" -a -n "$NEXT_PUBLIC_SUPABASE_ANON_KEY" \
   || (echo "ERROR: NEXT_PUBLIC_SUPABASE_* build args are empty; the client bundle would ship without them" && exit 1)
 RUN node scripts/verify-codex-cli.mjs "$NEXT_PUBLIC_CODEX_CLI_VERSION"
 RUN --mount=type=cache,id=next-cache,target=/app/.next/cache pnpm build
+# What the runtime takes: the source (server.ts runs it as is) and the built
+# .next, without the build's dependencies (next build's cache is a mount, not
+# in the image).
+RUN mkdir /release && tar -cf - --exclude=./node_modules --exclude=./.next/cache . | tar -xf - -C /release
 
 # ---- runtime: server.ts under tini + the built agent binary -------------------
 FROM base AS runtime
@@ -88,9 +92,8 @@ ENV RUNTIME_AGENT_BINARY_PATH=bin/runtime-agent-linux-amd64
 # lockfile, so a deploy usually pulls just the small app layer after it.
 COPY --from=prod-deps /app/node_modules /app/node_modules
 COPY --from=agent /out/runtime-agent-linux-amd64 /app/bin/runtime-agent-linux-amd64
-# The app: its source (server.ts runs it as is) and the built .next, without
-# the build's dependencies or next build's cache.
-COPY --from=build --exclude=node_modules --exclude=.next/cache /app /app
+# The app, as the build stage set it out.
+COPY --from=build /release /app
 # Not root: the image's own `node` user (uid 1000). The app stays root-owned
 # and read-only to it; Next's cache is the one place it writes under /app.
 RUN mkdir -p /app/.next/cache && chown -R node:node /app/.next/cache
