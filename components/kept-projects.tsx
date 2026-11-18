@@ -29,5 +29,5 @@ export function ServedProjects({ projects, canSync, scope }: { projects: Project
 export function KeptProjects() {
   const data = useAppData();
   const canSync = KEPT_CAN_SYNC.useKept(useViewerScope());
-  return data ? <ProjectsIndex projects={data.projects} canSync={canSync ?? false} /> : <RouteLoading label="Loading projects" />;
+  return data ? <ProjectsIndex projects={data.projects} canSync={canSync ?? false} /> : <RouteLoading label="Loading environments" />;
 }

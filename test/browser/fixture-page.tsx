@@ -76,7 +76,7 @@ export function FixturePage() {
   const pathname = usePathname();
   const view =
     params.get("view") ??
-    (pathname.startsWith("/projects/") ? "project" : pathname.startsWith("/workspaces/") ? "session" : "home");
+    ((pathname.startsWith("/environments/") || pathname.startsWith("/projects/")) ? "project" : pathname.startsWith("/workspaces/") ? "session" : "home");
   const state =
     params.get("state") ??
     (pathname.includes("readonly") ? "readonly" : "normal");
@@ -288,6 +288,7 @@ export function FixturePage() {
               id: 42, accountLogin: "outrunner-sh", accountType: "Organization", repositorySelection: "all",
               suspendedAt: null, suspended: false, installedBy: null, createdAt: "2026-10-30T00:00:00Z",
             }] : []}
+            offered={params.get("offer") === "1" ? { id: 42, accountLogin: "outrunner-sh" } : null}
             pending={false} installed={null} error={null}
           />
         </SettingsFrame>

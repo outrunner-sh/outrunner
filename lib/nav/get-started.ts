@@ -49,7 +49,7 @@ export function getStartedSteps({
   const steps: GetStartedStep[] = [
     // The new-session screen is where a repository is picked and becomes a
     // project: it opens with its picker open, or its composer focused.
-    { id: "project", label: "Create your first project", href: "/new?pick=repo", done: projects > 0 },
+    { id: "project", label: "Add your first repository", href: "/new?pick=repo", done: projects > 0 },
     { id: "session", label: "Start your first session", href: "/new?focus=composer", done: sessions > 0 },
   ];
   // Claude is a step only where a session needs it: on Outrunner's models a

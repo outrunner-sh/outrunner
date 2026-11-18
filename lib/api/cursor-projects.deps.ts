@@ -32,6 +32,7 @@ import { lifecycleApi } from "@/lib/api/workspaces";
 import { defaultEnvironmentId, getEnvironment } from "@/lib/db/environments";
 import { toWorkspace } from "@/lib/db/mappers";
 import { projectLevel } from "@/lib/db/org-access";
+import { noRepository } from "@/lib/api/no-repository.deps";
 import { getProject, getProjectByFullName, getWorkspace } from "@/lib/db/repositories";
 import { isUuid } from "@/lib/ids";
 import { archiveMission } from "@/lib/missions/archive";
@@ -95,12 +96,14 @@ async function placeOf(context: ApiContext, create: ProjectCreate): Promise<{ en
     // A repository: its own project, as the app's Mission screen starts one.
     const repo = "projectId" in place ? await getProject(place.projectId) : await getProjectByFullName(caller.orgId, place.repoFullName);
     if (!repo || repo.orgId !== caller.orgId) {
-      return apiError(404, "No repository at that address in this org that you can see. Add it to Outrunner first.");
+      return "repoFullName" in place
+        ? noRepository(context, place.repoFullName)
+        : apiError(404, "No repository at that address in this org that you can see. Add it to Outrunner first.");
     }
     environmentId = await defaultEnvironmentId(owner.id, repo.id);
   }
   const environment = environmentId ? await getEnvironment(owner.id, environmentId) : null;
-  if (!environment || environment.orgId !== caller.orgId) return apiError(404, "No project by that id that you can see.");
+  if (!environment || environment.orgId !== caller.orgId) return apiError(404, "No environment by that id that you can see.");
   const projectId = environment.defaultForProjectId ?? environment.repos[0]?.projectId;
   const project = projectId ? await getProject(projectId) : null;
   if (!project || project.orgId !== caller.orgId || !allows(await projectLevel(owner.id, project.id), "read")) {

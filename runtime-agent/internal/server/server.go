@@ -26,6 +26,7 @@ import (
 	"runtime-agent/internal/auth"
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/conversation"
+	"runtime-agent/internal/desktop"
 	"runtime-agent/internal/editor"
 	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/media"
@@ -134,6 +135,9 @@ func (s *Server) Handler() http.Handler {
 	// A session's upload of a screenshot or recording (its upload_media
 	// tool, or `outrunner media upload`), with its ask token as ask's.
 	mux.HandleFunc("POST /workspaces/{id}/media", s.uploadMedia)
+	// `outrunner browser state`, with the session's ask token too: the
+	// desktop browser's sign-ins, for the session's own browser tests.
+	mux.HandleFunc("POST /workspaces/{id}/browser-state", s.browserState)
 	mux.HandleFunc("POST /workspaces/{id}/secrets", s.authed(s.provideSecrets))
 	mux.HandleFunc("POST /workspaces/{id}/mask", s.authed(s.maskText))
 	// git's credential helper and the gh wrapper on this box ask, with the
@@ -1066,6 +1070,43 @@ func (s *Server) uploadMedia(w http.ResponseWriter, r *http.Request) {
 			Text string `json:"text"`
 			media.Result
 		}{media.Text(result), result})
+	}
+}
+
+// browserState answers with the desktop browser's sign-ins as Playwright's
+// storageState, for the session's own browser tests, and a warning for each
+// open tab's localStorage left out. The session proves itself as uploadMedia's
+// does: the sign-ins are the user's, so no other session's caller reads them.
+func (s *Server) browserState(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !validWorkspaceID(id) || !s.ws.AskAuthorized(id, bearer(r)) {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "this session can't read the browser's sign-ins")
+		return
+	}
+	var req struct {
+		Origins []string `json:"origins"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "malformed request: "+err.Error())
+		return
+	}
+	state, warnings, err := s.ws.BrowserState(r.Context(), id, req.Origins)
+	var invalid *desktop.InvalidOriginError
+	switch {
+	case errors.As(err, &invalid):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, workspace.ErrNoDesktopBrowser):
+		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+	default:
+		if warnings == nil {
+			warnings = []string{}
+		}
+		writeJSON(w, http.StatusOK, struct {
+			State    desktop.StorageState `json:"state"`
+			Warnings []string             `json:"warnings"`
+		}{state, warnings})
 	}
 }
 

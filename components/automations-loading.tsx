@@ -13,7 +13,7 @@ export function AutomationsLoading() {
   return (
     <div role="status" aria-busy aria-label="Opening automations">
       <PageLayout className="space-y-8">
-        <PageHeader title="Automations" description="Recurring and event-driven workflows for your projects." />
+        <PageHeader title="Automations" description="Recurring and event-driven workflows for your environments." />
         <SkeletonRows rows={5} rowHeight={44} />
       </PageLayout>
     </div>

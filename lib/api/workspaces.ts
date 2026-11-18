@@ -38,11 +38,11 @@ import { imagesToAttachments } from "@/lib/api/images.deps";
 import { boxSetupRefusal } from "@/lib/api/auth";
 import { firstPrompt, idempotencyKey, idempotentId, MAX_PROMPT, messageOf, parseAttachmentIds, parseCreate, type CreateInput } from "@/lib/api/create-request";
 import { apiError, errorFromRoute } from "@/lib/api/errors";
+import { noRepository } from "@/lib/api/no-repository.deps";
 import { appRequest, jsonBody, routeParams, type ApiContext } from "@/lib/api/handler";
 import { readConversation, readLiveConversation } from "@/lib/api/live";
 import { findRun, runRef } from "@/lib/api/cursor";
 import { firstRunPending, FIRST_RUN, pendingFirstRun, runsFrom, sessionUsage, type Run } from "@/lib/api/runs";
-import { getOrg } from "@/lib/db/orgs";
 import { getChat, listChats } from "@/lib/db/chats";
 import { agentChat, chatNamed } from "@/lib/session/chat-target";
 import { mainChatOf, orderedChats, type SessionChat } from "@/lib/session/chats";
@@ -109,13 +109,13 @@ export async function createWorkspace(
   let projectId = input.projectId;
   if (input.repoFullName) {
     const found = await getProjectByFullName(caller.orgId, input.repoFullName);
-    if (!found) return apiError(404, await noRepository(context, input.repoFullName));
+    if (!found) return noRepository(context, input.repoFullName);
     projectId = found.id;
   }
   let environmentId: string | undefined;
   if (input.environmentId) {
     const environment = await getEnvironment(owner.id, input.environmentId);
-    if (!environment || environment.orgId !== caller.orgId) return apiError(404, "No project by that id that you can see.");
+    if (!environment || environment.orgId !== caller.orgId) return apiError(404, "No environment by that id that you can see.");
     // It works first in the repository the project is the default of, else
     // its first: a project someone made has every one of them checked out,
     // as the new-session screen starts it.
@@ -188,17 +188,6 @@ export async function createWorkspace(
     { ...workspaceJson(workspace, context.base), status: "preparing", run_id: FIRST_RUN, run: pendingFirstRun(workspace) },
     { status: 202 },
   );
-}
-
-/** Why a repository named by address wasn't found: which one, in which org,
- *  and, for a key that names its org per call, how to name another. */
-async function noRepository(context: ApiContext, fullName: string): Promise<string> {
-  const org = await getOrg(context.caller.orgId).catch(() => null);
-  const where = org ? `the org ${org.name} (${org.id})` : `the org ${context.caller.orgId}`;
-  const which = context.caller.kind === "org_key"
-    ? "An org key acts in its own org alone."
-    : "A personal key or the CLI acts in your personal org unless the call names another (`?org=`, or the `Outrunner-Org` header).";
-  return `No repository ${fullName} in ${where} that you can see: add it to Outrunner, or check the org. ${which} GET /projects lists what this key sees.`;
 }
 
 /** Where a session on a pull request starts (its head branch, in the

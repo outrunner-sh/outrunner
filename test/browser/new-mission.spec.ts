@@ -31,7 +31,7 @@ for (const viewport of [
     await page.getByRole("button", { name: "Start a Mission", exact: true }).click();
 
     // A few chips, the project with the latest session first, though listed last.
-    const chips = page.getByRole("radiogroup", { name: "Project" }).getByRole("radio");
+    const chips = page.getByRole("radiogroup", { name: "Repository" }).getByRole("radio");
     await expect(chips).toHaveCount(5);
     await expect(chips.first()).toHaveAccessibleName("outrunner");
     await expect(chips.first()).toHaveAttribute("aria-checked", "true");
@@ -41,9 +41,9 @@ for (const viewport of [
 
     // The rest are searched; the list scrolls inside the dialog.
     await page.getByRole("button", { name: "All 158" }).click();
-    const search = page.getByRole("combobox", { name: "Search projects" });
+    const search = page.getByRole("combobox", { name: "Search repositories" });
     await expect(search).toBeFocused();
-    const list = page.getByRole("listbox", { name: "Projects" });
+    const list = page.getByRole("listbox", { name: "Repositories" });
     await expect(list.getByRole("option")).toHaveCount(158);
     await expectInView(page);
     // The keys keep the active option in view: ↑ from the first wraps to the last.

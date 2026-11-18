@@ -66,9 +66,9 @@ export function OrgAccessSettings({
       <div className="space-y-1">
         <PageHeader title={"Roles & access"} />
         <p className="max-w-prose text-sm text-muted-foreground">
-          What members of {org.name} may do with its projects. <b className="font-medium text-foreground">Read</b>: see
-          a project and start sessions in it. <b className="font-medium text-foreground">Write</b>: also change its
-          settings; on all projects, connect new ones. A member gets the most any grant below gives them. Admins can do
+          What members of {org.name} may do with its repositories. <b className="font-medium text-foreground">Read</b>: see
+          a repository and start sessions in it. <b className="font-medium text-foreground">Write</b>: also change its
+          settings; on all repositories, connect new ones. A member gets the most any grant below gives them. Admins can do
           everything.
         </p>
       </div>
@@ -249,9 +249,9 @@ function PrincipalCard({
       ) : null}
       <ul className="divide-y divide-border/60">
         <li className="flex items-center gap-3 px-3 py-2">
-          <span className="flex-1 text-[13px] text-foreground">All projects</span>
+          <span className="flex-1 text-[13px] text-foreground">All repositories</span>
           <LevelSelect
-            label={`${title} on all projects`}
+            label={`${title} on all repositories`}
             value={all}
             disabled={disabled}
             onChange={(level) => void setLevel(roleId, null, level)}
@@ -260,14 +260,14 @@ function PrincipalCard({
         {exceptions.map((g) => (
           <li key={g.projectId} className="flex items-center gap-3 px-3 py-2">
             <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
-              {named.get(g.projectId!) ?? "A hidden project"}
+              {named.get(g.projectId!) ?? "A hidden repository"}
             </span>
             {/* Its own span: a long name truncates without hiding it. */}
             {rank(g.level) <= rank(all) ? (
-              <span className="shrink-0 text-xs text-muted-foreground">No effect: All projects gives as much</span>
+              <span className="shrink-0 text-xs text-muted-foreground">No effect: All repositories gives as much</span>
             ) : null}
             <LevelSelect
-              label={`${title} on ${named.get(g.projectId!) ?? "the project"}`}
+              label={`${title} on ${named.get(g.projectId!) ?? "the repository"}`}
               value={g.level}
               disabled={disabled}
               noneLabel="Remove"
@@ -278,7 +278,7 @@ function PrincipalCard({
         {addable.length > 0 ? (
           <li className="flex items-center gap-3 px-3 py-2">
             <select
-              aria-label={`Give ${title} access to one project`}
+              aria-label={`Give ${title} access to one repository`}
               value={adding}
               disabled={disabled}
               onChange={async (event) => {
@@ -289,7 +289,7 @@ function PrincipalCard({
               }}
               className={cn("h-8 flex-1 rounded-md border border-dashed border-input bg-transparent px-2 text-[13px] text-muted-foreground", SELECT_OPTIONS)}
             >
-              <option value="">Add one project…</option>
+              <option value="">Add one repository…</option>
               {addable.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.fullName}

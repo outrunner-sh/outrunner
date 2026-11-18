@@ -343,7 +343,7 @@ function EnvironmentOffer({ environment: env, disabled }: { environment: FirstSe
       <div>
         <h2 className="text-sm font-medium">Bring {env.offer.repo}&apos;s environment from this Mac</h2>
         <p className="text-muted-foreground text-xs">
-          Pick what this project&apos;s cloud sessions start with. Kept encrypted, for this one and every one after.
+          Pick what this environment&apos;s cloud sessions start with. Kept encrypted, for this one and every one after.
         </p>
       </div>
       <div className="max-h-56 overflow-auto">
@@ -360,7 +360,7 @@ function EnvironmentOffer({ environment: env, disabled }: { environment: FirstSe
           />
           <span>
             Store the variables and files I picked, encrypted, in Outrunner&apos;s cloud, and give them to this
-            project&apos;s cloud sessions, where the agent can read them.
+            environment&apos;s cloud sessions, where the agent can read them.
           </span>
         </label>
       )}

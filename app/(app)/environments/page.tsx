@@ -48,7 +48,7 @@ async function ServerProjects() {
     (error: unknown) => ({ error }),
   );
   const owner = await getOwnerSafe();
-  if (!owner) redirect("/signin?next=/projects");
+  if (!owner) redirect("/signin?next=/environments");
   const read = await orgRead;
   if ("error" in read) throw read.error;
   const org = read.context;

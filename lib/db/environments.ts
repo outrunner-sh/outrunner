@@ -39,7 +39,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 /** The user may read the project but not change it. */
 export class EnvironmentAccessError extends Error {
   constructor() {
-    super("You can see this project but not change it. Ask an admin of its org for write access.");
+    super("You can see this environment but not change it. Ask an admin of its org for write access.");
     this.name = "EnvironmentAccessError";
   }
 }
@@ -365,7 +365,7 @@ function warmRunOf(runs: unknown, memberId: string): WarmRun | null {
  *  to; nothing of this one was saved. */
 export class EnvironmentConflictError extends Error {
   constructor() {
-    super("The project changed while saving. Try again.");
+    super("The environment changed while saving. Try again.");
   }
 }
 
@@ -471,10 +471,10 @@ export async function sessionCheckouts(userId: string, id: string): Promise<Sess
  *  adding one the user only reads would leave them unable to change it. */
 export async function addEnvironmentRepo(userId: string, id: string, projectId: string): Promise<void> {
   const environment = await getEnvironment(userId, id);
-  if (!environment) throw new EnvironmentRuleError("Project not found.");
+  if (!environment) throw new EnvironmentRuleError("Environment not found.");
   if (!allows(environment.access, "write")) throw new EnvironmentAccessError();
   const repoLevel = await projectLevel(userId, projectId);
-  if (!repoLevel) throw new EnvironmentRuleError("That repository isn't connected to this project's organization.");
+  if (!repoLevel) throw new EnvironmentRuleError("That repository isn't connected to this environment's organization.");
   if (!allows(repoLevel, "write")) {
     throw new EnvironmentRuleError("You can only add a repository you can change. Ask an admin for write access on it.");
   }
@@ -490,7 +490,7 @@ export async function addEnvironmentRepo(userId: string, id: string, projectId: 
     .eq("id", projectId)
     .maybeSingle();
   if (error) throw error;
-  if (!project) throw new EnvironmentRuleError("That repository isn't connected to this project's organization.");
+  if (!project) throw new EnvironmentRuleError("That repository isn't connected to this environment's organization.");
   const taken = new Set(environment.repos.map((r) => r.checkoutName));
   const base = checkoutNameFor(project.name);
   let name = base;
@@ -508,7 +508,7 @@ export async function addEnvironmentRepo(userId: string, id: string, projectId: 
   }
   // Another add at the same moment took the folder name, or the repository.
   if (insertError?.code === "23505") {
-    throw new EnvironmentRuleError("The project changed while adding that repository. Try again.");
+    throw new EnvironmentRuleError("The environment changed while adding that repository. Try again.");
   }
   if (insertError) throw insertError;
 }
@@ -518,9 +518,9 @@ export async function addEnvironmentRepo(userId: string, id: string, projectId: 
  *  Needs write on the project (else EnvironmentAccessError). */
 export async function removeEnvironmentRepo(userId: string, id: string, projectId: string): Promise<void> {
   const environment = await getEnvironment(userId, id);
-  if (!environment) throw new EnvironmentRuleError("Project not found.");
+  if (!environment) throw new EnvironmentRuleError("Environment not found.");
   if (!allows(environment.access, "write")) throw new EnvironmentAccessError();
-  if (environment.repos.length <= 1) throw new EnvironmentRuleError("A project keeps at least one repository.");
+  if (environment.repos.length <= 1) throw new EnvironmentRuleError("An environment keeps at least one repository.");
   if (environment.defaultForProjectId === projectId) {
     throw new EnvironmentRuleError("This project is that repository's own: remove the others instead.");
   }
@@ -586,7 +586,7 @@ export async function createEnvironment(userId: string, orgId: string, name: str
  */
 export async function archiveEnvironment(userId: string, id: string): Promise<void> {
   const environment = await getEnvironment(userId, id);
-  if (!environment) throw new EnvironmentRuleError("Project not found.");
+  if (!environment) throw new EnvironmentRuleError("Environment not found.");
   if (!allows(environment.access, "write")) throw new EnvironmentAccessError();
   if (environment.defaultForProjectId) {
     throw new EnvironmentRuleError("This project is its repository's own, and goes only with the repository.");

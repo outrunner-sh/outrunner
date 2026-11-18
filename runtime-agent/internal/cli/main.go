@@ -44,6 +44,9 @@ Each takes --org <name> and --json; outrunner <command> --help for more.
 In a session's terminal on its box:
   media    Show your work in a pull request: outrunner media upload after.png
            --name "Settings page on a phone, after"; outrunner media gif rec.mp4
+  browser  Start browser tests signed in: outrunner browser state --origin
+           http://localhost:3000 writes the desktop browser's sign-ins for
+           Playwright and prints the file's path
 `
 
 // Main runs the command and returns its exit status. stdin is where the
@@ -93,6 +96,10 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	// a GIF is made here: neither reads this terminal's config.
 	if command == "media" {
 		return mediaCommand(ctx, rest, stdout, stderr)
+	}
+	// So does reading the box's browser's sign-ins.
+	if command == "browser" {
+		return browserCommand(ctx, rest, stdout, stderr)
 	}
 	url := strings.TrimRight(firstNonEmpty(*base, os.Getenv("OUTRUNNER_URL"), DefaultURL), "/")
 

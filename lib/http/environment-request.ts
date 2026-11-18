@@ -7,7 +7,7 @@ import { signInFirst } from "@/lib/http/settings-save";
 
 /** A project's route's 404: also a project the user can't see. */
 export function projectNotFound(): NextResponse {
-  return NextResponse.json({ error: "Project not found." }, { status: 404 });
+  return NextResponse.json({ error: "Environment not found." }, { status: 404 });
 }
 
 /**

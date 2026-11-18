@@ -179,6 +179,9 @@ type Service struct {
 	// DesktopToolbox is where the box's desktop is driven from (desktop.go);
 	// empty launches sessions without the desktop tools.
 	DesktopToolbox string
+	// Browser is the desktop's browser, which BrowserState reads sign-ins
+	// from (browser_state.go); nil reads none.
+	Browser *desktop.Browser
 	// desktopFound is set once the box is found to have a desktop, and
 	// desktopNotFoundAt when it was last found not to (desktop.go).
 	desktopFound      atomic.Bool
@@ -1091,6 +1094,9 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 	}
 	if s.desktopReady(workspaceID) {
 		o += "\n\n# Desktop\n\n" + desktop.Instructions
+		if note := s.browserStateNote(workspaceID); note != "" {
+			o += "\n\n" + note
+		}
 	}
 	o += "\n\n" + s.environmentNote(workspaceID)
 	o += "\n\n" + s.canvasNote(workspaceID)

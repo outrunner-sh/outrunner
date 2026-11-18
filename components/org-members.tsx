@@ -89,7 +89,7 @@ export function OrgMembersSettings({
       <div className="space-y-1">
         <PageHeader title={"Members"} />
         <p className="text-sm text-muted-foreground">
-          {`Who's in ${org.name}. What each may do with its projects is set on Roles & access; each person's sessions stay their own, admins included.`}
+          {`Who's in ${org.name}. What each may do with its repositories is set on Roles & access; each person's sessions stay their own, admins included.`}
         </p>
       </div>
 

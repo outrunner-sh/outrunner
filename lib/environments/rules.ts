@@ -106,7 +106,7 @@ export function instructionsText(value: string | null): string | null {
 /** A name, trimmed, or why it can't be one. */
 export function projectName(name: string): string {
   const trimmed = name.trim();
-  if (trimmed === "") throw new EnvironmentRuleError("Give the project a name.");
+  if (trimmed === "") throw new EnvironmentRuleError("Give the environment a name.");
   if (trimmed.length > MAX_NAME) throw new EnvironmentRuleError(`A project's name is at most ${MAX_NAME} characters.`);
   return trimmed;
 }
