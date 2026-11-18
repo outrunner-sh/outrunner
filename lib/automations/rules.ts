@@ -23,6 +23,10 @@ export const AUTOMATION_TRIGGERS = [
   "issues.labeled",
   "schedule",
   "webhook",
+  // A Mission's only (target "mission"): a watched Slack channel's message,
+  // and a Linear issue routed to it.
+  "slack.message",
+  "linear.issue",
 ] as const;
 export type AutomationTrigger = (typeof AUTOMATION_TRIGGERS)[number];
 
@@ -31,6 +35,20 @@ export type PullRequestTrigger = Extract<AutomationTrigger, `pull_request.${stri
 
 /** An issue's triggers. */
 export type IssueTrigger = Extract<AutomationTrigger, `issues.${string}`>;
+
+/** The triggers a Mission's automation may have; the last two are a
+ *  Mission's only. */
+export const MISSION_TRIGGERS = ["schedule", "webhook", "slack.message", "linear.issue"] as const satisfies readonly AutomationTrigger[];
+export const MISSION_ONLY_TRIGGERS: readonly AutomationTrigger[] = ["slack.message", "linear.issue"];
+
+/** Where an automation's runs go: a new session each, or a Mission, as a
+ *  request (docs/missions.md, "Triggers"). */
+export type TargetKind = "session" | "mission";
+
+/** The longest filter prompt a watched channel has. */
+export const FILTER_PROMPT_MAX = 2000;
+/** App ids a watched channel hears, at most. */
+export const APP_IDS_MAX = 20;
 
 /** The triggers a GitHub event is, which the Outrunner GitHub App's webhook
  *  starts; the rest are Outrunner's own. */
@@ -47,11 +65,13 @@ export const TRIGGER_LABELS: Record<AutomationTrigger, string> = {
   "issues.labeled": "Issue labeled",
   schedule: "Schedule",
   webhook: "Webhook",
+  "slack.message": "Message in a watched Slack channel",
+  "linear.issue": "Linear issue delegated to Outrunner",
 };
 
 /** What a run list is filtered by: a trigger's kind. A run from before runs
  *  kept their trigger is a pull request's. */
-export const TRIGGER_KINDS = ["pull_request", "issues", "schedule", "webhook"] as const;
+export const TRIGGER_KINDS = ["pull_request", "issues", "schedule", "webhook", "slack", "linear"] as const;
 export type TriggerKind = (typeof TRIGGER_KINDS)[number];
 
 export const TRIGGER_KIND_LABELS: Record<TriggerKind, string> = {
@@ -59,11 +79,16 @@ export const TRIGGER_KIND_LABELS: Record<TriggerKind, string> = {
   issues: "Issue",
   schedule: "Schedule",
   webhook: "Webhook",
+  slack: "Slack",
+  linear: "Linear",
 };
 
 /** How a run stands: waiting out its debounce window, being set up, set up
- *  (its prompt sent), its session failed, or none made (`reason` says why). */
-export type RunStatus = "queued" | "started" | "ready" | "failed" | "refused";
+ *  (its prompt sent; a Mission's: its request made), its session failed (a
+ *  Mission's: its filter failed, to run again), none made (`reason` says
+ *  why), or, a Mission's, nothing to do (its filter didn't match, the
+ *  Mission is paused). */
+export type RunStatus = "queued" | "started" | "ready" | "failed" | "refused" | "skipped";
 
 export function triggerKind(trigger: AutomationTrigger | null): TriggerKind {
   return trigger === null ? "pull_request" : (trigger.split(".")[0] as TriggerKind);
@@ -137,8 +162,24 @@ export type Automation = {
   /** Who it runs as: whoever last set what it does (its prompt, triggers
    *  or repositories). Null once they've left. */
   runsAs: { id: string; login: string } | null;
+  /** Where its runs go (docs/missions.md, "Triggers"). */
+  target: AutomationTarget;
   createdAt: string;
 };
+
+/** A Mission automation's own settings. */
+export type MissionInputs = {
+  /** A watched Slack channel, and what a message must be to go to the
+   *  Mission (`slack.message`). */
+  watch: { teamId: string; channelId: string; filterPrompt: string; allowedAppIds: string[] } | null;
+  /** Linear teams whose delegated issues go to it (`linear.issue`), with
+   *  the automation's labels as a filter. */
+  linearTeamIds: string[];
+};
+
+export type AutomationTarget =
+  | { kind: "session" }
+  | ({ kind: "mission"; missionId: string; missionTitle?: string | null; approved?: boolean; hasHmacSecret?: boolean } & MissionInputs);
 
 /** What's saved: everything the page sets. */
 export type AutomationInput = {
@@ -159,6 +200,10 @@ export type AutomationInput = {
   model: AutomationModel | null;
   /** A change only: archive it (done), or bring it back. */
   archived?: boolean;
+  /** Where its runs go; a session's when not sent. */
+  target?: { kind: "session" } | ({ kind: "mission"; missionId: string } & MissionInputs);
+  /** A webhook's HMAC secret: set (a string), cleared (null), or kept. */
+  webhookSecret?: string | null;
 };
 
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -299,6 +344,32 @@ export function parseAutomationInput(
     if (ids.length > REPOS_MAX && !value.coverNewRepos) return { ok: false, error: `Pick at most ${REPOS_MAX} repositories.` };
     value.projectIds = ids;
   }
+  if (b.target !== undefined) {
+    const target = parseTarget(b.target);
+    if (!target.ok) return target;
+    value.target = target.value;
+  }
+  if (b.webhookSecret !== undefined) {
+    const secret = b.webhookSecret;
+    if (secret !== null && (typeof secret !== "string" || secret.length < 16 || secret.length > 200)) {
+      return { ok: false, error: "A webhook signing secret is 16 to 200 characters." };
+    }
+    value.webhookSecret = secret as string | null;
+  }
+  if (value.target || value.triggers) {
+    const kind = value.target?.kind;
+    const triggers = value.triggers ?? [];
+    if (kind === "mission" && triggers.some((t) => !(MISSION_TRIGGERS as readonly string[]).includes(t))) {
+      return { ok: false, error: "A Mission's automation runs on a schedule, a webhook, a watched Slack channel or Linear issues." };
+    }
+    if (kind !== "mission" && value.target && triggers.some((t) => MISSION_ONLY_TRIGGERS.includes(t))) {
+      return { ok: false, error: "Watched Slack channels and Linear issues go to a Mission: pick one as its destination." };
+    }
+    if (value.target?.kind === "mission") {
+      if (triggers.includes("slack.message") && !value.target.watch) return { ok: false, error: "Pick the Slack channel to watch, and its filter." };
+      if (triggers.includes("linear.issue") && value.target.linearTeamIds.length === 0) return { ok: false, error: "Pick the Linear teams whose issues go to the Mission." };
+    }
+  }
   if (full || b.enabled !== undefined) {
     if (b.enabled !== undefined && typeof b.enabled !== "boolean") return { ok: false, error: "Enabled is on or off." };
     value.enabled = b.enabled ?? true;
@@ -391,4 +462,37 @@ export function appCoverage(
     result.set(fullName, coverage);
   }
   return result;
+}
+
+/** Where an automation's runs go, as the page sends it: a session (the
+ *  default), or a Mission with its inputs. */
+function parseTarget(sent: unknown): Parsed<NonNullable<AutomationInput["target"]>> {
+  if (sent === undefined || sent === null) return { ok: true, value: { kind: "session" } };
+  if (typeof sent !== "object") return { ok: false, error: "That isn't a destination." };
+  const t = sent as Record<string, unknown>;
+  if (t.kind === "session") return { ok: true, value: { kind: "session" } };
+  if (t.kind !== "mission" || typeof t.missionId !== "string" || !isUuid(t.missionId)) {
+    return { ok: false, error: "Pick the Mission its runs go to." };
+  }
+  let watch: MissionInputs["watch"] = null;
+  if (t.watch !== undefined && t.watch !== null) {
+    const w = t.watch as Record<string, unknown>;
+    const teamId = typeof w.teamId === "string" ? w.teamId.trim() : "";
+    const channelId = typeof w.channelId === "string" ? w.channelId.trim() : "";
+    const filterPrompt = typeof w.filterPrompt === "string" ? w.filterPrompt.trim() : "";
+    if (!/^[A-Z0-9]{2,32}$/.test(teamId) || !/^[CG][A-Z0-9]{2,32}$/.test(channelId)) return { ok: false, error: "Pick a Slack channel to watch." };
+    if (filterPrompt.length < 1 || filterPrompt.length > FILTER_PROMPT_MAX) {
+      return { ok: false, error: `Write the filter a message must pass, up to ${FILTER_PROMPT_MAX} characters.` };
+    }
+    const apps = w.allowedAppIds ?? [];
+    if (!Array.isArray(apps) || apps.length > APP_IDS_MAX || !apps.every((a) => typeof a === "string" && /^A[A-Z0-9]{2,32}$/.test(a))) {
+      return { ok: false, error: `Name at most ${APP_IDS_MAX} Slack app ids (A…) whose messages it hears.` };
+    }
+    watch = { teamId, channelId, filterPrompt, allowedAppIds: [...new Set(apps as string[])] };
+  }
+  const teams = t.linearTeamIds ?? [];
+  if (!Array.isArray(teams) || teams.length > FILTERS_MAX || !teams.every((x) => typeof x === "string" && /^[A-Za-z0-9-]{1,64}$/.test(x))) {
+    return { ok: false, error: `Name at most ${FILTERS_MAX} Linear teams.` };
+  }
+  return { ok: true, value: { kind: "mission", missionId: t.missionId, watch, linearTeamIds: [...new Set(teams as string[])] } };
 }

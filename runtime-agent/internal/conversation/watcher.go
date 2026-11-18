@@ -57,6 +57,9 @@ type rawRecord struct {
 	// previous process left running. No reply follows it, so it is no prompt.
 	QueueTranscriptOnly bool `json:"queueTranscriptOnly"`
 	Message             *struct {
+		// ID is the model call's own id (Anthropic's msg_…, or whatever id
+		// the endpoint answered with): the same on every record of one reply.
+		ID         string                      `json:"id"`
 		Role       string                      `json:"role"`
 		Model      string                      `json:"model"`
 		StopReason string                      `json:"stop_reason"`
@@ -290,6 +293,9 @@ func decode(line []byte) (Event, bool) {
 		// wrote. Claude logs each block of a reply as its own record, each
 		// with the reply's usage so far, so the latest is the one to read.
 		if u := UsageFrom(*rec.Message.Usage); u != nil {
+			// The call it was, so its usage counts once however many records
+			// carry it (lib/missions/spend.ts).
+			msg.CallID = rec.Message.ID
 			msg.Usage = &protocol.TokenUsageAmounts{
 				InputTokens:              u.InputTokens,
 				OutputTokens:             u.OutputTokens,

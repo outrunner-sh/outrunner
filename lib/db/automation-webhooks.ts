@@ -18,11 +18,21 @@ export function webhookTokenSettings(token = newWebhookToken()): { hash: string;
  *  null for a token that's no automation's. */
 export async function webhookAutomation(
   token: string,
-): Promise<{ automationId: string; orgId: string; live: boolean; personal: boolean } | null> {
+): Promise<{
+  automationId: string;
+  orgId: string;
+  live: boolean;
+  personal: boolean;
+  /** A Mission's: its runs are requests, under the rules of
+   *  lib/missions/webhook-target.ts. */
+  mission: boolean;
+  /** Its HMAC secret, sealed; null for none. */
+  hmacSealed: string | null;
+} | null> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("automations")
-    .select("id, org_id, enabled, triggers")
+    .select("id, org_id, enabled, triggers, target_kind, webhook_hmac_sealed")
     .eq("webhook_token_hash", webhookTokenHash(token))
     .maybeSingle();
   if (error) throw error;
@@ -38,6 +48,8 @@ export async function webhookAutomation(
     orgId: data.org_id,
     live: data.enabled && data.triggers.includes("webhook"),
     personal: Boolean(org?.personal_owner_id),
+    mission: data.target_kind === "mission",
+    hmacSealed: data.webhook_hmac_sealed,
   };
 }
 
@@ -84,9 +96,9 @@ export async function rotateWebhookToken(orgId: string, automationId: string): P
 export async function runsByKey(
   automationId: string,
   dedupeKey: string,
-): Promise<{ runId: string; projectId: string; workspaceId: string | null; status: string; reason: string | null }[]> {
+): Promise<{ runId: string; projectId: string; workspaceId: string | null; status: string; reason: string | null; payloadHash: string | null }[]> {
   const supabase = createSupabaseAdminClient();
-  const columns = "id, project_id, workspace_id, status, reason";
+  const columns = "id, project_id, workspace_id, status, reason, context";
   // Two reads, not one `or`, and the key quoted as an array element: a
   // caller's Idempotency-Key may hold the characters a filter would need
   // escaped (`.contains` passes them on as they are).
@@ -107,5 +119,6 @@ export async function runsByKey(
     workspaceId: r.workspace_id,
     status: r.status,
     reason: r.reason,
+    payloadHash: typeof (r.context as { payloadHash?: unknown } | null)?.payloadHash === "string" ? (r.context as { payloadHash: string }).payloadHash : null,
   }));
 }

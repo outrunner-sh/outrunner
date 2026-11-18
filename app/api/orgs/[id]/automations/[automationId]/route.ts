@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 
 import { parseAutomationInput } from "@/lib/automations/rules";
 import { savingAutomation } from "@/lib/automations/routes";
-import { deleteAutomation, updateAutomation } from "@/lib/db/automations";
+import { deleteAutomation, getAutomation, resetDelegation, updateAutomation } from "@/lib/db/automations";
+import { changesWhatItSends, checkMissionTarget } from "@/lib/missions/mission-automations";
+import { missionLevel } from "@/lib/missions/slack-route.deps";
+import { sessionById } from "@/lib/missions/store";
 import { isUuid } from "@/lib/ids";
 import { orgCaller } from "@/lib/orgs/routes";
 
@@ -21,7 +24,16 @@ export async function PATCH(request: Request, { params }: Params) {
   const parsed = parseAutomationInput(await request.json().catch(() => null), { full: false });
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
   return savingAutomation(async () => {
-    if (!(await updateAutomation(id, automationId, caller.owner.id, parsed.value))) {
+    const saved = await getAutomation(id, automationId);
+    if (!saved) return NextResponse.json(NOT_FOUND, { status: 404 });
+    const target = await checkMissionTarget(id, caller.owner.id, parsed.value, saved.target, { mission: sessionById, level: missionLevel });
+    if (!target.ok) return NextResponse.json({ error: target.error }, { status: target.status });
+    // Someone other than the Mission's owner changing what it sends: the
+    // owner approves it again (withdrawn before the change goes in).
+    if (target.mission && target.mission.ownerId !== caller.owner.id && changesWhatItSends(target.input, saved.target)) {
+      await resetDelegation(automationId);
+    }
+    if (!(await updateAutomation(id, automationId, caller.owner.id, target.input))) {
       return NextResponse.json(NOT_FOUND, { status: 404 });
     }
     return NextResponse.json({ id: automationId });

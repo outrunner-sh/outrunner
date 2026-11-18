@@ -443,3 +443,40 @@ export function describeSchedule(schedule: Schedule): string {
       return `Cron ${schedule.expression}`;
   }
 }
+
+/** A schedule's config revision: a hash of what it is (kind, zone, spec), so
+ *  saving it unchanged (or renaming the automation) is the same revision,
+ *  and changing when it runs is a new one. */
+export function scheduleRevision(schedule: Schedule): string {
+  const text = JSON.stringify([schedule.kind, schedule.timezone, scheduleSpec(schedule)]);
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * One occurrence's identity: the schedule, its revision, and the time on the
+ * schedule's own clock (to the minute). Two instants that read the same on
+ * that clock (the hour a DST change repeats) are one occurrence; an edit
+ * that leaves when it runs alone keeps it.
+ */
+export function occurrenceKey(scheduleId: string, schedule: Schedule, dueAt: string): string {
+  const w = wallTime(Date.parse(dueAt), schedule.timezone);
+  const local = `${w.year}-${String(w.month).padStart(2, "0")}-${String(w.day).padStart(2, "0")}T${String(w.hour).padStart(2, "0")}:${String(w.minute).padStart(2, "0")}`;
+  return `occurrence:${scheduleId}:${scheduleRevision(schedule)}:${local}`;
+}
+
+/** The times after `dueAt` up to `now` an outage missed: folded into the one
+ *  run at `dueAt`, never caught up on (at most `max` counted). */
+export function missedSince(schedule: Schedule, dueAt: number, now: number, max = 1000): number {
+  let missed = 0;
+  let at = nextRun(schedule, dueAt);
+  while (at !== null && at <= now && missed < max) {
+    missed++;
+    at = nextRun(schedule, at);
+  }
+  return missed;
+}

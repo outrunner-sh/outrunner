@@ -20,9 +20,51 @@ export type ScheduleEvent = {
   /** The schedule's zone, and the schedule as the page says it. */
   timezone: string;
   description: string;
+  /** A Mission's: earlier times an outage missed, folded into this one. */
+  missed?: number;
 };
 
-export type RunEvent = PullRequestEvent | IssueEvent | ScheduleEvent | WebhookEvent;
+/** A message in a Slack channel a Mission's automation watches. */
+export type SlackWatchEvent = {
+  trigger: "slack.message";
+  teamId: string;
+  channelId: string;
+  ts: string;
+  /** Who said it: a person's Slack id, or an app's bot (and its app id). */
+  user: string;
+  botId?: string | null;
+  appId?: string | null;
+  author?: string | null;
+  text: string;
+  permalink?: string | null;
+};
+
+/** A Linear issue delegated to Outrunner, routed to a Mission. */
+export type LinearIssueEvent = {
+  trigger: "linear.issue";
+  installationId: string;
+  agentSessionId: string;
+  issueId: string;
+  identifier?: string | null;
+  title: string;
+  url?: string | null;
+  /** What the delegation asked: its prompt, or the issue's description. */
+  prompt: string;
+  /** The person who delegated it, linked to Outrunner (null: a rule). */
+  requestedBy: string | null;
+  from?: string | null;
+  /** This delegation's request key (lib/missions/linear-route.ts,
+   *  delegationKey): the agent session's, and a fresh one each time the
+   *  issue is delegated again after its request was stopped. */
+  delegation?: string | null;
+};
+
+export type RunEvent = PullRequestEvent | IssueEvent | ScheduleEvent | WebhookEvent | SlackWatchEvent | LinearIssueEvent;
+
+/** A Mission's own events: never a session's. */
+export function isMissionEvent(event: RunEvent): event is SlackWatchEvent | LinearIssueEvent {
+  return event.trigger === "slack.message" || event.trigger === "linear.issue";
+}
 
 export function isPullRequestEvent(event: RunEvent): event is PullRequestEvent {
   return event.trigger.startsWith("pull_request.");
@@ -37,6 +79,8 @@ export function isIssueEvent(event: RunEvent): event is IssueEvent {
 export function eventSubject(event: RunEvent): string {
   if (isPullRequestEvent(event)) return `pr:${event.number}`;
   if (isIssueEvent(event)) return `issue:${event.number}`;
+  if (event.trigger === "slack.message") return `slack:${event.channelId}:${event.ts}`;
+  if (event.trigger === "linear.issue") return `linear:${event.issueId}`;
   return event.trigger;
 }
 
@@ -56,6 +100,10 @@ export function onClock(instant: string, timezone: string): string {
 export function eventTitle(automationName: string, event: RunEvent): string {
   if (isPullRequestEvent(event)) return runTitle(automationName, event);
   if (isIssueEvent(event)) return issueTitle(automationName, event);
+  if (isMissionEvent(event)) {
+    const title = event.trigger === "linear.issue" ? `${automationName}: ${event.identifier ?? event.title}` : `${automationName}, Slack message`;
+    return title.length > 120 ? `${title.slice(0, 119)}…` : title;
+  }
   const title =
     event.trigger === "webhook"
       ? `${automationName}, webhook ${onClock(event.receivedAt, "UTC")} UTC`
@@ -74,6 +122,8 @@ export function eventBaseBranch(event: RunEvent): string | undefined {
 export function eventPrompt(automationPrompt: string, event: RunEvent, place: RunPlace): string {
   if (isPullRequestEvent(event)) return runPrompt(automationPrompt, event, place.appSlug, place.runId);
   if (isIssueEvent(event)) return issuePrompt(automationPrompt, event, place.appSlug);
+  // A Mission's: never a session's prompt (lib/missions/automation-target.ts).
+  if (isMissionEvent(event)) return automationPrompt;
   return [
     event.trigger === "webhook"
       ? `Webhook run: a POST to this automation's URL, ${onClock(event.receivedAt, "UTC")} UTC.`
@@ -106,13 +156,53 @@ export function readRunEvent(value: unknown): RunEvent | null {
   if (v.trigger === "webhook") {
     const receivedAt = text("receivedAt");
     if (!receivedAt || Number.isNaN(Date.parse(receivedAt))) return null;
-    return { trigger: "webhook", receivedAt, payload: v.payload ?? null };
+    const payloadHash = text("payloadHash");
+    return { trigger: "webhook", receivedAt, payload: v.payload ?? null, ...(payloadHash && { payloadHash }) };
   }
   if (v.trigger === "schedule") {
     const scheduledFor = text("scheduledFor");
     const timezone = text("timezone");
     if (!scheduledFor || Number.isNaN(Date.parse(scheduledFor)) || !isTimeZone(timezone)) return null;
-    return { trigger: "schedule", scheduledFor, timezone, description: text("description") ?? "" };
+    const missed = typeof v.missed === "number" && Number.isInteger(v.missed) && v.missed > 0 ? v.missed : undefined;
+    return { trigger: "schedule", scheduledFor, timezone, description: text("description") ?? "", ...(missed && { missed }) };
+  }
+  if (v.trigger === "slack.message") {
+    const teamId = text("teamId");
+    const channelId = text("channelId");
+    const ts = text("ts");
+    const user = text("user");
+    if (!teamId || !channelId || !ts || !user) return null;
+    return {
+      trigger: "slack.message",
+      teamId,
+      channelId,
+      ts,
+      user,
+      botId: text("botId"),
+      appId: text("appId"),
+      author: text("author"),
+      text: text("text") ?? "",
+      permalink: text("permalink"),
+    };
+  }
+  if (v.trigger === "linear.issue") {
+    const installationId = text("installationId");
+    const agentSessionId = text("agentSessionId");
+    const issueId = text("issueId");
+    if (!installationId || !agentSessionId || !issueId) return null;
+    return {
+      trigger: "linear.issue",
+      installationId,
+      agentSessionId,
+      issueId,
+      identifier: text("identifier"),
+      title: text("title") ?? "",
+      url: text("url"),
+      prompt: text("prompt") ?? "",
+      requestedBy: text("requestedBy"),
+      from: text("from"),
+      delegation: text("delegation"),
+    };
   }
   if (v.trigger === "issues.opened" || v.trigger === "issues.labeled") {
     const installationId = v.installationId;

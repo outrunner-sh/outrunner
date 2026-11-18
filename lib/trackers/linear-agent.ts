@@ -30,6 +30,7 @@ import type { ServerSessionResult, ServerSessionStart } from "@/lib/session/serv
 import type { LinearActivity, LinearSignal, RepositorySuggestion } from "@/lib/trackers/linear";
 import { branchHint } from "@/lib/trackers/issue-key";
 import type { TriageActor } from "@/lib/triage/access";
+import { type LinearMissionDeps, promptedForMission, routeIssue, stopForMission } from "@/lib/missions/linear-route";
 import { cutText, MAX_BODY, MAX_TITLE, type WorkItem } from "@/lib/triage/work-items";
 
 const SOURCE = "linear" as const;
@@ -111,6 +112,9 @@ export type AgentDeps = {
   /** How long a stop waits on the session before saying it may still be running: the webhook
    *  it answers has 5s. */
   interruptWaitMs: number;
+  /** Missions' routes (lib/missions/linear-route.ts): an issue whose team
+   *  routes to a Mission is its request. Absent: none. */
+  mission?: LinearMissionDeps;
   /** Where its conversation is, before a send: activity after it is that send's turn. */
   sendBaseline(workspaceId: string): Promise<number | null>;
   /** A turn was sent: from now on the relay and the tick watch it. */
@@ -514,6 +518,12 @@ export async function within<T>(work: Promise<T>, ms: number, fallback: T): Prom
 async function stopHere(context: Context): Promise<void> {
   const { installation, agentSessionId, payload, deps } = context;
   const say = (content: LinearActivity) => deps.say(installation.id, agentSessionId, content);
+  // A Mission's request: cancelled, and only it.
+  if (deps.mission && (await stopForMission(agentSessionId, deps.mission))) {
+    await deps.stopRow(agentSessionId).catch(() => undefined);
+    await say({ type: "response", body: REPLIES.stopped });
+    return;
+  }
   const row = await deps.row(agentSessionId);
   if (!row) {
     if (!issueIdOf(payload)) {
@@ -673,6 +683,42 @@ async function delegate(context: Context): Promise<boolean> {
     }
     if (steered === "capped") return refuse(context, scope.orgId, capReply(scope.ruleSessionsPerDay), true);
     if (steered === "refused") return refuse(context, scope.orgId, REPLIES.cantSteer, runner.ruleStarted);
+  }
+
+  // Not a session's yet: a Mission's, if its team routes there. Never a
+  // session instead once a route takes it.
+  if (deps.mission) {
+    const issue = payload.agentSession?.issue;
+    const routed = await routeIssue(
+      {
+        orgId: scope.orgId,
+        teamId: scope.externalTeamId,
+        event: {
+          trigger: "linear.issue",
+          installationId: installation.id,
+          agentSessionId,
+          issueId,
+          identifier: text(issue?.identifier),
+          title: text(issue?.title) ?? "Untitled issue",
+          url: text(issue?.url),
+          prompt,
+          requestedBy: runner.ruleStarted ? null : runner.actor.userId,
+          from: text(payload.agentSession?.creator?.name),
+        },
+      },
+      deps.mission,
+    );
+    if (routed.routed) {
+      // A row, so Linear's later events find it; no session, no slot. Not
+      // taken (refused), it's stopped, so delegating again tries again.
+      const written = await deps.saveRow(
+        rowOf(context, { orgId: scope.orgId, teamId: scope.externalTeamId, itemId: item?.id ?? null, ownerId: runner.actor.userId, stage: routed.taken ? "working" : "stopped", prompt, ruleStarted: runner.ruleStarted, ask: askOf(payload) }),
+        existing,
+        { restart: context.restart },
+      );
+      if (written) await deps.say(installation.id, agentSessionId, { type: "response", body: routed.said });
+      return false;
+    }
   }
 
   const projects = await deps.projects(scope.orgId);
@@ -932,6 +978,28 @@ async function moveToStarted({ installation, deps }: Context, scope: TrackerScop
 async function prompted(context: Context): Promise<void> {
   const { installation, agentSessionId, payload, deps } = context;
   const say = (content: LinearActivity, signal?: LinearSignal) => deps.say(installation.id, agentSessionId, content, signal);
+  // A Mission's request: what's said steers it, never a fresh start.
+  if (deps.mission) {
+    const speaker = text(payload.agentActivity?.userId);
+    const said = promptOfActivity(payload);
+    const answer = await promptedForMission(
+      {
+        agentSessionId,
+        appUserId: installation.appUserId ?? null,
+        speaker,
+        speakerOwner: speaker ? await deps.linkedOwner(installation.id, speaker) : null,
+        activityId: text((payload.agentActivity as { id?: unknown } | null | undefined)?.id) ?? `${speaker ?? "?"}:${said ?? ""}`,
+        text: said ? withoutEscapes(said) : "",
+        from: text(payload.agentActivity?.user?.name),
+      },
+      deps.mission,
+    );
+    if (answer === "ignored") return;
+    if (answer !== null) {
+      await say({ type: "response", body: answer });
+      return;
+    }
+  }
   const row = await deps.row(agentSessionId);
   const reply = promptOfActivity(payload);
   // What was first asked: this event needn't repeat it.

@@ -13,6 +13,8 @@ import {
   type WebhookEvent,
 } from "@/lib/automations/webhook";
 import { automationCandidates, recordRuns } from "@/lib/db/automation-runs";
+import { open } from "@/lib/crypto/secret-box";
+import { checkMissionWebhook, sameDelivery } from "@/lib/missions/webhook-target";
 import { runsByKey, webhookAutomation } from "@/lib/db/automation-webhooks";
 import { optionalEnv } from "@/lib/env";
 import { githubAppConfig } from "@/lib/github/app";
@@ -61,15 +63,16 @@ export async function POST(request: Request, { params }: Params) {
   const address = perAddress.take(clientAddress(request.headers));
   if (!address.ok) return tooMany(address);
   if (!isWebhookToken(token)) return NextResponse.json(NOT_FOUND, { status: 404 });
-  if (!githubAppConfig()) {
-    return NextResponse.json({ error: "Automations can't run here: the GitHub App isn't set up." }, { status: 503 });
-  }
 
   try {
     // Its automation first: a token that's none is answered without its body
     // being read at all.
     const automation = await webhookAutomation(token);
     if (!automation) return NextResponse.json(NOT_FOUND, { status: 404 });
+    // A session's run works on GitHub as the App; a Mission's makes a request.
+    if (!automation.mission && !githubAppConfig()) {
+      return NextResponse.json({ error: "Automations can't run here: the GitHub App isn't set up." }, { status: 503 });
+    }
     if (!automation.live) {
       return NextResponse.json({ error: "This automation is off, or doesn't run on its webhook." }, { status: 409 });
     }
@@ -90,7 +93,15 @@ export async function POST(request: Request, { params }: Params) {
         return NextResponse.json({ error: "Send the payload as JSON." }, { status: 400 });
       }
     }
-    const dedupeKey = webhookDedupeKey(request.headers.get("idempotency-key"), randomUUID());
+    // A Mission's: a delivery key required, the signature checked when it
+    // has a secret (lib/missions/webhook-target.ts).
+    let missionCheck: { key: string; payloadHash: string } | null = null;
+    if (automation.mission) {
+      const checked = checkMissionWebhook({ headers: request.headers, raw, secret: automation.hmacSealed ? open(automation.hmacSealed) : null });
+      if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: checked.status });
+      missionCheck = checked;
+    }
+    const dedupeKey = missionCheck?.key ?? webhookDedupeKey(request.headers.get("idempotency-key"), randomUUID());
     if (!dedupeKey) return NextResponse.json({ error: "That Idempotency-Key isn't one: 1 to 200 characters." }, { status: 400 });
     const url = new URL(request.url);
     const repo = url.searchParams.get("repo")?.trim().toLowerCase() || null;
@@ -105,7 +116,12 @@ export async function POST(request: Request, { params }: Params) {
         { status: repo ? 400 : 409 },
       );
     }
-    const event: WebhookEvent = { trigger: "webhook", receivedAt: new Date().toISOString(), payload };
+    const event: WebhookEvent = {
+      trigger: "webhook",
+      receivedAt: new Date().toISOString(),
+      payload,
+      ...(missionCheck && { payloadHash: missionCheck.payloadHash }),
+    };
     const recorded = await recordRuns(candidates.map((c) => recordOf(c, event, dedupeKey)));
     const base = optionalEnv("RUNTIME_BASE_URL") ?? url.origin;
     // A team org's run sessions are its connector's: its admins read them on
@@ -123,6 +139,9 @@ export async function POST(request: Request, { params }: Params) {
       const taken = await runsByKey(automation.automationId, dedupeKey);
       if (taken.length === 0) {
         return NextResponse.json({ error: "This automation has run as many times as it's set to, or is off." }, { status: 409 });
+      }
+      if (missionCheck && !sameDelivery(taken, missionCheck.payloadHash)) {
+        return NextResponse.json({ error: "That delivery key was used before with a different payload." }, { status: 409 });
       }
       const runs = taken.map((r) => ({
         runId: r.runId,

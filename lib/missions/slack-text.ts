@@ -1,0 +1,300 @@
+/**
+ * A Mission on call in Slack, the parts with no network: the exact commands
+ * people give it (parsed here, never by a model, as `share channel access`
+ * is: lib/slack/channel-access.ts), the thread keywords, and what the system
+ * itself posts (the intro, the question card, a Ship's pull request, a limit
+ * reached).
+ */
+
+import type { PullRequestRef } from "@/lib/missions/events";
+import { pullRequestLink } from "@/lib/slack/announce-pull-request";
+
+export type OnCallCommand =
+  | { action: "bind"; project: string }
+  | { action: "unbind" }
+  | { action: "pause" }
+  | { action: "resume" }
+  | { action: "stop" }
+  | { action: "help" };
+
+export const ON_CALL_HELP =
+  "To put a Mission on call here: `@Outrunner be on call here for <project>` (it needs write on the project). Then mention me with a task. `!help` shows this; `@Outrunner !new <task>` starts a fresh thread for a task. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread, `!assign @person` assigns the thread's work to them, `@Outrunner stop` stops that thread's work (its open requests and its Ships' turns). `@Outrunner pause` / `resume` pauses it here, `@Outrunner stop being on call here` takes it off.";
+
+export const NEW_USAGE = "Say `!new <task>` to start a fresh thread for a task.";
+export const ASSIGN_USAGE = "Say `!assign @person` in a thread the Mission is in: one person, nothing else.";
+export const ASSIGN_ELSEWHERE = "`!assign` works in a thread the Mission is in.";
+
+export const assignedText = (name: string): string => `Assigned this thread to ${name.replace(/[<>|*]/g, "")}.`;
+
+/** `!assign` naming someone with no Outrunner account in the Mission's org.
+ *  No connect link: a link is signed for the Slack user it's sent to, so
+ *  they get their own when they mention Outrunner. */
+export function assigneeNotLinkedText(slackUserId: string, otherOrg: boolean): string {
+  return otherOrg
+    ? `<@${slackUserId}>'s Slack account is connected to a different Outrunner org than the Mission on call here, so nothing was assigned.`
+    : `<@${slackUserId}> hasn't connected Slack to Outrunner, so nothing was assigned. They can mention me here to get a link to connect.`;
+}
+
+/** What the Mission is told when a thread is assigned: a note, not a task. */
+export const assignedNote = (assignee: string, by: string): string =>
+  `Note, not a new task: ${assignee} was assigned to this thread by ${by}. Keep going as before. Ships still run as the Mission's owner; nothing to reply.`;
+
+/** `!new`'s requests' keys start so: how the tick tells them from a
+ *  mention's (told inline, never by the tick). */
+export const NEW_KEY_PREFIX = "new:";
+
+/** The message without the bot's mention, trimmed. */
+export function withoutMention(text: string, botUserId: string): string {
+  return text.replace(new RegExp(`<@${botUserId}(\\|[^>]*)?>`, "g"), "").trim();
+}
+
+/** An exact on-call command, or null for anything else (a task). */
+export function onCallCommand(text: string, botUserId: string): OnCallCommand | null {
+  const clean = withoutMention(text, botUserId).replace(/[.!]+$/, "").trim();
+  const bind = /^be on call here for\s+(.+)$/i.exec(clean);
+  if (bind) {
+    const project = bind[1].trim().replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, "").trim();
+    return project && project.length <= 200 ? { action: "bind", project } : { action: "help" };
+  }
+  if (/^be on call here$/i.test(clean)) return { action: "help" };
+  if (/^(stop being on call here|go off call)$/i.test(clean)) return { action: "unbind" };
+  if (/^pause$/i.test(clean)) return { action: "pause" };
+  if (/^(resume|unpause)$/i.test(clean)) return { action: "resume" };
+  if (/^stop$/i.test(clean)) return { action: "stop" };
+  return null;
+}
+
+export type ThreadKeyword = "aside" | "mute" | "unmute" | "help" | "new" | "assign";
+
+/** A thread keyword at the start of a message: handled before the Mission
+ *  hears anything. */
+export function threadKeyword(text: string): ThreadKeyword | null {
+  if (/^(!aside\b|\(aside\))/i.test(text)) return "aside";
+  if (/^!mute\b/i.test(text)) return "mute";
+  if (/^!unmute\b/i.test(text)) return "unmute";
+  if (/^!help\b/i.test(text)) return "help";
+  if (/^!new\b/i.test(text)) return "new";
+  if (/^!assign\b/i.test(text)) return "assign";
+  return null;
+}
+
+/** `!new <task>`: the task, trimmed; empty when there's none. */
+export function newTask(text: string): string {
+  return text.replace(/^!new\b/i, "").trim();
+}
+
+const USER_MENTION = /<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g;
+
+/** `!assign @person` (Outrunner's own mention already taken out): the one
+ *  Slack user named, or null when it's none, several, or another keyword
+ *  comes along. */
+export function assignTarget(text: string): string | null {
+  const rest = text.replace(/^!assign\b/i, "");
+  const mentioned = [...rest.matchAll(USER_MENTION)].map((m) => m[1]);
+  if (mentioned.length !== 1) return null;
+  if (/(^|\s)(!\w+|\(aside\))/i.test(rest.replace(USER_MENTION, " "))) return null;
+  return mentioned[0];
+}
+
+/** A task's text for a root post the system makes: no channel-wide pings. */
+export function quietText(text: string): string {
+  return text
+    .replace(/<!subteam\^[A-Z0-9]+(?:\|([^>]*))?>/g, (_m, label: string | undefined) => label ?? "@group")
+    .replace(/<!(\w+)(?:\|[^>]*)?>/g, "@$1");
+}
+
+/** `!new`'s root post: who asked, and what. */
+export function newRequestRootText(slackUserId: string, task: string, max = 600): string {
+  const text = quietText(task.trim());
+  return `:inbox_tray: New request from <@${slackUserId}>: ${text.length > max ? `${text.slice(0, max)}…` : text}`;
+}
+
+/** What the system posts when a Mission goes on call in a channel. */
+export function introText(input: { mission: string; project: string; url: string | null }): string {
+  const name = input.url ? `<${input.url}|${input.mission.replace(/[<>|]/g, "")}>` : input.mission;
+  return `:wave: Mission ${name} is on call here for *${input.project}*. Mention @Outrunner with a task: it answers in the thread, and starts Ships (cloud sessions that open pull requests) for work. Replies in its threads reach it without a mention; \`!aside\` keeps one from it, \`!mute\` silences a thread. \`@Outrunner stop\` stops that thread's work (its open requests and its Ships' turns); \`@Outrunner pause\` pauses it here.`;
+}
+
+/** Slack's buttons for a question card. Each option's value names the card
+ *  and the option; "Other" asks for a reply in the thread. */
+export const MISSION_ASK_ACTION = "mission_ask";
+export const MISSION_ASK_OTHER = "mission_ask_other";
+
+export function askBlocks(askId: string, question: string, options: readonly string[]): Record<string, unknown>[] {
+  return [
+    { type: "section", text: { type: "mrkdwn", text: question.slice(0, 2900) } },
+    {
+      type: "actions",
+      block_id: `mission_ask:${askId}`,
+      elements: [
+        ...options.map((option, i) => ({
+          type: "button",
+          action_id: `${MISSION_ASK_ACTION}:${i}`,
+          text: { type: "plain_text", text: option.slice(0, 75), emoji: true },
+          value: `${askId}:${i}`,
+        })),
+        { type: "button", action_id: MISSION_ASK_OTHER, text: { type: "plain_text", text: "Other" }, value: `${askId}:other` },
+      ],
+    },
+  ];
+}
+
+/** The card once answered: the question, and who picked what. */
+export function answeredBlocks(question: string, answer: string, by: string): Record<string, unknown>[] {
+  return [
+    { type: "section", text: { type: "mrkdwn", text: question.slice(0, 2900) } },
+    { type: "context", elements: [{ type: "mrkdwn", text: `*${answer.replace(/[*<>|]/g, "")}*, picked by ${by}` }] },
+  ];
+}
+
+/** Why a card's question isn't waiting any more. */
+export type CardEnd = "off_call" | "archived";
+
+export const cardEndText = (why: CardEnd): string =>
+  why === "archived" ? "No longer waiting: the Mission was archived" : "No longer waiting: the Mission went off call";
+
+/** The card once its Mission can't hear the answer: the question, and why
+ *  nothing is waiting on it. No buttons. */
+export function closedBlocks(question: string, why: CardEnd): Record<string, unknown>[] {
+  return [
+    { type: "section", text: { type: "mrkdwn", text: question.slice(0, 2900) } },
+    { type: "context", elements: [{ type: "mrkdwn", text: cardEndText(why) }] },
+  ];
+}
+
+/** A click's value read back: the card and the option. */
+export function parseAskValue(value: string): { askId: string; option: number | "other" } | null {
+  const match = /^([0-9a-f-]{36}):(\d|other)$/.exec(value);
+  if (!match) return null;
+  return { askId: match[1], option: match[2] === "other" ? "other" : Number(match[2]) };
+}
+
+/** Slack's buttons for a Ship's question card (lib/missions/ship-ask.ts):
+ *  each option's value names the card and the option; "Other" is a link to
+ *  the Ship, which Slack sends no value for. Not `mission_ask…`: the route
+ *  tells the two apart by prefix. */
+export const SHIP_ASK_ACTION = "ship_ask";
+export const SHIP_ASK_OPEN = "ship_ask_open";
+
+/** What a Ship's card says it's working on: one line. */
+export function workingLine(title: string): Record<string, unknown> {
+  const one = title.replace(/\s+/g, " ").trim().slice(0, 150) || "Ship";
+  return { type: "context", elements: [{ type: "mrkdwn", text: `Working on: *${one.replace(/[*<>|]/g, "")}*` }] };
+}
+
+/** A Ship's question card: what it's working on, the question, a button an
+ *  option, then "Other" (or, for a question one click can't answer, "Answer
+ *  in Outrunner") linking to the Ship. */
+export function shipAskBlocks(input: { askId: string; title: string; question: string; options: readonly string[]; url: string | null }): Record<string, unknown>[] {
+  const buttons: Record<string, unknown>[] = input.options.map((option, i) => ({
+    type: "button",
+    action_id: `${SHIP_ASK_ACTION}:${i}`,
+    text: { type: "plain_text", text: option.slice(0, 75), emoji: true },
+    value: `${input.askId}:${i}`,
+  }));
+  if (input.url) {
+    buttons.push({ type: "button", action_id: SHIP_ASK_OPEN, text: { type: "plain_text", text: input.options.length > 0 ? "Other" : "Answer in Outrunner" }, url: input.url });
+  }
+  return [
+    workingLine(input.title),
+    { type: "section", text: { type: "mrkdwn", text: input.question.slice(0, 2900) } },
+    ...(buttons.length > 0 ? [{ type: "actions", block_id: `${SHIP_ASK_ACTION}:${input.askId}`, elements: buttons }] : []),
+  ];
+}
+
+/** A Ship's card once answered from Slack: who picked what. No buttons. */
+export function shipAnsweredBlocks(title: string, question: string, answer: string, by: string): Record<string, unknown>[] {
+  return [workingLine(title), ...answeredBlocks(question, answer, by)];
+}
+
+/** Why a Ship's card waits on nothing: the Mission's binding ended
+ *  (CardEnd), or the call is over (answered in Outrunner, the Ship moved
+ *  on). */
+export type ShipCardEnd = CardEnd | "moved_on";
+
+export const SHIP_CARD_MOVED_ON = "No longer waiting: answered in Outrunner, or the Ship moved on";
+
+export function shipClosedBlocks(title: string, question: string, why: ShipCardEnd): Record<string, unknown>[] {
+  if (why !== "moved_on") return [workingLine(title), ...closedBlocks(question, why)];
+  return [
+    workingLine(title),
+    { type: "section", text: { type: "mrkdwn", text: question.slice(0, 2900) } },
+    { type: "context", elements: [{ type: "mrkdwn", text: SHIP_CARD_MOVED_ON }] },
+  ];
+}
+
+/** A Ship card click's value read back: the card and the option. */
+export function parseShipAskValue(value: string): { askId: string; option: number } | null {
+  const match = /^([0-9a-f-]{36}):(\d{1,2})$/.exec(value);
+  return match ? { askId: match[1], option: Number(match[2]) } : null;
+}
+
+/** The reactions slack_react may add, by name (or the emoji itself). */
+const REACTIONS: Record<string, string> = {
+  eyes: "eyes",
+  "👀": "eyes",
+  white_check_mark: "white_check_mark",
+  "✅": "white_check_mark",
+  x: "x",
+  "❌": "x",
+};
+
+export function reactionName(emoji: string): string | null {
+  return REACTIONS[emoji.trim().replace(/^:|:$/g, "")] ?? null;
+}
+
+/** A Ship's pull request ready, merged or closed, as its thread is told. */
+export function pullRequestCard(kind: "opened" | "ready" | "merged" | "closed", pr: PullRequestRef, ship: string): string {
+  const link = pullRequestLink(pr);
+  const who = ship.replace(/[<>|*]/g, "");
+  switch (kind) {
+    case "opened":
+      return `:arrow_heading_up: Opened: ${link} (Ship ${who})`;
+    case "ready":
+      return `:white_check_mark: Ready for review: ${link} (Ship ${who})`;
+    case "merged":
+      return `:rocket: Merged: ${link} (Ship ${who})`;
+    case "closed":
+      return `:no_entry_sign: Closed without merging: ${link} (Ship ${who})`;
+  }
+}
+
+/** A limit on Ships reached, as the thread is told. */
+export function limitText(refused: "hour" | "day", limit: number): string {
+  const ships = `${limit} Ship${limit === 1 ? "" : "s"}`;
+  return refused === "hour"
+    ? `I've started ${ships} for this channel in the last hour, which is my limit, so I didn't start one for this. Ask again in a while.`
+    : `I've started ${ships} for this channel in the last 24 hours, which is my limit, so I didn't start one for this. Ask again later.`;
+}
+
+/** Idle pause (docs/missions.md, "Idle pause"): the channel's offer after 2
+ *  weeks with no human, and the pause 24 hours after it. */
+export const IDLE_OFFER_TEXT = "No one has replied here for 2 weeks. I'll pause in 24 hours unless someone replies. @Outrunner resume any time after.";
+export const IDLE_PAUSE_TEXT = "Paused: no one has replied for 2 weeks. @Outrunner resume to continue.";
+
+/** A Mission's Slack channel as its header shows it (GET /api/missions/[id]/slack). */
+export type MissionSlackView = {
+  binding: {
+    teamId: string;
+    channelId: string;
+    channelName: string | null;
+    paused: boolean;
+    /** Paused by the idle sweep (no human for 2 weeks), not by a person. */
+    idlePaused?: boolean;
+    listen: string;
+  } | null;
+  /** Channels it could go on call in: those Outrunner is in, of the Slack
+   *  workspaces the owner has linked into the Mission's org. Unbound only. */
+  channels: { teamId: string; teamName: string | null; id: string; name: string }[];
+  canManage: boolean;
+  /** Why there's nothing to pick, when there isn't. */
+  hint: string | null;
+};
+
+/** A Slack request to a budget-paused Mission: one fixed reply, never a
+ *  dollar figure (docs/missions.md, "Budgets"). */
+export function budgetReachedText(period: "day" | "week"): string {
+  return period === "day"
+    ? "The Mission's budget for today is reached, so it didn't take that. It goes on when the day rolls over or someone raises its budget."
+    : "The Mission's budget for this week is reached, so it didn't take that. It goes on when the week rolls over or someone raises its budget.";
+}

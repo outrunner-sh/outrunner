@@ -10,7 +10,10 @@
  * - the message carries the delivery's id as its key, which the box sends
  *   once (FeatureMessageKeys), so sending it again after a crash between
  *   sending and recording it is no second message;
- * - a send that fails is tried again with backoff, never dropped.
+ * - a send that fails is tried again with backoff, never dropped;
+ * - while the Mission is budget-paused (docs/missions.md, "Budgets"), nothing
+ *   is claimed: its events are held, never dropped, and go once the pause
+ *   lifts (its period rolls over, or its limit is raised).
  */
 
 import { formatDelivery, type MissionEvent } from "@/lib/missions/events";
@@ -32,6 +35,8 @@ export type OutboxDeps = {
   send(mission: Workspace, text: string, key: string): Promise<void>;
   complete(deliveryId: string): Promise<void>;
   fail(deliveryId: string, reason: string): Promise<void>;
+  /** The Mission is budget-paused: its events wait. */
+  held?(missionId: string): Promise<boolean>;
   log?(message: string, error?: unknown): void;
 };
 
@@ -40,10 +45,12 @@ export type OutboxDeps = {
  *  archive fails, it hears them.) */
 const PUT_AWAY: readonly WorkspaceStatus[] = ["archived", "destroying", "destroyed"];
 
-export type DeliveryOutcome = "delivered" | "nothing" | "failed" | "dropped";
+export type DeliveryOutcome = "delivered" | "nothing" | "failed" | "dropped" | "held";
 
 /** Deliver the Mission's next batch of events, if one is due. */
 export async function deliverMissionEvents(missionId: string, deps: OutboxDeps): Promise<DeliveryOutcome> {
+  // Asked before the claim, so a held batch stays as it is, to go whole.
+  if (deps.held && (await deps.held(missionId))) return "held";
   const claim = await deps.claim(missionId);
   if (!claim) return "nothing";
   const events = await deps.eventsOf(claim.deliveryId);
@@ -75,7 +82,7 @@ export async function drainMissionEvents(missionId: string, deps: OutboxDeps, ma
   for (let i = 0; i < max; i++) {
     const outcome = await deliverMissionEvents(missionId, deps);
     if (outcome === "delivered") delivered++;
-    if (outcome === "nothing" || outcome === "failed") break;
+    if (outcome === "nothing" || outcome === "failed" || outcome === "held") break;
   }
   return delivered;
 }

@@ -25,7 +25,7 @@ import {
   type RunEvent,
   type ScheduleEvent,
 } from "@/lib/automations/run-event";
-import { describeSchedule, nextRun } from "@/lib/automations/schedule";
+import { describeSchedule, missedSince, nextRun, occurrenceKey } from "@/lib/automations/schedule";
 import { repositoryIdOf } from "@/lib/db/installation-projects";
 import type {
   ClaimedRun,
@@ -194,8 +194,18 @@ export async function planScheduledRuns(now: Date, deps: ScheduleDeps): Promise<
     };
     const mine = candidates.filter((c) => c.automationId === slot.automationId);
     try {
-      const recorded = await deps.recordRuns(mine.map((c) => recordOf(c, event, `schedule:${slot.dueAt}`)));
-      pending.push(...pendingOf(mine, recorded, event));
+      // A Mission's occurrence has its own identity (schedule, revision,
+      // local time), and the times an outage missed fold into it.
+      const forMission = mine.filter((c) => c.target?.kind === "mission");
+      const forSessions = mine.filter((c) => c.target?.kind !== "mission");
+      const missed = forMission.length ? missedSince(slot.schedule, Date.parse(slot.dueAt), now.getTime()) : 0;
+      const missionEvent: ScheduleEvent = missed > 0 ? { ...event, missed } : event;
+      const key = occurrenceKey(slot.scheduleId, slot.schedule, slot.dueAt);
+      const recorded = await deps.recordRuns([
+        ...forSessions.map((c) => recordOf(c, event, `schedule:${slot.dueAt}`)),
+        ...forMission.map((c) => recordOf(c, missionEvent, key)),
+      ]);
+      pending.push(...pendingOf(forSessions, recorded, event), ...pendingOf(forMission, recorded, missionEvent));
       const next = nextRun(slot.schedule, Math.max(now.getTime(), Date.parse(slot.dueAt)));
       await deps.advanceSchedule(slot.scheduleId, slot.dueAt, next === null ? null : new Date(next).toISOString());
     } catch (error) {
@@ -281,6 +291,9 @@ export type StartDeps = {
   /** Give one of `userId`'s sessions a prompt, waking or restoring it first;
    *  false when it can't be (gone, not answering). */
   continueSession(userId: string, workspaceId: string, prompt: string): Promise<boolean>;
+  /** A Mission's run: its request (lib/missions/automation-target.ts),
+   *  never a session. Without it, a Mission's run is refused. */
+  startMissionRun?(run: PendingRun): Promise<void>;
 };
 
 /** What a session that ran the automation before is told first: its tree
@@ -319,6 +332,13 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
     }
     if (!claimed) return;
     ({ event, combined } = claimed);
+  }
+  // A Mission's destination: a request to it, never a session, whatever
+  // comes of it (lib/missions/automation-target.ts).
+  if (candidate.target?.kind === "mission") {
+    if (deps.startMissionRun) await deps.startMissionRun({ ...run, event, combined });
+    else await settle({ status: "refused", reason: "Missions' runs can't be started here." });
+    return;
   }
   // A review of a pull request's code has its check on the pull request
   // from the start (lib/automations/checks.ts): in progress until its

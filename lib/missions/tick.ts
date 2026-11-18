@@ -10,9 +10,19 @@
  *   queued      messages held for a Runner whose turn ended meanwhile
  *   failures    Runners that failed between turns, with no watch to tell
  *   deliveries  events waiting for their Mission, retried with backoff
+ *   slack in    Slack events saved for a Mission and never processed
+ *   idle        bindings no human has replied to for 2 weeks: offered a
+ *               pause, then paused (lib/missions/idle-pause.ts); their posts
+ *               queued for slack out
+ *   slack out   Slack posts queued for a Mission, due (lib/missions/slack-outbox.ts)
  */
 
+import { sweepIdle } from "@/lib/missions/idle-pause";
+import { idleSweepDeps } from "@/lib/missions/idle-pause.deps";
 import { deliverNow, missionsWithPendingEvents } from "@/lib/missions/outbox.deps";
+import { announceUntold } from "@/lib/missions/requests.deps";
+import { processDueInbound } from "@/lib/missions/slack-inbound.deps";
+import { deliverDuePosts } from "@/lib/missions/slack-outbox.deps";
 import { settleDueRunners } from "@/lib/missions/pull-requests";
 import { checkStaleWatches, reportFailedRunners, sendWaitingQueued } from "@/lib/missions/watch.deps";
 
@@ -25,12 +35,26 @@ async function quietly<T>(label: string, work: () => Promise<T>): Promise<T | nu
   }
 }
 
-export async function runMissionTick(): Promise<{ turns: number; pullRequests: number; queued: number; failures: number; delivered: number }> {
-  const [turns, pullRequests, queued, failures] = await Promise.all([
+export async function runMissionTick(): Promise<{
+  turns: number;
+  pullRequests: number;
+  queued: number;
+  failures: number;
+  delivered: number;
+  slackInbound: number;
+  slackPosts: number;
+  untold: number;
+  idleOffered: number;
+  idlePaused: number;
+}> {
+  const [turns, pullRequests, queued, failures, slackInbound, untold, idle] = await Promise.all([
     quietly("turns", () => checkStaleWatches()),
     quietly("pull requests", () => settleDueRunners()),
     quietly("queued messages", () => sendWaitingQueued()),
     quietly("failures", () => reportFailedRunners()),
+    quietly("saved Slack events", () => processDueInbound()),
+    quietly("untold requests", () => announceUntold()),
+    quietly("idle pause", () => sweepIdle(idleSweepDeps())),
   ]);
   // Last: what the parts above recorded goes in the same tick.
   const delivered = await quietly("deliveries", async () => {
@@ -38,5 +62,18 @@ export async function runMissionTick(): Promise<{ turns: number; pullRequests: n
     for (const missionId of await missionsWithPendingEvents()) count += await deliverNow(missionId);
     return count;
   });
-  return { turns: turns ?? 0, pullRequests: pullRequests ?? 0, queued: queued ?? 0, failures: failures ?? 0, delivered: delivered ?? 0 };
+  // And Slack posts the parts above queued, or that are due again.
+  const slackPosts = await quietly("Slack posts", () => deliverDuePosts());
+  return {
+    turns: turns ?? 0,
+    pullRequests: pullRequests ?? 0,
+    queued: queued ?? 0,
+    failures: failures ?? 0,
+    delivered: delivered ?? 0,
+    slackInbound: slackInbound ?? 0,
+    slackPosts: slackPosts ?? 0,
+    untold: untold ?? 0,
+    idleOffered: idle?.offered ?? 0,
+    idlePaused: idle?.paused ?? 0,
+  };
 }

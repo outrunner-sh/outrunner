@@ -5,16 +5,20 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 
 	"runtime-agent/internal/ask"
 	"runtime-agent/internal/codex"
+	"runtime-agent/internal/conversation"
+	"runtime-agent/internal/protocol"
 )
 
 // A Claude session asks the user questions through the ask_user tool (package
@@ -156,18 +160,96 @@ func (s *Service) codexSecretsArgs(workspaceID string) []string {
 }
 
 // Ask waits for the user's answer to a session's questions, returned as the
-// tool's text for its agent.
-func (s *Service) Ask(ctx context.Context, workspaceID, requestID string, questions []ask.Question) (string, error) {
-	reply, err := s.asks.Ask(ctx, workspaceID, requestID, questions)
+// tool's text for its agent. toolUseHint is the transcript's tool_use id as
+// the agent's CLI told the relay, if it did.
+func (s *Service) Ask(ctx context.Context, workspaceID, requestID, toolUseHint string, questions []ask.Question) (string, error) {
+	reply, err := s.asks.AskCall(ctx, workspaceID, requestID, toolUseHint, questions)
 	if err != nil {
 		return "", err
 	}
 	return ask.Format(questions, reply), nil
 }
 
-// Answer gives the user's reply to the questions a session is waiting on.
+// Answer gives the user's reply to the questions a session is waiting on,
+// matched by their text: a client that names no call.
 func (s *Service) Answer(workspaceID string, questions []ask.Question, reply ask.Reply) error {
 	return s.asks.Answer(workspaceID, questions, reply)
+}
+
+// AnswerCall gives the user's reply to the exact call id names
+// (ask.Broker.AnswerCall).
+func (s *Service) AnswerCall(workspaceID string, id ask.CallIdentity, operationID string, questions []ask.Question, reply ask.Reply) (ask.AnswerResult, error) {
+	return s.asks.AnswerCall(workspaceID, id, operationID, questions, reply)
+}
+
+// PendingQuestion is the ask_user call a chat (key) waits on, if any, with
+// its transcript tool_use where the transcript bears it out (pendingAskUse).
+func (s *Service) PendingQuestion(key string) (ask.PendingCall, string, bool) {
+	call, ok := s.asks.Pending(key)
+	if !ok {
+		return ask.PendingCall{}, "", false
+	}
+	return call, verifiedToolUse(s.SessionLog(key), call), true
+}
+
+// verifiedToolUse is the transcript's tool_use for call: the chat's pending
+// ask_user call (the newest, with no result and no prompt since) where it
+// asks the same questions and, if the CLI named the call's tool_use, is that
+// one. "" where the transcript doesn't bear it out (not written yet, another
+// call, no log): the association isn't assumed.
+func verifiedToolUse(log string, call ask.PendingCall) string {
+	if log == "" {
+		return ""
+	}
+	id, input, ok := pendingAskUse(log)
+	if !ok || (call.ToolUseHint != "" && call.ToolUseHint != id) {
+		return ""
+	}
+	var asked struct {
+		Questions []ask.Question `json:"questions"`
+	}
+	if json.Unmarshal(input, &asked) != nil || !reflect.DeepEqual(asked.Questions, call.Questions) {
+		return ""
+	}
+	return id
+}
+
+// pendingAskUse is the newest ask_user tool_use in a conversation log still
+// waiting on its result, as lib/runtime/pending-question.ts reads it
+// (pendingToolCall): a result for it, a prompt or a stopped turn after it
+// ends it.
+func pendingAskUse(log string) (string, json.RawMessage, bool) {
+	var id string
+	var input json.RawMessage
+	err := conversation.Walk(log, 0, func(ev conversation.Event) bool {
+		msg := ev.Message
+		if msg == nil {
+			return true
+		}
+		if msg.Role == "user" && !msg.Meta && hasText(msg.Content) {
+			id, input = "", nil // a prompt, or the record of a stop
+			return true
+		}
+		for _, block := range msg.Content {
+			switch {
+			case block.Type == "tool_use" && block.Name == ask.QualifiedToolName:
+				id, input = block.ID, block.Input
+			case block.Type == "tool_result" && id != "" && block.ToolUseID == id:
+				id, input = "", nil
+			}
+		}
+		return true
+	})
+	return id, input, err == nil && id != ""
+}
+
+func hasText(blocks []protocol.ContentBlock) bool {
+	for _, b := range blocks {
+		if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // forgetAsk removes a destroyed session's token and config.

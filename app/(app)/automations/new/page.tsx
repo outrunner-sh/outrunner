@@ -8,7 +8,7 @@ import { orgAppCoverage } from "@/lib/automations/coverage";
 import type { AppCoverage } from "@/lib/automations/rules";
 import { automationTemplate, CODE_REVIEW_TEMPLATE_ID } from "@/lib/automations/templates";
 import { automationSettingsOrDefault } from "@/lib/db/automation-settings";
-import { listOrgRepos } from "@/lib/db/automations";
+import { listOrgRepos, orgMissionChoices } from "@/lib/db/automations";
 import { getOrgContext } from "@/lib/orgs/server";
 
 type SearchParams = Promise<{ template?: string }>;
@@ -60,7 +60,11 @@ async function NewAutomation({ searchParams }: { searchParams: SearchParams }) {
   if (!context || context.active.role !== "admin") redirect("/automations");
   const { active } = context;
   const template = automationTemplate((await searchParams).template);
-  const [repos, settings] = await Promise.all([listOrgRepos(active.id), automationSettingsOrDefault(active.id)]);
+  const [repos, settings, missions] = await Promise.all([
+    listOrgRepos(active.id),
+    automationSettingsOrDefault(active.id),
+    orgMissionChoices(active.id).catch(() => []),
+  ]);
   // Coverage only flags repositories: without it, the editor still works.
   const coverage: Record<string, AppCoverage> = await orgAppCoverage(active.id, repos).catch((error: unknown) => {
     console.error("Automation: could not read the GitHub App's coverage", error);
@@ -96,6 +100,7 @@ async function NewAutomation({ searchParams }: { searchParams: SearchParams }) {
       byConnector={!active.personal}
       onHarness={settings.onHarness}
       webhook={null}
+      missions={missions}
       editable
     />
   );

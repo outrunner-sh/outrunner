@@ -108,6 +108,11 @@ type EnvKey =
   // anthropic/claude-sonnet-5.5). It runs on the org's key for Outrunner's
   // models, within the org's plan allowance.
   | "SLACK_AGENT_MODEL"
+  // Mission spend (docs/mission-spend.md): optional JSON with a `version`,
+  // prices for models the built-in cost basis doesn't list. Unset: those stay
+  // unpriced. Compute is priced at the plan's included rate
+  // (lib/billing/usage.ts), with nothing to configure.
+  | "MISSION_COST_BASIS"
   // Agent engine: "jcode" provisions a jcode box; unset/other = Claude Code.
   | "RUNTIME_ENGINE"
   // Where the control plane reads jcode credentials to inject (default ~/.jcode).

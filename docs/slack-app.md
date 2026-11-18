@@ -10,7 +10,7 @@ thread, where everyone can see it, and the thread becomes the work's session (Re
    in their sidebar with a **Slack badge**, and its header links back to the thread.
 3. From then on, **the thread and the session are in step**:
    - what people say in the thread goes to the session, with who said it (`!aside` keeps a message out;
-     `@Outrunner stop` stops its turn);
+     `@Outrunner stop` stops that thread's work);
    - the session's reply at the end of each turn is posted in the thread, with a link to the whole session;
    - what you type in the session in Outrunner is posted in the thread too.
    The session header's **Synced** toggle turns this off and on (Devin's sync toggle).
@@ -61,6 +61,23 @@ Filing/editing items, adding notes, code research, session starts and session st
 account and their existing permissions. Mention Outrunner on each shared question. Deployments upgrading the
 app must apply the channel-access migration and reinstall through the install link to approve `channels:read`
 and `groups:read` (needed to verify channel boundaries). Missing metadata or scopes fail closed.
+
+**A Mission on call in a channel.** `@Outrunner be on call here for <project>` (write on the project) binds a
+Mission to the channel: one of yours on that project, or a new one. From then on, mentions there, and replies in
+threads it took, go to the Mission instead of the spec-card flow; it answers in the thread, starts Ships (cloud
+sessions that open pull requests), and posts their pull requests there. A Mission's event is saved before Outrunner
+answers Slack (so a crash loses nothing, and the endpoint answers 503, for Slack to retry, when it can't be saved),
+and every post it makes goes through a queue that never posts the same thing twice. Only connected members who can read the
+project can task it. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread,
+`@Outrunner stop` stops that thread's work: its open requests are cancelled, its Ships' running turns are interrupted by the server, the Mission archives the Ships with no open pull request and starts nothing more for them. Other threads go on. `@Outrunner pause` / `resume` and `@Outrunner stop being on call here` need write
+on the project. It starts at most 6 Ships an hour and 30 a day. The commands are exact and handled directly, not
+by a model. Channels with no Mission keep everything below. See [Missions](missions.md#on-call-in-slack).
+
+**Watching a channel for a Mission.** A Mission's trigger can watch a channel (docs/missions.md, "Triggers"): new
+messages there that pass its filter become requests to the Mission, posted as new messages in the Mission's own
+channel. Invite Outrunner to the watched channel. Apps' and bots' messages are heard only from the app ids the trigger
+allows; Outrunner's own never. This uses the `message.channels` / `message.groups` events and history scopes already in
+the manifest; no new scopes.
 
 **It speaks first, too:**
 
@@ -161,7 +178,13 @@ app's signing secret.
    - `SLACK_SIGNING_SECRET`: the **Signing Secret**. While it is unset, the endpoint answers 404.
    - `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`: the **Client ID** and **Client Secret**. Connecting an account
      signs in with Slack, and while these are unset nobody can connect.
-4. Apply the database migrations (`pnpm db:migrate`), including `20261103180000_slack_channel_access.sql`.
+4. Apply the database migrations (`pnpm db:migrate`), including `20261103180000_slack_channel_access.sql` and,
+   for Missions on call, `20261118110000_mission_slack.sql` and `20261118110100_mission_slack_reliability.sql`.
+   Missions on call need no new scopes or events: they use `chat:write` (their posts carry a marker in Slack's
+   message metadata, which needs no scope of its own), `reactions:write`, `channels:read` and `groups:read` (to
+   list and check channels), `channels:history` and `groups:history` (to look for a post whose send went
+   unanswered before posting it again), `app_mentions:read` and the `message.*` events already in the manifest,
+   `chat.getPermalink` (no scope), and the interactivity URL for question cards.
 
 ## Connecting a Slack user to an Outrunner account (each person, once)
 

@@ -292,6 +292,25 @@ func TestDecodeCarriesTheReplysUsageForTheContextRing(t *testing.T) {
 	}
 }
 
+// Each block of one reply is a record of its own, each with the reply's usage
+// so far: the call's id goes beside the usage, the same on every record, so a
+// reader counts the call once.
+func TestDecodeNamesTheCallItsUsageIsFrom(t *testing.T) {
+	first := `{"type":"assistant","uuid":"a","timestamp":"t","message":{"id":"msg_1","role":"assistant","content":[{"type":"thinking","thinking":""}],"usage":{"input_tokens":3,"output_tokens":1}}}`
+	second := `{"type":"assistant","uuid":"b","parentUuid":"a","timestamp":"t","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":40}}}`
+	for _, line := range []string{first, second} {
+		if ev, _ := decode([]byte(line)); ev.Message.CallID != "msg_1" {
+			t.Errorf("call id = %q, want msg_1", ev.Message.CallID)
+		}
+	}
+	// No usage, no call id: there's nothing of the call's to count.
+	user := `{"type":"user","uuid":"u","timestamp":"t","message":{"id":"x","role":"user","content":"hi"}}`
+	ev, _ := decode([]byte(user))
+	if frame, _ := json.Marshal(ev.Message); strings.Contains(string(frame), "callId") {
+		t.Errorf("frame %s names a call", frame)
+	}
+}
+
 // What Claude 2.1 writes as /compact runs: the boundary, the summary it goes
 // on from (a user record, but no prompt), then the command's own records.
 func TestDecodeShowsACompactionAndNotItsSummary(t *testing.T) {

@@ -18,7 +18,9 @@ import {
   type AutomationRepo,
   type AutomationTrigger,
   canCoverNewRepos,
+  FILTER_PROMPT_MAX,
   GITHUB_TRIGGERS,
+  type MissionInputs,
   NAME_MAX,
   PROMPT_MAX,
   TRIGGER_LABELS,
@@ -27,6 +29,7 @@ import type { Schedule } from "@/lib/automations/schedule";
 import { CONNECTOR_NAME } from "@/lib/automations/connector-name";
 import type { WebhookUrl } from "@/lib/db/automation-webhooks";
 import { requestJson } from "@/lib/http/request-json";
+import { sameTarget } from "@/lib/missions/mission-automations";
 import { cn } from "@/lib/utils";
 
 /** What the editor opens with: an automation to change, or a new one's
@@ -53,7 +56,17 @@ export type AutomationDraft = {
   /** Who it runs as, for one that exists: their login, "" when it can't be
    *  told, null once they're no longer in the org. */
   runsAs: string | null;
+  /** Where its runs go: a new session each, or a Mission (docs/missions.md,
+   *  "Triggers"). A session's when absent. */
+  target?: { kind: "session" } | ({ kind: "mission"; missionId: string; hasHmacSecret?: boolean } & MissionInputs);
 };
+
+/** A Mission an automation can send its runs to. */
+export type MissionChoice = { id: string; title: string; projectId: string };
+
+/** Where the editor saves: the org's automation routes, or a Mission's own
+ *  triggers routes (app/api/missions/[id]/triggers). */
+export type EditorPlace = { create: string; /** An automation's route: this, then its id. */ itemBase: string; back: string; backLabel: string };
 
 const COVERAGE_NOTES: Record<AppCoverage, string | null> = {
   installed: null,
@@ -77,6 +90,9 @@ export function AutomationEditor({
   byConnector,
   onHarness,
   webhook,
+  missions = [],
+  fixedMission = null,
+  place,
 }: {
   orgId: string;
   draft: AutomationDraft;
@@ -91,8 +107,30 @@ export function AutomationEditor({
   onHarness: boolean;
   /** Its webhook's URL, for an admin; null for a member, or a new one. */
   webhook: WebhookUrl | null;
+  /** The org's Missions it may send its runs to (a new one's choice). */
+  missions?: MissionChoice[];
+  /** Opened from a Mission's Triggers: its runs go there, fixed. */
+  fixedMission?: MissionChoice | null;
+  place?: EditorPlace;
 }) {
   const router = useRouter();
+  const where: EditorPlace = place ?? {
+    create: `/api/orgs/${orgId}/automations`,
+    itemBase: `/api/orgs/${orgId}/automations`,
+    back: "/automations",
+    backLabel: "Automations",
+  };
+  const initialTarget = draft.target ?? (fixedMission ? { kind: "mission" as const, missionId: fixedMission.id, watch: null, linearTeamIds: [] } : { kind: "session" as const });
+  const [missionId, setMissionId] = useState<string | null>(initialTarget.kind === "mission" ? initialTarget.missionId : null);
+  const toMission = missionId !== null;
+  const missionChoice = fixedMission ?? missions.find((m) => m.id === missionId) ?? null;
+  const savedWatch = initialTarget.kind === "mission" ? initialTarget.watch : null;
+  const [watchTeam, setWatchTeam] = useState(savedWatch?.teamId ?? "");
+  const [watchChannel, setWatchChannel] = useState(savedWatch?.channelId ?? "");
+  const [filterPrompt, setFilterPrompt] = useState(savedWatch?.filterPrompt ?? "");
+  const [appIds, setAppIds] = useState((savedWatch?.allowedAppIds ?? []).join(", "));
+  const [linearTeams, setLinearTeams] = useState((initialTarget.kind === "mission" ? initialTarget.linearTeamIds : []).join(", "));
+  const [webhookSecret, setWebhookSecret] = useState("");
   const [name, setName] = useState(draft.name);
   const [prompt, setPrompt] = useState(draft.prompt);
   const [triggers, setTriggers] = useState<AutomationTrigger[]>(draft.triggers);
@@ -110,8 +148,9 @@ export function AutomationEditor({
   const [projectIds, setProjectIds] = useState<string[]>(draft.projectIds);
   const [coverNewRepos, setCoverNewRepos] = useState(draft.coverNewRepos);
   // Off whenever a trigger runs on every repository (a schedule, a webhook),
-  // and saved off: ticking one turns it off.
-  const canCover = canCoverNewRepos(triggers);
+  // and saved off: ticking one turns it off. Never a Mission's: it keeps its
+  // project's one repository.
+  const canCover = !toMission && canCoverNewRepos(triggers);
   const covering = coverNewRepos && canCover;
   const [enabled, setEnabled] = useState(draft.enabled);
   const [filter, setFilter] = useState("");
@@ -200,16 +239,41 @@ export function AutomationEditor({
               : { projectIds, coverNewRepos: covering }),
             ...(enabled !== draft.enabled ? { enabled } : {}),
           };
+      // A Mission's: its destination and inputs, its one repository its
+      // project's (the server sets it the same).
+      const list = (text: string) => text.split(/[\s,]+/).filter(Boolean);
+      const target = toMission && missionChoice
+        ? {
+            kind: "mission" as const,
+            missionId: missionChoice.id,
+            watch: triggers.includes("slack.message")
+              ? { teamId: watchTeam.trim(), channelId: watchChannel.trim(), filterPrompt: filterPrompt.trim(), allowedAppIds: list(appIds) }
+              : null,
+            linearTeamIds: triggers.includes("linear.issue") ? list(linearTeams) : [],
+          }
+        : null;
+      // Sent when it changed (or it's new), like the other fields: a save
+      // that doesn't change what it sends doesn't ask the owner again. The
+      // server's own comparison (lib/missions/mission-automations.ts).
+      const targetChanged = creating || !sameTarget(target ?? undefined, draft.target ?? null);
+      const missionBody =
+        target && missionChoice
+          ? {
+              ...(targetChanged && { target }),
+              ...(creating && { projectIds: [missionChoice.projectId] }),
+              ...(webhookSecret.trim() ? { webhookSecret: webhookSecret.trim() } : {}),
+            }
+          : {};
       const { id } = await requestJson<{ id: string }>(
-        creating ? `/api/orgs/${orgId}/automations` : `/api/orgs/${orgId}/automations/${draft.id}`,
+        creating ? where.create : `${where.itemBase}/${draft.id}`,
         {
           method: creating ? "POST" : "PATCH",
-          body,
+          body: { ...body, ...missionBody },
           fallback: "Couldn't save the automation. Try again.",
         },
       );
       // Given a webhook it had none of: back to it, where its URL is now.
-      router.push(triggers.includes("webhook") && !webhook?.path ? `/automations/${id}` : "/automations");
+      router.push(triggers.includes("webhook") && !webhook?.path && !place ? `/automations/${id}` : where.back);
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Couldn't save the automation. Try again.");
@@ -222,11 +286,11 @@ export function AutomationEditor({
     setDeleting(true);
     setError(null);
     try {
-      await requestJson(`/api/orgs/${orgId}/automations/${draft.id}`, {
+      await requestJson(`${where.itemBase}/${draft.id}`, {
         method: "DELETE",
         fallback: "Couldn't delete the automation. Try again.",
       });
-      router.push("/automations");
+      router.push(where.back);
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Couldn't delete the automation. Try again.");
@@ -238,10 +302,10 @@ export function AutomationEditor({
     <div className="px-8 py-8">
       <div className="mx-auto max-w-3xl space-y-6">
         <Link
-          href="/automations"
+          href={where.back}
           className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
         >
-          <ArrowLeft className="size-3.5" /> Automations
+          <ArrowLeft className="size-3.5" /> {where.backLabel}
         </Link>
         <header className="space-y-1">
           <h1 className="text-lg font-semibold text-foreground">{creating ? "New automation" : draft.name}</h1>
@@ -279,8 +343,60 @@ export function AutomationEditor({
           />
         </Field>
 
+        <Field label="Destination">
+          {fixedMission || !creating ? (
+            <p className="text-[13px] text-foreground">
+              {toMission ? `The Mission "${missionChoice?.title ?? "Mission"}", as a request` : "A new session each run"}
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-2 text-[13px] text-foreground">
+                <input type="radio" name="destination" checked={!toMission} disabled={!editable} onChange={() => setMissionId(null)} className="size-3.5 accent-[var(--primary)]" />
+                A new session each run
+              </label>
+              <label className={cn("flex items-center gap-2 text-[13px] text-foreground", missions.length === 0 && "opacity-60")}>
+                <input
+                  type="radio"
+                  name="destination"
+                  checked={toMission}
+                  disabled={!editable || missions.length === 0}
+                  onChange={() => {
+                    setMissionId(missions[0]?.id ?? null);
+                    setTriggers(triggers.filter((t) => t === "schedule" || t === "webhook"));
+                  }}
+                  className="size-3.5 accent-[var(--primary)]"
+                />
+                A Mission, as a request
+                {toMission ? (
+                  <select
+                    value={missionId ?? ""}
+                    onChange={(event) => setMissionId(event.target.value)}
+                    disabled={!editable}
+                    aria-label="Mission"
+                    className="ml-1 h-7 rounded-md border border-border bg-transparent px-1.5 text-xs"
+                  >
+                    {missions.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.title}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+              </label>
+              {toMission ? (
+                <p className="text-xs text-muted-foreground">
+                  Each run becomes a request to the Mission, never a session: it decides what to do and starts Ships. Its owner
+                  approves it before it runs, unless it&apos;s yours.
+                </p>
+              ) : null}
+            </div>
+          )}
+        </Field>
+
         <Field label="Trigger">
           <div className="space-y-1.5">
+            {toMission ? null : (
+              <>
             <div className="text-xs text-muted-foreground">Pull requests</div>
             {GITHUB_TRIGGERS.filter((t) => t.startsWith("pull_request.")).map((trigger) => triggerCheck(trigger))}
             {triggers.includes("pull_request.review_requested") ? (
@@ -321,6 +437,8 @@ export function AutomationEditor({
                 </p>
               </div>
             ) : null}
+              </>
+            )}
             <div className="pt-1.5 text-xs text-muted-foreground">Outrunner</div>
             <Check checked={scheduled} disabled={!editable} onChange={toggleSchedule}>
               On a schedule
@@ -341,8 +459,74 @@ export function AutomationEditor({
               <AutomationWebhook orgId={orgId} automationId={draft.id} webhook={webhook} editable={editable} />
             </div>
           ) : null}
+          {toMission && triggers.includes("webhook") ? (
+            <div className="space-y-1 pl-5 pt-1">
+              <Input
+                type="password"
+                value={webhookSecret}
+                onChange={(event) => setWebhookSecret(event.target.value)}
+                disabled={!editable}
+                placeholder={draft.target?.kind === "mission" && draft.target.hasHmacSecret ? "A signing secret is set: type a new one to replace it" : "Signing secret (optional, 16+ characters)"}
+                aria-label="Webhook signing secret"
+                className="h-7 max-w-sm text-xs"
+                autoComplete="off"
+              />
+              <p className="text-xs text-muted-foreground">
+                A Mission&apos;s webhook needs an Idempotency-Key (or X-Delivery-Id) header on each delivery: the same key with a
+                different body is refused. With a secret, each body must carry X-Outrunner-Signature: sha256=&lt;HMAC&gt;. Sentry and PagerDuty deliver as they are: use the Client Secret or the subscription&apos;s secret.
+              </p>
+            </div>
+          ) : null}
+          {toMission ? (
+            <>
+              <div className="pt-1.5">
+                <Check checked={triggers.includes("slack.message")} disabled={!editable} onChange={() => setTriggers(toggle(triggers, "slack.message"))}>
+                  {TRIGGER_LABELS["slack.message"]}
+                </Check>
+              </div>
+              {triggers.includes("slack.message") ? (
+                <div className="space-y-1.5 pl-5 pt-1">
+                  <div className="flex gap-2">
+                    <Input value={watchTeam} onChange={(e) => setWatchTeam(e.target.value)} disabled={!editable} placeholder="Slack workspace id (T…)" aria-label="Slack workspace id" className="h-7 max-w-[12rem] font-mono text-xs" autoComplete="off" />
+                    <Input value={watchChannel} onChange={(e) => setWatchChannel(e.target.value)} disabled={!editable} placeholder="Channel id (C…)" aria-label="Slack channel id" className="h-7 max-w-[12rem] font-mono text-xs" autoComplete="off" />
+                  </div>
+                  <Textarea
+                    value={filterPrompt}
+                    onChange={(e) => setFilterPrompt(e.target.value)}
+                    maxLength={FILTER_PROMPT_MAX}
+                    disabled={!editable}
+                    placeholder="Which messages become requests, e.g. “Bug reports about the web app, with steps or an error.”"
+                    aria-label="Filter"
+                    className="min-h-20 text-xs md:text-xs"
+                  />
+                  <Input value={appIds} onChange={(e) => setAppIds(e.target.value)} disabled={!editable} placeholder="App ids whose messages it hears (A…), comma between" aria-label="Allowed app ids" className="h-7 max-w-sm font-mono text-xs" autoComplete="off" />
+                  <p className="text-xs text-muted-foreground">
+                    New messages in the channel (not threads, not mentions of Outrunner) go through the filter, a model call with no
+                    tools; matches become requests, posted in the Mission&apos;s channel. Apps are heard only from the ids listed,
+                    and Outrunner&apos;s own messages never. Invite Outrunner to the channel.
+                  </p>
+                </div>
+              ) : null}
+              <div className="pt-1.5">
+                <Check checked={triggers.includes("linear.issue")} disabled={!editable} onChange={() => setTriggers(toggle(triggers, "linear.issue"))}>
+                  {TRIGGER_LABELS["linear.issue"]}
+                </Check>
+              </div>
+              {triggers.includes("linear.issue") ? (
+                <div className="space-y-1 pl-5 pt-1">
+                  <Input value={linearTeams} onChange={(e) => setLinearTeams(e.target.value)} disabled={!editable} placeholder="Linear team ids, comma between" aria-label="Linear team ids" className="h-7 max-w-sm font-mono text-xs" autoComplete="off" />
+                  <p className="text-xs text-muted-foreground">
+                    Issues delegated to Outrunner in these teams go to the Mission, unless a session has them already. What&apos;s said
+                    in the issue&apos;s agent session reaches the same request; a stop, taking it back or closing the issue cancels
+                    that request&apos;s work.
+                  </p>
+                </div>
+              ) : null}
+            </>
+          ) : null}
         </Field>
 
+        {toMission ? null : (
         <Field label="Repositories">
           {repos.length === 0 ? (
             <p className="text-[13px] text-muted-foreground">
@@ -393,6 +577,7 @@ export function AutomationEditor({
             </p>
           </div>
         </Field>
+        )}
 
         <Field label="Prompt" htmlFor="automation-prompt">
           <Textarea

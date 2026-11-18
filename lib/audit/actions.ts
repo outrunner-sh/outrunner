@@ -14,6 +14,10 @@ export type AuditAction =
   | "slack_channel.revoked"
   | "slack_channel.asked"
   | "slack_channel.lookup"
+  | "mission.slack_bound"
+  | "mission.slack_unbound"
+  | "mission.slack_idle_paused"
+  | "mission.slack_ship_started"
   | "org.renamed"
   | "org.github_join_changed"
   | "member.invited"
@@ -123,6 +127,14 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `asked a shared channel question in ${what}`;
     case "slack_channel.lookup":
       return `looked up ${text(d.tool) ?? "status"} in ${what}`;
+    case "mission.slack_bound":
+      return `put the Mission ${what} on call in Slack channel ${text(d.slack_channel_id) ?? "?"}`;
+    case "mission.slack_unbound":
+      return `took the Mission ${what} off call in Slack channel ${text(d.slack_channel_id) ?? "?"}`;
+    case "mission.slack_idle_paused":
+      return `paused the Mission ${what} in Slack channel ${text(d.slack_channel_id) ?? "?"}: no one had replied for 2 weeks`;
+    case "mission.slack_ship_started":
+      return `started a Ship from Slack for the Mission ${what}${text(d.requested_by_slack) ? `, asked by Slack user ${text(d.requested_by_slack)}` : ""}`;
     case "org.renamed":
       return `renamed the org from ${text(d.from) ?? "?"} to ${text(d.to) ?? what}`;
     case "org.github_join_changed":

@@ -10,6 +10,7 @@
  * the scoping and the refusals here test without a database or a box.
  */
 
+import { budgetStartRefusal } from "@/lib/missions/budget";
 import type { RunnerPullRequest } from "@/lib/missions/pulls";
 import {
   boolArg,
@@ -21,6 +22,17 @@ import {
   runnerState,
   textArg,
 } from "@/lib/missions/rules";
+import {
+  callSlackTool,
+  type MissionSlackDeps,
+  recheckMessage,
+  recheckStart,
+  SLACK_TOOL_NAMES,
+  SLACK_TOOLS,
+  SPAWN_SLACK_PROPERTIES,
+  slackSpawn,
+  tellStartRefused,
+} from "@/lib/missions/slack-tools";
 import type { Workspace } from "@/lib/runtime/types";
 
 /** The Mission a call is for: the one its token names. */
@@ -36,6 +48,9 @@ export type RunnerStart = {
   model: string | undefined;
   agent: string | undefined;
   effort: string | undefined;
+  /** The session id it's made with (a Ship start's reservation chose it), so
+   *  a start tried again finds the same session. */
+  id?: string;
 };
 
 export type MissionToolDeps = {
@@ -52,7 +67,9 @@ export type MissionToolDeps = {
   /** Its latest reply: read from its box, else the last one recorded. */
   latestResponse(session: Workspace): Promise<string | null>;
   pullRequests(runner: Workspace): Promise<RunnerPullRequest[]>;
-  startRunner(mission: Workspace, start: RunnerStart): Promise<{ runnerId: string } | { error: string }>;
+  /** `definite`: the start was answered with a refusal, so no Ship was made
+   *  by it; false when its outcome is unknown (it threw). */
+  startRunner(mission: Workspace, start: RunnerStart): Promise<{ runnerId: string } | { error: string; definite: boolean }>;
   /** Send as the owner, waking or restoring it first; false when it can't be. */
   send(runner: Workspace, content: string): Promise<boolean>;
   queue(missionId: string, runnerId: string, content: string): Promise<void>;
@@ -60,6 +77,12 @@ export type MissionToolDeps = {
   archive(runner: Workspace): Promise<boolean>;
   readNotes(missionId: string): Promise<{ body: string; updatedAt: string | null }>;
   writeNotes(missionId: string, body: string): Promise<void>;
+  /** The Mission's budget pause, if it's budget-paused (budget.deps.ts):
+   *  the period reached. No Ship starts while it is. */
+  budgetPause?(missionId: string): Promise<"day" | "week" | null>;
+  /** Slack, for a Mission on call in a channel (lib/missions/slack-tools.ts);
+   *  without it, its Slack tools are off. */
+  slack?: MissionSlackDeps;
 };
 
 export type ToolResult = { text: string; isError?: boolean };
@@ -86,6 +109,7 @@ export const MISSION_TOOLS: ToolDefinition[] = [
         agent: { type: "string", enum: ["claude", "codex"], description: "The coding agent to run." },
         effort: { type: "string", enum: ["low", "medium", "high", "xhigh", "max"], description: "Thinking effort." },
         plan_mode: { type: "boolean", description: "Have it reply with a plan first and change nothing until told to go ahead." },
+        ...SPAWN_SLACK_PROPERTIES,
       },
       required: ["prompt"],
       additionalProperties: false,
@@ -150,6 +174,7 @@ export const MISSION_TOOLS: ToolDefinition[] = [
       additionalProperties: false,
     },
   },
+  ...SLACK_TOOLS.map((tool) => ({ ...tool, inputSchema: tool.inputSchema as Record<string, unknown> })),
 ];
 
 const NO_SUCH_RUNNER: ToolResult = { text: "This Mission has no Ship with that id. list_runners shows its Ships.", isError: true };
@@ -245,6 +270,7 @@ export async function callMissionTool(
       return { text: "Notes saved." };
     }
     default:
+      if (SLACK_TOOL_NAMES.includes(name)) return callSlackTool(mission, name, args, deps.slack);
       return refuse(`No tool is called ${name}.`);
   }
 }
@@ -254,19 +280,75 @@ async function spawnRunner(mission: Workspace, args: Record<string, unknown>, de
   if (!prompt) return refuse("prompt is required: the Ship's brief.");
   const notReady = await deps.environmentReady(mission);
   if (notReady) return refuse(`The Ship didn't start: ${notReady}`);
+  // On call in Slack: reserved under its key and the limits, for its request.
+  const slack = await slackSpawn(mission, args, deps.slack, async (id) => (await deps.session(id)) !== null);
+  if (slack && "error" in slack) return refuse(slack.error);
+  if (slack && "existing" in slack) {
+    return json({
+      runner_id: slack.existing,
+      note: "That request_id and spawn_key started this Ship already: it's the same one. Use a new spawn_key for another Ship.",
+    });
+  }
+  // Given back only when this call took it and no Ship can have come of it.
+  const giveBack = async () => {
+    if (slack && !slack.resumed && !(await deps.session(slack.plannedRunnerId))) {
+      await deps.slack?.releaseShip(slack.reservation).catch(() => undefined);
+    }
+  };
   const places = runnerPlacesLeft(await deps.runners(mission.id));
   if (places === 0) {
+    await giveBack();
     return refuse(`This Mission already has ${MAX_RUNNERS} Ships that aren't archived. Archive a finished one (archive_runner) first.`);
   }
-  const started = await deps.startRunner(mission, {
-    brief: prompt,
-    planMode: boolArg(args, "plan_mode"),
-    name: textArg(args, "name")?.slice(0, 120),
-    model: textArg(args, "model"),
-    agent: textArg(args, "agent"),
-    effort: textArg(args, "effort"),
-  });
-  if ("error" in started) return refuse(`The Ship didn't start: ${started.error}`);
+  if (slack && deps.slack) {
+    // Right before the start: still on call the same way, still allowed.
+    const why = await recheckStart(mission, slack, deps.slack);
+    if (why) {
+      await giveBack();
+      return refuse(`The Ship didn't start: ${why}.`);
+    }
+  }
+  // Every Ship start, on call or not: the Mission's budget. Ships already
+  // running go on.
+  const budget = deps.budgetPause ? await deps.budgetPause(mission.id) : null;
+  if (budget) {
+    await giveBack();
+    const why = budgetStartRefusal(budget);
+    if (slack && deps.slack) await tellStartRefused(slack, why, deps.slack).catch(() => undefined);
+    return refuse(`The Ship didn't start: ${why}.`);
+  }
+  let started: Awaited<ReturnType<MissionToolDeps["startRunner"]>>;
+  try {
+    started = await deps.startRunner(mission, {
+      brief: slack?.briefNote ? `${prompt}${slack.briefNote}` : prompt,
+      planMode: boolArg(args, "plan_mode"),
+      name: textArg(args, "name")?.slice(0, 120),
+      model: textArg(args, "model"),
+      agent: textArg(args, "agent"),
+      effort: textArg(args, "effort"),
+      ...(slack && { id: slack.plannedRunnerId }),
+    });
+  } catch (error) {
+    started = { error: error instanceof Error ? error.message : String(error), definite: false };
+  }
+  if ("error" in started) {
+    // A refusal is proof no Ship was made by this call; anything else isn't,
+    // and the place stays reserved for a retry under the same key.
+    if (started.definite) {
+      await giveBack();
+      // Said in the thread by the server: the Mission may not, and must not go quiet.
+      if (slack && deps.slack) await tellStartRefused(slack, started.error, deps.slack).catch(() => undefined);
+    }
+    return refuse(
+      `The Ship didn't start: ${started.error}${slack && !started.definite ? " Call spawn_runner again with the same request_id and spawn_key: it finds the Ship if one was made, or starts it." : ""}`,
+    );
+  }
+  if (slack && deps.slack) {
+    await deps.slack.linkShip(slack.reservation, started.runnerId).catch((error: unknown) =>
+      console.error(`Mission ${mission.id}: Ship ${started.runnerId} isn't linked to its request`, error),
+    );
+    await deps.slack.auditShip(mission, slack.binding, slack.request, started.runnerId).catch(() => undefined);
+  }
   return json({
     runner_id: started.runnerId,
     note: "It's setting up its box and starts on the brief once ready. You hear when its turn ends; there is no need to poll.",
@@ -278,6 +360,8 @@ async function messageRunner(mission: Workspace, args: Record<string, unknown>, 
   if (!runner) return NO_SUCH_RUNNER;
   const message = textArg(args, "message");
   if (!message) return refuse("message is required.");
+  const slackWhy = await recheckMessage(mission, runner.id, deps.slack);
+  if (slackWhy) return refuse(slackWhy);
   if (runner.status === "failed") return refuse("That Ship failed to start, so it can't take messages. Spawn another.");
   if (runner.status === "creating" || runner.status === "provisioning") {
     await deps.queue(mission.id, runner.id, message);

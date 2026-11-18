@@ -14,7 +14,13 @@ import { NOTES_FILE } from "@/lib/missions/rules";
 
 export const MISSION_MCP_SERVER = "outrunner-mission";
 
-export type MissionBoxSetup = { token: string; notes: string; url: string };
+export type MissionBoxSetup = {
+  token: string;
+  notes: string;
+  url: string;
+  /** On call in a Slack channel: its instructions say how. */
+  onCall?: boolean;
+};
 
 /** The Mission's MCP endpoint, as its box reaches the app. */
 export function missionMcpUrl(): string | null {
@@ -59,6 +65,6 @@ export function withMissionEnvironment(environment: EnvironmentSetup | null, mis
     archive: environment?.archive ?? null,
     ...(environment?.hooks && { hooks: environment.hooks }),
     ...(environment?.generation !== undefined && { generation: environment.generation }),
-    instructions: missionInstructions(environment?.instructions ?? null),
+    instructions: missionInstructions(environment?.instructions ?? null, { onCall: mission.onCall }),
   };
 }

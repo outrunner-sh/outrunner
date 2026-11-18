@@ -98,7 +98,13 @@ async function AutomationSection({ params }: { params: Params }) {
         // Its runner's login, "" when it can't be told (no GitHub login on
         // record), null once they're no longer in the org.
         runsAs: automation.runsAs ? automation.runsAs.login : null,
+        target: automation.target,
       }}
+      fixedMission={
+        automation.target.kind === "mission"
+          ? { id: automation.target.missionId, title: automation.target.missionTitle ?? "Mission", projectId: automation.repos[0]?.projectId ?? "" }
+          : null
+      }
       repos={repos}
       coverage={coverage}
       byConnector={!active.personal}

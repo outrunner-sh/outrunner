@@ -23,12 +23,15 @@ import {
   linearSetIssueState,
 } from "@/lib/trackers/linear";
 import { type AgentDeps, resumeAfterLink } from "@/lib/trackers/linear-agent";
+import { linearMissionDeps } from "@/lib/missions/linear-route.deps";
 import { linearSendBaseline, openLinearWatch, sessionUrl, watchLinearReply } from "@/lib/trackers/linear-relay";
 
 /** How long a delegation waits for its person to link. */
 const LINK_WAIT_MS = 24 * 60 * 60_000;
 
 export const agentDeps: AgentDeps = {
+  // Issues whose team routes to a Mission are its requests (lib/missions/linear-route.ts).
+  mission: linearMissionDeps(),
   // A token that can't be had right now throws: the webhook answers 503, and Linear
   // delivers it again. A disconnected install has no one to say anything to.
   say: (installationId, agentSessionId, content, signal) =>

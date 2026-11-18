@@ -7,6 +7,7 @@
 
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
 import { reachBox } from "@/lib/missions/box";
+import { budgetPause } from "@/lib/missions/budget.deps";
 import type { MissionEvent, MissionEventPayload } from "@/lib/missions/events";
 import {
   DELIVERY_LEASE_SECONDS,
@@ -98,6 +99,7 @@ export function outboxDeps(): OutboxDeps {
       const { error } = await db().rpc("fail_mission_delivery", { target: deliveryId, failure: reason });
       if (error) throw error;
     },
+    held: async (missionId) => (await budgetPause(missionId)) !== null,
     log: (message, error) => console.warn(message, error instanceof Error ? error.message : ""),
   };
 }

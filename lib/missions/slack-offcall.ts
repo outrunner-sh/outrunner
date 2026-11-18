@@ -1,0 +1,91 @@
+/**
+ * A Mission going off call, the parts with no network: its open question
+ * cards closed, the binding ended, the Mission told, the org's log written.
+ * The wiring is lib/missions/slack-binding.ts (takeOffCall).
+ *
+ * The order is the point: cards close first (once the binding row is gone a
+ * click can't tell what it was under), then the binding ends, and the
+ * Mission hears of it last.
+ *
+ * Requests the ended binding left without a Ship are dropped: dropPending
+ * cancels them once the binding has ended (lib/missions/slack-binding.ts
+ * wires it to cancelPendingRequests). The revision checks
+ * (lib/missions/slack-tools.ts recheckStart, recheckMessage) stay as the
+ * backstop for anything in flight.
+ */
+
+import type { MissionAsk, MissionChannel, MissionThread, ShipAsk } from "@/lib/missions/slack-store";
+import { type CardEnd, cardEndText, closedBlocks, shipClosedBlocks } from "@/lib/missions/slack-text";
+import type { Workspace } from "@/lib/runtime/types";
+
+export type OffCallDeps = {
+  binding(missionId: string): Promise<MissionChannel | null>;
+  /** The Mission's question cards on screen and not answered. */
+  openAsks(missionId: string): Promise<MissionAsk[]>;
+  thread(id: string): Promise<MissionThread | null>;
+  /** Its Ships' question cards posted under this binding, open (none when
+   *  unwired). */
+  openShipAsks?(missionId: string, bindingRevision: string): Promise<ShipAsk[]>;
+  /** Close a Ship card: true when this closed it (a click's claim wins). */
+  closeShipAsk?(id: string): Promise<boolean>;
+  /** Edit a card; rejects when it can't. */
+  update(binding: MissionChannel, ts: string, text: string, blocks: Record<string, unknown>[]): Promise<void>;
+  /** End the binding; true when it was on. */
+  unbind(missionId: string): Promise<boolean>;
+  /** Cancel what the ended binding left pending (requests with no Ship).
+   *  Wired by takeOffCall; optional so the pure flow can run without it. */
+  dropPending?(missionId: string, binding: MissionChannel, why: CardEnd): Promise<unknown>;
+  /** Tell the Mission it's off call. */
+  tell(mission: Workspace, binding: MissionChannel): Promise<void>;
+  audit(mission: Workspace, binding: MissionChannel, userId: string): Promise<void>;
+  log(message: string, error: unknown): void;
+};
+
+/** Every open question card of the binding that's ending says nothing is
+ *  waiting on it. Best effort, one at a time: a card that can't be edited is
+ *  still refused when clicked (lib/missions/slack-ask.ts). Cards asked under
+ *  an earlier binding are skipped: closed when it ended (nothing marks them
+ *  so), and a click on one is refused by revision anyway. How many were
+ *  closed. */
+export async function closeOpenCards(missionId: string, binding: MissionChannel, why: CardEnd, deps: OffCallDeps): Promise<number> {
+  let closed = 0;
+  for (const ask of await deps.openAsks(missionId)) {
+    if (ask.bindingRevision !== null && ask.bindingRevision !== binding.revision) continue;
+    const thread = await deps.thread(ask.threadId).catch(() => null);
+    if (!ask.messageTs || !thread || thread.channelId !== binding.channelId) continue;
+    try {
+      await deps.update(binding, ask.messageTs, `${ask.question}: ${cardEndText(why)}`, closedBlocks(ask.question, why));
+      closed++;
+    } catch (error) {
+      deps.log(`Mission ${missionId}: couldn't close its question card ${ask.id}`, error);
+    }
+  }
+  // Its Ships' cards of this binding too: nothing will answer them now.
+  if (deps.openShipAsks && deps.closeShipAsk) {
+    for (const ask of await deps.openShipAsks(missionId, binding.revision)) {
+      if (!(await deps.closeShipAsk(ask.id))) continue; // a click claimed it first
+      const thread = ask.messageTs ? await deps.thread(ask.threadId).catch(() => null) : null;
+      if (!ask.messageTs || !thread || thread.channelId !== binding.channelId) continue;
+      try {
+        await deps.update(binding, ask.messageTs, `${ask.question}: ${cardEndText(why)}`, shipClosedBlocks(ask.title, ask.question, why));
+        closed++;
+      } catch (error) {
+        deps.log(`Mission ${missionId}: couldn't close Ship question card ${ask.id}`, error);
+      }
+    }
+  }
+  return closed;
+}
+
+/** Take the Mission off call. Work it already started goes on, with its
+ *  owner (docs/missions.md). False when it wasn't on call. */
+export async function takeMissionOffCall(mission: Workspace, userId: string, why: CardEnd, deps: OffCallDeps): Promise<boolean> {
+  const binding = await deps.binding(mission.id);
+  if (!binding) return false;
+  await closeOpenCards(mission.id, binding, why, deps).catch((error: unknown) => deps.log(`Mission ${mission.id}: couldn't close its cards`, error));
+  if (!(await deps.unbind(mission.id))) return false;
+  await deps.dropPending?.(mission.id, binding, why).catch((error: unknown) => deps.log(`Mission ${mission.id}: couldn't drop its pending requests`, error));
+  await deps.tell(mission, binding).catch((error: unknown) => deps.log(`Mission ${mission.id}: couldn't tell it it's off call`, error));
+  await deps.audit(mission, binding, userId);
+  return true;
+}

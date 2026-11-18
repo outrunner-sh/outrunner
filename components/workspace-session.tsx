@@ -7,7 +7,15 @@ import { RECENT_SELECTION } from "@/lib/session/kept-selection";
 import { sessionModelToRemember } from "@/lib/session/recent-selection";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { type AgentEvent, ChangesResponse, FilesResponse, PlanActionResponse, RewindResponse } from "@/lib/runtime/agent-protocol";
+import {
+  type AgentEvent,
+  type CallIdentity,
+  ChangesResponse,
+  FilesResponse,
+  PendingQuestionsResponse,
+  PlanActionResponse,
+  RewindResponse,
+} from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline } from "@/components/conversation-timeline";
 import { ImageBoxContext } from "@/components/markdown";
 import { QueuedPrompts } from "@/components/queued-prompts";
@@ -36,9 +44,13 @@ import { pendingPlan } from "@/lib/runtime/pending-plan";
 import { rememberedMode, rememberMode, type SessionMode } from "@/lib/session/session-mode";
 import {
   type AskAnswer,
+  agentAnswer,
+  answerTarget,
+  type CardAnswer,
   isExpiredQuestionError,
   pendingQuestion,
   type PendingQuestion,
+  QUESTION_EXPIRED_MESSAGE,
 } from "@/lib/runtime/pending-question";
 import {
   echoUuid,
@@ -510,11 +522,16 @@ export function WorkspaceSession({
     setSendError(null);
     setAnswerError(null);
     setQuestionGone(null);
-    const body = { questions: asked.raw, ...reply };
-    (local
-      ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/answer`, body)
-      : answerCloudQuestion(workspaceId, chatId, body)
-    ).catch((error: unknown) => {
+    // Named for the transcript call the card shows, so the agent answers that
+    // call and no other asking the same; one operation per answer, so a
+    // retry of it is delivered once.
+    const body: CardAnswer = {
+      questions: asked.raw as unknown[],
+      toolUseId: asked.toolUseId,
+      answerOperationId: crypto.randomUUID(),
+      ...reply,
+    };
+    (local ? answerLocalQuestion(workspaceId, body) : answerCloudQuestion(workspaceId, chatId, body)).catch((error: unknown) => {
       const raw = error instanceof Error ? error.message : String(error ?? "");
       if (isExpiredQuestionError(raw)) {
         // Over already (the session restarted, or it was answered elsewhere):
@@ -1697,9 +1714,27 @@ class ModelSwitchError extends Error {
   }
 }
 
+/** Answer the questions a local session's agent is waiting on: to the call
+ *  the agent verified is the card's, where it lists its calls (GET
+ *  /workspaces/{id}/question; an older desktop agent has no such route, and
+ *  is answered by the questions' text, as before). */
+async function answerLocalQuestion(workspaceId: string, answer: CardAnswer): Promise<void> {
+  const target = localTarget(workspaceId);
+  const listed = await localAgentRequest(target, "GET", `/workspaces/${workspaceId}/question`)
+    .then((out) => PendingQuestionsResponse.safeParse(out))
+    .catch(() => null);
+  let call: CallIdentity | null = null;
+  if (listed?.success && answer.toolUseId) {
+    const found = answerTarget(listed.data.questions, answer.toolUseId);
+    if (found.kind === "gone") throw new Error(QUESTION_EXPIRED_MESSAGE);
+    if (found.kind === "call") call = found.identity;
+  }
+  await localAgentRequest(target, "POST", `/workspaces/${workspaceId}/answer`, agentAnswer(answer, call, answer.answerOperationId ?? crypto.randomUUID()));
+}
+
 /** Answer the questions a cloud session's agent is waiting on. The server
  *  reaches the session's agent, as for a prompt. */
-async function answerCloudQuestion(workspaceId: string, chatId: string, body: unknown): Promise<void> {
+async function answerCloudQuestion(workspaceId: string, chatId: string, body: CardAnswer): Promise<void> {
   const res = await fetch(chatRoute(workspaceId, chatId, "answer"), {
     method: "POST",
     headers: { "content-type": "application/json" },

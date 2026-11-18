@@ -84,6 +84,11 @@ export const linearEventDeps: LinearEventDeps = {
     if (error) throw error;
     return data ? { id: data.id, ownerId: data.owner_id, status: data.status } : null;
   },
+  missionIssueEnded: async (installationId, issueId, reason) => {
+    const { cancelIssue } = await import("@/lib/missions/linear-route");
+    const { linearMissionDeps } = await import("@/lib/missions/linear-route.deps");
+    await cancelIssue(installationId, issueId, reason, linearMissionDeps());
+  },
   archiveOnClose,
   wake: wakeSession,
   suspend: suspendSession,

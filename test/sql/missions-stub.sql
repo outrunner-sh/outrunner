@@ -4,6 +4,7 @@
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon; end if;
   if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated; end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role; end if;
 end $$;
 
 create extension if not exists pgcrypto;
@@ -49,3 +50,51 @@ create table notification_preferences (
 insert into notification_preferences (user_id, kinds) values
   ('00000000-0000-0000-0000-0000000000a1', '{turn_done,pr_opened}'),
   ('00000000-0000-0000-0000-0000000000a2', '{turn_done}');
+
+-- What the Slack binding tables point at (20261118110000_mission_slack.sql):
+-- an org, and a person.
+create table organizations (id uuid primary key default gen_random_uuid());
+create schema if not exists auth;
+create table auth.users (id uuid primary key default gen_random_uuid());
+
+-- The automations tables, as much of them as 20261118110200_mission_inputs.sql
+-- changes or checks (their checks under the names the earlier migrations give
+-- them).
+create table automations (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid,
+  name text not null default 'a',
+  prompt text not null default 'p',
+  triggers text[] not null constraint automations_triggers_check
+    check (cardinality(triggers) > 0 and triggers <@ array['pull_request.opened', 'schedule', 'webhook']),
+  labels text[] not null default '{}',
+  enabled boolean not null default true,
+  runs_as uuid,
+  template text,
+  max_runs integer,
+  archive_when_done boolean not null default false,
+  debounce_seconds integer not null default 0,
+  session_mode text not null default 'new',
+  archived_at timestamptz,
+  webhook_token_hash text,
+  webhook_token_sealed text,
+  -- What automations_mission_only_check reads: 20261114140000_automation_cover_new_repos.sql
+  -- and 20261117120000_automation_model.sql.
+  cover_new_repos boolean not null default false,
+  model_provider text,
+  model_id text,
+  model_effort text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+-- create_mission_automation's helpers, as no-ops: their own migrations test them.
+create or replace function set_automation_repos(target_org uuid, automation uuid, project_ids uuid[]) returns void language sql as $$ select $$;
+create or replace function set_automation_schedules(automation uuid, schedules jsonb) returns void language sql as $$ select $$;
+create table automation_runs (
+  id uuid primary key default gen_random_uuid(),
+  automation_id uuid references automations (id) on delete cascade,
+  trigger text constraint automation_runs_trigger_check check (trigger is null or trigger in ('pull_request.opened', 'schedule', 'webhook')),
+  status text not null default 'started' constraint automation_runs_status_check check (status in ('queued', 'started', 'ready', 'failed', 'refused'))
+);
+insert into automations (triggers) values ('{schedule}');
+insert into automation_runs (trigger, status) values ('webhook', 'ready');

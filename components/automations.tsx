@@ -290,6 +290,7 @@ const RUN_STATUS: Record<AutomationRun["status"], { label: string; text: string;
   ready: { label: "Running", text: "text-positive", dot: "bg-positive" },
   failed: { label: "Failed", text: "text-destructive", dot: "bg-destructive" },
   refused: { label: "Didn't start", text: "text-warning", dot: "bg-warning" },
+  skipped: { label: "Skipped", text: "text-muted-foreground", dot: "bg-muted-foreground/50" },
 };
 
 /** A run's status as a dot and its word, or `label` in its place. */
@@ -431,7 +432,7 @@ type RunFilter = "all" | AutomationRun["status"];
 /** The org's latest runs: which automation, what started it (a pull request
  *  and its commit, a schedule's time), how it went, and the session it
  *  started; narrowed by trigger and by status. */
-function RecentRuns({
+export function RecentRuns({
   orgId,
   runs,
   kind,

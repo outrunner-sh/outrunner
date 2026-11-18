@@ -2,13 +2,17 @@
 
 /**
  * A Mission's page header: its icon (click to pick another), its name (click
- * to rename), its project, and how many Ships it has out of how many.
+ * to rename), its project, how many Ships it has out of how many, and the
+ * Slack channel it's on call in (connect, pause, disconnect), and its budget.
  */
 
-import { FolderGit2, Users } from "lucide-react";
+import { FolderGit2, Users, Zap } from "lucide-react";
+import Link from "next/link";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 
+import { MissionBudgetChip } from "@/components/missions/mission-budget-chip";
 import { MissionGlyph, StatusDot } from "@/components/missions/mission-parts";
+import { MissionSlackChip } from "@/components/missions/mission-slack-chip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { refreshMissions, useMission } from "@/hooks/use-missions";
 import { MISSION_ICONS, missionIcon } from "@/lib/missions/icons";
@@ -170,6 +174,18 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
           <Users className="size-3" />
           {active} Ship{active === 1 ? "" : "s"}
         </span>
+      )}
+      {mission && <MissionSlackChip missionId={missionId} onError={setFailed} />}
+      {mission && <MissionBudgetChip missionId={missionId} />}
+      {mission && (
+        <Link
+          href={`/missions/${missionId}/triggers`}
+          title="What sends this Mission work: schedules, webhooks, watched Slack channels, Linear"
+          className="hidden shrink-0 items-center gap-1 rounded-md border border-white/[0.08] px-1.5 py-0.5 text-[12px] text-[#a3a3a3] transition-colors hover:bg-white/[0.05] md:inline-flex"
+        >
+          <Zap className="size-3" />
+          Triggers
+        </Link>
       )}
     </div>
   );
