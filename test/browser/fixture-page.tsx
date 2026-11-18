@@ -288,7 +288,8 @@ export function FixturePage() {
               id: 42, accountLogin: "outrunner-sh", accountType: "Organization", repositorySelection: "all",
               suspendedAt: null, suspended: false, installedBy: null, createdAt: "2026-10-30T00:00:00Z",
             }] : []}
-            pending={false} installed={null} error={null}
+            offered={params.get("offer") === "1" ? { id: 42, accountLogin: "outrunner-sh" } : null}
+            pending={false} installed={null} synced={null} error={null}
           />
         </SettingsFrame>
       ) : view === "members" ? (
