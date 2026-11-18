@@ -11,6 +11,7 @@ import { pullRequestRef, repoFullName, type PullRequestRef } from "@/lib/api/rep
 import { isUuid } from "@/lib/ids";
 import { MAX_ATTACHMENTS_PER_MESSAGE } from "@/lib/runtime/attachments";
 import { isBoxSizeId } from "@/lib/runtime/box-sizes";
+import { parseSessionOverrides, type SessionOverrides } from "@/lib/session/session-overrides";
 
 /** What a session started with `plan_mode` is told before its prompt. */
 export const PLAN_MODE_PREAMBLE =
@@ -56,6 +57,9 @@ export type CreateInput = {
   images: ImageInput[];
   /** Kept for the webhooks (lib/api/webhooks.ts). */
   webhookUrl: string | null;
+  /** Its own variables, MCP servers and subagents (`env`, `mcp_servers`,
+   *  `subagents`), over its project's; null for none. */
+  overrides: SessionOverrides | null;
 };
 
 function optionalString(raw: Record<string, unknown>, key: string): string | undefined | null {
@@ -124,6 +128,8 @@ export function parseCreate(raw: Record<string, unknown>): CreateInput | string 
   if (typeof attachmentIds === "string") return attachmentIds;
   const images = parseImages(raw.images, attachmentIds.length);
   if (typeof images === "string") return images;
+  const overrides = parseSessionOverrides(raw);
+  if (typeof overrides === "string") return overrides;
   return {
     projectId: projectId ?? null,
     environmentId: environmentId ?? null,
@@ -144,6 +150,7 @@ export function parseCreate(raw: Record<string, unknown>): CreateInput | string 
     attachmentIds,
     images,
     webhookUrl: fields.webhook_url ?? null,
+    overrides,
   };
 }
 
@@ -181,4 +188,20 @@ export function firstPrompt(
   // Pushing straight to a branch is the pull request's work done already.
   const coda = input.autoCreatePr && !input.workOnCurrentBranch ? AUTO_PR_CODA : undefined;
   return [input.planMode ? PLAN_MODE_PREAMBLE : undefined, preamble ?? pushTo, input.prompt, coda].filter(Boolean).join("\n\n");
+}
+
+/** A message's words and images: `content`, or `prompt` (text, or
+ *  `{ text, images }`); or the reason they're refused. */
+export function messageOf(raw: Record<string, unknown>): { content: string; images: unknown } | string {
+  if (raw.prompt === undefined || raw.prompt === null) {
+    return { content: typeof raw.content === "string" ? raw.content.trim() : "", images: raw.images };
+  }
+  if (raw.content !== undefined && raw.content !== null) return "Send `content` or `prompt`, not both.";
+  if (typeof raw.prompt === "string") return { content: raw.prompt.trim(), images: raw.images };
+  const prompt = raw.prompt as { text?: unknown; images?: unknown };
+  if (typeof prompt !== "object" || Array.isArray(prompt) || (prompt.text !== undefined && typeof prompt.text !== "string")) {
+    return "`prompt` is the message's text, or `{ text, images }`.";
+  }
+  if (raw.images !== undefined && prompt.images !== undefined) return "Send `images` or `prompt.images`, not both.";
+  return { content: typeof prompt.text === "string" ? prompt.text.trim() : "", images: prompt.images ?? raw.images };
 }

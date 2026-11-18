@@ -601,7 +601,9 @@ async function createOnce(
       await transitionWorkspace({ id: workspace.id, ownerId: workspace.ownerId, from: SETTING_UP, patch: { status: "failed", errorMessage } }).catch(
         (updateError: unknown) => console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
       );
-      return NextResponse.json({ error: errorMessage }, { status: 500 });
+      // The session it made, failed: a caller trying another way mustn't
+      // make a second (lib/session/server-session.ts).
+      return NextResponse.json({ error: errorMessage, workspace: { id: workspace.id } }, { status: 500 });
     }
   }
   if (options.title) {

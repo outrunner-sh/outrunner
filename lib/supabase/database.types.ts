@@ -171,6 +171,31 @@ type WorkspaceRow = {
 type MissionTokenRow = { mission_id: string; token_hash: string; minted_at: string };
 type MissionRunnerBriefRow = { runner_id: string; mission_id: string; brief: string; created_at: string };
 type MissionNotesRow = { mission_id: string; body: string; updated_at: string };
+// supabase/migrations/20261117100000_session_overrides.sql
+type SessionOverridesRow = { workspace_id: string; overrides_ciphertext: string; created_at: string };
+// supabase/migrations/20261117110000_team_and_personal_secrets.sql
+type ScopedSecretType = "runtime_secret" | "environment_variable";
+type OrgSecretRow = {
+  id: string;
+  org_id: string;
+  name: string;
+  value_ciphertext: string;
+  type: ScopedSecretType;
+  repos: string[];
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+type UserSecretRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  value_ciphertext: string;
+  type: ScopedSecretType;
+  repos: string[];
+  created_at: string;
+  updated_at: string;
+};
 export type MissionEventKind = "finished" | "ready" | "needs_attention" | "merged" | "closed" | "archived";
 type MissionEventRow = {
   id: string;
@@ -931,6 +956,11 @@ type AutomationRow = {
   session_mode: "new" | "reuse";
   /** supabase/migrations/20261114140000_automation_cover_new_repos.sql */
   cover_new_repos: boolean;
+  /** Its own model, all or none of provider and id
+   *  (supabase/migrations/20261117120000_automation_model.sql). */
+  model_provider: string | null;
+  model_id: string | null;
+  model_effort: string | null;
   archived_at: string | null;
   runs_since: string;
   created_at: string;
@@ -1952,6 +1982,24 @@ export type Database = {
         Row: MissionNotesRow;
         Insert: Insert<MissionNotesRow, "mission_id">;
         Update: Partial<MissionNotesRow>;
+        Relationships: [];
+      };
+      session_overrides: {
+        Row: SessionOverridesRow;
+        Insert: Insert<SessionOverridesRow, "workspace_id" | "overrides_ciphertext">;
+        Update: Partial<SessionOverridesRow>;
+        Relationships: [];
+      };
+      org_secrets: {
+        Row: OrgSecretRow;
+        Insert: Insert<OrgSecretRow, "org_id" | "name" | "value_ciphertext">;
+        Update: Partial<OrgSecretRow>;
+        Relationships: [];
+      };
+      user_secrets: {
+        Row: UserSecretRow;
+        Insert: Insert<UserSecretRow, "user_id" | "name" | "value_ciphertext">;
+        Update: Partial<UserSecretRow>;
         Relationships: [];
       };
       mission_events: {

@@ -9,7 +9,8 @@
  * (startServerSession): on Outrunner's models, on the user's allowance (or
  * the runner's own default model and coding agent, where the org set its
  * automations to), working on GitHub as the App (reading code, commenting on
- * pull requests), so what it posts is the App's and it can't push.
+ * pull requests), so what it posts is the App's and it can't push. An
+ * automation with a model of its own starts on that first.
  */
 
 import { eventDedupeKey, filtersTake, type IssueEvent, readIssueEvent } from "@/lib/automations/github-events";
@@ -394,6 +395,9 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
     // As the App, reading code and commenting, with tokens its box asks for
     // as it goes (#187's git-credential), so none expires on it mid-review.
     reviewAsApp: true,
+    // Its own model first, when it has one; not on the runner's menu, it
+    // starts as the org's automations do, and the run says why (fellBack).
+    ...(candidate.model && { choice: candidate.model }),
     onHarness,
     source: "automation",
     // Linked to the run as soon as it's made: its box's token requests are
