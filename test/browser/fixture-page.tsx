@@ -31,6 +31,7 @@ import { OrgGeneralSettings } from "@/components/org-settings";
 import { PageLayout } from "@/components/page-layout";
 import { ProjectSettings } from "@/components/project-settings";
 import { ServedProjects } from "@/components/kept-projects";
+import { needsSetup, type SetupGate, setupGate } from "@/lib/orgs/setup";
 import { PullHeading, PullInfo } from "@/components/review/pull-detail";
 import { PullFiles } from "@/components/review/pull-files";
 import { ReviewChat } from "@/components/review/review-chat";
@@ -72,6 +73,20 @@ const LOADED_AT = Date.now();
 const INVITE_SENT_AT = new Date(LOADED_AT - 2 * 86_400_000).toISOString();
 const INVITE_EXPIRES_AT = new Date(LOADED_AT + 5 * 86_400_000).toISOString();
 
+/** The org setup fixtures set up. */
+const SETUP_ORG = { id: "org-1", name: "Acme", personal: false };
+
+/**
+ * Home's setup gate as the server would answer it (lib/orgs/setup.ts), for
+ * `?state=setup-admin` (a new org's admin), `setup-member` (its member) and
+ * `setup-used` (an org that has had a session): the real rule, on the data
+ * shapes the server reads.
+ */
+function fixtureSetupGate(state: string): SetupGate {
+  const needed = needsSetup({ setupCompletedAt: null, hasWorkspace: state === "setup-used", environments: [{ defaultForProjectId: "project-1" }] });
+  return setupGate(needed, { ...SETUP_ORG, role: state === "setup-member" ? "member" : "admin" });
+}
+
 /** A standalone test app: fixture navigation and APIs can never reach real resources. */
 export function FixturePage() {
   const ready = useSyncExternalStore(subscribe, () => true, () => false);
@@ -112,7 +127,7 @@ export function FixturePage() {
   let content: React.ReactNode;
   if (view === "sandbox") content = <PageLayout><SandboxSettingsForm initial={{ sandbox: state === "connected" ? "gcp" : "outrunner", daytona: { connected: false, hint: null, updatedAt: null }, modal: { connected: false, hint: null, updatedAt: null }, gcp: { connected: state === "connected", hint: state === "connected" ? "sandbox-project" : null, updatedAt: null }, boxSize: "small", boxSizeChosen: true }} sizes plan={PLANS.free} /></PageLayout>;
   else if (view === "desktop-signin") content = <DesktopSignIn next="/"><p>Browser sign-in</p></DesktopSignIn>;
-  else if (view === "web-onboarding") content = <OnboardingLive user={{ id: "desktop-browser-user", name: "Ada", login: "ada", avatarUrl: null }} outrunnerModels desktopReturn />;
+  else if (view === "web-onboarding") content = <OnboardingLive user={{ id: "desktop-browser-user", name: "Ada", login: "ada", avatarUrl: null }} org={SETUP_ORG} outrunnerModels desktopReturn />;
   else if (view === "desktop-ready" || pathname === "/auth/desktop/ready") content = <DesktopWelcome email="ada@example.com" next={params.get("next") ?? "/new?project=p1&start=codex"} expired={state === "expired"} />;
   else if (view === "session") content = <FixtureSession id={pathname.split("/")[2] ?? "preview-0"} agent={params.get("harness") === "claude" ? "claude" : "codex"} />;
   else if (view === "environments")
@@ -273,7 +288,7 @@ export function FixturePage() {
   else if (view === "tracker-item") content = <TrackerItemFixture source={params.get("source") ?? "linear"} />;
   else if (view === "pr-sidebar") content = <PullRequestFixture />;
   else if (view === "startup") content = <StartupFixture agent={params.get("harness") === "codex" ? "codex" : "claude"} shared={params.get("shared") === "1"} mission={params.get("kind") === "mission"} legacy={params.get("legacy") === "1"} />;
-  else content = pathname === "/new" ? <NewSessionRoute server={<ServerAnswer value={null} />} /> : <HomeSessionRoute />;
+  else content = pathname === "/new" ? <NewSessionRoute server={<ServerAnswer value={null} />} /> : <HomeSessionRoute gate={state.startsWith("setup-") ? <ServerAnswer value={fixtureSetupGate(state)} /> : undefined} />;
   return (
     <>
       <span hidden data-testid="fixture-ready" data-ready={ready} />

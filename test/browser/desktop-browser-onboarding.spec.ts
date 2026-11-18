@@ -4,14 +4,17 @@ async function onboardingApis(page: Page) {
   const writes: { path: string; body: unknown }[] = [];
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (route.request().method() !== "GET") writes.push({ path, body: route.request().postDataJSON() });
+    if (route.request().method() !== "GET") writes.push({ path, body: route.request().postData() ? route.request().postDataJSON() : null });
     const data: Record<string, unknown> = {
       "/api/settings/claude": { connected: false, last4: null },
       "/api/settings/providers": { keys: {} },
       "/api/settings/agents": { choices: { claude: null, codex: null } },
-      "/api/onboarding/github": { access: null },
+      "/api/onboarding/github": {
+        access: { admin: true, accounts: ["outrunner-sh"], available: [], personalGithub: false, appInstallable: true, installNeedsGithub: false, personalConnectable: true },
+      },
       "/api/github/repositories": { repositories: [{ githubRepoId: 1, fullName: "outrunner-sh/outrunner", name: "outrunner", owner: "outrunner-sh", private: true, language: "TypeScript", pushedAt: "2026-10-30T00:00:00Z" }], connected: [] },
-      "/api/projects/sync": { projects: [{ id: "p1", githubRepoId: 1 }] },
+      "/api/projects/sync": { projects: [{ id: "p1", githubRepoId: 1, fullName: "outrunner-sh/outrunner" }] },
+      "/api/environments": { id: "env-1" },
       "/api/onboarding/complete": { ok: true },
     };
     await route.fulfill({ status: 200, json: data[path] ?? {} });
@@ -24,9 +27,12 @@ async function finishOnboarding(page: Page) {
   await page.getByRole("button", { name: /OpenAI Codex/ }).click();
   await page.getByRole("button", { name: /Outrunner.s models/ }).click();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Connect GitHub" })).toBeVisible();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Pick your repositories" })).toBeVisible();
-  await page.getByRole("checkbox", { name: /outrunner-sh\/outrunner/ }).check();
-  await page.getByRole("button", { name: "Finish", exact: true }).click();
+  await page.getByRole("checkbox", { name: /outrunner-sh\/outrunner/ }).click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Create environment", exact: true }).click();
   await expect(page.getByRole("heading", { name: "You’re ready to go" })).toBeVisible({ timeout: 15_000 });
 }
 
@@ -63,7 +69,7 @@ test("normal web sign-in never invokes the desktop bridge", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "Continue in your browser" })).toHaveCount(0);
 });
 
-test("browser onboarding finishes before the app choice, keeping repository/model and offering a web continuation", async ({ page }) => {
+test("browser setup finishes before the app choice, keeping environment/model and offering a web continuation", async ({ page }) => {
   const writes = await onboardingApis(page);
   let handoffs = 0;
   await page.route("**/auth/desktop/handoff", async (route) => { handoffs++; await route.fulfill({ status: 500, json: {} }); });
@@ -73,14 +79,14 @@ test("browser onboarding finishes before the app choice, keeping repository/mode
   expect(handoffs).toBe(0);
   const href = await page.getByRole("link", { name: "Continue on web" }).getAttribute("href");
   const next = new URL(href!, "http://localhost").searchParams.get("next");
-  expect(next).toContain("project=p1");
+  expect(next).toContain("environment=env-1");
   expect(next).toContain("start=codex-outrunner");
   await expect(page.getByRole("button", { name: "Open desktop app", exact: true })).toBeVisible();
   await expect(page.getByText("On this Mac", { exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test("skip onboarding also offers both destinations without opening the app automatically", async ({ page }) => {
+test("skipping setup also offers both destinations without opening the app automatically", async ({ page }) => {
   const writes = await onboardingApis(page);
   await page.goto("/?view=web-onboarding");
   await page.getByRole("button", { name: "Skip for now" }).click();

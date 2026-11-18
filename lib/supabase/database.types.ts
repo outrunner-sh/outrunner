@@ -762,6 +762,9 @@ type OrganizationSettingsRow = {
   // supabase/migrations/20261119120000_environments_model.sql: the
   // environment the org's new sessions start from.
   default_environment_id: string | null;
+  // supabase/migrations/20261119130000_org_setup.sql: when its setup was
+  // finished or skipped (lib/orgs/setup.ts).
+  setup_completed_at: string | null;
   // supabase/migrations/20261119100000_github_org_join.sql.
   join_via_github: boolean;
   updated_by: string | null;

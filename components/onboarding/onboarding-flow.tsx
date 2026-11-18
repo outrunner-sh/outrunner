@@ -4,10 +4,13 @@ import { Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AgentStep } from "@/components/onboarding/agent-step";
+import { EnvironmentStep } from "@/components/onboarding/environment-step";
+import { GitHubStep } from "@/components/onboarding/github-step";
 import { ReposStep } from "@/components/onboarding/repos-step";
 import { Stepper } from "@/components/onboarding/stepper";
 import { resumeAt } from "@/lib/onboarding/rules";
 import type { AgentPick, AgentStatus, OnboardingEnv, OnboardingStep as Step } from "@/lib/onboarding/types";
+import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /** What's taken as connected when it can't be checked: nothing. */
@@ -15,18 +18,20 @@ const NOTHING_CONNECTED: AgentStatus = { claude: { subscription: false, last4: n
 
 const STEPS: { id: Step; label: string }[] = [
   { id: "agent", label: "Agent" },
+  { id: "github", label: "GitHub" },
   { id: "repos", label: "Repositories" },
+  { id: "environment", label: "Environment" },
 ];
 
 /**
- * First run, as Replicas' onboarding: the coding agent signed in and the
- * repositories to work on connected, then the new-session screen, on the
- * first of them and the agent picked, to start a first session from. Each
- * step ticks once done. It opens where the user left it in this browser
- * (after installing the GitHub App, say), and past the Agent step when an
- * agent is connected already (from `npx outrunner` in the terminal, in a tab
- * it opened): lib/onboarding/rules.ts resumeAt.
- * Teams come in as a step of their own later.
+ * An org's setup, as Replicas' onboarding: the coding agent signed in,
+ * GitHub connected, the repositories it works on picked, and its first
+ * environment made of them (its default), then the new-session screen, on
+ * that environment and the agent picked, to start a first session from.
+ * Each step ticks once done. It opens where the user left it in this
+ * browser for this org (after installing the GitHub App, say), and past the
+ * Agent step when an agent is connected already (from `npx outrunner` in the
+ * terminal, in a tab it opened): lib/onboarding/rules.ts resumeAt.
  */
 export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: (href: string) => void }) {
   const [step, setStep] = useState<Step>("agent");
@@ -35,6 +40,9 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
   const [runOn, setRunOn] = useState<AgentPick>("outrunner");
   const [done, setDone] = useState<Set<Step>>(new Set());
   const [skipping, setSkipping] = useState(false);
+  // The repositories picked, for the Environment step; not kept past the
+  // page (a reload picks again: they're connected by then).
+  const [picked, setPicked] = useState<Project[]>([]);
   // Nothing is shown or kept until where it was left is known.
   const [resumed, setResumed] = useState(false);
 
@@ -91,6 +99,7 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
         <span className="flex items-center gap-1.5 font-mono text-sm">
           <Terminal className="size-4" aria-hidden />
           <span className="font-semibold tracking-tight">outrunner</span>
+          <span className="text-muted-foreground ml-2 font-sans text-xs">Setting up {env.org.name}</span>
         </span>
         <button
           type="button"
@@ -119,14 +128,29 @@ export function OnboardingFlow({ env, onLeave }: { env: OnboardingEnv; onLeave: 
                 env={env}
                 status={status}
                 onStatus={setStatus}
-                onDone={(picked) => {
-                  setRunOn(picked);
-                  finish("agent", "repos");
+                onDone={(pick) => {
+                  setRunOn(pick);
+                  finish("agent", "github");
                 }}
               />
             )}
-            {step === "repos" && (
-              <ReposStep env={env} onDone={(picked) => env.finish(picked[0]?.id, runOn).then(onLeave)} />
+            {step === "github" && <GitHubStep env={env} onDone={() => finish("github", "repos")} />}
+            {(step === "repos" || (step === "environment" && picked.length === 0)) && (
+              <ReposStep
+                env={env}
+                onDone={(projects) => {
+                  setPicked(projects);
+                  finish("repos", "environment");
+                }}
+              />
+            )}
+            {step === "environment" && picked.length > 0 && (
+              <EnvironmentStep
+                env={env}
+                projects={picked}
+                onBack={() => setStep("repos")}
+                onDone={(environmentId) => env.finish(environmentId, runOn).then(onLeave)}
+              />
             )}
           </>
         )}

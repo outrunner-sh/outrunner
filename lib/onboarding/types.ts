@@ -1,22 +1,23 @@
 /**
- * What onboarding needs from the world, behind one seam: the live app's APIs
+ * What setup needs from the world, behind one seam: the live app's APIs
  * (lib/onboarding/live-env.ts), or mock data for building the screens
  * (components/onboarding/onboarding-preview.tsx).
  *
- * The flow is Agent → Repositories: the coding agent signed in and the
- * repositories to work on connected, then the new-session screen, on the
- * first of them and the agent picked.
+ * Setup runs per org (lib/orgs/setup.ts): Agent → GitHub → Repositories →
+ * Environment, then the new-session screen, on the environment made and the
+ * agent picked. The Repositories step is the app's one repository picker
+ * (components/repository-picker.tsx), on the live listing.
  */
 
 import type { AgentAuthChoices } from "@/lib/db/credentials";
-import type { RepositoryListing } from "@/lib/github/listing";
-import type { Project } from "@/lib/runtime/types";
-import type { CodeProvider } from "@/lib/code-providers/repository";
 import type { GitLabConnectionStatus } from "@/lib/gitlab/client";
 
-/** `id` is the account's (Supabase's): what this browser keeps onboarding's
- *  progress under. */
+/** `id` is the account's (Supabase's): what this browser keeps setup's
+ *  progress under, with the org's. */
 export type OnboardingUser = { id: string; name: string; login: string; avatarUrl: string | null };
+
+/** The org being set up: the active one. Its environment is named after it. */
+export type OnboardingOrg = { id: string; name: string; personal: boolean };
 
 /** Whether each agent can run a cloud session on the user's own account. */
 export type AgentStatus = {
@@ -43,27 +44,24 @@ export type AgentMethod = "subscription" | "api-key";
  *  Providers); null where they've picked none. */
 export type AgentChoices = Pick<AgentAuthChoices, "claude" | "codex">;
 
-export type OnboardingStep = "agent" | "repos";
+export type OnboardingStep = "agent" | "github" | "repos" | "environment";
 
-/** How far the user got, kept in the browser, so onboarding opens there
- *  again after it's left: for GitHub to install the App, Settings to link
- *  GitHub, or a tab the CLI opened (lib/onboarding/rules.ts resumeAt). */
+/** How far the user got, kept in the browser, so setup opens there again
+ *  after it's left: for GitHub to install the App, Settings to link GitHub,
+ *  or a tab the CLI opened (lib/onboarding/rules.ts resumeAt). */
 export type OnboardingProgress = { step: OnboardingStep; done: OnboardingStep[]; runOn: AgentPick };
 
-/** The selected provider's repositories, and which are already projects. */
-export type RepositoryList = {
-  repositories: RepositoryListing[];
-  /** Ids within the selected provider. */
-  connected: number[];
-};
-
-/** Where the repositories come from: the org they're added to (the active
- *  one) and the user's others, each with the GitHub accounts its Outrunner
- *  GitHub App reaches. An org without the App lists the user's own, when
- *  they signed in with GitHub. */
+/** Where the org's repositories come from: the GitHub accounts its Outrunner
+ *  GitHub App reaches, installations on GitHub the user could add to it (as
+ *  Settings → Org → GitHub offers), or, in a personal org without the App,
+ *  the user's own GitHub. */
 export type GitHubAccess = {
-  orgs: { id: string; name: string; personal: boolean; admin: boolean; accounts: string[] }[];
-  activeOrgId: string;
+  /** The user administers the org: installing or adding the App is theirs. */
+  admin: boolean;
+  /** The accounts the org's App reaches (not suspended). */
+  accounts: string[];
+  /** Installations on GitHub the user may add to the org. */
+  available: { id: number; accountLogin: string }[];
   /** Connected their own GitHub (Settings → Connections): their own
    *  repositories, in their personal org. */
   personalGithub: boolean;
@@ -79,6 +77,7 @@ export type GitHubAccess = {
 
 export type OnboardingEnv = {
   user: OnboardingUser;
+  org: OnboardingOrg;
   /** In the Mac app, Claude's subscription connects with one click there. */
   desktop: boolean;
   /** The server runs Outrunner's models: a session needs no account of the
@@ -95,21 +94,22 @@ export type OnboardingEnv = {
   /** Run sessions of `agent` on `method` from now on (Settings → Providers). */
   chooseMethod(agent: "claude" | "codex", method: AgentMethod): Promise<void>;
 
-  /** Where repositories come from; null before orgs. */
+  /** Where the org's repositories come from; null before orgs. */
   githubAccess(): Promise<GitHubAccess | null>;
-  /** Add repositories to this org from now on (the active org). */
-  useOrg(orgId: string): Promise<void>;
+  /** Add an installation on GitHub to the org (Settings → Org → GitHub's
+   *  "Add to <org>"). */
+  addInstallation(installationId: number): Promise<void>;
   gitlabConnection(): Promise<GitLabConnectionStatus | null>;
   /** Null disconnects; a token connects or replaces the connection. */
   saveGitlabConnection(token: string | null): Promise<GitLabConnectionStatus | null>;
-  repositories(provider?: CodeProvider): Promise<RepositoryList>;
-  /** Connect repositories as projects; every project the user has after. */
-  connect(repoIds: number[], provider?: CodeProvider): Promise<Project[]>;
 
-  /** Finish onboarding; where the first session is started from: the
-   *  new-session screen, on the project and the agent picked. */
-  finish(projectId: string | undefined, runOn: AgentPick): Promise<string>;
-  /** Finish onboarding without a session; where home is. */
+  /** Make the org's first environment, of these connected repositories, its
+   *  default; its id. */
+  createEnvironment(name: string, projectIds: string[]): Promise<string>;
+  /** Finish setup; where the first session is started from: the
+   *  new-session screen, on the environment and the agent picked. */
+  finish(environmentId: string, runOn: AgentPick): Promise<string>;
+  /** Finish setup without a session; where home is. */
   skip(): Promise<string>;
 
   /** Where the user got to last time, in this browser; null if nowhere. */

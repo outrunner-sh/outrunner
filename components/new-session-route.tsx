@@ -7,7 +7,9 @@ import { useAppData } from "@/components/app-data";
 import { NewSessionCreator } from "@/components/new-session-creator";
 import { RecentSessions } from "@/components/recent-sessions";
 import { useServerAnswer } from "@/components/server-answer";
+import { SetupWaiting } from "@/components/setup-waiting";
 import { parseAgentPick, startingPick } from "@/lib/onboarding/rules";
+import type { SetupGate } from "@/lib/orgs/setup";
 import type { Project } from "@/lib/runtime/types";
 import { homeStart } from "@/lib/session/initial-project";
 import { useNewSessionCount } from "@/lib/session/new-session-reset";
@@ -18,25 +20,41 @@ import { useFailedCreate } from "@/lib/session/pending-sessions";
  * was just refused, else the org's default environment, else where the most
  * recent session started (homeStart). A fresh form on each "New Session",
  * the prompt's draft kept.
+ *
+ * `gate` is the server's word on the active org's setup (lib/orgs/setup.ts),
+ * arriving after the form shows: its admin goes through setup, and a member
+ * of an org not set up yet is told an admin is on it instead of the form.
  */
-export function HomeSessionRoute() {
+export function HomeSessionRoute({ gate }: { gate?: React.ReactNode }) {
   const data = useAppData();
   const projects = data?.projects ?? [];
   const environments = data?.environments ?? [];
   const asked = useNewSessionCount();
   const refused = useFailedCreate();
+  const router = useRouter();
+  const [setup, slot] = useServerAnswer<SetupGate>(gate);
+  useEffect(() => {
+    if (setup?.kind === "setup") router.replace("/onboarding");
+  }, [setup, router]);
   const start = homeStart(environments, projects, data?.workspaces ?? [], refused);
   return (
-    <NewSessionCreator
-      key={asked}
-      projects={projects}
-      environments={environments}
-      projectsKnown={data !== null}
-      initialProjectId={start?.projectId}
-      initialEnvironmentId={start?.environmentId}
-    >
-      <RecentSessions />
-    </NewSessionCreator>
+    <>
+      {setup?.kind === "waiting" ? (
+        <SetupWaiting orgName={setup.orgName} />
+      ) : (
+        <NewSessionCreator
+          key={asked}
+          projects={projects}
+          environments={environments}
+          projectsKnown={data !== null}
+          initialProjectId={start?.projectId}
+          initialEnvironmentId={start?.environmentId}
+        >
+          <RecentSessions />
+        </NewSessionCreator>
+      )}
+      {slot}
+    </>
   );
 }
 
