@@ -1,0 +1,8 @@
+// Deploy: cd deploy/neev-redirect && npx wrangler deploy
+{
+  "name": "outrunner-neev-redirect",
+  "main": "worker.js",
+  "compatibility_date": "2026-11-01",
+  "account_id": "573a49a12e65fd8fc97b0103fa200d36",
+  "routes": [{ "pattern": "outrunner.neev.ai", "custom_domain": true }]
+}
