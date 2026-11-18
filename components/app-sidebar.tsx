@@ -154,7 +154,6 @@ export function AppSidebar({
   };
   const standings = useStandings();
   const sections = useMemo(() => buildStatusSections(shown, standings, now), [shown, standings, now]);
-  const needingYou = Object.values(standings).filter((s) => s.standing === "needs_you").length;
 
   // Projects folded shut with their chevron, remembered across visits.
   // Toggled here; else as the cookie had them, once read.
@@ -199,11 +198,12 @@ export function AppSidebar({
             icon={<Inbox />}
             active={pathname === "/triage"}
           />
+          {/* No count: the list below already groups the sessions that need
+              you, and every idle one without a pull request does, so a badge
+              here only repeated it, and was rarely zero. */}
           <HeaderActionLink
             href="/workspaces"
             label="Sessions"
-            count={needingYou}
-            countDescription="need you"
             icon={<LayoutList />}
             active={pathname === "/workspaces"}
           />
@@ -573,16 +573,16 @@ function NavLink({
 function HeaderActionLink({
   href,
   label,
-  count,
-  countDescription,
+  count = 0,
+  countDescription = "",
   shortcut,
   icon,
   active,
 }: {
   href: string;
   label: string;
-  count: number;
-  countDescription: string;
+  count?: number;
+  countDescription?: string;
   shortcut?: string;
   icon: React.ReactNode;
   active: boolean;

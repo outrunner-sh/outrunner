@@ -134,6 +134,21 @@ test("other tools read as their name and primary argument", () => {
   assert.deepEqual([toolRow("mcp__x__y", {}).kind, toolRow("mcp__x__y", {}).label], ["other", "mcp__x__y"]);
 });
 
+test("a Mission's tools read as what they do to its Ships", () => {
+  const spawn = toolRow("mcp__outrunner-mission__spawn_runner", { prompt: "do it", name: "Fix login" });
+  assert.deepEqual([spawn.kind, spawn.label, spawn.mono], ["agent", "Spawn ship · Fix login", false]);
+  assert.equal(toolRow("mcp__outrunner-mission__spawn_runner", { prompt: "do it" }).label, "Spawn ship");
+  assert.equal(toolRow("outrunner-mission.spawn_runner", { name: "Fix login" }).label, "Spawn ship · Fix login");
+  assert.equal(toolRow("mcp__outrunner-mission__message_runner", {}).label, "Message ship");
+  assert.equal(toolRow("mcp__outrunner-mission__list_runners", {}).label, "List ships");
+  assert.equal(toolRow("mcp__outrunner-mission__read_runner", {}).label, "Check on ship");
+  assert.equal(toolRow("mcp__outrunner-mission__archive_runner", {}).label, "Archive ship");
+  assert.deepEqual([toolRow("mcp__outrunner-mission__read_notes", {}).kind, toolRow("mcp__outrunner-mission__read_notes", {}).label], ["read", "Read mission notes"]);
+  assert.deepEqual([toolRow("mcp__outrunner-mission__write_notes", {}).kind, toolRow("mcp__outrunner-mission__write_notes", {}).label], ["edit", "Save mission notes"]);
+  // An unknown tool on the server keeps its raw name.
+  assert.equal(toolRow("mcp__outrunner-mission__other", {}).label, "mcp__outrunner-mission__other");
+});
+
 test("a thought says how long it took, when known", () => {
   assert.equal(thoughtLabel(null), "Thought");
   assert.equal(thoughtLabel(9), "Thought for 9s");
