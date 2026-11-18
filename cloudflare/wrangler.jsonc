@@ -24,7 +24,7 @@
       // the service-role key and CREDENTIALS_ENCRYPTION_KEY stay Worker secrets.
       "image_vars": {
         "NEXT_PUBLIC_CODEX_CLI_VERSION": "0.1.4",
-        "NEXT_PUBLIC_SUPABASE_URL": "https://vidulqzirsthlshybwat.supabase.co",
+        "NEXT_PUBLIC_SUPABASE_URL": "https://auth.outrunner.sh",
         "NEXT_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_YQyZjz2N7_CxOaY7DjqB5A_QWUbv1Hu"
       },
       "instance_type": "standard-1",
