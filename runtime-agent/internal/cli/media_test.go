@@ -208,8 +208,8 @@ type fakeBox struct {
 
 func newFakeBox(t *testing.T) *fakeBox {
 	t.Helper()
-	box := &fakeBox{root: t.TempDir()}
-	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	box := &fakeBox{}
+	box.root = serveFakeBox(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/workspaces/ws-1/media" || r.Header.Get("Authorization") != "Bearer tok" {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = io.WriteString(w, `{"error":{"code":"UNAUTHORIZED","message":"this session can't upload files here"}}`)
@@ -236,16 +236,25 @@ func newFakeBox(t *testing.T) *fakeBox {
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"text": markdown, "url": url, "pageUrl": "https://app/media/m", "markdown": markdown, "access": access,
 		})
-	}))
+	})
+	return box
+}
+
+// serveFakeBox is a box's root whose agent is handler, for session ws-1,
+// whose ask token is "tok", in whose terminal the test runs.
+func serveFakeBox(t *testing.T, handler http.HandlerFunc) string {
+	t.Helper()
+	root := t.TempDir()
+	agent := httptest.NewServer(handler)
 	t.Cleanup(agent.Close)
-	if err := os.MkdirAll(filepath.Join(box.root, "ask"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "ask"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.WriteFile(filepath.Join(box.root, "agent.addr"), []byte(strings.TrimPrefix(agent.URL, "http://")+"\n"), 0o600)
-	_ = os.WriteFile(filepath.Join(box.root, "ask", "ws-1.token"), []byte("tok\n"), 0o600)
-	t.Setenv("OUTRUNNER_BOX_ROOT", box.root)
+	_ = os.WriteFile(filepath.Join(root, "agent.addr"), []byte(strings.TrimPrefix(agent.URL, "http://")+"\n"), 0o600)
+	_ = os.WriteFile(filepath.Join(root, "ask", "ws-1.token"), []byte("tok\n"), 0o600)
+	t.Setenv("OUTRUNNER_BOX_ROOT", root)
 	t.Setenv("OUTRUNNER_SESSION_ID", "ws-1")
-	return box
+	return root
 }
 
 func run(t *testing.T, args ...string) (int, string, string) {

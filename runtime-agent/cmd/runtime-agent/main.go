@@ -105,6 +105,13 @@ func main() {
 	// Sessions get the desktop tools where the box turns out to have a
 	// desktop (Daytona's); elsewhere nothing answers here, and they don't.
 	svc.DesktopToolbox = desktop.DefaultToolbox
+	// The same desktop's browser, whose sign-ins the sessions' browser tests
+	// start from (`outrunner browser state`).
+	if home, err := os.UserHomeDir(); err == nil {
+		svc.Browser = desktop.NewBrowser(home)
+	} else {
+		log.Printf("runtime-agent: sessions can't read the desktop browser's sign-ins: %v", err)
+	}
 	if exe, err := os.Executable(); err == nil {
 		svc.RelayExecutable = exe
 	} else {
@@ -274,12 +281,8 @@ func desktopServer(args []string) int {
 	}
 	err = desktop.Serve(context.Background(), os.Stdin, os.Stdout, desktop.Config{
 		Toolbox: toolbox,
-		Browser: &desktop.Browser{
-			Port:    desktop.DevToolsPort,
-			Profile: filepath.Join(home, ".outrunner", "desktop", "chromium"),
-			Display: desktop.Display,
-		},
-		Folder: desktop.FilesFolder(*folder),
+		Browser: desktop.NewBrowser(home),
+		Folder:  desktop.FilesFolder(*folder),
 		// In a session of its own, so it outlives this server and the
 		// session's CLI.
 		Watchdog: func(id string, until time.Time) error {

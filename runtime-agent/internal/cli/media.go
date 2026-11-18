@@ -93,7 +93,13 @@ func mediaCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 }
 
 func mediaFlags(name, usage string, stderr io.Writer) *flag.FlagSet {
-	set := flag.NewFlagSet("outrunner media "+name, flag.ContinueOnError)
+	return boxCommandFlags("outrunner media "+name, usage, stderr)
+}
+
+// boxCommandFlags are the flags of a command run in a session's terminal on
+// its box, whose usage goes to stderr.
+func boxCommandFlags(name, usage string, stderr io.Writer) *flag.FlagSet {
+	set := flag.NewFlagSet(name, flag.ContinueOnError)
 	set.SetOutput(stderr)
 	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	return set
@@ -223,35 +229,59 @@ type MediaLink struct {
 
 // upload has the agent upload the file at path, absolute.
 func (a boxAgent) upload(ctx context.Context, path, name, access string) (MediaLink, error) {
+	data, err := a.post(ctx, "media", map[string]string{"path": path, "name": name, "access": access}, agentAsk{
+		what:   "upload",
+		before: "this box's Outrunner agent can't upload yet: it's from before uploads",
+	})
+	if err != nil {
+		return MediaLink{}, err
+	}
+	var link MediaLink
+	if err := json.Unmarshal(data, &link); err != nil || link.URL == "" {
+		return MediaLink{}, errors.New("the agent sent a malformed answer")
+	}
+	return link, nil
+}
+
+// agentAsk says, for a session's request of its agent, what it is ("the
+// upload") and what an agent from before the request answers.
+type agentAsk struct {
+	what, before string
+}
+
+// post asks the agent, as the session, at /workspaces/<session>/<route> with
+// body as JSON, and gives back the agent's answer: its refusal's message as
+// the error, which is the session's to read.
+func (a boxAgent) post(ctx context.Context, route string, body any, ask agentAsk) ([]byte, error) {
 	addr, err := readTrimmed(a.addrFile)
 	if err != nil {
-		return MediaLink{}, fmt.Errorf("can't find this box's Outrunner agent: %w", err)
+		return nil, fmt.Errorf("can't find this box's Outrunner agent: %w", err)
 	}
 	token, err := readTrimmed(a.tokenFile)
 	if err != nil {
-		return MediaLink{}, fmt.Errorf("this session can't upload: %w", err)
+		return nil, fmt.Errorf("this session can't %s: %w", ask.what, err)
 	}
-	body, err := json.Marshal(map[string]string{"path": path, "name": name, "access": access})
+	encoded, err := json.Marshal(body)
 	if err != nil {
-		return MediaLink{}, err
+		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+"/workspaces/"+a.sessionID+"/media", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+"/workspaces/"+a.sessionID+"/"+route, bytes.NewReader(encoded))
 	if err != nil {
-		return MediaLink{}, err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return MediaLink{}, fmt.Errorf("can't reach this box's Outrunner agent: %w", err)
+		return nil, fmt.Errorf("can't reach this box's Outrunner agent: %w", err)
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
-		return MediaLink{}, err
+		return nil, err
 	}
 	if resp.StatusCode == http.StatusNotFound {
-		return MediaLink{}, errors.New("this box's Outrunner agent can't upload yet: it's from before uploads")
+		return nil, errors.New(ask.before)
 	}
 	if resp.StatusCode != http.StatusOK {
 		var refusal struct {
@@ -260,15 +290,11 @@ func (a boxAgent) upload(ctx context.Context, path, name, access string) (MediaL
 			} `json:"error"`
 		}
 		if json.Unmarshal(data, &refusal) == nil && refusal.Error.Message != "" {
-			return MediaLink{}, errors.New(refusal.Error.Message)
+			return nil, errors.New(refusal.Error.Message)
 		}
-		return MediaLink{}, fmt.Errorf("the upload failed: %s", resp.Status)
+		return nil, fmt.Errorf("the %s failed: %s", ask.what, resp.Status)
 	}
-	var link MediaLink
-	if err := json.Unmarshal(data, &link); err != nil || link.URL == "" {
-		return MediaLink{}, errors.New("the agent sent a malformed answer")
-	}
-	return link, nil
+	return data, nil
 }
 
 // sessionOfFolder is the session whose worktree dir is in, or "".
