@@ -73,7 +73,7 @@ test("a repository's folder is its name, made safe", () => {
 });
 
 test("names, text and scripts are trimmed or refused", () => {
-  assert.equal(projectName("  Neevcloud "), "Neevcloud");
+  assert.equal(projectName("  Acme Cloud "), "Acme Cloud");
   assert.throws(() => projectName("   "), EnvironmentRuleError);
   assert.equal(optionalText("  ", 10, "x"), null);
   assert.throws(() => optionalText("x".repeat(11), 10, "x"), EnvironmentRuleError);

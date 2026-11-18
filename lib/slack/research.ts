@@ -209,7 +209,7 @@ export async function answerResearch(id: string, token: string, answer: string):
     const install = await getInstallation(conversation.team_id);
     if (!install) return true;
     // Posted with curl, so the box's chat masking never saw it: the box
-    // masks it now, and an answer it can't check isn't posted (NEE-268). The
+    // masks it now, and an answer it can't check isn't posted. The
     // thread is pointed at the session instead, whose chat is masked.
     const masked = claimed.workspace_id ? await maskOnBox(claimed.workspace_id, answer) : null;
     if (masked === null) {

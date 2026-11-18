@@ -74,8 +74,8 @@ test("installations' listings merge as one: each repository once, newest push fi
 
 test("an installation's repositories are picked on its account's settings on GitHub", () => {
   assert.equal(
-    installationSettingsUrl({ installationId: 9, login: "zerotrail", type: "Organization" }),
-    "https://github.com/organizations/zerotrail/settings/installations/9",
+    installationSettingsUrl({ installationId: 9, login: "initech", type: "Organization" }),
+    "https://github.com/organizations/initech/settings/installations/9",
   );
   assert.equal(
     installationSettingsUrl({ installationId: 9, login: "ada", type: "User" }),

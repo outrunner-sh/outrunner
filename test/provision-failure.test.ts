@@ -64,7 +64,7 @@ test("git refused by GitHub says to reconnect, not git's message", () => {
   assert.match(provisionFailureMessage(new Error("fatal: repository not found"), "clone", []), /repository not found/);
 });
 
-test("the page shows a sentence first and what the box said behind Details (NEE-231)", () => {
+test("the page shows a sentence first and what the box said behind Details", () => {
   assert.deepEqual(failureParts("Setup failed while cloning the repository: fatal: repository not found"), {
     summary: "Setup failed while cloning the repository. Try again to start a fresh session.",
     detail: "fatal: repository not found",

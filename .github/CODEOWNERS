@@ -1,0 +1,13 @@
+# Code owners are requested for review on pull requests that touch their paths.
+# The last matching pattern takes precedence.
+
+*                           @immadsahin
+
+# Repository automation and settings.
+/.github/                   @immadsahin
+
+# Database schema: applied migrations must never be edited.
+/supabase/migrations/       @immadsahin
+
+# Native desktop shell: signing, updater and capabilities.
+/runtime-desktop/src-tauri/ @immadsahin

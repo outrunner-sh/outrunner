@@ -24,7 +24,7 @@ So the Dockerfile *builds* the Go agent in-image, then serves the whole app.
 
 Account + zone (non-secret identifiers):
 
-- **Account id:** `573a49a12e65fd8fc97b0103fa200d36` (Neevcode@neevcloud.com)
+- **Account id:** `573a49a12e65fd8fc97b0103fa200d36` (the hosted service's Cloudflare account)
 - **`neev.ai` zone id:** `4025edd7b4e5bf2fea54e245dc21427e` (active, on Cloudflare NS)
 - **`outrunner.sh` zone:** moved into this account, for `app.outrunner.sh`
 - **Domain:** `app.outrunner.sh` (`outrunner.neev.ai` redirects to it)

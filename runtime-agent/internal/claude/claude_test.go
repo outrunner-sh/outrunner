@@ -50,8 +50,8 @@ func TestOrientationIncludesVerbatimLines(t *testing.T) {
 	}
 }
 
-// A new worktree's session on its generated branch gets the block word for
-// word as NEE-56 gives it, less the promise that Outrunner renames the branch,
+// A new worktree's session on its generated branch gets the whole block word
+// for word, less the promise that Outrunner renames the branch,
 // which it doesn't.
 func TestOrientationForANewWorktreeIsTheWholeBlock(t *testing.T) {
 	want := "You are working inside Outrunner, a Mac app that lets the user run many coding agents in parallel.\n" +

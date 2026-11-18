@@ -38,7 +38,7 @@ test("each step is a row, a tool's result riding on its call", () => {
   assert.equal(read.kind === "tool" && read.result, null);
 });
 
-test("a failed tool's result says so (NEE-234)", () => {
+test("a failed tool's result says so", () => {
   const nodes = conversationNodes([
     message("assistant", "2026-10-21T10:00:10Z", [
       { type: "tool_use", id: "t1", name: "Bash", input: { command: "false" } },

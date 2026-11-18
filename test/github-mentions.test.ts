@@ -23,18 +23,18 @@ function issueComment(over: { body?: string; user?: Record<string, unknown>; act
   return {
     action: over.action ?? "created",
     installation: { id: 42 },
-    repository: { full_name: "neevai-labs/outrunner" },
+    repository: { full_name: "outrunner-sh/outrunner" },
     issue: {
       number: 12,
       title: "Login is slow",
       body: "It takes 5 seconds.",
-      html_url: "https://github.com/neevai-labs/outrunner/issues/12",
-      ...(over.pull && { pull_request: { url: "https://api.github.com/repos/neevai-labs/outrunner/pulls/12" } }),
+      html_url: "https://github.com/outrunner-sh/outrunner/issues/12",
+      ...(over.pull && { pull_request: { url: "https://api.github.com/repos/outrunner-sh/outrunner/pulls/12" } }),
     },
     comment: {
       id: 900,
       body: over.body ?? "@outrunner please look into this",
-      html_url: "https://github.com/neevai-labs/outrunner/issues/12#issuecomment-900",
+      html_url: "https://github.com/outrunner-sh/outrunner/issues/12#issuecomment-900",
       author_association: over.association ?? "MEMBER",
       user: { id: 7, login: "ada", type: "User", ...over.user },
     },
@@ -45,19 +45,19 @@ function reviewComment(body = "@outrunner-connector rename this") {
   return {
     action: "created",
     installation: { id: 42 },
-    repository: { full_name: "neevai-labs/outrunner" },
+    repository: { full_name: "outrunner-sh/outrunner" },
     pull_request: {
       number: 30,
       title: "Faster login",
       body: "Caches the session.",
-      html_url: "https://github.com/neevai-labs/outrunner/pull/30",
-      head: { ref: "feature/login", sha: SHA, repo: { full_name: "neevai-labs/outrunner" } },
+      html_url: "https://github.com/outrunner-sh/outrunner/pull/30",
+      head: { ref: "feature/login", sha: SHA, repo: { full_name: "outrunner-sh/outrunner" } },
       base: { ref: "main" },
     },
     comment: {
       id: 901,
       body,
-      html_url: "https://github.com/neevai-labs/outrunner/pull/30#discussion_r901",
+      html_url: "https://github.com/outrunner-sh/outrunner/pull/30#discussion_r901",
       author_association: "COLLABORATOR",
       user: { id: 7, login: "ada", type: "User" },
       path: "lib/auth.ts",
@@ -119,7 +119,7 @@ test("an issue comment is read as on its issue, or on its pull request's convers
     id: 900,
     kind: "issue_comment",
     body: "@outrunner please look into this",
-    url: "https://github.com/neevai-labs/outrunner/issues/12#issuecomment-900",
+    url: "https://github.com/outrunner-sh/outrunner/issues/12#issuecomment-900",
   });
   assert.deepEqual(onIssue.author, { id: 7, login: "ada", type: "User" });
   assert.equal(onIssue.line, null);
@@ -162,7 +162,7 @@ test("a follow-up carries who said it, where in the diff, and what", () => {
   assert.match(block, /```diff\n@@ -38,6 \+38,9 @@\n const a = 1;\n\+const cache = new Map\(\);\n```/);
   assert.match(block, /\n> rename this$/);
   const prompt = followUpPrompt(mention, SLUG);
-  assert.match(prompt, /^New on GitHub, on the pull request this session works on \(neevai-labs\/outrunner#30\):/);
+  assert.match(prompt, /^New on GitHub, on the pull request this session works on \(outrunner-sh\/outrunner#30\):/);
   assert.match(prompt, /gh pr comment 30/);
 });
 
@@ -170,7 +170,7 @@ test("a new session is told the issue, or the pull request and where to push", (
   const issue = readMention("issue_comment", issueComment(), SLUG);
   assert.ok(typeof issue === "object");
   const issuePrompt = startPrompt(issue, SLUG);
-  assert.match(issuePrompt, /^@ada asked for you on GitHub, on issue neevai-labs\/outrunner#12 "Login is slow"/);
+  assert.match(issuePrompt, /^@ada asked for you on GitHub, on issue outrunner-sh\/outrunner#12 "Login is slow"/);
   assert.match(issuePrompt, /> It takes 5 seconds\./);
   assert.match(issuePrompt, /Closes #12/);
   assert.match(issuePrompt, /gh issue comment 12/);
@@ -184,7 +184,7 @@ test("a new session is told the issue, or the pull request and where to push", (
 });
 
 test("titles and replies", () => {
-  assert.equal(mentionTitle({ repoFullName: "neevai-labs/outrunner", number: 12, title: "Login is slow", target: "issue" }), "outrunner#12: Login is slow");
+  assert.equal(mentionTitle({ repoFullName: "outrunner-sh/outrunner", number: 12, title: "Login is slow", target: "issue" }), "outrunner#12: Login is slow");
   assert.equal(mentionTitle({ repoFullName: "a/b", number: 1, title: "x".repeat(200), target: "pull" }).length, 120);
   assert.match(replyText({ kind: "started", url: "https://app/workspaces/w1" }), /\(https:\/\/app\/workspaces\/w1\)/);
   assert.match(replyText({ kind: "sent", url: "https://app/workspaces/w1" }), /^Sent to the session/);

@@ -15,7 +15,7 @@ function instructions(over: Partial<Parameters<typeof prInstructions>[0]> = {}) 
 test("the instructions name the branch, its target and how many files differ from it", () => {
   const md = instructions({ branch: "runtime/abc", baseBranch: "develop", changedFiles: 3 });
   assert.match(md, /^3 files differ from origin\/develop\.$/m);
-  // Not "uncommitted": the count is the whole branch's, commits included (NEE-232).
+  // Not "uncommitted": the count is the whole branch's, commits included.
   assert.doesNotMatch(md, /^There (is|are) .*uncommitted/m);
   assert.match(md, /^The current branch is runtime\/abc\.$/m);
   assert.match(md, /^The target branch is origin\/develop\.$/m);

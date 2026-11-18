@@ -24,7 +24,7 @@ function deps(over: Partial<Omit<RenameBranchDeps, "session">> & { session?: Ren
 }
 
 test("a name is <type>/<what-it-does>, in lowercase words, not a tool's", () => {
-  for (const ok of ["fix/google-sign-in", "feat/expandable-right-sidebar", "fix/nee-268-mask-chat-secrets", "security/box-request-hardening", "perf/faster-ci"]) {
+  for (const ok of ["fix/google-sign-in", "feat/expandable-right-sidebar", "fix/eng-123-mask-chat-secrets", "security/box-request-hardening", "perf/faster-ci"]) {
     assert.equal(nameProblem(ok), null, ok);
   }
   for (const bad of ["google-sign-in", "Fix/Sign-In", "fix/sign in", "fix/a/b", "fix/", "fix/-x", "fix/x-", "fix/x--y", "-fix/x", "f/x"]) {

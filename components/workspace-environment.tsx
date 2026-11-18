@@ -317,7 +317,7 @@ const PR_WAIT_MS = 10 * 60_000;
 
 /** Each row's Create PR (`workspace:project`) while it's being sent or its
  *  pull request is awaited, for this tab: the panel unmounts as it closes,
- *  and the request must not go with it (NEE-219). A row mounted mid-send sees
+ *  and the request must not go with it. A row mounted mid-send sees
  *  the send finish. */
 type PrAsk = { phase: "sending" | "waiting"; since: number };
 const PR_ASKS = store<Partial<Record<string, PrAsk>>>({});

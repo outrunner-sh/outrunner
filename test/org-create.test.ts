@@ -22,21 +22,21 @@ function deps(emails: VerifiedEmail[], claimed: DomainOrg[] = []) {
   return { d, made, asked };
 }
 
-const zerotrail: DomainOrg = { id: "z", name: "Zerotrail", domain: "zerotrail.ai", memberCount: 3 };
+const initech: DomainOrg = { id: "z", name: "Initech", domain: "initech.dev", memberCount: 3 };
 
 test("a team org claims the creator's primary email's domain", async () => {
   const { d, made } = deps([
-    { email: "sahin@zerotrail.ai", primary: true },
+    { email: "dev@initech.dev", primary: true },
     { email: "me@side.dev", primary: false },
   ]);
-  assert.deepEqual(await createTeamOrgFor("u1", "Zerotrail", d), { made: true, orgId: "new-org", domain: "zerotrail.ai" });
-  assert.deepEqual(made, [{ name: "Zerotrail", creatorId: "u1", domain: "zerotrail.ai" }]);
+  assert.deepEqual(await createTeamOrgFor("u1", "Initech", d), { made: true, orgId: "new-org", domain: "initech.dev" });
+  assert.deepEqual(made, [{ name: "Initech", creatorId: "u1", domain: "initech.dev" }]);
 });
 
 test("an org has the creator's domain already: none is made, and they're pointed at it", async () => {
-  const { d, made, asked } = deps([{ email: "sahin@zerotrail.ai", primary: true }], [zerotrail]);
-  assert.deepEqual(await createTeamOrgFor("u1", "Mine", d), { made: false, existing: zerotrail });
-  assert.deepEqual(asked, [["zerotrail.ai"]]);
+  const { d, made, asked } = deps([{ email: "dev@initech.dev", primary: true }], [initech]);
+  assert.deepEqual(await createTeamOrgFor("u1", "Mine", d), { made: false, existing: initech });
+  assert.deepEqual(asked, [["initech.dev"]]);
   assert.deepEqual(made, []);
 });
 
@@ -44,9 +44,9 @@ test("a secondary email's domain neither blocks the creator nor is claimed", asy
   const { d, made, asked } = deps(
     [
       { email: "me@side.dev", primary: true },
-      { email: "sahin@zerotrail.ai", primary: false },
+      { email: "dev@initech.dev", primary: false },
     ],
-    [zerotrail],
+    [initech],
   );
   assert.deepEqual(await createTeamOrgFor("u1", "Side", d), { made: true, orgId: "new-org", domain: "side.dev" });
   assert.deepEqual(asked, [["side.dev"]]);

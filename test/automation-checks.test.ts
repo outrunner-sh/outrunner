@@ -49,12 +49,12 @@ function comment(over: { login?: string; body?: string; installation?: number; r
   return {
     action: "created",
     installation: { id: over.installation ?? 42 },
-    repository: { full_name: over.repo ?? "neevai-labs/outrunner" },
+    repository: { full_name: over.repo ?? "outrunner-sh/outrunner" },
     issue: { number: over.number ?? 7, ...(over.pr === false ? {} : { pull_request: { url: "x" } }) },
     comment: {
       user: { login: over.login ?? "outrunner-sh[bot]" },
       body: over.body ?? `Score: 4/5\n${runMarker(RUN)}`,
-      html_url: "https://github.com/neevai-labs/outrunner/pull/7#issuecomment-1",
+      html_url: "https://github.com/outrunner-sh/outrunner/pull/7#issuecomment-1",
     },
   };
 }
@@ -63,7 +63,7 @@ function deps() {
   const closed: unknown[] = [];
   const d: CommentDeps = {
     openCheckOf: async (runId) =>
-      runId === RUN ? { installationId: 42, repoFullName: "Neevai-Labs/Outrunner", prNumber: 7 } : null,
+      runId === RUN ? { installationId: 42, repoFullName: "Outrunner-Sh/Outrunner", prNumber: 7 } : null,
     closeCheck: async (runId, outcome) => {
       closed.push([runId, outcome.conclusion]);
     },
@@ -82,12 +82,12 @@ test("a review's body with the marker closes it too, should the summary be one",
   const review = {
     action: "submitted",
     installation: { id: 42 },
-    repository: { full_name: "neevai-labs/outrunner" },
+    repository: { full_name: "outrunner-sh/outrunner" },
     pull_request: { number: 7 },
     review: {
       user: { login: "outrunner-sh[bot]" },
       body: `Score: 3/5\n${runMarker(RUN)}`,
-      html_url: "https://github.com/neevai-labs/outrunner/pull/7#pullrequestreview-1",
+      html_url: "https://github.com/outrunner-sh/outrunner/pull/7#pullrequestreview-1",
     },
   };
   assert.equal(await finishCheckFromComment(review, "outrunner-sh", d), true);
@@ -106,7 +106,7 @@ test("no one else's comment closes a check, nor the App's on another pull reques
     ["another app's", comment({ login: "replicas-connector[bot]" })],
     ["no marker", comment({ body: "Score: 5/5" })],
     ["another pull request", comment({ number: 8 })],
-    ["another repository", comment({ repo: "neevai-labs/other" })],
+    ["another repository", comment({ repo: "outrunner-sh/other" })],
     ["another installation", comment({ installation: 43 })],
     ["an issue, not a pull request", comment({ pr: false })],
     ["edited, not posted", { ...comment(), action: "edited" }],

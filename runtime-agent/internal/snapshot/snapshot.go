@@ -185,7 +185,7 @@ type Input struct {
 	// Chats are the session's other chats, each uploaded to its own URLs.
 	Chats []ChatInput
 	// Secrets are the box's, masked in every conversation and rollout the
-	// Snapshot keeps, as in the chat (NEE-268).
+	// Snapshot keeps, as in the chat.
 	Secrets []string
 }
 
