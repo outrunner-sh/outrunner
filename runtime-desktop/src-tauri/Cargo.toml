@@ -42,7 +42,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json"] }
 # The updater turns on reqwest's rustls without a crypto provider, for every
 # client in the app: run() installs this one before any client is built.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-hmac = "0.12"
+hmac = "0.13"
 sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.3"
