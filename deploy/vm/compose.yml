@@ -8,16 +8,23 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
+      # Only for a release built on the VM (build-release.sh, which checks
+      # they're set); a pulled image (install-release.sh --pull) has none,
+      # so they're optional here, where compose reads them either way.
       args:
         OUTRUNNER_BUILD: ${OUTRUNNER_BUILD:?Set the release SHA}
-        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?Set the public Supabase URL}
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:?Set the public Supabase key}
-        NEXT_PUBLIC_CODEX_CLI_VERSION: ${NEXT_PUBLIC_CODEX_CLI_VERSION:?Set the supported CLI version}
+        OUTRUNNER_TREE: ${OUTRUNNER_TREE:-}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+        NEXT_PUBLIC_CODEX_CLI_VERSION: ${NEXT_PUBLIC_CODEX_CLI_VERSION:-}
     restart: unless-stopped
     env_file:
       - path: /etc/outrunner/runtime.env
         format: raw
     environment:
+      # The commit this release is: a pulled image is built per tree, and
+      # deployed as whichever commit has it.
+      OUTRUNNER_BUILD: ${OUTRUNNER_BUILD:?Set the release SHA}
       NODE_ENV: production
       PORT: "8080"
       RUNTIME_AGENT_BINARY_PATH: bin/runtime-agent-linux-amd64

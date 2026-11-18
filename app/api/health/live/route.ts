@@ -1,5 +1,6 @@
 import { connection, NextResponse } from "next/server";
 
+import { buildInfo } from "@/lib/observability/build";
 import { isDraining } from "@/lib/observability/drain";
 
 /**
@@ -13,7 +14,7 @@ export async function GET() {
   await connection();
   return NextResponse.json({
     ok: true,
-    build: process.env.OUTRUNNER_BUILD || null,
+    ...buildInfo(),
     ...(isDraining() ? { draining: true } : {}),
   });
 }
