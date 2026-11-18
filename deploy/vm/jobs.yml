@@ -1,0 +1,22 @@
+# The scheduler, run as project outrunner-jobs once /etc/outrunner/cron-enabled
+# exists. Activation recreates it after each switch, pointed at the live slot.
+services:
+  cron:
+    image: outrunner-control-plane:${OUTRUNNER_BUILD:?Set the release SHA}
+    restart: unless-stopped
+    entrypoint: [node, deploy/vm/cron.mjs]
+    env_file:
+      - path: /etc/outrunner/cron.env
+        format: raw
+    environment:
+      OUTRUNNER_CRON_ORIGIN: http://app-${SLOT:?Set the live slot}:8080
+    networks: [edge]
+    stop_grace_period: 75s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  edge:
+    external: true
+    name: outrunner
