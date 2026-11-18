@@ -30,7 +30,7 @@ export type MissionChannel = {
   /** Idle pause (docs/missions.md, "Idle pause"): when a human last posted
    *  something it hears, when it offered to pause (null: no offer pending),
    *  and whether it's paused because no one replied. Absent before
-   *  20261114210100_mission_idle_pause.sql. */
+   *  20261118120200_mission_idle_pause.sql. */
   lastHumanAt?: string;
   idleWarnedAt?: string | null;
   idlePaused?: boolean;
@@ -212,7 +212,7 @@ export async function isIdleOfferThread(binding: Pick<MissionChannel, "missionId
   return (data?.length ?? 0) > 0;
 }
 
-/** The idle sweep's two steps (20261114210100_mission_idle_pause.sql): the
+/** The idle sweep's two steps (20261118120200_mission_idle_pause.sql): the
  *  bindings each marks, its post queued with it. Each binding once however
  *  many ticks race. */
 export async function offerIdlePauses(idleSeconds: number, text: string, max: number): Promise<MissionChannel[]> {
@@ -447,7 +447,7 @@ export type MissionRequest = {
   announcedAt?: string | null;
   /** What the Mission is told of it (a trigger's request, or `!new`'s). */
   details?: RequestDetails | null;
-  /** `!assign @person` (20261114210200_mission_assign.sql): who the thread's
+  /** `!assign @person` (20261118120300_mission_assign.sql): who the thread's
    *  work is assigned to, by whom, when. Ships still run as the owner. */
   assigneeUserId?: string | null;
   assignedBy?: string | null;
@@ -638,7 +638,7 @@ export async function cancelRequestRow(missionId: string, requestKey: string): P
 
 /** Requests the Mission hasn't been told of, made before `before`: for the
  *  tick. Triggers' requests, and `!new`'s while open (unannounced_new_requests,
- *  20261114210200_mission_assign.sql; the tick decides by its root post).
+ *  20261118120300_mission_assign.sql; the tick decides by its root post).
  *  Never a mention's: it's told as it's taken (and never marked told). A
  *  cancelled one is never news, and mustn't hold the window. */
 export async function unannouncedRequests(before: Date, max = 25): Promise<MissionRequest[]> {
@@ -661,7 +661,7 @@ export async function unannouncedRequests(before: Date, max = 25): Promise<Missi
   // missed migration can't turn recovery off quietly.
   if (fresh.error) {
     console.error(
-      "Missions: unannounced_new_requests is missing (is 20261114210200_mission_assign.sql applied?): !new requests a crash left untold aren't recovered.",
+      "Missions: unannounced_new_requests is missing (is 20261118120300_mission_assign.sql applied?): !new requests a crash left untold aren't recovered.",
     );
   }
   return [...(triggers.data ?? []), ...((fresh.error ? [] : fresh.data) ?? [])].map(toRequest);
@@ -918,7 +918,7 @@ export async function orgBoundChannels(orgId: string): Promise<{ row: BoundChann
 }
 
 // ---------------------------------------------------------------------------
-// Ships' questions as cards (20261114210300_mission_ship_asks.sql)
+// Ships' questions as cards (20261118120400_mission_ship_asks.sql)
 // ---------------------------------------------------------------------------
 
 /** A Ship's ask_user call as a card in its request's thread

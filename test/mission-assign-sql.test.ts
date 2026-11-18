@@ -1,5 +1,5 @@
 /**
- * The `!assign` / `!new` migration's SQL (20261114210200_mission_assign.sql),
+ * The `!assign` / `!new` migration's SQL (20261118120300_mission_assign.sql),
  * run on a real Postgres after the Missions migrations before it: the
  * assignee columns, and unannounced_new_requests, the predicate the tick's
  * unannouncedRequests (lib/missions/slack-store.ts) calls by RPC, so this is

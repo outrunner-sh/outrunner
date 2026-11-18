@@ -235,7 +235,7 @@ type MissionChannelRow = {
   paused: boolean;
   /** 20261118110100: new each time it's bound. */
   revision: string;
-  /** 20261114210100_mission_idle_pause.sql */
+  /** 20261118120200_mission_idle_pause.sql */
   last_human_at: string;
   idle_warned_at: string | null;
   idle_paused: boolean;
@@ -244,7 +244,7 @@ type MissionChannelRow = {
 };
 
 type MissionBudgetRow = {
-  /** 20261114210000_mission_budgets.sql */
+  /** 20261118120100_mission_budgets.sql */
   mission_id: string;
   org_id: string;
   daily_usd: number | null;
@@ -314,7 +314,7 @@ type MissionSlackRequestRow = {
   automation_id: string | null;
   announced_at: string | null;
   details: Json | null;
-  /** 20261114210200_mission_assign.sql */
+  /** 20261118120300_mission_assign.sql */
   assignee_user_id: string | null;
   assigned_by: string | null;
   assigned_at: string | null;
@@ -380,7 +380,7 @@ type MissionSlackAskRow = {
   binding_revision: string | null;
   created_at: string;
 };
-// supabase/migrations/20261114210300_mission_ship_asks.sql
+// supabase/migrations/20261118120400_mission_ship_asks.sql
 type MissionShipAskRow = {
   id: string;
   mission_id: string;
@@ -2730,7 +2730,7 @@ export type Database = {
         Args: { grace_seconds: number; pause_text: string; max_rows: number };
         Returns: MissionChannelRow[];
       };
-      // 20261114210200_mission_assign.sql
+      // 20261118120300_mission_assign.sql
       unannounced_new_requests: {
         Args: { made_before: string; max_rows: number };
         Returns: MissionSlackRequestRow[];
@@ -2764,7 +2764,7 @@ export type Database = {
         Args: { max_missions: number };
         Returns: { mission_id: string }[];
       };
-      // supabase/migrations/20261114210000_mission_budgets.sql
+      // supabase/migrations/20261118120100_mission_budgets.sql
       set_mission_budget: {
         Args: {
           target: string;

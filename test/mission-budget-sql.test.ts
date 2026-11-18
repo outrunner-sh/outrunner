@@ -1,5 +1,5 @@
 /**
- * Mission budgets' SQL (20261114210000_mission_budgets.sql), on a real
+ * Mission budgets' SQL (20261118120100_mission_budgets.sql), on a real
  * Postgres: limits and a pause written together; a pause settled only while
  * the limits are the ones decided on, so a stale check can't pause a Mission
  * whose limit was just raised; a budget-paused Mission's events held out of

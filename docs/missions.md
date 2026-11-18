@@ -202,7 +202,7 @@ channel, one channel a Mission.
 
 A Ship started for a Slack request that stops on an `ask_user` question
 gets a card in that request's thread (`lib/missions/ship-ask.ts`,
-`mission_ship_asks`, `20261114210300_mission_ship_asks.sql`):
+`mission_ship_asks`, `20261118120400_mission_ship_asks.sql`):
 
 - **The card.** `Working on: <Ship title>`, the question, a button per
   option, then **Other**, a link to the Ship in Outrunner (no free text in
@@ -300,7 +300,7 @@ Slack's retries, timeouts and rebinds
 ### Budgets
 
 A Mission can have a daily and a weekly dollar budget
-(`mission_budgets`, `20261114210000_mission_budgets.sql`). No row, no
+(`mission_budgets`, `20261118120100_mission_budgets.sql`). No row, no
 budget: a plain Mission has none unless one is set.
 
 - **What counts.** The family's spend as [mission spend](mission-spend.md)
@@ -361,7 +361,7 @@ budget: a plain Mission has none unless one is set.
 ### Idle pause
 
 A bound Mission no human talks to for 2 weeks pauses itself
-(`20261114210100_mission_idle_pause.sql`, `lib/missions/idle-pause.ts`):
+(`20261118120200_mission_idle_pause.sql`, `lib/missions/idle-pause.ts`):
 
 - **Heard.** A human message meant for the Mission moves `last_human_at`: a
   mention of Outrunner, a reply in a thread it owns that isn't muted, or a
