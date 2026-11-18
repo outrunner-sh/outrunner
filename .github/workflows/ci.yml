@@ -108,7 +108,7 @@ jobs:
           tree=$(git rev-parse 'HEAD^{tree}')
           echo "tree=$tree" >> "$GITHUB_OUTPUT"
           echo "ref=ghcr.io/${GITHUB_REPOSITORY,,}/control-plane:tree-$tree" >> "$GITHUB_OUTPUT"
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
