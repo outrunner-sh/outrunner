@@ -138,7 +138,13 @@ export function OrgMembersSettings({
         <ul className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border/60">
           {members.map((m) => (
             <li key={m.userId} className="flex items-center gap-3 px-3 py-2">
-              <PersonCell person={m} detail={m.login ? `@${m.login}` : m.email} you={m.userId === me} />
+              <PersonCell
+                person={m}
+                detail={[m.login ? `@${m.login}` : m.email, admin && m.joinedViaGithub ? `via GitHub ${m.joinedViaGithub}` : null]
+                  .filter(Boolean)
+                  .join(" · ") || null}
+                you={m.userId === me}
+              />
               {admin && m.role === "member" && roles.length > 0 ? (
                 <RolesMenu
                   roles={roles}
