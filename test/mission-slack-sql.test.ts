@@ -337,6 +337,9 @@ test("existing automations are sessions' and stay so; a Mission's needs its Miss
   assert.equal(psql(`select string_agg(distinct target_kind, ',') from automations where target_mission_id is null`), "session");
   fails(`insert into automations (triggers, target_kind) values ('{schedule}', 'mission')`, /automations_target_check/);
   fails(`insert into automations (triggers, target_kind, target_mission_id) values ('{schedule}', 'session', '${mission()}')`, /automations_target_check/);
+  // A Mission's never takes on new repositories, nor a model of its own.
+  fails(`insert into automations (triggers, target_kind, target_mission_id, linear_team_ids, cover_new_repos) values ('{linear.issue}', 'mission', '${mission()}', '{T1}', true)`, /automations_mission_only_check/);
+  fails(`insert into automations (triggers, target_kind, target_mission_id, model_provider, model_id) values ('{schedule}', 'mission', '${mission()}', 'anthropic', 'm')`, /automations_mission_only_check/);
   // A watched channel or Linear are a Mission's only.
   fails(`insert into automations (triggers) values ('{slack.message}')`, /automations_inputs_check/);
   fails(`insert into automations (triggers) values ('{linear.issue}')`, /automations_inputs_check/);

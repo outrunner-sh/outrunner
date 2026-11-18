@@ -46,6 +46,15 @@ alter table automations add constraint automations_inputs_check check (
 ) not valid;
 alter table automations validate constraint automations_inputs_check;
 
+-- A Mission's automation keeps its project's one repository (never joined by
+-- new ones, 20261114140000_automation_cover_new_repos.sql) and its runs are
+-- requests on the Mission's own model (20261117120000_automation_model.sql).
+alter table automations drop constraint if exists automations_mission_only_check;
+alter table automations add constraint automations_mission_only_check check (
+  target_kind = 'session' or (not cover_new_repos and model_provider is null and model_id is null)
+) not valid;
+alter table automations validate constraint automations_mission_only_check;
+
 alter table automations drop constraint if exists automations_triggers_check;
 alter table automations add constraint automations_triggers_check
   check (cardinality(triggers) > 0 and triggers <@ array[

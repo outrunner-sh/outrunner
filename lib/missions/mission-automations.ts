@@ -1,7 +1,8 @@
 /**
  * Who may point an automation at a Mission, and what that makes of it
  * (docs/missions.md, "Triggers"): only someone with write on the Mission's
- * project; its one repository is the Mission's project's; its target never
+ * project; its one repository is the Mission's project's (it never adds new
+ * ones) and it has no model of its own; its target never
  * changes once made; and its runs wait for the Mission's owner to approve it
  * (approved at once when the owner makes it). Shared by the org's
  * automation routes and the Mission's own.
@@ -48,6 +49,10 @@ export async function checkMissionTarget(
   if (!allows(await deps.level(callerId, mission), "write")) {
     return { ok: false, status: 403, error: "Sending an automation's runs to a Mission needs write on its project." };
   }
+  // Its one repository stays its project's, and its runs are requests on
+  // the Mission's own model (automations_mission_only_check).
+  if (input.coverNewRepos) return { ok: false, status: 400, error: "A Mission's trigger stays on its project's repository: it can't add new ones." };
+  if (input.model) return { ok: false, status: 400, error: "A Mission's trigger runs on the Mission's own model: it can't pick one." };
   return {
     ok: true,
     mission,

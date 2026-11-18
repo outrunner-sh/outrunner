@@ -148,8 +148,9 @@ export function AutomationEditor({
   const [projectIds, setProjectIds] = useState<string[]>(draft.projectIds);
   const [coverNewRepos, setCoverNewRepos] = useState(draft.coverNewRepos);
   // Off whenever a trigger runs on every repository (a schedule, a webhook),
-  // and saved off: ticking one turns it off.
-  const canCover = canCoverNewRepos(triggers);
+  // and saved off: ticking one turns it off. Never a Mission's: it keeps its
+  // project's one repository.
+  const canCover = !toMission && canCoverNewRepos(triggers);
   const covering = coverNewRepos && canCover;
   const [enabled, setEnabled] = useState(draft.enabled);
   const [filter, setFilter] = useState("");
