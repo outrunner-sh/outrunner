@@ -33,9 +33,9 @@ access public.
 
 CI and cloud box checks use standard GitHub-hosted Linux runners. They require
 no production credentials. Container publication, npm publication, production
-deployment, desktop signing and downloads, and mirroring are upstream-only
-maintainer workflows. A fork can adapt those repository guards to publish its
-own artifacts after configuring its own accounts and secrets.
+deployment, and desktop signing and downloads are upstream-only maintainer
+workflows. A fork can adapt those repository guards to publish its own
+artifacts after configuring its own accounts and secrets.
 
 `cloudflare/wrangler.jsonc` describes the official hosted deployment, including
 public Supabase values. Those values are intentionally public, but they are
