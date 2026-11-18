@@ -4,8 +4,9 @@
  *
  * One org per email domain: the org takes the domain of its creator's primary
  * verified email (a free mail provider's never counts; lib/orgs/domains.ts).
- * If an org has claimed that domain already, no org is made; the creator is
- * pointed at that one to ask to join instead.
+ * If an org with people has claimed that domain already, no org is made; the
+ * creator is pointed at that one to ask to join instead. One with none left
+ * (orgsForDomains leaves it out) gives its domain up to the new org.
  */
 
 import type { DomainOrg } from "@/lib/db/orgs";
