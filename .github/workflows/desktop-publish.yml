@@ -29,7 +29,7 @@ name: Desktop publish
 #   secret   CLOUDFLARE_ACCOUNT_ID       (already set for deploy.yml)
 #   variable DOWNLOADS_BUCKET            the R2 bucket name
 #   variable DOWNLOADS_BASE_URL          the bucket's public custom domain,
-#                                        e.g. https://downloads.neev.ai
+#                                        e.g. https://downloads.outrunner.sh
 
 on:
   release:

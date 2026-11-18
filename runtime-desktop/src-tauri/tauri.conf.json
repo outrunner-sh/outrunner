@@ -24,7 +24,10 @@
     },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJGNUVGMkYyMEVGRUUyMEEKUldRSzR2NE84dkplTCtGYkJLcTNWRjlLSlpaVlZXdXZ2cUtDenpFZ2Z0a1pDMVNTZEduYUVHeSsK",
-      "endpoints": ["https://downloads.neev.ai/outrunner/latest.json"]
+      "endpoints": [
+        "https://downloads.outrunner.sh/outrunner/latest.json",
+        "https://downloads.neev.ai/outrunner/latest.json"
+      ]
     }
   },
   "bundle": {
