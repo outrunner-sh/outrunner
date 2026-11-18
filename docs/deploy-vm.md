@@ -134,19 +134,47 @@ migration.
 Create `/etc/outrunner/cron.env`, also root-owned `0600`, with only the same
 `BILLING_CRON_SECRET`. The scheduler receives no unrelated app credentials.
 
-Create `/etc/outrunner/build.env` with these public build values:
+Create `/etc/outrunner/build.env` with the domain the proxy serves:
 
 ```dotenv
 APP_DOMAIN=app.outrunner.sh
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-public-key
-NEXT_PUBLIC_CODEX_CLI_VERSION=the-supported-version
 ```
 
-Use the existing production values. The hosted CLI pin is recorded in
-`cloudflare/wrangler.jsonc`; reading it requires no Cloudflare API call.
+The image's public build values (`NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_CODEX_CLI_VERSION`) live in
+`cloudflare/wrangler.jsonc`'s `image_vars`, read by CI
+(`scripts/image-build-values.mjs`). Only a release built on the VM (below)
+needs them in `build.env` too.
 
-## Build and activate an exact release
+## How a merge reaches production
+
+1. **Every pull request's CI builds the production image** of the tree it tests
+   (its merge with `main`) on Blacksmith's cached builder, and pushes it to
+   `ghcr.io/outrunner-sh/outrunner/control-plane:tree-<tree>` (`ci.yml`,
+   Image). It checks the image starts and reports that tree. A tree already
+   built is left alone.
+2. **A merge to `main` deploys at once when it was tested as is**: when a pull
+   request merged in it ran green with the merge's very tree, which is the case
+   when the pull request was up to date with `main` (**Update branch** before
+   merging). `deploy/plan.mjs` decides. A merge whose pull request was behind
+   `main` waits for `main`'s CI, which builds its image, about five minutes
+   more. A run whose commit is no longer `main`'s head stands down: the head's
+   run ships it.
+3. **The VM pulls the image** (`deploy.sh` with `OUTRUNNER_IMAGE`) using the
+   deploy run's own token, sent on stdin and kept nowhere. It tags it
+   `outrunner-control-plane:<sha>` and activates it (below). Only the commit's
+   `deploy/vm/` files are sent.
+
+From merge to live is about two minutes for an up-to-date pull request. Each
+image carries its tree (`OUTRUNNER_TREE`), and activation requires the new
+slot's `/api/health` to report both the commit and the tree, so the code
+running is the code that was tested.
+
+The repository variable `VM_BUILD_ON_VM=true` switches back to building on the
+VM, the old way (below), for every deploy. A rollback by hand to a commit from
+before images is built on the VM too, unless the VM still has it.
+
+## Build and activate an exact release on the VM
 
 Select a commit on `main` that passed CI. Archive that commit rather than
 copying a working directory containing local secrets, and copy it with the
@@ -181,7 +209,10 @@ Activation switches with no downtime between two app slots, blue and green
    at it by rewriting `conf/live.caddy` and reloading. A reload keeps every
    open connection; deploys never restart Caddy.
 4. The scheduler (project `outrunner-jobs`) moves to the new slot, and the old
-   slot stops after a 90-second drain (`OUTRUNNER_DRAIN_SECONDS`).
+   slot stops after a 90-second drain (`OUTRUNNER_DRAIN_SECONDS`), from a
+   detached timer (`outrunner-activate-release --drain`, logged to
+   `/opt/outrunner/drain.log`): the deploy is done at the switch. The timer
+   stops the slot only if it is still idle and still that release by then.
 
 A release that fails to start, reports another build, or whose configuration
 Caddy refuses never receives traffic: the live slot is left as it was.
@@ -189,10 +220,10 @@ Rolling back is activating an earlier, already-built release. The live slot is
 recorded in `/opt/outrunner/live-slot`. The first activation on a host from the
 earlier single-project layout hands over ports 80/443 once, with a gap of a
 few seconds. Caddy persists certificates in the named volumes
-`outrunner_caddy_data` and `outrunner_caddy_config`; keep them during updates. Each
-release keeps its image; remove old release directories and their
-`outrunner-control-plane:<sha>` images (and run `docker builder prune`) when
-the disk fills, keeping the last few for rollback.
+`outrunner_caddy_data` and `outrunner_caddy_config`; keep them during updates. After
+each activation, `prune-releases.sh` keeps both slots' releases and the
+newest others, five in all (`OUTRUNNER_KEEP_RELEASES`), with their images,
+and removes the rest, untagged images, and build cache older than a day.
 
 Inspect the selected release:
 
