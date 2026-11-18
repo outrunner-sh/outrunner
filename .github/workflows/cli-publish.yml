@@ -63,7 +63,7 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # All of main's history, to tell whether this commit is on it.
           fetch-depth: 0

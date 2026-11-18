@@ -80,7 +80,7 @@ jobs:
       sha: ${{ steps.resolve.outputs.sha }}
       deploy: ${{ steps.resolve.outputs.deploy }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main
           # The whole history: the summary lists commits since the last deploy.
@@ -239,7 +239,7 @@ jobs:
       # main's head when the run started, not the commit CI passed).
       DEPLOY_SHA: ${{ needs.plan.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.plan.outputs.sha }}
 
@@ -431,7 +431,7 @@ jobs:
     env:
       DEPLOY_SHA: ${{ needs.plan.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.plan.outputs.sha }}
           # deploy.sh checks the commit is on origin/main and archives it.
