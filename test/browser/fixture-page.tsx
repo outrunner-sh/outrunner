@@ -76,7 +76,7 @@ export function FixturePage() {
   const pathname = usePathname();
   const view =
     params.get("view") ??
-    (pathname.startsWith("/projects/") ? "project" : pathname.startsWith("/workspaces/") ? "session" : "home");
+    ((pathname.startsWith("/environments/") || pathname.startsWith("/projects/")) ? "project" : pathname.startsWith("/workspaces/") ? "session" : "home");
   const state =
     params.get("state") ??
     (pathname.includes("readonly") ? "readonly" : "normal");

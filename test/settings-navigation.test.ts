@@ -62,3 +62,8 @@ test("old credential/auth, membership, and billing destinations keep compatible 
   );
   assert.equal(redirects.has("/settings/sandbox"), false);
 });
+
+test("old Projects links open Environments, a project's at its environment", () => {
+  assert.ok(SETTINGS_REDIRECTS.some(([from, to]) => from === "/projects" && to === "/environments"));
+  assert.ok(SETTINGS_REDIRECTS.some(([from, to]) => from === "/projects/:id" && to === "/environments/:id"));
+});
