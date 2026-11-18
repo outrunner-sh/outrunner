@@ -13,6 +13,7 @@ import { hashSecret } from "@/lib/auth/cli-login";
 import { connectorsAmong } from "@/lib/automations/connector";
 import type { OrgRole } from "@/lib/orgs/active";
 import { INVITE_DAYS, newInviteToken } from "@/lib/orgs/invite-token";
+import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** How long after a declined request its asker may ask again. */
@@ -27,7 +28,13 @@ export type Person = {
   avatarUrl: string | null;
 };
 
-export type Member = Person & { role: OrgRole; joinedAt: string };
+export type Member = Person & {
+  role: OrgRole;
+  joinedAt: string;
+  /** The GitHub organization they joined through (lib/orgs/github-join.ts),
+   *  by its login then; null otherwise. For admins' eyes. */
+  joinedViaGithub: string | null;
+};
 
 export type OpenInvite = {
   id: string;
@@ -102,7 +109,7 @@ export async function people(userIds: readonly string[]): Promise<Map<string, Pe
 export async function listMembers(orgId: string): Promise<Member[]> {
   const { data, error } = await createSupabaseAdminClient()
     .from("organization_members")
-    .select("user_id, role, created_at")
+    .select("user_id, role, created_at, joined_via_github")
     .eq("org_id", orgId);
   if (error) throw error;
   // Not the org's outrunner-connector, a service user its automations run as.
@@ -110,7 +117,12 @@ export async function listMembers(orgId: string): Promise<Member[]> {
   const humans = (data ?? []).filter((m) => !connectors.has(m.user_id));
   const byId = await people(humans.map((m) => m.user_id));
   return humans
-    .map((m) => ({ ...byId.get(m.user_id)!, role: m.role as OrgRole, joinedAt: m.created_at }))
+    .map((m) => ({
+      ...byId.get(m.user_id)!,
+      role: m.role as OrgRole,
+      joinedAt: m.created_at,
+      joinedViaGithub: m.joined_via_github,
+    }))
     .sort((a, b) => Number(b.role === "admin") - Number(a.role === "admin") || a.name.localeCompare(b.name));
 }
 
@@ -344,6 +356,71 @@ export async function requestToJoin(orgId: string, userId: string, email: string
   if (error?.code === "23505") return "pending";
   if (error) throw error;
   return "requested";
+}
+
+/** What joining an org through its GitHub organization came to: in (or a
+ *  member already), or the database's refusal
+ *  (20261119100000_github_org_join.sql). */
+export type GitHubJoinOutcome = "joined" | "member" | "personal" | "disabled" | "not_source" | "removed";
+
+/** Let `userId` into `orgId` as a member through GitHub organization
+ *  `githubOrg` (installation `installationId`'s): the caller asked GitHub
+ *  that they're its active member (lib/orgs/github-join.ts). */
+export async function joinOrgViaGithub(
+  orgId: string,
+  userId: string,
+  githubOrg: string,
+  installationId: number,
+): Promise<GitHubJoinOutcome> {
+  const { data, error } = await createSupabaseAdminClient().rpc("join_org_via_github", {
+    target_org: orgId,
+    member: userId,
+    github_org: githubOrg,
+    target_installation: installationId,
+  });
+  if (error) throw error;
+  return data as GitHubJoinOutcome;
+}
+
+/** The orgs a user is in, and those someone else removed them from (which
+ *  only an invite brings them back to), for joining one through GitHub. */
+export async function joinStanding(
+  userId: string,
+): Promise<{ memberOf: ReadonlySet<string>; removedFrom: ReadonlySet<string> }> {
+  const supabase = createSupabaseAdminClient();
+  const [members, removals] = await Promise.all([
+    supabase.from("organization_members").select("org_id").eq("user_id", userId),
+    supabase.from("organization_removals").select("org_id, removed_by").eq("user_id", userId),
+  ]);
+  if (members.error) throw members.error;
+  if (removals.error) throw removals.error;
+  return {
+    memberOf: new Set((members.data ?? []).map((m) => m.org_id)),
+    removedFrom: new Set((removals.data ?? []).filter((r) => r.removed_by !== userId).map((r) => r.org_id)),
+  };
+}
+
+/** Whether a team org lets its GitHub organization's members join without an
+ *  invite (organization_settings.join_via_github): on with nothing saved.
+ *  Off before the migration, when no one can join that way anyway. */
+export async function getJoinViaGithub(orgId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("organization_settings")
+    .select("join_via_github")
+    .eq("org_id", orgId)
+    .maybeSingle();
+  const status = probeStatus(error);
+  if (status === "missing" || status === "outdated") return false;
+  if (error) throw error;
+  return data?.join_via_github ?? true;
+}
+
+/** Set it, as admin `by`; the org's other settings are left as they are. */
+export async function setJoinViaGithub(orgId: string, enabled: boolean, by: string): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("organization_settings")
+    .upsert({ org_id: orgId, join_via_github: enabled, updated_by: by }, { onConflict: "org_id" });
+  if (error) throw error;
 }
 
 /** An org's pending requests to join, oldest first. */

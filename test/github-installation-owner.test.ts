@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { githubOwnership, linkIdentity } from "@/lib/github/installation-owner";
+import { activeOrgMember, githubOwnership, linkIdentity } from "@/lib/github/installation-owner";
 
 const org = { id: 42, accountLogin: "acme", accountType: "Organization" as const, accountId: 900 };
 const user = { id: 43, accountLogin: "ada", accountType: "User" as const, accountId: 7 };
@@ -69,6 +69,29 @@ test("a rate limit is an error, not a no, primary or secondary", async () => {
   // A plain 403 (no Members permission) is still a no.
   const plain = github({ ...user, "/orgs/acme/memberships/grace": { status: 403, headers: { "x-ratelimit-remaining": "4999" } } });
   assert.equal(await githubOwnership(org, 99, token, plain.doFetch), null);
+});
+
+test("an organization's active members and owners are members, by id; nothing else is", async () => {
+  const grace = { id: 99, login: "grace" };
+  const at = (body: unknown, status = 200): Record<string, Answer> => ({ "/orgs/acme/memberships/grace": { status, body } });
+  const cases: Array<[string, Record<string, Answer>, boolean]> = [
+    ["an active member", at({ state: "active", role: "member", user: { id: 99 } }), true],
+    ["an active owner", at({ state: "active", role: "admin", user: { id: 99 } }), true],
+    ["invited, not yet in", at({ state: "pending", role: "member", user: { id: 99 } }), false],
+    ["the login now someone else's", at({ state: "active", role: "member", user: { id: 5 } }), false],
+    ["no user said", at({ state: "active", role: "member" }), false],
+    ["a role GitHub hasn't said", at({ state: "active", role: "billing_manager", user: { id: 99 } }), false],
+    ["no Members permission (403)", at(undefined, 403), false],
+    ["not a member (404)", {}, false],
+  ];
+  for (const [name, answers, member] of cases) {
+    assert.equal(await activeOrgMember("acme", grace, token, github(answers).doFetch), member, name);
+  }
+  await assert.rejects(activeOrgMember("acme", grace, token, github(at(undefined, 502)).doFetch), "an outage throws");
+  const offline = (async () => {
+    throw new TypeError("fetch failed");
+  }) as typeof fetch;
+  await assert.rejects(activeOrgMember("acme", grace, token, offline), "GitHub out of reach throws");
 });
 
 test("the identity a link is made with: the installer first, then a verified owner", async () => {

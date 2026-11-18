@@ -79,8 +79,8 @@ async function MembersSection() {
     admin ? listRoles(active.id) : Promise.resolve([]),
   ]);
   // Members see one another by GitHub login; only admins, who invite and
-  // answer requests, see emails.
-  const members = admin ? listed : listed.map((m) => ({ ...m, email: null }));
+  // answer requests, see emails, and who joined through GitHub.
+  const members = admin ? listed : listed.map((m) => ({ ...m, email: null, joinedViaGithub: null }));
   return (
     <OrgMembersSettings
       org={active}
