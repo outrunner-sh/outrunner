@@ -43,6 +43,9 @@ type Browser struct {
 	// Display is the X display it opens on, the desktop's.
 	Display string
 
+	// stateMu has StorageState read one at a time (storage_state.go).
+	stateMu sync.Mutex
+
 	mu sync.Mutex
 	// target is the tab the agent last opened or navigated, which browser
 	// actions act on while it is open.
@@ -61,6 +64,10 @@ func NewBrowser(home string) *Browser {
 }
 
 func (b *Browser) base() string { return "http://127.0.0.1:" + strconv.Itoa(b.Port) }
+
+// DevToolsURL is where the browser's DevTools answer, on the box alone: what
+// Playwright's connectOverCDP takes.
+func (b *Browser) DevToolsURL() string { return b.base() }
 
 // browserBinaries are the names Chromium goes by, in the order looked for.
 // Daytona's images have /usr/bin/chromium.
