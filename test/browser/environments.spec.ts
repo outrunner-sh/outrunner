@@ -24,7 +24,10 @@ async function stubEnvironmentApis(page: Page) {
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
-    if (request.method() !== "GET") writes.push({ path, body: request.postData() ? request.postDataJSON() : null });
+    // The page's own writes, not the frame's (its sessions' background calls).
+    if (request.method() !== "GET" && (path.startsWith("/api/projects/") || path.startsWith("/api/environments"))) {
+      writes.push({ path, body: request.postData() ? request.postDataJSON() : null });
+    }
     if (path === "/api/github/repositories") {
       return route.fulfill({
         json: {
