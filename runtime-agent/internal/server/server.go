@@ -1318,7 +1318,7 @@ func (s *Server) sessionTool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// What a tool keeps (a note to the org's memory, a learning) leaves the
-	// box: its secrets are masked first, as in the chat (NEE-268).
+	// box: its secrets are masked first, as in the chat.
 	if len(call.Args) > 0 {
 		if masked, err := s.redactor().JSON(call.Args); err == nil {
 			call.Args = masked
@@ -1366,7 +1366,7 @@ func maskMessage(r *redact.Redactor, m *protocol.ConversationMessage) (*protocol
 
 // maskText answers text with the box's secrets masked: for what a session
 // sends out by another way than its chat (a Slack research answer, posted
-// with curl), which the server masks here before passing it on (NEE-268).
+// with curl), which the server masks here before passing it on.
 func (s *Server) maskText(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Text string `json:"text"`
@@ -1664,7 +1664,7 @@ func (s *Server) streamEvents(
 	cursor := fromOffset
 	running := s.ws.SessionLog(key) != ""
 	// The box's secrets are masked in every event, as in its terminal: a
-	// command that prints one would otherwise show it in the chat (NEE-268).
+	// command that prints one would otherwise show it in the chat.
 	// The redactor is made again at most once a second, from the box's
 	// shared read of them (CurrentSecrets), so a session's environment
 	// written after the stream opened is masked too; values provided

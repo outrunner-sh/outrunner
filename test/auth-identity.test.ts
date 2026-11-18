@@ -101,8 +101,8 @@ test("a sign-in's token is stored only as GitHub vouches for it", () => {
 test("without a GitHub token, GitHub's emails are the ones kept from the last GitHub sign-in", async () => {
   const { verifiedEmailsFor } = await import("@/lib/orgs/verified-emails");
   const { MissingGithubTokenError } = await import("@/lib/github/client");
-  const githubOnly = user([{ provider: "github", identity_data: { email: "md@zerotrail.ai" } }]);
-  const kept = [{ email: "md@zerotrail.ai", primary: true }];
+  const githubOnly = user([{ provider: "github", identity_data: { email: "dev@initech.dev" } }]);
+  const kept = [{ email: "dev@initech.dev", primary: true }];
   assert.deepEqual(await verifiedEmailsFor(githubOnly, undefined, kept), kept);
   // Nothing kept and no other provider to vouch: sign in with GitHub again.
   await assert.rejects(verifiedEmailsFor(githubOnly, undefined, []), MissingGithubTokenError);
@@ -113,7 +113,7 @@ test("a GitHub token GitHub refuses falls back on what was kept", async () => {
   const real = globalThis.fetch;
   globalThis.fetch = (async () => new Response(null, { status: 401 })) as typeof fetch;
   try {
-    const kept = [{ email: "md@zerotrail.ai", primary: true }];
+    const kept = [{ email: "dev@initech.dev", primary: true }];
     assert.deepEqual(await verifiedEmailsFor(user([]), "gho_revoked", kept), kept);
     await assert.rejects(verifiedEmailsFor(user([]), "gho_revoked", []));
   } finally {

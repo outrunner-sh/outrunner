@@ -22,8 +22,8 @@ name: Deploy production
 #
 # Required repo secrets (Settings -> Secrets and variables -> Actions):
 #   CLOUDFLARE_API_TOKEN   - Workers Scripts:Edit, Durable Objects:Edit,
-#                            Containers:Edit, and neev.ai Zone:DNS:Edit
-#   CLOUDFLARE_ACCOUNT_ID  - the Neevcloud account id
+#                            Containers:Edit, and DNS:Edit on the custom-domain zones
+#   CLOUDFLARE_ACCOUNT_ID  - the Cloudflare account id (matches wrangler.jsonc)
 # The public supported CLI version lives with the existing public build values
 # in cloudflare/wrangler.jsonc, and is verified against npm before every deploy.
 # Apply pending SQL migrations separately before deploying; the health gate
@@ -80,7 +80,7 @@ jobs:
       sha: ${{ steps.resolve.outputs.sha }}
       deploy: ${{ steps.resolve.outputs.deploy }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main
           # The whole history: the summary lists commits since the last deploy.
@@ -239,7 +239,7 @@ jobs:
       # main's head when the run started, not the commit CI passed).
       DEPLOY_SHA: ${{ needs.plan.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.plan.outputs.sha }}
 
@@ -248,7 +248,7 @@ jobs:
       # action error on the mismatch.
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -311,7 +311,7 @@ jobs:
           fi
 
       - name: Deploy
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -431,7 +431,7 @@ jobs:
     env:
       DEPLOY_SHA: ${{ needs.plan.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.plan.outputs.sha }}
           # deploy.sh checks the commit is on origin/main and archives it.

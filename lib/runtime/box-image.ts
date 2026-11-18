@@ -76,7 +76,7 @@ export function boxImageTag(dockerfile: string): string {
 export const BOX_IMAGE_TAG = "1a3ded882f6a";
 
 /** Where CI publishes the image, public. */
-export const BOX_IMAGE_REPOSITORY = "ghcr.io/neevai-labs/outrunner-box";
+export const BOX_IMAGE_REPOSITORY = "ghcr.io/outrunner-sh/outrunner-box";
 export const BOX_IMAGE = `${BOX_IMAGE_REPOSITORY}:${BOX_IMAGE_TAG}`;
 
 /**

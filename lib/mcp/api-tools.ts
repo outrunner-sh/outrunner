@@ -4,8 +4,7 @@
  * the same key, rights and rate limits, so an agent driving Outrunner over
  * MCP and a script over REST go down one path.
  *
- * Another module adds tools here with registerApiMcpTool; one with its own
- * endpoint and context makes its own McpServer (lib/mcp/server.ts).
+ * Endpoints with their own context use a separate McpServer (lib/mcp/server.ts).
  */
 
 import { listArtifactsApi } from "@/lib/api/artifacts.deps";
@@ -545,8 +544,3 @@ export const apiMcpServer = new McpServer<ApiContext>(
   },
   API_TOOLS,
 );
-
-/** Add a tool to the Outrunner API's MCP server, as the key's maker. */
-export function registerApiMcpTool(tool: McpTool<ApiContext>): void {
-  apiMcpServer.register(tool);
-}

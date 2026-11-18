@@ -94,7 +94,7 @@ function truncate(text: string): string {
 }
 
 /**
- * A stored failure message as the page shows it (NEE-231): a sentence first,
+ * A stored failure message as the page shows it: a sentence first,
  * and what the box or git said, if anything, behind Details.
  */
 export function failureParts(message: string): { summary: string; detail: string | null } {

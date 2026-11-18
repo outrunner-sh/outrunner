@@ -102,8 +102,8 @@ pnpm, and Go run inside the image build. Install Docker from its official
 repository and enable its service at boot.
 
 Inspect existing workloads first. Preserve SSH and unrelated services; Caddy
-needs ports 80/443. The app is published only on `127.0.0.1:3000`, and cron has
-no published ports. Caddy removes client-supplied Cloudflare address headers,
+needs ports 80/443. The two app slots are published only on `127.0.0.1:3001`
+and `127.0.0.1:3002`, and cron has no published ports. Caddy removes client-supplied Cloudflare address headers,
 supplies forwarding headers, and supports streaming and WebSocket upgrades.
 
 ```sh
@@ -172,11 +172,24 @@ Release metadata `.env.build` contains only public values; runtime secrets
 stay under `/etc/outrunner`. Apply pending migrations before installing;
 older installations should check the [migration recovery notes](../supabase/README.md).
 
-Activation updates `/opt/outrunner/current`, starts the app, verifies local
-health and the exact build SHA, then starts Caddy. Failed activation restores
-the previous VM image and configuration when available. Previous source
-folders and image tags must remain available for rollback. Caddy persists
-certificates in named volumes; keep those volumes during updates. Each
+Activation switches with no downtime between two app slots, blue and green
+(compose projects `outrunner-blue` and `outrunner-green`):
+
+1. The release starts in the idle slot while the live slot keeps serving.
+2. The idle slot must report this exact build on its local port.
+3. Caddy (project `outrunner-edge`, files in `/opt/outrunner/edge`) is pointed
+   at it by rewriting `conf/live.caddy` and reloading. A reload keeps every
+   open connection; deploys never restart Caddy.
+4. The scheduler (project `outrunner-jobs`) moves to the new slot, and the old
+   slot stops after a 90-second drain (`OUTRUNNER_DRAIN_SECONDS`).
+
+A release that fails to start, reports another build, or whose configuration
+Caddy refuses never receives traffic: the live slot is left as it was.
+Rolling back is activating an earlier, already-built release. The live slot is
+recorded in `/opt/outrunner/live-slot`. The first activation on a host from the
+earlier single-project layout hands over ports 80/443 once, with a gap of a
+few seconds. Caddy persists certificates in the named volumes
+`outrunner_caddy_data` and `outrunner_caddy_config`; keep them during updates. Each
 release keeps its image; remove old release directories and their
 `outrunner-control-plane:<sha>` images (and run `docker builder prune`) when
 the disk fills, keeping the last few for rollback.
@@ -184,8 +197,8 @@ the disk fills, keeping the last few for rollback.
 Inspect the selected release:
 
 ```sh
-cd /opt/outrunner/current
-docker compose --env-file .env.build -f deploy/vm/compose.yml logs --tail 100 app
+docker compose -p "outrunner-$(cat /opt/outrunner/live-slot)" logs --tail 100 app
+docker compose -p outrunner-edge logs --tail 50 caddy
 ```
 
 ## Cut over from Cloudflare Containers
@@ -208,14 +221,13 @@ docker compose --env-file .env.build -f deploy/vm/compose.yml logs --tail 100 ap
 4. Stop the old Worker's scheduled trigger, then start the VM scheduler:
 
    ```sh
-   cd /opt/outrunner/current
-   docker compose --env-file .env.build -f deploy/vm/compose.yml --profile jobs up -d cron
    sudo touch /etc/outrunner/cron-enabled
+   sudo /usr/local/sbin/outrunner-activate-release "$(basename "$(readlink /opt/outrunner/current)")"
    ```
 
    It calls all six jobs every two minutes with independent timeouts and no
    credential forwarding through redirects. The marker preserves this choice
-   on later activations. Check cron logs and authenticated health heartbeats.
+   on later activations, which start the scheduler against the live slot. Check cron logs and authenticated health heartbeats.
 5. Confirm public `/api/health` reports the chosen SHA and repeat the user
    flows. Preview wildcard hosts and the old `outrunner.neev.ai` redirect need
    separate routing migration when used. The supplied Caddyfile serves only

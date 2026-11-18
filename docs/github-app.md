@@ -227,6 +227,23 @@ by the reconciler's cron for any that a restart cut short.
 Every act is claimed by what it's for: the comment's id, the review's id, the commit, or the close and its time.
 GitHub's redeliveries therefore never act twice.
 
+## Repository and account renames
+
+GitHub's numeric repository ID stays the same when a repository or organization
+is renamed, or a repository is transferred. Outrunner uses that ID to refresh
+the names of existing connected projects when an installation is reconnected,
+its repository selection changes, or GitHub sends a rename event. Project IDs,
+session links, ownership, hidden state, and access grants are preserved. A
+repository reusing an old name does not take over the original project.
+
+The installation's repository list in Settings comes directly from GitHub;
+sessions use the stored project record. On older deployments, reconnecting can
+therefore show the new name in Settings while sessions still use the old one.
+**Projects → Sync repositories** can refresh projects connected by the current
+user. Deploy the rename refresh for installations with projects connected by
+other members. Tools using a local checkout should use its current canonical
+GitHub URL after a move.
+
 ## Permissions and events
 
 Set these on the App (GitHub → Settings → Developer settings → GitHub Apps → outrunner-connector). After a
@@ -250,6 +267,7 @@ then, GitHub refuses what needs them, and Outrunner logs that and goes on.
 | Pull request review comment | Mentions on a line |
 | Pull request review | Review follow-ups; automation runs' checks (#238) |
 | Check suite, Check run, Workflow run | CI failure follow-ups |
+| Repository | Keep connected project names current after renames and transfers |
 
 `installation`, `installation_repositories` and `github_app_authorization` events come to every App without
 subscribing.
@@ -292,7 +310,8 @@ authorization tokens** is on; new Apps have it on.
     "pull_request_review_comment",
     "check_suite",
     "check_run",
-    "workflow_run"
+    "workflow_run",
+    "repository"
   ]
 }
 ```

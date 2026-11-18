@@ -110,7 +110,7 @@ const VIEW_PATHS: Record<string, string> = {
   settings: "/settings/org",
   automations: "/automations",
   review: "/review",
-  detail: "/review/neevai-labs/outrunner/337",
+  detail: "/review/outrunner-sh/outrunner/337",
 };
 
 for (const view of [
@@ -166,7 +166,7 @@ test("inbox filters locally and preserves unknown and partial counts", async ({
   await expect(inbox.getByText("≥", { exact: true })).toBeVisible();
   await page
     .getByLabel("Repository", { exact: true })
-    .selectOption("neevai-labs/neev-ai");
+    .selectOption("outrunner-sh/website");
   await expect(inbox.getByRole("listitem")).toHaveCount(1);
   await page.getByLabel("Search pull requests").fill("nothing matches");
   await expect(
@@ -178,7 +178,7 @@ test("inbox filters locally and preserves unknown and partial counts", async ({
 test("chat keeps its draft and conversation through Info/Chat switches", async ({
   page,
 }) => {
-  await openFixture(page, "/review/neevai-labs/outrunner/337?view=detail");
+  await openFixture(page, "/review/outrunner-sh/outrunner/337?view=detail");
   await page.getByRole("tab", { name: "Chat", exact: true }).click();
   const draft = page.getByPlaceholder("Ask about this PR");
   await draft.fill("How does restore work?");
@@ -199,7 +199,7 @@ test("chat keeps its draft and conversation through Info/Chat switches", async (
 test("Files mounts on first use, retains selections, and a quote opens and focuses Chat", async ({
   page,
 }) => {
-  await openFixture(page, "/review/neevai-labs/outrunner/337?view=detail");
+  await openFixture(page, "/review/outrunner-sh/outrunner/337?view=detail");
   await expect(page.locator("[data-file]")).toHaveCount(0);
   await page.getByRole("tab", { name: "Files", exact: true }).click();
   await page
@@ -223,7 +223,7 @@ test("Files mounts on first use, retains selections, and a quote opens and focus
 test("keyboard tab navigation works without exposing hidden controls", async ({
   page,
 }) => {
-  await openFixture(page, "/review/neevai-labs/outrunner/337?view=detail");
+  await openFixture(page, "/review/outrunner-sh/outrunner/337?view=detail");
   const description = page.getByRole("tab", {
     name: "Description",
     exact: true,
@@ -250,7 +250,7 @@ test("hidden Chat pauses progress polling and refreshes when reopened", async ({
       polls++;
   });
   await page.clock.install();
-  await openFixture(page, "/review/neevai-labs/outrunner/337?view=detail");
+  await openFixture(page, "/review/outrunner-sh/outrunner/337?view=detail");
   await page.getByRole("tab", { name: "Chat", exact: true }).click();
   await page.getByPlaceholder("Ask about this PR").fill("Preserve the draft");
   await page.getByRole("button", { name: "Ask for a change" }).click();
@@ -269,7 +269,7 @@ test("hidden Chat pauses progress polling and refreshes when reopened", async ({
 test("hidden Files pauses tour shortcuts and keeps the current step", async ({
   page,
 }) => {
-  await openFixture(page, "/review/neevai-labs/outrunner/337?view=detail");
+  await openFixture(page, "/review/outrunner-sh/outrunner/337?view=detail");
   await page.getByRole("tab", { name: "Files", exact: true }).click();
   await page.getByRole("button", { name: "Start tour", exact: true }).click();
   await page.getByRole("button", { name: "Begin", exact: true }).click();
@@ -324,7 +324,7 @@ test("merged sidebar icon remains identifiable without checks or a visible numbe
 }) => {
   await openFixture(page, "/chips?view=chips");
   const icon = page.getByRole("img", {
-    name: /Merged pull request neevai-labs\/outrunner#284/,
+    name: /Merged pull request outrunner-sh\/outrunner#284/,
   });
   await expect(icon).toBeVisible();
   await expect(icon).toHaveText("");
@@ -426,7 +426,7 @@ test("loading, empty and unavailable states remain distinguishable", async ({
 test("500-file diff stays folded and does not render until Files opens", async ({
   page,
 }) => {
-  await openFixture(page, "/review/neevai-labs/outrunner/337?view=detail&state=large");
+  await openFixture(page, "/review/outrunner-sh/outrunner/337?view=detail&state=large");
   await expect(page.locator("[data-file]")).toHaveCount(0);
   const started = Date.now();
   await page.getByRole("tab", { name: "Files", exact: true }).click();

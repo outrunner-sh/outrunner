@@ -99,28 +99,14 @@ export async function memberRole(orgId: string, userId: string): Promise<OrgRole
 /** An org that has claimed a domain, as someone asking to make another sees it. */
 export type DomainOrg = { id: string; name: string; domain: string; memberCount: number };
 
-/** The orgs that have claimed any of these domains. */
+/** The orgs that have claimed any of these domains and still have people (its
+ *  connector isn't one). One with none left holds its domain for no one: the
+ *  next org made for it takes it over (20261118120000_abandoned_org_domains.sql). */
 export async function orgsForDomains(domains: readonly string[]): Promise<DomainOrg[]> {
   if (domains.length === 0) return [];
-  const supabase = createSupabaseAdminClient();
-  const { data: claims, error } = await supabase
-    .from("organization_domains")
-    .select("domain, org_id")
-    .in("domain", [...domains]);
+  const { data, error } = await createSupabaseAdminClient().rpc("domain_orgs", { domains: [...domains] });
   if (error) throw error;
-  const found: DomainOrg[] = [];
-  for (const claim of claims ?? []) {
-    const [{ data: org, error: orgError }, { count, error: countError }, { count: connectors }] = await Promise.all([
-      supabase.from("organizations").select("id, name").eq("id", claim.org_id).maybeSingle(),
-      supabase.from("organization_members").select("user_id", { count: "exact", head: true }).eq("org_id", claim.org_id),
-      // Its outrunner-connector isn't one of its people.
-      supabase.from("org_connectors").select("org_id", { count: "exact", head: true }).eq("org_id", claim.org_id),
-    ]);
-    if (orgError) throw orgError;
-    if (countError) throw countError;
-    if (org) found.push({ id: org.id, name: org.name, domain: claim.domain, memberCount: Math.max(0, (count ?? 0) - (connectors ?? 0)) });
-  }
-  return found;
+  return (data ?? []).map((o) => ({ id: o.id, name: o.name, domain: o.domain, memberCount: Number(o.member_count) }));
 }
 
 /** The domain an org claimed, if it did. */

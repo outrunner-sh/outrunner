@@ -231,7 +231,7 @@ export class AgentClient {
     return EditorResponse.parse(raw);
   }
 
-  /** Text with the box's secrets masked, as its chat masks them (NEE-268):
+  /** Text with the box's secrets masked, as its chat masks them:
    *  for what the session sends out by another way. Null when the answer
    *  isn't text. An agent from before this answers 404 with no error envelope. */
   async maskText(identity: WorkspaceIdentity, text: string): Promise<string | null> {

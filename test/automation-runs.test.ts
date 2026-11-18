@@ -21,15 +21,15 @@ function payload(over: { action?: string; pr?: Record<string, unknown>; installa
   return {
     action: over.action ?? "opened",
     installation: over.installation ?? { id: 42 },
-    repository: over.repository ?? { full_name: "neevai-labs/outrunner", id: 101 },
+    repository: over.repository ?? { full_name: "outrunner-sh/outrunner", id: 101 },
     pull_request: {
       number: 7,
       title: "Add automations",
-      html_url: "https://github.com/neevai-labs/outrunner/pull/7",
+      html_url: "https://github.com/outrunner-sh/outrunner/pull/7",
       draft: false,
       user: { login: "someone" },
-      head: { sha: SHA, ref: "feature/x", repo: { full_name: "neevai-labs/outrunner" } },
-      base: { ref: "main", repo: { full_name: "neevai-labs/outrunner" } },
+      head: { sha: SHA, ref: "feature/x", repo: { full_name: "outrunner-sh/outrunner" } },
+      base: { ref: "main", repo: { full_name: "outrunner-sh/outrunner" } },
       ...over.pr,
     },
   };
@@ -42,7 +42,7 @@ const candidate: RunCandidate = {
   triggers: ["pull_request.opened", "pull_request.synchronize"],
   runsAs: "u1",
   projectId: "p1",
-  repoFullName: "neevai-labs/outrunner",
+  repoFullName: "outrunner-sh/outrunner",
   orgId: "o1",
   reviewers: [],
   labels: [],
@@ -65,10 +65,10 @@ test("a pull request event is read with what a run needs", () => {
   assert.deepEqual(readPullRequestEvent(payload()), {
     installationId: 42,
     trigger: "pull_request.opened",
-    repoFullName: "neevai-labs/outrunner",
+    repoFullName: "outrunner-sh/outrunner",
     number: 7,
     title: "Add automations",
-    url: "https://github.com/neevai-labs/outrunner/pull/7",
+    url: "https://github.com/outrunner-sh/outrunner/pull/7",
     headSha: SHA,
     headRef: "feature/x",
     baseRef: "main",
@@ -97,7 +97,7 @@ test("a run's session is told the pull request, then the automation's prompt", (
   const event = readPullRequestEvent(payload({ action: "synchronize" }));
   assert.ok(typeof event !== "string");
   const prompt = runPrompt("Review it.", event);
-  assert.match(prompt, /^Pull request: neevai-labs\/outrunner#7 "Add automations"/);
+  assert.match(prompt, /^Pull request: outrunner-sh\/outrunner#7 "Add automations"/);
   assert.match(prompt, /gh pr diff 7/);
   assert.match(prompt, /new commits/);
   // Every run, an automation made from an older template's prompt included.
@@ -155,7 +155,7 @@ test("an event records one run per matching automation, in one write, once per c
   // Nor does one that names no repository id: its projects match by it,
   // never by a full name a project's members can set.
   assert.deepEqual(
-    await planRuns(payload({ repository: { full_name: "neevai-labs/outrunner" } }), {
+    await planRuns(payload({ repository: { full_name: "outrunner-sh/outrunner" } }), {
       ...deps,
       automationsForPullRequest: async () => assert.fail("looked up"),
     }),
@@ -163,7 +163,7 @@ test("an event records one run per matching automation, in one write, once per c
   );
   // A write that fails records none of them, so a redelivery starts them all.
   await assert.rejects(
-    planRuns(payload({ action: "synchronize", pr: { head: { sha: "f".repeat(40), ref: "x", repo: { full_name: "neevai-labs/outrunner" } } } }), {
+    planRuns(payload({ action: "synchronize", pr: { head: { sha: "f".repeat(40), ref: "x", repo: { full_name: "outrunner-sh/outrunner" } } } }), {
       ...deps,
       recordRuns: async () => {
         throw new Error("db down");
@@ -433,7 +433,7 @@ test("a closed or merged pull request is read as such; nothing else is", () => {
   assert.deepEqual(readClosedPullRequest(payload({ action: "closed", pr: { merged: true } })), {
     installationId: 42,
     repoId: 101,
-    repoFullName: "neevai-labs/outrunner",
+    repoFullName: "outrunner-sh/outrunner",
     number: 7,
   });
   // Closed is closed, whoever's or whatever its head: a draft's or a fork's
@@ -444,7 +444,7 @@ test("a closed or merged pull request is read as such; nothing else is", () => {
   assert.equal(readClosedPullRequest(payload({ action: "closed", installation: { id: "nope" } })), null);
   assert.equal(readClosedPullRequest(payload({ action: "closed", pr: { number: 0 } })), null);
   // No repository id, nothing to match its projects by: it's no one's.
-  assert.equal(readClosedPullRequest(payload({ action: "closed", repository: { full_name: "neevai-labs/outrunner" } })), null);
+  assert.equal(readClosedPullRequest(payload({ action: "closed", repository: { full_name: "outrunner-sh/outrunner" } })), null);
 });
 
 test("a pull request closing archives its review sessions, each as its runner", async () => {
@@ -522,7 +522,7 @@ function rerunDeps(over: { target?: Partial<RerunTarget> | null; pr?: Record<str
           enabled: true,
           atLimit: false,
           candidate,
-          repoFullName: "neevai-labs/outrunner",
+          repoFullName: "outrunner-sh/outrunner",
           installationId: 42,
           installationSuspended: false,
           covered: true,
@@ -532,7 +532,7 @@ function rerunDeps(over: { target?: Partial<RerunTarget> | null; pr?: Record<str
   const deps: RerunDeps = {
     rerunTarget: async (orgId, runId) => (orgId === "o1" && runId === "r1" ? target : null),
     pullRequest: async (installationId, repo, number) => {
-      assert.deepEqual([installationId, repo, number], [42, "neevai-labs/outrunner", 7]);
+      assert.deepEqual([installationId, repo, number], [42, "outrunner-sh/outrunner", 7]);
       return { state: "open", ...payload().pull_request, ...over.pr };
     },
     reopenRun: async (runId) => {
@@ -569,7 +569,7 @@ test("a run that failed runs again at the same commit as itself, once, told it's
 test("one whose pull request has moved on runs at its head now, as a new run", async () => {
   const later = "f".repeat(40);
   const { deps, reopened, recorded } = rerunDeps({
-    pr: { head: { sha: later, ref: "feature/x", repo: { full_name: "neevai-labs/outrunner" } } },
+    pr: { head: { sha: later, ref: "feature/x", repo: { full_name: "outrunner-sh/outrunner" } } },
   });
   const rerun = await rerunRun("o1", "r1", deps);
   assert.ok(rerun.ok);
@@ -595,7 +595,7 @@ test("one whose pull request has moved on runs at its head now, as a new run", a
   );
   // Unless that commit has its run already.
   const taken = rerunDeps({
-    pr: { head: { sha: later, ref: "feature/x", repo: { full_name: "neevai-labs/outrunner" } } },
+    pr: { head: { sha: later, ref: "feature/x", repo: { full_name: "outrunner-sh/outrunner" } } },
     recordRuns: async () => new Map(),
   });
   const refused = await rerunRun("o1", "r1", taken.deps);
@@ -627,14 +627,14 @@ test("a run runs again only when it's the org's, failed or didn't start, and its
   }
   // A repository renamed since: the pull request names it as it is now (GitHub
   // redirects), and that's no fork.
-  const renamed = { full_name: "neevai-labs/renamed" };
+  const renamed = { full_name: "outrunner-sh/renamed" };
   const moved = await rerunRun(
     "o1",
     "r1",
     rerunDeps({ pr: { head: { sha: SHA, ref: "feature/x", repo: renamed }, base: { ref: "main", repo: renamed } } }).deps,
   );
   assert.ok(moved.ok && isPullRequestEvent(moved.run.event));
-  assert.equal(moved.run.event.repoFullName, "neevai-labs/renamed");
+  assert.equal(moved.run.event.repoFullName, "outrunner-sh/renamed");
   // A refused one runs again too.
   assert.ok((await rerunRun("o1", "r1", rerunDeps({ target: { status: "refused" } }).deps)).ok);
 });

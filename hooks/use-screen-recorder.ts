@@ -113,7 +113,7 @@ function callBack(title: Session["title"]) {
 }
 
 /**
- * Record the user's screen from the composer (NEE-263). `start` asks the
+ * Record the user's screen from the composer. `start` asks the
  * browser which screen, window or tab to share; the recording ends at `stop`,
  * when the user stops sharing from the browser's own bar, at the length or
  * size limit (lib/session/screen-recording.ts), or when the composer goes

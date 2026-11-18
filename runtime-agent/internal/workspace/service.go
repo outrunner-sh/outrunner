@@ -2360,7 +2360,7 @@ func (s *Service) SummaryOf(ctx context.Context, workspaceID string) protocol.Wo
 	}
 	snap := sum.Snapshot(ctx)
 	// The last reply leaves the box (a Slack thread, a Mission, a Snapshot's
-	// manifest): its secrets are masked, as in the chat (NEE-268).
+	// manifest): its secrets are masked, as in the chat.
 	if snap.LastAssistantMessage != nil {
 		masked := s.masker()(*snap.LastAssistantMessage)
 		snap.LastAssistantMessage = &masked

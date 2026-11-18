@@ -33,7 +33,6 @@ type EnvKey =
   | "DAYTONA_API_KEY"
   | "DAYTONA_API_URL"
   | "DAYTONA_TARGET"
-  | "DAYTONA_SNAPSHOT"
   // "1" where the Daytona account is this deployment's alone: the orphaned-box
   // sweep then deletes boxes from before they were labelled with it too.
   | "ORPHAN_SWEEP_UNLABELLED"

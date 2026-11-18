@@ -40,7 +40,7 @@ before(() => {
   }
   sql(`
     insert into github_installations (installation_id, org_id, account_login, account_type, repository_selection, installed_by, installer_id)
-    values (42, '${ORG}', 'neevai-labs', 'Organization', 'all', '${ADMIN}', 7),
+    values (42, '${ORG}', 'outrunner-sh', 'Organization', 'all', '${ADMIN}', 7),
            (43, '${ORG}', 'legacy', 'Organization', 'selected', '${ADMIN}', null),
            (44, null, 'fresh', 'User', 'all', null, 7);
     insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_id, removed_from)

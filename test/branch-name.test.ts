@@ -27,7 +27,7 @@ test("chat around the task doesn't reach the branch", () => {
 });
 
 test("a link keeps its issue or pull request number, nothing else", () => {
-  assert.equal(sessionBranch({ prompt: "https://github.com/neevai-labs/outrunner/issues/266 fix this" }), "issue-266-fix");
+  assert.equal(sessionBranch({ prompt: "https://github.com/outrunner-sh/outrunner/issues/266 fix this" }), "issue-266-fix");
   assert.equal(branchSlug("review https://github.com/o/r/pull/394/files please"), "review-pr-394");
   assert.equal(branchSlug("Fix https://example.com/a?b=c crash in café façade!!"), "fix-crash-cafe-facade");
 });

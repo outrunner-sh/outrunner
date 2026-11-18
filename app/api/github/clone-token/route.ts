@@ -12,7 +12,7 @@ import { activeOrgId } from "@/lib/orgs/server";
 
 /**
  * A GitHub token for the Mac app to clone a repository they picked for a
- * local session (NEE-55): only the page can hand it to the app, and the app
+ * local session: only the page can hand it to the app, and the app
  * uses it for that clone only, never writing it down. Returned to their own
  * page, as `outrunnerModelKey` is.
  *

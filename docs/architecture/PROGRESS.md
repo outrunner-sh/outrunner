@@ -1,6 +1,8 @@
 # Runtime v1 — Progress Tracker
 
-Single source of truth for what's done and what's left. Update as milestones land.
+> Historical milestone tracker. This is a development snapshot, not current
+> product status. See the [documentation index](../README.md) and
+> [development guide](../development.md) for current setup.
 Detail lives in [`runtime-v1-plan.md`](./runtime-v1-plan.md) and [`spike4-runtime-report.md`](./spike4-runtime-report.md).
 
 Legend: ✅ done · 🟡 in progress · ⬜ not started
@@ -125,8 +127,6 @@ close laptop → Claude keeps running → reconnect from another device → resu
 ## Housekeeping / follow-ups
 - ✅ Applied `20260804110000_runtime_computers.sql` + `20260805000000_runtime_computer_provision_timings.sql` to Supabase
   (`database.types.ts` hand-maintained in lockstep)
-- ⬜ Rotate the `CLAUDE_CODE_OAUTH_TOKEN` shared earlier (treat as exposed)
 - ⬜ Provision/configure Daytona credentials in the deployment secret manager,
   then complete the authenticated Phase 6 acceptance checklist.
-- ⬜ Review/merge PR #9
 - Known limitations (from Spike 4): interactive-TUI PTY input handling; heavy-workload/>30-min profiling; per-turn JSONL flush confirmation

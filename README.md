@@ -1,193 +1,206 @@
-# Outrunner
+<div align="center">
 
+<img src="public/brand/icon.svg" alt="Outrunner app icon" width="96" height="96" />
 
-Outrunner runs the real Claude Code CLI in a persistent cloud workspace you drive
-from the browser. You get a live terminal and a structured conversation you can
-close your laptop on and reconnect to — the agent keeps running. Conductor-style
-workflow, but the session lives in the cloud, not on your machine.
+### Outrunner
 
-## How it works
+Run fleets of Claude Code and Codex sessions in the cloud. Hand off a task, get back a pull request.
 
-- One **Runtime Computer** — a long-lived [Daytona](https://daytona.io) box per
-  project, built from a frozen versioned image.
-- One **Workspace** = one Claude Code session, in a tmux + git worktree on that
-  box.
-- A Go **runtime-agent** on the box exposes the live PTY over WebSocket and
-  streams the conversation; a Next.js + Supabase control plane handles auth,
-  GitHub, and lifecycle.
-- Or a **local session**: in the Outrunner Mac app, choose *This Mac*, pick any
-  folder, and the same agent runs Claude Code on your machine with your own
-  `claude` login — no GitHub repository needed. See
-  [`runtime-desktop/README.md`](runtime-desktop/README.md#local-sessions).
+[**Download for macOS**](https://downloads.outrunner.sh/outrunner/Outrunner.dmg) &nbsp;&bull;&nbsp; [Open the web app](https://app.outrunner.sh) &nbsp;&bull;&nbsp; [Documentation](docs/README.md) &nbsp;&bull;&nbsp; [Changelog](https://github.com/outrunner-sh/outrunner/releases) &nbsp;&bull;&nbsp; [Contributing](CONTRIBUTING.md)
 
-## Status
+<p align="center">
+  <img width="800" alt="An Outrunner Mission splitting usage-based billing across four Ships, with their pull requests in the Ships pane" src=".github/assets/readme-hero.png" />
+</p>
 
-Phase 0 (architecture validated end-to-end on Daytona) and Milestone 1
-(foundations) are complete; the interactive execution path is in progress. See
-[`docs/architecture/PROGRESS.md`](docs/architecture/PROGRESS.md).
+</div>
 
-## Local setup
+## What is Outrunner?
 
-1. Copy `.env.example` → `.env.local`; fill the Supabase and GitHub owner values.
-2. Apply `supabase/migrations/*.sql` in filename order (Supabase SQL editor or CLI).
-3. `pnpm install && pnpm dev`
+Outrunner is an open-source workspace for running coding agents in parallel,
+released under the [MIT License](LICENSE). Each task gets its own cloud
+computer, Git worktree, branch, terminal and conversation, so Claude Code or
+Codex can work on several tasks in one repository at once, and keep working
+after you close the tab.
 
-`GITHUB_PAT` is server-only, must belong to the configured Outrunner owner, and
-needs repo **Metadata: Read**, **Contents: Read/write**, and **Pull requests:
-Read/write**. Keep it out of `NEXT_PUBLIC_*` and commits.
+It is for developers who already hand work to a coding agent and want to run
+more than one task at a time, or hand off the whole loop, from issue to
+reviewed pull request.
 
-## Shared coding agent accounts
+A single agent CLI runs one session in one terminal on your laptop. Outrunner
+adds the workspace around the agents:
 
-Personal → Coding agents keeps your Claude and Codex subscription connections
-private. Organization → Coding agents lets admins connect either agent for
-members’ cloud sessions; members can see connection status. Claude connects in
-the Mac app or by pasting the token from `claude setup-token` on the web. Codex
-uses its existing organization login flow.
+- **One box per task**: every session runs in its own sandbox, on its own branch and worktree
+- **Missions and Ships**: a Mission plans a body of work and delegates each piece to a Ship, its own session with its own pull request
+- **Review in the app**: diffs, checks and pull requests next to the conversation, with live previews and the agent's desktop
+- **Agent status**: the sidebar shows which session is working, which needs you, and which has a pull request ready
+- **Start work from anywhere**: triage, GitHub, GitLab, Slack, Linear, Jira, schedules, the CLI, REST API or MCP server
+- **Built for teams**: share repositories, environments, secrets and agent connections across an organization
 
-Cloud sessions use personal subscription credentials first, then the connected
-organization subscription for the same agent if the provider rejects a request
-because its quota is exhausted. The broker retries that rejected request once,
-keeps the conversation and model, and briefly avoids the exhausted account.
-If both accounts are exhausted, the provider error is returned. Authentication,
-network and server errors do not switch accounts. API-key selections keep their
-existing billing behavior; fallback does not switch agents or buy API credits.
-Local Mac sessions continue using personal credentials.
+Outrunner is not a coding agent itself. You connect your own Claude or Codex
+subscription, or provider API keys, and Outrunner runs the official agents for
+you.
 
-Organization Claude tokens use the existing encrypted `org_provider_keys` store
-under `claude-subscription`; no additional database migration is needed. Deploy
-the web app and a runtime-agent advertising `claude-account` together. Existing
-cloud computers upgrade through the normal capability check before accepting a
-shared Claude connection; reconnect or restore existing sessions to apply newly
-connected accounts. `RUNTIME_BASE_URL` must point to the app’s public origin so
-cloud agents can reach its inference brokers.
+**Platforms**: any modern browser, and a Mac app (universal, Apple Silicon and
+Intel) that can also run sessions on your own machine.
 
-## CLI
+## Install
 
-`npx outrunner@latest` is the one command a new user pastes into their
-terminal. It signs the terminal in through the browser (`/cli-login`, PKCE, a
-token kept in `~/.outrunner/cli.json`), offers to connect their Claude
-subscription when Claude Code is on the computer (it runs `claude setup-token`
-under a PTY and saves the token), then continues onboarding in the browser.
-`outrunner login | claude | whoami | logout` do one step each,
-`outrunner triage "…"` adds a work item to triage, and `outrunner
-list | get | create | send | read | wait | delete` drive sessions through
-the API ([`docs/api.md`](docs/api.md#cli), `--json` for scripts,
-`OUTRUNNER_API_KEY` instead of a sign-in); `claude` signs
-in first if needed and opens no tab after, so it's what onboarding's
-subscription page shows (always with `--url`, the page's own app).
-`--url` or `OUTRUNNER_URL` points it at another app.
+- **Web**: open [app.outrunner.sh](https://app.outrunner.sh) and sign in
+- **macOS**: [Outrunner.dmg](https://downloads.outrunner.sh/outrunner/Outrunner.dmg) (universal, signed and notarized) · [All releases](https://github.com/outrunner-sh/outrunner/releases)
+- **Terminal**: `npx outrunner@latest` signs you in through your browser and continues onboarding
 
-On an Outrunner box the sessions have `outrunner` too (the runtime-agent's
-own copy), for showing their work in a pull request: `outrunner media gif
-<recording>` makes a looping GIF under the 5 MB GitHub shows, and `outrunner
-media upload <file> --name "<what it shows>"` uploads it through the box's
-agent and prints the `![name](url)` line to paste.
+For another deployment, use `outrunner --url https://your-app.example.com` or
+set `OUTRUNNER_URL`. Agent subscriptions, model APIs and cloud compute have
+their own accounts, terms and costs.
 
-The CLI is Go (`runtime-agent/cmd/outrunner`), shipped through npm like
-esbuild: the `outrunner` launcher (`cli-npm/`) and one `outrunner-<os>-<cpu>`
-package per platform. `scripts/build-cli.sh <version>` stages them all.
+## Start with one task
+
+1. [Sign in](#install) and connect GitHub (or GitLab) and your coding agent in **Settings**.
+2. Pick a repository, choose Claude Code or Codex, and describe a small change.
+3. Watch it work, review the diff and the preview, then open the pull request from the session.
+
+## Run tasks in parallel
+
+Every session gets a cloud box with its own worktree, branch, terminal and
+conversation. Sessions keep running when you close the browser; the sidebar
+groups them by where each stands: **Needs you**, **Working**, **Ready**.
+
+[Sessions](docs/sessions.md) · [Previews](docs/previews.md) · [Agent desktop](docs/desktop.md)
+
+## Delegate with Missions
+
+A **Mission** is a long-lived session that owns one area of a project (billing,
+onboarding, the CLI). It plans and delegates instead of writing code: each piece
+of work goes to a **Ship**, an ordinary session with its own box and branch.
+News from Ships comes back on its own, and the Mission writes to you only when
+it needs a decision or a pull request is ready.
+
+[Missions and Ships](docs/missions.md)
+
+## Review and ship
+
+- **Pull requests in the app.** Read the diff, checks and review threads next to the conversation, and send feedback back to the agent.
+- **Evidence in every PR.** For a change you can see, the agent runs the app, captures before and after screenshots on its desktop, and puts them in the pull request. [PR evidence](docs/pr-evidence.md)
+- **Live previews.** Share a stable link to a dev server running on a session's box, for your org or for anyone. [Previews](docs/previews.md)
+
+## Start work from anywhere
+
+Turn issues, messages and events into sessions without opening the app.
+
+[Triage](docs/sessions.md#triage) · [GitHub](docs/github-app.md) · [GitLab](docs/gitlab.md) · [Slack](docs/slack-app.md) · [Linear](docs/linear-app.md) · [Jira](docs/jira-app.md)
+
+- **Automations**: run a prompt on a schedule or when a pull request opens, across one repository or all of them
+- **Mentions**: ask Outrunner on a GitHub issue or pull request, or in a Slack thread
+- **Triage**: a queue of work items from the app, Slack, Linear, Jira or the CLI, each one a session away
+
+## Supported agents
+
+Keep your existing agent subscriptions.
+
+| Agent | Runs on |
+|:------|:-------|
+| [Claude Code](https://github.com/anthropics/claude-code) | A Claude subscription, or an API key from Anthropic, OpenAI, OpenRouter, Z.ai, Moonshot or DeepSeek |
+| [OpenAI Codex CLI](https://github.com/openai/codex) | A ChatGPT subscription |
+
+Admins can share a Claude or Codex subscription with their organization, and
+the hosted service includes Outrunner's own models for both agents.
+
+## More than a web app
+
+Every surface talks to the same sessions, so you can start a task in one place
+and check on it from another.
+
+| Surface | What you get |
+|:--------|:-------------|
+| [**Web app**](https://app.outrunner.sh) | Sessions, Missions, review, triage, automations and settings |
+| [**Mac app**](runtime-desktop/README.md) | A native shell around the web app, with local sessions on your own machine |
+| [**CLI**](docs/api.md#cli) | `outrunner create`, `send`, `wait` and `read` from any shell or CI job |
+| [**REST API**](docs/api.md) | Start, message, wait on and archive sessions over HTTP |
+| [**MCP server**](docs/api.md#mcp) | Let Claude Code, Codex and other agents start and manage sessions themselves |
 
 ```sh
-cd runtime-agent && go run ./cmd/outrunner --url http://localhost:3000
+claude mcp add --transport http outrunner https://app.outrunner.sh/api/mcp \
+  --header "Authorization: Bearer $OUTRUNNER_API_KEY"
 ```
 
-## Google Cloud sandboxes
+## Development
 
-`outrunner sandbox connect gcp` configures your billing-enabled GCP project,
-checks a private sandbox VM, and offers to use it for new sessions. Google
-bills you directly; no JSON service-account key is needed. See
-[`docs/gcp-sandboxes.md`](docs/gcp-sandboxes.md) for permissions, costs and teardown.
+Want to hack on Outrunner or contribute a PR? You need Node.js 22.18+, pnpm
+10.26.0, Git, and your own [Supabase](https://supabase.com) project:
 
-## Triage
+```sh
+git clone https://github.com/outrunner-sh/outrunner.git
+cd outrunner
+corepack enable
+pnpm install --frozen-lockfile
+cp .env.example .env.local   # then add your Supabase keys
+pnpm dev                     # http://localhost:3000
+```
 
-Triage (`/triage`, ⌘I) is the queue of work for agents; a tracker, if you use
-one, stays the record of the issue. A connected tracker's issues come in as
-items, and nothing moves out of it. Items are the org's, numbered per org, and follow its Roles & access: read on a
-repository sees its items and starts sessions from them; write triages them.
-Each item has a Markdown body, a feed of notes, and a workspace (a
-repository), or none yet: Unsorted. Items come from the app, from Slack (a message shortcut
-and `/triage`, see [`docs/slack-app.md`](docs/slack-app.md)), from Linear (by each team's rules, see
-[`docs/linear-app.md`](docs/linear-app.md), Jira:
-[`docs/jira-app.md`](docs/jira-app.md)), and from the CLI
-or a script (`POST /api/triage/items?org=<name>` with a CLI token). An item is accepted,
-declined or marked a duplicate. **Start session** opens a session on the
-item's workspace with the item as its first prompt, and marks the item in
-progress.
+Unit tests and the browser fixtures run without any credentials:
 
-## API
+```sh
+pnpm check          # typecheck, lint and tests
+pnpm test:browser   # isolated browser fixtures
+```
 
-Outrunner has a public API at `/api/v1` ([`docs/api.md`](docs/api.md)):
-start a session on a repository, send it messages, wait for its turn to
-end, read its conversation, and pause, archive or delete it, from a script,
-CI or another agent. Calls carry an API key (`Authorization: Bearer
-or_key_…`): an org's, made by its admins under Settings → Org → API keys,
-or your own, under Settings → API keys. A key acts as whoever made it, with
-their Roles & access, and every call is recorded with it. Sessions it
-starts send signed webhooks (`workspace.ready`, `turn.completed`,
-`needs_input`, `pr.opened`, `error`), and the same operations are an MCP
-server at `/api/mcp`.
+See the [**development guide**](docs/development.md) for configuration, cloud
+sessions, tests and troubleshooting, and the [**Supabase guide**](supabase/README.md)
+for migrations and sign-in.
 
-## Where sessions stand
+## Architecture
 
-The sidebar lists sessions by where each stands (or by project, its other
-view): **Needs you** (the agent asked a question, waits for a plan's approval
-or for secrets, errored, or is stuck), **Working**, **In review** (an open pull
-request), and **Done** (a merged pull request). Idle sessions without a merged
-pull request stay in **Needs you**. The server works it out
-(`lib/session/standing.ts`) from what it reads of each live session's
-conversation stream (`lib/session/watch.ts`: closely after a send, and every
-two minutes from `POST /api/sessions/tick`, which the Cloudflare cron calls
-with `BILLING_CRON_SECRET`) and from the GitHub App's pull request events, so
-every tab and the Mac app agree. A session can be pinned or moved by hand, a
-reply you haven't seen is marked, and ⌘J opens the next session that needs
-you. `/workspaces` lists every session in the org you may see, to search,
-filter and archive or delete several at once.
+```mermaid
+flowchart LR
+  you(["Browser, Mac app, CLI, API"]) --> edge["Cloudflare Worker"]
+  edge --> web["Web app<br/>Next.js control plane"]
+  web <--> db[("Supabase<br/>Postgres, auth, storage")]
+  web <--> box["Cloud box<br/>runtime-agent + tmux"]
+  box --> agents["Claude Code / Codex<br/>a worktree per session"]
+  you -. "Mac local sessions" .-> local["Local runtime-agent"]
+```
 
-## Notifications
+| Component | Path | Docs |
+|:----------|:-----|:-----|
+| Web app and API: sign-in, permissions, credentials, session lifecycle | [`app/`](app/), [`components/`](components/), [`lib/`](lib/) | [Development](docs/development.md) |
+| Runtime agent: tmux sessions, worktrees, terminals and conversation streams on each box | [`runtime-agent/`](runtime-agent/) | [Runtime agent](docs/architecture/runtime-agent.md) |
+| Mac app: native shell and local sessions | [`runtime-desktop/`](runtime-desktop/) | [Desktop](runtime-desktop/README.md) |
+| Database: migrations, RLS and auth setup | [`supabase/`](supabase/) | [Supabase](supabase/README.md) |
+| Hosting: Cloudflare Containers deployment and the cloud box image | [`cloudflare/`](cloudflare/), [`box/`](box/) | [Cloudflare](docs/deploy-cloudflare.md) |
 
-When a session's turn finishes, it needs your input or errors, or its pull
-request opens or merges, the server records it once (`lib/notifications`) and
-tells you: in the browser as it happens (not for the session
-you're looking at), by email (each one, or a daily digest, through
-`lib/email`) and by Slack DM if your Slack is linked. Email and Slack wait a
-minute and skip what you've seen by then. Choose in Settings → Account:
-browser on and email off until you change them.
+Cloud sessions run on Daytona, Neev, Modal, or your own Google Cloud project.
+The full map is in the [development guide](docs/development.md#repository-map).
 
-## Missions
+## Self-hosting
 
-A **Mission** is a long-lived session that owns one area of a project and
-delegates instead of coding: each piece of work goes to a **Ship**, a cloud
-session of its own with only the brief the Mission wrote. Ships' turns,
-pull requests (ready, needs attention, merged) and failures come back to the
-Mission exactly once, and it writes to you only when it needs a decision or a
-pull request is ready. Start one with `+` next to **Missions** in the sidebar.
-See [`docs/missions.md`](docs/missions.md).
+Outrunner runs on infrastructure you control: deploy the control plane to
+[Cloudflare Containers](docs/deploy-cloudflare.md), [Railway](docs/deploy-railway.md),
+or [a VM with Docker Compose](docs/deploy-vm.md). The checked-in Cloudflare
+config describes the hosted deployment; replace its account, domains and public
+Supabase values with your own.
 
-## Previews
+## Contributing
 
-A **preview** is a stable link to a server running on a session's box,
-`https://<slug>.<RUNTIME_PREVIEW_DOMAIN>/`, that can be shared: **login**
-lets in signed-in members of the org who can see the repository, **public**
-anyone with the link. The custom server (`server.ts`) signs visitors in and
-proxies pages, assets and WebSockets to the box; deleting a preview revokes
-its link within seconds. Made from the session's Environment panel, the API
-or MCP, or by the agent itself. See [`docs/previews.md`](docs/previews.md),
-threat model included.
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get
+set up and open a PR. Bugs and feature requests go in
+[issues](https://github.com/outrunner-sh/outrunner/issues). Participation is
+governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-## Docs
+[![CI](https://github.com/outrunner-sh/outrunner/actions/workflows/ci.yml/badge.svg)](https://github.com/outrunner-sh/outrunner/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/outrunner-sh/outrunner?style=flat&logo=github&display_name=release)](https://github.com/outrunner-sh/outrunner/releases)
+[![GitHub stars](https://img.shields.io/github/stars/outrunner-sh/outrunner?style=flat&logo=github)](https://github.com/outrunner-sh/outrunner/stargazers)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat)](LICENSE)
 
-- Weekly changelog (October 26–November 1, 2026) — [`docs/changelog/2026-10-26.md`](docs/changelog/2026-10-26.md)
-- API — [`docs/api.md`](docs/api.md)
-- Missions and Ships — [`docs/missions.md`](docs/missions.md)
-- Doppler and Infisical secret sync — [`docs/secret-sync.md`](docs/secret-sync.md)
-- Previews, and who can reach what through one — [`docs/previews.md`](docs/previews.md)
-- Architecture — [`docs/architecture/runtime-v1-plan.md`](docs/architecture/runtime-v1-plan.md)
-- Agent & protocol — [`runtime-agent.md`](docs/architecture/runtime-agent.md), [`protocol.md`](docs/architecture/protocol.md)
-- Validation report — [`spike4-runtime-report.md`](docs/architecture/spike4-runtime-report.md)
-- GitHub App (`@outrunner` on issues and pull requests, its permissions and events) — [`docs/github-app.md`](docs/github-app.md)
-- GitLab code provider (repositories, personal tokens and merge requests) — [`docs/gitlab.md`](docs/gitlab.md)
+## Security
 
-## VM hosting
+Please report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md),
+not in public issues.
 
-For Docker Compose hosting on a VM without Cloudflare Containers, see
-[the VM deployment guide](docs/deploy-vm.md).
+## License
+
+Outrunner's original source code is copyright (c) 2026 Outrunner, Inc. and
+available under the [MIT License](LICENSE): use it, modify it, self-host it and
+redistribute it. Third-party dependencies and bundled assets keep their own
+licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The MIT license
+does not provide hosted infrastructure, third-party accounts, or rights to
+third-party trademarks.

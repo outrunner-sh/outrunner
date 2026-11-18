@@ -74,7 +74,7 @@ function local(
 
 test("cloud repositories and Mac folders share one list, newest activity first", () => {
   const groups = buildSidebarGroups(
-    [project("p1", "outrunner"), project("p2", "neev-ai")],
+    [project("p1", "outrunner"), project("p2", "website")],
     [
       workspace("w1", "p1", "2026-10-01T00:00:00Z"),
       workspace("w2", "p2", "2026-10-05T00:00:00Z"),
@@ -84,7 +84,7 @@ test("cloud repositories and Mac folders share one list, newest activity first",
   assert.deepEqual(
     groups.map((g) => [g.label, g.local]),
     [
-      ["neev-ai", false],
+      ["website", false],
       ["notes", true],
       ["outrunner", false],
     ],
@@ -270,7 +270,7 @@ test("only a group with a real repository behind it can start a session", () => 
 
 const sample = () =>
   buildSidebarGroups(
-    [project("p1", "outrunner"), project("p2", "neev-ai")],
+    [project("p1", "outrunner"), project("p2", "website")],
     [
       workspace("w1", "p1", "2026-10-02T00:00:00Z", "Fix login redirect"),
       workspace("w2", "p1", "2026-10-01T00:00:00Z", "Add billing page"),
@@ -292,7 +292,7 @@ test("search across workspaces keeps their order", () => {
   assert.deepEqual(
     result.map((g) => [g.label, g.sessions.map((s) => s.title)]),
     [
-      ["neev-ai", ["Login copy tweaks"]],
+      ["website", ["Login copy tweaks"]],
       ["outrunner", ["Fix login redirect"]],
     ],
   );

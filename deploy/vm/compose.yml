@@ -1,5 +1,7 @@
-name: outrunner
-
+# One app slot. Activation runs this file twice over, as projects
+# outrunner-blue and outrunner-green: the new release starts in the idle
+# slot while the live one keeps serving, and the proxy (edge.yml) switches
+# only once the new slot reports its exact build. See activate-release.sh.
 services:
   app:
     image: outrunner-control-plane:${OUTRUNNER_BUILD:?Set the release SHA}
@@ -19,8 +21,13 @@ services:
       NODE_ENV: production
       PORT: "8080"
       RUNTIME_AGENT_BINARY_PATH: bin/runtime-agent-linux-amd64
+    # Each slot has its own local port, so activation can check the new
+    # slot while the live one keeps its own.
     ports:
-      - "127.0.0.1:3000:8080"
+      - "127.0.0.1:${APP_PORT:-3001}:8080"
+    networks:
+      edge:
+        aliases: ["app-${SLOT:-blue}"]
     stop_grace_period: 45s
     healthcheck:
       test:
@@ -36,42 +43,7 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
-  caddy:
-    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
-    restart: unless-stopped
-    environment:
-      APP_DOMAIN: ${APP_DOMAIN:?Set the public app hostname}
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      app: { condition: service_healthy }
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
-
-  cron:
-    image: outrunner-control-plane:${OUTRUNNER_BUILD:?Set the release SHA}
-    profiles: [jobs]
-    restart: unless-stopped
-    entrypoint: [node, deploy/vm/cron.mjs]
-    env_file:
-      - path: /etc/outrunner/cron.env
-        format: raw
-    environment:
-      OUTRUNNER_CRON_ORIGIN: http://app:8080
-    stop_grace_period: 75s
-    depends_on:
-      app: { condition: service_healthy }
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
-
-volumes:
-  caddy_data:
-  caddy_config:
+networks:
+  edge:
+    external: true
+    name: outrunner

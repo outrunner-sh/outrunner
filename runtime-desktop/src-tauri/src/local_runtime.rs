@@ -1676,7 +1676,7 @@ mod tests {
     #[test]
     fn only_a_github_owner_and_name_can_be_cloned() {
         assert_eq!(github_repo("sajdakabir/Doorman"), Some(("sajdakabir".into(), "Doorman".into())));
-        assert_eq!(github_repo("neevai-labs/neev.ai_x-1"), Some(("neevai-labs".into(), "neev.ai_x-1".into())));
+        assert_eq!(github_repo("outrunner-sh/outrunner.sh_x-1"), Some(("outrunner-sh".into(), "outrunner.sh_x-1".into())));
         for bad in [
             "", "Doorman", "a/b/c", "../x", "a/..", "a/.", "-a/x", "a/-x", "a/x y", "a/x;rm", "a b/x",
             "evil.com/x", "a/--upload-pack=x",

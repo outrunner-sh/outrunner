@@ -32,7 +32,7 @@ function suite(over: { conclusion?: string; action?: string; pulls?: unknown[]; 
   return {
     action: over.action ?? "completed",
     installation: { id: 42 },
-    repository: { full_name: "neevai-labs/outrunner" },
+    repository: { full_name: "outrunner-sh/outrunner" },
     check_suite: {
       conclusion: over.conclusion ?? "failure",
       head_sha: SHA,
@@ -46,7 +46,7 @@ function suite(over: { conclusion?: string; action?: string; pulls?: unknown[]; 
 test("CI that completed failed is read from check suites, check runs and workflow runs", () => {
   assert.deepEqual(readCiFailure("check_suite", suite(), SLUG), {
     installationId: 42,
-    repoFullName: "neevai-labs/outrunner",
+    repoFullName: "outrunner-sh/outrunner",
     headSha: SHA,
     headBranch: "feature/login",
     prNumbers: [30],
@@ -54,14 +54,14 @@ test("CI that completed failed is read from check suites, check runs and workflo
   const run = {
     action: "completed",
     installation: { id: 42 },
-    repository: { full_name: "neevai-labs/outrunner" },
+    repository: { full_name: "outrunner-sh/outrunner" },
     check_run: { conclusion: "timed_out", head_sha: SHA, check_suite: { head_branch: "feature/login" }, pull_requests: [{ number: 30 }] },
   };
   assert.deepEqual(readCiFailure("check_run", run, SLUG)?.prNumbers, [30]);
   const workflow = {
     action: "completed",
     installation: { id: 42 },
-    repository: { full_name: "neevai-labs/outrunner" },
+    repository: { full_name: "outrunner-sh/outrunner" },
     workflow_run: { conclusion: "failure", head_sha: SHA, head_branch: "feature/login", pull_requests: [] },
   };
   assert.deepEqual(readCiFailure("workflow_run", workflow, SLUG)?.prNumbers, []);
@@ -82,7 +82,7 @@ function reviewEvent(over: { state?: string; body?: string; user?: Record<string
   return {
     action: over.action ?? "submitted",
     installation: { id: 42 },
-    repository: { full_name: "neevai-labs/outrunner" },
+    repository: { full_name: "outrunner-sh/outrunner" },
     review: { id: 555, state: over.state ?? "changes_requested", body: over.body ?? "Needs tests", user: { login: "ada", type: "User", ...over.user } },
     pull_request: { number: 30, head: { ref: "feature/login" } },
   };
@@ -91,7 +91,7 @@ function reviewEvent(over: { state?: string; body?: string; user?: Record<string
 test("a person's submitted review is read; bots', dismissed ones and [skip outrunner] aren't", () => {
   assert.deepEqual(readReviewSubmitted("pull_request_review", reviewEvent()), {
     installationId: 42,
-    repoFullName: "neevai-labs/outrunner",
+    repoFullName: "outrunner-sh/outrunner",
     number: 30,
     reviewId: 555,
     headRef: "feature/login",
@@ -166,7 +166,7 @@ test("a review is sent with only what a person said to the session", () => {
 
 test("the prompts name the pull request, what failed or was said, and where to push", () => {
   const ci = ciPrompt({
-    repoFullName: "neevai-labs/outrunner",
+    repoFullName: "outrunner-sh/outrunner",
     number: 30,
     headSha: SHA,
     headRef: "feature/login",
@@ -176,14 +176,14 @@ test("the prompts name the pull request, what failed or was said, and where to p
     ],
     turn: 2,
   });
-  assert.match(ci, /^CI failed on the pull request this session works on \(neevai-labs\/outrunner#30\), at 0123456:/);
+  assert.match(ci, /^CI failed on the pull request this session works on \(outrunner-sh\/outrunner#30\), at 0123456:/);
   assert.match(ci, /- test \(failure\): https:\/\/gh\/run\/2\n- e2e \(timed out\)/);
   assert.match(ci, /test:\n```\n✖ login caches the session\n```/);
   assert.match(ci, /git push origin HEAD:feature\/login/);
   assert.match(ci, new RegExp(`fix 2 of at most ${MAX_CI_TURNS}`));
 
   const reviews = reviewPrompt({
-    repoFullName: "neevai-labs/outrunner",
+    repoFullName: "outrunner-sh/outrunner",
     number: 30,
     headRef: "feature/login",
     reviews: [
@@ -291,7 +291,7 @@ function due(over: Partial<DueFollowUp> = {}): DueFollowUp {
     kind: "ci",
     installationId: 42,
     projectId: "p1",
-    repoFullName: "neevai-labs/outrunner",
+    repoFullName: "outrunner-sh/outrunner",
     prNumber: 30,
     headSha: SHA,
     reviewIds: [],
