@@ -1,19 +1,15 @@
 # Codex account connections
 
-Organization → Coding agents → Codex contains the active organization’s shared ChatGPT connection and OpenAI API-key cards. Page ownership is fixed: Personal never defaults to a team org, and an inaccessible org never falls back to a personal connection. Old provider links to Codex account/default methods retain #328’s active-org destination; explicit API-key/local-method links stay personal, and query parameters/fragments survive the alias.
+Organization → Coding agents → Codex contains the active organization’s shared ChatGPT connection and OpenAI API-key cards. Page ownership is fixed: Personal never defaults to a team org, and an inaccessible org never falls back to a personal connection. Old provider links to Codex account/default methods keep their active-org destination; explicit API-key/local-method links stay personal, and query parameters/fragments survive the alias.
 
 Personal → Coding agents → Codex offers a private **ChatGPT account** alongside the existing
 API-key method. The old Mac-only ChatGPT/local choices are kept as they were;
 local sessions remain disabled on the web. No existing choice is rewritten.
 
-The user explicitly chose a personal ChatGPT Plus/Pro account connected once at
-organization scope, for current members' cloud sessions on new computers. This
-supersedes the earlier per-computer and owner-only proposals. The public Replicas
-technical/product pattern is the reference, not a claim of provider contractual
-approval:
-
-- https://docs.replicas.dev/features/coding-agents/codex.md
-- https://docs.replicas.dev/admin/credentials.md
+A ChatGPT account can be connected at personal scope or once at organization
+scope, for current members' cloud sessions on new computers. Whether a given
+account's terms permit that use is for the operator to check; this document
+describes the technical design only.
 
 ## Connect and manage
 
@@ -129,41 +125,22 @@ CODEX_TEST_BINARY=/path/to/codex RUNTIME_TMUX_SOCKET=outrunner-codex-test-probe 
   go test ./internal/workspace -run TestCodexAccountNativeSession -v
 ```
 
-Both probes passed on pinned 0.146.0 with synthetic upstreams. Separately, on
-2026-10-29 the owner approved the official device login in the isolated harness.
-The real controller accepted/encrypted the upload; admin and teammate native TUI
-inference passed on separate network-disabled test computers using the provider's
-actual catalog model (`gpt-reserve`), without teammate provider login. Twelve
-concurrent renewal callers made exactly one OAuth request (HTTP 200) and stored
-one revision. Native inference after same-computer stop/resume and renewal passed.
-Nonmember/cross-org use, removed-member use and saved API-key precedence were
-checked against the actual controller. Disconnect through real settings cleared
-the encrypted credential and both retained grants returned HTTP 403.
-
-The first automatic run stopped at renewal with a generic error while preserving
-the connection. The exact initial cause was not retained. Subsequent real renewal
-and concurrent renewal passed without reapproval; the runner now records only
-the renewal HTTP status and safe error classification for future diagnosis.
-The completed private report is visible in the launcher; no provider token or
-device code is included in public evidence. Production was not connected or
-deployed, and cloud provisioning was not exercised by these local containers.
-
-Actual owner-approved connection and disconnect:
-
-![Owner-approved Codex connection disconnected after live inference and refresh checks](https://api.replicas.dev/v1/media/public/31500a97-e014-4120-b626-aec109ad783e/PmgQTSeehdN2v-SRhzTKnV54GO8o6Y4S4YtGbiVvItY)
+Both probes use synthetic upstreams; neither needs a real provider login.
+The [live Codex verification harness](../../scripts/codex-live/README.md)
+exercises the real device login, controller and teammate inference in isolated
+containers when a maintainer needs end-to-end evidence.
 
 Rollout requires the migration, normal app/runtime release and a CLI release
 containing `codex-auth` via the existing CLI-publish workflow. After verifying
 that release, pin its exact version in `cloudflare/wrangler.jsonc` →
 `containers[].image_vars.NEXT_PUBLIC_CODEX_CLI_VERSION`. CI and deployment verify
-the public executable and pass the pin through Docker at build time. The current
-verified public release is **0.1.4**. Settings pins that release; without a configured version it explains
-the prerequisite and disables starting an unusable sign-in. It never assumes
-the mutable `latest` tag contains this unreleased command. No production
-deployment or provider entitlement is assumed by this PR.
-See [production rollout and existing-user recovery](../operations/codex-rollout.md).
+the public executable and pass the pin through Docker at build time. Settings
+pins that release; without a configured version it explains the prerequisite
+and disables starting an unusable sign-in. It never assumes the mutable
+`latest` tag contains this command.
+See [rollout and existing-user recovery](../operations/codex-rollout.md).
 
 The isolated harness instead builds with
 `NEXT_PUBLIC_CODEX_AUTH_LAUNCHER_PATH=/__test`, so settings links back to the
-private launcher and hides local CLI instructions. The owner only enters the
+harness launcher and hides local CLI instructions. The tester only enters the
 active device code on OpenAI; the branch CLI already runs in the workspace.

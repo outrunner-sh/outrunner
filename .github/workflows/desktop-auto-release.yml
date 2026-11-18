@@ -35,7 +35,7 @@ concurrency:
 jobs:
   plan:
     name: Plan
-    # The mirror pushes main to immadsahin/outrunner, which can't sign.
+    # Forks have none of the signing secrets, so only plan here.
     if: github.repository == 'outrunner-sh/outrunner'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5

@@ -41,7 +41,7 @@ export function FixtureFrame({ children }: { children: React.ReactNode }) {
               workspaceId: "preview-0",
               projectId: "project-1",
               number: 343,
-              url: "https://github.com/neevai-labs/outrunner/pull/343",
+              url: "https://github.com/outrunner-sh/outrunner/pull/343",
               title: "Improve workspace navigation",
               baseBranch: "main",
               headBranch: "runtime/preview-0",

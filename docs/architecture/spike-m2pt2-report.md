@@ -130,5 +130,4 @@ exactly the argument for measuring before assuming.
   the boot-env channel when sessions need per-workspace secrets.
 - **Watch:** `mirror_clone` scales with repo size; large repos will dominate the
   provision budget. The `provision_timings` column will show it if it regresses.
-- **Housekeeping:** rotate the shared `CLAUDE_CODE_OAUTH_TOKEN` (still treated as
-  exposed); `provision_timings` migration applied.
+- **Housekeeping:** `provision_timings` migration applied.

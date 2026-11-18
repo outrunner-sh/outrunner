@@ -18,7 +18,7 @@ import type { Recorded, RerunTarget, RunCandidate, RunRecord } from "@/lib/db/au
 import type { ServerSessionStart } from "@/lib/session/server-session";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
-const REPO = "neevai-labs/outrunner";
+const REPO = "outrunner-sh/outrunner";
 
 function prPayload(action: string, over: Record<string, unknown> = {}, pr: Record<string, unknown> = {}) {
   return {
@@ -59,7 +59,7 @@ const candidate: RunCandidate = {
   projectId: "p1",
   repoFullName: REPO,
   orgId: "o1",
-  reviewers: ["Octocat", "neevai-labs/reviewers"],
+  reviewers: ["Octocat", "outrunner-sh/reviewers"],
   labels: ["bug"],
   sessionMode: "new",
 };
@@ -87,7 +87,7 @@ test("a review requested names whom: a person, or a team as org/slug; a fork's i
   assert.match(runPrompt("Review.", person), /A review of it was just requested of octocat\./);
   const team = readPullRequestEvent(prPayload("review_requested", { requested_team: { slug: "reviewers" } }));
   assert.ok(typeof team !== "string");
-  assert.equal(team.reviewer, "neevai-labs/reviewers");
+  assert.equal(team.reviewer, "outrunner-sh/reviewers");
   assert.equal(readPullRequestEvent(prPayload("review_requested")), "unreadable");
   // A review a run's session requested, as the App: marked so.
   const requested = readPullRequestEvent(
@@ -132,7 +132,7 @@ test("an issue opened or labeled is read; a bot's, a pull request's, and other a
   assert.equal(eventBaseBranch(event), undefined);
   assert.equal(eventSubject(event), "issue:12");
   const prompt = issuePrompt("Triage it.", event, "outrunner-connector");
-  assert.match(prompt, /^Issue: neevai-labs\/outrunner#12 "Flaky test"/);
+  assert.match(prompt, /^Issue: outrunner-sh\/outrunner#12 "Flaky test"/);
   assert.match(prompt, /It was just labeled "bug"\./);
   assert.match(prompt, /gh issue view 12 --comments/);
   assert.ok(prompt.endsWith("\n\nTriage it."));
@@ -321,7 +321,7 @@ test("reusing its session, a run is sent to the automation's last one; one that 
   assert.equal(userId, "u1");
   assert.equal(workspaceId, "w-last");
   assert.match(prompt, /^This session ran this automation before.*gh pr checkout 7/);
-  assert.match(prompt, /Pull request: neevai-labs\/outrunner#7/);
+  assert.match(prompt, /Pull request: outrunner-sh\/outrunner#7/);
   assert.deepEqual(archived, []);
   // Its session on this pull request, not another's that may be mid-run.
   assert.deepEqual(asked, [{ runId: "r1", automationId: "a1", projectId: "p1", subject: "pr:7" }]);
@@ -449,7 +449,7 @@ test("an automation's filters and limits are checked as they're saved", () => {
     {
       ...base,
       triggers: ["pull_request.review_requested", "issues.labeled"],
-      reviewers: ["@octocat", "Octocat", "neevai-labs/reviewers"],
+      reviewers: ["@octocat", "Octocat", "outrunner-sh/reviewers"],
       labels: ["bug", " needs triage "],
       maxRuns: 1,
       archiveWhenDone: true,
@@ -459,7 +459,7 @@ test("an automation's filters and limits are checked as they're saved", () => {
     { full: true },
   );
   assert.ok(ok.ok);
-  assert.deepEqual(ok.value.reviewers, ["octocat", "neevai-labs/reviewers"]);
+  assert.deepEqual(ok.value.reviewers, ["octocat", "outrunner-sh/reviewers"]);
   assert.deepEqual(ok.value.labels, ["bug", "needs triage"]);
   assert.equal(ok.value.maxRuns, 1);
   assert.equal(ok.value.sessionMode, "reuse");

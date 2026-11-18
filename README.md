@@ -182,8 +182,9 @@ Supabase values with your own.
 ## Contributing
 
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get
-set up and open a PR, and follow the [Code of Conduct](CODE_OF_CONDUCT.md). Bugs
-and feature requests go in [issues](https://github.com/outrunner-sh/outrunner/issues).
+set up and open a PR. Bugs and feature requests go in
+[issues](https://github.com/outrunner-sh/outrunner/issues). Participation is
+governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 [![CI](https://github.com/outrunner-sh/outrunner/actions/workflows/ci.yml/badge.svg)](https://github.com/outrunner-sh/outrunner/actions/workflows/ci.yml)
 [![GitHub release](https://img.shields.io/github/v/release/outrunner-sh/outrunner?style=flat&logo=github&display_name=release)](https://github.com/outrunner-sh/outrunner/releases)

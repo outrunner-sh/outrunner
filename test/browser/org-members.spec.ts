@@ -11,7 +11,7 @@ async function open(page: Page, email: boolean) {
     return route.fulfill({ json: { invite: {}, link: "http://127.0.0.1:3100/invite/or_inv_rotated", emailed: email } });
   });
   await page.goto(`/settings/org/members?view=members${email ? "&email=1" : ""}`);
-  await expect(page.getByText("grace@neev.ai")).toBeVisible();
+  await expect(page.getByText("grace@acme.dev")).toBeVisible();
   return resends;
 }
 
@@ -22,7 +22,7 @@ test("without email: a note says so, and Resend shows the new link to copy", asy
   await expect(page.getByText(/expired: resend it for a new link/)).toBeVisible();
   if (info.project.name === "desktop") await page.screenshot({ path: ".context/org-members-pending.png", fullPage: true });
   await page.getByRole("button", { name: "Resend" }).first().click();
-  await expect(page.getByText(/Send grace@neev.ai this new link. The old one no longer works/)).toBeVisible();
+  await expect(page.getByText(/Send grace@acme.dev this new link. The old one no longer works/)).toBeVisible();
   await expect(page.getByLabel("Invite link")).toHaveValue("http://127.0.0.1:3100/invite/or_inv_rotated");
   await expect(page.getByRole("button", { name: "Copy" })).toBeVisible();
   expect(resends).toEqual([expect.stringContaining("/api/orgs/org-1/invites/inv-1/resend")]);
@@ -33,6 +33,6 @@ test("with email: no note, and Resend says it was emailed", async ({ page }) => 
   await open(page, true);
   await expect(page.getByText(/won't be emailed until/)).toHaveCount(0);
   await page.getByRole("button", { name: "Resend" }).first().click();
-  await expect(page.getByText("Emailed grace@neev.ai a new link. The old one no longer works.")).toBeVisible();
+  await expect(page.getByText("Emailed grace@acme.dev a new link. The old one no longer works.")).toBeVisible();
   await expect(page.getByLabel("Invite link")).toHaveCount(0);
 });

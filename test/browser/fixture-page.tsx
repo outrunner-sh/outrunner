@@ -140,7 +140,7 @@ export function FixturePage() {
                     },
                   ]
                 : pulls,
-          unreachable: state === "unreachable" ? ["neevai-labs/private"] : [],
+          unreachable: state === "unreachable" ? ["outrunner-sh/private"] : [],
           error:
             state === "error"
               ? "Couldn't load pull requests. Please try again."
@@ -195,7 +195,7 @@ export function FixturePage() {
         <Automations
           org={org}
           appSlug="outrunner-connector"
-          installations={[{ login: "neevai-labs", suspended: false }]}
+          installations={[{ login: "outrunner-sh", suspended: false }]}
           automations={
             state === "error" ? null : state === "empty" ? [] : automations
           }
@@ -274,18 +274,18 @@ export function FixturePage() {
       ) : view === "github" ? (
         <SettingsFrame>
           <OrgGitHubSettings
-            org={{ ...org, name: "neevcloud" }} configured
+            org={{ ...org, name: "acme" }} configured
             installations={state === "connected" ? [{
-              id: 42, accountLogin: "neevai-labs", accountType: "Organization", repositorySelection: "all",
+              id: 42, accountLogin: "outrunner-sh", accountType: "Organization", repositorySelection: "all",
               suspendedAt: null, suspended: false, installedBy: "preview-owner", createdAt: "2026-10-30T00:00:00Z",
-              repositories: ["neevai-labs/outrunner"], total: 1, reachable: true,
+              repositories: ["outrunner-sh/outrunner"], total: 1, reachable: true,
               shares: params.get("shared") === "1" ? [{
                 orgId: "00000000-0000-4000-a000-000000000077", orgName: "Personal", personal: true,
-                linkedAt: "2026-11-01T00:00:00Z", linkedBy: "u-alan", linkedByEmail: "alan@neev.ai", authority: null,
+                linkedAt: "2026-11-01T00:00:00Z", linkedBy: "u-alan", linkedByEmail: "alan@acme.dev", authority: null,
               }] : [],
             }] : []}
             available={state !== "connected" ? [{
-              id: 42, accountLogin: "neevai-labs", accountType: "Organization", repositorySelection: "all",
+              id: 42, accountLogin: "outrunner-sh", accountType: "Organization", repositorySelection: "all",
               suspendedAt: null, suspended: false, installedBy: null, createdAt: "2026-10-30T00:00:00Z",
             }] : []}
             pending={false} installed={null} error={null}
@@ -297,12 +297,12 @@ export function FixturePage() {
             org={org}
             me="u-ada"
             members={[
-              { userId: "u-ada", login: "ada", name: "Ada Lovelace", email: "ada@neev.ai", avatarUrl: null, role: "admin", joinedAt: "2026-10-01T00:00:00Z" },
-              { userId: "u-alan", login: "alan", name: "Alan Turing", email: "alan@neev.ai", avatarUrl: null, role: "member", joinedAt: "2026-10-02T00:00:00Z" },
+              { userId: "u-ada", login: "ada", name: "Ada Lovelace", email: "ada@acme.dev", avatarUrl: null, role: "admin", joinedAt: "2026-10-01T00:00:00Z" },
+              { userId: "u-alan", login: "alan", name: "Alan Turing", email: "alan@acme.dev", avatarUrl: null, role: "member", joinedAt: "2026-10-02T00:00:00Z" },
             ]}
             invites={[
-              { id: "inv-1", email: "grace@neev.ai", role: "member", invitedBy: "u-ada", createdAt: INVITE_SENT_AT, expiresAt: INVITE_EXPIRES_AT, expired: false },
-              { id: "inv-2", email: "linus@neev.ai", role: "admin", invitedBy: "u-ada", createdAt: "2026-10-01T00:00:00Z", expiresAt: "2026-10-08T00:00:00Z", expired: true },
+              { id: "inv-1", email: "grace@acme.dev", role: "member", invitedBy: "u-ada", createdAt: INVITE_SENT_AT, expiresAt: INVITE_EXPIRES_AT, expired: false },
+              { id: "inv-2", email: "linus@acme.dev", role: "admin", invitedBy: "u-ada", createdAt: "2026-10-01T00:00:00Z", expiresAt: "2026-10-08T00:00:00Z", expired: true },
             ]}
             requests={[]}
             emails={params.get("email") === "1"}
@@ -310,7 +310,7 @@ export function FixturePage() {
         </SettingsFrame>
       ) : view === "settings" ? (
         <SettingsFrame>
-          <OrgGeneralSettings org={org} domain="neev.ai" />
+          <OrgGeneralSettings org={org} domain="acme.dev" />
         </SettingsFrame>
       ) : (
         content

@@ -1,0 +1,36 @@
+# The HTTPS proxy, run once as project outrunner-edge from /opt/outrunner/edge.
+# Deploys never restart it: they rewrite conf/live.caddy and reload it, which
+# keeps every open connection. Certificates live in the named volumes.
+services:
+  caddy:
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set the public app hostname}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      # A directory, not single files: a file rewritten by rename is only
+      # seen through its directory.
+      - ./conf:/etc/caddy:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  edge:
+    external: true
+    name: outrunner
+
+volumes:
+  caddy_data:
+    external: true
+    name: outrunner_caddy_data
+  caddy_config:
+    external: true
+    name: outrunner_caddy_config

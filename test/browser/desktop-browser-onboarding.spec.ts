@@ -10,7 +10,7 @@ async function onboardingApis(page: Page) {
       "/api/settings/providers": { keys: {} },
       "/api/settings/agents": { choices: { claude: null, codex: null } },
       "/api/onboarding/github": { access: null },
-      "/api/github/repositories": { repositories: [{ githubRepoId: 1, fullName: "neevai-labs/outrunner", name: "outrunner", owner: "neevai-labs", private: true, language: "TypeScript", pushedAt: "2026-10-30T00:00:00Z" }], connected: [] },
+      "/api/github/repositories": { repositories: [{ githubRepoId: 1, fullName: "outrunner-sh/outrunner", name: "outrunner", owner: "outrunner-sh", private: true, language: "TypeScript", pushedAt: "2026-10-30T00:00:00Z" }], connected: [] },
       "/api/projects/sync": { projects: [{ id: "p1", githubRepoId: 1 }] },
       "/api/onboarding/complete": { ok: true },
     };
@@ -25,7 +25,7 @@ async function finishOnboarding(page: Page) {
   await page.getByRole("button", { name: /Outrunner.s models/ }).click();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Pick your repositories" })).toBeVisible();
-  await page.getByRole("checkbox", { name: /neevai-labs\/outrunner/ }).check();
+  await page.getByRole("checkbox", { name: /outrunner-sh\/outrunner/ }).check();
   await page.getByRole("button", { name: "Finish", exact: true }).click();
   await expect(page.getByRole("heading", { name: "You’re ready to go" })).toBeVisible({ timeout: 15_000 });
 }
