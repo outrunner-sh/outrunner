@@ -320,7 +320,7 @@ The four inputs:
 | Reliability: saved events, spawn keys, the post queue, revisions | `supabase/migrations/20261118110100_mission_slack_reliability.sql` |
 | Saving and processing Slack's events | `lib/missions/slack-inbound.ts`, `app/api/integrations/slack/events` |
 | The post queue | `lib/missions/slack-outbox.ts` |
-| Triggers: schema (targets, inputs, delegations, request sources, message claims, root posts) | `supabase/migrations/20261114200200_mission_inputs.sql` |
+| Triggers: schema (targets, inputs, delegations, request sources, message claims, root posts) | `supabase/migrations/20261118110200_mission_inputs.sql` |
 | A Mission's run, and its request | `lib/missions/automation-target.ts`, `lib/missions/requests.ts`, `startRun` in `lib/automations/runs.ts` |
 | Watched channels | `lib/missions/slack-watch.ts`, `lib/missions/slack-inbound.ts` |
 | Webhooks | `lib/missions/webhook-target.ts`, `app/api/automations/webhook/[token]` |
@@ -468,7 +468,7 @@ twice records it once. Events are delivered in batches:
 - **Migrations:** `pnpm db:migrate`, including
   `20261118110000_mission_slack.sql` and
   `20261118110100_mission_slack_reliability.sql` for Missions on call in
-  Slack, and `20261114200200_mission_inputs.sql` for triggers. Until the first is applied, the Slack agent behaves as before (it
+  Slack, and `20261118110200_mission_inputs.sql` for triggers. Until the first is applied, the Slack agent behaves as before (it
   can't tell a channel has a Mission, so it treats none as having one). Apply
   both before the code that uses them is deployed.
 

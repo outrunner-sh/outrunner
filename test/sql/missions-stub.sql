@@ -57,7 +57,7 @@ create table organizations (id uuid primary key default gen_random_uuid());
 create schema if not exists auth;
 create table auth.users (id uuid primary key default gen_random_uuid());
 
--- The automations tables, as much of them as 20261114200200_mission_inputs.sql
+-- The automations tables, as much of them as 20261118110200_mission_inputs.sql
 -- changes (their checks under the names the earlier migrations give them).
 create table automations (
   id uuid primary key default gen_random_uuid(),

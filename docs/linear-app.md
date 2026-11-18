@@ -145,4 +145,4 @@ A Mission's trigger can route a Linear team's delegated issues to the Mission (d
 an issue delegated to Outrunner in that team becomes a request to the Mission instead of a session of its own,
 unless a session has it already. What's said later in its agent session reaches the same request; a stop, taking
 it back, or closing the issue cancels that request's work only. The Mission replies in the agent session as
-Outrunner's app. Apply `20261114200200_mission_inputs.sql` first; teams with no route work as before.
+Outrunner's app. Apply `20261118110200_mission_inputs.sql` first; teams with no route work as before.

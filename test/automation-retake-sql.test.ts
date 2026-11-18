@@ -6,7 +6,7 @@
  * wins. The statement below is the one retakeRun sends through PostgREST
  * (an UPDATE … WHERE automation_id, project_id, dedupe_key and status IN
  * (failed, refused, skipped) … RETURNING id). The status constraint is the
- * real one, from 20261114200200_mission_inputs.sql. Needs MISSIONS_PG
+ * real one, from 20261118110200_mission_inputs.sql. Needs MISSIONS_PG
  * (as test/mission-slack-sql.test.ts); skipped without one.
  */
 

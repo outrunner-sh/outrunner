@@ -324,7 +324,7 @@ test("an ambiguous or failed post doesn't hold its thread up; a question card is
 });
 
 // ---------------------------------------------------------------------------
-// 20261114200200_mission_inputs.sql
+// 20261118110200_mission_inputs.sql
 // ---------------------------------------------------------------------------
 
 function missionAutomation(m: string, triggers: string, inputs = "{}"): string {

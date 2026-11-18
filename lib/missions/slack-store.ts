@@ -358,7 +358,7 @@ export type MissionRequest = {
   messageTs: string | null;
   requestedBy: string | null;
   requestedBySlack: string | null;
-  /** Where it came from (20261114200200_mission_inputs.sql); Slack's own
+  /** Where it came from (20261118110200_mission_inputs.sql); Slack's own
    *  when absent. */
   source?: "slack" | "slack_watch" | "webhook" | "schedule" | "linear";
   /** Cancelled: its Ships take no more work for it. */
