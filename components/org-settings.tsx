@@ -60,8 +60,8 @@ export function OrgGeneralSettings({ org, domain }: { org: Org; domain: string |
 
       {org.personal ? (
         <p className="max-w-prose text-sm text-muted-foreground">
-          Your personal org holds your own projects and sessions. Make a team org from the org menu at the top of the
-          sidebar to work with others: everyone in it sees its projects, and each person&apos;s sessions stay their own.
+          Your personal org holds your own environments and sessions. Make a team org from the org menu at the top of the
+          sidebar to work with others: everyone in it sees its environments, and each person&apos;s sessions stay their own.
         </p>
       ) : (
         <div className="max-w-sm space-y-2">

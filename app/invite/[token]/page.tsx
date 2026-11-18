@@ -34,7 +34,7 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
                   invite.invitedBy
                     ? `${invite.invitedBy.name} invited ${invite.email}`
                     : `This invite is for ${invite.email},`
-                } to join as ${invite.role === "admin" ? "an admin" : "a member"}. You'll see its projects; your sessions stay your own.`}
+                } to join as ${invite.role === "admin" ? "an admin" : "a member"}. You'll see its environments; your sessions stay your own.`}
               </p>
             </div>
             <AcceptInvite token={token} orgName={invite.orgName} />

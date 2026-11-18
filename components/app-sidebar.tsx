@@ -246,10 +246,10 @@ export function AppSidebar({
           active={pathname === "/" || pathname === "/new"}
         />
         <NavLink
-          href="/projects"
+          href="/environments"
           icon={<Folder />}
-          label="Projects"
-          active={pathname === "/projects" || pathname.startsWith("/projects/")}
+          label="Environments"
+          active={pathname === "/environments" || pathname.startsWith("/environments/")}
         />
         {/* Import (/import) is hidden from the nav for now; the page still works. */}
         {/* The org's open pull requests: ask about one, send it back, merge. */}
@@ -429,7 +429,7 @@ function WorkspaceGroup({
           // The project's settings: a repository's id opens its default
           // project (app/(app)/projects/[id]).
           <Link
-            href={`/projects/${start.projectId}`}
+            href={`/environments/${start.projectId}`}
             aria-label={`${group.label} settings`}
             title={`${group.label} settings`}
             className="rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/ws:opacity-100"
@@ -531,7 +531,7 @@ function SidebarSkeleton() {
 
 /** The add-project button's name: a GitHub repository, unless local sessions
  *  are on, where the picker it opens can be a folder on the Mac. */
-const ADD_PROJECT_LABEL = LOCAL_SESSIONS ? "Add a project" : "Add a repository from GitHub";
+const ADD_PROJECT_LABEL = LOCAL_SESSIONS ? "Add a repository" : "Add a repository from GitHub";
 
 type DeletingSession = { id: string; title: string; deletion: SessionDeletion };
 
@@ -697,7 +697,7 @@ function GroupingSwitch({ value, onChange }: { value: Grouping; onChange: (value
     <div role="group" aria-label="List sessions by" className="-ml-1 flex items-center gap-0.5">
       {option("status", "Status")}
       <span aria-hidden className="text-[13px] text-muted-foreground/40">/</span>
-      {option("projects", "Projects")}
+      {option("projects", "Repositories")}
     </div>
   );
 }

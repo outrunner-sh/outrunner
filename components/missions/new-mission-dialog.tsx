@@ -97,7 +97,7 @@ export function NewMissionDialog({
           <div className="min-w-0">
             <DialogTitle className="text-[15px] font-medium">New Mission</DialogTitle>
             <DialogDescription className="mt-1 text-[12.5px] leading-relaxed text-[#8f8f8f]">
-              A Mission owns one area of a project. It plans, hands each piece of work to a Ship with its own box and
+              A Mission owns one area of a repository. It plans, hands each piece of work to a Ship with its own box and
               branch, and tells you when a pull request is ready or it needs a decision.
             </DialogDescription>
           </div>
@@ -105,10 +105,10 @@ export function NewMissionDialog({
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
           <div>
             <p className="mb-1.5 text-[12px] text-[#8f8f8f]" id="mission-project">
-              Project
+              Repository
             </p>
             {projects.length === 0 ? (
-              <p className="text-[12.5px] text-[#8f8f8f]">Add a repository first, from Projects.</p>
+              <p className="text-[12.5px] text-[#8f8f8f]">Add a repository first, from Environments.</p>
             ) : (
               <ProjectPicker
                 projects={projects}
@@ -308,13 +308,13 @@ function ProjectPicker({
               aria-controls={listId}
               aria-activedescendant={matches[active] ? `${listId}-${active}` : undefined}
               aria-autocomplete="list"
-              aria-label="Search projects"
-              placeholder="Search projects…"
+              aria-label="Search repositories"
+              placeholder="Search repositories…"
               className="w-full bg-transparent py-2 pr-3 pl-8 text-[13px] text-[#ededed] outline-none placeholder:text-[#5f5f5f]"
             />
           </div>
-          <div id={listId} role="listbox" aria-label="Projects" className="max-h-48 overflow-y-auto py-1">
-            {matches.length === 0 && <p className="px-3 py-1.5 text-[12.5px] text-[#8f8f8f]">No projects match “{query}”.</p>}
+          <div id={listId} role="listbox" aria-label="Repositories" className="max-h-48 overflow-y-auto py-1">
+            {matches.length === 0 && <p className="px-3 py-1.5 text-[12.5px] text-[#8f8f8f]">No repositories match “{query}”.</p>}
             {matches.map((p, i) => (
               <button
                 key={p.id}

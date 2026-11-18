@@ -89,7 +89,7 @@ export function Automations({
     <PageLayout className="flex min-h-full flex-col gap-8">
       <PageHeader
         title="Automations"
-        description={`Recurring and event-driven workflows for ${org.personal ? "your projects" : org.name}.`}
+        description={`Recurring and event-driven workflows for ${org.personal ? "your environments" : org.name}.`}
         actions={admin ? (
           <Link href="/automations/new" className={cn(buttonVariants({ size: "sm" }), "shrink-0")}>
             <Plus /> Create automation

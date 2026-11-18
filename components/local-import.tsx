@@ -168,7 +168,7 @@ export function LocalImport() {
   const lastProgress = lastRun.flatMap((key) => progress[key] ?? []);
   const runSummary =
     importSummary(lastProgress) +
-    (!importing && lastProgress.some((p) => p.state === "done") ? ". They're in the sidebar, under their projects." : "");
+    (!importing && lastProgress.some((p) => p.state === "done") ? ". They're in the sidebar, under their repositories." : "");
   return (
     <Page
       action={

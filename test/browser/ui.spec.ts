@@ -83,7 +83,7 @@ async function stubApis(page: Page) {
       path === "/api/environments/environment-1" &&
       request.method() === "PATCH"
     ) {
-      body = { error: "Could not save project. Try again." };
+      body = { error: "Could not save environment. Try again." };
       status = 503;
     }
     await route.fulfill({ json: body, status });
@@ -106,7 +106,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 const VIEW_PATHS: Record<string, string> = {
-  project: "/projects/project-1",
+  project: "/environments/project-1",
   settings: "/settings/org",
   automations: "/automations",
   review: "/review",
@@ -280,18 +280,18 @@ test("hidden Files pauses tour shortcuts and keeps the current step", async ({
   await expect(page.getByText("Step 1 of 2")).toBeVisible();
 });
 
-test("failed project saves keep edits; read-only projects disable fields", async ({
+test("failed environment saves keep edits; read-only environments disable fields", async ({
   page,
 }) => {
-  await openFixture(page, "/projects/project-1?view=project");
-  const name = page.getByLabel("Project name", { exact: true });
-  await name.fill("My edited project");
+  await openFixture(page, "/environments/project-1?view=project");
+  const name = page.getByLabel("Environment name", { exact: true });
+  await name.fill("My edited environment");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
-    page.getByText("Could not save project. Try again."),
+    page.getByText("Could not save environment. Try again."),
   ).toBeVisible();
-  await expect(name).toHaveValue("My edited project");
-  await openFixture(page, "/projects/readonly?view=project&state=readonly");
+  await expect(name).toHaveValue("My edited environment");
+  await openFixture(page, "/environments/readonly?view=project&state=readonly");
   await expect(name).toBeDisabled();
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
@@ -303,19 +303,19 @@ test("failed project saves keep edits; read-only projects disable fields", async
   await expect(page.getByLabel("Variables to add")).toBeDisabled();
 });
 
-test("successful project saves update the page heading", async ({ page }) => {
+test("successful environment saves update the page heading", async ({ page }) => {
   await page.route("**/api/environments/environment-1", async (route) => {
     await route.fulfill({
       json: { ...environment, ...route.request().postDataJSON() },
     });
   });
-  await openFixture(page, "/projects/project-1?view=project");
+  await openFixture(page, "/environments/project-1?view=project");
   await page
-    .getByLabel("Project name", { exact: true })
-    .fill("Renamed project");
+    .getByLabel("Environment name", { exact: true })
+    .fill("Renamed environment");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "Renamed project",
+    "Renamed environment",
   );
 });
 
