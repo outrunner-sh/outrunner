@@ -14,7 +14,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
-    "vite": "^6.4.4"
+    "vite": "^8.3.8"
   },
   "author": "Outrunner, Inc.",
   "license": "MIT",
