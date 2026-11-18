@@ -11,6 +11,12 @@
 #
 # SHA defaults to origin/main. OUTRUNNER_ALLOW_UNMERGED=1 also accepts a
 # commit pushed to any branch on origin, to try a pull request before merge.
+#
+# With OUTRUNNER_IMAGE (the image CI built for the commit's tree, tagged
+# tree-<tree>) and OUTRUNNER_REGISTRY_TOKEN (a token that can read it), the
+# VM pulls that image instead of building one, and only the commit's
+# deploy/vm/ files are sent. The token goes over SSH on stdin, never on a
+# command line, and the VM keeps it nowhere.
 set -euo pipefail
 
 if [[ -n "${OUTRUNNER_VM_SSH:-}" ]]; then
@@ -40,11 +46,21 @@ fi
 # Archive the commit, never the working tree, so local files and secrets stay here.
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-git archive --format=tar -o "$work/source.tar" "$sha"
 git show "$sha:deploy/vm/install-release.sh" > "$work/install-release.sh"
+if [[ -n "${OUTRUNNER_IMAGE:-}" ]]; then
+  tree="$(git rev-parse "$sha^{tree}")"
+  [[ "$OUTRUNNER_IMAGE" = *":tree-$tree" ]] || { echo "$OUTRUNNER_IMAGE is not the image of $sha's tree ($tree)" >&2; exit 1; }
+  : "${OUTRUNNER_REGISTRY_TOKEN:?Set OUTRUNNER_REGISTRY_TOKEN to pull $OUTRUNNER_IMAGE}"
+  git archive --format=tar -o "$work/source.tar" "$sha" deploy/vm
+  install=(--pull "$OUTRUNNER_IMAGE" "$tree")
+else
+  git archive --format=tar -o "$work/source.tar" "$sha"
+  install=()
+fi
 
 remote="/tmp/outrunner-$sha"
 # Plain mkdir fails if another user already created the path in /tmp.
-run "rm -rf $remote && mkdir -m 0700 $remote"
-copy "$remote/" "$work/source.tar" "$work/install-release.sh"
-run "sudo bash $remote/install-release.sh $remote/source.tar $sha; status=\$?; rm -rf $remote; exit \$status"
+run "rm -rf $remote && mkdir -m 0700 $remote" </dev/null
+copy "$remote/" "$work/source.tar" "$work/install-release.sh" </dev/null
+printf '%s\n' "${OUTRUNNER_REGISTRY_TOKEN:-}" \
+  | run "sudo bash $remote/install-release.sh ${install[*]:-} $remote/source.tar $sha; status=\$?; rm -rf $remote; exit \$status"
