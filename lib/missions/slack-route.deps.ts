@@ -179,13 +179,10 @@ export function slackRouteDeps(
   const { teamId, channel } = message;
   return {
     botUserId: install.botUserId,
-    // Can't tell (a database hiccup, or the migration not applied yet): the
-    // Slack agent goes on as in a channel with no Mission.
-    binding: (team, id) =>
-      channelBinding(team, id).catch((error: unknown) => {
-        console.error("Slack: couldn't tell whether a Mission is on call here", error);
-        return null;
-      }),
+    // Before the migration, no Mission anywhere (channelBinding). A database
+    // hiccup throws: a saved message is tried again (lib/slack/agent-run.ts),
+    // never handed to the Slack agent as if no Mission were here.
+    binding: channelBinding,
     thread: channelThread,
     mission: sessionById,
     linked: (slackUserId) => linkedAccount(teamId, slackUserId),

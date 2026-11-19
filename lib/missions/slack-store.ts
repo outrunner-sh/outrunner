@@ -343,6 +343,16 @@ export async function claimAnswer(id: string, answer: { text: string; userId: st
   return (data?.length ?? 0) > 0;
 }
 
+/** Undo `claimAnswer` by that person, its answer not passed on. */
+export async function releaseAnswer(id: string, slackUserId: string): Promise<void> {
+  const { error } = await db()
+    .from("mission_slack_asks")
+    .update({ answer: null, answered_by: null, answered_by_slack: null, answered_at: null })
+    .eq("id", id)
+    .eq("answered_by_slack", slackUserId);
+  if (error) throw error;
+}
+
 // ---------------------------------------------------------------------------
 // Requests, spawn keys, the post queue (20261119140200_mission_slack_reliability.sql)
 // ---------------------------------------------------------------------------

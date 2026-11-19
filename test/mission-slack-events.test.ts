@@ -192,7 +192,7 @@ test("a slack_request while the Mission works is folded into its turn: one turn,
 
 // A question card's click.
 
-function askWorld(patch: { answered?: boolean; binding?: Partial<MissionChannel> | null; askRevision?: string | null } = {}) {
+function askWorld(patch: { answered?: boolean; binding?: Partial<MissionChannel> | null; askRevision?: string | null; enqueueFails?: boolean } = {}) {
   const binding: MissionChannel = { missionId: "m1", orgId: "o1", teamId: "T1", channelId: "C1", boundBy: "wes", listen: "mentions", allowBotMessages: false, paused: false, revision: "rev1", ...patch.binding };
   const thread: MissionThread = {
     id: "t1",
@@ -231,7 +231,11 @@ function askWorld(patch: { answered?: boolean; binding?: Partial<MissionChannel>
       claimed = true;
       return true;
     },
+    release: async () => {
+      claimed = false;
+    },
     enqueue: async (event) => {
+      if (patch.enqueueFails) throw new Error("database down");
       events.push(event);
       return true;
     },
@@ -253,6 +257,15 @@ function askWorld(patch: { answered?: boolean; binding?: Partial<MissionChannel>
 }
 
 const click = (user: string, value: string) => ({ teamId: "T1", user, value, channel: "C1" });
+
+test("an answer that can't be passed on leaves the question open to answer again", async () => {
+  const w = askWorld({ enqueueFails: true });
+  const id = "00000000-0000-0000-0000-0000000000aa";
+  await assert.rejects(answerAsk(click("UANA", `${id}:1`), w.deps), /database down/);
+  assert.deepEqual(w.said, ["tell: That answer didn't get through. Try again."]);
+  // Claimable again: the next click isn't told someone answered first.
+  assert.equal(await w.deps.claim(id, { text: "prod", userId: "ana", slackUserId: "UANA" }), true);
+});
 
 test("a question card is answered once, by someone who may, and reaches the Mission", async () => {
   const w = askWorld();

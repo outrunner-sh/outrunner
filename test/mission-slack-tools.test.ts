@@ -165,6 +165,17 @@ test("the Slack tools and spawn_runner's keys are listed with the Mission's tool
   for (const key of ["request_id", "spawn_key", "thread"]) assert.ok(props[key], key);
 });
 
+test("a Mission's posts can't ping the whole channel, whatever it was told to write", async () => {
+  const { deps, queue } = world();
+  await call(deps, "m1", "slack_reply", { thread: "1731400000.000100", text: "Done <!channel> <!here|here> <!subteam^S1|@oncall>, thanks <@U123>" });
+  const [reply] = queue.values();
+  assert.deepEqual(reply.payload, { chunks: ["Done @channel @here @oncall, thanks <@U123>"] });
+  queue.clear();
+  await call(deps, "m1", "slack_ask", { thread: "1731400000.000100", question: "Ship it <!everyone>?", options: ["Yes"] });
+  const [ask] = queue.values();
+  assert.equal((ask.payload as { text: string }).text, "Ship it @everyone?");
+});
+
 test("a Mission queues posts only in its own threads of the channel it's on call in", async () => {
   const { deps, queue } = world();
   const own = await call(deps, "m1", "slack_reply", { thread: "1731400000.000100", text: "On **it**." });

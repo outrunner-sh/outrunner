@@ -206,7 +206,7 @@ export async function removeReaction(token: string, message: { channel: string; 
 /** Rechecked on delegated reads: Slack Connect/shared channels are not eligible. */
 export async function channelIdentity(token: string, channel: string) {
   const answer = await call<{ channel: {
-    id: string; is_im?: boolean; is_mpim?: boolean; is_member?: boolean;
+    id: string; is_im?: boolean; is_mpim?: boolean; is_member?: boolean; is_private?: boolean;
     is_ext_shared?: boolean; is_org_shared?: boolean; is_shared?: boolean;
     shared_team_ids?: string[];
   } }>(token, "conversations.info", { channel }, "form");
@@ -229,12 +229,12 @@ export async function messagePermalink(token: string, channel: string, ts: strin
 
 /** The channels the bot is in, public and private (channels:read,
  *  groups:read): what a Mission can be put on call in from the app. */
-export async function botChannels(token: string, max = 400): Promise<{ id: string; name: string; shared: boolean }[]> {
-  const found: { id: string; name: string; shared: boolean }[] = [];
+export async function botChannels(token: string, max = 400): Promise<{ id: string; name: string; shared: boolean; private: boolean }[]> {
+  const found: { id: string; name: string; shared: boolean; private: boolean }[] = [];
   let cursor: string | undefined;
   do {
     const answer = await call<{
-      channels?: { id: string; name?: string; is_member?: boolean; is_ext_shared?: boolean; is_org_shared?: boolean; is_shared?: boolean }[];
+      channels?: { id: string; name?: string; is_member?: boolean; is_private?: boolean; is_ext_shared?: boolean; is_org_shared?: boolean; is_shared?: boolean }[];
       response_metadata?: { next_cursor?: string };
     }>(
       token,
@@ -243,10 +243,29 @@ export async function botChannels(token: string, max = 400): Promise<{ id: strin
       "form",
     );
     for (const c of answer.channels ?? []) {
-      if (c.is_member) found.push({ id: c.id, name: c.name ?? c.id, shared: !!(c.is_ext_shared || c.is_org_shared || c.is_shared) });
+      if (c.is_member) found.push({ id: c.id, name: c.name ?? c.id, shared: !!(c.is_ext_shared || c.is_org_shared || c.is_shared), private: !!c.is_private });
     }
     cursor = answer.response_metadata?.next_cursor || undefined;
   } while (cursor && found.length < max);
+  return found;
+}
+
+/** The private channels a person is in that the bot can see
+ *  (users.conversations, channels:read and groups:read): whom a private
+ *  channel's name and messages may be shown to. */
+export async function userPrivateChannels(token: string, user: string, max = 1000): Promise<Set<string>> {
+  const found = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const answer = await call<{ channels?: { id: string }[]; response_metadata?: { next_cursor?: string } }>(
+      token,
+      "users.conversations",
+      { user, types: "private_channel", exclude_archived: true, limit: 200, ...(cursor && { cursor }) },
+      "form",
+    );
+    for (const c of answer.channels ?? []) found.add(c.id);
+    cursor = answer.response_metadata?.next_cursor || undefined;
+  } while (cursor && found.size < max);
   return found;
 }
 

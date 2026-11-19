@@ -158,3 +158,11 @@ export type MissionSlackView = {
   /** Why there's nothing to pick, when there isn't. */
   hint: string | null;
 };
+
+/** Text the Mission posts: no channel-wide pings (`@channel`, `@here`,
+ *  `@everyone`, user groups), which Slack would otherwise send to everyone. */
+export function quietText(text: string): string {
+  return text
+    .replace(/<!subteam\^[A-Z0-9]+(?:\|([^>]*))?>/g, (_m, label: string | undefined) => label ?? "@group")
+    .replace(/<!(\w+)(?:\|[^>]*)?>/g, "@$1");
+}
