@@ -1,5 +1,5 @@
 /**
- * The on-call Missions migration's SQL (20261118110000_mission_slack.sql), run
+ * The on-call Missions migration's SQL (20261119140100_mission_slack.sql), run
  * on a real Postgres after the Missions migrations before it: Slack's events
  * with no Ship, one Mission a channel and one channel a Mission, threads, and
  * the limits on Ships under racing spawns. Needs MISSIONS_PG, as
@@ -183,7 +183,7 @@ test("a question is answered once", { skip }, () => {
 });
 
 // ---------------------------------------------------------------------------
-// 20261118110100_mission_slack_reliability.sql
+// 20261119140200_mission_slack_reliability.sql
 // ---------------------------------------------------------------------------
 
 test("a binding made again is a new revision", { skip }, () => {

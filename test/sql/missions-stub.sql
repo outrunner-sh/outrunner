@@ -50,7 +50,7 @@ insert into notification_preferences (user_id, kinds) values
   ('00000000-0000-0000-0000-0000000000a1', '{turn_done,pr_opened}'),
   ('00000000-0000-0000-0000-0000000000a2', '{turn_done}');
 
--- What the Slack binding tables point at (20261118110000_mission_slack.sql):
+-- What the Slack binding tables point at (20261119140100_mission_slack.sql):
 -- an org, and a person.
 create table organizations (id uuid primary key default gen_random_uuid());
 create schema if not exists auth;
