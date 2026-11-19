@@ -189,6 +189,25 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
+  # The CLI ships for Windows, where `outrunner claude` runs Claude Code on a
+  # ConPTY (internal/childterm): test that on Windows itself. Only that
+  # package, as the rest of the agent is Linux and macOS.
+  agent-windows:
+    name: Go CLI terminal (Windows)
+    runs-on: windows-2025
+    defaults:
+      run:
+        working-directory: runtime-agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: runtime-agent/go.mod
+          cache-dependency-path: runtime-agent/go.sum
+      - run: go build ./cmd/outrunner
+      - run: go vet ./internal/childterm/
+      - run: go test ./internal/childterm/
+
   worker:
     name: Cloudflare worker
     runs-on: ubuntu-24.04
