@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
+	"runtime-agent/internal/childterm"
 )
 
 // Connecting Claude: run `claude setup-token` on this computer, as the Mac
@@ -23,9 +23,10 @@ import (
 // token it prints to the user's account.
 //
 // setup-token is a TUI: with no terminal it prints nothing and never exits,
-// so it runs under a PTY of its own. Its flow: print a sign-in link and open
-// the browser; the user approves there; usually it then prints the token on
-// its own, and otherwise it asks for a code, which the user pastes here.
+// so it runs on a terminal of its own (childterm: a PTY, or a ConPTY on
+// Windows). Its flow: print a sign-in link and open the browser; the user
+// approves there; usually it then prints the token on its own, and otherwise
+// it asks for a code, which the user pastes here.
 
 const (
 	// urlTimeout is how long setup-token may take to print its sign-in link.
@@ -88,24 +89,18 @@ type ClaudeOptions struct {
 
 // SetupToken runs `claude setup-token` and returns the token it prints.
 func SetupToken(ctx context.Context, opts ClaudeOptions) (string, error) {
-	cmd := exec.CommandContext(ctx, opts.Binary, "setup-token")
+	dir := ""
 	if home, err := os.UserHomeDir(); err == nil {
-		cmd.Dir = home
+		dir = home
 	}
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-	// Wide enough that the sign-in link is never wrapped onto lines of its own.
-	term, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 48, Cols: 1000})
-	if errors.Is(err, pty.ErrUnsupported) {
-		return "", errors.New("connecting Claude from the terminal isn't supported on this system yet. Connect it in Outrunner under Settings → Claude")
+	term, err := childterm.Start(opts.Binary, []string{"setup-token"}, dir, append(os.Environ(), "TERM=xterm-256color"))
+	if errors.Is(err, childterm.ErrUnsupported) {
+		return "", errors.New("connecting Claude from the terminal isn't supported on this system. Run `claude setup-token`, then paste the token it prints in Outrunner under Settings → Claude")
 	}
 	if err != nil {
 		return "", fmt.Errorf("run claude setup-token: %w", err)
 	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_ = term.Close()
-		_ = cmd.Wait()
-	}()
+	defer func() { _ = term.Close() }()
 
 	var (
 		mu         sync.Mutex
