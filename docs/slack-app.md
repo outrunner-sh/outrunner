@@ -67,8 +67,8 @@ Mission to the channel: one of yours on that project, or a new one. From then on
 threads it took, go to the Mission instead of the spec-card flow; it answers in the thread, starts Ships (cloud
 sessions that open pull requests), and posts their pull requests there. A Mission's event is saved before Outrunner
 answers Slack (so a crash loses nothing, and the endpoint answers 503, for Slack to retry, when it can't be saved),
-and every post it makes goes through a queue that never posts the same thing twice. Only connected members who can read the
-project can task it. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread,
+and every post it makes goes through a queue that never posts the same thing twice. Only connected members who can change the
+project (write) can task it, as it works with its owner's access. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread,
 `@Outrunner stop` stops its turn. `@Outrunner pause` / `resume` and `@Outrunner stop being on call here` need write
 on the project. It starts at most 6 Ships an hour and 30 a day. The commands are exact and handled directly, not
 by a model. Channels with no Mission keep everything below. See [Missions](missions.md#on-call-in-slack).

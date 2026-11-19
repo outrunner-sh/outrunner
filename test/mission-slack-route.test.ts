@@ -38,8 +38,10 @@ function world(patch: { binding?: Partial<MissionChannel>; mission?: Partial<Wor
     UWES: { userId: "wes", orgId: "o1" },
     UBOB: { userId: "bob", orgId: "o2" },
     UNORA: { userId: "nora", orgId: "o1" },
+    URITA: { userId: "rita", orgId: "o1" },
   };
-  const levels: Record<string, AccessLevel | null> = { alice: "read", wes: "write", nora: null, bob: "read" };
+  // Alice asks for work (write on web); Rita can only read web.
+  const levels: Record<string, AccessLevel | null> = { alice: "write", wes: "write", nora: null, bob: "read", rita: "read" };
   const state = { interrupted: 0, bound: [] as string[], created: 0 };
   const deps: SlackRouteDeps = {
     botUserId: BOT,
@@ -193,16 +195,20 @@ test("Slack's retries of an event are one request", async () => {
   assert.equal(v.events[0].key, "slack_request:T1:C1:1731400000.000100");
 });
 
-test("the gate: linked, in the Mission's org, with read on its project", async () => {
+test("the gate: linked, in the Mission's org, with write on its project (read isn't enough)", async () => {
   const w = world();
   assert.equal(await routeToMission(msg({ user: "UUNA" }), w.deps), true);
   assert.equal(await routeToMission(msg({ user: "UBOB" }), w.deps), true);
   assert.equal(await routeToMission(msg({ user: "UNORA" }), w.deps), true);
+  // Rita can read web, but the Mission works with its owner's access.
+  assert.equal(await routeToMission(msg({ user: "URITA" }), w.deps), true);
   assert.equal(w.events.length, 0);
+  const refused = "tell: Only people who can change web in Outrunner can give the Mission on call here work, as it works with its owner's access.";
   assert.deepEqual(w.said, [
     "connect",
     "tell: Your Slack account is connected to a different Outrunner org than the Mission on call here.",
-    "tell: Only people who can read web in Outrunner can give the Mission on call here work.",
+    refused,
+    refused,
   ]);
   // And no thread was taken for them.
   assert.equal(w.threads.length, 0);
@@ -216,6 +222,7 @@ test("in its own threads, plain replies that don't pass the gate are dropped qui
   assert.equal(await reply("UUNA", 1), true);
   assert.equal(await reply("UBOB", 2), true);
   assert.equal(await reply("UNORA", 3), true);
+  assert.equal(await reply("URITA", 6), true);
   assert.deepEqual(w.said, [], "nobody nagged on a plain reply");
   assert.equal(w.events.length, 1);
   // A mention still tells them why.
@@ -247,7 +254,7 @@ test("keywords: !aside is ignored, !mute and !unmute a thread", async () => {
 
 test("paused, it says so and takes nothing; pause and resume need write", async () => {
   const w = world();
-  assert.equal(await routeToMission(msg({ text: `<@${BOT}> pause` }), w.deps), true);
+  assert.equal(await routeToMission(msg({ user: "URITA", text: `<@${BOT}> pause` }), w.deps), true);
   assert.equal(w.bindings[0].paused, false, "read isn't enough");
   assert.equal(await routeToMission(msg({ user: "UWES", text: `<@${BOT}> pause`, eventId: "Ep" }), w.deps), true);
   assert.equal(w.bindings[0].paused, true);
@@ -264,7 +271,7 @@ test("@Outrunner stop interrupts the Mission's turn; stop being on call here unb
   const w = world();
   await routeToMission(msg({ text: `<@${BOT}> stop` }), w.deps);
   assert.equal(w.state.interrupted, 1);
-  await routeToMission(msg({ text: `<@${BOT}> stop being on call here`, eventId: "E2" }), w.deps);
+  await routeToMission(msg({ user: "URITA", text: `<@${BOT}> stop being on call here`, eventId: "E2" }), w.deps);
   assert.equal(w.bindings.length, 1, "needs write");
   await routeToMission(msg({ user: "UWES", text: `<@${BOT}> stop being on call here`, eventId: "E3" }), w.deps);
   assert.equal(w.bindings.length, 0);
@@ -302,8 +309,8 @@ test("an archived Mission says so and takes nothing", async () => {
 
 test("be on call here: needs write on the project; binds a Mission, or starts one", async () => {
   const w = world();
-  // Alice can only read web.
-  await routeToMission(msg({ channel: "C2", text: `<@${BOT}> be on call here for web` }), w.deps);
+  // Rita can only read web.
+  await routeToMission(msg({ channel: "C2", user: "URITA", text: `<@${BOT}> be on call here for web` }), w.deps);
   assert.deepEqual(w.state.bound, []);
   assert.ok(w.said.at(-1)?.includes("needs write on web"));
   await routeToMission(msg({ channel: "C2", user: "UWES", text: `<@${BOT}> be on call here for "Web".` }), w.deps);

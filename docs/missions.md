@@ -93,9 +93,12 @@ channel, one channel a Mission.
   only mentions is used.
 - **Before it hears anything,** by rule, not by a model:
   - the sender needs a linked Slack→Outrunner account in the Mission's org
-    with read on its project; anyone else who mentions Outrunner gets the
-    Connect prompt, or is told no (a plain reply in its thread is dropped
-    quietly). Unlinked people in shared channels can't task it;
+    with write on its project. Read isn't enough: the Mission and its Ships
+    work with its owner's GitHub and Claude access, so only someone who could
+    make those changes themselves directs it. Anyone else who mentions
+    Outrunner gets the Connect prompt, or is told no (a plain reply in its
+    thread is dropped quietly). Unlinked people in shared channels can't task
+    it;
   - `!aside` keeps a message from it; `!mute` / `!unmute` silences a thread
     (nothing in or out, the system's posts included);
   - `@Outrunner stop` stops its turn; `@Outrunner pause` / `resume` (write on

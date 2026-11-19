@@ -176,8 +176,11 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
   }
   const level = await deps.level(requester.userId, mission);
   const project = await deps.projectName(mission);
-  if (!allows(level, "read")) {
-    await refuse(`Only people who can read ${project} in Outrunner can give the Mission on call here work.`);
+  // The Mission and its Ships work with their owner's GitHub and Claude
+  // access, whoever asked. So only someone who could make those changes
+  // themselves may direct it: write on the project, not read.
+  if (!allows(level, "write")) {
+    await refuse(`Only people who can change ${project} in Outrunner can give the Mission on call here work, as it works with its owner's access.`);
     return true;
   }
 

@@ -84,7 +84,8 @@ test("a mention becomes a Ship and its pull request's cards, once each, through 
     thread: async (_t, _c, ts) => threads.find((t) => t.threadTs === ts) ?? null,
     mission: async (id) => sessions.find((s) => s.id === id) ?? null,
     linked: async (user) => (user === "UANA" ? { userId: "ana", orgId: "o1" } : null),
-    level: async (userId) => (userId === "ana" ? "read" : null),
+    // Write: who gives the Mission on call work must be able to change the project.
+    level: async (userId) => (userId === "ana" ? "write" : null),
     projectName: async () => "web",
     acceptThread: async (input) => {
       let thread = threads.find((t) => t.threadTs === input.threadTs);
