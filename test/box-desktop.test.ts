@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { mock, test } from "node:test";
 
 import type { Sandbox } from "@daytonaio/sdk";
 
-import { NOVNC_PORT } from "@/lib/runtime/box-ports";
+import { DEVTOOLS_PORT, NOVNC_PORT } from "@/lib/runtime/box-ports";
 import { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import type { SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
 import { box, WEB_BROWSER_SETUP } from "@/lib/runtime/sandbox/daytona";
@@ -116,5 +120,70 @@ test("a desktop whose Web Browser can't be set up still starts, and says why", a
     } finally {
       warn.mock.restore();
     }
+  }
+});
+
+/**
+ * WEB_BROWSER_SETUP run in a home of its own, then the desktop's Web Browser
+ * opened on a URL, as XFCE's dock does. The `chromium` first on the PATH is a
+ * fake that writes down how it was started, and, where `sandbox` is false,
+ * refuses to start with its sandbox as Chromium does on a Daytona box.
+ */
+function openWebBrowser(sandbox: boolean, helpersRc?: string): { home: string; launches: string[]; helpersRc: string } {
+  const home = mkdtempSync(join(tmpdir(), "desktop-web-browser-"));
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "chromium"),
+    [
+      "#!/bin/sh",
+      'case " $* " in *" --no-sandbox "*) ;; *) if [ "$FAKE_SANDBOX" = no ]; then echo "No usable sandbox!" >&2; exit 1; fi ;; esac',
+      'printf "%s\\n" "$*" >> "$HOME/launches"',
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  if (helpersRc !== undefined) {
+    mkdirSync(join(home, ".config", "xfce4"), { recursive: true });
+    writeFileSync(join(home, ".config", "xfce4", "helpers.rc"), helpersRc);
+  }
+  const env = { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, FAKE_SANDBOX: sandbox ? "yes" : "no" };
+  // Twice, as every desktop start writes it: the second changes nothing.
+  execFileSync("bash", ["-c", WEB_BROWSER_SETUP], { env });
+  execFileSync("bash", ["-c", WEB_BROWSER_SETUP], { env });
+  execFileSync(join(home, ".outrunner", "desktop", "web-browser"), ["https://example.com"], { env });
+  return {
+    home,
+    launches: readFileSync(join(home, "launches"), "utf8").trim().split("\n"),
+    helpersRc: readFileSync(join(home, ".config", "xfce4", "helpers.rc"), "utf8"),
+  };
+}
+
+const agentBrowserArgs = (home: string) =>
+  `--remote-debugging-port=${DEVTOOLS_PORT} --remote-debugging-address=127.0.0.1 --user-data-dir=${home}/.outrunner/desktop/chromium ` +
+  "--no-first-run --no-default-browser-check --password-store=basic --start-maximized https://example.com";
+
+test("the desktop's Web Browser is the agent's Chromium, without its sandbox where the box can't give it one", () => {
+  const { home, launches, helpersRc } = openWebBrowser(false);
+  try {
+    assert.deepEqual(launches, [`--no-sandbox ${agentBrowserArgs(home)}`]);
+    assert.equal(helpersRc, "WebBrowser=outrunner-web-browser\n");
+    const helper = readFileSync(join(home, ".local", "share", "xfce4", "helpers", "outrunner-web-browser.desktop"), "utf8");
+    assert.match(helper, /^Type=X-XFCE-Helper$/m);
+    assert.match(helper, /^X-XFCE-Category=WebBrowser$/m);
+    assert.ok(helper.includes(`X-XFCE-CommandsWithParameter=${home}/.outrunner/desktop/web-browser "%s"\n`));
+    // The profile holds every sign-in: the agent's own user's alone.
+    assert.equal(statSync(join(home, ".outrunner", "desktop", "chromium")).mode & 0o777, 0o700);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("the desktop's Web Browser keeps Chromium's sandbox where it has one, and the user's other helpers", () => {
+  const { home, launches, helpersRc } = openWebBrowser(true, "MailReader=thunderbird\nWebBrowser=debian-sensible-browser\n");
+  try {
+    assert.deepEqual(launches, [agentBrowserArgs(home)]);
+    assert.equal(helpersRc, "MailReader=thunderbird\nWebBrowser=outrunner-web-browser\n");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
