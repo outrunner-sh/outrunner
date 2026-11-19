@@ -237,6 +237,7 @@ test("a mention becomes a Ship and its pull request's cards, once each, through 
     muted: async () => false,
     mission: async () => sessions[0],
     canRead: async (userId: string) => userId === "ana",
+    ownChannel: async () => true,
     post: async (post: QueuedPost, message: { text: string; marker: string }) => {
       const ts = `${tsClock++}.000100`;
       slack.push({ ts, thread: post.threadTs, text: message.text, marker: message.marker });

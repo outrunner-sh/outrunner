@@ -229,6 +229,14 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
     return true;
   }
 
+  // Bound only in the workspace's own channels, but a channel can be shared
+  // (Slack Connect) after: checked again for every request, as main's Slack
+  // agent does for channel access. Told only to the asker, not the channel.
+  if (!(await deps.localChannel())) {
+    await refuse("This channel is shared outside the workspace now, so the Mission on call here doesn't take work in it. Slack Connect and shared channels aren't supported.");
+    return true;
+  }
+
   const permalink = await deps.permalink(message.ts).catch(() => null);
   const requestKey = message.eventId ?? `${message.teamId}:${message.channel}:${message.ts}`;
   const accepted = await deps.acceptThread({

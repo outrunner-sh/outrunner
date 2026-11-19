@@ -42,7 +42,7 @@ function world(patch: { binding?: Partial<MissionChannel>; mission?: Partial<Wor
   };
   // Alice asks for work (write on web); Rita can only read web.
   const levels: Record<string, AccessLevel | null> = { alice: "write", wes: "write", nora: null, bob: "read", rita: "read" };
-  const state = { interrupted: 0, bound: [] as string[], created: 0 };
+  const state = { interrupted: 0, bound: [] as string[], created: 0, shared: false };
   const deps: SlackRouteDeps = {
     botUserId: BOT,
     binding: async (team, channel) => bindings.find((b) => b.teamId === team && b.channelId === channel) ?? null,
@@ -108,7 +108,7 @@ function world(patch: { binding?: Partial<MissionChannel>; mission?: Partial<Wor
     },
     findProject: async (_r, name) => (name.toLowerCase() === "web" ? { id: "env1", name: "web" } : name === "dup" ? { ambiguous: ["dup", "Dup"] } : null),
     projectLevel: async (userId) => levels[userId] ?? null,
-    localChannel: async () => true,
+    localChannel: async () => !state.shared,
     freeMissions: async () => [],
     createMission: async () => {
       state.created++;
@@ -315,6 +315,20 @@ test("a failed Mission says so and takes nothing: its events would never be deli
   assert.ok(w.said[0].startsWith("reply: The Mission on call here failed"), w.said[0]);
   // Someone with write can still take it off call.
   await routeToMission(msg({ user: "UWES", text: `<@${BOT}> stop being on call here`, eventId: "Ef2" }), w.deps);
+  assert.equal(w.bindings.length, 0);
+});
+
+test("a channel shared since it was bound: the Mission takes no work there, but can still be taken off call", async () => {
+  const w = world();
+  w.state.shared = true;
+  assert.equal(await routeToMission(msg(), w.deps), true);
+  assert.equal(w.events.length, 0);
+  assert.equal(w.threads.length, 0, "no thread taken");
+  // Told to the asker alone, not posted where the other company sees it.
+  assert.deepEqual(w.said, [
+    "tell: This channel is shared outside the workspace now, so the Mission on call here doesn't take work in it. Slack Connect and shared channels aren't supported.",
+  ]);
+  await routeToMission(msg({ user: "UWES", text: `<@${BOT}> stop being on call here`, eventId: "Es2" }), w.deps);
   assert.equal(w.bindings.length, 0);
 });
 

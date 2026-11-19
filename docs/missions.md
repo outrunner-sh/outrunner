@@ -99,6 +99,9 @@ channel, one channel a Mission.
     Outrunner gets the Connect prompt, or is told no (a plain reply in its
     thread is dropped quietly). Unlinked people in shared channels can't task
     it;
+  - the channel is checked again for every request, not only at binding: one
+    shared since (Slack Connect) takes no work, and the asker alone is told
+    why. `@Outrunner stop being on call here` still works there;
   - a failed Mission takes nothing and says so: its events would never be
     delivered. Someone with write takes it off call and puts another on;
   - `!aside` keeps a message from it; `!mute` / `!unmute` silences a thread
@@ -183,8 +186,10 @@ Slack's retries, timeouts and rebinds
   finished posts after 14.
 - **Checked again right before acting.**
   - Each post: the binding is the one it was queued under (same revision,
-    as a rebind is a new one), the thread isn't muted, and whoever's request
-    it answers can still read the project. After an unbind or a rebind,
+    as a rebind is a new one), the thread isn't muted, the channel is still
+    the workspace's own (not shared since: Slack Connect would show the post
+    to other companies; when Slack can't say, it's retried), and whoever's
+    request it answers can still read the project. After an unbind or a rebind,
     queued posts are dropped, never moved to the new channel. A paused
     Mission still posts about work it had started (pause stops new requests).
   - **Off call (unbind, or the Mission archived):** every open question
@@ -416,7 +421,7 @@ twice records it once. Events are delivered in batches:
   retries one row, a database that's down a 503, a crash after the answer
   finished by the tick, the last try saying sorry.
 - `test/mission-slack-outbox.test.ts`: the post queue's rechecks (unbind,
-  rebind, mute, access), a crash resumed at the next chunk, a lost send found
+  rebind, mute, shared since, access), a crash resumed at the next chunk, a lost send found
   in the thread, ambiguous when the thread can't settle it, Retry-After.
 - `test/mission-slack-cards.test.ts`: 2 Ships and 3 pull requests in one
   thread, each card its own, once.

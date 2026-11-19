@@ -47,6 +47,8 @@ function slack() {
   const state = {
     binding: binding as MissionChannel | null,
     muted: false,
+    /** Whether the channel was shared since it was bound; "unknown": Slack can't say. */
+    shared: false as boolean | "unknown",
     readers: new Set(["ana"]),
     /** What each next send does, in order; then they succeed. */
     sends: [] as ("ok" | "lost" | "unknown-not-sent" | "ratelimited" | "fatal" | "error")[],
@@ -58,6 +60,10 @@ function slack() {
     muted: async () => state.muted,
     mission: async () => ({ id: "m1", kind: "mission", status: "ready" }) as Workspace,
     canRead: async (userId) => state.readers.has(userId),
+    ownChannel: async () => {
+      if (state.shared === "unknown") throw new Error("channel_not_found");
+      return !state.shared;
+    },
     post: async (post, message) => {
       const how = state.sends.shift() ?? "ok";
       if (how === "ratelimited") throw new SlackApiError("chat.postMessage", "ratelimited", 42);
@@ -96,12 +102,13 @@ test("a reply goes as its chunks, in order, each with its marker", async () => {
   assert.deepEqual(s.progress, [1, 2, 3]);
 });
 
-test("rechecked before it goes: off call, rebound, muted, or the requester's access gone drops it", async () => {
+test("rechecked before it goes: off call, rebound, muted, shared since, or the requester's access gone drops it", async () => {
   const cases: [string, (s: ReturnType<typeof slack>) => void, RegExp][] = [
     ["unbound", (s) => (s.state.binding = null), /no longer on call/],
     ["rebound, same channel", (s) => (s.state.binding = { ...binding, revision: "rev2" }), /another binding/],
     ["rebound elsewhere", (s) => (s.state.binding = { ...binding, channelId: "C2", revision: "rev2" }), /another binding/],
     ["muted", (s) => (s.state.muted = true), /muted/],
+    ["shared since", (s) => (s.state.shared = true), /shared outside the workspace/],
     ["access", (s) => s.state.readers.delete("ana"), /can no longer read/],
   ];
   for (const [name, change, why] of cases) {
@@ -112,6 +119,12 @@ test("rechecked before it goes: off call, rebound, muted, or the requester's acc
     assert.match(outcome.status === "dropped" ? outcome.error : "", why, name);
     assert.equal(s.thread.length, 0, `${name}: nothing posted, and never to the new channel`);
   }
+  // Slack can't say whether it's shared: not posted, and not dropped either.
+  // deliverPost throws, and deliverPosts makes that a retry.
+  const unsure = slack();
+  unsure.state.shared = "unknown";
+  await assert.rejects(deliverPost(claimed(), unsure.deps));
+  assert.equal(unsure.thread.length, 0);
   // Paused isn't checked: a paused Mission still reports on its work.
   const paused = slack();
   paused.state.binding = { ...binding, paused: true };

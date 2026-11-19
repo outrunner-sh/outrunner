@@ -23,7 +23,8 @@ import {
 import { sessionById } from "@/lib/missions/store";
 import { allows } from "@/lib/orgs/access";
 import type { Json, MissionSlackPostRow } from "@/lib/supabase/database.types";
-import { addReaction, postMessage, threadMarkers } from "@/lib/slack/web";
+import { ownChannel } from "@/lib/slack/channel-access";
+import { addReaction, channelIdentity, postMessage, threadMarkers } from "@/lib/slack/web";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** A sender's lease: long enough for a long reply's chunks. */
@@ -64,6 +65,8 @@ export function postDeps(): OutboxPostDeps {
     muted: threadMuted,
     mission: sessionById,
     canRead: async (userId, mission) => allows(await missionLevel(userId, mission), "read"),
+    ownChannel: async (post) =>
+      ownChannel(await channelIdentity(await token(post.teamId), post.channelId), { teamId: post.teamId, channel: post.channelId }),
     post: async (post, message) =>
       postMessage(await token(post.teamId), { channel: post.channelId, threadTs: post.threadTs, ...message }),
     react: async (post, ts, name) => addReaction(await token(post.teamId), { channel: post.channelId, ts, name }),

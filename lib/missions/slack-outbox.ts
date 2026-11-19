@@ -12,6 +12,8 @@
  *              revision it was queued under: never moved to a channel bound
  *              since, nor posted after an unbind
  *   thread     not muted
+ *   channel    still the workspace's own: not shared (Slack Connect) since
+ *              it was bound, which would show the post to other companies
  *   requester  whoever's request it answers can still read the project
  *   pause      not checked: a paused Mission still reports on work it had
  *              started (decision 3 of PR #418)
@@ -72,6 +74,9 @@ export type OutboxPostDeps = {
   muted(teamId: string, channelId: string, threadTs: string): Promise<boolean>;
   mission(id: string): Promise<Workspace | null>;
   canRead(userId: string, mission: Workspace): Promise<boolean>;
+  /** Whether the post's channel is still the workspace's own (ownChannel):
+   *  not shared since it was bound. Throws when Slack can't say: retried. */
+  ownChannel(post: QueuedPost): Promise<boolean>;
   /** Post with a marker; Slack's ts. Throws SlackApiError, or
    *  SlackUnknownOutcomeError when Slack didn't answer. */
   post(post: QueuedPost, message: { text: string; blocks?: SlackBlocks; marker: string }): Promise<string>;
@@ -143,6 +148,7 @@ async function recheck(post: ClaimedPost, deps: OutboxPostDeps): Promise<string 
     return "the Mission was put on call again since (another binding): queued posts aren't moved to it";
   }
   if (await deps.muted(post.teamId, post.channelId, post.threadTs)) return "the thread is muted";
+  if (!(await deps.ownChannel(post))) return "the channel is shared outside the workspace now (Slack Connect): the Mission doesn't post in it";
   const mission = await deps.mission(post.missionId);
   if (!mission || mission.kind !== "mission" || mission.status === "destroying" || mission.status === "destroyed") return "the Mission is gone";
   if (post.requester && !(await deps.canRead(post.requester, mission))) return "the person who asked can no longer read the project";
