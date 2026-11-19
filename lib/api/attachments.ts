@@ -47,7 +47,7 @@ export async function uploadRoom(): Promise<Response | null> {
 /** Keep `file` as the caller's upload, through the composer's own route:
  *  what it's called and holds, or the answer to give. */
 export async function storeAttachment(
-  context: ApiContext,
+  context: Pick<ApiContext, "base">,
   file: File,
 ): Promise<Pick<Attachment, "id" | "filename" | "contentType" | "sizeBytes"> | Response> {
   const forwarded = new FormData();

@@ -1253,6 +1253,7 @@ type ApiWatchRow = {
   baseline_fenced: boolean;
   asked_tool_use: string | null;
   told_prs: string[];
+  auto_review: boolean;
   watch_until: string | null;
   checked_at: string | null;
   created_at: string;

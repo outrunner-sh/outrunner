@@ -68,6 +68,8 @@ export type Watch = WatchState &
     userId: string;
     webhookUrl: string | null;
     toldPrs: string[];
+    /** Asked to review a pull request it opens (`auto_create_pr`). */
+    autoReview: boolean;
     watchUntil: string | null;
   };
 
@@ -84,6 +86,7 @@ type WatchRow = {
   baseline_fenced: boolean;
   asked_tool_use: string | null;
   told_prs: string[];
+  auto_review: boolean;
   watch_until: string | null;
 };
 
@@ -101,12 +104,13 @@ function toWatch(row: WatchRow): Watch {
     baselineFenced: row.baseline_fenced,
     askedToolUse: row.asked_tool_use,
     toldPrs: row.told_prs,
+    autoReview: row.auto_review,
     watchUntil: row.watch_until,
   };
 }
 
 const WATCH_COLUMNS =
-  "workspace_id, org_id, user_id, scope, scope_id, webhook_url, awaiting, seen_working, baseline_event, baseline_fenced, asked_tool_use, told_prs, watch_until";
+  "workspace_id, org_id, user_id, scope, scope_id, webhook_url, awaiting, seen_working, baseline_event, baseline_fenced, asked_tool_use, told_prs, auto_review, watch_until";
 
 /** Watch a session made through the API, from its setup on, for `forMs`:
  *  its setup's end is told once, by whichever look ends the watch. */
@@ -116,6 +120,7 @@ export async function createWatch(input: {
   userId: string;
   who: WebhookScope;
   webhookUrl: string | null;
+  autoReview?: boolean;
   forMs: number;
 }): Promise<void> {
   const { error } = await db().from("api_watches").insert({
@@ -125,6 +130,7 @@ export async function createWatch(input: {
     scope: input.who.scope,
     scope_id: input.who.scopeId,
     webhook_url: input.webhookUrl,
+    auto_review: input.autoReview === true,
     watch_until: new Date(Date.now() + input.forMs).toISOString(),
   });
   if (error) throw error;

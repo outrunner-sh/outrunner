@@ -22,6 +22,11 @@ with an Evidence section and a "Verified in the browser" checklist.
   before the project's instructions. So a PR the agent opens on its own, from a
   GitHub mention, an automation, a Runner or a plain "open a PR", is written
   the same way. Sessions created before this don't have it.
+- **Review.** The Review button attaches `Review request.md`
+  (`lib/session/review-instructions.ts`). A session started through the API
+  with `auto_create_pr` is sent the same request by itself, once the pull
+  request it opened shows at a turn's end (`lib/api/auto-review.ts`, from the
+  API's watch in `lib/api/webhooks.deps.ts`).
 - **Which steps a session gets.** Sessions on Daytona (`daytona`,
   `user-daytona`) get the evidence steps, because their boxes have a desktop
   with Chromium (`outrunner_desktop` tools). Modal, Neev and Mac sessions get

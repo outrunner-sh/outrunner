@@ -229,7 +229,11 @@ there. Without `work_on_current_branch`, a session on a pull request works
 on a branch of its own made from its head, and bases any pull request it
 opens on that head. `auto_create_pr` and `work_on_current_branch` are told
 to the agent with its prompt; the pull request it opens shows in
-`pull-requests` and the `pr.opened` webhook.
+`pull-requests` and the `pr.opened` webhook. With `auto_create_pr`, once
+that pull request shows, the session is asked to review it, as the app's
+Review button asks: the message "Review my changes" with `Review request.md`
+attached. The review is its own run, told as `turn.completed`, its findings
+in `data.turn.last_message`. Nothing is posted to the pull request.
 
 Send an `Idempotency-Key` header (1 to 255 printable characters) to make a
 create safe to retry: the same key from the same person answers `200` with
@@ -790,7 +794,7 @@ the key that started it: Settings → Org → API keys for an org key, Settings
 | `workspace.ready` | Its setup ended and its prompt was sent |
 | `turn.completed` | A turn is over: its first prompt's, or a message's (`data.turn.last_message` is what it said) |
 | `needs_input` | It asked a question, or for secrets (`data.turn.pending_input`) |
-| `pr.opened` | A pull request of its showed up as a turn ended (`data.pull_request`) |
+| `pr.opened` | A pull request of its showed up as a turn ended (`data.pull_request`); with `auto_create_pr`, its review starts then |
 | `error` | Its setup failed, or it did later (`data.message`) |
 
 ```json

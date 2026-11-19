@@ -453,6 +453,22 @@ export async function sendMessageApi(
   );
 }
 
+/** Send the session's main chat a message from the server, as its owner
+ *  (the acting user): the fence its turn is awaited from, null when the log
+ *  doesn't show it yet. Throws when the message route refuses it. */
+export async function sendAsOwner(base: string, workspace: Workspace, content: string, attachmentIds: string[]): Promise<number | null> {
+  const sentAt = Date.now();
+  const sent = await messagePOST(
+    appRequest(base, `/api/workspaces/${workspace.id}/message`, {
+      body: { content, ...(attachmentIds.length && { attachmentIds }) },
+    }),
+    routeParams({ id: workspace.id }),
+  );
+  if (!sent.ok) throw new Error(`The message route answered ${sent.status}.`);
+  const logged = await fenceAfterSend((await getWorkspace(workspace.id)) ?? workspace, content, sentAt);
+  return logged?.fence ?? null;
+}
+
 /** How long a send's message is looked for in the log, once more, when the
  *  first read after the send doesn't have it yet. */
 const FENCE_RETRY_MS = 1_500;

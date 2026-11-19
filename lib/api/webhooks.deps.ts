@@ -9,6 +9,10 @@
  *   needs_input       it asked a question, or for secrets
  *   pr.opened         a pull request of its showed up as a turn ended
  *
+ * A session made with `auto_create_pr` is then asked to review that pull
+ * request, as the app's Review button asks (lib/api/auto-review.ts), and the
+ * review's turn is watched like a message's.
+ *
  * A turn is watched right after the send, in after(), for WATCH_MS, as the
  * Slack relay watches for a reply (lib/slack/relay.ts); the cron's tick
  * (app/api/v1/tick) carries on for turns that outlast it, and tries again
@@ -21,7 +25,9 @@ import { isIP } from "node:net";
 import { after } from "@/lib/observability/after";
 
 import { GET as pullRequestGET } from "@/app/api/workspaces/[id]/pull-request/route";
+import { storeAttachment } from "@/lib/api/attachments";
 import type { ApiCaller } from "@/lib/api/auth";
+import { autoReviewRequest } from "@/lib/api/auto-review";
 import { apiError } from "@/lib/api/errors";
 import { appRequest, routeParams, type ApiContext } from "@/lib/api/handler";
 import { workspaceJson } from "@/lib/api/serialize";
@@ -38,7 +44,7 @@ import {
 } from "@/lib/api/webhooks";
 import { promptSince } from "@/lib/api/conversation";
 import { readLiveConversation } from "@/lib/api/live";
-import { turnJson, type CreateHooks } from "@/lib/api/workspaces";
+import { sendAsOwner, turnJson, type CreateHooks } from "@/lib/api/workspaces";
 import {
   advanceWatch,
   awaitTurn,
@@ -96,6 +102,7 @@ export function webhookHooks(context: ApiContext): CreateHooks {
         userId: context.caller.userId,
         who,
         webhookUrl: input.webhookUrl,
+        autoReview: input.autoCreatePr,
         forMs: AWAIT_MS,
       });
       workspaceId = workspace.id;
@@ -218,10 +225,34 @@ async function lookOnce(workspaceId: string): Promise<boolean> {
   if (!moved) return true;
   for (const event of step.events) await emit(watch, event, workspace, { turn });
   for (const pr of prs ?? []) await emit(watch, "pr.opened", workspace, { pull_request: pr.pullRequest, project_id: pr.projectId });
+  // Its review's turn is awaited afresh: watched on by that.
+  if (watch.autoReview && prs?.length && (await askForReview(workspace, prs))) return false;
   return step.next.awaiting;
 }
 
-type FoundPullRequest = { key: string; projectId: string; pullRequest: Record<string, unknown> };
+/** Ask the session to review the pull requests it just opened, and await
+ *  that turn. False when it couldn't be asked: nothing more is tried, the
+ *  pull requests having been told. */
+async function askForReview(workspace: Workspace, prs: FoundPullRequest[]): Promise<boolean> {
+  const request = autoReviewRequest(workspace.checkouts, prs.map((pr) => ({ projectId: pr.projectId, number: pr.number, baseBranch: pr.baseBranch })));
+  if (!request) return false;
+  try {
+    const attachmentIds: string[] = [];
+    for (const file of request.files) {
+      const stored = await storeAttachment({ base: base() }, new File([file.content], file.filename, { type: "text/markdown" }));
+      if (stored instanceof Response) throw new Error(`Couldn't attach ${file.filename} (${stored.status}).`);
+      attachmentIds.push(stored.id);
+    }
+    const fence = await sendAsOwner(base(), workspace, request.prompt, attachmentIds);
+    await turnAwaited(workspace.id, fence === null ? null : String(fence));
+    return true;
+  } catch (error) {
+    console.error(`Webhooks: couldn't ask ${workspace.id} for its review`, error);
+    return false;
+  }
+}
+
+type FoundPullRequest = { key: string; projectId: string; number: number; baseBranch: string; pullRequest: Record<string, unknown> };
 
 /** The session's pull requests not yet told, as its pull-request route finds them. */
 async function newPullRequests(workspace: Workspace, watch: Watch): Promise<FoundPullRequest[]> {
@@ -238,6 +269,8 @@ async function newPullRequests(workspace: Workspace, watch: Watch): Promise<Foun
     found.push({
       key,
       projectId,
+      number: pullRequest.number,
+      baseBranch: pullRequest.baseBranch,
       pullRequest: {
         number: pullRequest.number,
         url: pullRequest.url,
