@@ -2362,9 +2362,14 @@ export type Database = {
         Args: Record<never, never>;
         Returns: string[];
       };
+      // supabase/migrations/20261120130000_own_org_on_sign_in.sql
       create_team_org: {
-        Args: { org_name: string; creator: string; claimed_domain: string | null };
+        Args: { org_name: string; creator: string; claimed_domain: string | null; may_make_another: boolean };
         Returns: string;
+      };
+      create_own_org: {
+        Args: { org_name: string; creator: string };
+        Returns: string | null;
       };
       // supabase/migrations/20261118120000_abandoned_org_domains.sql
       org_people: {

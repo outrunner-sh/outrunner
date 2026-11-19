@@ -4,9 +4,25 @@
 \set QUIET on
 set client_min_messages to notice;
 
+-- A personal org for a user, as sign-up made one before
+-- 20261120130000_own_org_on_sign_in.sql: the users here stand for those from
+-- before it.
+create function pg_temp.personal_org_as_before(member uuid) returns uuid language plpgsql as $$
+declare org uuid;
+begin
+  insert into organizations (name, personal_owner_id, created_by) values ('Personal', member, member) returning id into org;
+  insert into organization_members (org_id, user_id, role) values (org, member, 'admin');
+  return org;
+end $$;
+
 insert into auth.users (id, email)
 values ('11111111-1111-1111-1111-111111111111', 'owner@example.com'),
        ('22222222-2222-2222-2222-222222222222', 'other@example.com');
+
+-- Signing up makes no org any more (20261120130000_own_org_on_sign_in.sql):
+-- these two are users from before that, each with the personal org sign-up
+-- made them then.
+select pg_temp.personal_org_as_before(id) from auth.users;
 
 insert into projects (owner_id, github_repo_id, full_name, owner, name)
 values ('11111111-1111-1111-1111-111111111111', 42,
@@ -867,10 +883,21 @@ end $$;
 
 reset role;
 
--- 23. Orgs: every user has a personal org they're admin of, a new user's too,
--- and their projects, sessions and boxes are in it.
+-- 23. Orgs: signing up makes no org (the app makes a new user's own); every
+-- user from before has a personal org they're admin of, and their projects,
+-- sessions and boxes are in it.
 insert into auth.users (id, email)
 values ('33333333-3333-3333-3333-333333333333', 'third@example.com');
+
+do $$
+begin
+  if exists (select 1 from organization_members where user_id = '33333333-3333-3333-3333-333333333333') then
+    raise exception 'FAIL: signing up made an org';
+  end if;
+  raise notice 'ok: signing up makes no org';
+end $$;
+
+select pg_temp.personal_org_as_before('33333333-3333-3333-3333-333333333333');
 
 do $$
 declare n integer;
@@ -1098,18 +1125,19 @@ begin
 end $$;
 
 -- 27. Team orgs: a user may have the same repository in their personal org
--- and a team org, makes one team org at most, and no one but the server
+-- and a team org, makes one Free org at most, and no one but the server
 -- reads or writes the domains orgs claimed.
 do $$
 begin
   insert into projects (org_id, owner_id, github_repo_id, full_name, owner, name)
   values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111',
           42, 'immadsahin/runtime', 'immadsahin', 'runtime');
+  -- One Free org per creator (20261120130000_own_org_on_sign_in.sql): user
+  -- 1 made Team, so another takes the server's word that they may.
   begin
-    insert into organizations (name, created_by)
-    values ('Second team', '11111111-1111-1111-1111-111111111111');
-    raise exception 'FAIL: a user made a second team org';
-  exception when unique_violation then
+    perform create_team_org('Second team', '11111111-1111-1111-1111-111111111111', null, false);
+    raise exception 'FAIL: a user made a second Free org';
+  exception when check_violation then
     null;
   end;
   insert into organization_domains (domain, org_id, claimed_by)
@@ -1131,7 +1159,7 @@ begin
      or has_table_privilege('anon', 'organization_domains', 'select') then
     raise exception 'FAIL: users may read the domains orgs claimed';
   end if;
-  raise notice 'ok: a repository in a personal and a team org, one team org per user, one org per domain';
+  raise notice 'ok: a repository in a personal and a team org, one Free org per creator, one org per domain';
 end $$;
 
 -- 28. A warm pool per member: two members of an org each keep a pooled box
