@@ -5,7 +5,7 @@ import { Maximize2, Minimize2, MousePointer2, PanelRightClose, RotateCw } from "
 import { useEffect, useReducer, useRef, useState } from "react";
 
 import { Spinner } from "@/components/ui/loaders";
-import { CONNECT_TIMEOUT_MS, desktopView, FIRST_VIEW, openDesktop } from "@/lib/session/desktop-view";
+import { CONNECT_TIMEOUT_MS, desktopView, FIRST_VIEW, inUseReporter, openDesktop } from "@/lib/session/desktop-view";
 import { cn } from "@/lib/utils";
 
 /** noVNC's client, loaded once for the page. It touches `window` as it
@@ -124,6 +124,21 @@ export function WorkspaceDesktop({
     };
   }, [workspaceId, isReady, view.attempt]);
 
+  // While the user drives (Interact on, the desktop live), their moves on it
+  // tell the agent's desktop tools to wait for them: caught on the way down
+  // to noVNC's canvas, which keeps the events for itself.
+  const connected = view.status === "connected";
+  useEffect(() => {
+    const target = screen.current;
+    if (!interact || !connected || !target) return;
+    const report = inUseReporter(workspaceId);
+    const moves = ["pointerdown", "pointermove", "wheel", "keydown"] as const;
+    for (const type of moves) target.addEventListener(type, report, { capture: true, passive: true });
+    return () => {
+      for (const type of moves) target.removeEventListener(type, report, { capture: true });
+    };
+  }, [interact, connected, workspaceId]);
+
   // Fullscreen is the browser's, so Esc leaves it without this knowing:
   // the button follows the document, not its own clicks.
   useEffect(() => {
@@ -137,7 +152,6 @@ export function WorkspaceDesktop({
     else void panel.current?.requestFullscreen().catch(() => {});
   }
 
-  const connected = view.status === "connected";
   const opening = view.status === "starting" || view.status === "connecting";
   const reconnect = () => dispatch({ type: "reconnect" });
 

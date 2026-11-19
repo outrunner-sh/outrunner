@@ -8,6 +8,8 @@ import {
   type DesktopView,
   desktopView,
   FIRST_VIEW,
+  IN_USE_EVERY_MS,
+  inUseReporter,
   openDesktop,
   VIEWER_FAILED,
 } from "@/lib/session/desktop-view";
@@ -154,4 +156,28 @@ test("a viewer that didn't load asks for the page to be reloaded, not tried agai
     httpStatus: 0,
     reload: true,
   });
+});
+
+test("the user's moves on the desktop are told at most every few seconds, and a failure is let go", async () => {
+  const sent: { url: string; method?: string }[] = [];
+  const fetchImpl = (async (url: string, init?: RequestInit) => {
+    sent.push({ url, method: init?.method });
+    if (sent.length === 2) throw new Error("offline");
+    return new Response(null, { status: 204 });
+  }) as unknown as typeof fetch;
+  let now = 1_000;
+  const report = inUseReporter("ws-1", fetchImpl, () => now);
+
+  report();
+  report();
+  now += IN_USE_EVERY_MS - 1;
+  report();
+  assert.deepEqual(sent, [{ url: "/api/workspaces/ws-1/desktop/activity", method: "POST" }]);
+
+  now += 1;
+  report();
+  now += IN_USE_EVERY_MS;
+  report();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sent.length, 3);
 });
