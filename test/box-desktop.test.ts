@@ -10,11 +10,11 @@ import type { Sandbox } from "@daytonaio/sdk";
 import { DEVTOOLS_PORT, NOVNC_PORT } from "@/lib/runtime/box-ports";
 import { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import type { SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
-import { box, MARK_DESKTOP_IN_USE, WEB_BROWSER_SETUP } from "@/lib/runtime/sandbox/daytona";
+import { box, MARK_DESKTOP_IN_USE, OPEN_WEB_BROWSER, WEB_BROWSER_SETUP } from "@/lib/runtime/sandbox/daytona";
 import { hasDesktop } from "@/lib/runtime/types";
 
 /** The scripts the desktop runs on the box, by the name a log gives them. */
-const SCRIPTS: Record<string, string> = { setup: WEB_BROWSER_SETUP, "in use": MARK_DESKTOP_IN_USE };
+const SCRIPTS: Record<string, string> = { setup: WEB_BROWSER_SETUP, "in use": MARK_DESKTOP_IN_USE, "open browser": OPEN_WEB_BROWSER };
 
 /** A Daytona sandbox that records its computer-use starts, the scripts run
  *  on it and signed links. */
@@ -236,4 +236,20 @@ test("a failed mark says so, for the route to answer it", async () => {
     process: { executeCommand: async () => ({ exitCode: 1, result: "touch: Read-only file system" }) },
   } as unknown as Sandbox;
   await assert.rejects(box(sandbox).desktop!.markInUse(), /marking the desktop in use: exit 1: touch: Read-only file system/);
+});
+
+test("the Desktop tab's Browser button opens the agent's browser on the box", async () => {
+  const { sandbox, log } = desktopSandbox();
+  const provider = new ComputerRuntimeProvider("daytona", backendOf(box(sandbox)));
+  assert.equal(await provider.openDesktopBrowser("box-1"), true);
+  assert.deepEqual(log, ["open browser"]);
+
+  const noDesktop = new ComputerRuntimeProvider("neev", backendOf({ id: "box-2" } as unknown as SandboxBox));
+  assert.equal(await noDesktop.openDesktopBrowser("box-2"), false);
+});
+
+test("the browser is set up again before it opens, and opens on the desktop's display, let go of", () => {
+  assert.ok(OPEN_WEB_BROWSER.startsWith(WEB_BROWSER_SETUP));
+  const launch = OPEN_WEB_BROWSER.slice(WEB_BROWSER_SETUP.length).trim();
+  assert.equal(launch, 'DISPLAY=:0 setsid -f "$HOME/.outrunner/desktop/web-browser" >/dev/null 2>&1 </dev/null');
 });

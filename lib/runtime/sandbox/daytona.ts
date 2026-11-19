@@ -116,6 +116,15 @@ async function setUpWebBrowser(sandbox: Sandbox): Promise<void> {
  */
 export const MARK_DESKTOP_IN_USE = `mkdir -p "$HOME/.outrunner/desktop" && touch "$HOME/.outrunner/desktop/user-active"`;
 
+/**
+ * Opens the desktop's Web Browser, the agent's own Chromium, as the dock's
+ * globe does: set up again first (a box whose setup failed at the desktop's
+ * start gets it now), then launched on the desktop's display in a session of
+ * its own, its output let go, so the command ends while the browser runs on.
+ */
+export const OPEN_WEB_BROWSER = `${WEB_BROWSER_SETUP}DISPLAY=:0 setsid -f "$HOME/.outrunner/desktop/web-browser" >/dev/null 2>&1 </dev/null
+`;
+
 /** How long a quick command for the Desktop tab may take on the box. */
 const DESKTOP_ACTION_TIMEOUT_MS = 15_000;
 
@@ -518,6 +527,7 @@ export function box(sandbox: Sandbox): SandboxBox {
         return url.toString();
       },
       markInUse: () => runOnDesktop(sandbox, MARK_DESKTOP_IN_USE, "marking the desktop in use"),
+      openBrowser: () => runOnDesktop(sandbox, OPEN_WEB_BROWSER, "opening the desktop's web browser"),
     },
     // The signed link, its credential good for this one port, and for a
     // quarter of an hour: the standard link's token is the sandbox's, good
