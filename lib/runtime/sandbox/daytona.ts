@@ -1,7 +1,7 @@
 import { Daytona, DaytonaNotFoundError, type CreateSandboxFromSnapshotParams, type Sandbox } from "@daytonaio/sdk";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
-import { NOVNC_PORT } from "@/lib/runtime/box-ports";
+import { DEVTOOLS_PORT, NOVNC_PORT } from "@/lib/runtime/box-ports";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
 import type { ListedBox } from "@/lib/runtime/orphan-boxes";
@@ -50,6 +50,69 @@ export const DESKTOP_RESOLUTION = "1280x800";
  * five minutes.
  */
 const DESKTOP_START_TIMEOUT_MS = 30_000;
+
+/**
+ * Makes the desktop's Web Browser (the globe in XFCE's dock, and a link the
+ * desktop opens) the agent's own Chromium. XFCE's default, Debian's
+ * sensible-browser, starts Chromium with its sandbox, which a Daytona box
+ * can't give it (no user namespaces, no setuid helper): Chromium quits at
+ * once with "No usable sandbox!" and the click opens nothing. The helper XFCE
+ * is pointed at instead starts it as the agent's desktop tools do
+ * (runtime-agent/internal/desktop/browser.go): on the same profile and
+ * DevTools port, so the user and the agent share one browser and its
+ * sign-ins, and without its sandbox only once it has said it has none.
+ * Written on every start, so a box made before this gets it too; only the
+ * WebBrowser line of the user's helpers.rc is touched.
+ */
+export const WEB_BROWSER_SETUP = `set -e
+dir="$HOME/.outrunner/desktop"
+mkdir -p "$dir" "$HOME/.local/share/xfce4/helpers" "$HOME/.config/xfce4"
+cat > "$dir/web-browser" <<'EOF'
+#!/bin/sh
+# The desktop's Web Browser: the agent's own Chromium, written by Outrunner.
+profile="$HOME/.outrunner/desktop/chromium"
+log="$HOME/.outrunner/desktop/web-browser.log"
+for b in chromium chromium-browser google-chrome google-chrome-stable; do
+  command -v "$b" >/dev/null 2>&1 && break
+done
+(umask 077; mkdir -p "$profile")
+set -- --remote-debugging-port=${DEVTOOLS_PORT} --remote-debugging-address=127.0.0.1 --user-data-dir="$profile" --no-first-run --no-default-browser-check --password-store=basic --start-maximized "$@"
+"$b" "$@" >"$log" 2>&1 && exit 0
+grep -q "No usable sandbox" "$log" || exit 1
+exec "$b" --no-sandbox "$@" >>"$log" 2>&1
+EOF
+chmod 755 "$dir/web-browser"
+cat > "$HOME/.local/share/xfce4/helpers/outrunner-web-browser.desktop" <<EOF
+[Desktop Entry]
+Version=1.0
+Type=X-XFCE-Helper
+Name=Chromium
+Icon=chromium
+X-XFCE-Category=WebBrowser
+X-XFCE-Commands=$dir/web-browser
+X-XFCE-CommandsWithParameter=$dir/web-browser "%s"
+NoDisplay=true
+EOF
+rc="$HOME/.config/xfce4/helpers.rc"
+touch "$rc"
+{ grep -v '^WebBrowser=' "$rc" || true; echo "WebBrowser=outrunner-web-browser"; } > "$rc.new"
+mv "$rc.new" "$rc"
+`;
+
+/** WEB_BROWSER_SETUP on the box. A failure is logged, never the desktop's:
+ *  it still opens, its Web Browser only as it was. */
+async function setUpWebBrowser(sandbox: Sandbox): Promise<void> {
+  try {
+    const res = await withTimeout(
+      sandbox.process.executeCommand(`bash -c ${shellQuote(WEB_BROWSER_SETUP)}`, undefined, undefined, DESKTOP_START_TIMEOUT_MS / 1000),
+      DESKTOP_START_TIMEOUT_MS,
+      "setting up the desktop's web browser didn't finish in time",
+    );
+    if (res.exitCode) throw new Error(`exit ${res.exitCode}: ${(res.result ?? "").trim()}`);
+  } catch (error) {
+    console.warn(`Could not set up the desktop's web browser on Daytona box ${sandbox.id}`, error);
+  }
+}
 
 /** `promise`, or a rejection saying `message` once `ms` have gone by. */
 async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
@@ -419,9 +482,13 @@ export function box(sandbox: Sandbox): SandboxBox {
     browserUrl: async (port, ttlSeconds) => (await sandbox.getSignedPreviewUrl(port, ttlSeconds)).url,
     desktop: {
       // Starts what isn't running (the display, its window manager, the VNC
-      // server and noVNC) and leaves what is: a second start is a no-op.
+      // server and noVNC) and leaves what is: a second start is a no-op. Its
+      // Web Browser is set up alongside, before anyone can click it.
       start: async () => {
-        await withTimeout(sandbox.computerUse.start(), DESKTOP_START_TIMEOUT_MS, "Daytona's desktop didn't start in time");
+        await Promise.all([
+          withTimeout(sandbox.computerUse.start(), DESKTOP_START_TIMEOUT_MS, "Daytona's desktop didn't start in time"),
+          setUpWebBrowser(sandbox),
+        ]);
       },
       // A signed preview link is good for its one port alone (checked on a
       // real box: the token in it is refused on any other), and noVNC's

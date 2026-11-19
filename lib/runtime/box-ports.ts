@@ -12,6 +12,10 @@ export const PROVIDER_PORTS: readonly number[] = [2280, 22220, 22222, 33333];
  *  VNC client opens. It forwards to the desktop's VNC server alone. */
 export const NOVNC_PORT = 6080;
 
+/** The DevTools port of the desktop's browser, on the box's loopback alone
+ *  (runtime-agent/internal/desktop DevToolsPort). */
+export const DEVTOOLS_PORT = 19222;
+
 /**
  * The desktop's servers (lib/runtime/sandbox/backend.ts BoxDesktop): x11vnc
  * on 5900 and 5901 and noVNC's proxy, which Daytona's computer use starts, and
@@ -22,7 +26,7 @@ export const NOVNC_PORT = 6080;
  * to both. The Desktop tab is the way in, through a link that lasts minutes.
  * Both lists match DesktopPorts in agent-protocol.fixtures.json.
  */
-export const DESKTOP_PORTS: readonly number[] = [5900, 5901, NOVNC_PORT, 19222];
+export const DESKTOP_PORTS: readonly number[] = [5900, 5901, NOVNC_PORT, DEVTOOLS_PORT];
 
 /** Whether a preview link may be made for `port` on a session's box: a
  *  server of the user's, not the agent's, the provider's or the desktop's,
