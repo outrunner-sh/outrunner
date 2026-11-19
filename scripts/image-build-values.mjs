@@ -9,7 +9,7 @@
 // No dependencies, so a job can run it before installing any.
 import { readFileSync } from "node:fs";
 
-export const IMAGE_BUILD_VALUES = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_CODEX_CLI_VERSION"];
+export const IMAGE_BUILD_VALUES = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_CODEX_CLI_VERSION", "NEXT_PUBLIC_SENTRY_DSN"];
 
 /** JSON with comments and trailing commas, as wrangler reads it, as JSON:
  *  comments and trailing commas outside strings dropped. */

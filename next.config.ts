@@ -22,6 +22,12 @@ const nextConfig: NextConfig = {
   // ssh2 (the Neev tunnel) loads optional native bindings the same way.
   serverExternalPackages: ["@daytonaio/sdk", "form-data", "ssh2"],
 
+  // Browser source maps, served beside each chunk, so Sentry can fetch them
+  // and show a browser error's stack as source rather than minified code.
+  // The source is public already; uploading them instead would need a Sentry
+  // auth token in CI. A map is only fetchable while its deploy is live.
+  productionBrowserSourceMaps: true,
+
   // The Daytona provider reads the cross-compiled runtime-agent binary at
   // request time via `readFile(RUNTIME_AGENT_BINARY_PATH)` (upload-on-provision,
   // decision 1A). The path is computed at runtime, so Next's file tracer cannot

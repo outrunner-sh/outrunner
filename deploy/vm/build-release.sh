@@ -18,6 +18,10 @@ export OUTRUNNER_BUILD="$release_sha"
   for name in OUTRUNNER_BUILD APP_DOMAIN NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY NEXT_PUBLIC_CODEX_CLI_VERSION; do
     printf '%s=%s\n' "$name" "${!name}"
   done
+  # Optional: without it the browser reports no errors.
+  if [[ -n "${NEXT_PUBLIC_SENTRY_DSN:-}" && "$NEXT_PUBLIC_SENTRY_DSN" != *$'\n'* ]]; then
+    printf 'NEXT_PUBLIC_SENTRY_DSN=%s\n' "$NEXT_PUBLIC_SENTRY_DSN"
+  fi
 } > "$release_dir/.env.build"
 docker compose --env-file "$release_dir/.env.build" -f "$release_dir/deploy/vm/compose.yml" build app
 printf '%s\n' "$release_sha" > "$release_dir/.image-built"

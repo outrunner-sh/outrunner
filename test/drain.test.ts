@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import { drained, holdOpen, pendingWork } from "@/lib/observability/drain";
 import { sentryOptions } from "@/lib/observability/report";
+import { clientSentryOptions } from "@/lib/observability/sentry-options";
 import { timeoutSignal, TimeoutError, withTimeout } from "@/lib/http/timeout";
 
 test("drained waits for the work under way, and gives up after its limit", async () => {
@@ -39,6 +40,26 @@ test("Sentry is off without SENTRY_DSN, and sends no request data with it", () =
   assert.equal(collect?.httpHeaders, false);
   assert.equal(collect?.cookies, false);
   assert.deepEqual(collect?.httpBodies, []);
+  assert.equal(collect?.urlQueryParams, false);
+  // The browser's DSN serves the server when it has none of its own.
+  assert.equal(sentryOptions({ NEXT_PUBLIC_SENTRY_DSN: "https://b@o1.ingest.sentry.io/3" })?.dsn, "https://b@o1.ingest.sentry.io/3");
+  assert.equal(sentryOptions({ SENTRY_DSN: "https://k@o1.ingest.sentry.io/2", NEXT_PUBLIC_SENTRY_DSN: "https://b@o1.ingest.sentry.io/3" })?.dsn, "https://k@o1.ingest.sentry.io/2");
+});
+
+test("the browser's Sentry is off without a built-in DSN, keeps the server's privacy, and drops console breadcrumbs", () => {
+  assert.equal(clientSentryOptions({ dsn: undefined, nodeEnv: "production" }), null);
+  assert.equal(clientSentryOptions({ dsn: " ", nodeEnv: "production" }), null);
+  const client = clientSentryOptions({ dsn: "https://b@o1.ingest.sentry.io/3", nodeEnv: "production" });
+  const server = sentryOptions({ SENTRY_DSN: "https://b@o1.ingest.sentry.io/3", NODE_ENV: "production" });
+  assert.deepEqual(client?.dataCollection, (server as { dataCollection?: unknown }).dataCollection);
+  assert.equal(client?.environment, "production");
+  assert.equal(client?.tracesSampleRate, 0);
+  assert.equal(client?.release, undefined);
+  assert.equal(clientSentryOptions({ dsn: "https://b@o1.ingest.sentry.io/3", environment: "staging", nodeEnv: "production" })?.environment, "staging");
+  assert.equal(client?.beforeBreadcrumb({ category: "console", message: "the user's prompt" }), null);
+  const click = { category: "ui.click", message: "button.send" };
+  assert.equal(client?.beforeBreadcrumb(click), click);
+  assert.deepEqual(client?.beforeBreadcrumb({}), {});
 });
 
 test("withTimeout gives up on slow work, and timeoutSignal keeps the caller's own signal", async () => {

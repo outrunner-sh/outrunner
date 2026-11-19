@@ -17,7 +17,7 @@ test("JSONC: comments and trailing commas go, strings stay as they are", () => {
 
 test("the image's public values, or which are missing", () => {
   const wrangler = (vars: object) => JSON.stringify({ containers: [{ image_vars: vars }] });
-  const all = { NEXT_PUBLIC_SUPABASE_URL: "https://auth.example.com", NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_x", NEXT_PUBLIC_CODEX_CLI_VERSION: "0.1.4" };
+  const all = { NEXT_PUBLIC_SUPABASE_URL: "https://auth.example.com", NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_x", NEXT_PUBLIC_CODEX_CLI_VERSION: "0.1.4", NEXT_PUBLIC_SENTRY_DSN: "https://k@o1.ingest.sentry.io/2" };
   assert.deepEqual(imageBuildValues(wrangler({ ...all, OTHER: "x" })), all);
   assert.throws(() => imageBuildValues(wrangler({ ...all, NEXT_PUBLIC_SUPABASE_ANON_KEY: "" })), /image_vars\.NEXT_PUBLIC_SUPABASE_ANON_KEY/);
 });
