@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { orgName, orgSummary, pickActiveOrg, sortOrgs, type Org } from "@/lib/orgs/active";
+import { madeByOthers, orgName, orgSummary, pickActiveOrg, sortOrgs, type Org } from "@/lib/orgs/active";
 import { emailDomain, isPublicDomain, primaryDomain } from "@/lib/orgs/domains";
 
 const personal: Org = { id: "p", name: "Personal", personal: true, role: "admin" };
@@ -27,6 +27,17 @@ test("orgs list the personal one first, then teams by name", () => {
     sortOrgs([team, personal, other]).map((o) => o.id),
     ["p", "a", "t"],
   );
+});
+
+test("only an org someone else made lets a user in: never one they made themselves", () => {
+  const memberships = [
+    { orgId: "own", createdBy: "me" },
+    { orgId: "invited", createdBy: "them" },
+    // Its maker has deleted their account since: still not the user's doing.
+    { orgId: "orphaned", createdBy: null },
+  ];
+  assert.deepEqual(madeByOthers(memberships, "me"), ["invited", "orphaned"]);
+  assert.deepEqual(madeByOthers([{ orgId: "own", createdBy: "me" }], "me"), []);
 });
 
 test("an org's name is trimmed and 1 to 80 characters", () => {

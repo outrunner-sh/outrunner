@@ -49,6 +49,14 @@ export function pickActiveOrg(orgs: readonly Org[], wanted: string | undefined):
   return orgs.find((o) => o.id === wanted) ?? orgs.find((o) => o.personal) ?? orgs[0] ?? null;
 }
 
+/**
+ * The ids of the orgs among a user's memberships that someone else made. An
+ * org whose maker has since gone (`createdBy` null) is someone else's too.
+ */
+export function madeByOthers(memberships: readonly { orgId: string; createdBy: string | null }[], userId: string): string[] {
+  return memberships.filter((m) => m.createdBy !== userId).map((m) => m.orgId);
+}
+
 /** An org's name, as a user may give it: trimmed, 1 to 80 characters. */
 export function orgName(value: unknown): string | null {
   if (typeof value !== "string") return null;

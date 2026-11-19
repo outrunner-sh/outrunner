@@ -3,8 +3,9 @@
  * apart from GitHub and the database so the rules test on their own (wired in
  * app/auth/callback/route.ts):
  *
- * - Someone already in a team org: let in (app_metadata.outrunner_admitted).
- *   This also mends an accept whose admission didn't save.
+ * - Someone already in an org someone else made: let in
+ *   (app_metadata.outrunner_admitted). This also mends an accept whose
+ *   admission didn't save. An org they made themselves lets no one in.
  * - Someone with an open invite to one of their verified emails: kept signed
  *   in, but only so far as the invite's page, where accepting it lets them in
  *   (app/api/invites/accept). An invite alone lets no one into the app:
@@ -20,8 +21,9 @@ import type { JoinRequestOutcome } from "@/lib/db/org-members";
 import { primaryDomain, type VerifiedEmail } from "@/lib/orgs/domains";
 
 export type AdmissionDeps = {
-  /** Whether the user is a member of any team org. */
-  inTeamOrg(): Promise<boolean>;
+  /** Whether the user is a member of an org someone else made
+   *  (orgIdsMadeByOthers). */
+  inOrgMadeByOthers(): Promise<boolean>;
   verifiedEmails(): Promise<VerifiedEmail[]>;
   hasOpenInviteFor(emails: string[]): Promise<boolean>;
   orgsForDomains(domains: string[]): Promise<DomainOrg[]>;
@@ -41,7 +43,7 @@ export type Admission =
   | { kind: "refused" };
 
 export async function admitOnSignIn(deps: AdmissionDeps): Promise<Admission> {
-  if (await deps.inTeamOrg()) {
+  if (await deps.inOrgMadeByOthers()) {
     await deps.admit();
     return { kind: "admitted" };
   }
