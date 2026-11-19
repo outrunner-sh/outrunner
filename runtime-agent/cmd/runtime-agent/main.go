@@ -280,9 +280,10 @@ func desktopServer(args []string) int {
 		return 1
 	}
 	err = desktop.Serve(context.Background(), os.Stdin, os.Stdout, desktop.Config{
-		Toolbox: toolbox,
-		Browser: desktop.NewBrowser(home),
-		Folder:  desktop.FilesFolder(*folder),
+		Toolbox:    toolbox,
+		Browser:    desktop.NewBrowser(home),
+		Folder:     desktop.FilesFolder(*folder),
+		UserActive: desktop.UserActivePath(home),
 		// In a session of its own, so it outlives this server and the
 		// session's CLI.
 		Watchdog: func(id string, until time.Time) error {
