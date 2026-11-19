@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { ownOrgName, ownOrgOnSignIn } from "@/lib/orgs/own-org";
+import { ownOrgName, ownOrgOnSignIn, pickOwnOrg } from "@/lib/orgs/own-org";
 
 test("a user's own org is named after their first name, else their login or email's local part", () => {
   assert.equal(ownOrgName("Immad Sahin"), "Immad's organization");
@@ -22,4 +22,13 @@ test("sign-in makes no own org on the way to an invite: they'll be in its org", 
   assert.equal(ownOrgOnSignIn("/invite/abc123"), false);
   assert.equal(ownOrgOnSignIn("/"), true);
   assert.equal(ownOrgOnSignIn("/onboarding"), true);
+});
+
+test("a user's own org: their personal org while they have one, else the first they made", () => {
+  const personal = { id: "p", personal: true, createdAt: "2026-11-02T00:00:00Z" };
+  const first = { id: "f", personal: false, createdAt: "2026-11-01T00:00:00Z" };
+  const later = { id: "l", personal: false, createdAt: "2026-11-05T00:00:00Z" };
+  assert.equal(pickOwnOrg([later, personal, first]), "p");
+  assert.equal(pickOwnOrg([later, first]), "f");
+  assert.equal(pickOwnOrg([]), null);
 });

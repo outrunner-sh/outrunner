@@ -11,7 +11,7 @@ import type { OrgRole } from "@/lib/orgs/active";
  * GitHub back without our state: from "Redirect on update" after someone
  * changed the App's repositories on GitHub, or an install begun there.
  *
- * - `refresh`: one the org they're looking at (else their personal org) has
+ * - `refresh`: one the org they're looking at (else their own org) has
  *   already: kept up to date.
  * - `offer`: one the org they're looking at, which they administer, hasn't:
  *   offered for them to add there with a click. Never linked on this GET
@@ -29,12 +29,12 @@ export function returnWithoutState(input: {
   /** The orgs it's linked to; null when Outrunner hasn't heard of it. */
   linkedOrgIds: readonly string[] | null;
   activeOrg: { id: string; role: OrgRole } | null;
-  personalOrgId: string | null;
+  ownOrgId: string | null;
 }): ReturnWithoutState {
-  const { linkedOrgIds, activeOrg, personalOrgId } = input;
+  const { linkedOrgIds, activeOrg, ownOrgId } = input;
   if (!linkedOrgIds) return { kind: "expired" };
   if (activeOrg && linkedOrgIds.includes(activeOrg.id)) return { kind: "refresh", orgId: activeOrg.id };
-  if (personalOrgId && linkedOrgIds.includes(personalOrgId)) return { kind: "refresh", orgId: personalOrgId };
+  if (ownOrgId && linkedOrgIds.includes(ownOrgId)) return { kind: "refresh", orgId: ownOrgId };
   if (!activeOrg) return { kind: "expired" };
   if (activeOrg.role !== "admin") return { kind: "not_admin" };
   return { kind: "offer", orgId: activeOrg.id };

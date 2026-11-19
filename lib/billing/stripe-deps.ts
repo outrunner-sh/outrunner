@@ -17,7 +17,7 @@ import { OVERAGE_KIND } from "@/lib/billing/overage";
 import type { CheckoutDeps } from "@/lib/billing/checkout";
 import { refreshModelAllowance } from "@/lib/db/credentials";
 import { refreshOrgModelAllowance } from "@/lib/db/org-model-allowance";
-import { getOrg, personalOrgId, personalOwners } from "@/lib/db/orgs";
+import { getOrg, ownOrgId, personalOwners } from "@/lib/db/orgs";
 import { PLANS } from "@/lib/billing/plans";
 import { stripe } from "@/lib/billing/stripe";
 import type { SyncDeps } from "@/lib/billing/sync";
@@ -25,7 +25,7 @@ import type { SyncDeps } from "@/lib/billing/sync";
 export const syncDeps: SyncDeps = {
   retrieveSubscription: (id) => stripe().subscriptions.retrieve(id),
   orgForCustomer,
-  personalOrgOf: personalOrgId,
+  personalOrgOf: ownOrgId,
   subscriptionById,
   // Stored, and said in the org's audit log when its plan or status moved.
   async saveSubscription(record, fetchedAt) {

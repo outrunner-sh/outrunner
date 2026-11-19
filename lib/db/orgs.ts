@@ -9,7 +9,7 @@ import type { User } from "@supabase/supabase-js";
 
 import { ownerFromUser } from "@/lib/auth/owner";
 import { type Org, type OrgRole, sortOrgs } from "@/lib/orgs/active";
-import { ownOrgName } from "@/lib/orgs/own-org";
+import { ownOrgName, pickOwnOrg } from "@/lib/orgs/own-org";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -56,15 +56,22 @@ export async function orgHasOtherMembers(projectId: string, userId: string): Pro
   return (count ?? 0) > 0;
 }
 
-/** A user's personal org, read as the server; null before it's made. */
-export async function personalOrgId(userId: string): Promise<string | null> {
+/**
+ * A user's own org, read as the server: their personal org while they have
+ * one, else the first org they made and still administer (the one made for
+ * them at sign-in: lib/orgs/own-org.ts). Null when there's none.
+ */
+export async function ownOrgId(userId: string): Promise<string | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("organizations")
-    .select("id")
-    .eq("personal_owner_id", userId)
-    .maybeSingle();
+    .select("id, personal_owner_id, created_at, organization_members!inner(user_id, role)")
+    .eq("created_by", userId)
+    .eq("organization_members.user_id", userId)
+    .eq("organization_members.role", "admin");
   if (error) throw error;
-  return data?.id ?? null;
+  return pickOwnOrg(
+    (data ?? []).map((o) => ({ id: o.id, personal: o.personal_owner_id === userId, createdAt: o.created_at })),
+  );
 }
 
 /** The personal orgs among `orgIds`, by org, with their owners. */

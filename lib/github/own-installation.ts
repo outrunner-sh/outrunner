@@ -1,8 +1,8 @@
 /**
- * The Outrunner GitHub App on a user's own GitHub account, for their personal
- * org: what connecting GitHub in Settings → Connections sets up beside the
+ * The Outrunner GitHub App on a user's own GitHub account, for their own
+ * org (ownOrgId): what connecting GitHub in Settings → Connections sets up beside the
  * App's user authorization. Installing it is where GitHub has them pick All
- * or Selected repositories; linking it to their personal org (the same
+ * or Selected repositories; linking it to their own org (the same
  * org_github_installations link an admin's install makes, claimInstallation)
  * gives that org the App's own tokens too, for boxes' per-repository reads and
  * for working as the App.
@@ -14,15 +14,15 @@ import {
   installationHolder,
   recordInstalled,
 } from "@/lib/db/github-installations";
-import { personalOrgId } from "@/lib/db/orgs";
+import { ownOrgId } from "@/lib/db/orgs";
 import { listUserInstallations, ownInstallation, type UserInstallation } from "@/lib/github/user-auth";
 
 /** What's left to do: install the App on their account, or nothing. */
 export type OwnInstallationOutcome = { next: "install"; orgId: string } | { next: "done"; installation: UserInstallation | null };
 
 /**
- * Link the App's installation on the user's own account to their personal
- * org, if they have one and it isn't linked yet; or say it's to be installed.
+ * Link the App's installation on the user's own account to their own org
+ * (ownOrgId), if they have one and it isn't linked yet; or say it's to be installed.
  * Best-effort past that: a link the database refuses (the installation is
  * another org's, which the user doesn't administer) leaves the connection
  * working as it is.
@@ -32,7 +32,7 @@ export async function linkOwnInstallation(
   github: { id: number; login: string },
   token: string,
 ): Promise<OwnInstallationOutcome> {
-  const orgId = await personalOrgId(user.id);
+  const orgId = await ownOrgId(user.id);
   const installations = await listUserInstallations(token).catch((error: unknown) => {
     console.warn(`Couldn't list user ${user.id}'s GitHub App installations`, error instanceof Error ? error.message : error);
     return null;
@@ -54,7 +54,7 @@ export async function linkOwnInstallation(
     await claimInstallation({ orgId, installation: own, githubIds: [github.id], userId: user.id });
   } catch (error) {
     if (!(error instanceof ClaimError)) throw error;
-    console.warn(`Not linking installation ${own.id} to user ${user.id}'s personal org: ${error.reason}`);
+    console.warn(`Not linking installation ${own.id} to user ${user.id}'s own org: ${error.reason}`);
   }
   return { next: "done", installation: own };
 }

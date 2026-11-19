@@ -1,5 +1,5 @@
 import { subscriptionsFor } from "@/lib/billing/billing-store";
-import { personalOrgId } from "@/lib/db/orgs";
+import { ownOrgId } from "@/lib/db/orgs";
 import type { Period } from "@/lib/billing/hours";
 import { billingMode } from "@/lib/billing/mode";
 import { isConnector } from "@/lib/automations/connector";
@@ -52,7 +52,7 @@ export async function personalEntitlements(userId: string, now = new Date()): Pr
   if (await isConnector(userId)) {
     return { plan: connectorPlan(automationModelAllowanceUsd()), allowancePeriod: connectorPeriod(now) };
   }
-  const orgId = await personalOrgId(userId);
+  const orgId = await ownOrgId(userId);
   return orgId ? entitlementsFor(orgId, now) : { plan: PLANS.free, allowancePeriod: null };
 }
 

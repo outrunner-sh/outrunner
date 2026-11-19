@@ -31,3 +31,16 @@ export function ownOrgOnSignIn(next: string): boolean {
   return !isInvitePath(next);
 }
 
+/**
+ * Which of the orgs a user made and administers is their own: their personal
+ * org while they have one, else the first they made. Ties, by id.
+ */
+export function pickOwnOrg(made: readonly { id: string; personal: boolean; createdAt: string }[]): string | null {
+  const [own] = [...made].sort(
+    (a, b) =>
+      Number(b.personal) - Number(a.personal) ||
+      Date.parse(a.createdAt) - Date.parse(b.createdAt) ||
+      a.id.localeCompare(b.id),
+  );
+  return own?.id ?? null;
+}
