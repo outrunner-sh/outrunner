@@ -3,9 +3,12 @@
  * carries, the key that records each one once, and how a delivery of them
  * reads to the Mission's agent, as `<runner_event>` blocks (the Mission's
  * prompt, lib/missions/prompt.ts, says what to do with each; the session page
- * shows them as cards). The parts with no network.
+ * shows them as cards). A Mission on call in Slack also hears Slack's news
+ * (lib/missions/slack-route.ts), with no Ship: `<slack_request>`,
+ * `<slack_answer>` and `<slack_channel>` blocks. The parts with no network.
  */
 
+import { ON_CALL_PROMPT } from "@/lib/missions/prompt";
 import type { NotificationDraft } from "@/lib/notifications/events";
 import type { MissionEventKind } from "@/lib/supabase/database.types";
 
@@ -24,11 +27,52 @@ export type MissionEventPayload = {
   pr?: PullRequestRef;
   /** ready / needs_attention / archived: why. */
   reason?: string;
+  /** slack_request / slack_answer / slack_channel: where in Slack, and what. */
+  slack?: SlackEventPayload;
 };
+
+/** Slack's news for a Mission on call (docs/missions.md, "On call in Slack"). */
+export type SlackEventPayload = {
+  /** The bound channel. */
+  channel: string;
+  /** slack_request / slack_answer: the thread's ts, which the Mission's
+   *  slack_* tools name it by. */
+  thread?: string;
+  /** slack_request: its key, which spawn_runner and slack_react take as
+   *  request_id. */
+  request?: string;
+  /** slack_request: the message's own ts. */
+  ts?: string;
+  permalink?: string | null;
+  /** Who said it, as Slack shows them, and their Slack id. */
+  author?: string;
+  slackUserId?: string;
+  /** Their linked Outrunner account. */
+  userId?: string | null;
+  /** slack_request: what they said (Slack's markup made Markdown); its
+   *  files' names. */
+  text?: string;
+  files?: string[];
+  /** slack_answer: the question, and the answer picked. */
+  question?: string;
+  answer?: string;
+  /** slack_channel: on call there now, or not any more. */
+  bound?: boolean;
+  /** slack_channel: the channel's name, when Slack said it. */
+  channelName?: string | null;
+};
+
+/** The kinds that are Slack's, with no Ship. */
+export const SLACK_EVENT_KINDS = ["slack_request", "slack_answer", "slack_channel"] as const satisfies readonly MissionEventKind[];
+
+export function isSlackEvent(kind: MissionEventKind): kind is (typeof SLACK_EVENT_KINDS)[number] {
+  return (SLACK_EVENT_KINDS as readonly string[]).includes(kind);
+}
 
 export type MissionEvent = {
   id: string;
-  runnerId: string;
+  /** The Ship it's about; null for Slack's kinds. */
+  runnerId: string | null;
   kind: MissionEventKind;
   payload: MissionEventPayload;
   createdAt: string;
@@ -51,6 +95,13 @@ export const eventKey = {
   decision: (runnerId: string, pr: { repo: string; number: number }, seq: number) => `decision:${runnerId}:${prKey(pr)}:${seq}`,
   ended: (kind: "merged" | "closed", runnerId: string, pr: { repo: string; number: number }) => `${kind}:${runnerId}:${prKey(pr)}`,
   archived: (runnerId: string, at: string) => `archived:${runnerId}:${at}`,
+  /** A Slack message, by Slack's own event id: Slack's retries of it are
+   *  one request. */
+  slackRequest: (eventId: string) => `slack_request:${eventId}`,
+  /** A question card's answer: its first, only. */
+  slackAnswer: (askId: string) => `slack_answer:${askId}`,
+  /** The binding changing: once a change. */
+  slackChannel: (missionId: string, bound: boolean, at: string) => `slack_channel:${missionId}:${bound ? "on" : "off"}:${at}`,
 };
 
 function attr(value: string): string {
@@ -62,7 +113,7 @@ function attr(value: string): string {
  *  block and pass off one of its own as an event, to the Mission or the
  *  page. */
 function inert(text: string): string {
-  return text.replace(/<(\/?)runner_event/gi, "<$1runner-event");
+  return text.replace(/<(\/?)(runner|slack)_(event|request|answer|channel)/gi, "<$1$2-$3");
 }
 
 function prLine(pr: PullRequestRef | undefined): string {
@@ -88,11 +139,42 @@ function body(event: MissionEvent): string {
       return `${prLine(p.pr)}\nClosed without merging.`;
     case "archived":
       return `Archived: ${p.reason ?? "its work is done"}. Messaging it restores it.`;
+    case "slack_request": {
+      const s = p.slack;
+      const files = s?.files?.length ? `\nFiles: ${s.files.join(", ")}` : "";
+      return `${s?.text?.trim() || "(no text)"}${files}`;
+    }
+    case "slack_answer":
+      return `Your question: ${p.slack?.question ?? ""}\nAnswer: ${p.slack?.answer ?? ""}`;
+    case "slack_channel":
+      return p.slack?.bound
+        ? `You are now on call in the Slack channel ${channelLabel(p.slack)}.\n\n${ON_CALL_PROMPT}`
+        : `You are no longer on call in the Slack channel ${channelLabel(p.slack)}. Its threads don't reach you any more, and your slack_* tools are off. Don't post in Slack. Requests from it that hadn't started a Ship are refused: start nothing for them. Ships already started go on with their owner in Outrunner.`;
   }
+}
+
+function channelLabel(slack: SlackEventPayload | undefined): string {
+  if (!slack) return "(unknown)";
+  return slack.channelName ? `#${slack.channelName} (${slack.channel})` : slack.channel;
+}
+
+/** One of Slack's events as the Mission reads it: its own tag, naming the
+ *  thread its slack_* tools take. */
+function formatSlackEvent(event: MissionEvent): string {
+  const s = event.payload.slack;
+  const attrs = [
+    s?.thread && `thread="${attr(s.thread)}"`,
+    s?.request && `request_id="${attr(s.request)}"`,
+    s?.author && `from="${attr(s.author)}"`,
+    s?.permalink && `permalink="${attr(s.permalink)}"`,
+    `at="${event.createdAt}"`,
+  ].filter(Boolean);
+  return `<${event.kind} ${attrs.join(" ")}>\n${inert(body(event))}\n</${event.kind}>`;
 }
 
 /** One event as the Mission reads it. */
 export function formatEvent(event: MissionEvent): string {
+  if (isSlackEvent(event.kind)) return formatSlackEvent(event);
   const name = event.payload.runner ? ` runner="${attr(event.payload.runner)}"` : "";
   return `<runner_event kind="${event.kind}" runner_id="${event.runnerId}"${name} at="${event.createdAt}">\n${inert(body(event))}\n</runner_event>`;
 }
@@ -103,11 +185,21 @@ export function formatDelivery(events: readonly MissionEvent[]): string {
   return sorted.map(formatEvent).join("\n\n");
 }
 
-/** The `<runner_event>` blocks in a message, for the session page's cards:
- *  what's around them is the message's own text. */
-export type ParsedRunnerEvent = { kind: MissionEventKind; runnerId: string; runner: string | null; at: string | null; body: string };
+/** The `<runner_event>` blocks in a message (and Slack's), for the session
+ *  page's cards: what's around them is the message's own text. A Slack block
+ *  has no Ship (`runnerId` is empty), and says who and where instead. */
+export type ParsedRunnerEvent = {
+  kind: MissionEventKind;
+  runnerId: string;
+  runner: string | null;
+  at: string | null;
+  body: string;
+  /** Slack's kinds: who said it, and the link to it. */
+  from?: string | null;
+  permalink?: string | null;
+};
 
-const BLOCK = /<runner_event\s+([^>]*)>\n?([\s\S]*?)\n?<\/runner_event>/g;
+const BLOCK = /<(runner_event|slack_request|slack_answer|slack_channel)\s+([^>]*)>\n?([\s\S]*?)\n?<\/\1>/g;
 const ATTR = /(\w+)="([^"]*)"/g;
 
 function unattr(value: string): string {
@@ -116,9 +208,16 @@ function unattr(value: string): string {
 
 export function parseRunnerEvents(text: string): { events: ParsedRunnerEvent[]; rest: string } {
   const events: ParsedRunnerEvent[] = [];
-  const rest = text.replace(BLOCK, (_, attrs: string, inner: string) => {
+  const rest = text.replace(BLOCK, (_, tag: string, attrs: string, inner: string) => {
     const found: Record<string, string> = {};
     for (const [, k, v] of attrs.matchAll(ATTR)) found[k] = unattr(v);
+    if (tag !== "runner_event") {
+      const kind = tag as MissionEventKind;
+      // The Mission's own instructions aren't news to show.
+      const shown = kind === "slack_channel" ? inner.split("\n")[0] : inner;
+      events.push({ kind, runnerId: "", runner: null, at: found.at ?? null, body: shown.trim(), from: found.from ?? null, permalink: found.permalink ?? null });
+      return "";
+    }
     const kind = found.kind as MissionEventKind;
     if (["finished", "ready", "needs_attention", "merged", "closed", "archived"].includes(kind) && found.runner_id) {
       events.push({ kind, runnerId: found.runner_id, runner: found.runner ?? null, at: found.at ?? null, body: inner.trim() });

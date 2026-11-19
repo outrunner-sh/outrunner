@@ -12,6 +12,8 @@
  *                 that PR (lib/automations/templates.ts)
  */
 
+import { routeToMission } from "@/lib/missions/slack-route";
+import { slackRouteDeps } from "@/lib/missions/slack-route.deps";
 import { channelReader, restrictToChannel, slackAccountActive } from "@/lib/slack/channel-access";
 import { CHANNEL_ACCESS_HELP, configureChannelAccess, runChannelQuestion } from "@/lib/slack/shared-channel";
 import { sharedChannelDeps } from "@/lib/slack/shared-channel.deps";
@@ -104,6 +106,12 @@ export type AgentMessage = {
   /** A new message in a channel, not in a thread: heard only where the
    *  channel is watched. */
   topLevel?: boolean;
+  /** Slack's id for the event (a Mission's request is keyed by it). */
+  eventId?: string | null;
+  /** A bot's message: heard only by a Mission on call that takes bots'. */
+  botId?: string | null;
+  /** Its files' names. */
+  files?: string[];
 };
 
 function appUrl(path: string): string {
@@ -143,7 +151,13 @@ async function askToConnect(install: SlackInstallation, message: { channel: stri
  * reply in a thread it's in, or a DM, continues it. Once the thread's work is
  * filed, what's said there becomes notes on the item.
  */
-export async function handleAgentMessage(message: AgentMessage): Promise<void> {
+export async function handleAgentMessage(
+  message: AgentMessage,
+  /** A message saved before Slack was answered (lib/missions/slack-inbound.ts):
+   *  a failure routing it to a Mission is thrown, so it's tried again, until
+   *  its last try (`final`), which says sorry as before. */
+  options: { retryable?: boolean; final?: boolean } = {},
+): Promise<void> {
   const install = await getInstallation(message.teamId);
   if (!install) {
     console.error(`Slack agent: no bot token for team ${message.teamId}; install the app again through its install link.`);
@@ -155,6 +169,20 @@ export async function handleAgentMessage(message: AgentMessage): Promise<void> {
   if (!message.mention && message.channelType !== "im" && message.text.includes(`<@${install.botUserId}`)) return;
   const threadTs = message.threadTs ?? message.ts;
   const reply = (text: string) => postMessage(install.botToken, { channel: message.channel, threadTs, text });
+  // First: a channel with a Mission on call (lib/missions/slack-route.ts)
+  // takes mentions and its own threads, instead of the spec-card flow.
+  try {
+    const connect = (at: string) => askToConnect(install, { channel: message.channel, user: message.user, threadTs: at });
+    if (await routeToMission(message, slackRouteDeps(install, message, connect))) return;
+  } catch (error) {
+    if (options.retryable && !options.final) throw error;
+    console.error("Slack: the Mission on call couldn't take a message", error);
+    // Only to someone who asked: a blip mustn't answer every reply, or a bot.
+    if (message.mention && !message.botId) await reply("Sorry, something went wrong on my side. Mention me again to retry.").catch(() => undefined);
+    return;
+  }
+  // Bots are heard only by a Mission that takes them.
+  if (message.botId) return;
   if (message.topLevel && !message.mention && message.channelType !== "im") {
     await offerIfWork(install, message).catch((error: unknown) => console.error("Slack agent: watching failed", error));
     return;

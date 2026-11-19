@@ -54,6 +54,8 @@ export type RunnerView = {
    *  its mark and its unread reply; null before the server has read it. */
   standing: SessionStanding | null;
   createdAt: string;
+  /** The Slack thread it was started for, on call (docs/missions.md). */
+  slackThread?: string | null;
 };
 
 export type MissionStatus = "needs_you" | "working" | "ready" | "idle";
