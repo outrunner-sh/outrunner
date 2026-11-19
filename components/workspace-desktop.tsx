@@ -6,6 +6,14 @@ import { useEffect, useReducer, useRef, useState } from "react";
 
 import { Spinner } from "@/components/ui/loaders";
 import {
+  type ClipboardAction,
+  clipboardAction,
+  DesktopClipboard,
+  PASTE_WAIT_MS,
+  remoteKeys,
+  writeToClipboard,
+} from "@/lib/session/desktop-clipboard";
+import {
   CONNECT_TIMEOUT_MS,
   desktopView,
   FIRST_VIEW,
@@ -55,6 +63,9 @@ export function WorkspaceDesktop({
   const panel = useRef<HTMLDivElement>(null);
   const screen = useRef<HTMLDivElement>(null);
   const client = useRef<RFB | null>(null);
+  // The desktop's clipboard as it tells it, and where the user's paste lands.
+  const [remoteClipboard] = useState(() => new DesktopClipboard());
+  const pasteCatcher = useRef<HTMLTextAreaElement>(null);
   // Read by a connection as it opens, so a reconnect keeps the user's choice.
   const interacting = useRef(interact);
 
@@ -123,6 +134,7 @@ export function WorkspaceDesktop({
         send({ type: "disconnect", clean: event.detail.clean });
       });
       rfb.addEventListener("securityfailure", (event) => send({ type: "securityfailure", reason: event.detail.reason }));
+      rfb.addEventListener("clipboard", (event) => remoteClipboard.told(event.detail.text));
       client.current = rfb;
     })();
     return () => {
@@ -131,7 +143,7 @@ export function WorkspaceDesktop({
       client.current = null;
       if (!closed) rfb?.disconnect();
     };
-  }, [workspaceId, isReady, view.attempt]);
+  }, [workspaceId, isReady, view.attempt, remoteClipboard]);
 
   // While the user drives (Interact on, the desktop live), their moves on it
   // tell the agent's desktop tools to wait for them: caught on the way down
@@ -147,6 +159,64 @@ export function WorkspaceDesktop({
       for (const type of moves) target.removeEventListener(type, report, { capture: true });
     };
   }, [interact, connected, workspaceId]);
+
+  // Copy and paste with the user's own computer while they drive
+  // (lib/session/desktop-clipboard.ts): the shortcuts are caught on the way
+  // down, before noVNC's canvas sends them to the desktop as pressed.
+  useEffect(() => {
+    const target = screen.current;
+    const catcher = pasteCatcher.current;
+    if (!interact || !connected || !target || !catcher) return;
+    let pending: { metaKey: boolean; timer: ReturnType<typeof setTimeout> } | null = null;
+    const press = (action: ClipboardAction, metaKey: boolean) => {
+      for (const key of remoteKeys(action, metaKey)) client.current?.sendKey(key.keysym, null, key.down);
+    };
+    // The user's text, put on the desktop's clipboard and pasted there; or,
+    // when the browser gives none (nothing to paste, or it won't), the
+    // desktop's own clipboard pasted.
+    const paste = (text: string | null) => {
+      if (!pending) return;
+      const { metaKey, timer } = pending;
+      pending = null;
+      clearTimeout(timer);
+      client.current?.focus({ preventScroll: true });
+      if (text) client.current?.clipboardPasteFrom(text);
+      press("paste", metaKey);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      const action = clipboardAction(event);
+      if (!action || !client.current) return;
+      event.stopPropagation();
+      if (action === "paste") {
+        // The browser pastes into what has the focus once the key press is
+        // done: the catcher, whose paste event hands over the text.
+        if (pending) clearTimeout(pending.timer);
+        pending = { metaKey: event.metaKey, timer: setTimeout(() => paste(null), PASTE_WAIT_MS) };
+        catcher.focus({ preventScroll: true });
+        return;
+      }
+      event.preventDefault();
+      const copied = remoteClipboard.next();
+      press(action, event.metaKey);
+      writeToClipboard(copied, navigator.clipboard);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (clipboardAction(event)) event.stopPropagation();
+    };
+    const onPaste = (event: ClipboardEvent) => {
+      event.preventDefault();
+      paste(event.clipboardData?.getData("text/plain") ?? null);
+    };
+    target.addEventListener("keydown", onKeyDown, { capture: true });
+    target.addEventListener("keyup", onKeyUp, { capture: true });
+    catcher.addEventListener("paste", onPaste);
+    return () => {
+      target.removeEventListener("keydown", onKeyDown, { capture: true });
+      target.removeEventListener("keyup", onKeyUp, { capture: true });
+      catcher.removeEventListener("paste", onPaste);
+      if (pending) clearTimeout(pending.timer);
+    };
+  }, [interact, connected, remoteClipboard]);
 
   // Fullscreen is the browser's, so Esc leaves it without this knowing:
   // the button follows the document, not its own clicks.
@@ -219,6 +289,9 @@ export function WorkspaceDesktop({
           it, so React and noVNC never share a parent. */}
       <div className={cn("studio-desktop-screen", interact && "is-interacting")}>
         <div ref={screen} className="studio-desktop-canvas" />
+        {/* Where the browser's paste lands, for its text to reach the
+            desktop (the clipboard effect above). */}
+        <textarea ref={pasteCatcher} className="studio-desktop-paste" tabIndex={-1} aria-hidden="true" />
         {!isReady ? (
           <div className="studio-desktop-overlay">
             <p>The desktop runs while the session does.</p>
