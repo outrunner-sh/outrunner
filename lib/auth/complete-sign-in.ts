@@ -7,12 +7,13 @@ import { sameSecret } from "@/lib/crypto/secret-box";
 import { getGithubToken, getGithubVerifiedEmails, setGithubToken, setGithubVerifiedEmails } from "@/lib/db/credentials";
 import { githubConnectionStatus } from "@/lib/db/github-connections";
 import { hasOpenInviteFor, orgIdsMadeByOthers, requestToJoin, setAdmitted } from "@/lib/db/org-members";
-import { orgsForDomains } from "@/lib/db/orgs";
+import { createOwnOrg, orgsForDomains } from "@/lib/db/orgs";
 import { optionalEnv } from "@/lib/env";
 import { listVerifiedEmails, tokenOwner } from "@/lib/github/client";
 import { legacyTokenMode, revokeSignInToken } from "@/lib/github/legacy-token";
 import { admitOnSignIn, type Admission, isInvitePath } from "@/lib/orgs/admission";
 import { emailJoinRequest } from "@/lib/orgs/notify";
+import { ownOrgOnSignIn } from "@/lib/orgs/own-org";
 import { verifiedEmailsFor } from "@/lib/orgs/verified-emails";
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -25,8 +26,9 @@ const disownedAlert = (userId: string) => `Not storing a sign-in token for ${use
  * What every sign-in does once Supabase has a session for it, whichever way
  * it came (OAuth at /auth/callback, an emailed code at /auth/email): enforce
  * the allowlist, keep the emails GitHub verified (the GitHub token itself
- * only in GITHUB_LEGACY_TOKENS `store` mode), and say where to go next —
- * `next`, or back to /signin with why not.
+ * only in GITHUB_LEGACY_TOKENS `store` mode), make the user's own org if
+ * they're in none and not on their way to an invite, and say where to go
+ * next — `next`, or back to /signin with why not.
  *
  * Access may be allowlisted: anyone whose GitHub login isn't in
  * RUNTIME_OWNER_GITHUB_LOGIN is signed straight back out, unless an org lets
@@ -62,7 +64,21 @@ export async function completeSignIn({
   }
 
   await captureGithubSignIn(user, githubToken);
+  if (ownOrgOnSignIn(next)) await makeOwnOrg(user);
   return `${base}${next}`;
+}
+
+/**
+ * The user's own org, when they're in none (lib/orgs/own-org.ts). Best
+ * effort: should it fail, the first page that finds them in no org makes it
+ * (lib/orgs/server.ts), so a sign-in never fails for it.
+ */
+async function makeOwnOrg(user: User): Promise<void> {
+  try {
+    await createOwnOrg(user);
+  } catch (error) {
+    console.error(`Couldn't make ${user.id}'s own org at sign-in; the app makes it on their first page.`, error);
+  }
 }
 
 /** Let a user the allowlist doesn't name in, if an org does; refused when

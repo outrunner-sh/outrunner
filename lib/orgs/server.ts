@@ -1,7 +1,8 @@
 import { cookies } from "next/headers";
 import { cache } from "react";
 
-import { listMyOrgs } from "@/lib/db/orgs";
+import { getAuthUser, isOwner } from "@/lib/auth/owner";
+import { createOwnOrg, listMyOrgs } from "@/lib/db/orgs";
 import { ACTIVE_ORG_COOKIE, type Org, pickActiveOrg } from "@/lib/orgs/active";
 
 export type OrgContext = {
@@ -13,8 +14,10 @@ export type OrgContext = {
 
 /**
  * The signed-in user's orgs and the active one, once per request (React
- * `cache`): the sidebar, the page and the route all ask. Null for a user in
- * no org (every user has a personal org, made with the account) or before
+ * `cache`): the sidebar, the page and the route all ask. A user let in and in
+ * no org (sign-in didn't make theirs: it failed, or they went to an invite
+ * and didn't accept it) has their own made now (lib/orgs/own-org.ts): only
+ * then is anything more asked. Null for a user in no org still, or before
  * the migration that adds orgs.
  *
  * Throws when the orgs can't be read. A reader may carry on without them (the
@@ -22,10 +25,26 @@ export type OrgContext = {
  * user meant for a team org would land in their personal one.
  */
 export const getOrgContext = cache(async (): Promise<OrgContext | null> => {
-  const orgs = await listMyOrgs();
+  const orgs = await withOwnOrg(await listMyOrgs());
   const active = pickActiveOrg(orgs, (await cookies()).get(ACTIVE_ORG_COOKIE)?.value);
   return active ? { orgs, active } : null;
 });
+
+/** `orgs`, or, for a user let in and in none, their own org made now. */
+async function withOwnOrg(orgs: Org[]): Promise<Org[]> {
+  if (orgs.length > 0) return orgs;
+  const user = await getAuthUser();
+  if (!user || !isOwner(user)) return orgs;
+  try {
+    // Null when another request made it first: listed either way.
+    await createOwnOrg(user);
+  } catch (error) {
+    // Before the migration that makes it, say; the page goes on without one.
+    console.error(`Couldn't make ${user.id}'s own org`, error);
+    return orgs;
+  }
+  return listMyOrgs();
+}
 
 /** The active org's id, or undefined when there's none (before orgs).
  *  Throws when the orgs can't be read: see {@link getOrgContext}. */

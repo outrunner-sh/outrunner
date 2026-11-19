@@ -5,7 +5,11 @@
  * here is handed the checks the route made and checks the role itself.
  */
 
+import type { User } from "@supabase/supabase-js";
+
+import { ownerFromUser } from "@/lib/auth/owner";
 import { type Org, type OrgRole, sortOrgs } from "@/lib/orgs/active";
+import { ownOrgName } from "@/lib/orgs/own-org";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -166,6 +170,20 @@ export async function createTeamOrg(input: {
   if (error) throw error;
   if (typeof data !== "string") throw new Error("create_team_org returned no org.");
   return data;
+}
+
+/**
+ * Make the user's own org (lib/orgs/own-org.ts), named after them, with them
+ * its admin, if they're in no org (20261120130000_own_org_on_sign_in.sql):
+ * its id, or null when they're in one already, and none was made.
+ */
+export async function createOwnOrg(user: User): Promise<string | null> {
+  const { data, error } = await createSupabaseAdminClient().rpc("create_own_org", {
+    org_name: ownOrgName(ownerFromUser(user).name),
+    creator: user.id,
+  });
+  if (error) throw error;
+  return typeof data === "string" ? data : null;
 }
 
 /** Rename an org; its admins may, and a personal org keeps its name. */
