@@ -108,9 +108,12 @@ func Start(binary string, args []string, dir string, env []string) (Terminal, er
 	}
 	startup := &windows.StartupInfoEx{ProcThreadAttributeList: attrs.List()}
 	startup.Cb = uint32(unsafe.Sizeof(*startup))
+	// Standard handles given, as none: without STARTF_USESTDHANDLES, a
+	// program whose parent's are redirected (npm's launcher, `go test`) gets
+	// those, and reads and prints past the pseudo-console. With none, it
+	// gets the pseudo-console's.
+	startup.Flags = windows.STARTF_USESTDHANDLES
 	var info windows.ProcessInformation
-	// No handles inherited, and no STARTF_USESTDHANDLES: the program's
-	// standard handles are the pseudo-console's.
 	flags := uint32(windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_UNICODE_ENVIRONMENT)
 	if err := windows.CreateProcess(nil, commandLine, nil, nil, false, flags, envBlock, workDir, &startup.StartupInfo, &info); err != nil {
 		return fail(fmt.Errorf("start %s: %w", binary, err))
