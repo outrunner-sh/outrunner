@@ -31,20 +31,25 @@ export async function listMyOrgs(): Promise<Org[]> {
   );
 }
 
-/** Whether a project is in a team org, which has other members: false for a
- *  personal org's, and for one the user can't see. */
-export async function inTeamOrg(projectId: string): Promise<boolean> {
-  const supabase = await createSupabaseServerClient();
-  const { data: project, error } = await supabase.from("projects").select("org_id").eq("id", projectId).maybeSingle();
+/** Whether a project's org has members besides `userId`: someone else may
+ *  hold what the user can't see. False for a project the user can't see. */
+export async function orgHasOtherMembers(projectId: string, userId: string): Promise<boolean> {
+  // As the user: RLS says whether they can see the project at all.
+  const { data: project, error } = await (await createSupabaseServerClient())
+    .from("projects")
+    .select("org_id")
+    .eq("id", projectId)
+    .maybeSingle();
   if (error) throw error;
   if (!project) return false;
-  const { data: org, error: orgError } = await supabase
-    .from("organizations")
-    .select("personal_owner_id")
-    .eq("id", project.org_id)
-    .maybeSingle();
-  if (orgError) throw orgError;
-  return org !== null && org.personal_owner_id === null;
+  // As the server: a member reads only their own membership row.
+  const { count, error: countError } = await createSupabaseAdminClient()
+    .from("organization_members")
+    .select("user_id", { count: "exact", head: true })
+    .eq("org_id", project.org_id)
+    .neq("user_id", userId);
+  if (countError) throw countError;
+  return (count ?? 0) > 0;
 }
 
 /** A user's personal org, read as the server; null before it's made. */
