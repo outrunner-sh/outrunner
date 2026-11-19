@@ -62,6 +62,13 @@ test("the browser's Sentry is off without a built-in DSN, keeps the server's pri
   assert.deepEqual(client?.beforeBreadcrumb({}), {});
 });
 
+test("the browser keeps frames' real URLs, so Sentry can fetch the served source maps", () => {
+  // Named as @sentry/nextjs 11 names its browser defaults.
+  const defaults = ["GlobalHandlers", "Dedupe", "BrowserTracing", "NextjsClientStackFrameNormalization"].map((name) => ({ name }));
+  const client = clientSentryOptions({ dsn: "https://b@o1.ingest.sentry.io/3", nodeEnv: "production" });
+  assert.deepEqual(client?.integrations(defaults).map((integration) => integration.name), ["GlobalHandlers", "Dedupe"]);
+});
+
 test("withTimeout gives up on slow work, and timeoutSignal keeps the caller's own signal", async () => {
   assert.equal(await withTimeout(Promise.resolve(1), 50, "fast"), 1);
   await assert.rejects(withTimeout(new Promise(() => {}), 10, "Slow work"), (error: unknown) => error instanceof TimeoutError && /Slow work/.test((error as Error).message));

@@ -51,7 +51,22 @@ export function clientSentryOptions(env: { dsn: string | undefined; environment?
     // whichever commit has it, so only the server knows the commit.
     ...baseSentryOptions({ dsn, environment: sentryEnvironment(env.environment, env.nodeEnv) }),
     beforeBreadcrumb: dropConsoleBreadcrumbs,
+    integrations: withoutClientIntegrations,
   };
+}
+
+/**
+ * The browser defaults @sentry/nextjs adds that don't fit how we ship:
+ * - its frame normalization renames each frame's https:// URL to app:///,
+ *   which only resolves against source maps uploaded from CI. Ours are served
+ *   beside each chunk (next.config.ts productionBrowserSourceMaps), and Sentry
+ *   can fetch them only from the real URL.
+ * - tracing: errors only (tracesSampleRate 0), so it would only add listeners.
+ */
+const DROPPED_CLIENT_INTEGRATIONS = new Set(["NextjsClientStackFrameNormalization", "BrowserTracing"]);
+
+export function withoutClientIntegrations<I extends { name: string }>(defaults: I[]): I[] {
+  return defaults.filter((integration) => !DROPPED_CLIENT_INTEGRATIONS.has(integration.name));
 }
 
 /** Console breadcrumbs would carry whatever the app logs, which can be a
