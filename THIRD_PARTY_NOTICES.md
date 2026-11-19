@@ -17,8 +17,9 @@ their upstream licenses and copyright notices.
 | [utf8proc](https://github.com/JuliaStrings/utf8proc) | Linked into the Mac tmux sidecar | [MIT and Unicode notices](licenses/utf8proc.txt) |
 | [jemalloc](https://github.com/jemalloc/jemalloc) | Linked into the Mac tmux sidecar | [BSD](licenses/jemalloc.txt) |
 
-The Go standard library and runtime retain the
-[Go project's BSD license](licenses/go-runtime.txt).
+The Go standard library and runtime, and
+[golang.org/x/sys](https://pkg.go.dev/golang.org/x/sys) (in the Windows CLI),
+retain the [Go project's BSD license](licenses/go-runtime.txt).
 
 The Mac app's resource bundle includes these notices and licenses. CLI npm
 packages include Outrunner's license and the licenses for the Go dependencies
