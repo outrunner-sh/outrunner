@@ -187,3 +187,15 @@ test("the desktop's Web Browser keeps Chromium's sandbox where it has one, and t
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("the desktop's Web Browser starts Chromium as the agent's desktop tools do (runtime-agent/internal/desktop)", () => {
+  const go = readFileSync(new URL("../runtime-agent/internal/desktop/browser.go", import.meta.url), "utf8");
+  assert.match(go, new RegExp(`const DevToolsPort = ${DEVTOOLS_PORT}\\n`));
+  assert.match(go, /filepath\.Join\(home, "\.outrunner", "desktop", "chromium"\)/);
+  assert.ok(WEB_BROWSER_SETUP.includes('profile="$HOME/.outrunner/desktop/chromium"'));
+  const browserArgs = go.match(/func BrowserArgs\([\s\S]*?\n}\n/)?.[0];
+  assert.ok(browserArgs, "BrowserArgs is in browser.go");
+  const flags = [...browserArgs.matchAll(/"(--[^"]+)"/g)].map((m) => m[1]);
+  assert.ok(flags.length >= 5, `BrowserArgs' flags: ${flags.join(" ")}`);
+  for (const flag of flags) assert.ok(WEB_BROWSER_SETUP.includes(flag), `the Web Browser starts Chromium with ${flag}`);
+});
