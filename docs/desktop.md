@@ -86,3 +86,34 @@ Chromium runs on the desktop with its own profile at
 sign-in lasts. Its DevTools listens on `127.0.0.1:19222` only. Like the
 desktop's VNC (5900, 5901) and noVNC (6080) ports, that port is never listed
 or given a preview link (`DESKTOP_PORTS` in `lib/runtime/box-ports.ts`).
+
+The desktop's own Web Browser (the globe in its dock, and a link the desktop
+opens) is this same Chromium, on the same profile and DevTools port, so a site
+the user signs in to there is signed in for the agent too. Each desktop start
+points XFCE's `WebBrowser` helper at `~/.outrunner/desktop/web-browser`, a
+launcher that starts Chromium as the agent's tools do, without its sandbox
+only once Chromium says it has none (a Daytona box can't give it one).
+
+## The Desktop tab
+
+The session's owner watches the desktop in the Desktop tab, view only until
+they choose **Interact**. Then their mouse and keyboard reach it:
+
+- **Browser** opens the Chromium above, with Interact on.
+- **Copy and paste** work with the user's own computer. Cmd or Ctrl with C, X
+  or V (Shift too, for a terminal) is caught before noVNC, which would send a
+  Mac's Cmd as Alt and paste the desktop's own clipboard. A paste puts the
+  user's text on the desktop's clipboard and presses Ctrl+V there. A copy or
+  cut presses Ctrl+C or X there and writes what the desktop copied to the
+  user's clipboard.
+- **The agent waits for the user.** While the user moves, clicks, scrolls or
+  types on the desktop, the tab tells Outrunner at most every 5 seconds, which
+  touches `~/.outrunner/desktop/user-active` on the box. A tool that acts
+  (every tool but `screenshot`, `browser_snapshot` and the recording ones)
+  waits until that file is 12 seconds old. After a minute it fails with a
+  message saying the user is still using the desktop, and the agent carries
+  on with other work or asks them.
+
+The tab's routes, `POST /api/workspaces/[id]/desktop` (a link to the
+desktop), `…/desktop/browser` and `…/desktop/activity`, answer the session's
+owner alone (`lib/runtime/desktop-access.ts`).

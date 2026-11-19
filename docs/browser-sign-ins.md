@@ -8,7 +8,8 @@ through the UI in every session.
 
 ## Use it
 
-1. Sign in to your app once in the Desktop tab's browser.
+1. Sign in to your app once in the Desktop tab's browser: choose **Browser**
+   in the tab (or the globe in the desktop's dock) to open it.
 2. In Playwright's `globalSetup`, write the sign-ins as a `storageState` file
    at a path your repository ignores. Then have every test start from it:
 
