@@ -18,7 +18,7 @@ export type OnCallCommand =
   | { action: "help" };
 
 export const ON_CALL_HELP =
-  "To put a Mission on call here: `@Outrunner be on call here for <project>` (it needs write on the project). Then mention me with a task. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread, `@Outrunner stop` stops its turn. `@Outrunner pause` / `resume` pauses it here, `@Outrunner stop being on call here` takes it off.";
+  "To put a Mission on call here: `@Outrunner be on call here for <repository>` (it needs write on the project). Then mention me with a task. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread, `@Outrunner stop` stops its turn. `@Outrunner pause` / `resume` pauses it here, `@Outrunner stop being on call here` takes it off.";
 
 /** The message without the bot's mention, trimmed. */
 export function withoutMention(text: string, botUserId: string): string {

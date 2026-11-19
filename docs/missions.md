@@ -76,7 +76,7 @@ channel, one channel a Mission.
 
 - **Binding.** From the Mission's header (**Connect Slack channel**, a
   channel Outrunner is in, of a Slack workspace you've linked into the
-  Mission's org), or in Slack: `@Outrunner be on call here for <project>`,
+  Mission's org), or in Slack: `@Outrunner be on call here for <repository>`,
   where the project is named by its name or a repository of it
   (`owner/name`). That binds the sender's newest Mission on the project that
   isn't on call elsewhere, or starts one for them. Either way it needs write

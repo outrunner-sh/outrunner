@@ -116,7 +116,7 @@ export function MissionSlackChip({ missionId, onError }: { missionId: string; on
         <DropdownMenuLabel className="text-[11.5px] font-normal text-muted-foreground">
           {look.channels && view.channels.length === 0 && !view.hint
             ? "Looking for channels Outrunner is in…"
-            : (view.hint ?? "Put this Mission on call in a channel Outrunner is in. Or, in Slack: @Outrunner be on call here for <project>.")}
+            : (view.hint ?? "Put this Mission on call in a channel Outrunner is in. Or, in Slack: @Outrunner be on call here for <repository>.")}
         </DropdownMenuLabel>
         {view.channels.length > 0 && <DropdownMenuSeparator />}
         {view.channels.map((c) => (

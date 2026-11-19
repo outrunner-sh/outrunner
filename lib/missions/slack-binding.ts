@@ -1,6 +1,6 @@
 /**
  * Putting a Mission on call in a Slack channel and taking it off, wired: the
- * same whether it's done in Slack (`be on call here for <project>`,
+ * same whether it's done in Slack (`be on call here for <repository>`,
  * lib/missions/slack-route.ts) or from the Mission's header in the app
  * (app/api/missions/[id]/slack). Each tells the Mission through its outbox
  * (a `slack_channel` event, which carries its on-call instructions to a box

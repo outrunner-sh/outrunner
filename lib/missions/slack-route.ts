@@ -9,7 +9,7 @@
  *
  * Before anything reaches the Mission, here, by rule rather than a model:
  *
- *   commands  `be on call here for <project>`, `stop being on call here`,
+ *   commands  `be on call here for <repository>`, `stop being on call here`,
  *             `pause`, `resume`, `stop` (its turn), exact, on a mention
  *   keywords  `!aside` (ignored), `!mute` / `!unmute` (the thread)
  *   gate      a linked Outrunner account in the Mission's org that can read
@@ -318,7 +318,7 @@ async function runCommand(
   }
 }
 
-/** `be on call here for <project>`: bind one of the sender's Missions on that
+/** `be on call here for <repository>`: bind one of the sender's Missions on that
  *  project (the newest not on call elsewhere), or start one. Needs write on
  *  the project, and a local channel. */
 async function bindHere(name: string, message: SlackRouteMessage, binding: MissionChannel | null, deps: SlackRouteDeps): Promise<void> {

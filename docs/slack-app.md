@@ -62,7 +62,7 @@ account and their existing permissions. Mention Outrunner on each shared questio
 app must apply the channel-access migration and reinstall through the install link to approve `channels:read`
 and `groups:read` (needed to verify channel boundaries). Missing metadata or scopes fail closed.
 
-**A Mission on call in a channel.** `@Outrunner be on call here for <project>` (write on the project) binds a
+**A Mission on call in a channel.** `@Outrunner be on call here for <repository>` (write on the project) binds a
 Mission to the channel: one of yours on that project, or a new one. From then on, mentions there, and replies in
 threads it took, go to the Mission instead of the spec-card flow; it answers in the thread, starts Ships (cloud
 sessions that open pull requests), and posts their pull requests there. A Mission's event is saved before Outrunner
