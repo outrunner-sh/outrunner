@@ -99,6 +99,8 @@ channel, one channel a Mission.
     Outrunner gets the Connect prompt, or is told no (a plain reply in its
     thread is dropped quietly). Unlinked people in shared channels can't task
     it;
+  - a failed Mission takes nothing and says so: its events would never be
+    delivered. Someone with write takes it off call and puts another on;
   - `!aside` keeps a message from it; `!mute` / `!unmute` silences a thread
     (nothing in or out, the system's posts included);
   - `@Outrunner stop` stops its turn; `@Outrunner pause` / `resume` (write on

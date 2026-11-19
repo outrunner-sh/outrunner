@@ -217,6 +217,13 @@ export async function routeToMission(message: SlackRouteMessage, deps: SlackRout
     await (message.mention ? deps.reply(threadTs, said) : deps.tell(threadTs, said));
     return true;
   }
+  // A failed Mission's events are never delivered (it isn't ready or idle):
+  // taken, the request would wait forever with no word in the thread.
+  if (mission.status === "failed") {
+    const said = `The Mission on call here failed, so it didn't take that. Someone with write on ${project} can say \`@Outrunner stop being on call here\` and put another on call.`;
+    await (message.mention ? deps.reply(threadTs, said) : deps.tell(threadTs, said));
+    return true;
+  }
   if (!text && !message.files?.length) {
     if (message.mention) await deps.tell(threadTs, "Mention me with a task, and the Mission on call here takes it on.");
     return true;

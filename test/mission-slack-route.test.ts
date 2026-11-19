@@ -307,6 +307,17 @@ test("an archived Mission says so and takes nothing", async () => {
   assert.ok(w.said[1].startsWith("tell: ") && w.said[1].includes("archived"));
 });
 
+test("a failed Mission says so and takes nothing: its events would never be delivered", async () => {
+  const w = world({ mission: { status: "failed" } });
+  assert.equal(await routeToMission(msg(), w.deps), true);
+  assert.equal(w.events.length, 0);
+  assert.equal(w.threads.length, 0);
+  assert.ok(w.said[0].startsWith("reply: The Mission on call here failed"), w.said[0]);
+  // Someone with write can still take it off call.
+  await routeToMission(msg({ user: "UWES", text: `<@${BOT}> stop being on call here`, eventId: "Ef2" }), w.deps);
+  assert.equal(w.bindings.length, 0);
+});
+
 test("be on call here: needs write on the project; binds a Mission, or starts one", async () => {
   const w = world();
   // Rita can only read web.
