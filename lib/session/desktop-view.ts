@@ -159,3 +159,24 @@ export function inUseReporter(workspaceId: string, fetchImpl: typeof fetch = fet
     fetchImpl(`/api/workspaces/${workspaceId}/desktop/activity`, { method: "POST", cache: "no-store", keepalive: true }).catch(() => {});
   };
 }
+
+/** What the Desktop tab says when it couldn't reach Outrunner to open the
+ *  browser. */
+export const BROWSER_UNREACHABLE = "Couldn't reach Outrunner to open the browser. Please try again.";
+
+/**
+ * Open the web browser on session `workspaceId`'s desktop (POST
+ * /api/workspaces/[id]/desktop/browser): null once it's on its way up, else
+ * what to tell the user.
+ */
+export async function openDesktopBrowser(workspaceId: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  let res: Response;
+  try {
+    res = await fetchImpl(`/api/workspaces/${workspaceId}/desktop/browser`, { method: "POST", cache: "no-store" });
+  } catch {
+    return BROWSER_UNREACHABLE;
+  }
+  if (res.ok) return null;
+  const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+  return typeof body.error === "string" && body.error ? body.error : BROWSER_UNREACHABLE;
+}

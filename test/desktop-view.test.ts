@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  BROWSER_UNREACHABLE,
   DESKTOP_TIMED_OUT,
   DESKTOP_UNREACHABLE,
   type DesktopEvent,
@@ -11,6 +12,7 @@ import {
   IN_USE_EVERY_MS,
   inUseReporter,
   openDesktop,
+  openDesktopBrowser,
   VIEWER_FAILED,
 } from "@/lib/session/desktop-view";
 
@@ -180,4 +182,23 @@ test("the user's moves on the desktop are told at most every few seconds, and a 
   report();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sent.length, 3);
+});
+
+test("the Browser button asks the session's desktop route, and says why when it can't", async () => {
+  const asked: string[] = [];
+  const answer = (res: Response | Error) =>
+    (async (url: string, init?: RequestInit) => {
+      asked.push(`${init?.method} ${url}`);
+      if (res instanceof Error) throw res;
+      return res;
+    }) as unknown as typeof fetch;
+
+  assert.equal(await openDesktopBrowser("ws-1", answer(new Response(null, { status: 204 }))), null);
+  assert.deepEqual(asked, ["POST /api/workspaces/ws-1/desktop/browser"]);
+  assert.equal(
+    await openDesktopBrowser("ws-1", answer(Response.json({ error: "Couldn't open the browser. Please try again." }, { status: 502 }))),
+    "Couldn't open the browser. Please try again.",
+  );
+  assert.equal(await openDesktopBrowser("ws-1", answer(new Response("Bad gateway", { status: 502 }))), BROWSER_UNREACHABLE);
+  assert.equal(await openDesktopBrowser("ws-1", answer(new TypeError("Failed to fetch"))), BROWSER_UNREACHABLE);
 });

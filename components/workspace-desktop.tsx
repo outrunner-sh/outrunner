@@ -1,11 +1,18 @@
 "use client";
 
 import type RFB from "@novnc/novnc";
-import { Maximize2, Minimize2, MousePointer2, PanelRightClose, RotateCw } from "lucide-react";
+import { Globe, Maximize2, Minimize2, MousePointer2, PanelRightClose, RotateCw } from "lucide-react";
 import { useEffect, useReducer, useRef, useState } from "react";
 
 import { Spinner } from "@/components/ui/loaders";
-import { CONNECT_TIMEOUT_MS, desktopView, FIRST_VIEW, inUseReporter, openDesktop } from "@/lib/session/desktop-view";
+import {
+  CONNECT_TIMEOUT_MS,
+  desktopView,
+  FIRST_VIEW,
+  inUseReporter,
+  openDesktop,
+  openDesktopBrowser,
+} from "@/lib/session/desktop-view";
 import { cn } from "@/lib/utils";
 
 /** noVNC's client, loaded once for the page. It touches `window` as it
@@ -43,6 +50,8 @@ export function WorkspaceDesktop({
   const [view, dispatch] = useReducer(desktopView, FIRST_VIEW);
   const [interact, setInteract] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  // The Browser button's request, and what to say if it failed.
+  const [browser, setBrowser] = useState<{ opening: boolean; error: string | null }>({ opening: false, error: null });
   const panel = useRef<HTMLDivElement>(null);
   const screen = useRef<HTMLDivElement>(null);
   const client = useRef<RFB | null>(null);
@@ -147,6 +156,13 @@ export function WorkspaceDesktop({
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
 
+  // The browser opens for the user to use: Interact goes on with it.
+  async function openBrowser() {
+    setInteract(true);
+    setBrowser({ opening: true, error: null });
+    setBrowser({ opening: false, error: await openDesktopBrowser(workspaceId) });
+  }
+
   function toggleFullscreen() {
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
     else void panel.current?.requestFullscreen().catch(() => {});
@@ -163,6 +179,16 @@ export function WorkspaceDesktop({
           {!isReady ? "Not running" : connected ? "Live" : opening ? "Connecting" : view.status === "error" ? "Unavailable" : "Disconnected"}
         </span>
         <span className="studio-desktop-actions">
+          <button
+            type="button"
+            onClick={() => void openBrowser()}
+            disabled={!connected || browser.opening}
+            className="studio-desktop-toggle"
+            title="Open the browser the agent uses: a site you sign in to there is signed in for the agent too"
+          >
+            <Globe />
+            {browser.opening ? "Opening…" : "Browser"}
+          </button>
           <button
             type="button"
             onClick={() => setInteract((on) => !on)}
@@ -222,8 +248,9 @@ export function WorkspaceDesktop({
         ) : null}
       </div>
 
-      <p className="studio-desktop-note">
-        The session&apos;s desktop, where the agent&apos;s browser and desktop tools run. View only until you choose Interact.
+      <p className="studio-desktop-note" role={browser.error ? "alert" : undefined}>
+        {browser.error ??
+          "The session's desktop, where the agent's browser and desktop tools run. View only until you choose Interact; while you use it, the agent waits for you."}
       </p>
     </div>
   );
