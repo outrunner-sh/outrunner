@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  BROWSER_UNREACHABLE,
   DESKTOP_TIMED_OUT,
   DESKTOP_UNREACHABLE,
   type DesktopEvent,
   type DesktopView,
   desktopView,
   FIRST_VIEW,
+  IN_USE_EVERY_MS,
+  inUseReporter,
   openDesktop,
+  openDesktopBrowser,
   VIEWER_FAILED,
 } from "@/lib/session/desktop-view";
 
@@ -154,4 +158,47 @@ test("a viewer that didn't load asks for the page to be reloaded, not tried agai
     httpStatus: 0,
     reload: true,
   });
+});
+
+test("the user's moves on the desktop are told at most every few seconds, and a failure is let go", async () => {
+  const sent: { url: string; method?: string }[] = [];
+  const fetchImpl = (async (url: string, init?: RequestInit) => {
+    sent.push({ url, method: init?.method });
+    if (sent.length === 2) throw new Error("offline");
+    return new Response(null, { status: 204 });
+  }) as unknown as typeof fetch;
+  let now = 1_000;
+  const report = inUseReporter("ws-1", fetchImpl, () => now);
+
+  report();
+  report();
+  now += IN_USE_EVERY_MS - 1;
+  report();
+  assert.deepEqual(sent, [{ url: "/api/workspaces/ws-1/desktop/activity", method: "POST" }]);
+
+  now += 1;
+  report();
+  now += IN_USE_EVERY_MS;
+  report();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sent.length, 3);
+});
+
+test("the Browser button asks the session's desktop route, and says why when it can't", async () => {
+  const asked: string[] = [];
+  const answer = (res: Response | Error) =>
+    (async (url: string, init?: RequestInit) => {
+      asked.push(`${init?.method} ${url}`);
+      if (res instanceof Error) throw res;
+      return res;
+    }) as unknown as typeof fetch;
+
+  assert.equal(await openDesktopBrowser("ws-1", answer(new Response(null, { status: 204 }))), null);
+  assert.deepEqual(asked, ["POST /api/workspaces/ws-1/desktop/browser"]);
+  assert.equal(
+    await openDesktopBrowser("ws-1", answer(Response.json({ error: "Couldn't open the browser. Please try again." }, { status: 502 }))),
+    "Couldn't open the browser. Please try again.",
+  );
+  assert.equal(await openDesktopBrowser("ws-1", answer(new Response("Bad gateway", { status: 502 }))), BROWSER_UNREACHABLE);
+  assert.equal(await openDesktopBrowser("ws-1", answer(new TypeError("Failed to fetch"))), BROWSER_UNREACHABLE);
 });

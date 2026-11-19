@@ -136,3 +136,47 @@ export async function openDesktop(
   if (res.ok && typeof body.url === "string" && body.url) return { url: body.url };
   return { type: "refused", httpStatus: res.status, ...(typeof body.error === "string" && { error: body.error }) };
 }
+
+/**
+ * How often, at most, the Desktop tab says the user is using the desktop
+ * while they do: well inside the 12 seconds after which the agent's tools
+ * count them as done (runtime-agent/internal/desktop UserIdleAfter).
+ */
+export const IN_USE_EVERY_MS = 5_000;
+
+/**
+ * What to call on each of the user's moves on the desktop: it tells Outrunner
+ * (POST /api/workspaces/[id]/desktop/activity), at most every
+ * IN_USE_EVERY_MS, so the agent's desktop tools wait for them. A request that
+ * fails is let go: their next move sends another.
+ */
+export function inUseReporter(workspaceId: string, fetchImpl: typeof fetch = fetch, now: () => number = Date.now): () => void {
+  let last = -Infinity;
+  return () => {
+    const at = now();
+    if (at - last < IN_USE_EVERY_MS) return;
+    last = at;
+    fetchImpl(`/api/workspaces/${workspaceId}/desktop/activity`, { method: "POST", cache: "no-store", keepalive: true }).catch(() => {});
+  };
+}
+
+/** What the Desktop tab says when it couldn't reach Outrunner to open the
+ *  browser. */
+export const BROWSER_UNREACHABLE = "Couldn't reach Outrunner to open the browser. Please try again.";
+
+/**
+ * Open the web browser on session `workspaceId`'s desktop (POST
+ * /api/workspaces/[id]/desktop/browser): null once it's on its way up, else
+ * what to tell the user.
+ */
+export async function openDesktopBrowser(workspaceId: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  let res: Response;
+  try {
+    res = await fetchImpl(`/api/workspaces/${workspaceId}/desktop/browser`, { method: "POST", cache: "no-store" });
+  } catch {
+    return BROWSER_UNREACHABLE;
+  }
+  if (res.ok) return null;
+  const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+  return typeof body.error === "string" && body.error ? body.error : BROWSER_UNREACHABLE;
+}

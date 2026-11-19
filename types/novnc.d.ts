@@ -8,6 +8,8 @@ declare module "@novnc/novnc" {
     connect: CustomEvent<Record<string, never>>;
     disconnect: CustomEvent<{ clean: boolean }>;
     securityfailure: CustomEvent<{ status: number; reason?: string }>;
+    /** The remote clipboard changed (not sent while view only). */
+    clipboard: CustomEvent<{ text: string }>;
   };
 
   export default class RFB {
@@ -25,6 +27,11 @@ declare module "@novnc/novnc" {
     background: string;
     disconnect(): void;
     focus(options?: FocusOptions): void;
+    /** Put `text` on the remote clipboard (ignored while view only). */
+    clipboardPasteFrom(text: string): void;
+    /** Send a key: pressed, released, or (no `down`) both. A null code
+     *  sends the keysym alone. */
+    sendKey(keysym: number, code: string | null, down?: boolean): void;
     addEventListener<K extends keyof RFBEvents>(type: K, listener: (event: RFBEvents[K]) => void): void;
     removeEventListener<K extends keyof RFBEvents>(type: K, listener: (event: RFBEvents[K]) => void): void;
   }
