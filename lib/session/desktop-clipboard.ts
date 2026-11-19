@@ -103,7 +103,8 @@ export class DesktopClipboard {
  * press, as browsers let only a page the user just acted on write to it: a
  * ClipboardItem whose text comes later where there is one (Safari and the Mac
  * app's WebKit refuse a write made after the press), writeText where there
- * isn't. Nothing copied, or a browser that refuses, leaves it as it was.
+ * isn't. Nothing copied (an empty clipboard: a copy with nothing selected),
+ * or a browser that refuses, leaves it as it was.
  */
 export function writeToClipboard(
   text: Promise<string | null>,
@@ -113,11 +114,11 @@ export function writeToClipboard(
   if (!clipboard) return;
   if (Item && clipboard.write) {
     const blob = text.then((t) => {
-      if (t === null) throw new Error("the desktop copied nothing");
+      if (!t) throw new Error("the desktop copied nothing");
       return new Blob([t], { type: "text/plain" });
     });
     clipboard.write([new Item({ "text/plain": blob })]).catch(() => {});
     return;
   }
-  text.then((t) => (t === null ? undefined : clipboard.writeText(t))).catch(() => {});
+  text.then((t) => (t ? clipboard.writeText(t) : undefined)).catch(() => {});
 }

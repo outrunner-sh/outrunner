@@ -138,6 +138,10 @@ test("nothing copied writes nothing, and a browser without ClipboardItem writes 
   const { clipboard, written } = fakeClipboard();
   writeToClipboard(Promise.resolve(null), clipboard, FakeItem as unknown as typeof ClipboardItem);
   writeToClipboard(Promise.resolve(null), clipboard, undefined);
+  // A copy with nothing selected: the desktop's clipboard is empty, and the
+  // user's keeps what it had.
+  writeToClipboard(Promise.resolve(""), clipboard, FakeItem as unknown as typeof ClipboardItem);
+  writeToClipboard(Promise.resolve(""), clipboard, undefined);
   writeToClipboard(Promise.resolve("plain"), clipboard, undefined);
   writeToClipboard(Promise.resolve("ignored"), undefined, undefined);
   await new Promise((resolve) => setImmediate(resolve));
