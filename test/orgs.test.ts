@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { madeByOthers, orgName, orgSummary, pickActiveOrg, sortOrgs, type Org } from "@/lib/orgs/active";
+import { firstJoined, madeByOthers, orgName, orgSummary, pickActiveOrg, sortOrgs, type Org } from "@/lib/orgs/active";
 import { emailDomain, isPublicDomain, primaryDomain } from "@/lib/orgs/domains";
 
 const personal: Org = { id: "p", name: "Personal", personal: true, role: "admin" };
@@ -38,6 +38,24 @@ test("only an org someone else made lets a user in: never one they made themselv
   ];
   assert.deepEqual(madeByOthers(memberships, "me"), ["invited", "orphaned"]);
   assert.deepEqual(madeByOthers([{ orgId: "own", createdBy: "me" }], "me"), []);
+});
+
+test("a call naming no org acts in the one the user joined first; ties by id", () => {
+  assert.equal(
+    firstJoined([
+      { orgId: "team", joinedAt: "2026-11-01T10:00:00Z" },
+      { orgId: "own", joinedAt: "2026-10-27T09:00:00.123456+00:00" },
+    ]),
+    "own",
+  );
+  assert.equal(
+    firstJoined([
+      { orgId: "b", joinedAt: "2026-11-01T10:00:00Z" },
+      { orgId: "a", joinedAt: "2026-11-01T10:00:00Z" },
+    ]),
+    "a",
+  );
+  assert.equal(firstJoined([]), null);
 });
 
 test("an org's name is trimmed and 1 to 80 characters", () => {

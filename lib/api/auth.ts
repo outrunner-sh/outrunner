@@ -6,7 +6,7 @@
  *                  org's admins (an admin manages the org's keys, and a key
  *                  outliving its maker's say over the org would be no one's)
  *   personal key   its maker, in the org `org` names (an id or a name),
- *   or CLI token   else their personal org, as `outrunner triage` does
+ *   or CLI token   else the org they joined first, as `outrunner triage` does
  *
  * Either way the call has its maker's Roles & access in that org, no more:
  * every read and write runs as them (lib/api/handler.ts).
@@ -34,8 +34,8 @@ export type ApiCaller = {
 export type ApiAuthDeps = {
   findKey(hash: string): Promise<StoredApiKey | null>;
   findCliToken(hash: string): Promise<{ id: string; userId: string } | null>;
-  /** The user's org that `wanted` names (an id or a name), else their
-   *  personal org; null when they're in none such. */
+  /** The user's org that `wanted` names (an id or a name), else the one
+   *  they joined first; null when they're in none such. */
   memberOrgId(userId: string, wanted: string | null): Promise<string | null>;
   memberRole(orgId: string, userId: string): Promise<OrgRole | null>;
   /** Whether the user may still use Outrunner at all (the allowlist). */
