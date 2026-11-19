@@ -127,12 +127,12 @@ export async function orgDomain(orgId: string): Promise<string | null> {
   return data?.domain ?? null;
 }
 
-/** Why a team org wasn't made. */
+/** Why an org wasn't made. */
 export class TeamOrgError extends Error {
-  constructor(readonly reason: "one_team_org" | "domain_taken") {
+  constructor(readonly reason: "one_free_org" | "domain_taken") {
     super(
-      reason === "one_team_org"
-        ? "You've made a team org already. For now each person can make one."
+      reason === "one_free_org"
+        ? "You've made a Free org already. Upgrade an org you're an admin of to make another."
         : "Another org has claimed your email's domain.",
     );
     this.name = "TeamOrgError";
@@ -140,22 +140,29 @@ export class TeamOrgError extends Error {
 }
 
 /**
- * Make a team org with its creator as admin, claiming `domain` (a verified,
- * non-public one: the caller checked) or none. All or nothing.
+ * Make an org with its creator as admin, claiming `domain` (a verified,
+ * non-public one: the caller checked) or none. All or nothing. Refused with
+ * `one_free_org` when they've made one already and `mayMakeAnother` is false
+ * (lib/orgs/create.ts says).
  */
-export async function createTeamOrg(input: { name: string; creatorId: string; domain: string | null }): Promise<string> {
+export async function createTeamOrg(input: {
+  name: string;
+  creatorId: string;
+  domain: string | null;
+  mayMakeAnother: boolean;
+}): Promise<string> {
   const { data, error } = await createSupabaseAdminClient().rpc("create_team_org", {
     org_name: input.name,
     creator: input.creatorId,
     claimed_domain: input.domain,
+    may_make_another: input.mayMakeAnother,
   });
-  // Which unique index refused it, by name (20261028120000_team_orgs.sql);
-  // any other stays the error it is.
-  if (error?.code === "23505") {
-    const text = `${error.message} ${error.details ?? ""}`;
-    if (text.includes("organization_domains_pkey")) throw new TeamOrgError("domain_taken");
-    if (text.includes("organizations_one_team_org_per_creator")) throw new TeamOrgError("one_team_org");
+  // Which rule refused it, by name (20261028120000_team_orgs.sql,
+  // 20261120130000_own_org_on_sign_in.sql); any other stays the error it is.
+  if (error?.code === "23505" && `${error.message} ${error.details ?? ""}`.includes("organization_domains_pkey")) {
+    throw new TeamOrgError("domain_taken");
   }
+  if (error?.code === "23514" && error.message.includes("one_free_org")) throw new TeamOrgError("one_free_org");
   if (error) throw error;
   if (typeof data !== "string") throw new Error("create_team_org returned no org.");
   return data;
