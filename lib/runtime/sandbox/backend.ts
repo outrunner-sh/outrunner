@@ -75,6 +75,10 @@ export interface BoxDesktop {
    *  stays open after it lapses. It reaches the desktop's VNC server and
    *  nothing else on the box. */
   viewerUrl(ttlSeconds: number): Promise<string>;
+  /** Say the session's owner is using it with their own mouse and keyboard,
+   *  now: the agent's tools that act on it wait until they've stopped
+   *  (runtime-agent/internal/desktop UserActivePath). */
+  markInUse(): Promise<void>;
 }
 
 /** CPU and memory a new box boots with. */

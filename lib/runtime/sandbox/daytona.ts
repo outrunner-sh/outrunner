@@ -103,15 +103,31 @@ mv "$rc.new" "$rc"
  *  it still opens, its Web Browser only as it was. */
 async function setUpWebBrowser(sandbox: Sandbox): Promise<void> {
   try {
-    const res = await withTimeout(
-      sandbox.process.executeCommand(`bash -c ${shellQuote(WEB_BROWSER_SETUP)}`, undefined, undefined, DESKTOP_START_TIMEOUT_MS / 1000),
-      DESKTOP_START_TIMEOUT_MS,
-      "setting up the desktop's web browser didn't finish in time",
-    );
-    if (res.exitCode) throw new Error(`exit ${res.exitCode}: ${(res.result ?? "").trim()}`);
+    await runOnDesktop(sandbox, WEB_BROWSER_SETUP, "setting up the desktop's web browser", DESKTOP_START_TIMEOUT_MS);
   } catch (error) {
     console.warn(`Could not set up the desktop's web browser on Daytona box ${sandbox.id}`, error);
   }
+}
+
+/**
+ * Touches the file the agent's desktop tools wait on while the user uses
+ * the desktop with their own mouse and keyboard
+ * (runtime-agent/internal/desktop UserActivePath).
+ */
+export const MARK_DESKTOP_IN_USE = `mkdir -p "$HOME/.outrunner/desktop" && touch "$HOME/.outrunner/desktop/user-active"`;
+
+/** How long a quick command for the Desktop tab may take on the box. */
+const DESKTOP_ACTION_TIMEOUT_MS = 15_000;
+
+/** `script` run by bash on the box, as its user, given up after `timeoutMs`;
+ *  throws when it fails, naming `what`. */
+async function runOnDesktop(sandbox: Sandbox, script: string, what: string, timeoutMs = DESKTOP_ACTION_TIMEOUT_MS): Promise<void> {
+  const res = await withTimeout(
+    sandbox.process.executeCommand(`bash -c ${shellQuote(script)}`, undefined, undefined, timeoutMs / 1000),
+    timeoutMs,
+    `${what} didn't finish in time`,
+  );
+  if (res.exitCode) throw new Error(`${what}: exit ${res.exitCode}: ${(res.result ?? "").trim()}`);
 }
 
 /** `promise`, or a rejection saying `message` once `ms` have gone by. */
@@ -501,6 +517,7 @@ export function box(sandbox: Sandbox): SandboxBox {
         url.pathname = "/websockify";
         return url.toString();
       },
+      markInUse: () => runOnDesktop(sandbox, MARK_DESKTOP_IN_USE, "marking the desktop in use"),
     },
     // The signed link, its credential good for this one port, and for a
     // quarter of an hour: the standard link's token is the sandbox's, good
