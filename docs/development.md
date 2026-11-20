@@ -37,6 +37,7 @@ Configure your own infrastructure in `.env.local`:
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only secret/service-role key |
 | `SUPABASE_DB_URL` | Session-pooler database URI for migrations |
 | `CREDENTIALS_ENCRYPTION_KEY` | Generate with `openssl rand -base64 32`; keep it stable and private |
+| `CREDENTIALS_ENCRYPTION_KEY_PREVIOUS` | Optional: earlier key(s), comma-separated, that still open what they sealed |
 | `RUNTIME_PROVIDER` | Deployment compute provider; `.env.example` selects `daytona` |
 | `RUNTIME_BILLING` | `off` for a deployment without Stripe; plan limits still apply |
 

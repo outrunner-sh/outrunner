@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { test } from "node:test";
 
 import { startupEnvProblems } from "@/lib/startup-env";
@@ -37,4 +38,13 @@ test("a malformed URL is named, an optional one only when set", () => {
   assert.deepEqual(startupEnvProblems({ ...COMPLETE, NEXT_PUBLIC_SUPABASE_URL: "abc" }), ["NEXT_PUBLIC_SUPABASE_URL is not a URL"]);
   assert.deepEqual(startupEnvProblems({ ...COMPLETE, SENTRY_DSN: "nope" }), ["SENTRY_DSN is not a URL"]);
   assert.deepEqual(startupEnvProblems({ ...COMPLETE, SENTRY_DSN: "https://k@o1.ingest.sentry.io/2" }), []);
+});
+
+test("a previous encryption key that isn't 32 bytes is named, a good list passes", () => {
+  const base64 = randomBytes(32).toString("base64");
+  const hex = randomBytes(32).toString("hex");
+  assert.deepEqual(startupEnvProblems({ ...COMPLETE, CREDENTIALS_ENCRYPTION_KEY_PREVIOUS: `${base64}, ${hex}` }), []);
+  assert.deepEqual(startupEnvProblems({ ...COMPLETE, CREDENTIALS_ENCRYPTION_KEY_PREVIOUS: `${base64},short` }), [
+    "CREDENTIALS_ENCRYPTION_KEY_PREVIOUS must be 32-byte keys (base64 or hex), separated by commas",
+  ]);
 });

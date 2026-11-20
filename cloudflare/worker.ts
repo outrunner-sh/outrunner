@@ -38,6 +38,8 @@ interface Env {
    * 32 bytes, base64 or hex (`openssl rand -base64 32`).
    */
   CREDENTIALS_ENCRYPTION_KEY: string;
+  /** Optional: earlier key(s), comma-separated, that still open what they sealed. */
+  CREDENTIALS_ENCRYPTION_KEY_PREVIOUS?: string;
   /** Optional allowlist. BLANK MEANS OPEN — note the polarity. */
   RUNTIME_OWNER_GITHUB_LOGIN?: string;
   /** Optional plan-limit exemptions; blank means nobody is exempt. */
@@ -334,6 +336,9 @@ export class OutrunnerControlPlane extends Container<Env> {
       SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,
       DAYTONA_API_KEY: env.DAYTONA_API_KEY,
       CREDENTIALS_ENCRYPTION_KEY: env.CREDENTIALS_ENCRYPTION_KEY,
+      ...(env.CREDENTIALS_ENCRYPTION_KEY_PREVIOUS
+        ? { CREDENTIALS_ENCRYPTION_KEY_PREVIOUS: env.CREDENTIALS_ENCRYPTION_KEY_PREVIOUS }
+        : {}),
       // Blank/unset admits everyone, which is the intent for open sign-up.
       ...(env.RUNTIME_OWNER_GITHUB_LOGIN
         ? { RUNTIME_OWNER_GITHUB_LOGIN: env.RUNTIME_OWNER_GITHUB_LOGIN }

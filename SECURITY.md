@@ -24,7 +24,9 @@ previews have different trust boundaries:
 - Use a separate Supabase project and credentials for each deployment. The
   service-role key bypasses row-level security and must stay on the server.
 - Keep `CREDENTIALS_ENCRYPTION_KEY` private and backed up. Changing it makes
-  stored credentials unreadable until users reconnect.
+  stored credentials unreadable until users reconnect, unless the old key is
+  kept in `CREDENTIALS_ENCRYPTION_KEY_PREVIOUS`, which still opens what it
+  sealed.
 - Agent processes can read the credentials supplied to their session. Use
   narrowly scoped provider tokens and isolated compute. A Git worktree does
   not isolate processes or credentials.
