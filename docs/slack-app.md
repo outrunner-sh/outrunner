@@ -20,7 +20,7 @@ thread, where everyone can see it, and the thread becomes the work's session (Re
    criteria** automation (Automations → templates), if it's on for the repository, checks the PR against them in
    a fresh session and posts PASS, FAIL or PARTIAL on the PR. A person decides what happens next.
 
-Sessions started from Slack are paid like the org's other sessions: a team org's run Outrunner's models on the
+Sessions started from Slack are paid like the org's other sessions: they run Outrunner's models on the
 org's key, within its plan.
 
 **Ask it things, too.** The agent tells a question from work to do:
@@ -75,7 +75,7 @@ Digests, nudges and follow-ups go out from there.
 
 The agent thinks with `SLACK_AGENT_MODEL` (default `anthropic/claude-sonnet-5.5`, through OpenRouter) on the
 **org's** own key for Outrunner's models: the one its members' cloud sessions use, within the same allowance
-from the org's plan (one budget per org; a personal org's is its owner's). The org pays, not whoever is in the
+from the org's plan (one budget per org). The org pays, not whoever is in the
 thread. Starting a session always needs a click.
 
 Its events come to `POST /api/integrations/slack/events`. The bot token it posts with is kept, encrypted, when

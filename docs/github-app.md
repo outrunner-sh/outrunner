@@ -4,8 +4,8 @@ The Outrunner GitHub App is how Outrunner reaches GitHub, two ways:
 
 - **Organizations.** An org's admin installs it from **Settings → Org → GitHub**, on their GitHub account or
   organization and the repositories they pick. The org's sessions and automations then work on GitHub as
-  Outrunner, with per-repository tokens an hour long, rather than as each member. A team org never falls back
-  to a member's own GitHub.
+  Outrunner, with per-repository tokens an hour long, rather than as each member. An org never falls back
+  to a member's own GitHub, a user's own org included: anyone can be invited into it.
 - **Each user's own repositories.** A user connects GitHub in **Settings → Connections → GitHub**
   ([below](#connecting-your-own-github)): the App's user authorization, acting as them, and the App
   installed on their own account with the repositories they pick.
@@ -31,8 +31,8 @@ connections. Its webhook is `POST /api/github/webhook`, and its setup URL (with 
    reach, with the App's permissions. Pushes, pull requests and merges show as you, with "via
    outrunner-connector".
 2. **Install the App on your account.** GitHub has you pick **All repositories** or **Only select
-   repositories**. The installation is linked to your personal org, through the same claim as an admin's
-   install. **Manage repositories** opens that installation's page on GitHub; **Add an account** installs
+   repositories**. The installation is linked to your own org (the first org you made, or the one made for
+   you when you first signed in), through the same claim as an admin's install. **Manage repositories** opens that installation's page on GitHub; **Add an account** installs
    it on one of your GitHub organizations as well.
 
 The flow is bound to the browser that started it, with a nonce in a cookie, a PKCE verifier and a signed
@@ -50,9 +50,9 @@ a fine-grained (`github_pat_`) or classic (`ghp_`) token, and Outrunner uses it 
 have used your own GitHub connection for (`lib/github/personal-choice.ts`). It's stored sealed in
 `user_github_tokens` (migration `20261114130000`). Other kinds of GitHub tokens are refused.
 
-- **Where it works:** your personal org only. Its repository picker lists everything the token's account
-  can reach, ahead of the App connection and the org's installations. Team orgs still list only what
-  their App installations reach (`lib/github/source-choice.ts`).
+- **Where it works:** your own sessions, in any org: they clone, push and open pull requests with it. It lists
+  no repositories: an org's repository picker lists only what its App installations reach
+  (`lib/github/repository-source.ts`), so a repository the App can't reach can't be added.
 - **What saving does:** GitHub checks the token (`GET /user`), which reports a classic token's scopes and
   any token's expiry. Your GitHub identity is set to **My GitHub account**, because as the App the token
   would be listed but never used. Pushes and pull requests show as the token's account, whoever that is.
@@ -153,16 +153,16 @@ can manage them, so the page warns its admins before they remove it, and they ca
 can remove any share, including one GitHub's installer or an owner made: it's the org that brought the
 installation, and they can connect it again.
 
-**Joining a team org through its GitHub organization** (`20261119100000`, `lib/orgs/github-join.ts`). When a
-team org is the source org of an installation on a GitHub organization, that organization's active members
-(owners or members; a pending invitation doesn't count) can join the team org at once, as members, from **New
-team org**, with no admin's approval. Admins can turn this off in **Settings → Org** (`join_via_github`, on by
+**Joining an org through its GitHub organization** (`20261119100000`, `lib/orgs/github-join.ts`). When an
+org is the source org of an installation on a GitHub organization, that organization's active members
+(owners or members; a pending invitation doesn't count) can join the org at once, as members, from **New
+organization**, with no admin's approval. Admins can turn this off in **Settings → Org** (`join_via_github`, on by
 default). Only the source org counts, so shares let no one in. Outrunner lists the user's installations with
 their own GitHub connection (`GET /user/installations`), then asks GitHub, as each installation, about the
 user's membership (`GET /orgs/{org}/memberships/{username}`), which also needs **Members: Read**. The check
 fails closed: an installation that hasn't granted the permission answers 403, and its members are told to ask an
 admin for an invite. Joining asks GitHub again on the server. Someone an admin removed can't rejoin this way.
-Leaving the GitHub organization later doesn't remove anyone from the team org. The members page shows admins
+Leaving the GitHub organization later doesn't remove anyone from the org. The members page shows admins
 who joined through GitHub, and the audit log records it (`member.joined`, `via: github`).
 
 Installation metadata is global (`github_installations`); access is an independent link per organization
@@ -202,7 +202,7 @@ on its repository. Each run's session reviews it as the App and comments; a clos
 
 **Closing archives.** When an issue or pull request closes, or a pull request merges, the sessions working on it
 are archived. Each gets a snapshot and can be restored. The snapshot is taken on the session's box, so a session
-that went to sleep is woken to be archived. Team orgs can turn this off under
+that went to sleep is woken to be archived. An org can turn this off under
 **Settings → Org → Defaults**; it is on by default.
 
 **Follow-ups** (`lib/github/followups.ts`). Some things that happen on a pull request a session works on reach
@@ -273,7 +273,7 @@ then, GitHub refuses what needs them, and Outrunner logs that and goes on.
 
 | Permission (organization) | Access | For |
 | --- | --- | --- |
-| Members | Read | Who owns a GitHub organization (connecting its installation) and who's a member (joining a team org through it). Without it both fail closed |
+| Members | Read | Who owns a GitHub organization (connecting its installation) and who's a member (joining an org through it). Without it both fail closed |
 
 | Event | For |
 | --- | --- |
