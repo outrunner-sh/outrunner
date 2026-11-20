@@ -16,8 +16,9 @@ const FINE_GRAINED_TOKENS = "https://github.com/settings/personal-access-tokens"
 /**
  * Settings → Connections → GitHub → personal access token: for repositories
  * the Outrunner GitHub App isn't installed on, such as an organization whose
- * owner hasn't approved it. It reaches every repository the token's account
- * can, in the user's personal org, and wins over the App connection there.
+ * owner hasn't approved it. The user's sessions clone, push and open pull
+ * requests with it, over the App connection (lib/github/personal.ts); an
+ * org's repositories still come from its App (lib/github/repository-source.ts).
  * `health` is streamed in by the server: whether GitHub still takes it.
  */
 export function GitHubTokenCard({ initial, health }: { initial: PersonalTokenView | null; health?: React.ReactNode }) {
@@ -107,8 +108,8 @@ export function GitHubTokenCard({ initial, health }: { initial: PersonalTokenVie
       </div>
       <p className="text-xs text-muted-foreground">
         For repositories Outrunner&apos;s GitHub App can&apos;t reach, such as an organization whose owner hasn&apos;t
-        approved it. A token reaches every repository its account can in your personal org, and is used instead of the
-        connection above. Pushes and pull requests show as the token&apos;s account.
+        approved it. Your sessions clone, push and open pull requests with it instead of the connection above, and they
+        show as the token&apos;s account. An org&apos;s repositories still come from its GitHub App.
       </p>
 
       {notes.map((note) => (

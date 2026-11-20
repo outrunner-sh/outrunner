@@ -10,7 +10,6 @@ import {
   personalTokenNotes,
   type PersonalTokenInfo,
 } from "@/lib/github/personal-token";
-import { pickRepositorySource } from "@/lib/github/source-choice";
 import { GitHubConnectionBrokenError } from "@/lib/github/user-connection";
 import { readTokenBody } from "@/lib/http/token-body";
 
@@ -57,17 +56,6 @@ test("a user with only a token has connected their own GitHub, so is never quiet
   const no = async () => false;
   assert.equal(await isPersonalConnected("u1", { hasToken: async () => true, hasAppConnection: no, hasLegacy: no }), true);
   assert.equal(await isPersonalConnected("u1", { hasToken: no, hasAppConnection: no, hasLegacy: no }), false);
-});
-
-test("a token lists in the user's own org, over its installations, but never in a team org", () => {
-  assert.equal(pickRepositorySource({ personal: true, installations: 2, own: "pat" }), "pat");
-  assert.equal(pickRepositorySource({ personal: true, installations: 2, own: "app_user" }), "user_app");
-  assert.equal(pickRepositorySource({ personal: true, installations: 2, own: "legacy" }), "app");
-  assert.equal(pickRepositorySource({ personal: true, installations: 0, own: "legacy" }), "legacy");
-  assert.equal(pickRepositorySource({ personal: true, installations: 0, own: null }), "missing");
-  // A team org is the App's alone, whatever the member has.
-  assert.equal(pickRepositorySource({ personal: false, installations: 1, own: "pat" }), "app");
-  assert.equal(pickRepositorySource({ personal: false, installations: 0, own: "pat" }), "no_installation");
 });
 
 /** GitHub answering `/user` with this status, body and headers. */
