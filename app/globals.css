@@ -713,8 +713,8 @@
 .route-state-button:hover { background: rgba(255,255,255,.05); }
 .route-state-button.is-primary { border-color: transparent; color: var(--background); background: var(--foreground); }
 .route-state-button.is-primary:hover { background: color-mix(in oklab, var(--foreground) 88%, transparent); }
-.route-state-action-row { position:relative; display:flex; flex-direction:column; align-items:center; }
-.route-state-message { position:absolute; top:100%; margin-top:12px; width:max-content; max-width:min(384px, 90vw); }
+.route-state-action-row { position:relative; display:flex; flex-direction:column; align-items:center; gap:18px; }
+.route-state-message { position:absolute; top:100%; left:50%; transform:translateX(-50%); margin-top:12px; width:max-content; max-width:min(384px, 90vw); }
 /* A reason that arrives after a click eases in rather than popping. */
 .route-state-message, .is-arriving { animation:skeleton-in .15s ease-out both; }
 @media (prefers-reduced-motion: reduce) { .route-state-message, .is-arriving { animation:none; } }
