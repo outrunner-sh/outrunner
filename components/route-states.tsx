@@ -50,8 +50,9 @@ export function SessionLoading() {
  * A state that takes the whole page or panel: a route that failed or is
  * missing, a session that didn't start. `actions` are the ways on (defaults to
  * a way home); `footer` sits under them, for a fact shown from the start.
- * `message` is what an action came back with: it hangs under the actions
- * without taking space, so the centered page doesn't jump when it appears.
+ * `message` is what an action came back with: it hangs below the actions (and
+ * the footer, when there is one) without taking space, so the centered page
+ * doesn't jump when it appears.
  */
 export function RouteMessage({
   title,
@@ -78,9 +79,9 @@ export function RouteMessage({
       </div>
       <div className="route-state-action-row">
         {actions ? <NoticeActions actions={actions} className="route-state-actions" /> : <HomeLink />}
+        {footer}
         {message && <div className="route-state-message">{message}</div>}
       </div>
-      {footer}
     </div>
   );
 }
