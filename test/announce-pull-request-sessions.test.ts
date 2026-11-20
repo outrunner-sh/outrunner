@@ -7,9 +7,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { createClient } from "@supabase/supabase-js";
+
 import { fakeDb, type Row } from "./fake-supabase.ts";
 
 import { sessionsOnRepoWith } from "@/lib/slack/announce-pull-request-sessions";
+import type { Database } from "@/lib/supabase/database.types";
 
 /** Org A's installation, its repository's sessions, and org B's session on a
  *  project its member renamed to collide with that repository. */
@@ -81,4 +84,40 @@ test("an org the installation is shared with is reached; a suspended or unowned 
   assert.deepEqual(await sessionsOnRepoWith(fakeDb(suspended), 42, 501, "feature/leak"), []);
   const unclaimed = db().tables;
   assert.deepEqual(await sessionsOnRepoWith(fakeDb(unclaimed), 43, 501, "feature/leak"), []);
+});
+
+test("the checkouts filter reaches PostgREST as JSON, which the jsonb column parses", async () => {
+  // The real client, its requests answered as PostgREST would: a jsonb
+  // containment value that isn't JSON is Postgres's 22P02. An array given to
+  // .contains() goes out as a Postgres array literal, `cs.{[object Object]}`.
+  const sent: string[] = [];
+  const db = createClient<Database>("http://supabase.test", "service-role-key", {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      fetch: async (input) => {
+        const url = new URL(input instanceof Request ? input.url : input);
+        const checkouts = url.searchParams.get("checkouts");
+        if (checkouts !== null) {
+          sent.push(checkouts);
+          try {
+            JSON.parse(checkouts.replace(/^cs\./, ""));
+          } catch {
+            return Response.json(
+              { code: "22P02", message: "invalid input syntax for type json", details: `Expected string or "}", but found "[".` },
+              { status: 400 },
+            );
+          }
+        }
+        const rows: Record<string, Row[]> = {
+          org_github_installation_details: [{ org_id: "org-a" }],
+          projects: [{ id: "p-a", org_id: "org-a" }],
+        };
+        return Response.json(rows[url.pathname.split("/").pop() ?? ""] ?? []);
+      },
+    },
+  });
+  await sessionsOnRepoWith(db, 42, 501, "feature/leak");
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /^cs\./);
+  assert.deepEqual(JSON.parse(sent[0].slice("cs.".length)), [{ projectId: "p-a" }]);
 });
