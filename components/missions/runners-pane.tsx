@@ -12,6 +12,7 @@ import Link from "next/link";
 import { ArrowLeft, ArrowUp, ChevronRight, ExternalLink, Users, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { SlackIcon } from "@/components/brand-icons";
 import { Markdown } from "@/components/markdown";
 import { DiffSize, PullRequestChip, RunnerGlyph, UnreadDot } from "@/components/missions/mission-parts";
 import { Spinner } from "@/components/ui/loaders";
@@ -275,6 +276,18 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
         <RunnerGlyph group={runner.group} state={runner.state} standing={runner.standing} attention={runner.attention} />
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#ededed]">{runner.name}</span>
         <span className="shrink-0 text-[11.5px] text-[#7a7a7a]">{STATE_LABEL[runner.state]}</span>
+        {runner.slackThread && (
+          <a
+            href={runner.slackThread}
+            target="_blank"
+            rel="noreferrer"
+            title="Its Slack thread"
+            aria-label={`${runner.name}'s Slack thread`}
+            className="rounded-md p-1.5 transition-opacity hover:bg-white/[0.05] hover:opacity-80"
+          >
+            <SlackIcon className="size-3.5" />
+          </a>
+        )}
         <Link
           href={`/workspaces/${runner.id}`}
           title="Open its session"

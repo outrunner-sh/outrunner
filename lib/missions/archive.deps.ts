@@ -8,6 +8,7 @@
 
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
 import type { ArchivedWithNote, MissionArchiveDeps } from "@/lib/missions/archive";
+import { takeOffCall } from "@/lib/missions/slack-binding";
 import { returnQueuedMessages, runnersOf, sessionById, takeQueuedMessages } from "@/lib/missions/store";
 import type { Workspace } from "@/lib/runtime/types";
 import { asBrowser } from "@/lib/slack/research";
@@ -30,6 +31,9 @@ export function missionArchiveDeps(): MissionArchiveDeps {
     takeQueued: takeQueuedMessages,
     returnQueued: returnQueuedMessages,
     archive: archiveSession,
+    offCall: async (mission) => {
+      await takeOffCall(mission, mission.ownerId, "archived");
+    },
     now: Date.now,
   };
 }

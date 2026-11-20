@@ -39,10 +39,16 @@ export type ChannelLocation = { teamId: string; channel: string; user: string; c
 export async function localChannel(where: ChannelLocation, deps: ChannelAccessDeps): Promise<boolean> {
   if (where.channelType === "im" || !/^[CG]/.test(where.channel)) return false;
   const [channel, sender] = await Promise.all([deps.channel(), deps.sender()]);
+  return ownChannel(channel, where) &&
+    sender.id === where.user && sender.team_id === where.teamId && !sender.deleted && !sender.is_bot && !sender.is_stranger;
+}
+
+/** Whether Slack's description of a channel is the workspace's own, with
+ *  Outrunner in it: not a DM, and not Slack Connect or otherwise shared. */
+export function ownChannel(channel: ChannelIdentity, where: { teamId: string; channel: string }): boolean {
   return channel.id === where.channel && channel.is_member === true && !channel.is_im && !channel.is_mpim &&
     channel.is_ext_shared === false && channel.is_org_shared === false && channel.is_shared === false &&
-    (!channel.shared_team_ids?.length || channel.shared_team_ids.every((id) => id === where.teamId)) &&
-    sender.id === where.user && sender.team_id === where.teamId && !sender.deleted && !sender.is_bot && !sender.is_stranger;
+    (!channel.shared_team_ids?.length || channel.shared_team_ids.every((id) => id === where.teamId));
 }
 
 /** No cached owner account or inferred authority from installation/digest/watch. */

@@ -37,8 +37,15 @@ export async function recordNotifications(all: NotificationDraft[]): Promise<num
       })),
       { onConflict: "user_id,workspace_id,kind,event_key", ignoreDuplicates: true },
     )
-    .select("id");
+    .select("id, workspace_id, kind");
   if (error) throw error;
+  // A Mission on call in Slack that waits on its owner (its ask_user card)
+  // says so in its latest thread too (lib/missions/slack-announce.ts).
+  const waiting = (data ?? []).filter((row) => row.kind === "needs_input").map((row) => ({ notificationId: row.id, workspaceId: row.workspace_id }));
+  if (waiting.length > 0) {
+    const { tellMissionsWaiting } = await import("@/lib/missions/slack-announce.deps");
+    await tellMissionsWaiting(waiting);
+  }
   return data?.length ?? 0;
 }
 

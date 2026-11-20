@@ -8,12 +8,29 @@ const API = "https://slack.com/api";
 const TIMEOUT_MS = 10_000;
 
 export class SlackApiError extends Error {
-  constructor(
-    readonly method: string,
-    readonly code: string,
-  ) {
+  readonly method: string;
+  readonly code: string;
+  /** Slack's Retry-After, in seconds, on a rate limit. */
+  readonly retryAfter: number | null;
+
+  constructor(method: string, code: string, retryAfter: number | null = null) {
     super(`Slack ${method}: ${code}`);
     this.name = "SlackApiError";
+    this.method = method;
+    this.code = code;
+    this.retryAfter = retryAfter;
+  }
+}
+
+/** A call whose outcome Slack never said: it timed out, or the connection
+ *  failed once the request may have gone. A write may have happened. */
+export class SlackUnknownOutcomeError extends Error {
+  readonly method: string;
+
+  constructor(method: string, cause: unknown) {
+    super(`Slack ${method}: no answer (${cause instanceof Error ? cause.message : String(cause)})`, { cause });
+    this.name = "SlackUnknownOutcomeError";
+    this.method = method;
   }
 }
 
@@ -29,24 +46,34 @@ async function call<T>(
 ): Promise<T> {
   const form = new URLSearchParams();
   for (const [key, value] of Object.entries(body)) if (value !== undefined) form.set(key, String(value));
-  const response = await fetch(`${API}/${method}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": encoding === "json" ? "application/json; charset=utf-8" : "application/x-www-form-urlencoded",
-    },
-    body: encoding === "json" ? JSON.stringify(body) : form.toString(),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API}/${method}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": encoding === "json" ? "application/json; charset=utf-8" : "application/x-www-form-urlencoded",
+      },
+      body: encoding === "json" ? JSON.stringify(body) : form.toString(),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new SlackUnknownOutcomeError(method, error);
+  }
+  const retry = Number(response.headers.get("retry-after"));
+  const retryAfter = Number.isFinite(retry) && retry > 0 ? retry : null;
+  if (response.status === 429) throw new SlackApiError(method, "ratelimited", retryAfter ?? 30);
+  // A 5xx says nothing of whether a write happened.
+  if (response.status >= 500) throw new SlackUnknownOutcomeError(method, new Error(`http_${response.status}`));
   const answer = (await response.json().catch(() => null)) as ({ ok?: boolean; error?: string } & T) | null;
-  if (!answer?.ok) throw new SlackApiError(method, answer?.error ?? `http_${response.status}`);
+  if (!answer?.ok) throw new SlackApiError(method, answer?.error ?? `http_${response.status}`, retryAfter);
   return answer;
 }
 
 /** Post in a thread (or start one, without `threadTs`); the message's ts. */
 export async function postMessage(
   token: string,
-  message: { channel: string; threadTs?: string; text: string; blocks?: SlackBlock[] },
+  message: { channel: string; threadTs?: string; text: string; blocks?: SlackBlock[]; marker?: string },
 ): Promise<string> {
   const answer = await call<{ ts: string }>(token, "chat.postMessage", {
     channel: message.channel,
@@ -55,8 +82,40 @@ export async function postMessage(
     blocks: message.blocks,
     unfurl_links: false,
     unfurl_media: false,
+    // A marker in the message's metadata, unseen in Slack: how a post whose
+    // outcome is unknown is found in its thread (lib/missions/slack-outbox.ts).
+    ...(message.marker && { metadata: { event_type: MARKER_EVENT, event_payload: { op: message.marker } } }),
   });
   return answer.ts;
+}
+
+/** The metadata event type an Outrunner post's marker goes under. */
+export const MARKER_EVENT = "outrunner_post";
+
+/** The markers of the bot's posts in a thread, and whether every reply was
+ *  read (false: the thread is longer than `maxPages` pages). */
+export async function threadMarkers(
+  token: string,
+  channel: string,
+  threadTs: string,
+  maxPages = 5,
+): Promise<{ markers: Map<string, string>; complete: boolean }> {
+  const markers = new Map<string, string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < maxPages; page++) {
+    const answer = await call<{
+      messages?: { ts: string; metadata?: { event_type?: string; event_payload?: { op?: unknown } } }[];
+      has_more?: boolean;
+      response_metadata?: { next_cursor?: string };
+    }>(token, "conversations.replies", { channel, ts: threadTs, limit: 200, include_all_metadata: true, ...(cursor && { cursor }) }, "form");
+    for (const m of answer.messages ?? []) {
+      const op = m.metadata?.event_type === MARKER_EVENT ? m.metadata.event_payload?.op : undefined;
+      if (typeof op === "string") markers.set(op, m.ts);
+    }
+    cursor = answer.response_metadata?.next_cursor || undefined;
+    if (!answer.has_more || !cursor) return { markers, complete: true };
+  }
+  return { markers, complete: false };
 }
 
 /** Change a message the bot posted (the spec card, once it's filed). */
@@ -147,7 +206,7 @@ export async function removeReaction(token: string, message: { channel: string; 
 /** Rechecked on delegated reads: Slack Connect/shared channels are not eligible. */
 export async function channelIdentity(token: string, channel: string) {
   const answer = await call<{ channel: {
-    id: string; is_im?: boolean; is_mpim?: boolean; is_member?: boolean;
+    id: string; is_im?: boolean; is_mpim?: boolean; is_member?: boolean; is_private?: boolean;
     is_ext_shared?: boolean; is_org_shared?: boolean; is_shared?: boolean;
     shared_team_ids?: string[];
   } }>(token, "conversations.info", { channel }, "form");
@@ -159,4 +218,59 @@ export async function senderIdentity(token: string, user: string) {
     token, "users.info", { user }, "form",
   );
   return answer.user;
+}
+
+/** A message's link, as Slack makes it (chat.getPermalink: no scope needed
+ *  beyond the bot being in the channel). */
+export async function messagePermalink(token: string, channel: string, ts: string): Promise<string | null> {
+  const answer = await call<{ permalink?: string }>(token, "chat.getPermalink", { channel, message_ts: ts }, "form");
+  return typeof answer.permalink === "string" && answer.permalink.startsWith("https://") ? answer.permalink : null;
+}
+
+/** The channels the bot is in, public and private (channels:read,
+ *  groups:read): what a Mission can be put on call in from the app. */
+export async function botChannels(token: string, max = 400): Promise<{ id: string; name: string; shared: boolean; private: boolean }[]> {
+  const found: { id: string; name: string; shared: boolean; private: boolean }[] = [];
+  let cursor: string | undefined;
+  do {
+    const answer = await call<{
+      channels?: { id: string; name?: string; is_member?: boolean; is_private?: boolean; is_ext_shared?: boolean; is_org_shared?: boolean; is_shared?: boolean }[];
+      response_metadata?: { next_cursor?: string };
+    }>(
+      token,
+      "conversations.list",
+      { types: "public_channel,private_channel", exclude_archived: true, limit: 200, ...(cursor && { cursor }) },
+      "form",
+    );
+    for (const c of answer.channels ?? []) {
+      if (c.is_member) found.push({ id: c.id, name: c.name ?? c.id, shared: !!(c.is_ext_shared || c.is_org_shared || c.is_shared), private: !!c.is_private });
+    }
+    cursor = answer.response_metadata?.next_cursor || undefined;
+  } while (cursor && found.length < max);
+  return found;
+}
+
+/** The private channels a person is in that the bot can see
+ *  (users.conversations, channels:read and groups:read): whom a private
+ *  channel's name and messages may be shown to. */
+export async function userPrivateChannels(token: string, user: string, max = 1000): Promise<Set<string>> {
+  const found = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const answer = await call<{ channels?: { id: string }[]; response_metadata?: { next_cursor?: string } }>(
+      token,
+      "users.conversations",
+      { user, types: "private_channel", exclude_archived: true, limit: 200, ...(cursor && { cursor }) },
+      "form",
+    );
+    for (const c of answer.channels ?? []) found.add(c.id);
+    cursor = answer.response_metadata?.next_cursor || undefined;
+  } while (cursor && found.size < max);
+  return found;
+}
+
+/** A channel's name, or null when Slack won't say. */
+export async function channelName(token: string, channel: string): Promise<string | null> {
+  const answer = await call<{ channel?: { name?: string } }>(token, "conversations.info", { channel }, "form").catch(() => null);
+  return answer?.channel?.name ?? null;
 }

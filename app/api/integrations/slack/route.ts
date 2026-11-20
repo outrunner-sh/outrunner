@@ -8,6 +8,7 @@ import { captureWorkItem, triageActor, WorkItemChangeError } from "@/lib/db/work
 import { optionalEnv } from "@/lib/env";
 import { isUuid } from "@/lib/ids";
 import { type CardAction, handleCardAction, handleProactiveAction, type ProactiveAction } from "@/lib/slack/agent-run";
+import { MISSION_ASK_ACTION, MISSION_ASK_OTHER } from "@/lib/missions/slack-text";
 import { PROACTIVE_ACTIONS } from "@/lib/slack/proactive-text";
 import {
   captureFromCommand,
@@ -111,6 +112,15 @@ function cardAction(payload: string): NextResponse {
     clicked.value = clicked.block_id.slice("spec:".length);
   }
   if (!action.team?.id || !action.user?.id || !clicked?.action_id || !clicked.value) {
+    return new NextResponse(null, { status: 200 });
+  }
+  // A Mission's question card (lib/missions/slack-ask.ts).
+  if (clicked.action_id.startsWith(MISSION_ASK_ACTION) || clicked.action_id === MISSION_ASK_OTHER) {
+    const click = { teamId: action.team.id, user: action.user.id, value: clicked.value, channel: action.channel?.id ?? null };
+    after(async () => {
+      const { handleMissionAsk } = await import("@/lib/missions/slack-ask.deps");
+      await handleMissionAsk(click);
+    });
     return new NextResponse(null, { status: 200 });
   }
   // Buttons the agent posted on its own: the watch offer, the verdict.

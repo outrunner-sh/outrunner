@@ -62,6 +62,17 @@ account and their existing permissions. Mention Outrunner on each shared questio
 app must apply the channel-access migration and reinstall through the install link to approve `channels:read`
 and `groups:read` (needed to verify channel boundaries). Missing metadata or scopes fail closed.
 
+**A Mission on call in a channel.** `@Outrunner be on call here for <repository>` (write on the project) binds a
+Mission to the channel: one of yours on that project, or a new one. From then on, mentions there, and replies in
+threads it took, go to the Mission instead of the spec-card flow; it answers in the thread, starts Ships (cloud
+sessions that open pull requests), and posts their pull requests there. A Mission's event is saved before Outrunner
+answers Slack (so a crash loses nothing, and the endpoint answers 503, for Slack to retry, when it can't be saved),
+and every post it makes goes through a queue that never posts the same thing twice. Only connected members who can change the
+project (write) can task it, as it works with its owner's access. In its threads: `!aside` keeps a message from it, `!mute` / `!unmute` silences the thread,
+`@Outrunner stop` stops its turn. `@Outrunner pause` / `resume` and `@Outrunner stop being on call here` need write
+on the project. It starts at most 6 Ships an hour and 30 a day. The commands are exact and handled directly, not
+by a model. Channels with no Mission keep everything below. See [Missions](missions.md#on-call-in-slack).
+
 **It speaks first, too:**
 
 - **Follow-ups in the item's thread.** It posts the validator's verdict on the session's pull request. On FAIL or PARTIAL it offers **Send back to the session**, which wakes the session with the findings; the validator checks again when the PR updates. A merge closes the item (done) and says so; a PR closed without merging is reported, and the item stays open.
@@ -161,7 +172,13 @@ app's signing secret.
    - `SLACK_SIGNING_SECRET`: the **Signing Secret**. While it is unset, the endpoint answers 404.
    - `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`: the **Client ID** and **Client Secret**. Connecting an account
      signs in with Slack, and while these are unset nobody can connect.
-4. Apply the database migrations (`pnpm db:migrate`), including `20261103180000_slack_channel_access.sql`.
+4. Apply the database migrations (`pnpm db:migrate`), including `20261103180000_slack_channel_access.sql` and,
+   for Missions on call, `20261119140100_mission_slack.sql` and `20261119140200_mission_slack_reliability.sql`.
+   Missions on call need no new scopes or events: they use `chat:write` (their posts carry a marker in Slack's
+   message metadata, which needs no scope of its own), `reactions:write`, `channels:read` and `groups:read` (to
+   list and check channels), `channels:history` and `groups:history` (to look for a post whose send went
+   unanswered before posting it again), `app_mentions:read` and the `message.*` events already in the manifest,
+   `chat.getPermalink` (no scope), and the interactivity URL for question cards.
 
 ## Connecting a Slack user to an Outrunner account (each person, once)
 

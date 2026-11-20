@@ -419,8 +419,8 @@ function NodeRow({
         </div>
       );
     case "prompt": {
-      // A Mission's news from its Runners: cards, not markup.
-      if (node.text.includes("<runner_event")) {
+      // A Mission's news from its Runners (and Slack): cards, not markup.
+      if (/<(runner_event|slack_)/.test(node.text)) {
         const { events, rest } = parseRunnerEvents(node.text);
         if (events.length > 0) return <RunnerEventCards events={events} note={rest || undefined} />;
       }

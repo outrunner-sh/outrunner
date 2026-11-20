@@ -383,3 +383,26 @@ test("the browser's ask answers the note, kept across asks that ran out of time"
   assert.equal(await requestMissionArchive("m1", asks), "A Ship was archived without its files: “a”. A Ship was archived without its files: “b”.");
   assert.equal(await requestMissionArchive("m1", (async () => new Response("{}", { status: 200 })) as typeof fetch), null);
 });
+
+test("an archived Mission is taken off call, and one that wasn't archived stays on", async () => {
+  const taken: string[] = [];
+  const offCall = async (m: Workspace) => {
+    taken.push(m.id);
+  };
+  const done = world([session("s1", "ready")]);
+  assert.equal((await archiveMission(runner(), { ...done.deps, offCall })).archived, true);
+  assert.deepEqual(taken, ["m1"]);
+  // Refused (a Ship can't be archived yet): still on call.
+  const blocked = world([session("s2", "creating")]);
+  assert.equal((await archiveMission(runner(), { ...blocked.deps, offCall })).archived, false);
+  assert.deepEqual(taken, ["m1"]);
+  // Taking it off call failing doesn't undo the archive.
+  const failing = world([]);
+  const result = await archiveMission(runner(), {
+    ...failing.deps,
+    offCall: async () => {
+      throw new Error("slack down");
+    },
+  });
+  assert.equal(result.archived, true);
+});

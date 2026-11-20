@@ -22,6 +22,27 @@ import {
   writeNotes,
 } from "@/lib/missions/store";
 import type { MissionToolDeps } from "@/lib/missions/tools";
+import { personLabel } from "@/lib/audit/labels";
+import { recordAudit } from "@/lib/audit/record";
+import { getInstallation } from "@/lib/db/slack-agent";
+import {
+  latestRequest,
+  linkSlackShip,
+  missionBinding,
+  missionThread,
+  releaseSlackShip,
+  requestByKey,
+  reserveSpawn,
+  saveAskOnce,
+  shipLedger,
+  threadById,
+  type MissionChannel,
+} from "@/lib/missions/slack-store";
+import { queuePost } from "@/lib/missions/slack-outbox.deps";
+import { missionLevel } from "@/lib/missions/slack-route.deps";
+import { askBlocks } from "@/lib/missions/slack-text";
+import type { MissionSlackDeps } from "@/lib/missions/slack-tools";
+import { userNames } from "@/lib/slack/web";
 import { asBrowser } from "@/lib/slack/research";
 import { allows } from "@/lib/orgs/access";
 import { actAsUser } from "@/lib/supabase/acting-user";
@@ -35,6 +56,54 @@ async function archiveAsOwner(ownerId: string, workspaceId: string, status: stri
     if (status === "suspended" && !(await lifecycle("resume")).ok) return false;
     return (await lifecycle("archive")).ok;
   }).catch(() => false);
+}
+
+async function botToken(binding: MissionChannel): Promise<string> {
+  const install = await getInstallation(binding.teamId);
+  if (!install) throw new Error(`Outrunner isn't installed in Slack workspace ${binding.teamId} any more`);
+  return install.botToken;
+}
+
+/** The Slack tools' wiring: the bound channel, the request and Ship ledger
+ *  (lib/missions/slack-store.ts), and the post queue (slack-outbox.deps.ts). */
+function missionSlackDeps(): MissionSlackDeps {
+  return {
+    binding: missionBinding,
+    thread: missionThread,
+    threadById,
+    request: requestByKey,
+    latestRequest,
+    canRead: async (userId, mission) => allows(await missionLevel(userId, mission), "read"),
+    queue: queuePost,
+    saveAsk: saveAskOnce,
+    askBlocks: (askId, question, options) => askBlocks(askId, question, options),
+    reserveSpawn,
+    linkShip: linkSlackShip,
+    releaseShip: releaseSlackShip,
+    ledger: shipLedger,
+    auditShip: async (mission, binding, request, runnerId) => {
+      const requester = request?.requestedBy ?? null;
+      await recordAudit({
+        orgId: binding.orgId,
+        actor: requester ? { id: requester, githubLogin: "", name: await personLabel(requester), email: null } : "system",
+        action: "mission.slack_ship_started",
+        resource: { type: "mission", id: mission.id, label: mission.title ?? mission.branch },
+        details: {
+          runner_id: runnerId,
+          slack_team_id: binding.teamId,
+          slack_channel_id: binding.channelId,
+          ...(request && { request_id: request.requestKey, requested_by: request.requestedBy, requested_by_slack: request.requestedBySlack }),
+          runs_as: mission.ownerId,
+        },
+      });
+    },
+    requesterName: async (request, thread) => {
+      const binding = await missionBinding(request.missionId);
+      const slackUser = request.requestedBySlack;
+      const name = binding && slackUser ? ((await userNames(await botToken(binding), [slackUser])).get(slackUser) ?? slackUser) : "someone";
+      return { name, permalink: thread?.permalink ?? null };
+    },
+  };
 }
 
 export function missionToolDeps(): MissionToolDeps {
@@ -72,6 +141,7 @@ export function missionToolDeps(): MissionToolDeps {
       if (mission) await writeBoxFile(mission, NOTES_FILE, notes.body, { ifMissing: true }).catch(() => false);
       return notes;
     },
+    slack: missionSlackDeps(),
     // Saved, then laid on the Mission's box too, so the file it reads is what
     // it saved; a box that's down gets them at its next setup.
     writeNotes: async (missionId, body) => {

@@ -87,7 +87,15 @@ export async function recordMissionEvent(event: RecordedEvent): Promise<boolean>
     .select("id");
   if (error) throw error;
   const fresh = (data?.length ?? 0) > 0;
-  if (fresh) scheduleDelivery(event.missionId);
+  if (fresh) {
+    scheduleDelivery(event.missionId);
+    // A Ship started for a Slack thread: its pull request's news is posted
+    // there too, once, as the event is recorded once.
+    if (event.runnerId && event.payload.pr && (event.kind === "ready" || event.kind === "merged" || event.kind === "closed")) {
+      const { tellShipThread } = await import("@/lib/missions/slack-announce.deps");
+      await tellShipThread(event);
+    }
+  }
   return fresh;
 }
 

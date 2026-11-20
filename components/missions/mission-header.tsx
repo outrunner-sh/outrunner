@@ -2,13 +2,15 @@
 
 /**
  * A Mission's page header: its icon (click to pick another), its name (click
- * to rename), its project, and how many Ships it has out of how many.
+ * to rename), its project, how many Ships it has out of how many, and the
+ * Slack channel it's on call in (connect, pause, disconnect).
  */
 
 import { FolderGit2, Users } from "lucide-react";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { MissionGlyph, StatusDot } from "@/components/missions/mission-parts";
+import { MissionSlackChip } from "@/components/missions/mission-slack-chip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { refreshMissions, useMission } from "@/hooks/use-missions";
 import { MISSION_ICONS, missionIcon } from "@/lib/missions/icons";
@@ -171,6 +173,7 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
           {active} Ship{active === 1 ? "" : "s"}
         </span>
       )}
+      {mission && <MissionSlackChip missionId={missionId} onError={setFailed} />}
     </div>
   );
 }
