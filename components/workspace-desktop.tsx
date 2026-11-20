@@ -1,11 +1,26 @@
 "use client";
 
 import type RFB from "@novnc/novnc";
-import { Maximize2, Minimize2, MousePointer2, PanelRightClose, RotateCw } from "lucide-react";
+import { Globe, Maximize2, Minimize2, MousePointer2, PanelRightClose, RotateCw } from "lucide-react";
 import { useEffect, useReducer, useRef, useState } from "react";
 
 import { Spinner } from "@/components/ui/loaders";
-import { CONNECT_TIMEOUT_MS, desktopView, FIRST_VIEW, openDesktop } from "@/lib/session/desktop-view";
+import {
+  type ClipboardAction,
+  clipboardAction,
+  DesktopClipboard,
+  PASTE_WAIT_MS,
+  remoteKeys,
+  writeToClipboard,
+} from "@/lib/session/desktop-clipboard";
+import {
+  CONNECT_TIMEOUT_MS,
+  desktopView,
+  FIRST_VIEW,
+  inUseReporter,
+  openDesktop,
+  openDesktopBrowser,
+} from "@/lib/session/desktop-view";
 import { cn } from "@/lib/utils";
 
 /** noVNC's client, loaded once for the page. It touches `window` as it
@@ -43,9 +58,14 @@ export function WorkspaceDesktop({
   const [view, dispatch] = useReducer(desktopView, FIRST_VIEW);
   const [interact, setInteract] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  // The Browser button's request, and what to say if it failed.
+  const [browser, setBrowser] = useState<{ opening: boolean; error: string | null }>({ opening: false, error: null });
   const panel = useRef<HTMLDivElement>(null);
   const screen = useRef<HTMLDivElement>(null);
   const client = useRef<RFB | null>(null);
+  // The desktop's clipboard as it tells it, and where the user's paste lands.
+  const [remoteClipboard] = useState(() => new DesktopClipboard());
+  const pasteCatcher = useRef<HTMLTextAreaElement>(null);
   // Read by a connection as it opens, so a reconnect keeps the user's choice.
   const interacting = useRef(interact);
 
@@ -114,6 +134,7 @@ export function WorkspaceDesktop({
         send({ type: "disconnect", clean: event.detail.clean });
       });
       rfb.addEventListener("securityfailure", (event) => send({ type: "securityfailure", reason: event.detail.reason }));
+      rfb.addEventListener("clipboard", (event) => remoteClipboard.told(event.detail.text));
       client.current = rfb;
     })();
     return () => {
@@ -122,7 +143,80 @@ export function WorkspaceDesktop({
       client.current = null;
       if (!closed) rfb?.disconnect();
     };
-  }, [workspaceId, isReady, view.attempt]);
+  }, [workspaceId, isReady, view.attempt, remoteClipboard]);
+
+  // While the user drives (Interact on, the desktop live), their moves on it
+  // tell the agent's desktop tools to wait for them: caught on the way down
+  // to noVNC's canvas, which keeps the events for itself.
+  const connected = view.status === "connected";
+  useEffect(() => {
+    const target = screen.current;
+    if (!interact || !connected || !target) return;
+    const report = inUseReporter(workspaceId);
+    const moves = ["pointerdown", "pointermove", "wheel", "keydown"] as const;
+    for (const type of moves) target.addEventListener(type, report, { capture: true, passive: true });
+    return () => {
+      for (const type of moves) target.removeEventListener(type, report, { capture: true });
+    };
+  }, [interact, connected, workspaceId]);
+
+  // Copy and paste with the user's own computer while they drive
+  // (lib/session/desktop-clipboard.ts): the shortcuts are caught on the way
+  // down, before noVNC's canvas sends them to the desktop as pressed.
+  useEffect(() => {
+    const target = screen.current;
+    const catcher = pasteCatcher.current;
+    if (!interact || !connected || !target || !catcher) return;
+    let pending: { metaKey: boolean; timer: ReturnType<typeof setTimeout> } | null = null;
+    const press = (action: ClipboardAction, metaKey: boolean) => {
+      for (const key of remoteKeys(action, metaKey)) client.current?.sendKey(key.keysym, null, key.down);
+    };
+    // The user's text, put on the desktop's clipboard and pasted there; or,
+    // when the browser gives none (nothing to paste, or it won't), the
+    // desktop's own clipboard pasted.
+    const paste = (text: string | null) => {
+      if (!pending) return;
+      const { metaKey, timer } = pending;
+      pending = null;
+      clearTimeout(timer);
+      client.current?.focus({ preventScroll: true });
+      if (text) client.current?.clipboardPasteFrom(text);
+      press("paste", metaKey);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      const action = clipboardAction(event);
+      if (!action || !client.current) return;
+      event.stopPropagation();
+      if (action === "paste") {
+        // The browser pastes into what has the focus once the key press is
+        // done: the catcher, whose paste event hands over the text.
+        if (pending) clearTimeout(pending.timer);
+        pending = { metaKey: event.metaKey, timer: setTimeout(() => paste(null), PASTE_WAIT_MS) };
+        catcher.focus({ preventScroll: true });
+        return;
+      }
+      event.preventDefault();
+      const copied = remoteClipboard.next();
+      press(action, event.metaKey);
+      writeToClipboard(copied, navigator.clipboard);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (clipboardAction(event)) event.stopPropagation();
+    };
+    const onPaste = (event: ClipboardEvent) => {
+      event.preventDefault();
+      paste(event.clipboardData?.getData("text/plain") ?? null);
+    };
+    target.addEventListener("keydown", onKeyDown, { capture: true });
+    target.addEventListener("keyup", onKeyUp, { capture: true });
+    catcher.addEventListener("paste", onPaste);
+    return () => {
+      target.removeEventListener("keydown", onKeyDown, { capture: true });
+      target.removeEventListener("keyup", onKeyUp, { capture: true });
+      catcher.removeEventListener("paste", onPaste);
+      if (pending) clearTimeout(pending.timer);
+    };
+  }, [interact, connected, remoteClipboard]);
 
   // Fullscreen is the browser's, so Esc leaves it without this knowing:
   // the button follows the document, not its own clicks.
@@ -132,12 +226,18 @@ export function WorkspaceDesktop({
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
 
+  // The browser opens for the user to use: Interact goes on with it.
+  async function openBrowser() {
+    setInteract(true);
+    setBrowser({ opening: true, error: null });
+    setBrowser({ opening: false, error: await openDesktopBrowser(workspaceId) });
+  }
+
   function toggleFullscreen() {
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
     else void panel.current?.requestFullscreen().catch(() => {});
   }
 
-  const connected = view.status === "connected";
   const opening = view.status === "starting" || view.status === "connecting";
   const reconnect = () => dispatch({ type: "reconnect" });
 
@@ -149,6 +249,16 @@ export function WorkspaceDesktop({
           {!isReady ? "Not running" : connected ? "Live" : opening ? "Connecting" : view.status === "error" ? "Unavailable" : "Disconnected"}
         </span>
         <span className="studio-desktop-actions">
+          <button
+            type="button"
+            onClick={() => void openBrowser()}
+            disabled={!connected || browser.opening}
+            className="studio-desktop-toggle"
+            title="Open the browser the agent uses: a site you sign in to there is signed in for the agent too"
+          >
+            <Globe />
+            {browser.opening ? "Opening…" : "Browser"}
+          </button>
           <button
             type="button"
             onClick={() => setInteract((on) => !on)}
@@ -179,6 +289,9 @@ export function WorkspaceDesktop({
           it, so React and noVNC never share a parent. */}
       <div className={cn("studio-desktop-screen", interact && "is-interacting")}>
         <div ref={screen} className="studio-desktop-canvas" />
+        {/* Where the browser's paste lands, for its text to reach the
+            desktop (the clipboard effect above). */}
+        <textarea ref={pasteCatcher} className="studio-desktop-paste" tabIndex={-1} aria-hidden="true" />
         {!isReady ? (
           <div className="studio-desktop-overlay">
             <p>The desktop runs while the session does.</p>
@@ -208,8 +321,9 @@ export function WorkspaceDesktop({
         ) : null}
       </div>
 
-      <p className="studio-desktop-note">
-        The session&apos;s desktop, where the agent&apos;s browser and desktop tools run. View only until you choose Interact.
+      <p className="studio-desktop-note" role={browser.error ? "alert" : undefined}>
+        {browser.error ??
+          "The session's desktop, where the agent's browser and desktop tools run. View only until you choose Interact; while you use it, the agent waits for you."}
       </p>
     </div>
   );

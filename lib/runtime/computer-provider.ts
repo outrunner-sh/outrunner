@@ -684,6 +684,24 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     return box.desktop.viewerUrl(ttlSeconds);
   }
 
+  /** Say the owner is using the box's desktop now (BoxDesktop.markInUse);
+   *  false where the provider has no desktop. */
+  async markDesktopInUse(sandboxId: string): Promise<boolean> {
+    const box = await this.backend.get(sandboxId);
+    if (!box.desktop) return false;
+    await box.desktop.markInUse();
+    return true;
+  }
+
+  /** Open the browser on the box's desktop (BoxDesktop.openBrowser); false
+   *  where the provider has no desktop. */
+  async openDesktopBrowser(sandboxId: string): Promise<boolean> {
+    const box = await this.backend.get(sandboxId);
+    if (!box.desktop) return false;
+    await box.desktop.openBrowser();
+    return true;
+  }
+
   /** How this server reaches the box's `port` for a preview it proxies;
    *  null where the provider has no way in. */
   async previewTarget(sandboxId: string, port: number): Promise<PreviewTarget | null> {

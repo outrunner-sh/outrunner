@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getOwner } from "@/lib/auth/owner";
-import { isSameOriginRequest } from "@/lib/http/guards";
-import { hasDesktop } from "@/lib/runtime/types";
-import { reachWorkspaceComputer } from "@/lib/runtime/workspace-agent";
+import { reachDesktop } from "@/lib/runtime/desktop-access";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -24,32 +21,8 @@ const DESKTOP_LINK_TTL_SECONDS = 120;
  * nothing else on the box (lib/runtime/sandbox/daytona.ts).
  */
 export async function POST(request: Request, context: RouteContext) {
-  if (!isSameOriginRequest(request)) {
-    return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
-  }
-  const owner = await getOwner();
-  if (!owner) {
-    return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
-  }
-
   const { id } = await context.params;
-  // The box, not its agent: the desktop is Daytona's own, so it opens even
-  // when the agent is wedged. Who may see it, and whether the provider has
-  // one, are checked as soon as the session is read, before its box is.
-  const reach = await reachWorkspaceComputer(id, {
-    needsComputer: "The desktop runs on Outrunner's cloud computers.",
-    admit: (workspace) => {
-      // The session's own owner alone, whoever else can read the session:
-      // the link is a key to the box's desktop.
-      if (workspace.ownerId !== owner.id) {
-        return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
-      }
-      if (!hasDesktop(workspace.provider)) {
-        return NextResponse.json({ error: "The desktop runs on Outrunner's Daytona sandboxes only." }, { status: 409 });
-      }
-      return null;
-    },
-  });
+  const reach = await reachDesktop(request, id);
   if (!reach.ok) return reach.response;
   const { workspace, provider, sandboxId } = reach.reached;
 

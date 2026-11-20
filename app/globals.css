@@ -396,11 +396,13 @@
 .studio-desktop-toggle:hover { color: var(--studio-text); border-color: rgba(255,255,255,.24); background: var(--studio-hover); }
 .studio-desktop-toggle:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: 1px; }
 .studio-desktop-toggle svg { width: 13px; height: 13px; }
+.studio-desktop-toggle:disabled, .studio-desktop-toggle:disabled:hover { opacity: .45; cursor: default; color: rgba(255,255,255,.72); border-color: var(--studio-border); background: transparent; }
 /* Interact on: lit like the composer's Send, so it's plain the pointer reaches the box. */
 .studio-desktop-toggle[aria-pressed="true"], .studio-desktop-toggle[aria-pressed="true"]:hover { color: #0a0a0a; border-color: #ededed; background: #ededed; }
 .studio-desktop-screen { position: relative; flex: 1 1 0; min-height: 0; width: 100%; margin-top: 6px; overflow: hidden; border: 1px solid var(--studio-border); border-radius: 8px; background: #0a0a0a; }
 .studio-desktop-screen.is-interacting { border-color: rgba(255,255,255,.4); }
 .studio-desktop-canvas { position: absolute; inset: 0; }
+.studio-desktop-paste { position: absolute; top: 0; left: 0; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; resize: none; pointer-events: none; }
 .studio-desktop-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 16px; color: var(--studio-muted); font-size: 13px; text-align: center; }
 .studio-desktop-overlay p { max-width: 36ch; margin: 0; line-height: 1.5; }
 .studio-desktop-overlay > svg { width: 18px; height: 18px; }

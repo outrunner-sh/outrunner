@@ -81,7 +81,9 @@ Use it when seeing or using a graphical interface is the point: to check a UI yo
 
 For web pages, use the browser tools: open_browser with a URL, then browser_snapshot to read the page as an accessibility tree whose elements carry refs (e123), and browser_click, browser_fill and browser_navigate by ref. Take a new snapshot after the page changes; refs from an old one may be gone. Use screenshot to see how the page looks, and the pointer tools (click, double_click, drag, scroll, type, key, at pixel coordinates read off the latest screenshot) for anything outside a web page or that the tree doesn't reach.
 
-Screenshots are saved under .context/desktop/ in the session's folder; embed one in your reply to show the user. To capture a flow as evidence (a before and after, a bug and its fix), call record_start before you go through it and record_stop after: record_stop gives the path of the MP4 it saved.`
+Screenshots are saved under .context/desktop/ in the session's folder; embed one in your reply to show the user. To capture a flow as evidence (a before and after, a bug and its fix), call record_start before you go through it and record_stop after: record_stop gives the path of the MP4 it saved.
+
+The user can use the desktop too, with their own mouse and keyboard. While they do, the tools that act on it wait until they've stopped for a few seconds; if they're still at it after a minute, the tool says so, and you should carry on with other work or ask them rather than retry at once. screenshot and browser_snapshot never wait.`
 
 // BrowserStateInstructions tell the agent how the project's own browser
 // tests start signed in, where the session has `outrunner` (the orientation
@@ -106,7 +108,35 @@ type Config struct {
 	// Watchdog holds a recording to MaxRecording (see Watchdog); nil keeps
 	// the cap in this process, which only tests do.
 	Watchdog Watchdog
+	// UserActive is the file the Desktop tab touches while the user uses the
+	// desktop (UserActivePath); empty never waits for them.
+	UserActive string
+	// UserIdle is how long after the file's last touch the user counts as
+	// done: UserIdleAfter but in tests.
+	UserIdle time.Duration
+	// UserWait is how long a tool that acts waits for them: UserWaitAtMost
+	// but in tests.
+	UserWait time.Duration
 }
+
+// UserActivePath is the file the Desktop tab touches, through the control
+// plane, while the box's user is using the desktop with their own mouse and
+// keyboard (lib/runtime/sandbox/daytona.ts), for a home's user.
+func UserActivePath(home string) string {
+	return filepath.Join(home, ".outrunner", "desktop", "user-active")
+}
+
+// UserIdleAfter is how long after the user's last move the desktop is the
+// agent's again: the Desktop tab touches UserActivePath at most every five
+// seconds while they use it, so a little more than two of those.
+const UserIdleAfter = 12 * time.Second
+
+// UserWaitAtMost is how long a tool that acts on the desktop waits for the
+// user to leave it before saying they're still using it.
+const UserWaitAtMost = time.Minute
+
+// userInUse is a tool's answer while the user is still using the desktop.
+var userInUse = errors.New("the user is using the desktop themselves right now, in the session's Desktop tab. Don't act on it until they're done: carry on with other work and try again later, or ask them in chat")
 
 // Watchdog sees that recording id stops at `until` if it is still running
 // then, from a process of its own: the agent's CLI may restart this server,
@@ -193,6 +223,12 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, cfg Config) error {
 	}
 	if cfg.StartSettle == 0 {
 		cfg.StartSettle = 2 * time.Second
+	}
+	if cfg.UserIdle == 0 {
+		cfg.UserIdle = UserIdleAfter
+	}
+	if cfg.UserWait == 0 {
+		cfg.UserWait = UserWaitAtMost
 	}
 	if cfg.Watchdog == nil {
 		cfg.Watchdog = func(id string, until time.Time) error {
@@ -337,6 +373,11 @@ func (s *server) run(ctx context.Context, name string, a args) (map[string]any, 
 	if !knownTool(name) {
 		return nil, fmt.Errorf("unknown tool %s", name)
 	}
+	if actsOnDesktop(name) {
+		if err := s.waitForUser(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.ensureDesktop(ctx); err != nil {
 		return nil, err
 	}
@@ -455,6 +496,50 @@ func (s *server) run(ctx context.Context, name string, a args) (map[string]any, 
 		return s.recordStop(ctx)
 	}
 	return nil, fmt.Errorf("unknown tool %s", name)
+}
+
+// actsOnDesktop is whether a tool moves the pointer, types or changes the
+// browser: what would fight the user's own hands. Looking (a screenshot, a
+// snapshot) and recording don't.
+func actsOnDesktop(name string) bool {
+	if name == ToolRecordStart || name == ToolRecordStop {
+		return false
+	}
+	for _, readOnly := range ReadOnlyTools {
+		if name == readOnly {
+			return false
+		}
+	}
+	return true
+}
+
+// waitForUser holds a tool that acts while the user is using the desktop in
+// the Desktop tab, until they've left it alone for UserIdle, or says they're
+// still at it after UserWait. On the wall clock, not cfg.Now: the file's
+// time is the box's own.
+func (s *server) waitForUser(ctx context.Context) error {
+	if s.cfg.UserActive == "" {
+		return nil
+	}
+	deadline := time.Now().Add(s.cfg.UserWait)
+	for {
+		info, err := os.Stat(s.cfg.UserActive)
+		if err != nil {
+			// Never touched: the user hasn't used the desktop.
+			return nil
+		}
+		now := time.Now()
+		idle := now.Sub(info.ModTime())
+		if idle >= s.cfg.UserIdle {
+			return nil
+		}
+		if !now.Before(deadline) {
+			return userInUse
+		}
+		if err := pause(ctx, min(s.cfg.UserIdle-idle, deadline.Sub(now))); err != nil {
+			return err
+		}
+	}
 }
 
 func knownTool(name string) bool {

@@ -540,3 +540,96 @@ func TestWebAddresses(t *testing.T) {
 		}
 	}
 }
+
+// usedAt has the Desktop tab touch the user's file at `at`, as it does
+// while they use the desktop.
+func usedAt(t *testing.T, path string, at time.Time) {
+	t.Helper()
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, at, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestToolsThatActWaitWhileTheUserIsUsingTheDesktop(t *testing.T) {
+	fake, toolbox := newFakeToolbox(t)
+	cfg, _ := testConfig(t, toolbox.URL)
+	cfg.UserActive = filepath.Join(t.TempDir(), "user-active")
+	cfg.UserIdle = 400 * time.Millisecond
+	cfg.UserWait = 10 * time.Second
+	c := startServer(t, cfg)
+	click := map[string]any{"x": 1, "y": 2}
+
+	// The user has never used it: no wait.
+	start := time.Now()
+	if text, r := c.tool(ToolClick, click); isError(r) {
+		t.Fatal(text)
+	}
+	if waited := time.Since(start); waited > 300*time.Millisecond {
+		t.Errorf("waited %v with no one using the desktop", waited)
+	}
+
+	// Left a while ago: no wait either.
+	usedAt(t, cfg.UserActive, time.Now().Add(-time.Minute))
+	start = time.Now()
+	c.tool(ToolClick, click)
+	if waited := time.Since(start); waited > 300*time.Millisecond {
+		t.Errorf("waited %v for a user who left a minute ago", waited)
+	}
+
+	// Using it now: the click lands once they've been idle for UserIdle.
+	usedAt(t, cfg.UserActive, time.Now())
+	start = time.Now()
+	if text, r := c.tool(ToolClick, click); isError(r) {
+		t.Fatal(text)
+	}
+	if waited := time.Since(start); waited < 350*time.Millisecond {
+		t.Errorf("clicked after %v, while the user was using the desktop", waited)
+	}
+	if n := fake.called("POST /computeruse/mouse/click"); n != 3 {
+		t.Errorf("clicks = %d", n)
+	}
+
+	// Looking never waits.
+	usedAt(t, cfg.UserActive, time.Now())
+	start = time.Now()
+	if text, r := c.tool(ToolScreenshot, nil); isError(r) {
+		t.Fatal(text)
+	}
+	if waited := time.Since(start); waited > 300*time.Millisecond {
+		t.Errorf("a screenshot waited %v for the user", waited)
+	}
+}
+
+func TestAToolSaysTheUserIsStillUsingTheDesktopOnceItHasWaited(t *testing.T) {
+	fake, toolbox := newFakeToolbox(t)
+	cfg, _ := testConfig(t, toolbox.URL)
+	cfg.UserActive = filepath.Join(t.TempDir(), "user-active")
+	cfg.UserIdle = time.Hour
+	cfg.UserWait = 300 * time.Millisecond
+	c := startServer(t, cfg)
+	usedAt(t, cfg.UserActive, time.Now())
+
+	text, r := c.tool(ToolType, map[string]any{"text": "hello"})
+	if !isError(r) || !strings.Contains(text, "the user is using the desktop themselves") {
+		t.Fatalf("type = %q", text)
+	}
+	if n := fake.called("POST /computeruse/keyboard/type"); n != 0 {
+		t.Errorf("typed %d times over the user", n)
+	}
+}
+
+func TestOnlyToolsThatActWaitForTheUser(t *testing.T) {
+	for _, name := range []string{ToolScreenshot, ToolBrowserSnapshot, ToolRecordStart, ToolRecordStop} {
+		if actsOnDesktop(name) {
+			t.Errorf("%s waits for the user", name)
+		}
+	}
+	for _, name := range []string{ToolClick, ToolDoubleClick, ToolDrag, ToolScroll, ToolType, ToolKey, ToolOpenBrowser, ToolBrowserNavigate, ToolBrowserClick, ToolBrowserFill} {
+		if !actsOnDesktop(name) {
+			t.Errorf("%s doesn't wait for the user", name)
+		}
+	}
+}
