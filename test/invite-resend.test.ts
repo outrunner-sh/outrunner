@@ -28,7 +28,7 @@ type Row = ResentInvite & { orgId: string; tokenHash: string; acceptedAt: string
 
 /** An org with one open invite, kept as the table keeps it (the token's
  *  hash), and the link's token it was made with. */
-function world(opts: { canSend: boolean; emailWorks?: boolean; personal?: boolean; expired?: boolean }) {
+function world(opts: { canSend: boolean; emailWorks?: boolean; orgGone?: boolean; expired?: boolean }) {
   const oldToken = newInviteToken();
   const row: Row = {
     id: INVITE,
@@ -49,7 +49,7 @@ function world(opts: { canSend: boolean; emailWorks?: boolean; personal?: boolea
   const deps: ResendDeps = {
     now: () => NOW,
     newToken: () => `or_inv_new${++tokens}`,
-    org: async (id) => (id === ORG ? { name: "Acme", personal: Boolean(opts.personal) } : null),
+    org: async (id) => (id === ORG && !opts.orgGone ? { name: "Acme" } : null),
     rotate: async ({ orgId, inviteId, tokenHash, expiresAt }) => {
       if (row.orgId !== orgId || row.id !== inviteId || row.acceptedAt || row.revokedAt) return null;
       row.tokenHash = tokenHash;
@@ -141,7 +141,7 @@ test("an email Resend refused says so, for the admin to share the link", async (
   assert.equal(typeof answer.body.link, "string");
 });
 
-test("a used or withdrawn invite, a bad id, or a personal org: nothing rotates", async () => {
+test("a used or withdrawn invite, a bad id, or an org that's gone: nothing rotates", async () => {
   const used = world({ canSend: true });
   used.row.acceptedAt = NOW.toISOString();
   assert.equal((await resendInvite({ orgId: ORG, inviteId: INVITE, caller: admin }, used.deps)).status, 404);
@@ -151,9 +151,9 @@ test("a used or withdrawn invite, a bad id, or a personal org: nothing rotates",
   const bad = world({ canSend: true });
   assert.equal((await resendInvite({ orgId: ORG, inviteId: "nope", caller: admin }, bad.deps)).status, 404);
 
-  const personal = world({ canSend: true, personal: true });
-  assert.equal((await resendInvite({ orgId: ORG, inviteId: INVITE, caller: admin }, personal.deps)).status, 409);
-  assert.ok(personal.accepts(personal.oldToken));
+  const gone = world({ canSend: true, orgGone: true });
+  assert.equal((await resendInvite({ orgId: ORG, inviteId: INVITE, caller: admin }, gone.deps)).status, 404);
+  assert.ok(gone.accepts(gone.oldToken));
 });
 
 test("rate limited: 3 resends of an invite in 10 minutes, then 429 with Retry-After", async () => {

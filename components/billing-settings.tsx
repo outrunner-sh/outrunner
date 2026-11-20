@@ -42,7 +42,7 @@ export function BillingSettings({
   org = null,
 }: {
   /** The org whose plan it is (billing is the org's); none before orgs. */
-  org?: { name: string; personal: boolean; admin: boolean } | null;
+  org?: { name: string; admin: boolean } | null;
   plan: Plan;
   subscription: ShownSubscription | null;
   forSale: boolean;
@@ -108,7 +108,7 @@ export function BillingSettings({
       <div className="space-y-1">
         <PageHeader title={"Billing"} />
         <p className="text-sm text-muted-foreground">
-          {!org || org.personal
+          {!org
             ? "Your plan, and what it includes."
             : `${org.name}'s plan, and what it includes: shared by all its members, whoever starts a session.`}
         </p>

@@ -101,8 +101,8 @@ test("moving between tabs keeps the rest of the address and drops a link's metho
   assert.equal(url.search, "?tab=claude&method=api-key&from=onboarding");
 });
 
-test("old Codex account links keep #328's active team scope; key/local/other-agent links stay personal", () => {
-  const team = { personal: false };
+test("old Codex account links keep #328's active org scope; key/local/other-agent links stay personal", () => {
+  const team = { id: "org-1" };
   assert.equal(
     legacyProviderSettingsHref({ tab: "codex", from: "callback" }, team),
     "/settings/org/coding-agents?tab=codex&from=callback",
@@ -127,7 +127,7 @@ test("old Codex account links keep #328's active team scope; key/local/other-age
     legacyProviderSettingsHref({ tab: "claude", method: "subscription" }, team),
     "/settings/coding-agents?tab=claude&method=subscription",
   );
-  for (const org of [null, undefined, { personal: true }])
+  for (const org of [null, undefined])
     assert.equal(
       legacyProviderSettingsHref({ tab: "codex" }, org),
       "/settings/coding-agents?tab=codex",

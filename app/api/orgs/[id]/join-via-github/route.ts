@@ -19,7 +19,7 @@ const ASK_FOR_AN_INVITE = "Ask one of its admins to invite you.";
 
 /**
  * Join team org `id` as a member through its GitHub organization, at once:
- * what "New team org" offers someone GitHub says is an active member of the
+ * what "New organization" offers someone GitHub says is an active member of the
  * GitHub organization the org's source installation is on
  * (lib/orgs/github-join.ts). GitHub is asked again here, whatever the
  * browser says; the database checks the rest (join_org_via_github). Joined,

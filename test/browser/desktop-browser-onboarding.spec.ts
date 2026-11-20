@@ -10,7 +10,7 @@ async function onboardingApis(page: Page) {
       "/api/settings/providers": { keys: {} },
       "/api/settings/agents": { choices: { claude: null, codex: null } },
       "/api/onboarding/github": {
-        access: { admin: true, accounts: ["outrunner-sh"], available: [], personalGithub: false, appInstallable: true, installNeedsGithub: false, personalConnectable: true },
+        access: { admin: true, accounts: ["outrunner-sh"], available: [], personalGithub: false, appInstallable: true, installNeedsGithub: false },
       },
       "/api/github/repositories": { repositories: [{ githubRepoId: 1, fullName: "outrunner-sh/outrunner", name: "outrunner", owner: "outrunner-sh", private: true, language: "TypeScript", pushedAt: "2026-10-30T00:00:00Z" }], connected: [] },
       "/api/projects/sync": { projects: [{ id: "p1", githubRepoId: 1, fullName: "outrunner-sh/outrunner" }] },

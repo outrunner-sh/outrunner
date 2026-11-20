@@ -1,9 +1,8 @@
 /**
  * The org's `outrunner-connector` (supabase/migrations/20261031120000_org_connectors.sql):
- * the service user a team org's automations run as, made the first time one
+ * the service user an org's automations run as, made the first time one
  * runs. Its sessions are in no member's list, and it's paid by the
  * deployment, on its own plan and allowance (lib/billing/entitlements.ts).
- * A personal org has none: its automations run as its owner, whose org it is.
  */
 
 import { connectorUserId } from "@/lib/automations/connector-id";
@@ -52,7 +51,7 @@ export async function connectorsAmong(userIds: readonly string[]): Promise<Set<s
 
 /**
  * The org's connector, made (a user, an admin of the org) the first time it's
- * asked for; null for a personal org, which takes no other member. Each step
+ * asked for; null for an org that's gone. Each step
  * is idempotent, by the connector's derived id: the user (made, or found
  * made), its membership, its record. So calls at once agree, and one that
  * died partway is finished by the next.
@@ -70,13 +69,9 @@ export async function orgConnector(orgId: string): Promise<string | null> {
     return existing.user_id;
   }
 
-  const { data: org, error: orgError } = await supabase
-    .from("organizations")
-    .select("personal_owner_id")
-    .eq("id", orgId)
-    .maybeSingle();
+  const { data: org, error: orgError } = await supabase.from("organizations").select("id").eq("id", orgId).maybeSingle();
   if (orgError) throw orgError;
-  if (!org || org.personal_owner_id) return null;
+  if (!org) return null;
 
   const userId = connectorUserId(orgId);
   const { error: makeError } = await supabase.auth.admin.createUser({

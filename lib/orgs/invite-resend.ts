@@ -28,7 +28,7 @@ export type ResendDeps = {
   now(): Date;
   newToken(): string;
   /** The org, or null for none. */
-  org(orgId: string): Promise<{ name: string; personal: boolean } | null>;
+  org(orgId: string): Promise<{ name: string } | null>;
   /** Give the org's open invite `tokenHash` and `expiresAt`, so its old link
    *  stops working; null when it has none by that id (used, withdrawn). */
   rotate(input: { orgId: string; inviteId: string; tokenHash: string; expiresAt: string }): Promise<ResentInvite | null>;
@@ -90,7 +90,7 @@ export async function resendInvite(
   }
 
   const org = await deps.org(orgId);
-  if (!org || org.personal) return { status: 409, body: { error: "Only a team org has members to invite." } };
+  if (!org) return { status: 404, body: { error: "No such org." } };
 
   const token = deps.newToken();
   const expiresAt = new Date(deps.now().getTime() + INVITE_DAYS * 24 * 60 * 60 * 1000).toISOString();

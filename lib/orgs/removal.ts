@@ -17,7 +17,7 @@
  *
  * Their GitHub App links go at once, in the database, as their membership
  * does (20261112130000_github_installation_sharing.sql): every link they made
- * of the org's installations into another org, their personal org included.
+ * of the org's installations into another org, their own included.
  */
 
 export const REMOVED_KEEP_DAYS = 30;

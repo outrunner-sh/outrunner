@@ -12,7 +12,7 @@ import { verifiedEmailsOf } from "@/lib/orgs/user-emails";
 
 /**
  * Ask to join the org that claimed the signed-in user's email domain (their
- * primary verified email's, GitHub's or else Google's): what "New team org" offers when there's
+ * primary verified email's, GitHub's or else Google's): what "New organization" offers when there's
  * one already. Its admins approve or decline.
  */
 export async function POST(request: Request) {

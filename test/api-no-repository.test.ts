@@ -5,7 +5,7 @@ import { noRepositoryAnswer, type NoRepositoryInput } from "@/lib/api/no-reposit
 
 const base: NoRepositoryInput = {
   fullName: "Walkover-Web-Solution/viasocket",
-  org: { id: "org-1", name: "walkover", personal: false },
+  org: { id: "org-1", name: "walkover" },
   orgId: "org-1",
   callerKind: "personal_key",
   githubConnected: false,
@@ -25,15 +25,14 @@ test("a team org with no GitHub connected says so, and where an admin connects i
   assert.equal(error.settings_url, "https://app.outrunner.sh/settings/org/github");
 });
 
-test("connected, unknown, or a personal org (its own GitHub counts): add it, or check the org", async () => {
+test("connected, or unknown: add it, or check the org", async () => {
   for (const input of [
     { ...base, githubConnected: true },
     { ...base, githubConnected: null },
-    { ...base, org: { id: "org-1", name: "Harsh", personal: true } },
   ]) {
     const error = await body(noRepositoryAnswer(input));
     assert.match(error.message, /that you can see: add it to Outrunner \(Environments → Pick repositories\), or check the org/);
-    assert.match(error.message, /A personal key or the CLI acts in your personal org/);
+    assert.match(error.message, /A personal key or the CLI acts in the org you joined first/);
     assert.equal(error.settings_url, undefined);
   }
   const orgKey = await body(noRepositoryAnswer({ ...base, githubConnected: true, callerKind: "org_key" }));

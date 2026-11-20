@@ -183,7 +183,6 @@ export async function claimInstallation(input: {
 export type InstallationShare = {
   orgId: string;
   orgName: string;
-  personal: boolean;
   linkedAt: string;
   linkedBy: string | null;
   linkedByEmail: string | null;
@@ -205,7 +204,6 @@ export async function listInstallationShares(orgId: string, installationId: numb
   return (data ?? []).map((r) => ({
     orgId: r.org_id,
     orgName: r.org_name,
-    personal: r.personal,
     linkedAt: r.linked_at,
     linkedBy: r.linked_by,
     linkedByEmail: r.linked_by_email,
@@ -214,7 +212,7 @@ export async function listInstallationShares(orgId: string, installationId: numb
 }
 
 /**
- * Team orgs that are the source of these installations (or the source
+ * Orgs that are the source of these installations (or the source
  * installations of this org), still connected to them, for joining an org
  * through its GitHub organization (lib/orgs/github-join.ts): installations on
  * a GitHub organization only, not suspended. join_org_via_github checks the
@@ -244,7 +242,7 @@ export async function sourceOrgInstallations(
       .select("org_id, installation_id")
       .in("installation_id", installs.map((i) => i.installation_id))
       .in("org_id", orgIds),
-    supabase.from("organizations").select("id, name").in("id", orgIds).is("personal_owner_id", null),
+    supabase.from("organizations").select("id, name").in("id", orgIds),
     supabase.from("organization_settings").select("org_id, join_via_github").in("org_id", orgIds),
   ]);
   if (links.error) throw links.error;

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import { recordAudit } from "@/lib/audit/record";
-import { getOrg } from "@/lib/db/orgs";
 import { clearOrgProviderKey, getOrgKeyStatuses, setOrgProviderKey } from "@/lib/db/org-credentials";
 import { savingSettings } from "@/lib/http/settings-save";
 import { orgCaller } from "@/lib/orgs/routes";
@@ -28,8 +27,6 @@ export async function PUT(request: Request, context: RouteContext) {
   const { id } = await context.params;
   const caller = await orgCaller(request, id, { admin: true });
   if (caller instanceof Response) return caller;
-  const refused = await personalRefusal(id);
-  if (refused) return refused;
   const body = (await request.json().catch(() => null)) as { provider?: unknown; key?: unknown } | null;
   const provider = body?.provider;
   if (!isKeyProviderId(provider)) {
@@ -69,14 +66,4 @@ export async function DELETE(request: Request, context: RouteContext) {
     });
     return NextResponse.json({ keys: await getOrgKeyStatuses(id) });
   });
-}
-
-/** A personal org's keys are its owner's own, under Settings → Providers. */
-async function personalRefusal(orgId: string): Promise<Response | null> {
-  const org = await getOrg(orgId);
-  if (!org?.personal) return null;
-  return NextResponse.json(
-    { error: "Your personal org runs on your own keys: save them under Settings → Providers." },
-    { status: 409 },
-  );
 }

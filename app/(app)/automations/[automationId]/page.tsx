@@ -101,7 +101,6 @@ async function AutomationSection({ params }: { params: Params }) {
       }}
       repos={repos}
       coverage={coverage}
-      byConnector={!active.personal}
       onHarness={settings.onHarness}
       editable={admin}
       webhook={webhook}

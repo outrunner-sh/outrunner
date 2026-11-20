@@ -74,7 +74,7 @@ const INVITE_SENT_AT = new Date(LOADED_AT - 2 * 86_400_000).toISOString();
 const INVITE_EXPIRES_AT = new Date(LOADED_AT + 5 * 86_400_000).toISOString();
 
 /** The org setup fixtures set up. */
-const SETUP_ORG = { id: "org-1", name: "Acme", personal: false };
+const SETUP_ORG = { id: "org-1", name: "Acme" };
 
 /**
  * Home's setup gate as the server would answer it (lib/orgs/setup.ts), for
@@ -101,7 +101,7 @@ export function FixturePage() {
   const org = {
     id: "org-1",
     name: "neev ai",
-    personal: false,
+    joinedAt: "2026-10-01T00:00:00Z",
     role: state === "member" ? ("member" as const) : ("admin" as const),
   };
   const detail = useMemo(
@@ -307,7 +307,7 @@ export function FixturePage() {
               suspendedAt: null, suspended: false, installedBy: "preview-owner", createdAt: "2026-10-30T00:00:00Z",
               repositories: ["outrunner-sh/outrunner"], total: 1, reachable: true,
               shares: params.get("shared") === "1" ? [{
-                orgId: "00000000-0000-4000-a000-000000000077", orgName: "Personal", personal: true,
+                orgId: "00000000-0000-4000-a000-000000000077", orgName: "Alan's organization",
                 linkedAt: "2026-11-01T00:00:00Z", linkedBy: "u-alan", linkedByEmail: "alan@acme.dev", authority: null,
               }] : [],
             }] : []}
@@ -321,14 +321,17 @@ export function FixturePage() {
         </SettingsFrame>
       ) : view === "members" ? (
         <SettingsFrame>
+          {/* `?state=fresh`: a new user's own org, made at sign-in, them alone in it. */}
           <OrgMembersSettings
-            org={org}
+            org={state === "fresh" ? { ...org, name: "Ada's organization" } : org}
             me="u-ada"
             members={[
               { userId: "u-ada", login: "ada", name: "Ada Lovelace", email: "ada@acme.dev", avatarUrl: null, role: "admin", joinedAt: "2026-10-01T00:00:00Z", joinedViaGithub: null },
-              { userId: "u-alan", login: "alan", name: "Alan Turing", email: "alan@acme.dev", avatarUrl: null, role: "member", joinedAt: "2026-10-02T00:00:00Z", joinedViaGithub: "acme" },
+              ...(state === "fresh" ? [] : [
+                { userId: "u-alan", login: "alan", name: "Alan Turing", email: "alan@acme.dev", avatarUrl: null, role: "member" as const, joinedAt: "2026-10-02T00:00:00Z", joinedViaGithub: "acme" },
+              ]),
             ]}
-            invites={[
+            invites={state === "fresh" ? [] : [
               { id: "inv-1", email: "grace@acme.dev", role: "member", invitedBy: "u-ada", createdAt: INVITE_SENT_AT, expiresAt: INVITE_EXPIRES_AT, expired: false },
               { id: "inv-2", email: "linus@acme.dev", role: "admin", invitedBy: "u-ada", createdAt: "2026-10-01T00:00:00Z", expiresAt: "2026-10-08T00:00:00Z", expired: true },
             ]}

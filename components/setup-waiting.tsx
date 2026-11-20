@@ -39,7 +39,7 @@ export function SetupWaiting({ orgName }: { orgName: string }) {
           <li className="flex items-start gap-3 px-4 py-3">
             <Laptop className="text-muted-foreground mt-0.5 size-4 shrink-0" aria-hidden />
             <span>
-              <span className="block font-medium">Work in your personal org</span>
+              <span className="block font-medium">Work in another org</span>
               <span className="text-muted-foreground block text-xs">Switch orgs from the menu at the top of the sidebar.</span>
             </span>
           </li>

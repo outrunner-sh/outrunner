@@ -10,7 +10,7 @@ import { requestJson } from "@/lib/http/request-json";
 import { MAX_BODY_CHARS, MAX_TITLE_CHARS, type LearningScope } from "@/lib/learnings/rules";
 import type { LearningView } from "@/lib/learnings/routes";
 
-type Org = { id: string; name: string; personal: boolean; admin: boolean };
+type Org = { id: string; name: string; admin: boolean };
 
 const ENDPOINT = "/api/learnings";
 
@@ -19,8 +19,7 @@ const ENDPOINT = "/api/learnings";
  * or a member's for the org, which its admins decide), then the org's
  * learnings and the user's own, each with a form to add one. An org's
  * learnings are its admins' to change; a member's addition is filed as a
- * suggestion. A personal org shows the user's own alone: they are already
- * in every org.
+ * suggestion.
  */
 export function LearningsSettings({ org, initial }: { org: Org; initial: LearningView[] }) {
   const [learnings, setLearnings] = useState(initial);
@@ -56,8 +55,7 @@ export function LearningsSettings({ org, initial }: { org: Org; initial: Learnin
   const remove = (id: string) =>
     change(`${ENDPOINT}/${id}?org=${encodeURIComponent(org.id)}`, { method: "DELETE" }, "Couldn't delete that learning. Try again.");
 
-  const showOrg = !org.personal;
-  const suggested = learnings.filter((l) => l.status === "suggested" && (showOrg || l.scope === "personal"));
+  const suggested = learnings.filter((l) => l.status === "suggested");
   const orgActive = learnings.filter((l) => l.scope === "org" && l.status === "active");
   const personalActive = learnings.filter((l) => l.scope === "personal" && l.status === "active");
 
@@ -91,22 +89,20 @@ export function LearningsSettings({ org, initial }: { org: Org; initial: Learnin
         </div>
       )}
 
-      {showOrg && (
-        <LearningList
-          title={`${org.name}'s learnings`}
-          intro={
-            org.admin
-              ? "Every session of the org's members loads these."
-              : "Every session of the org's members loads these. Its admins change them; what you add is a suggestion for them."
-          }
-          learnings={orgActive}
-          busy={busy}
-          addLabel={org.admin ? "Add for the org" : "Suggest for the org"}
-          onAdd={(title, body) => add("org", title, body)}
-          onSave={save}
-          onDelete={remove}
-        />
-      )}
+      <LearningList
+        title={`${org.name}'s learnings`}
+        intro={
+          org.admin
+            ? "Every session of the org's members loads these."
+            : "Every session of the org's members loads these. Its admins change them; what you add is a suggestion for them."
+        }
+        learnings={orgActive}
+        busy={busy}
+        addLabel={org.admin ? "Add for the org" : "Suggest for the org"}
+        onAdd={(title, body) => add("org", title, body)}
+        onSave={save}
+        onDelete={remove}
+      />
 
       <LearningList
         title="Your learnings"

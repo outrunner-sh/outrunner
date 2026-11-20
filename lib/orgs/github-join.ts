@@ -3,7 +3,7 @@
  * (20261119100000_github_org_join.sql): an org whose GitHub App installation
  * is on a GitHub organization, as that installation's source org, lets that
  * organization's active members in at once, as members, unless its admins
- * turned it off. "New team org" lists the ones it finds for the signed-in
+ * turned it off. "New organization" lists the ones it finds for the signed-in
  * user, and joins one (app/api/orgs/github-matches, app/api/orgs/[id]/join-via-github).
  *
  * Finding them is costly, so it's only asked for there, never on a page load:

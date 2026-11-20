@@ -22,7 +22,7 @@ export type OrgContext = {
  *
  * Throws when the orgs can't be read. A reader may carry on without them (the
  * sidebar lists every org's projects then); a writer must not, or what the
- * user meant for a team org would land in their personal one.
+ * user meant for one org would land in another.
  */
 export const getOrgContext = cache(async (): Promise<OrgContext | null> => {
   const orgs = await withOwnOrg(await listMyOrgs());

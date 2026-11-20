@@ -12,7 +12,7 @@ import { githubJoinDeps } from "@/lib/orgs/github-join.deps";
  * The team orgs the signed-in user could join through their GitHub
  * organizations (lib/orgs/github-join.ts): `{ matches, githubConnected,
  * canConnect }`. Asks GitHub, once per installation worth asking, so only
- * "New team org" calls it, as it opens; never a page load.
+ * "New organization" calls it, as it opens; never a page load.
  *
  * `githubConnected: false`: no GitHub connection to look with, and
  * `canConnect` says whether this deployment can make one.

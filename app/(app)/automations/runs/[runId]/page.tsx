@@ -5,6 +5,7 @@ import { RunSessionLoading } from "@/components/automations-loading";
 import { ReviewSessionView } from "@/components/review-session-view";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getRun } from "@/lib/db/automation-runs";
+import { getWorkspace } from "@/lib/db/repositories";
 import { isUuid } from "@/lib/ids";
 import { getOrgContext } from "@/lib/orgs/server";
 
@@ -51,7 +52,11 @@ async function RunSessionSection({ params }: { params: Params }) {
   if (active.role !== "admin") notFound();
   const run = await getRun(active.id, runId);
   if (!run?.workspaceId) notFound();
-  // A personal org's runs are its owner's own: no connector's to read.
-  if (active.personal) redirect(`/workspaces/${run.workspaceId}`);
+  // A run from before its org had a connector (a personal org's, once) ran
+  // as the admin themselves: their own session, which they open as theirs.
+  // RLS shows a session to its owner alone.
+  if (await getWorkspace(run.workspaceId).catch(() => null)) {
+    redirect(`/workspaces/${run.workspaceId}`);
+  }
   return <ReviewSessionView orgId={active.id} run={run} />;
 }

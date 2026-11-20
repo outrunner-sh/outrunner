@@ -40,7 +40,7 @@ export async function orgCaller(
 }
 
 /** Run a change to an org's members, answering a refusal (the last admin,
- *  a personal org, a used invite) as 409 with its reason. */
+ *  a used invite) as 409 with its reason. */
 export async function changingMembers(what: string, change: () => Promise<Response>): Promise<Response> {
   try {
     return await change();

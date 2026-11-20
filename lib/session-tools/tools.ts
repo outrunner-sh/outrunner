@@ -72,10 +72,8 @@ async function suggestLearning(
   args: Record<string, unknown>,
   deps: SessionToolDeps,
 ): Promise<SessionToolAnswer> {
-  let where = learningScope(args.scope ?? "personal");
+  const where = learningScope(args.scope ?? "personal");
   if (!where) return refuse(400, "A learning is for the user (personal) or the org.");
-  // A personal org's learnings are its person's own.
-  if (where === "org" && (await deps.learnings.personalOrg?.(scope.orgId))) where = "personal";
   const text = parseLearningText(args);
   if (typeof text === "string") return refuse(400, text.replaceAll("`", ""));
   try {
@@ -120,10 +118,8 @@ async function remember(
   args: Record<string, unknown>,
   deps: SessionToolDeps,
 ): Promise<SessionToolAnswer> {
-  let where: MemoryScope | null = args.scope === undefined ? "personal" : args.scope === "org" || args.scope === "personal" ? args.scope : null;
+  const where: MemoryScope | null = args.scope === undefined ? "personal" : args.scope === "org" || args.scope === "personal" ? args.scope : null;
   if (!where) return refuse(400, "A note is the user's own (personal) or shared with the org.");
-  // A personal org has no one to share with: the note is the user's own.
-  if (where === "org" && (await deps.learnings.personalOrg?.(scope.orgId))) where = "personal";
   try {
     await addMemory(actor, deps.memory, { scope: where, body: args.body, workspaceId: scope.workspaceId });
     return {

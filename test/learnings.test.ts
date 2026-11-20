@@ -190,12 +190,6 @@ test("caps count the full scope even when the displayed list is incomplete", asy
   await assert.rejects(updateLearning(admin, d, own[0].id, { status: "active" }), /100 learnings/);
 });
 
-test("a personal org has no learnings of its own", async () => {
-  const d = { ...deps(), personalOrg: async () => true };
-  await assert.rejects(createLearning(admin, d, { scope: "org", title: "T", body: "x" }), (e) => e instanceof LearningError && e.status === 400);
-  await createLearning(admin, d, { scope: "personal", title: "T", body: "x" });
-});
-
 test("an agent's suggestion is filed for its user to accept, in its session's org", async () => {
   const d = deps();
   const toolDeps = {
@@ -218,10 +212,6 @@ test("an agent's suggestion is filed for its user to accept, in its session's or
   assert.equal(d.rows[1].status, "suggested");
 
   assert.equal((await callSessionTool(scope, "suggest_learning", { title: "" }, toolDeps)).status, 400);
-  // In a personal org, --org is the user's own.
-  const personalOrgDeps = { ...toolDeps, learnings: { ...d, personalOrg: async () => true } };
-  await callSessionTool(scope, "suggest_learning", { scope: "org", title: "Mine", body: "x" }, personalOrgDeps);
-  assert.equal(d.rows.at(-1)?.scope, "personal");
   assert.equal((await callSessionTool(scope, "erase_everything", {}, toolDeps)).status, 404);
   assert.equal((await callSessionTool({ ...scope, userId: "u-gone" }, "suggest_learning", { title: "T", body: "x" }, toolDeps)).status, 403);
 });

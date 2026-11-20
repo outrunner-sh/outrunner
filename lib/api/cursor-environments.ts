@@ -90,13 +90,13 @@ export function repoNamesOf(value: unknown): string[] | string {
 export const BUILD_SETTINGS = { pullLatestCode: "when_stale", stalenessThresholdHours: null, installTimeoutMinutes: null } as const;
 
 /** A project as Cursor's environment; in full (GET one) with its
- *  `environmentJson` and `buildSettings`. `personal`: its org is its maker's
- *  own (Cursor's `owner: personal`), else the team's. */
-export function cursorEnvironmentJson(environment: Environment, personal: boolean, full: boolean): Record<string, unknown> {
+ *  `environmentJson` and `buildSettings`. Every org is a team (Cursor's
+ *  `owner: team`): none is anyone's personal one. */
+export function cursorEnvironmentJson(environment: Environment, full: boolean): Record<string, unknown> {
   return {
     id: environment.id,
     name: environment.name,
-    owner: personal ? "personal" : "team",
+    owner: "team",
     repos: environment.repos.map((r) => ({ url: `https://${repoAddress(r.fullName)}` })),
     ...(full && {
       environmentJson: environmentJsonOf(environment.hooks),

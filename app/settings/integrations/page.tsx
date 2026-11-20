@@ -228,8 +228,8 @@ async function IntegrationsSection({
         <h2 className="text-sm font-medium text-foreground">Terminal</h2>
         <p className="text-sm text-muted-foreground">
           After <code className="font-mono">outrunner login</code>, capture from the terminal with{" "}
-          <code className="font-mono">outrunner triage &quot;fix the flaky login test&quot;</code>. It goes to your
-          personal org&apos;s triage unless you pass <code className="font-mono">--org &lt;name&gt;</code>. Scripts can
+          <code className="font-mono">outrunner triage &quot;fix the flaky login test&quot;</code>. It goes to the
+          triage of the org you joined first unless you pass <code className="font-mono">--org &lt;name&gt;</code>. Scripts can
           post to <code className="font-mono">/api/triage/items?org=&lt;name&gt;</code> with the same token.
         </p>
       </div>

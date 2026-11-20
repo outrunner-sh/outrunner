@@ -32,14 +32,12 @@ async function DefaultsSection() {
   if (!owner) redirect("/signin?next=/settings/org/defaults");
   const context = await getOrgContext().catch(() => undefined);
   const org = context?.active;
-  if (!org || org.personal) {
+  if (!org) {
     return (
       <section className="space-y-6">
         <PageHeader title={"Defaults"} />
         <p className="max-w-prose text-sm text-muted-foreground">
-          {!org
-            ? "Couldn't load your orgs. Reload the page to try again."
-            : "Your personal org's defaults are your own, under Settings → Preferences and Sandbox. A team org can set defaults for its members here."}
+          Couldn&apos;t load your orgs. Reload the page to try again.
         </p>
       </section>
     );

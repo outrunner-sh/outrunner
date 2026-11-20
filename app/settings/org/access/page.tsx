@@ -27,16 +27,14 @@ async function AccessSection() {
   if (!owner) redirect("/signin?next=/settings/org/access");
   const context = await getOrgContext().catch(() => undefined);
   const org = context?.active;
-  if (!org || org.personal || org.role !== "admin") {
+  if (!org || org.role !== "admin") {
     return (
       <section className="space-y-6">
         <PageHeader title={"Roles & access"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           {!org
             ? "Couldn't load your orgs. Reload the page to try again."
-            : org.personal
-              ? "Your personal org is just you: you can do everything in it. Roles are for team orgs."
-              : "Only the org's admins decide who may do what. Ask one of them."}
+            : "Only the org's admins decide who may do what. Ask one of them."}
         </p>
       </section>
     );

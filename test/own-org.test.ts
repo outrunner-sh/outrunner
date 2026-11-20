@@ -24,11 +24,11 @@ test("sign-in makes no own org on the way to an invite: they'll be in its org", 
   assert.equal(ownOrgOnSignIn("/onboarding"), true);
 });
 
-test("a user's own org: their personal org while they have one, else the first they made", () => {
-  const personal = { id: "p", personal: true, createdAt: "2026-11-02T00:00:00Z" };
-  const first = { id: "f", personal: false, createdAt: "2026-11-01T00:00:00Z" };
-  const later = { id: "l", personal: false, createdAt: "2026-11-05T00:00:00Z" };
-  assert.equal(pickOwnOrg([later, personal, first]), "p");
+test("a user's own org is the first they made and administer; ties by id", () => {
+  const first = { id: "f", createdAt: "2026-11-01T00:00:00Z" };
+  const later = { id: "l", createdAt: "2026-11-05T00:00:00Z" };
+  const tied = { id: "a", createdAt: "2026-11-05T00:00:00Z" };
   assert.equal(pickOwnOrg([later, first]), "f");
+  assert.equal(pickOwnOrg([later, tied]), "a");
   assert.equal(pickOwnOrg([]), null);
 });

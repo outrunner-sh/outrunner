@@ -107,17 +107,17 @@ export function withProviderMethod(
 }
 
 export type SettingsQuery = Record<string, string | string[] | undefined>;
-/** Legacy Codex account links opened the active team scope on #328. Personal
- * API-key/local-method links and every other provider remain personal. */
+/** Legacy Codex account links opened the active org's scope on #328.
+ * Personal API-key/local-method links and every other provider remain
+ * personal. */
 export function legacyProviderSettingsHref(
   params: SettingsQuery,
-  org?: { personal: boolean } | null,
+  org?: { id: string } | null,
 ): string {
   const shared =
     params.tab === "codex" &&
     (params.method === undefined || params.method === "codex-account") &&
-    org &&
-    !org.personal;
+    Boolean(org);
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     for (const entry of Array.isArray(value)

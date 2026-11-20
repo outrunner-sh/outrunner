@@ -1,7 +1,8 @@
 /**
  * The app says Environments and repositories, not "projects" (renamed
  * 2026-11, after Replicas' model): this fails when UI copy in components/ or
- * app/ says "project" again. Code names (props, ids, `?project=`) aren't copy
+ * app/ says "project" again. Nor is any org a "personal org" or a "team org"
+ * (20261120140000_one_org_kind.sql): there's one kind. Code names (props, ids, `?project=`) aren't copy
  * and aren't looked at. Other products' projects (Doppler, Infisical, Jira,
  * Google Cloud, OpenAI, Linear) keep their own word: those are allowed.
  */
@@ -49,6 +50,10 @@ function copyOn(line: string): string[] {
   // A line of words alone, not a prop or key (`projects,`, `project: p,`).
   if (/^[A-Za-z][^=;{}()<>"'`]*$/.test(trimmed) && !/[,:]$/.test(trimmed) && !/^\w+:\s/.test(trimmed)) found.push(trimmed);
   for (const match of line.matchAll(/>([^<>{}]*[A-Za-z][^<>{}]*)</g)) found.push(match[1]);
+  // And words after a tag to the line's end (`<Plus /> New org`); not after
+  // an arrow (`=>`), which is code.
+  const tail = /(?<![=-])\/?>([^<>{}=();]*[A-Za-z][^<>{}=();]*)$/.exec(line);
+  if (tail) found.push(tail[1]);
   return found;
 }
 
@@ -69,6 +74,21 @@ test("UI copy says environment or repository, never project", () => {
   assert.deepEqual(offenders, [], `Say "environment" or "repository" instead:\n${offenders.join("\n")}`);
 });
 
+/** The org kinds there were: every org is just an org now. */
+const ORG_KIND = /\b(personal|team) orgs?\b/i;
+
+test("UI copy has one kind of org: never a personal or a team org", () => {
+  const offenders: string[] = [];
+  for (const root of ROOTS) {
+    for (const file of files(root)) {
+      readFileSync(file, "utf8").split("\n").forEach((line, index) => {
+        for (const copy of copyOn(line)) if (ORG_KIND.test(copy)) offenders.push(`${file}:${index + 1}: ${copy.trim()}`);
+      });
+    }
+  }
+  assert.deepEqual(offenders, [], `Say "org" alone:\n${offenders.join("\n")}`);
+});
+
 test("the guard sees copy, and only copy", () => {
   assert.ok(copyOn(`  label="Projects"`).some((c) => WORD.test(c)));
   assert.deepEqual(copyOn(`  {option("projects", "Repositories")}`).filter((c) => WORD.test(c)), []);
@@ -82,4 +102,8 @@ test("the guard sees copy, and only copy", () => {
   assert.deepEqual(copyOn(`  project: s.name,`).filter((c) => WORD.test(c)), []);
   assert.deepEqual(copyOn("  const parts = [`${row.project} · this Mac`];").filter((c) => WORD.test(c)), []);
   assert.ok(copyOn(`              Project`).some((c) => WORD.test(c)));
+  assert.ok(copyOn(`          Your personal org is just you.`).some((c) => ORG_KIND.test(c)));
+  assert.ok(copyOn(`            <Plus className="size-4" /> New team org`).some((c) => ORG_KIND.test(c)));
+  assert.deepEqual(copyOn(`  const personal = await personalOrg(context);`).filter((c) => ORG_KIND.test(c)), []);
+  assert.deepEqual(copyOn(`  .map((p) => p.fullName) : projects;`).filter((c) => WORD.test(c)), []);
 });

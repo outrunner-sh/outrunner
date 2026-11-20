@@ -34,8 +34,8 @@ export function needsSetup(state: OrgSetupState): boolean {
  *  for one, with what they can do meanwhile. Null: nothing to do. */
 export type SetupGate = { kind: "setup" } | { kind: "waiting"; orgName: string } | null;
 
-export function setupGate(needed: boolean, org: { role: OrgRole; name: string; personal: boolean }): SetupGate {
+export function setupGate(needed: boolean, org: { role: OrgRole; name: string }): SetupGate {
   if (!needed) return null;
   if (org.role === "admin") return { kind: "setup" };
-  return { kind: "waiting", orgName: org.personal ? "your personal org" : org.name };
+  return { kind: "waiting", orgName: org.name };
 }

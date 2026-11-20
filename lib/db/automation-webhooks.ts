@@ -13,12 +13,11 @@ export function webhookTokenSettings(token = newWebhookToken()): { hash: string;
   return { hash: webhookTokenHash(token), sealed: seal(token) };
 }
 
-/** The automation a token is, whether it takes webhooks now, and whether
- *  its org is a personal one (whose runs' sessions are its owner's to open);
- *  null for a token that's no automation's. */
+/** The automation a token is, and whether it takes webhooks now; null for a
+ *  token that's no automation's. */
 export async function webhookAutomation(
   token: string,
-): Promise<{ automationId: string; orgId: string; live: boolean; personal: boolean } | null> {
+): Promise<{ automationId: string; orgId: string; live: boolean } | null> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("automations")
@@ -27,17 +26,10 @@ export async function webhookAutomation(
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  const { data: org, error: orgError } = await supabase
-    .from("organizations")
-    .select("personal_owner_id")
-    .eq("id", data.org_id)
-    .maybeSingle();
-  if (orgError) throw orgError;
   return {
     automationId: data.id,
     orgId: data.org_id,
     live: data.enabled && data.triggers.includes("webhook"),
-    personal: Boolean(org?.personal_owner_id),
   };
 }
 

@@ -331,9 +331,8 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
     await settle({ status: "refused", reason });
     if (checked) await deps.closeCheck(run.runId, reason);
   };
-  // A team org's runs are its connector's: in no member's list, and paid by
-  // the deployment on its own allowance. A personal org's, its owner's, who
-  // set it up.
+  // An org's runs are its connector's: in no member's list, and paid by
+  // the deployment on its own allowance. Its maker's, should the org be gone.
   let runner: string | null;
   try {
     runner = (await deps.orgConnector(candidate.orgId)) ?? candidate.runsAs;

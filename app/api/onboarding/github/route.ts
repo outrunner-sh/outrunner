@@ -5,7 +5,6 @@ import { listAvailableFor, listOrgInstallations } from "@/lib/db/github-installa
 import { githubAppConfig } from "@/lib/github/app";
 import { appClientSecret } from "@/lib/github/installer";
 import { personalCredential } from "@/lib/github/personal";
-import { userAuthConfigured } from "@/lib/github/user-connection.deps";
 import type { GitHubAccess } from "@/lib/onboarding/types";
 import { getOrgContext } from "@/lib/orgs/server";
 
@@ -37,7 +36,6 @@ export async function GET() {
     personalGithub: token !== null,
     appInstallable: configured,
     installNeedsGithub: appClientSecret() === null,
-    personalConnectable: userAuthConfigured(),
   };
   return NextResponse.json({ access }, { headers: { "cache-control": "no-store" } });
 }

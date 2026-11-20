@@ -8,7 +8,7 @@ import { liveEnv } from "@/lib/onboarding/live-env";
  *  final navigation. */
 export function SetupFlowFixture() {
   const env = useMemo(
-    () => liveEnv({ id: "setup-user", name: "Ada", login: "", avatarUrl: null }, { id: "org-1", name: "Acme", personal: false }, { outrunnerModels: true }),
+    () => liveEnv({ id: "setup-user", name: "Ada", login: "", avatarUrl: null }, { id: "org-1", name: "Acme" }, { outrunnerModels: true }),
     [],
   );
   const [destination, setDestination] = useState<string | null>(null);
