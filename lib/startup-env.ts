@@ -3,9 +3,12 @@
  * (server.ts) so a deploy missing one fails at once, with the whole list,
  * rather than serving users and failing on the first request that needs it.
  * Optional settings stay optional: each feature checks its own where it's
- * used (lib/env.ts). Imports only zod, so server.ts can load it before Next.
+ * used (lib/env.ts). Imports only zod and the import-free key-bytes.ts, so
+ * server.ts can load it before Next.
  */
 import { z } from "zod";
+
+import { KEY_BYTES, keyBytes, keyList } from "./crypto/key-bytes.ts";
 
 const present = z.string().trim().min(1, "is not set");
 
@@ -16,6 +19,12 @@ const base = z.object({
   // Seals every user's credentials (lib/crypto/secret-box.ts): without it no
   // session can start, while the app otherwise looks healthy.
   CREDENTIALS_ENCRYPTION_KEY: present,
+  // Optional, but a malformed one would only show as users quietly losing
+  // their connections, since it's read only when the current key fails.
+  CREDENTIALS_ENCRYPTION_KEY_PREVIOUS: z
+    .string()
+    .refine((raw) => keyList(raw).every((each) => keyBytes(each).length === KEY_BYTES), `must be ${KEY_BYTES}-byte keys (base64 or hex), separated by commas`)
+    .optional(),
   RUNTIME_PROVIDER: z.enum(["local", "modal", "daytona", "neev"]).optional(),
   // Optional, but a malformed DSN would silently drop every error report.
   SENTRY_DSN: z.url("is not a URL").optional(),
