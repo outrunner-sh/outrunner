@@ -83,7 +83,9 @@ export function fakeDb(tables: Record<string, Row[]>): SupabaseClient<Database> 
     }
 
     contains(column: string, value: unknown) {
-      this.predicates.push((row) => contains(row[column], value));
+      // A string goes to PostgREST as it is, and the jsonb column parses it.
+      const wanted: unknown = typeof value === "string" ? JSON.parse(value) : value;
+      this.predicates.push((row) => contains(row[column], wanted));
       return this;
     }
 
