@@ -15,15 +15,30 @@
  * Wire format: `v1.<iv>.<tag>.<ciphertext>`, each part base64url. The version
  * prefix exists so the algorithm or key derivation can change later without
  * ambiguity about how an existing row was written.
+ *
+ * Changing the key: set the new one as CREDENTIALS_ENCRYPTION_KEY and the old
+ * one in CREDENTIALS_ENCRYPTION_KEY_PREVIOUS. Everything new is sealed under
+ * the new key; what was sealed under the old one still opens.
  */
 
 import { createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from "node:crypto";
 
-import { requireEnv } from "@/lib/env";
+import { KEY_BYTES, keyBytes, keyList } from "@/lib/crypto/key-bytes";
+import { optionalEnv, requireEnv } from "@/lib/env";
 
 const VERSION = "v1";
 const IV_BYTES = 12; // 96-bit nonce, the GCM-recommended size
-const KEY_BYTES = 32; // AES-256
+
+function decoded(name: string, raw: string): Buffer {
+  const bytes = keyBytes(raw);
+  if (bytes.length !== KEY_BYTES) {
+    throw new Error(
+      `${name} must decode to ${KEY_BYTES} bytes, got ${bytes.length}. ` +
+        `Generate one with: openssl rand -base64 32`,
+    );
+  }
+  return bytes;
+}
 
 /**
  * Decode CREDENTIALS_ENCRYPTION_KEY into raw key bytes.
@@ -34,18 +49,23 @@ const KEY_BYTES = 32; // AES-256
  * validation), and so a rotated value takes effect without a rebuild.
  */
 function key(): Buffer {
-  const raw = requireEnv("CREDENTIALS_ENCRYPTION_KEY");
-  const decoded = /^[0-9a-fA-F]+$/.test(raw)
-    ? Buffer.from(raw, "hex")
-    : Buffer.from(raw, "base64url");
+  return decoded("CREDENTIALS_ENCRYPTION_KEY", requireEnv("CREDENTIALS_ENCRYPTION_KEY"));
+}
 
-  if (decoded.length !== KEY_BYTES) {
-    throw new Error(
-      `CREDENTIALS_ENCRYPTION_KEY must decode to ${KEY_BYTES} bytes, got ${decoded.length}. ` +
-        `Generate one with: openssl rand -base64 32`,
-    );
-  }
-  return decoded;
+/** Keys credentials were sealed under before CREDENTIALS_ENCRYPTION_KEY, for
+ * opening only. Read only when the current key fails, so a row sealed under
+ * it never pays for them. */
+function previousKeys(): Buffer[] {
+  const raw = optionalEnv("CREDENTIALS_ENCRYPTION_KEY_PREVIOUS");
+  if (!raw) return [];
+  return keyList(raw).map((each) => decoded("CREDENTIALS_ENCRYPTION_KEY_PREVIOUS", each));
+}
+
+function openWith(key: Buffer, iv: Buffer, tag: Buffer, ciphertext: Buffer): string {
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  // final() throws if the tag does not verify — that IS the integrity check.
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
 }
 
 /** Encrypt a credential for storage. Returns the versioned wire format. */
@@ -65,8 +85,9 @@ export function seal(plaintext: string): string {
 
 /**
  * Decrypt a credential written by {@link seal}. Throws on a malformed, truncated,
- * or tampered value — callers should treat a throw as "this credential is
- * unusable, ask the user for it again" rather than crashing the request.
+ * or tampered value, or one no configured key opens — callers should treat a
+ * throw as "this credential is unusable, ask the user for it again" rather
+ * than crashing the request.
  */
 export function open(sealed: string): string {
   const parts = sealed.split(".");
@@ -81,10 +102,21 @@ export function open(sealed: string): string {
     throw new Error("Malformed sealed credential: bad IV length");
   }
 
-  const decipher = createDecipheriv("aes-256-gcm", key(), iv);
-  decipher.setAuthTag(tag);
-  // final() throws if the tag does not verify — that IS the integrity check.
-  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+  // Outside the try: a missing or malformed current key is a setup error to
+  // report as such, not a reason to fall back.
+  const current = key();
+  try {
+    return openWith(current, iv, tag, ciphertext);
+  } catch (failure) {
+    for (const previous of previousKeys()) {
+      try {
+        return openWith(previous, iv, tag, ciphertext);
+      } catch {
+        // Not this one either; the current key's failure is the one to report.
+      }
+    }
+    throw failure;
+  }
 }
 
 /**
