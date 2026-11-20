@@ -1,5 +1,4 @@
 import { subscriptionsFor } from "@/lib/billing/billing-store";
-import { ownOrgId } from "@/lib/db/orgs";
 import type { Period } from "@/lib/billing/hours";
 import { billingMode } from "@/lib/billing/mode";
 import { isConnector } from "@/lib/automations/connector";
@@ -40,20 +39,19 @@ export async function planFor(orgId: string | undefined): Promise<Plan> {
 /** The plan a session of `userId`'s in `orgId` runs within: the org's, or,
  *  for its connector (its automations), the connector's own. */
 export async function sessionPlan(userId: string, orgId: string): Promise<Plan> {
-  return (await isConnector(userId)) ? (await personalEntitlements(userId)).plan : planFor(orgId);
+  return (await isConnector(userId)) ? (await ownKeyEntitlements(userId)).plan : planFor(orgId);
 }
 
-/** A user's personal org's entitlements: what sets their own model key's
- *  allowance until it is the org's (an org's connector's: its own). Free
- *  without one. */
-export async function personalEntitlements(userId: string, now = new Date()): Promise<Entitlements> {
+/** What sets a user's own model key's allowance: an org's connector's own
+ *  plan; Free for anyone else, whose sessions bill an org
+ *  (lib/db/credentials.ts orgPayingForModels). */
+export async function ownKeyEntitlements(userId: string, now = new Date()): Promise<Entitlements> {
   // An org's connector, which its automations run as, billing on or off:
   // its own plan, renewed each calendar month.
   if (await isConnector(userId)) {
     return { plan: connectorPlan(automationModelAllowanceUsd()), allowancePeriod: connectorPeriod(now) };
   }
-  const orgId = await ownOrgId(userId);
-  return orgId ? entitlementsFor(orgId, now) : { plan: PLANS.free, allowancePeriod: null };
+  return { plan: PLANS.free, allowancePeriod: null };
 }
 
 /** The connector's allowance period: the calendar month (UTC) `now` is in. */

@@ -13,9 +13,9 @@ import { recordFromStripe, type SubscriptionRecord } from "@/lib/billing/subscri
 export type SyncDeps = {
   retrieveSubscription(id: string): Promise<Stripe.Subscription>;
   orgForCustomer(customerId: string): Promise<string | null>;
-  /** A user's personal org: a subscription from before billing was the
-   *  org's names only its buyer. */
-  personalOrgOf(userId: string): Promise<string | null>;
+  /** A user's own org (lib/db/orgs.ts ownOrgId): a subscription from before
+   *  billing was the org's names only its buyer. */
+  ownOrgOf(userId: string): Promise<string | null>;
   subscriptionById(id: string): Promise<SubscriptionRecord | null>;
   /** Store it as fetched at `fetchedAt`, unless a later fetch is stored;
    *  true when stored. */
@@ -68,14 +68,14 @@ export async function syncSubscription(id: string, deps: SyncDeps): Promise<Subs
   const previous = await deps.subscriptionById(id);
   // The customer Outrunner made for the org is the authority; the org id
   // checkout put in the metadata is a fallback, for a customer stored late,
-  // and one from before orgs names its buyer, whose personal org it is.
+  // and one from before orgs names its buyer, whose own org it is.
   const metadata = subscription.metadata ?? {};
   const buyer = metadata.user_id || previous?.userId || null;
   const orgId =
     (customerId && (await deps.orgForCustomer(customerId))) ||
     metadata.org_id ||
     previous?.orgId ||
-    (buyer ? await deps.personalOrgOf(buyer) : null);
+    (buyer ? await deps.ownOrgOf(buyer) : null);
   if (!orgId) {
     deps.log(`Stripe subscription ${id} is for customer ${customerId}, who is no Outrunner org; not stored`);
     return null;

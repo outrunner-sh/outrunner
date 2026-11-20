@@ -20,7 +20,7 @@ function standingOf(plan: Plan, vcpuHours: number, controls: UsageControls = non
   };
 }
 
-function world(account: AccountStanding, sent = new Set<number>(), accounts: Account[] = [{ kind: "team", orgId: "o-1" }]) {
+function world(account: AccountStanding, sent = new Set<number>(), accounts: Account[] = [{ kind: "org", orgId: "o-1" }]) {
   const emailed: number[] = [];
   const paused: string[] = [];
   const reasons: string[] = [];
@@ -82,11 +82,11 @@ test("each state does what it says to running boxes: pause where usage stops the
   }
 });
 
-test("each threshold crossed is emailed once, for personal orgs too, and never for a connector", async () => {
+test("each threshold crossed is emailed once for an org, and never for a connector", async () => {
   // $18 of Pro's $20: 90%.
   const ninety = (controls: UsageControls) => standingOf(PLANS.pro, 150, controls);
   const alerts: UsageControls = { limitUsd: null, alertThresholds: [50, 80, 100] };
-  for (const account of [{ kind: "team", orgId: "o-1" }, { kind: "personal", orgId: "o-me" }] as Account[]) {
+  for (const account of [{ kind: "org", orgId: "o-1" }] as Account[]) {
     const w = world(ninety(alerts), new Set(), [account]);
     const report = await sweepOrgUsage(w.deps);
     assert.deepEqual(w.emailed, [50, 80], account.kind);
@@ -130,7 +130,7 @@ test("a box that won't pause doesn't stop the others", async () => {
 });
 
 test("an account whose standing can't be read fails alone", async () => {
-  const w = world(standingOf(PLANS.free, 1000), new Set(), [{ kind: "team", orgId: "o-1" }, { kind: "team", orgId: "o-2" }]);
+  const w = world(standingOf(PLANS.free, 1000), new Set(), [{ kind: "org", orgId: "o-1" }, { kind: "org", orgId: "o-2" }]);
   let calls = 0;
   const account = standingOf(PLANS.free, 1000);
   w.deps.standing = async () => {

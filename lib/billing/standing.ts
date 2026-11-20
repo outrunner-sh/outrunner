@@ -7,7 +7,7 @@
  */
 
 import { overageUnpaidSince } from "@/lib/billing/billing-store";
-import { entitlementsFor, personalEntitlements } from "@/lib/billing/entitlements";
+import { entitlementsFor, ownKeyEntitlements } from "@/lib/billing/entitlements";
 import type { Period } from "@/lib/billing/hours";
 import { intervalsFor } from "@/lib/billing/metering-store";
 import { billingMode } from "@/lib/billing/mode";
@@ -36,7 +36,7 @@ export async function accountStanding(
   readControls: (orgId: string) => Promise<UsageControls>,
 ): Promise<AccountStanding> {
   const { plan, allowancePeriod } =
-    "ownerId" in whose ? await personalEntitlements(whose.ownerId, now) : await entitlementsFor(whose.orgId, now);
+    "ownerId" in whose ? await ownKeyEntitlements(whose.ownerId, now) : await entitlementsFor(whose.orgId, now);
   const period = usagePeriod(plan, allowancePeriod, now, billingMode());
   const [intervals, controls, unpaidSince] = await Promise.all([
     intervalsFor(whose, period),
