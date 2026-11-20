@@ -25,9 +25,19 @@ export async function sessionsOnRepoWith(
   if (projects.length === 0) return [];
   const ids = projects.map((p) => p.id);
   const orgIds = [...new Set(projects.map((p) => p.org_id))];
+  // The checkouts filter goes as a JSON string: given an array, postgrest-js
+  // writes a Postgres array literal (`cs.{[object Object]}`), which the jsonb
+  // column rejects (22P02).
   const queries = [
     db.from("workspaces").select("id").eq("branch", headRef).in("org_id", orgIds).in("project_id", ids),
-    ...ids.map((id) => db.from("workspaces").select("id").eq("branch", headRef).in("org_id", orgIds).contains("checkouts", [{ projectId: id }])),
+    ...ids.map((id) =>
+      db
+        .from("workspaces")
+        .select("id")
+        .eq("branch", headRef)
+        .in("org_id", orgIds)
+        .contains("checkouts", JSON.stringify([{ projectId: id }])),
+    ),
   ];
   const found = new Set<string>();
   for (const { data, error } of await Promise.all(queries)) {
