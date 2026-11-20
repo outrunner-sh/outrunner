@@ -73,7 +73,9 @@ fails on save and every workspace create is refused — so check the health
 report (`curl -H "Authorization: Bearer $BILLING_CRON_SECRET" …/api/health`)
 says `credentialEncryption: true` before telling anyone the deploy is up.
 Losing or rotating it makes stored credentials undecryptable;
-users are asked to reconnect rather than seeing an error.
+users are asked to reconnect rather than seeing an error. To rotate without
+that, keep the old key as the `CREDENTIALS_ENCRYPTION_KEY_PREVIOUS` secret:
+what it sealed still opens, and everything new uses the current key.
 
 **Outrunner's models** (optional, but new cloud sessions start on them): set
 an OpenRouter *management* key, so each user gets a key of their own capped at

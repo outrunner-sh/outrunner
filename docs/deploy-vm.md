@@ -126,7 +126,9 @@ Copy the current production settings, including the same Supabase project
 and keys, provider keys, GitHub App credentials, billing/Stripe settings,
 OpenRouter, cron secret, email, access restrictions, and integrations in use.
 **Preserve the exact existing `CREDENTIALS_ENCRYPTION_KEY`** so saved user
-credentials stay readable. Set the production origin to
+credentials stay readable. If it was ever changed, put the earlier key(s) in
+`CREDENTIALS_ENCRYPTION_KEY_PREVIOUS` (comma-separated) so credentials sealed
+before the change still open. Set the production origin to
 `RUNTIME_BASE_URL=https://app.outrunner.sh`. See [`.env.example`](../.env.example)
 for the supported variables. Do not generate replacement keys for a hosting
 migration.
