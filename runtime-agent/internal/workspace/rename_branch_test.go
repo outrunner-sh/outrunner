@@ -126,15 +126,73 @@ func TestRenamingTheBranchRenamesItAndRecordsIt(t *testing.T) {
 		t.Errorf("branch = %q", got)
 	}
 	f, _ := s.getFacts("ws")
-	if f.Branch != "fix/google-sign-in" || f.BranchRenamable {
+	if f.Branch != "fix/google-sign-in" || f.BranchRenamable || !f.BranchNamed {
 		t.Errorf("facts = %+v", f)
 	}
 	if len(cp.calls) != 2 || cp.calls[1]["from"] != "sign-fails-google-users" || cp.calls[1]["to"] != "fix/google-sign-in" {
 		t.Errorf("control plane calls = %+v", cp.calls)
 	}
-	// Once only.
+	// Named, it's named again as Outrunner allows (until it's pushed).
+	cp.checked = "fix/other"
+	if status, answer := renameTo(t, s, "ws", "fix/other"); status != http.StatusOK || !strings.Contains(answer.Text, "from fix/google-sign-in to fix/other") {
+		t.Fatalf("second rename: %d %+v", status, answer)
+	}
+	if got := head(t, dirs[0]); got != "fix/other" {
+		t.Errorf("branch = %q", got)
+	}
+	if f, _ := s.getFacts("ws"); f.Branch != "fix/other" || !f.BranchNamed {
+		t.Errorf("facts = %+v", f)
+	}
+	if len(cp.calls) != 4 || cp.calls[3]["from"] != "fix/google-sign-in" || cp.calls[3]["to"] != "fix/other" {
+		t.Errorf("control plane calls = %+v", cp.calls)
+	}
+}
+
+// Pushed since it was named: Outrunner refuses for good, and the agent's
+// next try is refused here without asking.
+func TestANamedBranchPushedSinceKeepsItsName(t *testing.T) {
+	cp := &controlPlane{checked: "fix/google-sign-in"}
+	s, dirs := renameSession(t, cp, "sign-fails-google-users")
+	renameTo(t, s, "ws", "fix/google-sign-in")
+	cp.checkStatus = http.StatusGone
+	if status, _ := renameTo(t, s, "ws", "fix/other"); status != http.StatusGone {
+		t.Fatalf("rename once pushed: %d", status)
+	}
+	if f, _ := s.getFacts("ws"); f.Branch != "fix/google-sign-in" || f.BranchNamed || f.BranchRenamable {
+		t.Errorf("facts = %+v", f)
+	}
+	if got := head(t, dirs[0]); got != "fix/google-sign-in" {
+		t.Errorf("branch = %q", got)
+	}
+	calls := len(cp.calls)
 	if status, _ := renameTo(t, s, "ws", "fix/other"); status != http.StatusConflict {
-		t.Errorf("second rename: %d", status)
+		t.Errorf("rename after a refusal for good: %d", status)
+	}
+	if len(cp.calls) != calls {
+		t.Errorf("Outrunner was asked again: %+v", cp.calls[calls:])
+	}
+}
+
+// A second name refused (taken meanwhile) leaves the first: a name the agent
+// gave, which isn't a stand-in to guard.
+func TestARefusedSecondNameLeavesTheFirstUnguarded(t *testing.T) {
+	cp := &controlPlane{checked: "fix/google-sign-in"}
+	s, dirs := renameSession(t, cp, "sign-fails-google-users")
+	renameTo(t, s, "ws", "fix/google-sign-in")
+	cp.checked, cp.commitStatus = "fix/other", http.StatusConflict
+	if status, _ := renameTo(t, s, "ws", "fix/other"); status != http.StatusConflict {
+		t.Fatalf("second rename: %d", status)
+	}
+	if got := head(t, dirs[0]); got != "fix/google-sign-in" {
+		t.Errorf("branch = %q", got)
+	}
+	if f, _ := s.getFacts("ws"); f.Branch != "fix/google-sign-in" || !f.BranchNamed {
+		t.Errorf("facts = %+v", f)
+	}
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	run(t, dirs[0], "init", "-q", "--bare", remote)
+	if out, ok := push(t, s, dirs[0], remote, "HEAD"); !ok {
+		t.Errorf("the named branch's push was refused:\n%s", out)
 	}
 }
 

@@ -107,6 +107,8 @@ type WorkspaceRow = {
   phase: ProvisionPhaseDb | null;
   branch: string;
   branch_renamable: boolean;
+  /** Named by its agent, and nameable again until pushed (20261121120000). */
+  branch_named: boolean;
   /** What the user first asked for; null until the first prompt. */
   title: string | null;
   base_branch: string;

@@ -511,7 +511,7 @@ export const CreateWorkspaceRequest = z.object({
   repoFullName: z.string().min(1),
   branch: z.string().min(1),
   /** Outrunner made `branch` up from the first prompt: the agent may give it
-   *  its real name once, before it's pushed (lib/session/rename-branch.ts).
+   *  its real name before it's pushed (lib/session/rename-branch.ts).
    *  An agent from before ignores it, and the branch keeps its name. */
   branchRenamable: z.boolean().optional(),
   baseBranch: z.string().min(1),
@@ -667,6 +667,9 @@ export const RestoreWorkspaceRequest = z
     branch: z.string().min(1),
     /** CreateWorkspaceRequest's, as the session has it now. */
     branchRenamable: z.boolean().optional(),
+    /** Its agent named the branch, and may name it again until it's pushed.
+     *  An agent from before ignores it, and refuses another name. */
+    branchNamed: z.boolean().optional(),
     baseBranch: z.string().optional(),
     sessionId: z.string().min(1).nullable(),
     downloads: z.array(RestoreDownload),

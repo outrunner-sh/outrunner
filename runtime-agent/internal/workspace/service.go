@@ -208,8 +208,11 @@ type workspaceFacts struct {
 	Harness *HarnessState `json:"harness,omitempty"`
 	Branch  string        `json:"branch"`
 	// BranchRenamable says Branch is the one Outrunner made up, which the
-	// agent may still rename once (rename_branch.go).
+	// agent may still rename (rename_branch.go).
 	BranchRenamable bool `json:"branchRenamable,omitempty"`
+	// BranchNamed says the agent named Branch, and may name it again until
+	// it's pushed.
+	BranchNamed bool `json:"branchNamed,omitempty"`
 	// PendingBranch is the name git has from a rename Outrunner hasn't
 	// confirmed (its commit got no answer): the same command finishes it.
 	PendingBranch  string                `json:"pendingBranch,omitempty"`
@@ -309,7 +312,7 @@ type CreateInput struct {
 	WorkspaceID string
 	Branch      string
 	// BranchRenamable says Outrunner made Branch up: the agent may name it
-	// once (rename_branch.go). Never on the Mac.
+	// (rename_branch.go). Never on the Mac.
 	BranchRenamable bool
 	// BaseBranch is the branch to fork from, without a remote prefix ("main").
 	BaseBranch string
@@ -1801,7 +1804,7 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 			return "", err
 		}
 	}
-	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BranchRenamable: req.BranchRenamable, BaseBranch: req.BaseBranch, Agent: req.Agent, Checkouts: checkouts})
+	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BranchRenamable: req.BranchRenamable, BranchNamed: req.BranchNamed, BaseBranch: req.BaseBranch, Agent: req.Agent, Checkouts: checkouts})
 	if req.Auth != nil && req.Auth.Kind != AuthNone {
 		if err := s.SetAuth(ctx, workspaceID, req.Auth.Kind, req.Auth.Token); err != nil {
 			return "", err

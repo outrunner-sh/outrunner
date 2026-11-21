@@ -542,13 +542,46 @@ export async function findPullRequest(input: {
  * land on that branch and its pull request lookup find that one.
  */
 export async function branchKnownOnGitHub(input: { token: string; repoFullName: string; branch: string }): Promise<boolean> {
+  if (await branchOnGitHub(input)) return true;
+  return (await findPullRequest({ token: input.token, repoFullName: input.repoFullName, headBranch: input.branch })) !== null;
+}
+
+/** Whether `branch` is a branch in the repository now. */
+export async function branchOnGitHub(input: { token: string; repoFullName: string; branch: string }): Promise<boolean> {
   const ref = new URL(`/repos/${input.repoFullName}/git/ref/heads/${encodeURIComponent(input.branch).replace(/%2F/g, "/")}`, GITHUB_API_URL);
   const response = await fetchGitHub(ref, input.token);
   if (response.ok) return true;
   if (response.status !== 404) {
     throw rejected(response, "branch lookup", "GitHub could not look up the branch. Please try again.");
   }
-  return (await findPullRequest({ token: input.token, repoFullName: input.repoFullName, headBranch: input.branch })) !== null;
+  return false;
+}
+
+/** Some of a repository's branches: those whose name holds `query`, by name,
+ *  and how many there are in all. */
+export type BranchList = { branches: string[]; total: number };
+
+const BRANCHES_QUERY = `query($owner: String!, $name: String!, $query: String, $first: Int!) {
+  repository(owner: $owner, name: $name) {
+    refs(refPrefix: "refs/heads/", query: $query, first: $first, orderBy: { field: ALPHABETICAL, direction: ASC }) {
+      totalCount
+      nodes { name }
+    }
+  }
+}`;
+
+/** The repository's branches whose name holds `query` (every one for none),
+ *  the first `first` of them by name. */
+export async function listGitHubBranches(input: { token: string; repoFullName: string; query: string; first: number }): Promise<BranchList> {
+  const [owner, name] = input.repoFullName.split("/");
+  const data = await githubGraphql<{ repository: { refs: { totalCount: number; nodes: { name: string }[] } | null } | null }>(
+    input.token,
+    BRANCHES_QUERY,
+    { owner, name, query: input.query || null, first: input.first },
+    "list the branches",
+  );
+  const refs = data.repository?.refs;
+  return { branches: refs?.nodes.map((n) => n.name) ?? [], total: refs?.totalCount ?? 0 };
 }
 
 /** Where a pull request stands: its state, what GitHub says of merging it

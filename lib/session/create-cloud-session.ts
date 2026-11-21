@@ -127,9 +127,9 @@ import { SETTING_UP } from "@/lib/session/provisioning";
 import { watchSent } from "@/lib/session/watch";
 import { GitLabError, gitLabErrorResponse } from "@/lib/gitlab/client";
 import { isGitLabRef } from "@/lib/code-providers/repository";
-import { branchKnown as branchKnownOnGitHub, getRepository as getGitHubRepository } from "@/lib/code-providers/client";
+import { branchExists, branchKnown as branchKnownOnGitHub, getRepository as getGitHubRepository } from "@/lib/code-providers/client";
 import { GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
-import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
+import { GITHUB_RECONNECT_HREF, githubErrorResponse } from "@/lib/github/http";
 import { GitIdentityError } from "@/lib/github/identity";
 import { gitTokensFor, markReviewSession, REVIEW_AS_APP, requireGitToken } from "@/lib/github/identity.deps";
 import { githubCoAuthor } from "@/lib/github/co-author";
@@ -165,6 +165,9 @@ function needsSandbox(error: string) {
 /** What the new-session screen asks for, as it sends it (each checked below). */
 export type SessionRequest = {
   branch?: unknown;
+  /** The branch it starts from, picked on the screen; the project's default
+   *  branch when not given. Checked to be a branch of the repository. */
+  baseBranch?: unknown;
   provider?: unknown;
   model?: unknown;
   key?: unknown;
@@ -471,9 +474,23 @@ async function createOnce(
   });
   // A project of several repositories: the session works on each, in its own
   // folder. Only on a Runtime Computer, whose agent makes the folder.
-  const baseBranch = options.baseBranch ?? project.defaultBranch;
+  const pickedBase = typeof body.baseBranch === "string" ? body.baseBranch.trim() : "";
+  const baseBranch = options.baseBranch ?? (pickedBase || project.defaultBranch);
   if (!isValidBranchName(baseBranch)) {
     return NextResponse.json({ error: "The session's base branch isn't a valid Git branch name." }, { status: 400 });
+  }
+  // One picked on the screen must be there to branch from: said now, not as
+  // its box fails to make the worktree. Without a token GitHub isn't asked.
+  if (baseBranch === pickedBase && pickedBase !== project.defaultBranch && githubToken.token) {
+    let exists: boolean;
+    try {
+      exists = await branchExists({ token: githubToken.token, repoFullName: project.fullName, branch: pickedBase });
+    } catch (error) {
+      return githubErrorResponse(error, "Could not check the base branch. Please try again.");
+    }
+    if (!exists) {
+      return NextResponse.json({ error: `${project.fullName} has no branch ${pickedBase} to start from. Pick another.` }, { status: 400 });
+    }
   }
   // Every repository the session's branch is made in, for a generated one to
   // be free in each.

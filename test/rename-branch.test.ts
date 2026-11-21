@@ -6,7 +6,7 @@ import { runnersOwning } from "@/lib/missions/settle";
 import { checkRename, commitRename, nameProblem, type RenameBranchDeps, type RenameSession } from "@/lib/session/rename-branch";
 import { callSessionTool, type SessionToolDeps } from "@/lib/session-tools/tools";
 
-const SESSION: RenameSession = { id: "ws", branch: "sign-fails-google-users", branchRenamable: true };
+const SESSION: RenameSession = { id: "ws", branch: "sign-fails-google-users", branchRenamable: true, branchNamed: false };
 
 function deps(over: Partial<Omit<RenameBranchDeps, "session">> & { session?: RenameSession | null } = {}): RenameBranchDeps & { settled: string[] } {
   const settled: string[] = [];
@@ -63,6 +63,28 @@ test("only a made-up branch, never pushed, with no pull request, is renamed", as
   assert.equal((await checkRename("ws", "Not A Name", deps())).status, 400);
 });
 
+test("a branch its agent named is named again until it's pushed", async () => {
+  const named: RenameSession = { ...SESSION, branch: "fix/first-name", branchRenamable: false, branchNamed: true };
+  assert.deepEqual(await checkRename("ws", "fix/second-name", deps({ session: named })), { status: 200, text: "fix/second-name" });
+  const renamed: string[][] = [];
+  const again = deps({ session: named, rename: async (...a) => (renamed.push(a), true) });
+  assert.deepEqual(await commitRename("ws", "fix/first-name", "fix/second-name", again), { status: 200, text: "fix/second-name" });
+  assert.deepEqual(renamed, [["ws", "fix/first-name", "fix/second-name"]]);
+  assert.equal((await checkRename("ws", "fix/first-name", deps({ session: named }))).status, 409);
+  // Pushed since: it keeps its name from now on.
+  const pushed = deps({ session: named, knownOnGitHub: async (_, b) => b === "fix/first-name" });
+  const answer = await checkRename("ws", "fix/second-name", pushed);
+  assert.equal(answer.status, 410);
+  assert.match(answer.error ?? "", /on GitHub already/);
+  assert.deepEqual(pushed.settled, ["ws"]);
+  const withPr = deps({ session: named, hasPullRequest: async () => true, rename: async () => assert.fail("recorded") });
+  assert.equal((await commitRename("ws", "fix/first-name", "fix/second-name", withPr)).status, 410);
+  // One the user chose was never Outrunner's to name.
+  const chosen = await checkRename("ws", "fix/x", deps({ session: { ...SESSION, branch: "feat/teammate", branchRenamable: false, branchNamed: false } }));
+  assert.equal(chosen.status, 410);
+  assert.match(chosen.error ?? "", /chosen/);
+});
+
 test("commit records the box's rename, or says why not", async () => {
   const renamed: string[][] = [];
   assert.deepEqual(await commitRename("ws", SESSION.branch, "fix/x", deps({ rename: async (...a) => (renamed.push(a), true) })), { status: 200, text: "fix/x" });
@@ -79,7 +101,7 @@ test("commit records the box's rename, or says why not", async () => {
   const withPr = deps({ hasPullRequest: async () => true, rename: async () => assert.fail("recorded") });
   assert.equal((await commitRename("ws", SESSION.branch, "fix/x", withPr)).status, 410);
   // Sent again after a lost answer: recorded already, so done.
-  const recorded = deps({ session: { ...SESSION, branch: "fix/x", branchRenamable: false }, rename: async () => assert.fail("recorded twice") });
+  const recorded = deps({ session: { ...SESSION, branch: "fix/x", branchRenamable: false, branchNamed: true }, rename: async () => assert.fail("recorded twice") });
   assert.deepEqual(await commitRename("ws", SESSION.branch, "fix/x", recorded), { status: 200, text: "fix/x" });
   // Taken since check, by a session or on GitHub: refused before it's recorded.
   const takenBySession = deps({ sessionBranches: async () => new Set([SESSION.branch, "fix/x"]), rename: async () => assert.fail("recorded") });

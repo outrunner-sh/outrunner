@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import { useAppData, useViewerScope } from "@/components/app-data";
+import { BaseBranchSelect } from "@/components/base-branch-select";
 import { ProjectEnvironmentPicker } from "@/components/import-setup-picker";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
@@ -142,6 +143,10 @@ export function NewSessionForm({
   const busy = isCreating || environment.keeping;
   // No repositories only blocks the cloud; a local session needs none.
   const noRepositories = projectsKnown && !local && projects.length === 0;
+  // The branch a cloud session starts from, picked for one repository: on
+  // another, its default branch again.
+  const [pickedBase, setPickedBase] = useState<{ projectId: string; branch: string } | null>(null);
+  const baseBranch = !local && selected && pickedBase?.projectId === selected.id ? pickedBase.branch : undefined;
   const details = newSessionDetails(
     local
       ? { kind: "local", folder: where.folder.state === "ok" ? where.folder.folder : null }
@@ -228,7 +233,17 @@ export function NewSessionForm({
                 onClosed={pickerClosed}
               />
             )}
-            {details.branch && (
+            {!local && selected ? (
+              <BaseBranchSelect
+                key={selected.id}
+                projectId={selected.id}
+                defaultBranch={selected.defaultBranch}
+                value={baseBranch ?? selected.defaultBranch}
+                onChange={(branch) => setPickedBase({ projectId: selected.id, branch })}
+                disabled={busy}
+                className={CHIP_BUTTON}
+              />
+            ) : details.branch && (
               <span className={CHIP} title="The branch the session starts from">
                 <GitBranch className="shrink-0" />
                 <span className="truncate font-mono text-[13px]">{details.branch}</span>
@@ -285,6 +300,8 @@ export function NewSessionForm({
                         effort,
                         workItem?.id,
                         startAgent,
+                        // The default branch is the server's own choice.
+                        baseBranch !== selected?.defaultBranch ? baseBranch : undefined,
                       ),
                   )
           }

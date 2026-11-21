@@ -41,7 +41,8 @@ const NONE: Record<string, PendingSession> = {};
  * pressed, before the server has made it: what the page and the sidebar show
  * until the create call answers with the real one. Setting up, titled from
  * its prompt as the server will title it (lib/session/name-session.ts), on
- * the branch it is asked for, from the repository's default branch.
+ * the branch it is asked for, from the base picked (the repository's
+ * default branch when none was).
  */
 export function optimisticSession(input: {
   id: string;
@@ -49,6 +50,8 @@ export function optimisticSession(input: {
   prompt: string;
   /** The branch it is asked for. */
   branch: string;
+  /** The branch it starts from, when one was picked. */
+  baseBranch?: string;
   agent: AgentId;
   model?: RecordedModel | null;
   /** The environment it starts from, when one was picked; null, the
@@ -71,7 +74,7 @@ export function optimisticSession(input: {
     branch: input.branch,
     // A prompt of only attachments names nothing: the sidebar still needs a label.
     title: sessionTitle(input.prompt) ?? "New session",
-    baseBranch: input.project.defaultBranch,
+    baseBranch: input.baseBranch ?? input.project.defaultBranch,
     worktreePath: "",
     sandboxId: null,
     volumeName: null,
