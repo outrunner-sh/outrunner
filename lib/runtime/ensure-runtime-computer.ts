@@ -67,6 +67,8 @@ export type EnsureRuntimeComputerInput = {
   /** The project's box that ended on its own, for a provider that brings one
    *  back on the disk it left (ProvisionComputerInput.previousSandboxId). */
   previousSandboxId?: string;
+  /** That box is a pooled one the session just took (ProvisionComputerInput.adopted). */
+  adopted?: boolean;
   /** The plan's cap on the owner's running boxes, enforced by the claim in
    *  the database; null or unset when none applies. */
   maxLiveComputers?: number | null;
@@ -132,6 +134,7 @@ export async function ensureRuntimeComputer(
       sessionEnv: input.sessionEnv,
       size: input.size,
       previousSandboxId: input.previousSandboxId,
+      ...(input.adopted && { adopted: true }),
     });
     await deps.update(claim.computer.id, claim.computer.ownerId, {
       status: "ready",

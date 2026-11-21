@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 
-import { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
+import { ComputerRuntimeProvider, smallerThan } from "@/lib/runtime/computer-provider";
 import type { BoxIO } from "@/lib/runtime/daytona/deploy";
 import type { SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
 
@@ -268,4 +268,65 @@ test("a fresh box clones while agent installation waits, and failure cleanup wai
   } finally { release(); }
   assert.match(String(await outcome), /mirror failed/);
   assert.equal(log.at(-1), "sb-parallel: deleted");
+});
+
+/** A backend that pools: its ended boxes come back as `pooled`, a new box is
+ *  made at the size asked, and a size's box is `sizeFor`'s answer. */
+function poolingBackend(log: string[], pooled: SandboxBox, sizeFor?: SandboxBackend["sizeFor"]): SandboxBackend {
+  const backend = restoringBackend(log, pooled);
+  backend.create = async (_labels, size) => {
+    log.push(`created at ${size ? `${size.cpu}/${size.memoryGb}` : "default"}`);
+    return { ...fakeBox("sb-new", log), cpu: size?.cpu, memoryGb: size?.memoryGb };
+  };
+  if (sizeFor) backend.sizeFor = sizeFor;
+  return backend;
+}
+
+const SMALL = { cpu: 2, memoryGb: 4 };
+const exact = (size: { cpu: number; memoryGb: number }) => size;
+
+test("a pooled box made smaller than the session's size is deleted, and a box of that size made instead", async () => {
+  const log: string[] = [];
+  const pooled = { ...fakeBox("sb-pooled", log), cpu: 1, memoryGb: 1 };
+  const provider = new ComputerRuntimeProvider("daytona", poolingBackend(log, pooled, exact));
+
+  const made = await provider.provisionComputer({ ...request, previousSandboxId: "sb-pooled", size: SMALL, adopted: true });
+
+  assert.equal(made.sandboxId, "sb-new");
+  assert.equal(made.cpu, 2);
+  assert.deepEqual(log.slice(0, 3), ["restored from sb-pooled", "sb-pooled: deleted", "created at 2/4"]);
+  assert.ok(!log.includes("sb-pooled: agent launched"));
+});
+
+test("a pooled box of the session's size is kept, as is one the backend can't size", async () => {
+  for (const sizeFor of [exact, undefined]) {
+    const log: string[] = [];
+    const pooled = { ...fakeBox("sb-pooled", log), cpu: sizeFor ? 2 : 1, memoryGb: sizeFor ? 4 : 1 };
+    const provider = new ComputerRuntimeProvider("daytona", poolingBackend(log, pooled, sizeFor));
+
+    const made = await provider.provisionComputer({ ...request, previousSandboxId: "sb-pooled", size: SMALL, adopted: true });
+
+    assert.equal(made.sandboxId, "sb-pooled");
+    assert.ok(!log.some((entry) => entry.includes("deleted") || entry.startsWith("created")));
+  }
+});
+
+test("a session's own box is never replaced for its size: its disk holds the session's work", async () => {
+  const log: string[] = [];
+  const own = { ...fakeBox("sb-own", log), cpu: 1, memoryGb: 1 };
+  const provider = new ComputerRuntimeProvider("daytona", poolingBackend(log, own, exact));
+
+  const made = await provider.provisionComputer({ ...request, previousSandboxId: "sb-own", size: SMALL });
+
+  assert.equal(made.sandboxId, "sb-own");
+  assert.ok(!log.some((entry) => entry.includes("deleted") || entry.startsWith("created")));
+});
+
+test("a box is smaller only by what is known of it", () => {
+  assert.equal(smallerThan({ cpu: 1, memoryGb: 1 }, SMALL), true);
+  assert.equal(smallerThan({ cpu: 2, memoryGb: 2 }, SMALL), true);
+  assert.equal(smallerThan({ cpu: 2, memoryGb: 4 }, SMALL), false);
+  assert.equal(smallerThan({ cpu: 4, memoryGb: 8 }, SMALL), false);
+  assert.equal(smallerThan({}, SMALL), false);
+  assert.equal(smallerThan({ cpu: 1, memoryGb: 1 }, undefined), false);
 });

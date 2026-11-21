@@ -83,6 +83,15 @@ test("a sized box is Daytona's largest size within both resources, the account d
   assert.equal(daytonaSnapshotFor({ cpu: 8, memoryGb: 16 }), "daytona-large");
 });
 
+test("a size's box is the snapshot create picks, unknown below Small", () => {
+  const backend = new DaytonaBackend();
+  assert.equal(backend.sizeFor({ cpu: 1, memoryGb: 2 }), undefined);
+  assert.deepEqual(backend.sizeFor({ cpu: 2, memoryGb: 4 }), { cpu: 2, memoryGb: 4 });
+  assert.deepEqual(backend.sizeFor({ cpu: 4, memoryGb: 8 }), { cpu: 4, memoryGb: 8 });
+  // Large is Daytona's largest snapshot: a pooled 4 vCPU / 8 GiB box is the box it would make.
+  assert.deepEqual(backend.sizeFor({ cpu: 8, memoryGb: 16 }), { cpu: 4, memoryGb: 8 });
+});
+
 test("snapshot selection respects memory as well as CPU, and never rounds CPU up", () => {
   assert.equal(daytonaSnapshotFor({ cpu: 4, memoryGb: 4 }), "daytona-medium");
   assert.equal(daytonaSnapshotFor({ cpu: 8, memoryGb: 2 }), undefined);

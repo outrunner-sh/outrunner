@@ -9,7 +9,7 @@ import { projectOrgId } from "@/lib/db/work-items";
 import { cloudBoxStartGate, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import { listChatsOf } from "@/lib/db/chats";
-import { agentAuthStore, modelKey, modelMenu } from "@/lib/db/credentials";
+import { agentAuthStore, getSandboxSettings, modelKey, modelMenu } from "@/lib/db/credentials";
 import { gitTokensFor, optionalGitToken, sessionGitAs } from "@/lib/github/identity.deps";
 import {
   clearWorkspaceFirstPrompt,
@@ -58,6 +58,7 @@ import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/
 import { archiveCloudSession, daytonaAgent } from "@/lib/session/archive-session";
 import { bringBack } from "@/lib/session/bring-back-box";
 import { restoreChats } from "@/lib/session/chat-snapshots";
+import { newBoxResources } from "@/lib/session/new-box-size";
 import { canDestroy } from "@/lib/session/provisioning";
 import { resumeFailure, type ResumeStage } from "@/lib/session/resume-failure";
 
@@ -348,6 +349,9 @@ async function restoreDaytonaWorkspace(
       repoFullName: project.fullName,
       githubToken,
       sessionEnv,
+      // A box made now (its own is gone) is made at the owner's size, as a
+      // new session's is; one brought back keeps the size it had.
+      size: await newBoxResources({ ownerId: owner.id, orgId, settings: await getSandboxSettings(owner.id) }),
       // The plan's box cap, enforced by the claim in the database.
       maxLiveComputers: gate.cap,
       ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),

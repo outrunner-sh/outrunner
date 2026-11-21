@@ -50,6 +50,7 @@ import {
   wakeIntentPool,
   warmRefusal,
 } from "@/lib/runtime/warm-pool";
+import { newBoxResources } from "@/lib/session/new-box-size";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** Whether `provider`'s boxes are pooled: Outrunner's own, on a provider
@@ -118,6 +119,8 @@ export async function intentWarmProject(owner: Owner, projectId: string): Promis
   const sandboxId = computer?.daytonaSandboxId;
   if (!computer || !sandboxId || !secret) return;
 
+  // Its size checked as it wakes: one pooled at a smaller size is replaced.
+  const size = await newBoxResources({ ownerId: owner.id, orgId: project.orgId, settings });
   await wakeIntentPool({
     wake: () => provider.provisionComputer({
       secret,
@@ -125,6 +128,8 @@ export async function intentWarmProject(owner: Owner, projectId: string): Promis
       githubToken,
       sessionEnv,
       previousSandboxId: sandboxId,
+      size,
+      adopted: true,
     }),
     publish: (restored) => completePooledWarmup(computer.id, owner.id, {
       sandboxId: restored.sandboxId,
@@ -214,6 +219,9 @@ export async function refillProjectPool(input: {
     const warmLimitMs = (await sessionPlan(ownerId, project.orgId)).warmHookMinutes * 60_000;
     const setup = environmentId ? await environmentSetup(ownerId, environmentId) : null;
     const generation = setup?.generation ?? null;
+    // The size the project's next session would make its box at, so the box
+    // it takes from the pool is that box, made ahead.
+    const size = await newBoxResources({ ownerId, orgId: project.orgId, settings: await getSandboxSettings(ownerId) });
     await refillPool({
       pools: poolsBoxes(provider),
       provider: provider.name,
@@ -228,6 +236,7 @@ export async function refillProjectPool(input: {
           repoFullName: project.fullName,
           githubToken: input.githubToken,
           sessionEnv: input.sessionEnv,
+          size,
           onBox,
         }),
       warm: async (computerId, sandboxId, secret) => {

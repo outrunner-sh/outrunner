@@ -279,6 +279,13 @@ export class DaytonaBackend implements SandboxBackend {
     return box(await this.retrying(`box ${id}`, () => daytona.get(id)));
   }
 
+  /** The snapshot `create` picks for `size`; none below Small (the account's
+   *  default box, whose size this can't say). */
+  sizeFor(size: BoxResources): BoxResources | undefined {
+    const snapshot = DAYTONA_SNAPSHOTS.find((s) => s.name === daytonaSnapshotFor(size));
+    return snapshot && { cpu: snapshot.cpu, memoryGb: snapshot.memoryGb };
+  }
+
   async alive(id: string): Promise<boolean> {
     try {
       const sandbox = await (await this.daytona()).get(id);

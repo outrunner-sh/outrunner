@@ -154,6 +154,14 @@ export type ProvisionComputerInput = {
    * already there. Otherwise, or with that disk gone, the box is a new one.
    */
   previousSandboxId?: string;
+  /**
+   * The box at `previousSandboxId` is a pooled one the session just took,
+   * with nothing of the session's on it yet. Made before the user's size was
+   * honoured, it may be smaller than a box made now: then it is deleted and a
+   * box of `size` made instead. Never set for a session's own box, whose disk
+   * holds its work.
+   */
+  adopted?: boolean;
   /** Optional live per-stage progress (the UI/verify script logs these). */
   onStage?: (stage: ProvisionStage, ms: number) => void;
   /** Told the box's id as soon as there is one, before the agent and the
@@ -161,6 +169,13 @@ export type ProvisionComputerInput = {
    *  record, and can delete the box rather than leave it running unknown. */
   onBox?: (sandboxId: string) => Promise<void>;
 };
+
+/** Whether `box` has fewer vCPUs or less memory than `wanted`. Unknown on
+ *  either side (a backend that can't say) is never smaller. Exported for tests. */
+export function smallerThan(box: Pick<SandboxBox, "cpu" | "memoryGb">, wanted: BoxResources | undefined): boolean {
+  if (!wanted) return false;
+  return (box.cpu !== undefined && box.cpu < wanted.cpu) || (box.memoryGb !== undefined && box.memoryGb < wanted.memoryGb);
+}
 
 /**
  * Runtime's real compute model: one always-on box per Project (the Runtime
@@ -260,6 +275,14 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     let sandbox: SandboxBox | null = null;
     try {
       sandbox = await this.restoreBox(timer, labels, input);
+      if (sandbox && input.adopted && input.size && smallerThan(sandbox, this.backend.sizeFor?.(input.size))) {
+        console.info(`Pooled box ${sandbox.id} is ${sandbox.cpu} vCPU / ${sandbox.memoryGb} GiB, smaller than asked: making a new one`);
+        const undersized = sandbox.id;
+        sandbox = null;
+        await this.backend
+          .delete(undersized)
+          .catch((error: unknown) => console.error(`Could not delete undersized pooled box ${undersized}`, error));
+      }
       const restored = sandbox !== null;
       sandbox ??= await timer.stage("sandbox_create", () => this.backend.create(labels, input.size));
       await input.onBox?.(sandbox.id);

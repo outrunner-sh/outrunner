@@ -21,7 +21,6 @@ import { after } from "@/lib/observability/after";
 import type { AgentId } from "@/lib/agents/registry";
 import { AgentAuthError, resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import type { Owner } from "@/lib/auth/owner";
-import { sessionPlan } from "@/lib/billing/entitlements";
 import { cloudBoxStartGate, isPlanLimitError } from "@/lib/billing/limits";
 import {
   agentAuthStore,
@@ -73,7 +72,6 @@ import { orgDefaultsFor } from "@/lib/db/org-defaults";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId } from "@/lib/providers/registry";
-import { newBoxSize } from "@/lib/orgs/defaults";
 import { appUrl } from "@/lib/orgs/notify";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_CODEX_GATEWAY, AGENT_FEATURE_MULTI_REPO } from "@/lib/runtime/agent-protocol";
@@ -106,7 +104,6 @@ import {
   sessionAuthClient,
 } from "@/lib/runtime/session-auth";
 import {
-  boxSizeOn,
   computerMadeBy,
   endedBoxOf,
   providerForNewSessions,
@@ -120,6 +117,7 @@ import { refillProjectPool, takePooledBox } from "@/lib/runtime/warm-pool.deps";
 import type { BoxSizeId } from "@/lib/runtime/box-sizes";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace, WorkspaceSource } from "@/lib/runtime/types";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
+import { newBoxResources } from "@/lib/session/new-box-size";
 import { deliverStoredFirstPrompt, firstPromptToKeep } from "@/lib/session/deliver-first-prompt";
 import { abandonedBefore, gateFirstPrompt } from "@/lib/session/first-prompt-claim";
 import { evidenceToolsFor, prGuide } from "@/lib/session/pr-template";
@@ -809,9 +807,10 @@ async function provisionWorkspace({
       // Only one warmed from the project's setup as it is now.
       // Not for a review as the App: a pooled box was booted with its user's
       // GitHub token.
+      let pooledBox: string | null = null;
       if (!as) {
         const generation = await setupGeneration(owner.id, workspace.environmentId).catch(() => null);
-        await takePooledBox(provider, workspace.id, generation);
+        pooledBox = await takePooledBox(provider, workspace.id, generation);
       }
       const currentComputer = await getRuntimeComputer(scope);
       // The box that ended, for a provider that brings it back on the disk it
@@ -846,14 +845,11 @@ async function provisionWorkspace({
         repoFullName: project.fullName,
         githubToken,
         sessionEnv,
-        // Theirs once they chose one, else their org's (lib/orgs/defaults.ts).
-        size: boxSizeOn(
-          sandboxSettings.sandbox,
-          boxSize ?? newBoxSize(sandboxSettings, (await orgDefaultsFor(project.orgId)).boxSize),
-          await sessionPlan(owner.id, project.orgId),
-        ),
+        size: await newBoxResources({ ownerId: owner.id, orgId: project.orgId, settings: sandboxSettings, asked: boxSize }),
         maxLiveComputers,
         ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),
+        // A pooled box made smaller than this session's size is replaced.
+        ...(pooledBox !== null && endedBox === pooledBox && { adopted: true }),
       });
       const computer = ensured.computer;
       secrets.push(ensured.agentSecret);

@@ -144,6 +144,11 @@ export class NeevBackend implements SandboxBackend {
     closeNeevTunnels(id);
   }
 
+  /** Neev makes a box at exactly the size asked (neevResources). */
+  sizeFor(size: BoxResources): BoxResources {
+    return size;
+  }
+
   /** The paused box `id`, running again on the disk it kept. Null when Neev
    *  has deleted it, or it isn't paused but broken. */
   async restore(id: string): Promise<SandboxBox | null> {

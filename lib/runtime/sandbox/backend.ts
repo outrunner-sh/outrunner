@@ -103,6 +103,13 @@ export interface SandboxBackend {
    * be asked.
    */
   restore?(id: string, labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox | null>;
+  /**
+   * The CPU and memory a new box asked for at `size` really gets here, where
+   * the backend can say: Daytona's nearest snapshot, Neev's exact size. So a
+   * box made earlier (a pooled one) can be told apart from one made now.
+   * Undefined where it can't say (an account's default box).
+   */
+  sizeFor?(size: BoxResources): BoxResources | undefined;
   /** Stop a box but keep its disk, for {@link restore} to bring back: how an
    *  idle box stops costing compute. Only on providers that can. */
   pause?(id: string): Promise<void>;
