@@ -53,6 +53,17 @@ const SANDBOX_CAPACITY = /\b(?:total )?(?:disk|cpu|memory|sandbox(?:es)?) (?:lim
 export const PLATFORM_CAPACITY_MESSAGE =
   "Outrunner's cloud has no room for another sandbox right now. This isn't a problem with your account; try again in a few minutes, and contact support if it keeps happening.";
 
+/** What Daytona says when calls come too fast for it (HTTP 429), still so
+ *  once the backend has waited it out (lib/runtime/sandbox/daytona.ts
+ *  unthrottled). Matched by its words: this module is the page's too, so it
+ *  doesn't take in the SDK. */
+const SANDBOX_THROTTLED = /\bThrottlerException\b|\bToo Many Requests\b/i;
+
+/** Outrunner's sandbox account throttled: the user's request was fine, and
+ *  the same one a minute on is likely to work. */
+export const PLATFORM_BUSY_MESSAGE =
+  "Outrunner's cloud is busy right now, so your sandbox couldn't be set up. This isn't a problem with your account; start the session again in a minute.";
+
 export function provisionFailureMessage(
   error: unknown,
   phase: ProvisionPhase | null,
@@ -66,6 +77,7 @@ export function provisionFailureMessage(
   // Only where a box is made or started: a clone or install that runs out of
   // room inside the box ("Disk quota exceeded" from git) is its own cause.
   if (platformBox && (phase === null || phase === "allocate") && SANDBOX_CAPACITY.test(detail)) return PLATFORM_CAPACITY_MESSAGE;
+  if (platformBox && (phase === null || phase === "allocate") && SANDBOX_THROTTLED.test(detail)) return PLATFORM_BUSY_MESSAGE;
   if (!detail) return `Setup failed${step}. Start a new session to try again.`;
   return `Setup failed${step}: ${truncate(redact(detail, secrets))}`;
 }
