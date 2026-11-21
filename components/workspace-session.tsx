@@ -31,7 +31,7 @@ import {
   runnerDidNotStartDetail,
 } from "@/lib/desktop/local-runtime";
 import { claudeIsWorking, firstUserPrompt, replyModel, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
-import { contextUsage } from "@/lib/runtime/context-usage";
+import { contextReportOffered, contextUsage } from "@/lib/runtime/context-usage";
 import { pendingPlan } from "@/lib/runtime/pending-plan";
 import { rememberedMode, rememberMode, type SessionMode } from "@/lib/session/session-mode";
 import {
@@ -476,6 +476,9 @@ export function WorkspaceSession({
   // The secrets the agent asked for (request_secrets), the same way: a form
   // in place of the composer, put away while its answer is on the way.
   const secretRequest = useMemo(() => pendingSecretRequest(conversation.events), [conversation.events]);
+  // Walks the conversation back for where Claude last compacted: once per
+  // change, not on every render.
+  const contextNow = useMemo(() => contextUsage(conversation.events, shownModel), [conversation.events, shownModel]);
   const waitingOnSecrets = secretRequest !== null && !answeredHere.has(secretRequest.toolUseId);
   const [secretsSaveError, setSecretsSaveError] = useState<string | null>(null);
   const waitingOnUser = (question !== null && !answeredHere.has(question.toolUseId)) || waitingOnSecrets;
@@ -1486,7 +1489,22 @@ export function WorkspaceSession({
           modeChoice={{ mode, onChange: setMode }}
           onCompact={startup ? undefined : compact}
           onSideChat={onSideChat}
-          context={contextUsage(conversation.events, shownModel)}
+          context={contextNow}
+          // Sent as itself, without the diff's comments, and only while no
+          // edit, plan, switch or queue would take the send over.
+          onContextReport={
+            contextReportOffered({
+              agent,
+              starting: Boolean(startup) || !initialDeliveryComplete || queuedEditing !== null,
+              working,
+              waitingOnUser: waitingOnUser || waitingOnPlan,
+              editing: editing !== null,
+              switchingHarness: pendingHarness !== null,
+              queued: queue.length,
+            })
+              ? () => void send("/context")
+              : undefined
+          }
           focusSignal={reviseSignal}
           editing={editing && { key: editing.uuid, text: editing.text, onCancel: () => setEditing(null) }}
           placeholder={

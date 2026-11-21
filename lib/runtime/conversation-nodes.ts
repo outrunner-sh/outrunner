@@ -43,7 +43,7 @@ export type ConversationNode =
     }
   /** Claude's own injected record (a skill's instructions, a reminder): folded
    *  behind a disclosure rather than shown inline. `label` names it in a word. */
-  | { kind: "meta"; key: string; label: string; text: string }
+  | { kind: "meta"; key: string; label: string; text: string; open?: boolean }
   /** A slash command Claude ran itself ("/model opus"), as typed. */
   | { kind: "command"; key: string; text: string }
   /** The conversation compacted here. */
@@ -67,6 +67,9 @@ export type ConversationNode =
        *  failed. */
       result: { content: unknown; isError?: boolean } | null;
     };
+
+/** /context's report (isContextReport): shown as Markdown, the newest open. */
+export const CONTEXT_USAGE = "Context usage";
 
 /**
  * Flatten the event stream into rows. A tool result is shown with the call it
@@ -230,6 +233,10 @@ export function conversationNodes(
     previousAt = event.timestamp;
   });
   if (!working) endTurn();
+  // The newest /context report shows open, as it was just asked for; the
+  // ones before it fold away with the rest.
+  const report = nodes.findLastIndex((node) => node.kind === "meta" && node.label === CONTEXT_USAGE);
+  if (report !== -1) nodes[report] = { ...(nodes[report] as Extract<ConversationNode, { kind: "meta" }>), open: true };
   return nodes;
 }
 
@@ -248,6 +255,7 @@ export function metaLabel(meta: boolean, text: string): string | null {
   if (t.startsWith("<command-name>") || t.startsWith("<command-message>")) return "Command";
   if (t.startsWith("<local-command-stdout>") || t.startsWith("<local-command-stderr>")) return "Command output";
   if (t.startsWith("<task-notification>")) return "Background task";
+  if (meta && t.startsWith("## Context Usage")) return CONTEXT_USAGE;
   if (t.startsWith("<system-reminder>")) return "System reminder";
   return meta ? "Internal" : null;
 }
