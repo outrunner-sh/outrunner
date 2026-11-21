@@ -513,6 +513,23 @@ type UserChatPreferencesRow = {
   updated_at: string;
 };
 
+/** A person's desktop-browser sign-ins in a project, sealed with both
+ *  (20261121170000). Service-role-only. */
+type BrowserSignInsRow = {
+  owner_id: string;
+  project_id: string;
+  state_ciphertext: string;
+  saved_at: string;
+  expires_at: string;
+};
+
+/** Whether a person's browser sign-ins are kept (20261121170000). */
+type BrowserSignInPreferencesRow = {
+  user_id: string;
+  keep: boolean;
+  updated_at: string;
+};
+
 /** One of a session's chats other than its main one (20261103100000). */
 type WorkspaceChatRow = {
   id: string;
@@ -2466,6 +2483,18 @@ export type Database = {
         Row: MemoryRow;
         Insert: Insert<MemoryRow, "user_id" | "body">;
         Update: Partial<MemoryRow>;
+        Relationships: [];
+      };
+      browser_sign_ins: {
+        Row: BrowserSignInsRow;
+        Insert: Insert<BrowserSignInsRow, "owner_id" | "project_id" | "state_ciphertext" | "expires_at"> & Partial<Pick<BrowserSignInsRow, "saved_at">>;
+        Update: Partial<BrowserSignInsRow>;
+        Relationships: [];
+      };
+      browser_sign_in_preferences: {
+        Row: BrowserSignInPreferencesRow;
+        Insert: Insert<BrowserSignInPreferencesRow, "user_id"> & Partial<Pick<BrowserSignInPreferencesRow, "updated_at">>;
+        Update: Partial<BrowserSignInPreferencesRow>;
         Relationships: [];
       };
       user_chat_preferences: {
