@@ -38,7 +38,8 @@ type Browser struct {
 	// Port is DevTools', DevToolsPort but in tests.
 	Port int
 	// Profile is the browser's own profile folder: one per box, so a site the
-	// agent signed in to stays signed in across sessions and launches.
+	// agent or the person signed in to stays signed in across launches, and
+	// is carried over to their next session's box (sign_ins.go).
 	Profile string
 	// Display is the X display it opens on, the desktop's.
 	Display string
@@ -112,8 +113,30 @@ func (b *Browser) Open(ctx context.Context, rawURL string) error {
 // start launches the browser on rawURL and waits for its DevTools to answer.
 // A box whose container can't give Chromium its sandbox (no user namespaces,
 // no setuid helper: Daytona's) has it quit at once saying so; there it is
-// launched again without one. Elsewhere it keeps its sandbox.
+// launched again without one. Elsewhere it keeps its sandbox. Sign-ins
+// carried over from the person's last session (QueueRestore) go in before
+// any page loads: the browser starts on a blank tab, and goes to rawURL once
+// they're in.
 func (b *Browser) start(ctx context.Context, rawURL string) error {
+	restore, err := b.claimRestore()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "desktop: starting the browser without the sign-ins carried over: %v\n", err)
+	}
+	if restore == nil {
+		return b.startOn(ctx, rawURL)
+	}
+	if err := b.startOn(ctx, "about:blank"); err != nil {
+		// Left for the next start, or the keeper.
+		if queueErr := b.QueueRestore(*restore); queueErr != nil {
+			fmt.Fprintf(os.Stderr, "desktop: the sign-ins carried over are lost: %v\n", queueErr)
+		}
+		return err
+	}
+	b.restoreAt(ctx, *restore, rawURL)
+	return nil
+}
+
+func (b *Browser) startOn(ctx context.Context, rawURL string) error {
 	exited, err := b.launch(rawURL, false)
 	if err != nil {
 		return err
