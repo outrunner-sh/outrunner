@@ -1,18 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import { RunnerTabs, RUNNERS, TerminalCommand, useCliAccount, useOrigin } from "@/components/claude-from-terminal";
 import { SectionHeader } from "@/components/settings-details";
 import { Button } from "@/components/ui/button";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
 import { useNow } from "@/hooks/use-now";
+import { checkLabel } from "@/lib/claude/account-label";
 import type { ClaudeAccountView } from "@/lib/claude/accounts";
 import { requestJson } from "@/lib/http/request-json";
+import { connectClaudeCommand } from "@/lib/onboarding/rules";
 
 type Answer = { accounts: ClaudeAccountView[]; max: number };
 
 const ENDPOINT = "/api/settings/claude/accounts";
+/** How often an open Add form looks for an account connected from the terminal. */
+const POLL_MS = 3_000;
 const isAnswer = (data: Partial<Answer>) => Array.isArray(data.accounts) && typeof data.max === "number";
 const message = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
 
@@ -29,8 +34,8 @@ export function ClaudeAccounts({ onChange }: { onChange: () => void }) {
   // What's being saved: an account's id (removing it), "order" or "add".
   const [busy, setBusy] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [label, setLabel] = useState("");
-  const [token, setToken] = useState("");
+  // Said once an account lands, until the next change.
+  const [notice, setNotice] = useState<string | null>(null);
   const now = useNow(60_000);
 
   useEffect(() => {
@@ -48,6 +53,7 @@ export function ClaudeAccounts({ onChange }: { onChange: () => void }) {
     async (what: string, send: () => Promise<Answer>): Promise<boolean> => {
       setBusy(what);
       setError(null);
+      setNotice(null);
       try {
         setAnswer(await send());
         onChange();
@@ -82,15 +88,13 @@ export function ClaudeAccounts({ onChange }: { onChange: () => void }) {
       }),
     );
 
-  const add = async () => {
-    const saved = await run("add", () =>
-      requestJson<Answer>(ENDPOINT, { method: "POST", body: { label, token }, has: isAnswer, fallback: "Couldn't save that Claude account." }),
-    );
-    if (saved) {
-      setLabel("");
-      setToken("");
-      setAdding(false);
-    }
+  /** An account connected, by the terminal or a pasted token: the list as it now is. */
+  const landed = (next: Answer, label: string) => {
+    setAnswer(next);
+    setAdding(false);
+    setError(null);
+    setNotice(`Connected ${label}.`);
+    onChange();
   };
 
   return (
@@ -138,67 +142,186 @@ export function ClaudeAccounts({ onChange }: { onChange: () => void }) {
         </ol>
       ) : null}
 
-      {adding ? (
-        <div className="space-y-2 rounded-md border border-border/60 p-3">
-          <label className="block space-y-1 text-xs text-muted-foreground" htmlFor="claude-account-label">
-            <span>Name</span>
-            <input
-              id="claude-account-label"
-              value={label}
-              onChange={(event) => setLabel(event.target.value)}
-              placeholder="personal"
-              maxLength={32}
-              autoComplete="off"
-              spellCheck={false}
-              className="border-border bg-transparent h-9 w-full rounded-md border px-3 text-sm text-foreground"
-            />
-          </label>
-          <label className="block space-y-1 text-xs text-muted-foreground" htmlFor="claude-account-token">
-            <span>Token</span>
-            <input
-              id="claude-account-token"
-              type="password"
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-              placeholder="sk-ant-oat01-…"
-              autoComplete="off"
-              spellCheck={false}
-              className="border-border bg-transparent h-9 w-full rounded-md border px-3 font-mono text-sm text-foreground"
-            />
-          </label>
-          <p className="text-xs text-muted-foreground">
-            Run <code className="font-mono">claude setup-token</code> signed in to the other Claude account and paste the
-            token it prints. Or, in a terminal, run <code className="font-mono">outrunner claude --label personal</code>.
-          </p>
-          <div className="flex gap-2">
-            <LoadingButton
-              status={busy === "add" ? "pending" : "idle"}
-              labels={{ idle: "Save account" }}
-              disabled={!label.trim() || !token.trim() || (busy !== null && busy !== "add")}
-              onClick={() => void add()}
-            />
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy === "add"}
-              onClick={() => {
-                setAdding(false);
-                setToken("");
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
+      {adding && answer ? (
+        <AddAccount before={answer.accounts} onLanded={landed} onCancel={() => setAdding(false)} />
       ) : answer !== null && accounts.length < max ? (
-        <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => setAdding(true)}>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy !== null}
+          onClick={() => {
+            setNotice(null);
+            setAdding(true);
+          }}
+        >
           Add another account
         </Button>
       ) : answer !== null ? (
         <p className="text-xs text-muted-foreground">You&apos;ve connected {max} Claude accounts, the most you can.</p>
       ) : null}
 
+      {notice ? <p className="text-xs text-muted-foreground" role="status">{notice}</p> : null}
       {error ? <InlineMessage>{error}</InlineMessage> : null}
+    </div>
+  );
+}
+
+/**
+ * Connect another Claude account: from the terminal, where the CLI signs in
+ * to Claude and saves the token under the name (watched for here), or by
+ * pasting a token from `claude setup-token`. Either way the person signs in
+ * to Claude with the other account, which a browser already signed in to the
+ * first makes easy to get wrong, so it says how not to.
+ */
+function AddAccount({
+  before,
+  onLanded,
+  onCancel,
+}: {
+  /** The accounts as the form opened: one not among them, or with a new token, is the one. */
+  before: ClaudeAccountView[];
+  onLanded: (next: Answer, label: string) => void;
+  onCancel: () => void;
+}) {
+  const [label, setLabel] = useState("");
+  const [token, setToken] = useState("");
+  const [manager, setManager] = useState(0);
+  const [pasting, setPasting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const account = useCliAccount();
+  const origin = useOrigin();
+
+  const typed = label.trim() ? checkLabel(label) : null;
+  const name = typed && "label" in typed ? typed.label : "personal";
+  const command = account === undefined ? null : connectClaudeCommand(RUNNERS[manager][1], origin, account ?? undefined, name);
+
+  // Watch for the terminal to save it: an account not there as the form
+  // opened, or one whose token changed (its name was used again).
+  const [baseline] = useState(() => new Map(before.map((a) => [a.id, a.last4])));
+  const latest = useRef(onLanded);
+  useEffect(() => {
+    latest.current = onLanded;
+  });
+  useEffect(() => {
+    let live = true;
+    const look = async () => {
+      if (document.hidden) return;
+      const now = await requestJson<Answer>(ENDPOINT, { has: isAnswer }).catch(() => null);
+      const fresh = now?.accounts.find((a) => !baseline.has(a.id) || baseline.get(a.id) !== a.last4);
+      if (live && now && fresh) latest.current(now, fresh.label);
+    };
+    const timer = setInterval(() => void look(), POLL_MS);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [baseline]);
+
+  const save = async () => {
+    const checked = checkLabel(label.trim() ? label : "personal");
+    if ("error" in checked) {
+      setError(checked.error);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await requestJson<Answer>(ENDPOINT, {
+        method: "POST",
+        body: { label: checked.label, token },
+        has: isAnswer,
+        fallback: "Couldn't save that Claude account.",
+      });
+      onLanded(next, checked.label);
+    } catch (e) {
+      setError(message(e, "Couldn't save that Claude account."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 rounded-md border border-border/60 p-3">
+      <label className="block space-y-1 text-xs text-muted-foreground" htmlFor="claude-account-label">
+        <span>Name</span>
+        <input
+          id="claude-account-label"
+          value={label}
+          onChange={(event) => setLabel(event.target.value)}
+          placeholder="personal"
+          maxLength={32}
+          autoComplete="off"
+          spellCheck={false}
+          className="border-border bg-transparent h-9 w-full rounded-md border px-3 text-sm text-foreground"
+        />
+        {typed && "error" in typed ? <span className="block text-warning">{typed.error}</span> : null}
+      </label>
+
+      {!pasting ? (
+        <div className="space-y-2">
+          <p className="text-sm text-foreground">Run this in a terminal on your computer</p>
+          <RunnerTabs manager={manager} onChange={setManager} />
+          <TerminalCommand command={command} />
+          <p className="text-xs text-muted-foreground">
+            It opens Claude in your browser. Sign in with the other Claude account, not the one already connected.
+            This list updates by itself once it&apos;s saved.
+          </p>
+          <button
+            type="button"
+            onClick={() => setPasting(true)}
+            className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            Or paste a token instead
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <ol className="list-decimal space-y-2 pl-4 text-xs text-muted-foreground">
+            <li className="space-y-1.5">
+              <span>In a terminal on your computer, run:</span>
+              <TerminalCommand command="claude setup-token" />
+            </li>
+            <li>When your browser opens, sign in with the other Claude account.</li>
+            <li>
+              Paste the token it prints, starting <code className="font-mono">sk-ant-oat01-</code>:
+            </li>
+          </ol>
+          <input
+            id="claude-account-token"
+            type="password"
+            aria-label="Claude token"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && token.trim() && !saving) void save();
+            }}
+            placeholder="sk-ant-oat01-…"
+            autoComplete="off"
+            spellCheck={false}
+            className="border-border bg-transparent h-9 w-full rounded-md border px-3 font-mono text-sm text-foreground"
+          />
+          <div className="flex items-center gap-3">
+            <LoadingButton status={saving ? "pending" : "idle"} labels={{ idle: "Save account" }} disabled={!token.trim()} onClick={() => void save()} />
+            <button
+              type="button"
+              onClick={() => setPasting(false)}
+              className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              Use the terminal command instead
+            </button>
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-muted-foreground">
+        Already signed in to claude.ai as the first account? Sign out there first, or open the sign-in link in a private
+        window.
+      </p>
+      {error ? <InlineMessage>{error}</InlineMessage> : null}
+      <Button variant="ghost" size="sm" disabled={saving} onClick={onCancel}>
+        Cancel
+      </Button>
     </div>
   );
 }
