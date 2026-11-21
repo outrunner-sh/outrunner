@@ -442,7 +442,7 @@ jobs:
           printf '%s\n' "$VM_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
       - if: vars.VM_SSH_HOST == ''
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
