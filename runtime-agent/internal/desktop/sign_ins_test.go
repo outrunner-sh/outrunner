@@ -564,3 +564,28 @@ func TestARealBrowserTakesTheSignInsCarriedOver(t *testing.T) {
 		t.Errorf("localStorage read back = %+v", origins)
 	}
 }
+
+// A browser started from the dock, which no launch of this package's wrote
+// the waiting sign-ins into, gets them within a second or so, however long
+// the keeper's looks are apart.
+func TestTheKeeperWritesWaitingSignInsInWithinASecond(t *testing.T) {
+	f, b := newSignInBrowser(t)
+	f.tabs["T1"] = "chrome://newtab/"
+	if err := b.QueueRestore(StorageState{Cookies: []Cookie{{Name: "sid", Value: "s", Domain: "localhost", Path: "/", Expires: -1, SameSite: "Lax"}}}); err != nil {
+		t.Fatal(err)
+	}
+	k := &SignInKeeper{Browser: b, Save: (&saves{}).save, MinGap: time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go k.Run(ctx, time.Hour, func() bool { return true })
+	for deadline := time.Now().Add(3 * time.Second); b.restoreWaiting(); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the waiting sign-ins weren't written in")
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.set) != 1 {
+		t.Errorf("Storage.setCookies calls = %d", len(f.set))
+	}
+}

@@ -61,21 +61,29 @@ func (k *SignInKeeper) Seed(state StorageState) {
 	}
 }
 
-// Run looks every `every` until ctx is done or the keeper stops; looking
-// only while active() (the box has a desktop) is true.
+// Run looks every `every` until ctx is done or the keeper stops, and every
+// second while sign-ins wait to be written in, so a browser started from
+// the dock gets them before anyone can type an address; looking only while
+// active() (the box has a desktop) is true.
 func (k *SignInKeeper) Run(ctx context.Context, every time.Duration, active func() bool) {
-	ticker := time.NewTicker(every)
+	ticker := time.NewTicker(min(every, time.Second))
 	defer ticker.Stop()
+	var looked time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
+		now := time.Now()
+		if now.Sub(looked) < every && !k.Browser.restoreWaiting() {
+			continue
+		}
 		if active != nil && !active() {
 			continue
 		}
-		if !k.Tick(ctx, time.Now()) {
+		looked = now
+		if !k.Tick(ctx, now) {
 			return
 		}
 	}

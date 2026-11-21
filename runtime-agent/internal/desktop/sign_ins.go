@@ -97,12 +97,18 @@ func (b *Browser) claimRestore() (*StorageState, error) {
 	return &state, nil
 }
 
+// restoreWaiting is whether sign-ins wait for the browser.
+func (b *Browser) restoreWaiting() bool {
+	_, err := os.Stat(b.restorePath())
+	return err == nil
+}
+
 // RestorePending writes the sign-ins waiting for the browser into it, when
 // it runs and they still wait: it was started by something other than this
 // package (the desktop's Web Browser, from the dock). It returns them, or
 // nil when none waited.
 func (b *Browser) RestorePending(ctx context.Context) (*StorageState, error) {
-	if _, err := os.Stat(b.restorePath()); err != nil {
+	if !b.restoreWaiting() {
 		return nil, nil
 	}
 	b.stateMu.Lock()
