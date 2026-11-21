@@ -43,9 +43,11 @@ export function renameBranchDeps(): RenameBranchDeps {
 
   return {
     async session(id) {
-      const { data, error } = await db.from("workspaces").select("id, branch, branch_renamable").eq("id", id).maybeSingle();
+      const { data, error } = await db.from("workspaces").select("id, branch, branch_renamable, branch_named").eq("id", id).maybeSingle();
       if (error) throw error;
-      return data ? { id: data.id, branch: data.branch, branchRenamable: data.branch_renamable === true } : null;
+      return data
+        ? { id: data.id, branch: data.branch, branchRenamable: data.branch_renamable === true, branchNamed: data.branch_named === true }
+        : null;
     },
     async hasPullRequest(id) {
       const [own, runner] = await Promise.all([
@@ -72,16 +74,16 @@ export function renameBranchDeps(): RenameBranchDeps {
     async rename(id, from, to) {
       const { data, error } = await db
         .from("workspaces")
-        .update({ branch: to, branch_renamable: false })
+        .update({ branch: to, branch_renamable: false, branch_named: true })
         .eq("id", id)
         .eq("branch", from)
-        .eq("branch_renamable", true)
+        .or("branch_renamable.eq.true,branch_named.eq.true")
         .select("id");
       if (error) throw error;
       return (data?.length ?? 0) > 0;
     },
     async settle(id) {
-      const { error } = await db.from("workspaces").update({ branch_renamable: false }).eq("id", id);
+      const { error } = await db.from("workspaces").update({ branch_renamable: false, branch_named: false }).eq("id", id);
       if (error) throw error;
     },
   };

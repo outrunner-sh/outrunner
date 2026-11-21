@@ -1,12 +1,15 @@
 /**
- * The agent naming its session's branch, once, when it knows what the change
- * is (`outrunner-session rename-branch <type>/<what-it-does>`): the name made
+ * The agent naming its session's branch when it knows what the change is
+ * (`outrunner-session rename-branch <type>/<what-it-does>`): the name made
  * from the first prompt (lib/session/branch-name.ts) is a stand-in until then.
+ * Named, it may be named again (the work changed, or the user asked) until
+ * it's pushed or has a pull request.
  *
  * Two steps, so the box can undo its half: `check` says the name it may take
  * (numbered `-2`… when taken) and changes nothing; the box renames the branch
  * in every checkout; `commit` records it, or refuses, and the box renames it
- * back. Only a branch Outrunner chose, never pushed, with no pull request:
+ * back. Only a branch Outrunner chose (and its agent named since, if it
+ * did), never pushed, with no pull request:
  * after that, GitHub, webhooks and pull request lookups know it by its name.
  * A session that can never be renamed is refused with 410 (FINAL), for the
  * box to stop asking; `commit` is safe to send again, for a box whose first
@@ -38,6 +41,8 @@ export type RenameSession = {
   branch: string;
   /** Still on the name Outrunner chose, and allowed a new one. */
   branchRenamable: boolean;
+  /** Named by its agent since, and allowed another until pushed. */
+  branchNamed: boolean;
 };
 
 export type RenameBranchDeps = {
@@ -50,9 +55,9 @@ export type RenameBranchDeps = {
   /** Whether GitHub knows `branch` in any of the session's repositories: a
    *  branch there, or a pull request's head. */
   knownOnGitHub(id: string, branch: string): Promise<boolean>;
-  /** Record `to`, and that it's named for good, if the session is still on
-   *  `from` and renamable: false when it isn't. Throws Postgres' 23505 when
-   *  another session took `to` meanwhile. */
+  /** Record `to`, and that its agent named it, if the session is still on
+   *  `from` and renamable or named: false when it isn't. Throws Postgres'
+   *  23505 when another session took `to` meanwhile. */
   rename(id: string, from: string, to: string): Promise<boolean>;
   /** It keeps its name from now on (pushed already). */
   settle(id: string): Promise<void>;
@@ -78,8 +83,8 @@ export function nameProblem(name: string): string | null {
 /** Whether a rename may still happen, or why not. */
 async function refusal(session: RenameSession | null, deps: RenameBranchDeps): Promise<RenameAnswer | null> {
   if (!session) return refuse(404, "That session isn't Outrunner's any more.");
-  if (!session.branchRenamable) {
-    return refuse(FINAL, `This branch, ${session.branch}, keeps its name: it was named already, or chosen, not made up by Outrunner.`);
+  if (!session.branchRenamable && !session.branchNamed) {
+    return refuse(FINAL, `This branch, ${session.branch}, keeps its name: it was chosen, not made up by Outrunner.`);
   }
   if (await deps.hasPullRequest(session.id)) {
     await deps.settle(session.id);

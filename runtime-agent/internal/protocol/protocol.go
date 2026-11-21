@@ -67,8 +67,8 @@ type CreateWorkspaceRequest struct {
 	Branch       string `json:"branch"`
 	BaseBranch   string `json:"baseBranch"`
 	// BranchRenamable says Outrunner made the branch up from the first
-	// prompt: the agent may give it its real name once, before anything is
-	// pushed (`outrunner-session rename-branch`).
+	// prompt: the agent may give it its real name before anything is pushed
+	// (`outrunner-session rename-branch`).
 	BranchRenamable bool `json:"branchRenamable,omitempty"`
 	// RepoPath, when set, is an existing checkout on this machine to branch the
 	// worktree from instead of the computer's bare mirror. Only the desktop
@@ -267,10 +267,13 @@ type RestoreWorkspaceRequest struct {
 	Chats  []RestoreChat `json:"chats,omitempty"`
 	Branch string        `json:"branch"`
 	// BranchRenamable is CreateWorkspaceRequest's, as the session has it now.
-	BranchRenamable bool              `json:"branchRenamable,omitempty"`
-	BaseBranch      string            `json:"baseBranch,omitempty"`
-	SessionID       *string           `json:"sessionId"`
-	Downloads       []RestoreDownload `json:"downloads"`
+	BranchRenamable bool `json:"branchRenamable,omitempty"`
+	// BranchNamed says the agent named the branch already, and may name it
+	// again until it's pushed.
+	BranchNamed bool              `json:"branchNamed,omitempty"`
+	BaseBranch  string            `json:"baseBranch,omitempty"`
+	SessionID   *string           `json:"sessionId"`
+	Downloads   []RestoreDownload `json:"downloads"`
 	// Agent is the session's agent ("claude", "codex"; empty is Claude): a
 	// fresh box has no record of it. A Codex session's optional "rollout"
 	// download resumes Codex itself; without it the session starts afresh,

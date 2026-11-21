@@ -13,13 +13,14 @@ import (
 	"runtime-agent/internal/sessiontools"
 )
 
-// The agent naming its session's branch, once, when it knows what the change
-// is: `outrunner-session rename-branch <type>/<what-it-does>`. The branch
-// Outrunner made up from the first prompt is a stand-in until then. The
-// control plane says the name it may take (numbered when taken) and records
-// it; this agent renames the branch in every checkout between the two, and
-// back again when the control plane refuses, so git and Outrunner never
-// disagree on its name (lib/session/rename-branch.ts).
+// The agent naming its session's branch when it knows what the change is:
+// `outrunner-session rename-branch <type>/<what-it-does>`. The branch
+// Outrunner made up from the first prompt is a stand-in until then; named, it
+// may be named again (the work changed, or the user asked) until it's pushed.
+// The control plane says the name it may take (numbered when taken) and
+// records it; this agent renames the branch in every checkout between the
+// two, and back again when the control plane refuses, so git and Outrunner
+// never disagree on its name (lib/session/rename-branch.ts).
 
 // RenameBranchTool is the session tool the command calls.
 const RenameBranchTool = "rename_branch"
@@ -41,8 +42,8 @@ func (s *Service) renameBranch(ctx context.Context, owner string, args json.RawM
 	if !ok {
 		return 0, sessiontools.Answer{}, ErrUnknownWorkspace
 	}
-	if !f.BranchRenamable || f.RepoPath != "" {
-		return http.StatusConflict, sessiontools.Answer{Error: fmt.Sprintf("This branch, %s, keeps its name: it was named already, or chosen.", f.Branch)}, nil
+	if (!f.BranchRenamable && !f.BranchNamed) || f.RepoPath != "" {
+		return http.StatusConflict, sessiontools.Answer{Error: fmt.Sprintf("This branch, %s, keeps its name: it was chosen, or pushed.", f.Branch)}, nil
 	}
 	name := strings.TrimSpace(in.Name)
 	dirs := s.branchCheckouts(owner, f)
@@ -74,7 +75,7 @@ func (s *Service) renameBranch(ctx context.Context, owner string, args json.RawM
 		if err == nil && status == http.StatusGone {
 			// It can never be renamed now (pushed, or a pull request): stop
 			// offering it.
-			s.settleBranch(owner, dirs, f.Branch, f.Branch)
+			s.settleBranch(owner, dirs, f.Branch, f.Branch, false)
 		}
 		if err != nil || status/100 != 2 {
 			return status, answer, err
@@ -107,17 +108,18 @@ func (s *Service) renameBranch(ctx context.Context, owner string, args json.RawM
 			return http.StatusInternalServerError, sessiontools.Answer{Error: fmt.Sprintf("Outrunner refused the name and git couldn't put %s back: %v", f.Branch, undoErr)}, nil
 		}
 		if status == http.StatusGone {
-			s.settleBranch(owner, dirs, f.Branch, f.Branch)
+			s.settleBranch(owner, dirs, f.Branch, f.Branch, false)
 		} else {
-			// Back on the stand-in, guarded again.
-			s.markStandIns(dirs, f.Branch, true)
+			// Back on the stand-in, guarded again; a name the agent gave
+			// isn't one.
+			s.markStandIns(dirs, f.Branch, f.BranchRenamable)
 			s.updateFacts(owner, func(f *workspaceFacts) { f.PendingBranch = "" })
 		}
 		return status, answer, nil
 	}
 
 	from := f.Branch
-	s.settleBranch(owner, dirs, from, to)
+	s.settleBranch(owner, dirs, from, to, true)
 	text := fmt.Sprintf("Renamed the branch from %s to %s.", from, to)
 	switch {
 	case finishing && to != name:
@@ -127,7 +129,7 @@ func (s *Service) renameBranch(ctx context.Context, owner string, args json.RawM
 	case to != name:
 		text += fmt.Sprintf(" %s was taken, so it's numbered.", name)
 	}
-	text += " It keeps this name now; push it with `git push -u origin HEAD`."
+	text += " If the work changes before it's pushed, rename it again the same way; push it with `git push -u origin HEAD`."
 	return http.StatusOK, sessiontools.Answer{Text: text}, nil
 }
 
@@ -159,17 +161,18 @@ const commitAttempts = 3
 
 var commitBackoff = 500 * time.Millisecond
 
-// settleBranch records that the session (and its chats) is on branch for
-// good, renamed from `from` or never to be: no more note, no more guard.
-func (s *Service) settleBranch(owner string, dirs []string, from, branch string) {
+// settleBranch records that the session (and its chats) is on branch, off
+// the stand-in: renamed from `from` by the agent (named, which it may be
+// again), or never to be renamed. No more note, no more guard.
+func (s *Service) settleBranch(owner string, dirs []string, from, branch string, named bool) {
 	if f, ok := s.getFacts(owner); ok {
-		f.Branch, f.BranchRenamable, f.PendingBranch = branch, false, ""
+		f.Branch, f.BranchRenamable, f.BranchNamed, f.PendingBranch = branch, false, named, ""
 		s.setFacts(owner, f)
 	}
 	// Its chats work in the same folder, on the same branch.
 	for _, key := range s.chatKeys(owner) {
 		if chat, ok := s.getFacts(key); ok {
-			chat.Branch, chat.BranchRenamable = branch, false
+			chat.Branch, chat.BranchRenamable, chat.BranchNamed = branch, false, named
 			s.setFacts(key, chat)
 		}
 	}
@@ -258,12 +261,14 @@ func finishRenameNote(pending string) string {
 func branchNameNote(current string) string {
 	return "# Branch name\n\n" +
 		"The branch's name, `" + current + "`, is a stand-in made from the first message. " +
-		"As soon as you know what the change is, before you edit your first file, give it its real name, once:\n\n" +
+		"As soon as you know what the change is, before you edit your first file, give it its real name:\n\n" +
 		"    " + sessiontools.CommandName + " rename-branch <type>/<what-it-does>\n\n" +
 		"- <type> is the kind of change: fix, feat, refactor, docs, test, chore or perf. When the change is clearly about one area, that area instead (security, deps, ci). For mixed work, the type of the main change the user asked for.\n" +
 		"- <what-it-does> is 2 to 5 lowercase words joined by hyphens, at most 40 characters, saying what the change does: fix/google-sign-in-redirect, feat/expandable-right-sidebar, perf/faster-ci-build.\n" +
 		"- If the task names a Linear or GitHub issue, put its key first: fix/eng-123-mask-chat-secrets, fix/issue-266-box-oom.\n" +
 		"- No ids, dates or tool names (outrunner/, claude/).\n" +
 		"- If you only answer questions, investigate or ask what's meant, and edit nothing, leave it as it is. If you're asked to push to another branch or an existing pull request, leave it too.\n" +
-		"- If the name is taken, the command numbers it (-2) and says so: use the name it prints. Once pushed, the branch keeps its name."
+		"- If the name is taken, the command numbers it (-2) and says so: use the name it prints.\n" +
+		"- If the work changes, or the user asks for another name, before it's pushed, rename it again the same way. Once pushed, the branch keeps its name.\n" +
+		"- Rename it only with this command, never with `git branch -m`: Outrunner wouldn't know the new name."
 }
