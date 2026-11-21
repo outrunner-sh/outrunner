@@ -99,6 +99,9 @@ export function WorkspaceDesktop({
     // Fetched alongside the link rather than after it.
     const loading = loadNoVnc();
     let stall: ReturnType<typeof setTimeout> | undefined;
+    // When the socket finished connecting: how long it lasted decides how
+    // its drop is retried (lib/session/desktop-view.ts STEADY_MS).
+    let connectedAt: number | undefined;
     void (async () => {
       const opened = await openDesktop(workspaceId);
       if (!live) return;
@@ -126,12 +129,13 @@ export function WorkspaceDesktop({
       }, CONNECT_TIMEOUT_MS);
       rfb.addEventListener("connect", () => {
         clearTimeout(stall);
+        connectedAt = Date.now();
         send({ type: "connect" });
       });
       rfb.addEventListener("disconnect", (event) => {
         closed = true;
         clearTimeout(stall);
-        send({ type: "disconnect", clean: event.detail.clean });
+        send({ type: "disconnect", clean: event.detail.clean, ...(connectedAt !== undefined && { lasted: Date.now() - connectedAt }) });
       });
       rfb.addEventListener("securityfailure", (event) => send({ type: "securityfailure", reason: event.detail.reason }));
       rfb.addEventListener("clipboard", (event) => remoteClipboard.told(event.detail.text));
@@ -144,6 +148,15 @@ export function WorkspaceDesktop({
       if (!closed) rfb?.disconnect();
     };
   }, [workspaceId, isReady, view.attempt, remoteClipboard]);
+
+  // A dropped socket is tried again on its own, after the wait the view says;
+  // the connection effect above opens it as a new attempt.
+  const retryInMs = view.status === "reconnecting" ? view.retryInMs : null;
+  useEffect(() => {
+    if (retryInMs === null || !isReady) return;
+    const timer = setTimeout(() => dispatch({ type: "retry" }), retryInMs);
+    return () => clearTimeout(timer);
+  }, [retryInMs, view.attempt, isReady]);
 
   // While the user drives (Interact on, the desktop live), their moves on it
   // tell the agent's desktop tools to wait for them: caught on the way down
@@ -238,7 +251,9 @@ export function WorkspaceDesktop({
     else void panel.current?.requestFullscreen().catch(() => {});
   }
 
-  const opening = view.status === "starting" || view.status === "connecting";
+  const opening = view.status === "starting" || view.status === "connecting" || view.status === "reconnecting";
+  // Back on its own after a drop, rather than starting for the first time.
+  const reconnecting = view.status === "reconnecting" || (opening && "tries" in view && view.tries !== undefined);
   const reconnect = () => dispatch({ type: "reconnect" });
 
   return (
@@ -246,7 +261,7 @@ export function WorkspaceDesktop({
       <div className="studio-desktop-bar">
         <span className="studio-desktop-state" aria-live="polite">
           <span className={cn("studio-status", connected ? "is-ready" : isReady && opening && "is-provisioning")} />
-          {!isReady ? "Not running" : connected ? "Live" : opening ? "Connecting" : view.status === "error" ? "Unavailable" : "Disconnected"}
+          {!isReady ? "Not running" : connected ? "Live" : reconnecting ? "Reconnecting" : opening ? "Connecting" : view.status === "error" ? "Unavailable" : "Disconnected"}
         </span>
         <span className="studio-desktop-actions">
           <button
@@ -299,7 +314,7 @@ export function WorkspaceDesktop({
         ) : opening ? (
           <div className="studio-desktop-overlay" role="status">
             <Spinner />
-            <p>Starting the desktop…</p>
+            <p>{reconnecting ? "Reconnecting to the desktop…" : "Starting the desktop…"}</p>
           </div>
         ) : view.status === "disconnected" || view.status === "error" ? (
           <div className="studio-desktop-overlay" role="alert">
