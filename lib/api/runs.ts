@@ -185,15 +185,18 @@ export function firstRunPending(
 }
 
 /** The first run before its prompt is in the log: `run-1`, `preparing` (or
- *  `error`, when the session's setup failed). */
-export function pendingFirstRun(workspace: Pick<Workspace, "status" | "errorMessage">): Record<string, unknown> {
+ *  `error`, when the session's setup failed). It began when its session was
+ *  started, its prompt given then, and `started_at` says so: a client timing
+ *  the run from it would read none (null) as 1970, a run going for decades
+ *  from its first second, and give it up before its box was up. */
+export function pendingFirstRun(workspace: Pick<Workspace, "status" | "errorMessage" | "createdAt">): Record<string, unknown> {
   const failed = workspace.status === "failed";
   return {
     id: FIRST_RUN,
     number: 1,
     prompt: null,
     status: failed ? "error" : "preparing",
-    started_at: null,
+    started_at: workspace.createdAt,
     ended_at: null,
     duration_ms: null,
     result: null,

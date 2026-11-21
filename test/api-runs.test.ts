@@ -116,5 +116,18 @@ test("a session's first run is there before its prompt is logged: while it's set
   assert.equal(firstRunPending(session("resuming"), none, "none", now), false);
   assert.equal(firstRunPending(session("creating"), runsFrom(twoRuns, "running"), "live", now), false);
   assert.equal(FIRST_RUN, "run-1");
-  assert.deepEqual([pendingFirstRun({ status: "creating", errorMessage: null }).status, pendingFirstRun({ status: "failed", errorMessage: "No box" }).error], ["preparing", "No box"]);
+  const createdAt = "2026-11-21T09:14:04.132Z";
+  assert.deepEqual([pendingFirstRun({ status: "creating", errorMessage: null, createdAt }).status, pendingFirstRun({ status: "failed", errorMessage: "No box", createdAt }).error], ["preparing", "No box"]);
+});
+
+test("a first run not begun started with its session, never at no time", () => {
+  // As POST /workspaces answers it: a client timing the run from started_at
+  // read null as 1970, so the run was "going" for decades a minute in, and
+  // given up on before its box was up.
+  const createdAt = "2026-11-21T09:14:04.132Z";
+  for (const status of ["creating", "provisioning", "ready", "failed"]) {
+    const run = pendingFirstRun({ status, errorMessage: null, createdAt } as never);
+    assert.equal(run.started_at, createdAt, status);
+    assert.ok(Date.parse(String(run.started_at)) > 0, status);
+  }
 });
