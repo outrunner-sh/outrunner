@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { failureParts, GITHUB_RECONNECT_MESSAGE, MAX_DETAIL_CHARS, PLATFORM_CAPACITY_MESSAGE, provisionFailureMessage } from "@/lib/runtime/provision-failure";
+import { failureParts, GITHUB_RECONNECT_MESSAGE, MAX_DETAIL_CHARS, PLATFORM_BUSY_MESSAGE, PLATFORM_CAPACITY_MESSAGE, provisionFailureMessage } from "@/lib/runtime/provision-failure";
 
 test("a failure names the step it stopped at and its error", () => {
   assert.equal(
@@ -101,4 +101,17 @@ test("Outrunner's sandbox account being full is said as Outrunner's, never as th
     provisionFailureMessage(new Error("snapshot not found"), "allocate", [], true),
     "Setup failed while provisioning the sandbox: snapshot not found",
   );
+});
+
+test("Outrunner's sandbox account still throttled after the waits says to start again shortly, not Daytona's words", () => {
+  // As a session's setup failed on 2026-11-21, before throttles were waited out.
+  const throttled = new Error("ThrottlerException: Too Many Requests");
+  assert.equal(provisionFailureMessage(throttled, "allocate", [], true), PLATFORM_BUSY_MESSAGE);
+  assert.equal(provisionFailureMessage(throttled, null, [], true), PLATFORM_BUSY_MESSAGE);
+  assert.doesNotMatch(PLATFORM_BUSY_MESSAGE, /daytona|throttl/i);
+  assert.deepEqual(failureParts(PLATFORM_BUSY_MESSAGE), { summary: PLATFORM_BUSY_MESSAGE, detail: null });
+  // On the user's own Daytona account, it's their account's limit: Daytona's words stand.
+  assert.equal(provisionFailureMessage(throttled, "allocate", [], false), "Setup failed while provisioning the sandbox: ThrottlerException: Too Many Requests");
+  // A later step that says so (an install hitting a registry's limit) is that step's own failure.
+  assert.match(provisionFailureMessage(new Error("npm ERR! 429 Too Many Requests"), "install", [], true), /^Setup failed while installing dependencies: npm ERR! 429/);
 });
