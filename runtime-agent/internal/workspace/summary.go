@@ -22,6 +22,9 @@ import (
 // at Snapshot() time via `git` shell-outs — cheap enough for the Mission
 // polling cadence and always fresh.
 type Summary struct {
+	// onLimit hears Claude Code's usage-limit notices as they're read
+	// (claude_account.go): the reply's id, its reset if known, and its time.
+	onLimit func(uuid, resetsAt string, at time.Time)
 	workspaceID string
 	worktree    string
 
@@ -110,6 +113,12 @@ func (s *Summary) applyEvent(ev conversation.Event) {
 	if ev.Message != nil {
 		switch ev.Message.Role {
 		case "assistant":
+			if s.onLimit != nil {
+				if hit, resetsAt := claudeLimit(ev.Message); hit {
+					at, _ := time.Parse(time.RFC3339Nano, ev.Message.Timestamp)
+					go s.onLimit(ev.Message.UUID, resetsAt, at)
+				}
+			}
 			// A reply can contain only commentary or thinking while work continues.
 			// Stop reasons preserve this distinction across translated engines.
 			s.turnOpen = ev.Message.StopReason == "tool_use" || ev.Message.StopReason == "in_progress" ||

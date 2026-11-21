@@ -168,6 +168,8 @@ type Service struct {
 	// controlPlane is how the agent reaches the control plane, for the
 	// sessions' own commands too (sessiontools.go); nil where it can't.
 	controlPlane *gitcred.Client
+	// claudeAccountSwitch stands in for SwitchClaudeAccount in tests.
+	claudeAccountSwitch func(ctx context.Context, id, token, resume string) error
 	// sessionTools is whether the sessions' command is in place.
 	sessionTools bool
 	// RelayExecutable is this binary, which a session's agent launches as
@@ -264,6 +266,9 @@ type workspaceFacts struct {
 	// Auth is the kind of the session's own credential (SetAuth), kept in its
 	// auth file; empty runs on its agent's own login.
 	Auth string `json:"auth,omitempty"`
+	// ClaudeLimitSeen is the last Claude usage-limit notice handled
+	// (claude_account.go), so a relaunch replaying it never switches again.
+	ClaudeLimitSeen string `json:"claudeLimitSeen,omitempty"`
 	// Plan puts the session in plan mode (SendPrompt's ModePlan): launched
 	// with --permission-mode plan, Codex read-only, whatever mode it builds
 	// in. Kept across launches, as the model is, until a prompt in build
@@ -2331,6 +2336,7 @@ func (s *Service) beginSummary(workspaceID, worktree string) {
 		f, _ := s.getFacts(workspaceID)
 		sum = newSummary(workspaceID, worktree)
 		sum.checkouts = checkoutDirs(worktree, f.Checkouts)
+		sum.onLimit = func(uuid, resetsAt string, at time.Time) { s.claudeLimitReached(workspaceID, uuid, resetsAt, at) }
 		s.summaries[workspaceID] = sum
 	}
 	s.summariesMu.Unlock()
