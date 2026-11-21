@@ -14,8 +14,12 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   const { id } = await context.params;
 
   try {
-    const left = await removeAccount(claudeAccountStore(owner.id), id);
-    return NextResponse.json({ accounts: left.map(view), max: MAX_CLAUDE_ACCOUNTS });
+    const store = claudeAccountStore(owner.id);
+    const left = await removeAccount(store, id);
+    return NextResponse.json({
+      accounts: left.map((account) => view(account, store.readable?.(account) ?? true)),
+      max: MAX_CLAUDE_ACCOUNTS,
+    });
   } catch (error) {
     if (error instanceof ClaudeAccountError) return NextResponse.json({ error: error.message }, { status: error.status });
     if (error instanceof ClaudeAccountsUnavailable) return NextResponse.json({ error: error.message }, { status: 503 });
