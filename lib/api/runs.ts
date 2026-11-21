@@ -188,17 +188,21 @@ export function firstRunPending(
  *  `error`, when the session's setup failed). It began when its session was
  *  started, its prompt given then, and `started_at` says so: a client timing
  *  the run from it would read none (null) as 1970, a run going for decades
- *  from its first second, and give it up before its box was up. */
-export function pendingFirstRun(workspace: Pick<Workspace, "status" | "errorMessage" | "createdAt">): Record<string, unknown> {
+ *  from its first second, and give it up before its box was up. A failed
+ *  setup ended it, as any run over has an end: when the session failed (its
+ *  last change), as Cursor's answer says it (lib/api/cursor.ts). */
+export function pendingFirstRun(workspace: Pick<Workspace, "status" | "errorMessage" | "createdAt" | "updatedAt">): Record<string, unknown> {
   const failed = workspace.status === "failed";
+  const endedAt = failed ? workspace.updatedAt : null;
+  const duration = endedAt ? Date.parse(endedAt) - Date.parse(workspace.createdAt) : NaN;
   return {
     id: FIRST_RUN,
     number: 1,
     prompt: null,
     status: failed ? "error" : "preparing",
     started_at: workspace.createdAt,
-    ended_at: null,
-    duration_ms: null,
+    ended_at: endedAt,
+    duration_ms: Number.isFinite(duration) && duration >= 0 ? duration : null,
     result: null,
     error: failed ? (workspace.errorMessage ?? "The session's setup failed.") : null,
     pending_input: null,
