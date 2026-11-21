@@ -10,6 +10,9 @@
  * meanwhile must not be counted as its own turn — which would drop the bubble
  * before the prompt had been sent at all. The stream can also record the
  * prompt before the session's answer comes back ({@link settlePending}).
+ * A prompt recorded after the bubble was handed over that holds its words
+ * puts it away too ({@link promptLanded}): Claude can record two prompts as
+ * one, which the count never sees.
  */
 
 /** What a bubble's message is known by in the timeline, as no message from
@@ -27,18 +30,41 @@ const ECHO_PREFIX = "optimistic-";
 
 /** One bubble: `expect` is the delivered-prompt count the stream must pass for
  *  it to go, or null while the session has not taken the prompt yet.
- *  `attachmentIds` are the files it carries, shown with it. */
-export type PendingPrompt = { id: string; text: string; expect: number | null; attachmentIds?: string[] };
+ *  `sentAt` is how many prompts the stream had recorded when it was handed to
+ *  the session (for {@link promptLanded}). `attachmentIds` are the files it
+ *  carries, shown with it. */
+export type PendingPrompt = { id: string; text: string; expect: number | null; sentAt?: number; attachmentIds?: string[] };
+
+/** Words as a prompt compares: whitespace runs as one space. */
+function words(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Whether a prompt recorded since the bubble was handed over holds its text:
+ * its prompt has landed, whatever the count says. The count can't see it when
+ * Claude records two prompts as one (two typed into its box before it took
+ * either, reproduced), or wraps one (a chat's, a Codex plan's): the bubble
+ * then waited for a turn that never came, under the prompt that holds it.
+ * Only prompts recorded after it was handed over count, so history and an
+ * earlier prompt of the same words don't.
+ */
+export function promptLanded(pending: PendingPrompt, recorded: string[]): boolean {
+  if (pending.sentAt === undefined) return false;
+  const text = words(pending.text);
+  return text !== "" && recorded.slice(pending.sentAt).some((prompt) => words(prompt).includes(text));
+}
 
 /** Whether the stream has yet to record this bubble's turn, at `delivered`
  *  prompts. One not handed over yet always has. */
-export function pendingShows(pending: PendingPrompt, delivered: number): boolean {
+export function pendingShows(pending: PendingPrompt, delivered: number, recorded?: string[]): boolean {
+  if (recorded && promptLanded(pending, recorded)) return false;
   return pending.expect === null || delivered < pending.expect;
 }
 
 /** `pending` without the bubbles the stream has caught up on. */
-export function livePrompts(pending: PendingPrompt[], delivered: number): PendingPrompt[] {
-  return pending.filter((p) => pendingShows(p, delivered));
+export function livePrompts(pending: PendingPrompt[], delivered: number, recorded?: string[]): PendingPrompt[] {
+  return pending.filter((p) => pendingShows(p, delivered, recorded));
 }
 
 /**
@@ -47,10 +73,10 @@ export function livePrompts(pending: PendingPrompt[], delivered: number): Pendin
  * than an earlier bubble still waiting, so queued sends keep their order. The
  * bubbles already caught up on go.
  */
-export function anchorPending(pending: PendingPrompt[], id: string, delivered: number): PendingPrompt[] {
+export function anchorPending(pending: PendingPrompt[], id: string, delivered: number, sentAt?: number): PendingPrompt[] {
   const kept = livePrompts(pending, delivered);
   const latest = kept.reduce((n, p) => Math.max(n, p.expect ?? 0), delivered);
-  return kept.map((p) => (p.id === id ? { ...p, expect: latest + 1 } : p));
+  return kept.map((p) => (p.id === id ? { ...p, expect: latest + 1, ...(sentAt !== undefined && { sentAt }) } : p));
 }
 
 /**
@@ -70,10 +96,10 @@ export function settlePending(
   sentAt: number,
 ): PendingPrompt[] {
   const mine = pending.find((p) => p.id === id);
-  if (mine && recorded.slice(sentAt).includes(mine.text)) {
-    return livePrompts(pending, recorded.length).filter((p) => p.id !== id);
+  if (mine && promptLanded({ ...mine, sentAt }, recorded)) {
+    return livePrompts(pending, recorded.length, recorded).filter((p) => p.id !== id);
   }
-  return anchorPending(pending, id, recorded.length);
+  return anchorPending(pending, id, recorded.length, sentAt);
 }
 
 /**

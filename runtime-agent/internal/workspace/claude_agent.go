@@ -377,8 +377,8 @@ func userTurnCount(dir string, skip map[string]bool) int {
 	return count
 }
 
-// fileUserTurns counts the user messages in one conversation file (0 if it
-// doesn't exist yet), and the prompts queued in it: one sent while Claude is
+// fileUserTurns counts the prompts in one conversation file (0 if it doesn't
+// exist yet: turnRecord.prompt), and the prompts queued in it: one sent while Claude is
 // mid-turn is queued, recorded as an enqueue at once but as a user message
 // only when the turn takes it up, which a long tool call can put off for
 // minutes. Counting both only ever grows the count, which is all a send
@@ -393,18 +393,56 @@ func fileUserTurns(path string) int {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		var rec struct {
-			Type      string `json:"type"`
-			Operation string `json:"operation"`
-		}
+		var rec turnRecord
 		if json.Unmarshal([]byte(line), &rec) != nil {
 			continue
 		}
-		if rec.Type == "user" || (rec.Type == "queue-operation" && rec.Operation == "enqueue") {
+		if (rec.Type == "user" && rec.prompt()) || (rec.Type == "queue-operation" && rec.Operation == "enqueue") {
 			count++
 		}
 	}
 	return count
+}
+
+// turnRecord is as much of a log record as fileUserTurns reads.
+type turnRecord struct {
+	Type      string `json:"type"`
+	Operation string `json:"operation"`
+	IsMeta    bool   `json:"isMeta"`
+	Message   *struct {
+		Content json.RawMessage `json:"content"`
+	} `json:"message"`
+}
+
+// prompt reports whether a user record is a prompt: words someone sent, not
+// a tool's result, Claude's own injected record (isMeta) or a background
+// task's notice, which Claude logs as user records too. Counted as prompts,
+// a tool step ending mid-turn read as a send's prompt landing, and the send
+// was "sent" with the prompt still in the box (reproduced).
+func (r turnRecord) prompt() bool {
+	if r.IsMeta {
+		return false
+	}
+	if r.Message == nil {
+		return true
+	}
+	var text string
+	if json.Unmarshal(r.Message.Content, &text) != nil {
+		var blocks []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(r.Message.Content, &blocks) != nil {
+			return false
+		}
+		for _, b := range blocks {
+			if b.Type == "text" {
+				text += b.Text
+			}
+		}
+	}
+	text = strings.TrimSpace(text)
+	return text != "" && !strings.HasPrefix(text, "<task-notification>")
 }
 
 // userTurns counts the user messages in a workspace's conversation: its own

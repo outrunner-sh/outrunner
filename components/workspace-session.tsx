@@ -312,7 +312,7 @@ export function WorkspaceSession({
         // Drop items the stream has already caught up on, then queue this one.
         // Trimming here (not in an effect) keeps the list bounded without a
         // setState-in-effect cascade.
-        const live = livePrompts(prev, userPromptCount(conversation.events));
+        const live = livePrompts(prev, userPromptCount(conversation.events), userPrompts(conversation.events));
         return [
           ...live,
           { id: pendingId, text: trimmed, expect: null, ...(attachmentIds.length > 0 && { attachmentIds }) },
@@ -350,6 +350,10 @@ export function WorkspaceSession({
   ) => {
     // The stream may record the prompt before the session answers.
     const sentAt = how.sentAt ?? userPromptCount(eventsRef.current);
+    // Handed over now: a prompt recorded from here that holds its words is
+    // its own, and puts the bubble away (promptLanded) even before the
+    // session answers.
+    setPending((prev) => prev.map((p) => (p.id === pendingId ? { ...p, sentAt } : p)));
     if (local) {
       return localAgentRequest(
         localTarget(workspaceId),
@@ -563,10 +567,11 @@ export function WorkspaceSession({
   // refuses a switch mid-turn too, since a turn's end can't be read for sure here.
   // A turn waiting on the user's answer is theirs, not the agent's at work.
   const delivered = userPromptCount(conversation.events);
+  const recordedPrompts = userPrompts(conversation.events);
   const working =
     !waitingOnUser &&
     (compacting ||
-      pending.some((p) => pendingShows(p, delivered)) ||
+      pending.some((p) => pendingShows(p, delivered, recordedPrompts)) ||
       (!waitingOnPlan && claudeIsWorking(conversation.events) && stoppedAt !== delivered));
   // Prompts sent while the agent is at work wait here (lib/session/prompt-queue.ts)
   // and go one at a time as each turn ends. One whose send failed holds the
@@ -1137,8 +1142,9 @@ export function WorkspaceSession({
 
   const timelineEvents = useMemo<AgentEvent[]>(() => {
     const delivered = userPromptCount(conversation.events);
+    const recorded = userPrompts(conversation.events);
     const optimistic = pending
-      .filter((p) => pendingShows(p, delivered))
+      .filter((p) => pendingShows(p, delivered, recorded))
       .map<AgentEvent>((p) => ({
         t: "message",
         uuid: echoUuid(p.id),

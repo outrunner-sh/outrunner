@@ -1407,12 +1407,23 @@ func (s *Service) promptText(workspaceID, content string) string {
 
 // deliverHeld pastes a prompt into the agent's prompt box and submits it, for
 // a caller holding the send lock.
+//
+// Enter goes once the paste is on screen, and again only while the box still
+// holds the prompt: on a box short of CPU, Claude takes a burst of keys after
+// a paste as more of the paste, so Enters pressed in a row came in as blank
+// lines, the prompt stayed in the box, and the next prompt went with it as
+// one (reproduced on a box at 4% of a CPU). The send is over once Claude
+// records a prompt, or once the prompt has left the box: a busy Claude
+// queues it, and a slow one records it late, which a fixed wait took for a
+// failed send though the prompt went.
 func (s *Service) deliverHeld(workspaceID, content string, lock *sendState) error {
 	// The send lock is held throughout, so a hung tmux must not hold it forever:
 	// past the deadline its commands are killed and the next send can proceed.
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
 	name := sessionName(workspaceID)
+	// The paste's wait counts toward it, inside sendTimeout.
+	deadline := time.Now().Add(sendConfirmWait)
 	before, retry := lock.takeStaged(content, time.Now())
 	switch {
 	case retry && s.userTurns(workspaceID) > before:
@@ -1423,24 +1434,45 @@ func (s *Service) deliverHeld(workspaceID, content string, lock *sendState) erro
 		if s.awaitingAnswer(ctx, workspaceID, name) {
 			return errAwaitsAnswer
 		}
-		s.clearPromptBox(ctx, workspaceID, name)
+		if !s.clearPromptBox(ctx, workspaceID, name) {
+			return ErrPromptBoxHeld
+		}
 		if err := s.tmux.Paste(ctx, name, content); err != nil {
 			return err
 		}
+		s.awaitPaste(ctx, name, content, deadline)
 	}
 	var lastErr error
-	for attempt := 0; attempt < submitAttempts && ctx.Err() == nil; attempt++ {
-		if s.awaitingAnswer(ctx, workspaceID, name) {
-			// Keep watching for the turn, which may have landed just before the
-			// menu came up, but press nothing into it.
-			lastErr = errAwaitsAnswer
-		} else if err := s.tmux.SubmitEnter(ctx, name); err != nil {
-			lastErr = err
+	entered := false
+	nextEnter := time.Now()
+	for ctx.Err() == nil && time.Now().Before(deadline) {
+		if !time.Now().Before(nextEnter) {
+			nextEnter = time.Now().Add(reEnterAfter)
+			switch {
+			case s.awaitingAnswer(ctx, workspaceID, name):
+				// Keep watching for the turn, which may have landed just before
+				// the menu came up, but press nothing into it.
+				lastErr = errAwaitsAnswer
+			case !entered || s.boxShows(ctx, name, content):
+				lastErr = nil
+				if err := s.tmux.SubmitEnter(ctx, name); err != nil {
+					lastErr = err
+				}
+				entered = true
+			}
 		}
 		time.Sleep(submitPollInterval)
 		if s.userTurns(workspaceID) > before {
-			return nil // Claude recorded a new user turn: the prompt was accepted
+			return nil // Claude recorded the prompt, or queued it
 		}
+	}
+	// Not recorded yet, but out of the box: Claude took it, and records it
+	// late (a busy or a slow one). Read on a look of its own: one that can't
+	// be read says nothing, and the send stays a failure.
+	lookCtx, cancelLook := context.WithTimeout(context.Background(), lastLookTimeout)
+	defer cancelLook()
+	if pane, err := s.tmux.CapturePane(lookCtx, name); entered && lastErr == nil && err == nil && !boxHolds(pane, content) {
+		return nil
 	}
 	// The text is in the composer, unconfirmed: a retry must not paste it again.
 	lock.staged = &stagedPrompt{content: content, baseline: before, at: time.Now()}
@@ -1450,14 +1482,52 @@ func (s *Service) deliverHeld(workspaceID, content string, lock *sendState) erro
 	// The prompt is staged in the composer but Claude never recorded a user turn.
 	// Report the failure so the caller sees a non-2xx and can retry, rather than
 	// a 200 for an undelivered prompt.
-	return fmt.Errorf("prompt not confirmed delivered after %d attempts", submitAttempts)
+	return fmt.Errorf("prompt not confirmed delivered after %s", sendConfirmWait)
+}
+
+// ErrPromptBoxHeld is a send refused because the agent's prompt box holds
+// text that wouldn't clear: pasted after it, the prompt would go as one with
+// it.
+var ErrPromptBoxHeld = errors.New("the agent's prompt box still holds earlier text that couldn't be cleared; try again")
+
+// How long a send waits for its paste to be drawn, for the agent to take its
+// prompt, and between one Enter and the next while the box still holds it.
+// Vars for tests.
+var (
+	pasteShowWait   = 10 * time.Second
+	sendConfirmWait = 25 * time.Second
+	reEnterAfter    = 3 * time.Second
+)
+
+// awaitPaste waits, up to pasteShowWait (and no later than deadline), for the
+// agent's prompt box to show a paste: an Enter pressed before then can come in
+// as part of it.
+func (s *Service) awaitPaste(ctx context.Context, name, content string, deadline time.Time) {
+	if limit := time.Now().Add(pasteShowWait); limit.Before(deadline) {
+		deadline = limit
+	}
+	for ctx.Err() == nil && time.Now().Before(deadline) {
+		if s.boxShows(ctx, name, content) {
+			return
+		}
+		time.Sleep(submitPollInterval)
+	}
+}
+
+// boxShows reports whether the agent's prompt box shows content (boxHolds).
+// A screen that can't be read shows nothing.
+func (s *Service) boxShows(ctx context.Context, name, content string) bool {
+	pane, err := s.tmux.CapturePane(ctx, name)
+	return err == nil && boxHolds(pane, content)
 }
 
 const (
 	// clearPasses bounds the reads and clears of a prompt box that won't empty.
 	clearPasses = 3
-	// clearSettle is how long the box gets to be drawn again after a clear.
-	clearSettle = 150 * time.Millisecond
+	// clearSettle is how often the box is looked at again after a clear, and
+	// clearSettleMax how long it gets to be drawn again.
+	clearSettle    = 150 * time.Millisecond
+	clearSettleMax = 2 * time.Second
 )
 
 // clearPromptBox empties the agent's prompt box of text a send would
@@ -1469,30 +1539,37 @@ const (
 // Ctrl+A, Ctrl+K to empty a line and again to take up the next, Backspace to
 // join the one above. None of those does anything on an empty box, unlike
 // Escape, which twice opens Claude's rewind menu. A box that can't be read is
-// left alone, and one that won't empty is logged and sent to as before.
-func (s *Service) clearPromptBox(ctx context.Context, workspaceID, name string) {
+// left alone (true). One that won't empty is false: a prompt pasted after its
+// text would go as one with it, so the send is refused instead.
+func (s *Service) clearPromptBox(ctx context.Context, workspaceID, name string) bool {
 	a := s.agentFor(workspaceID)
 	for pass := 0; ; pass++ {
 		pane, err := s.tmux.CapturePaneStyled(ctx, name)
 		if err != nil {
-			return
+			return true
 		}
 		lines := a.typedLines(pane)
 		if lines == 0 {
-			return
+			return true
 		}
 		if pass == clearPasses {
-			log.Printf("workspace %s: its prompt box still holds text after clearing it", workspaceID)
-			return
+			log.Printf("workspace %s: its prompt box still holds text after clearing it; the send is refused", workspaceID)
+			return false
 		}
 		keys := make([]string, 0, 4*(lines+1))
 		for i := 0; i <= lines; i++ {
 			keys = append(keys, "C-a", "C-k", "C-k", "BSpace")
 		}
 		if err := s.tmux.SendKeys(ctx, name, keys...); err != nil {
-			return
+			return true
 		}
-		time.Sleep(clearSettle)
+		// A box short of CPU is drawn again late: the next look waits for it.
+		for waited := time.Duration(0); waited < clearSettleMax && ctx.Err() == nil; waited += clearSettle {
+			time.Sleep(clearSettle)
+			if styled, err := s.tmux.CapturePaneStyled(ctx, name); err != nil || a.typedLines(styled) < lines {
+				break
+			}
+		}
 	}
 }
 
@@ -1588,10 +1665,11 @@ func (s *Service) awaitingAnswer(ctx context.Context, workspaceID, name string) 
 }
 
 const (
-	submitAttempts     = 20
 	submitPollInterval = 400 * time.Millisecond
-	// sendTimeout bounds one SendMessage: well past the ~8s of submit attempts.
-	sendTimeout = 30 * time.Second
+	// sendTimeout bounds one SendMessage: past sendConfirmWait, with room for
+	// the last look at the box (lastLookTimeout).
+	sendTimeout     = 30 * time.Second
+	lastLookTimeout = 3 * time.Second
 	// stagedRetryWindow is how long the same text counts as a retry of a send
 	// that gave up, rather than a new prompt that happens to match it.
 	stagedRetryWindow = 10 * time.Minute

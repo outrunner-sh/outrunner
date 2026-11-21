@@ -159,8 +159,16 @@ export function localCommandLine(text: string): string | null {
  *  and its records of a stopped turn. */
 export function userPrompts(events: AgentEvent[]): string[] {
   return events
-    .filter((e) => e.t === "message" && e.role === "user" && messageText(e) !== "" && !isInterruption(e))
+    .filter((e) => e.t === "message" && e.role === "user" && messageText(e) !== "" && !isInterruption(e) && !isTaskNotice(e))
     .map((e) => promptWithoutAttachments(messageText(e)));
+}
+
+/** Whether a user message is Claude Code's notice of a background task
+ *  (a Monitor's event, an MCP task's end), logged as a user message: no
+ *  prompt of the user's. Counted as one, it put away the bubble of a prompt
+ *  still on its way. */
+export function isTaskNotice(event: AgentEvent): boolean {
+  return event.t === "message" && event.role === "user" && messageText(event).startsWith("<task-notification>");
 }
 
 /** How many text-bearing user prompts the stream has recorded (userPrompts). */
