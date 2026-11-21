@@ -16,6 +16,8 @@
  * page satisfies it.
  */
 
+import { removeAllAccounts, replaceFirstAccount, saveAccount } from "@/lib/claude/accounts";
+import { claudeAccountStore, ClaudeAccountsUnavailable, loadClaudeAccounts } from "@/lib/claude/accounts.deps";
 import {
   clearAnthropicKey,
   credentialStatus,
@@ -34,12 +36,24 @@ export type ClaudeTokenMeta = {
   updatedAt: string | null;
 };
 
-/** Store (or replace) the owner's Claude token, encrypted at rest. */
+/**
+ * Store (or replace) the owner's Claude token, encrypted at rest: the token
+ * of their first Claude account, which sessions start on, or a "default" one
+ * (lib/claude/accounts.ts). Before claude_accounts exists, the Claude slot.
+ */
 export async function setClaudeToken(
   ownerId: string,
   token: string,
 ): Promise<void> {
-  await setAnthropicKey(ownerId, token);
+  await settleClaudeSlot(ownerId);
+  try {
+    // Adopts a token already in the slot first, so it's replaced, not kept beside.
+    if ((await loadClaudeAccounts(ownerId)) === null) throw new ClaudeAccountsUnavailable();
+    await replaceFirstAccount(claudeAccountStore(ownerId), token);
+  } catch (error) {
+    if (!(error instanceof ClaudeAccountsUnavailable)) throw error;
+    await setAnthropicKey(ownerId, token);
+  }
 }
 
 /** Presence + last-4 metadata safe to expose to the signed-in owner. */
@@ -58,8 +72,30 @@ export async function getClaudeTokenMeta(
   };
 }
 
-/** Remove the owner's stored token (disconnect). */
+/**
+ * Connect `token` as the owner's Claude account named `label`, or replace the
+ * token already under that name (`outrunner claude --label work`). Throws
+ * ClaudeAccountError at the account limit. Before claude_accounts exists, the
+ * token goes in the Claude slot and the name isn't kept.
+ */
+export async function saveClaudeAccount(ownerId: string, label: string, token: string): Promise<void> {
+  await settleClaudeSlot(ownerId);
+  try {
+    if ((await loadClaudeAccounts(ownerId)) === null) throw new ClaudeAccountsUnavailable();
+    await saveAccount(claudeAccountStore(ownerId), label, token);
+  } catch (error) {
+    if (!(error instanceof ClaudeAccountsUnavailable)) throw error;
+    await setAnthropicKey(ownerId, token);
+  }
+}
+
+/** Disconnect: every one of the owner's Claude accounts, and the slot. */
 export async function deleteClaudeToken(ownerId: string): Promise<void> {
+  try {
+    await removeAllAccounts(claudeAccountStore(ownerId));
+  } catch (error) {
+    if (!(error instanceof ClaudeAccountsUnavailable)) throw error;
+  }
   await clearAnthropicKey(ownerId);
 }
 

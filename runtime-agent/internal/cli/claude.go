@@ -216,9 +216,15 @@ func GetClaude(ctx context.Context, client *http.Client, base, token string) (Cl
 	return status, do(httpClient(client), req, &status)
 }
 
-// SaveClaude saves a Claude token to the signed-in user's account.
-func SaveClaude(ctx context.Context, client *http.Client, base, token, claude string) (ClaudeStatus, error) {
-	body, _ := json.Marshal(map[string]string{"token": claude})
+// SaveClaude saves a Claude token to the signed-in user's account: as the
+// account their sessions start on, or with a label as that named one of
+// their Claude accounts (replacing the token already under it).
+func SaveClaude(ctx context.Context, client *http.Client, base, token, claude, label string) (ClaudeStatus, error) {
+	fields := map[string]string{"token": claude}
+	if label != "" {
+		fields["label"] = label
+	}
+	body, _ := json.Marshal(fields)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, appURL(base, "/api/cli/claude"), bytes.NewReader(body))
 	if err != nil {
 		return ClaudeStatus{}, err

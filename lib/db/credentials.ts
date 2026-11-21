@@ -1,3 +1,4 @@
+import { sessionClaudeCiphertext } from "@/lib/claude/accounts.deps";
 import { claudeAccountForSession } from "@/lib/claude/grant";
 import { gcpConnection } from "@/lib/db/gcp";
 import { accountForSession, inferenceGrant } from "@/lib/codex/grant";
@@ -765,7 +766,17 @@ export function agentAuthStore(userId: string, orgId?: string): AgentAuthStore {
       if (slot?.error) throw slot.error;
       if (keys?.error && !beforeProviderKeys(keys.error)) throw keys.error;
       const sealed = new Map<string, string | null>();
-      if (slot) sealed.set("claude-slot", slot.data?.anthropic_key_ciphertext ?? null);
+      if (slot) {
+        const fromSlot = slot.data?.anthropic_key_ciphertext ?? null;
+        // Their first Claude account that isn't at its limit (lib/claude/
+        // accounts.ts). A failure reading them must not stop the session:
+        // the slot holds the first account all the same.
+        const account = await sessionClaudeCiphertext(userId, fromSlot).catch((error: unknown) => {
+          console.error(`Could not read the Claude accounts of user ${userId}; starting on the Claude slot`, error);
+          return fromSlot;
+        });
+        sealed.set("claude-slot", account);
+      }
       for (const row of keys?.data ?? []) sealed.set(row.provider, row.key_ciphertext);
 
       const account = agent === "codex" && (!choices.codex || choices.codex === "codex-account")

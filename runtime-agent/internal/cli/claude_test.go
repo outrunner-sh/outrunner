@@ -229,3 +229,42 @@ func TestOnlyATerminalIsAskedAnything(t *testing.T) {
 		t.Error("a terminal wasn't taken for one")
 	}
 }
+
+// `outrunner claude --label work` saves the token as the Claude account named
+// work; without --label the request carries no label, as older apps expect.
+func TestClaudeCommandSendsTheAccountLabel(t *testing.T) {
+	work := "work"
+	for _, tc := range []struct {
+		args  []string
+		label *string
+	}{
+		{args: []string{"claude", "--label", "work"}, label: &work},
+		{args: []string{"claude"}, label: nil},
+	} {
+		app := newFakeApp(t)
+		app.tokens["or_cli_token"] = true
+		var got struct {
+			Token string
+			Label *string
+		}
+		app.server.Config.Handler.(*http.ServeMux).HandleFunc("PUT /api/cli/claude", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			_, _ = w.Write([]byte(`{"connected":true,"last4":"6789"}`))
+		})
+		fakeClaude(t, printLink+"\necho "+fakeToken)
+		t.Setenv("OUTRUNNER_CONFIG", filepath.Join(t.TempDir(), "cli.json"))
+		path, _ := ConfigPath()
+		_ = SaveConfig(path, Config{URL: app.server.URL, Token: "or_cli_token", Login: "immad"})
+
+		var out, errOut bytes.Buffer
+		if code := Main(context.Background(), append([]string{"--url", app.server.URL}, tc.args...), nil, &out, &errOut); code != 0 {
+			t.Fatalf("%v: %d %s", tc.args, code, errOut.String())
+		}
+		if got.Token != fakeToken {
+			t.Fatalf("%v: saved token %q", tc.args, got.Token)
+		}
+		if (got.Label == nil) != (tc.label == nil) || (got.Label != nil && *got.Label != *tc.label) {
+			t.Fatalf("%v: label %v, want %v", tc.args, got.Label, tc.label)
+		}
+	}
+}

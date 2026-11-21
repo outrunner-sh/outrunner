@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { getCliOwner } from "@/lib/auth/cli-owner";
-import { getClaudeTokenMeta, setClaudeToken } from "@/lib/runtime/credentials/claude-credentials";
+import { checkLabel, ClaudeAccountError } from "@/lib/claude/accounts";
+import { getClaudeTokenMeta, saveClaudeAccount, setClaudeToken } from "@/lib/runtime/credentials/claude-credentials";
 import { checkClaudeToken } from "@/lib/runtime/credentials/claude-token";
 
 /**
@@ -9,7 +10,8 @@ import { checkClaudeToken } from "@/lib/runtime/credentials/claude-token";
  * Settings → Claude (/api/settings/claude), signed in by the CLI's token
  * rather than the browser's cookie. GET says whether one is connected (never
  * the token); PUT saves the token `claude setup-token` printed on the user's
- * computer.
+ * computer: as the account sessions start on, or with `label`
+ * (`outrunner claude --label work`) as that named account (lib/claude/accounts.ts).
  */
 
 function signInFirst() {
@@ -32,9 +34,19 @@ export async function PUT(request: Request) {
   } catch {
     return NextResponse.json({ error: "Expected a JSON body." }, { status: 400 });
   }
-  const checked = checkClaudeToken((body as { token?: unknown })?.token);
+  const input = (body ?? {}) as { token?: unknown; label?: unknown };
+  const checked = checkClaudeToken(input.token);
   if ("error" in checked) return NextResponse.json({ error: checked.error }, { status: 400 });
+  // Older CLIs send no label: the token sessions start on, as before.
+  const label = input.label === undefined || input.label === "" ? null : checkLabel(input.label);
+  if (label && "error" in label) return NextResponse.json({ error: label.error }, { status: 400 });
 
-  await setClaudeToken(owner.id, checked.token);
+  try {
+    if (label) await saveClaudeAccount(owner.id, label.label, checked.token);
+    else await setClaudeToken(owner.id, checked.token);
+  } catch (error) {
+    if (error instanceof ClaudeAccountError) return NextResponse.json({ error: error.message }, { status: error.status });
+    throw error;
+  }
   return NextResponse.json(await getClaudeTokenMeta(owner.id));
 }
