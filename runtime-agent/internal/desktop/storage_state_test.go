@@ -73,18 +73,7 @@ func TestAnOriginThatIsntOneIsRefusedBeforeTheBrowserIsTouched(t *testing.T) {
 // and no tab left behind. Skipped where there's no Chromium (CHROMIUM names
 // one that isn't on the PATH).
 func TestStorageStateReadsARealBrowsersSignIns(t *testing.T) {
-	binary := os.Getenv("CHROMIUM")
-	if binary == "" {
-		for _, name := range append(browserBinaries, "chrome") {
-			if path, err := exec.LookPath(name); err == nil {
-				binary = path
-				break
-			}
-		}
-	}
-	if binary == "" {
-		t.Skip("no Chromium (set CHROMIUM to one)")
-	}
+	binary := chromium(t)
 
 	var requests atomic.Int32
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -100,31 +89,7 @@ func TestStorageStateReadsARealBrowsersSignIns(t *testing.T) {
 	defer app.Close()
 
 	b := &Browser{Port: freePort(t), Profile: t.TempDir(), Display: Display}
-	args := append([]string{"--headless=new", "--no-sandbox"}, BrowserArgs(b.Port, b.Profile, app.URL+"/")...)
-	cmd := exec.Command(binary, args...)
-	// In a group of its own, so its helpers (renderers, the GPU process) are
-	// stopped with it: left running, they write to the profile as the test's
-	// folder is removed.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		_ = cmd.Wait()
-		// The helpers go a moment after the group is told to.
-		for i := 0; i < 50 && syscall.Kill(-cmd.Process.Pid, 0) == nil; i++ {
-			time.Sleep(100 * time.Millisecond)
-		}
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	for !b.running(ctx) {
-		if ctx.Err() != nil {
-			t.Fatal("Chromium didn't start")
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	ctx := runHeadless(t, binary, b, app.URL+"/")
 	// The app's page, open in a tab, signs in.
 	var token string
 	for token == "" {
@@ -169,6 +134,54 @@ func TestStorageStateReadsARealBrowsersSignIns(t *testing.T) {
 			break
 		}
 	}
+}
+
+// chromium is the Chromium to test with: CHROMIUM, else one on the PATH.
+// The test is skipped where there's none.
+func chromium(t *testing.T) string {
+	t.Helper()
+	if binary := os.Getenv("CHROMIUM"); binary != "" {
+		return binary
+	}
+	for _, name := range append(browserBinaries, "chrome") {
+		if path, err := exec.LookPath(name); err == nil {
+			return path
+		}
+	}
+	t.Skip("no Chromium (set CHROMIUM to one)")
+	return ""
+}
+
+// runHeadless runs binary headless as b, on rawURL, until the test ends,
+// and returns once its DevTools answer, with a context for the test.
+func runHeadless(t *testing.T, binary string, b *Browser, rawURL string) context.Context {
+	t.Helper()
+	args := append([]string{"--headless=new", "--no-sandbox"}, BrowserArgs(b.Port, b.Profile, rawURL)...)
+	cmd := exec.Command(binary, args...)
+	// In a group of its own, so its helpers (renderers, the GPU process) are
+	// stopped with it: left running, they write to the profile as the test's
+	// folder is removed.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+		// The helpers go a moment after the group is told to.
+		for i := 0; i < 50 && syscall.Kill(-cmd.Process.Pid, 0) == nil; i++ {
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	t.Cleanup(cancel)
+	for !b.running(ctx) {
+		if ctx.Err() != nil {
+			t.Fatal("Chromium didn't start")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return ctx
 }
 
 func freePort(t *testing.T) int {
