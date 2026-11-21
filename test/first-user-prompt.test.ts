@@ -65,3 +65,13 @@ test("Claude's record of a stopped turn is not a prompt", () => {
   assert.deepEqual(userPrompts(events), ["try again"]);
   assert.equal(firstUserPrompt(events), "try again");
 });
+
+test("a background task's notice, logged as a user message, isn't one of the user's prompts", () => {
+  // The shape of a Monitor/MCP notice in a prod session's stream (2026-11-21).
+  const notice: AgentEvent = {
+    t: "message", uuid: "n", parentUuid: null, role: "user", timestamp: "2026-11-21T12:01:25Z",
+    content: [{ type: "text", text: "<task-notification>\n<task-id>k74l6rek4</task-id>\n<status>completed</status>\n</task-notification>" }],
+  };
+  assert.equal(userPromptCount([notice]), 0);
+  assert.deepEqual(userPrompts([notice]), []);
+});

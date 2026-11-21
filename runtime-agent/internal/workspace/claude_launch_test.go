@@ -181,8 +181,10 @@ not json
 		writeTranscript(t, s, "ws-t", "a.jsonl", transcript, time.Hour)
 		writeTranscript(t, s, "ws-t", "b.jsonl", `{"type":"user"}`+"\n", 0)
 		writeTranscript(t, s, "ws-t", "c.txt", `{"type":"user"}`+"\n", 0)
-		if got := s.userTurns("ws-t"); got != 3 {
-			t.Errorf("userTurns = %d, want 3", got)
+		// A tool's result is no prompt: counted as one, a tool step ending
+		// mid-send read as the send's prompt landing (turnRecord.prompt).
+		if got := s.userTurns("ws-t"); got != 2 {
+			t.Errorf("userTurns = %d, want 2", got)
 		}
 	})
 	t.Run("an in-place session counts only its own transcript", func(t *testing.T) {
@@ -193,8 +195,8 @@ not json
 			t.Fatalf("userTurns from another conversation = %d, want 0", got)
 		}
 		writeTranscript(t, s, "ws-in", f.ClaudeSessionID+".jsonl", transcript, 0)
-		if got := s.userTurns("ws-in"); got != 2 {
-			t.Errorf("userTurns = %d, want 2", got)
+		if got := s.userTurns("ws-in"); got != 1 {
+			t.Errorf("userTurns = %d, want 1", got)
 		}
 	})
 }
