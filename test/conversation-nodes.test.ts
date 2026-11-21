@@ -206,3 +206,26 @@ test("an image pasted into the agent's own prompt rides on the prompt's row", ()
   const prompt = nodes.find((n) => n.kind === "prompt");
   assert.deepEqual(prompt?.kind === "prompt" && prompt.images, [{ mediaType: "image/png", data: "iVBORw0KGgo=" }]);
 });
+
+test("an agent started again after its session ended mid-call shows one restarted row, not a reply of \"No response requested.\"", () => {
+  const standIn: AgentEvent = {
+    t: "message", uuid: "nr", parentUuid: null, role: "assistant", model: "<synthetic>", stopReason: "stop_sequence",
+    timestamp: "2026-10-21T10:11:00Z", content: [{ type: "text", text: "No response requested." }],
+  };
+  const nodes = conversationNodes([
+    message("user", "2026-10-21T10:00:00Z", [{ type: "text", text: "install and test" }]),
+    message("assistant", "2026-10-21T10:00:05Z", [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "pnpm i" } }]),
+    // Killed for memory; started again, Claude Code closes the call (2.1.310, reproduced).
+    message("user", "2026-10-21T10:11:00Z", [{
+      type: "tool_result", toolUseId: "t1",
+      content: "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is unknown.]",
+    }]),
+    standIn,
+  ]);
+  assert.deepEqual(nodes.map((n) => n.kind).filter((k) => k !== "worked"), ["prompt", "tool", "restarted"]);
+  assert.ok(!nodes.some((n) => n.kind === "prose"));
+
+  // The same stand-in for a prompt that asked for no reply stays as it was.
+  const quiet = conversationNodes([message("user", "2026-10-21T10:00:00Z", [{ type: "text", text: "note this" }]), standIn]);
+  assert.ok(!quiet.some((n) => n.kind === "restarted"));
+});

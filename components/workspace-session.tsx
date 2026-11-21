@@ -48,6 +48,7 @@ import {
   settlePending,
   type PendingPrompt,
 } from "@/lib/session/optimistic-echo";
+import { agentStopped, isBusyRefusal, stoppedDetail, undeliveredPrompts } from "@/lib/session/agent-stopped";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import { changedOnly } from "@/lib/session/file-mentions";
 import { reachOutrunner } from "@/lib/http/request-json";
@@ -467,6 +468,16 @@ export function WorkspaceSession({
   // The prompts recorded when a turn was last stopped: the turn is over until
   // the next, even where the agent records nothing of the stop (Codex).
   const [stoppedAt, setStoppedAt] = useState<number | null>(null);
+  // The agent started again on its conversation (the restart route, the box's
+  // /resume): for one that stopped, or hangs where Stop can't reach it.
+  const [restarting, setRestarting] = useState(false);
+  // Prompts the agent never got: handed to it, then it stopped before its
+  // conversation recorded them. Said so, with a way to send them again.
+  const [undelivered, setUndelivered] = useState<PendingPrompt[]>([]);
+  // The box refused an edit as its agent at work while this page read the
+  // turn as over: Stop is offered anyway, the box's word being the one that
+  // decides.
+  const [busyRefused, setBusyRefused] = useState(false);
   // The questions the agent is waiting on the user to answer: the composer
   // gives way to their card. One answered or dismissed here is put away at
   // once, kept hidden while its answer is on the way (and offered again if
@@ -563,7 +574,15 @@ export function WorkspaceSession({
   // refuses a switch mid-turn too, since a turn's end can't be read for sure here.
   // A turn waiting on the user's answer is theirs, not the agent's at work.
   const delivered = userPromptCount(conversation.events);
+  // Its agent stopped on the box (it crashed, or was killed for memory): no
+  // turn runs, whatever its log was in the middle of.
+  const stopped = agentStopped(conversation.events);
+  // Stopped, the prompts it was handed but never recorded won't land: said
+  // so, rather than left as bubbles that never do.
+  const lost = stopped ? undeliveredPrompts(pending, delivered) : [];
+  const notDelivered = [...undelivered, ...lost];
   const working =
+    !stopped &&
     !waitingOnUser &&
     (compacting ||
       pending.some((p) => pendingShows(p, delivered)) ||
@@ -795,7 +814,9 @@ export function WorkspaceSession({
     } catch (error) {
       if ((error instanceof Error && "code" in error && error.code === "INVALID_REQUEST") ||
           (error instanceof LocalRuntimeError && error.code === "agent-invalid-request")) setEditing(null);
-      setSendError({ message: local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't edit the message." });
+      const message = local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't edit the message.";
+      if (isBusyRefusal(message)) setBusyRefused(true);
+      setSendError({ message });
       return false;
     }
     conversation.rewind(cut);
@@ -931,6 +952,7 @@ export function WorkspaceSession({
       setStoppedAt(userPromptCount(eventsRef.current));
       setQueuedAt(null);
       setPending(pendingAfterStop);
+      setBusyRefused(false);
     } finally {
       interrupting.current = false;
       setStopping(false);
@@ -969,7 +991,33 @@ export function WorkspaceSession({
   // composer's box: a click in the conversation takes the focus out of it.
   // Not from another field (it has its own Escape), nor one already taken
   // (a menu, a dialog, the composer's own).
-  const stopNow = attached && working ? { onStop: stop, stopping } : undefined;
+  // Start the agent again on its conversation. Its stream says "running"
+  // once it's back, which puts the stopped notice away. The prompts it never
+  // got stay said, out of the bubbles, to send again.
+  const restartAgent = () => {
+    if (restarting) return;
+    const lostAtRestart = lost;
+    setRestarting(true);
+    setStopError(null);
+    setSendError(null);
+    void (local
+      ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/resume`)
+      : restartCloudAgent(workspaceId, chatId)
+    )
+      .then(() => {
+        setBusyRefused(false);
+        setStoppedAt(null);
+        if (lostAtRestart.length > 0) {
+          setUndelivered((kept) => [...kept, ...lostAtRestart]);
+          setPending((current) => current.filter((p) => !lostAtRestart.includes(p)));
+        }
+      })
+      .catch((error: unknown) => {
+        setStopError(local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't restart the agent.");
+      })
+      .finally(() => setRestarting(false));
+  };
+  const stopNow = attached && (working || busyRefused) ? { onStop: stop, stopping } : undefined;
   const sessionRef = useRef<HTMLDivElement>(null);
   const stopRef = useRef(stopNow);
   useEffect(() => {
@@ -1137,8 +1185,11 @@ export function WorkspaceSession({
 
   const timelineEvents = useMemo<AgentEvent[]>(() => {
     const delivered = userPromptCount(conversation.events);
+    // With the agent stopped, the prompts it was handed won't land: the
+    // not-delivered notice says them instead of a bubble.
+    const stoppedAgent = agentStopped(conversation.events) !== null;
     const optimistic = pending
-      .filter((p) => pendingShows(p, delivered))
+      .filter((p) => pendingShows(p, delivered) && !(stoppedAgent && p.expect !== null))
       .map<AgentEvent>((p) => ({
         t: "message",
         uuid: echoUuid(p.id),
@@ -1321,13 +1372,60 @@ export function WorkspaceSession({
           ]}
         />
       )}
+      {stopped && !connectionError && !streamDropped && (
+        <Notice
+          tone="warning"
+          title={`${AGENTS[agent].label} stopped`}
+          detail={stoppedDetail(stopped)}
+          actions={[
+            {
+              label: "Restart",
+              icon: <RotateCw className={restarting ? "is-working" : undefined} />,
+              primary: true,
+              disabled: restarting,
+              onClick: restartAgent,
+            },
+          ]}
+        />
+      )}
       {stopError && !connectionError && !streamDropped && (
         <Notice
           tone="error"
           title="Couldn't stop this turn"
-          detail={`${stopError} The turn keeps running.`}
-          actions={[{ label: "Dismiss", onClick: () => setStopError(null) }]}
+          detail={`${stopError} If ${AGENTS[agent].label} isn't responding, restart it: it picks up the conversation, but the step it was on is lost.`}
+          actions={[
+            {
+              label: "Restart agent",
+              icon: <RotateCw className={restarting ? "is-working" : undefined} />,
+              disabled: restarting,
+              onClick: restartAgent,
+            },
+            { label: "Dismiss", onClick: () => setStopError(null) },
+          ]}
         />
+      )}
+      {notDelivered.length > 0 && (
+        <InlineMessage
+          tone="warning"
+          actions={[
+            {
+              label: "Send again",
+              disabled: stopped !== null,
+              onClick: () => {
+                const [first, ...rest] = undelivered;
+                if (!first) return;
+                setUndelivered(rest);
+                void sendOrQueue(first.text, first.attachmentIds ?? []);
+              },
+            },
+            ...(stopped ? [] : [{ label: "Dismiss", onClick: () => setUndelivered([]) }]),
+          ]}
+        >
+          {notDelivered.length === 1
+            ? `Not delivered: ${AGENTS[agent].label} stopped before it got your message “${clip(notDelivered[0].text)}”.`
+            : `Not delivered: ${AGENTS[agent].label} stopped before it got ${notDelivered.length} of your messages, the first “${clip(notDelivered[0].text)}”.`}
+          {stopped ? " Restart it, then send again." : ""}
+        </InlineMessage>
       )}
       {conversation.protocolErrorRef && !connectionError && !streamDropped && (
         <Notice
@@ -1765,6 +1863,19 @@ async function rewindCloudChat(workspaceId: string, chatId: string, uuid: string
 
 /** Stop a cloud session's turn. The server reaches the session's agent, as
  *  for a prompt. */
+async function restartCloudAgent(workspaceId: string, chatId: string): Promise<void> {
+  const res = await reachOutrunner(chatRoute(workspaceId, chatId, "restart"), { method: "POST" });
+  if (res.ok) return;
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  throw new Error(data.error ?? "Couldn't restart the agent. Please try again.");
+}
+
+/** A message's opening words, for a notice that names it. */
+function clip(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > 60 ? `${flat.slice(0, 59)}…` : flat;
+}
+
 async function stopCloudTurn(workspaceId: string, chatId: string): Promise<void> {
   const res = await reachOutrunner(chatRoute(workspaceId, chatId, "interrupt"), { method: "POST" });
   if (res.ok) return;

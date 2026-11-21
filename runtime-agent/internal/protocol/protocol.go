@@ -832,7 +832,13 @@ type WorkspaceStateChanged struct {
 	T           string `json:"t"` // "state"
 	WorkspaceID string `json:"workspaceId"`
 	State       string `json:"state"`
+	// Reason says why an agent "exited" where the box can tell:
+	// ExitOutOfMemory when the kernel killed processes for memory as it went.
+	Reason string `json:"reason,omitempty"`
 }
+
+// ExitOutOfMemory is an agent that stopped as the box ran out of memory.
+const ExitOutOfMemory = "out_of_memory"
 
 // ChangedFile is one entry of a workspace's change set, mirroring ChangedFile in
 // lib/runtime/types.ts (the shape /api/workspaces/[id]/changes returns).

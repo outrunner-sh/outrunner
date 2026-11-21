@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,6 +45,7 @@ type serverFixture struct {
 	secret      string
 	workspaceID string
 	jsonlPath   string
+	srv         *Server
 	stop        func()
 }
 
@@ -81,6 +83,7 @@ func newServerFixture(t *testing.T) *serverFixture {
 		secret:      secret,
 		workspaceID: workspaceID,
 		jsonlPath:   jsonlPath,
+		srv:         srv,
 		stop:        ts.Close,
 	}
 }
@@ -461,5 +464,121 @@ func TestMaskMessageLeavesImageBytesAlone(t *testing.T) {
 	}
 	if got.Content[2].Source.Data != "canary-2682b7c55940" || m.Content[0].Text != "key canary-2682b7c55940" {
 		t.Fatalf("an image's bytes were read, or the message itself changed")
+	}
+}
+
+// The agent seen running and then gone (killed as the box ran out of memory)
+// is said once, as "exited" with why; back after a restart, "running" again.
+// A blip shorter than agentGoneChecks looks isn't an exit.
+func TestEventsReportAnAgentThatExitedAndCameBack(t *testing.T) {
+	savedInterval, savedChecks, savedEvents := agentCheckInterval, agentGoneChecks, workspace.MemoryEventsPath
+	agentCheckInterval, agentGoneChecks = 40*time.Millisecond, 3
+	events := filepath.Join(t.TempDir(), "memory.events")
+	workspace.MemoryEventsPath = events
+	t.Cleanup(func() {
+		agentCheckInterval, agentGoneChecks, workspace.MemoryEventsPath = savedInterval, savedChecks, savedEvents
+	})
+	// Written whole (a rename), as the kernel's file is read: a stream's look
+	// must never land on it half written.
+	writeKills := func(n int) {
+		next := events + ".next"
+		if err := os.WriteFile(next, []byte(fmt.Sprintf("oom 1\noom_kill %d\n", n)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(next, events); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeKills(0)
+
+	f := newServerFixture(t)
+	defer f.stop()
+	f.appendJSONL(t, msg1)
+	var mu sync.Mutex
+	alive := true
+	f.srv.agentAlive = func(context.Context, string) (bool, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		return alive, true
+	}
+	setAlive := func(v bool) {
+		mu.Lock()
+		alive = v
+		mu.Unlock()
+	}
+
+	resp, cancel := f.dial(t, "")
+	defer cancel()
+	defer resp.Body.Close()
+	r := bufio.NewReader(resp.Body)
+	frames := readSSE(t, r, 2, 2*time.Second) // running, then the message
+	if got := stateOf(t, frames[0]); got != "running" {
+		t.Fatalf("initial state = %q, want running", got)
+	}
+	time.Sleep(3 * agentCheckInterval) // seen running
+
+	// The agent is killed for memory: one "exited", with why.
+	setAlive(false)
+	writeKills(1)
+	frames = readSSE(t, r, 1, 2*time.Second)
+	var ev protocol.WorkspaceStateChanged
+	if err := json.Unmarshal([]byte(frames[0].Data), &ev); err != nil || ev.State != "exited" || ev.Reason != protocol.ExitOutOfMemory {
+		t.Fatalf("frame after the agent went = %s, want exited out_of_memory", frames[0].Data)
+	}
+
+	// Restarted: "running" again, with no reason.
+	setAlive(true)
+	frames = readSSE(t, r, 1, 2*time.Second)
+	if got := stateOf(t, frames[0]); got != "running" {
+		t.Fatalf("state after the agent came back = %q, want running", got)
+	}
+}
+
+// An agent never seen running in the stream isn't reported: the stream's
+// start says what the session is, and a session not started isn't an exit.
+func TestEventsDontReportAnAgentNeverSeenRunning(t *testing.T) {
+	savedInterval := agentCheckInterval
+	agentCheckInterval = 20 * time.Millisecond
+	t.Cleanup(func() { agentCheckInterval = savedInterval })
+
+	f := newServerFixture(t)
+	defer f.stop()
+	f.appendJSONL(t, msg1)
+	f.srv.agentAlive = func(context.Context, string) (bool, bool) { return false, true }
+
+	resp, cancel := f.dial(t, "")
+	defer cancel()
+	defer resp.Body.Close()
+	r := bufio.NewReader(resp.Body)
+	readSSE(t, r, 2, 2*time.Second) // running, then the message
+	if frames := readSSEUpTo(r, 300*time.Millisecond); len(frames) != 0 {
+		t.Fatalf("frames for an agent never seen running: %v", frames)
+	}
+}
+
+// readSSEUpTo is the frames that arrive within d, for a test that wants none.
+// The reader is left to the stream's close.
+func readSSEUpTo(r *bufio.Reader, d time.Duration) []string {
+	got := make(chan string, 8)
+	go func() {
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return
+			}
+			if strings.HasPrefix(line, "data: ") {
+				got <- strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+			}
+		}
+	}()
+	var frames []string
+	timeout := time.After(d)
+	for {
+		select {
+		case frame := <-got:
+			frames = append(frames, frame)
+		case <-timeout:
+			return frames
+		}
 	}
 }

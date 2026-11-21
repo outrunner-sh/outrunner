@@ -1,6 +1,6 @@
 import { withoutCarried } from "@/lib/session/chats";
 import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
-import { isInterruption, isLocalCommand, localCommandLine, messageText, runnerContinuations } from "@/lib/runtime/conversation-events";
+import { isInterruption, isLocalCommand, isNoResponseReply, isSessionEndedResult, localCommandLine, messageText, runnerContinuations } from "@/lib/runtime/conversation-events";
 import { EXIT_PLAN_MODE, planOf } from "@/lib/runtime/pending-plan";
 import { between } from "@/lib/runtime/turn-timing";
 import { parseCommentQuotes } from "@/lib/session/diff-comments";
@@ -56,6 +56,10 @@ export type ConversationNode =
   | { kind: "worked"; key: string; ms: number; at: string }
   /** The user stopped the turn. */
   | { kind: "interrupted"; key: string }
+  /** The agent started again on a conversation it was cut off in (it
+   *  crashed, or was killed as its box ran out of memory): Claude Code's
+   *  closing of the cut-off call and its "No response requested." stand-in. */
+  | { kind: "restarted"; key: string }
   | { kind: "prose"; key: string; text: string; at: string }
   | { kind: "thought"; key: string; seconds: number | null }
   | {
@@ -152,6 +156,15 @@ export function conversationNodes(
       nodes.push({ kind: "interrupted", key: `${event.uuid}-${ei}` });
       previousAt = event.timestamp;
       lastWords = null; // a stopped plan is no plan
+      return;
+    }
+    // Claude Code's stand-in reply after the session-ended result it closed
+    // the cut-off call with: no answer of the model's, so one row says what
+    // happened rather than a reply of "No response requested.".
+    if (isNoResponseReply(event) && endedBefore(events, ei)) {
+      nodes.push({ kind: "restarted", key: `${event.uuid}-${ei}` });
+      previousAt = event.timestamp;
+      lastWords = null;
       return;
     }
     if (event.harness) {
@@ -373,4 +386,14 @@ export function currentTurn(tops: number[], line: number): number {
     if (top <= line) current = i;
   });
   return current;
+}
+
+/** Whether the message before `index` is the result Claude Code closes a
+ *  call cut off by its session's end with (isSessionEndedResult). */
+function endedBefore(events: AgentEvent[], index: number): boolean {
+  for (let i = index - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.t === "message") return isSessionEndedResult(event);
+  }
+  return false;
 }

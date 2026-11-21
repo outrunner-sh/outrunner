@@ -12,7 +12,7 @@
  */
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
-import { isErrorReply, isInterruption, isLocalCommandOutput, messageText } from "@/lib/runtime/conversation-events";
+import { isErrorReply, isInterruption, isLocalCommandOutput, isNoResponseReply, messageText } from "@/lib/runtime/conversation-events";
 import { ASK_TOOL } from "@/lib/runtime/pending-question";
 import { SECRETS_TOOL } from "@/lib/runtime/pending-secrets";
 
@@ -150,6 +150,11 @@ function foldEvent(state: TurnState, event: AgentEvent): TurnState {
     const waiting = WAITS_FOR[block.name];
     if (waiting) next = { ...next, waiting, waitingToolId: block.id, waitingSince: at };
   }
+  // Claude Code's "No response requested." stands in where no model answered
+  // (most often: it started again on a conversation cut off mid-turn, its
+  // agent having crashed or been killed). The turn is over, but there's no
+  // reply to keep, mark unread or notify of.
+  if (isNoResponseReply(event)) return { ...next, turn: "idle", ...NOT_WAITING };
   const last = event.content[event.content.length - 1];
   // A reply that ends in words is the turn over, unless it stopped for a
   // tool call (claudeIsWorking's rule).

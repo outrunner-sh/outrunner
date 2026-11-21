@@ -153,3 +153,22 @@ test("a turn that ends in an API error is kept as one: a reply whose preview is 
   assert.equal(isErrorPreview(answered.replyPreview), false);
   assert.equal(shownPreview(answered.replyPreview), "API Error: 400 is what the endpoint returns for a bad id.");
 });
+
+test("Claude Code's \"No response requested.\" after a restart ends the turn, but is no reply to keep or notify of", () => {
+  const working = foldEvents(IDLE, [user("build it", 0), reply("Done earlier.", 1), user("now test it", 2), call("Bash", "t9", 3)]);
+  assert.equal(working.turn, "working");
+  // The agent was killed mid-call; started again, Claude Code closes the call
+  // and stands in for the reply (Claude Code 2.1.310, reproduced).
+  const cutOff: AgentEvent = {
+    t: "message", uuid: `r${n++}`, parentUuid: null, role: "user", timestamp: at(9),
+    content: [{ type: "tool_result", toolUseId: "t9", content: "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is unknown.]" }],
+  };
+  const standIn: AgentEvent = {
+    t: "message", uuid: `a${n++}`, parentUuid: null, role: "assistant", model: "<synthetic>", stopReason: "stop_sequence",
+    timestamp: at(9), content: [{ type: "text", text: "No response requested." }],
+  };
+  const after = foldEvents(working, [cutOff, standIn]);
+  assert.equal(after.turn, "idle");
+  assert.equal(after.repliedAt, working.repliedAt);
+  assert.equal(after.replyPreview, "Done earlier.");
+});

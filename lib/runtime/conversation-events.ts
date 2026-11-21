@@ -110,6 +110,38 @@ export function isErrorReply(event: AgentEvent): boolean {
   );
 }
 
+/** Whether a reply is Claude Code's "No response requested.": its stand-in
+ *  where no model answered (a conversation it went on from cut off mid-turn,
+ *  a prompt that asked for none). Never the model's answer, so never a reply
+ *  to notify of. */
+export function isNoResponseReply(event: AgentEvent): boolean {
+  return (
+    event.t === "message" &&
+    event.role === "assistant" &&
+    event.model === SYNTHETIC_MODEL &&
+    messageText(event) === NO_RESPONSE
+  );
+}
+
+/** How Claude Code, started again on a conversation whose agent ended mid
+ *  tool call (it crashed, or was killed), closes that call: a result of this
+ *  text, then "No response requested." (Claude Code 2.1.310, reproduced). */
+const SESSION_ENDED = "[Tool call interrupted: the session ended";
+
+/** Whether an event is that result: the turn it was in was cut off when the
+ *  agent's session ended, and the agent started again. */
+export function isSessionEndedResult(event: AgentEvent): boolean {
+  if (event.t !== "message" || event.role !== "user") return false;
+  return event.content.some((block) => {
+    if (block.type !== "tool_result") return false;
+    const content = block.content;
+    if (typeof content === "string") return content.startsWith(SESSION_ENDED);
+    return Array.isArray(content) && content.some((part: unknown) =>
+      typeof part === "object" && part !== null && "text" in part &&
+      typeof part.text === "string" && part.text.startsWith(SESSION_ENDED));
+  });
+}
+
 /** How Claude Code records a turn stopped by Escape: a user message of this
  *  text, ending "]" or " for tool use]". Not a prompt. */
 const INTERRUPTED = "[Request interrupted by user";

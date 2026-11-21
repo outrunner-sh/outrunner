@@ -63,6 +63,15 @@ const (
 // stream reports "running" once the session log appears.
 const stateCheckInterval = time.Second
 
+// How often a Conversation stream checks its agent is still running, and how
+// many checks in a row must find it gone before the stream says it exited:
+// a relaunch (a model switch, an edit) ends the session for a moment only.
+// Vars for tests.
+var (
+	agentCheckInterval = 3 * time.Second
+	agentGoneChecks    = 2
+)
+
 type Server struct {
 	secret string
 	ws     *workspace.Service
@@ -74,6 +83,8 @@ type Server struct {
 	ProcRoot  string
 	upgrader  websocket.Upgrader
 	broker    *ptyx.Broker
+	// agentAlive is workspace.Service.AgentAlive but in tests.
+	agentAlive func(ctx context.Context, key string) (alive, known bool)
 	// startedAt gives a newly provisioned box a short idle grace. It is kept
 	// separate from actual user input so an agent restart cannot refresh the
 	// unknown-activity deadline.
@@ -87,11 +98,12 @@ type claimsContextKey struct{}
 
 func New(secret string, ws *workspace.Service) *Server {
 	s := &Server{
-		secret:    secret,
-		ws:        ws,
-		startedAt: time.Now().UTC(),
-		broker:    ptyx.NewBroker(),
-		Editor:    &editor.Editor{Home: ws.Root, Env: ws.SessionEnv()},
+		secret:     secret,
+		ws:         ws,
+		startedAt:  time.Now().UTC(),
+		broker:     ptyx.NewBroker(),
+		Editor:     &editor.Editor{Home: ws.Root, Env: ws.SessionEnv()},
+		agentAlive: ws.AgentAlive,
 		upgrader: websocket.Upgrader{
 			// The Daytona preview proxy already gates access; the Runtime token in
 			// the URL is the real authorization check.
@@ -1718,11 +1730,14 @@ func (s *Server) streamEvents(
 		}
 		return maskMessage(redactor, m)
 	}
-	writeState := func(state string) bool {
+	writeStateWhy := func(state, reason string) bool {
 		payload, _ := json.Marshal(protocol.WorkspaceStateChanged{
-			T: "state", WorkspaceID: workspaceID, State: state,
+			T: "state", WorkspaceID: workspaceID, State: state, Reason: reason,
 		})
 		return writeEvent(cursor, payload)
+	}
+	writeState := func(state string) bool {
+		return writeStateWhy(state, "")
 	}
 	// reportRunning sends "running" the first time the stream sees the log.
 	reportRunning := func() bool {
@@ -1783,6 +1798,19 @@ func (s *Server) streamEvents(
 
 	ticker := time.NewTicker(sseHeartbeat)
 	defer ticker.Stop()
+
+	// The agent seen running in this stream and then gone (crashed, or killed
+	// as the box ran out of memory) is said once, as "exited", which the page
+	// and the server's watch read as the turn over; back (a restart), it is
+	// "running" again. An agent never seen running isn't reported: the
+	// stream's start says what the session is.
+	agentCheck := time.NewTicker(agentCheckInterval)
+	defer agentCheck.Stop()
+	agentSeen, agentExited, agentGone := false, false, 0
+	// The box's OOM kills at the last two looks that found the agent running:
+	// kills since the earlier of them are what its end is put down to, so a
+	// look between the kernel's kill and the session's end doesn't hide it.
+	var oomEarlier, oomLatest int64 = -1, -1
 	// Watch for the log only while the stream is still "starting"; a nil
 	// channel never fires, so a running stream does no extra lookups.
 	var stateCheck <-chan time.Time
@@ -1808,6 +1836,44 @@ func (s *Server) streamEvents(
 		case <-rewindCheck.C:
 			if !rewound() {
 				return
+			}
+		case <-agentCheck.C:
+			alive, known := s.agentAlive(ctx, key)
+			switch {
+			case !known:
+			case alive:
+				agentSeen, agentGone = true, 0
+				n, ok := workspace.OOMKills()
+				if !ok {
+					n = -1
+				}
+				if oomLatest < 0 {
+					oomLatest = n
+				}
+				oomEarlier, oomLatest = oomLatest, n
+				if agentExited {
+					agentExited = false
+					if !writeState("running") {
+						return
+					}
+				}
+			case agentSeen && !agentExited:
+				if agentGone++; agentGone < agentGoneChecks {
+					continue
+				}
+				agentExited = true
+				reason := ""
+				if n, ok := workspace.OOMKills(); ok && oomEarlier >= 0 && n > oomEarlier {
+					reason = protocol.ExitOutOfMemory
+				}
+				if reason != "" {
+					log.Printf("events: %s: its agent exited as the box ran out of memory", key)
+				} else {
+					log.Printf("events: %s: its agent exited", key)
+				}
+				if !writeStateWhy("exited", reason) {
+					return
+				}
 			}
 		case ev := <-out:
 			// Read before an edit cut the log, maybe from where it now holds
