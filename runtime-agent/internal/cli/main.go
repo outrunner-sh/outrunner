@@ -29,6 +29,8 @@ Commands:
   sandbox  Connect your Google Cloud project: outrunner sandbox connect gcp
   triage   Add a work item to your triage: outrunner triage "fix the flaky test"
            (OUTRUNNER_API_KEY instead of a sign-in, as below)
+  import   Move Claude Code, Codex and Conductor sessions from this computer
+           to the cloud: outrunner import (--list to see them first)
 
 Sessions (the API, docs/api.md; OUTRUNNER_API_KEY instead of a sign-in):
   list     List your sessions
@@ -151,6 +153,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return sandboxCommand(ctx, url, path, config, *account, rest, in, stdout, stderr)
 	case "triage":
 		return triage(ctx, url, config, rest, in, stdout, stderr)
+	case "import":
+		return importCommand(ctx, url, config, rest, in, stdout, stderr)
 	case "list":
 		return listCommand(ctx, url, config, rest, stdout, stderr)
 	case "get":

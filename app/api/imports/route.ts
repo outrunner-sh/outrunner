@@ -1,14 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { githubErrorResponse } from "@/lib/github/http";
-import { repositorySource } from "@/lib/github/repository-source";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { ImportError } from "@/lib/imports/commit";
-import { importProvider, planDeps } from "@/lib/imports/deps";
-import { planImports } from "@/lib/imports/plan";
+import { planImportResponse } from "@/lib/imports/routes";
 import { ImportPlanRequest } from "@/lib/runtime/import-scan";
-import { connectRefusal } from "@/lib/orgs/connect-access";
 import { activeOrgId } from "@/lib/orgs/server";
 
 /**
@@ -16,6 +11,7 @@ import { activeOrgId } from "@/lib/orgs/server";
  * gets a new workspace id and signed upload URLs for its artifacts, or the
  * reason it can't come (a repository their GitHub can't see, a session
  * imported already). A taken branch is imported under a free one instead.
+ * The CLI's counterpart is app/api/cli/imports.
  */
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {
@@ -29,20 +25,6 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Pick the sessions to import from a scan." }, { status: 400 });
   }
-
-  try {
-    // Before anything is minted: the sessions will need a cloud computer.
-    await importProvider(owner.id);
-    const orgId = await activeOrgId();
-    const refused = await connectRefusal(owner.id, orgId);
-    if (refused) return refused;
-    const { lookup } = await repositorySource(owner.id, orgId);
-    const items = await planImports(owner.id, parsed.data, planDeps(owner.id, lookup, orgId));
-    return NextResponse.json({ items });
-  } catch (error) {
-    if (error instanceof ImportError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
-    return githubErrorResponse(error, "Could not plan the import. Please try again.");
-  }
+  // Into the active org, where the user is looking.
+  return planImportResponse(owner.id, parsed.data, activeOrgId);
 }

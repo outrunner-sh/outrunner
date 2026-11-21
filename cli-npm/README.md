@@ -17,7 +17,26 @@ outrunner claude     connect your Claude subscription (runs claude setup-token)
 outrunner whoami     show who this terminal is signed in as
 outrunner logout     sign this terminal out
 outrunner triage     add a work item to your triage
+outrunner import     move Claude Code, Codex and Conductor sessions to the cloud
 ```
+
+## Move sessions from this computer
+
+`outrunner import` brings the sessions on this computer (Claude Code's,
+Codex's and Conductor's) to your Outrunner cloud, on macOS or Linux. Each
+comes with its branch's unpushed commits, its uncommitted changes and its
+conversation, and becomes an archived session you resume from its page:
+
+```
+outrunner import                     pick from a list
+outrunner import --list              see what can come, and each one's key
+outrunner import --key claude:<id>   just that one (repeat --key for more)
+outrunner import --all --yes         every one, without asking
+```
+
+Sessions go in your personal org, or the one `--org <name>` names. A
+conversation is uploaded in full and can include anything its agent read,
+secrets too, so `outrunner import` asks first; `--yes` agrees for a script.
 
 ## Sessions from a terminal, a script or CI
 
