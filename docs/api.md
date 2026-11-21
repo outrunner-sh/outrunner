@@ -111,7 +111,7 @@ counted apart. The budget refills continuously: every answer carries
 | POST | `/api/v1/workspaces` | Start a session: `preparing` at once (`Idempotency-Key` makes a retry safe) |
 | GET | `/api/v1/workspaces/{id}` | A session, and where its turn is |
 | DELETE | `/api/v1/workspaces/{id}` | Delete a session for good |
-| POST | `/api/v1/workspaces/{id}/messages` | Send it a message (waking it first if it was paused or archived): `content` (or `prompt`), `attachment_ids`, `images`, `mode` |
+| POST | `/api/v1/workspaces/{id}/messages` | Send it a message (waking it first if it was paused or archived, or its box was paused while idle): `content` (or `prompt`), `attachment_ids`, `images`, `mode` |
 | POST | `/api/v1/workspaces/{id}/answer` | Answer the question its agent is waiting on: `answers`, or `dismissed` |
 | POST | `/api/v1/workspaces/{id}/secrets` | Give its agent the secrets it asked for: `values`, or `skipped` |
 | POST | `/api/v1/workspaces/{id}/plan/approve` | Approve the plan its agent is waiting on |
