@@ -1,4 +1,4 @@
-import { Daytona, DaytonaNotFoundError, type CreateSandboxFromSnapshotParams, type Sandbox } from "@daytonaio/sdk";
+import { Daytona, DaytonaNotFoundError, DaytonaRateLimitError, type CreateSandboxFromSnapshotParams, type Sandbox } from "@daytonaio/sdk";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
 import { DEVTOOLS_PORT, NOVNC_PORT } from "@/lib/runtime/box-ports";
@@ -154,6 +154,49 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
   }
 }
 
+/**
+ * Whether Daytona turned a call away for coming too fast: HTTP 429, its API's
+ * "ThrottlerException: Too Many Requests". Nothing was done, so the same call
+ * can be made again a moment later. A session started a minute after another
+ * failed its setup on one, where a few seconds' wait would have done.
+ */
+export function throttled(error: unknown): boolean {
+  if (error instanceof DaytonaRateLimitError) return true;
+  if (typeof error !== "object" || error === null) return false;
+  if ("statusCode" in error && error.statusCode === 429) return true;
+  return "message" in error && typeof error.message === "string" && /ThrottlerException|Too Many Requests/i.test(error.message);
+}
+
+/** The waits before each try again of a throttled call: 14 seconds in all
+ *  (a quarter either way), so a 60s lifecycle route still has room to answer. */
+export const THROTTLE_WAITS_MS: readonly number[] = [2_000, 4_000, 8_000];
+
+const sleepFor = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * `call`, made again while Daytona throttles it, after each of
+ * THROTTLE_WAITS_MS, each spread by up to a quarter either way so boxes
+ * throttled together don't all come back at once. Any other error, or a
+ * throttle past the last wait, is thrown as it came.
+ */
+export async function unthrottled<T>(
+  call: () => Promise<T>,
+  what: string,
+  { sleep = sleepFor, random = Math.random }: { sleep?: (ms: number) => Promise<void>; random?: () => number } = {},
+): Promise<T> {
+  for (let tried = 0; ; tried++) {
+    try {
+      return await call();
+    } catch (error) {
+      const wait = THROTTLE_WAITS_MS[tried];
+      if (wait === undefined || !throttled(error)) throw error;
+      const spread = Math.round(wait * (0.75 + random() / 2));
+      console.warn(`Daytona throttled ${what}; trying again in ${spread} ms`);
+      await sleep(spread);
+    }
+  }
+}
+
 /** How long a box alive() fetched is reused by keepAlive rather than
  *  fetched again: one reconcile look's span. Older ones are evicted as
  *  alive() adds more. */
@@ -172,9 +215,19 @@ export class DaytonaBackend implements SandboxBackend {
   /** The box alive() last fetched, for keepAlive to reuse (SEEN_REUSE_MS). */
   private readonly lastSeen = new Map<string, { sandbox: Sandbox; at: number }>();
   private readonly apiKey: (() => Promise<string>) | undefined;
+  /** How a throttled call waits before it's made again (tests skip it). */
+  private readonly sleep: ((ms: number) => Promise<void>) | undefined;
 
-  constructor(options: { apiKey?: () => Promise<string> } = {}) {
+  constructor(options: { apiKey?: () => Promise<string>; sleep?: (ms: number) => Promise<void> } = {}) {
     this.apiKey = options.apiKey;
+    this.sleep = options.sleep;
+  }
+
+  /** `call`, made again while Daytona throttles it (unthrottled): the calls
+   *  a session's setup makes, which fail it otherwise. Not the reconciler's
+   *  (alive, pause, keepAlive), which tries again on its next run anyway. */
+  private retrying<T>(what: string, call: () => Promise<T>): Promise<T> {
+    return unthrottled(call, what, { sleep: this.sleep });
   }
 
   /** Lazy so constructing the backend (e.g. in a test) needs no credentials. */
@@ -204,13 +257,13 @@ export class DaytonaBackend implements SandboxBackend {
     const params = createParams(labels, size, platform);
     let sandbox: Sandbox;
     try {
-      sandbox = await daytona.create(params, { timeout: CREATE_TIMEOUT_SECONDS });
+      sandbox = await this.retrying("a new box", () => daytona.create(params, { timeout: CREATE_TIMEOUT_SECONDS }));
     } catch (error) {
       // General snapshots may be absent on a self-hosted/other target. Retry
       // only a missing snapshot, never auth, quotas, timeouts or other errors.
       if (!params.snapshot || !(error instanceof DaytonaNotFoundError) || !/snapshot/i.test(error.message)) throw error;
       console.warn(`Daytona snapshot ${params.snapshot} is unavailable; using the account's default snapshot`);
-      sandbox = await daytona.create(createParams(labels, undefined, platform), { timeout: CREATE_TIMEOUT_SECONDS });
+      sandbox = await this.retrying("a new box", () => daytona.create(createParams(labels, undefined, platform), { timeout: CREATE_TIMEOUT_SECONDS }));
     }
     if (size && (sandbox.cpu !== size.cpu || sandbox.memory !== size.memoryGb)) {
       console.warn(
@@ -222,7 +275,8 @@ export class DaytonaBackend implements SandboxBackend {
   }
 
   async get(id: string): Promise<SandboxBox> {
-    return box(await (await this.daytona()).get(id));
+    const daytona = await this.daytona();
+    return box(await this.retrying(`box ${id}`, () => daytona.get(id)));
   }
 
   async alive(id: string): Promise<boolean> {
@@ -278,8 +332,9 @@ export class DaytonaBackend implements SandboxBackend {
    *  on it. Null when it's gone or broken, so a new box is the only way on. */
   async restore(id: string, labels: Record<string, string> = {}): Promise<SandboxBox | null> {
     let sandbox: Sandbox;
+    const daytona = await this.daytona();
     try {
-      sandbox = await (await this.daytona()).get(id);
+      sandbox = await this.retrying(`box ${id}`, () => daytona.get(id));
     } catch (error) {
       if (error instanceof DaytonaNotFoundError) return null;
       throw error;
@@ -291,7 +346,7 @@ export class DaytonaBackend implements SandboxBackend {
     const state = await settled(sandbox);
     if (STOPPED_STATES.has(state)) {
       try {
-        await sandbox.start(CREATE_TIMEOUT_SECONDS);
+        await this.retrying(`starting box ${id}`, () => sandbox.start(CREATE_TIMEOUT_SECONDS));
       } catch (error) {
         // Stopped again rather than left starting where nothing meters or
         // stops it: its computer is saved stopped, which the reconciler
