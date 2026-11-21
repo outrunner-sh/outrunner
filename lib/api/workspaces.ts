@@ -21,6 +21,7 @@ import { POST as interruptPOST } from "@/app/api/workspaces/[id]/interrupt/route
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
 import { POST as messagePOST } from "@/app/api/workspaces/[id]/message/route";
 import { POST as secretsPOST } from "@/app/api/workspaces/[id]/secrets/route";
+import { POST as sessionPOST } from "@/app/api/workspaces/[id]/session/route";
 import {
   conversationPage,
   sentPrompt,
@@ -53,8 +54,9 @@ import { workRepoId } from "@/lib/environments/listed";
 import { storeSessionOverrides } from "@/lib/db/session-overrides";
 import { toWorkspace } from "@/lib/db/mappers";
 import { projectLevel } from "@/lib/db/org-access";
-import { getProject, getProjectByFullName, getWorkspace } from "@/lib/db/repositories";
+import { getProject, getProjectByFullName, getWorkspace, getWorkspaceComputer } from "@/lib/db/repositories";
 import { pullRequestPreamble, pullRequestRef } from "@/lib/api/repo-ref";
+import { wakeFor } from "@/lib/api/wake";
 import { getPullRequestStatusWithDetails } from "@/lib/code-providers/client";
 import { requireGitToken } from "@/lib/github/identity.deps";
 import { isUuid } from "@/lib/ids";
@@ -382,14 +384,20 @@ export async function readConversationApi(context: ApiContext, id: string): Prom
   });
 }
 
-/** Wake a paused or archived session, as opening it in the app does. */
-async function wake(context: ApiContext, workspace: Workspace): Promise<Response | null> {
-  if (workspace.status !== "suspended" && workspace.status !== "archived") return null;
-  const action = workspace.status === "suspended" ? "resume" : "restore";
-  const woken = await lifecyclePOST(
-    appRequest(context.base, `/api/workspaces/${workspace.id}/lifecycle`, { body: { action } }),
-    routeParams({ id: workspace.id }),
-  );
+/** Wake a paused or archived session, or one whose box was paused while it
+ *  was idle (`chat` started too, when it names one), as opening it in the
+ *  app does (lib/api/wake.ts). */
+async function wake(context: ApiContext, workspace: Workspace, chat: string | undefined): Promise<Response | null> {
+  const computer = workspace.status === "ready" || workspace.status === "idle" ? await getWorkspaceComputer(workspace) : null;
+  const how = wakeFor(workspace.status, computer?.status ?? null);
+  if (!how) return null;
+  const woken =
+    how === "open"
+      ? await sessionPOST(appRequest(context.base, `/api/workspaces/${workspace.id}/session${chatParam(chat)}`), routeParams({ id: workspace.id }))
+      : await lifecyclePOST(
+          appRequest(context.base, `/api/workspaces/${workspace.id}/lifecycle`, { body: { action: how } }),
+          routeParams({ id: workspace.id }),
+        );
   return woken.ok ? null : errorFromRoute(woken, context.base);
 }
 
@@ -426,7 +434,7 @@ export async function sendMessageApi(
   const imageIds = await imagesToAttachments(context, images);
   if (imageIds instanceof Response) return imageIds;
   const attachmentIds = [...uploaded, ...imageIds];
-  const refused = await wake(context, workspace);
+  const refused = await wake(context, workspace, chat);
   if (refused) return refused;
   const sentAt = Date.now();
   const sent = await messagePOST(
