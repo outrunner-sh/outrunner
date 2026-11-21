@@ -76,8 +76,8 @@ export type LinearIssueRef = {
 
 type ProjectRow = {
   id: string;
-  /** The org it's in; given none, its owner's personal org
-   *  (20261027120000_organizations.sql). */
+  /** The org it's in; given none, its owner's own org
+   *  (20261120140000_one_org_kind.sql). */
   org_id: string;
   owner_id: string;
   github_repo_id: number | null;
@@ -553,7 +553,7 @@ type ProjectEnvironmentRow = {
 type EnvironmentRow = {
   id: string;
   /** Its org (20261028140000_org_environments.sql): its repository's, for a
-   *  repository's default; given none, its maker's personal org. */
+   *  repository's default; given none, its maker's own org. */
   org_id: string;
   /** Who made it. */
   owner_id: string;
@@ -915,8 +915,6 @@ type CliLoginCodeRow = {
 type OrganizationRow = {
   id: string;
   name: string;
-  /** Set on a user's personal org, and only there. */
-  personal_owner_id: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -1163,7 +1161,6 @@ export type GithubLinkAuthority = "installer" | "account_owner" | "org_owner";
 type GithubInstallationShareRow = {
   org_id: string;
   org_name: string;
-  personal: boolean;
   linked_at: string;
   linked_by: string | null;
   linked_by_email: string | null;
@@ -2552,7 +2549,7 @@ export type Database = {
       // supabase/migrations/20261119100000_github_org_join.sql
       join_org_via_github: {
         Args: { target_org: string; member: string; github_org: string; target_installation: number };
-        Returns: "joined" | "member" | "personal" | "disabled" | "not_source" | "removed";
+        Returns: "joined" | "member" | "disabled" | "not_source" | "removed";
       };
       // supabase/migrations/20261019130000_move_claude_slot_key.sql
       move_claude_slot_key: {

@@ -58,7 +58,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const outcome = await joinOrgViaGithub(id, owner.id, check.githubOrg, check.installationId);
     if (outcome !== "joined" && outcome !== "member") {
       const messages: Record<Refusal, string> = {
-        personal: "A personal org is just its owner's.",
         disabled: `${org.name}'s admins have turned off joining through GitHub. ${ASK_FOR_AN_INVITE}`,
         not_source: `${org.name} no longer lets members of ${check.githubOrg} in this way. ${ASK_FOR_AN_INVITE}`,
         removed: `An admin of ${org.name} removed you from it. ${ASK_FOR_AN_INVITE}`,

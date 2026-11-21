@@ -359,7 +359,7 @@ export async function requestToJoin(orgId: string, userId: string, email: string
 /** What joining an org through its GitHub organization came to: in (or a
  *  member already), or the database's refusal
  *  (20261119100000_github_org_join.sql). */
-export type GitHubJoinOutcome = "joined" | "member" | "personal" | "disabled" | "not_source" | "removed";
+export type GitHubJoinOutcome = "joined" | "member" | "disabled" | "not_source" | "removed";
 
 /** Let `userId` into `orgId` as a member through GitHub organization
  *  `githubOrg` (installation `installationId`'s): the caller asked GitHub
