@@ -68,7 +68,7 @@ import {
   isUniqueViolation,
   workspaceCreateErrorResponse,
 } from "@/lib/http/workspace-create-errors";
-import { inTeamOrg } from "@/lib/db/orgs";
+import { orgHasOtherMembers } from "@/lib/db/orgs";
 import { orgDefaultsFor } from "@/lib/db/org-defaults";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { NoProviderKeyError } from "@/lib/providers/errors";
@@ -575,8 +575,8 @@ async function createOnce(
     }
     // A requested branch can be one a live session already works on: name that
     // session and offer its page, rather than only saying one is there.
-    // (A generated one that collides is named again, above.) Not the user's own, in a team org's
-    // project: another member has it, whose session they can't open. Anywhere
+    // (A generated one that collides is named again, above.) Not the user's own, in an org
+    // with other members: another member has it, whose session they can't open. Anywhere
     // else (a session ended between the insert and the lookup), the plain
     // answer. If a lookup itself fails, the row's own failure is still the
     // answer to give, not a thrown one.
@@ -586,7 +586,7 @@ async function createOnce(
         return undefined;
       });
       if (holder) return branchTakenResponse({ id: holder.id, label: workspaceLabel(holder) });
-      if (holder === null && (await inTeamOrg(project.id).catch(() => false))) return branchTakenByTeammateResponse();
+      if (holder === null && (await orgHasOtherMembers(project.id, owner.id).catch(() => false))) return branchTakenByTeammateResponse();
     }
     return workspaceCreateErrorResponse(error, "Couldn't create the session's row");
   }

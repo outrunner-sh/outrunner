@@ -6,6 +6,7 @@ import { getOwner, type Owner } from "@/lib/auth/owner";
 import { triageActor } from "@/lib/db/work-items";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { isUuid } from "@/lib/ids";
+import { firstJoined } from "@/lib/orgs/active";
 import { activeOrgId } from "@/lib/orgs/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { TriageActor } from "@/lib/triage/access";
@@ -25,8 +26,8 @@ export type TriageCaller = {
  * The caller of a triage route: the browser's signed-in user, in the org the
  * app is showing (a write must be same-origin, as everywhere in the app); or,
  * where `allowToken`, the owner a CLI token (`Authorization: Bearer
- * or_cli_…`) names, in the org `?org=` names (an id or a name), else their
- * personal one. A token needs no Origin check: a browser never sends one on
+ * or_cli_…`) names, in the org `?org=` names (an id or a name), else the
+ * one they joined first. A token needs no Origin check: a browser never sends one on
  * its own.
  */
 export async function triageCaller(
@@ -74,24 +75,18 @@ async function withActor(
 
 /**
  * One of the user's orgs: the one `wanted` names (its id, or its name, any
- * case), else their personal org. Null when they're in none such.
+ * case), else the one they joined first (firstJoined). Null when they're in
+ * none such.
  */
 export async function memberOrgId(userId: string, wanted: string | null): Promise<string | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("organization_members")
-    .select("org_id, organizations (id, name, personal_owner_id)")
+    .select("org_id, created_at, organizations!inner(id, name)")
     .eq("user_id", userId);
   if (error) throw error;
-  const orgs = (data ?? []).flatMap((m) => {
-    const org = m.organizations as unknown as { id: string; name: string; personal_owner_id: string | null } | null;
-    return org ? [org] : [];
-  });
+  const memberships = data ?? [];
   const name = wanted?.trim().toLowerCase();
-  // Every user has a personal org; without one, the first by name, so the
-  // same command always lands in the same place.
-  if (!name) {
-    const fallback = [...orgs].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))[0];
-    return orgs.find((o) => o.personal_owner_id === userId)?.id ?? fallback?.id ?? null;
-  }
+  if (!name) return firstJoined(memberships.map((m) => ({ orgId: m.org_id, joinedAt: m.created_at })));
+  const orgs = memberships.map((m) => m.organizations);
   return (isUuid(name) ? orgs.find((o) => o.id === name) : orgs.find((o) => o.name.toLowerCase() === name))?.id ?? null;
 }

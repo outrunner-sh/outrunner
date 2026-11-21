@@ -11,7 +11,7 @@ import type { User } from "@supabase/supabase-js";
 import { ADMITTED_KEY, githubLogin, isAdmitted, onAllowlist } from "@/lib/auth/allowlist";
 import { hashSecret } from "@/lib/auth/cli-login";
 import { connectorsAmong } from "@/lib/automations/connector";
-import type { OrgRole } from "@/lib/orgs/active";
+import { madeByOthers, type OrgRole } from "@/lib/orgs/active";
 import { INVITE_DAYS, newInviteToken } from "@/lib/orgs/invite-token";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -501,20 +501,22 @@ export async function orgAdmins(orgId: string): Promise<Person[]> {
   return (await listMembers(orgId)).filter((m) => m.role === "admin");
 }
 
-/** The team orgs a user is a member of, by id. */
-export async function teamOrgIds(userId: string): Promise<string[]> {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.from("organization_members").select("org_id").eq("user_id", userId);
+/**
+ * The orgs a user is a member of that someone else made (or whose maker has
+ * since gone): the ones whose membership was given to them, by an invite, a
+ * join request approved, or their GitHub organization. An org a user made
+ * themselves is never one: making an org lets no one in (lib/orgs/admission.ts).
+ */
+export async function orgIdsMadeByOthers(userId: string): Promise<string[]> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("organization_members")
+    .select("org_id, organizations!inner(created_by)")
+    .eq("user_id", userId);
   if (error) throw error;
-  const ids = (data ?? []).map((m) => m.org_id);
-  if (ids.length === 0) return [];
-  const { data: orgs, error: orgsError } = await supabase
-    .from("organizations")
-    .select("id")
-    .in("id", ids)
-    .is("personal_owner_id", null);
-  if (orgsError) throw orgsError;
-  return (orgs ?? []).map((o) => o.id);
+  return madeByOthers(
+    (data ?? []).map((m) => ({ orgId: m.org_id, createdBy: m.organizations.created_by })),
+    userId,
+  );
 }
 
 /**
@@ -529,13 +531,13 @@ export async function setAdmitted(userId: string, admitted: boolean): Promise<vo
 }
 
 /**
- * After someone leaves or is removed from an org: if no team org holds them
- * any longer and the allowlist doesn't name them, the way in an org gave them
- * closes. Their personal org and its sessions stay, for when they're let in
- * again.
+ * After someone leaves or is removed from an org: if no org someone else made
+ * holds them any longer and the allowlist doesn't name them, the way in an
+ * org gave them closes. Their own org and its sessions stay, for when they're
+ * let in again.
  */
 export async function closeAdmissionIfAlone(userId: string): Promise<void> {
-  if ((await teamOrgIds(userId)).length > 0) return;
+  if ((await orgIdsMadeByOthers(userId)).length > 0) return;
   const { data, error } = await createSupabaseAdminClient().auth.admin.getUserById(userId);
   if (error) throw error;
   if (!data.user || !isAdmitted(data.user) || onAllowlist(data.user)) return;

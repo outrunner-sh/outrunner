@@ -17,7 +17,7 @@ function deps(opts: {
 }) {
   const log: string[] = [];
   const d: AdmissionDeps = {
-    inTeamOrg: async () => opts.member ?? false,
+    inOrgMadeByOthers: async () => opts.member ?? false,
     verifiedEmails: async () => opts.emails,
     hasOpenInviteFor: async (emails) => {
       log.push(`invites? ${emails.join(",")}`);

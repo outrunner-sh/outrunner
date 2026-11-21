@@ -49,6 +49,27 @@ export function pickActiveOrg(orgs: readonly Org[], wanted: string | undefined):
   return orgs.find((o) => o.id === wanted) ?? orgs.find((o) => o.personal) ?? orgs[0] ?? null;
 }
 
+/**
+ * The ids of the orgs among a user's memberships that someone else made. An
+ * org whose maker has since gone (`createdBy` null) is someone else's too.
+ */
+export function madeByOthers(memberships: readonly { orgId: string; createdBy: string | null }[], userId: string): string[] {
+  return memberships.filter((m) => m.createdBy !== userId).map((m) => m.orgId);
+}
+
+/**
+ * The org a call that names none acts in (the CLI, a personal API key): the
+ * one the user joined first, so the same command always lands in the same
+ * place. For everyone with a personal org that's it, made with their account.
+ * Ties, by id. Null for no membership.
+ */
+export function firstJoined(memberships: readonly { orgId: string; joinedAt: string }[]): string | null {
+  const [first] = [...memberships].sort(
+    (a, b) => Date.parse(a.joinedAt) - Date.parse(b.joinedAt) || a.orgId.localeCompare(b.orgId),
+  );
+  return first?.orgId ?? null;
+}
+
 /** An org's name, as a user may give it: trimmed, 1 to 80 characters. */
 export function orgName(value: unknown): string | null {
   if (typeof value !== "string") return null;

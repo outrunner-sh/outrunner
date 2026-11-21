@@ -6,7 +6,7 @@ import { githubLogin, isOwner } from "@/lib/auth/owner";
 import { sameSecret } from "@/lib/crypto/secret-box";
 import { getGithubToken, getGithubVerifiedEmails, setGithubToken, setGithubVerifiedEmails } from "@/lib/db/credentials";
 import { githubConnectionStatus } from "@/lib/db/github-connections";
-import { hasOpenInviteFor, requestToJoin, setAdmitted, teamOrgIds } from "@/lib/db/org-members";
+import { hasOpenInviteFor, orgIdsMadeByOthers, requestToJoin, setAdmitted } from "@/lib/db/org-members";
 import { orgsForDomains } from "@/lib/db/orgs";
 import { optionalEnv } from "@/lib/env";
 import { listVerifiedEmails, tokenOwner } from "@/lib/github/client";
@@ -70,7 +70,7 @@ export async function completeSignIn({
 async function admit(user: User, githubToken: string | undefined, base: string): Promise<Admission> {
   try {
     return await admitOnSignIn({
-      inTeamOrg: async () => (await teamOrgIds(user.id)).length > 0,
+      inOrgMadeByOthers: async () => (await orgIdsMadeByOthers(user.id)).length > 0,
       verifiedEmails: async () =>
         verifiedEmailsFor(user, githubToken, githubToken ? [] : await getGithubVerifiedEmails(user.id).catch(() => [])),
       hasOpenInviteFor,
