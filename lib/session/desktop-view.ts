@@ -6,15 +6,24 @@
  * desktop refuses it. The link is good for two minutes only (the open socket
  * outlives it), so every connection, a reconnect included, asks again.
  *
+ * A live socket that drops is reconnected on its own, after each of
+ * RECONNECT_DELAYS_MS. One was seen to drop every few minutes, and the tab
+ * sat on Reconnect until the user clicked it, though the desktop and its
+ * browser were still there. Only once those tries fail, or the desktop
+ * refuses outright, does it ask the user. `tries` counts the reconnects in a
+ * row; a connection that lasts STEADY_MS starts them afresh.
+ *
  * Pure (no I/O), so it is unit-tested in Node.
  */
 
 export type DesktopView =
   /** Asking Outrunner for the desktop, which may start it (a second or two). */
-  | { status: "starting"; attempt: number }
+  | { status: "starting"; attempt: number; tries?: number }
   /** A link in hand, the client opening its socket. */
-  | { status: "connecting"; attempt: number }
-  | { status: "connected"; attempt: number }
+  | { status: "connecting"; attempt: number; tries?: number }
+  | { status: "connected"; attempt: number; tries?: number }
+  /** The socket dropped: trying again on its own after `retryInMs`. */
+  | { status: "reconnecting"; attempt: number; tries: number; retryInMs: number }
   /** The socket closed, or never opened: `reason` says which. */
   | { status: "disconnected"; attempt: number; reason: string }
   /** Outrunner said no: `message` is its words, `httpStatus` its answer's
@@ -26,6 +35,8 @@ export type DesktopView =
 export type DesktopEvent =
   /** The tab opens, or Reconnect: ask for a fresh link. */
   | { type: "reconnect" }
+  /** A reconnect's wait is over: ask for a fresh link, as the same tries. */
+  | { type: "retry" }
   | { type: "opened" }
   | { type: "refused"; httpStatus: number; error?: string }
   | { type: "connect" }
@@ -33,7 +44,8 @@ export type DesktopEvent =
   | { type: "stalled" }
   /** noVNC's code didn't load. */
   | { type: "viewerfailed" }
-  | { type: "disconnect"; clean: boolean }
+  /** `lasted`: how long it had been connected, where it was. */
+  | { type: "disconnect"; clean: boolean; lasted?: number }
   | { type: "securityfailure"; reason?: string };
 
 export const FIRST_VIEW: DesktopView = { status: "starting", attempt: 0 };
@@ -48,6 +60,15 @@ export const OPEN_TIMEOUT_MS = 45_000;
 /** How long a link in hand may take to become a picture of the desktop: the
  *  VNC handshake takes well under a second. */
 export const CONNECT_TIMEOUT_MS = 20_000;
+
+/** The waits before each reconnect in a row once a live socket drops: the
+ *  first soon, as a dropped socket is usually just that, then longer. */
+export const RECONNECT_DELAYS_MS: readonly number[] = [1_000, 3_000, 10_000];
+
+/** A connection that lasted this long was a good one: its drop starts the
+ *  reconnects afresh. A shorter one's carries on counting, so a desktop that
+ *  drops as soon as it connects isn't tried for ever. */
+export const STEADY_MS = 30_000;
 
 /** What the tab says when the route didn't answer in time. */
 export const DESKTOP_TIMED_OUT = "The desktop took too long to start. Please try again.";
@@ -64,26 +85,36 @@ export const DESKTOP_UNREACHABLE = "Couldn't reach Outrunner to start the deskto
  */
 export function desktopView(view: DesktopView, event: DesktopEvent): DesktopView {
   const attempt = view.attempt;
+  // Set while the tab is reconnecting on its own: the tries so far.
+  const tries = "tries" in view ? view.tries : undefined;
   switch (event.type) {
     case "reconnect":
       return { status: "starting", attempt: attempt + 1 };
+    case "retry":
+      return view.status === "reconnecting" ? { status: "starting", attempt: attempt + 1, tries: view.tries } : view;
     case "opened":
-      return view.status === "starting" ? { status: "connecting", attempt } : view;
-    case "refused":
+      return view.status === "starting" ? { status: "connecting", attempt, ...withTries(tries) } : view;
+    case "refused": {
       // 409: this session has no desktop, or its box isn't running; either
       // way the route's words say which.
-      return {
+      const refused: DesktopView = {
         status: "error",
         attempt,
         message: event.error || (event.httpStatus === 0 ? DESKTOP_UNREACHABLE : "Couldn't start the desktop. Please try again."),
         httpStatus: event.httpStatus,
       };
+      // Mid-reconnect, Outrunner out of reach or failing (no answer, a 5xx)
+      // is tried again; a refusal (the box stopped) is said at once.
+      const passing = event.httpStatus === 0 || event.httpStatus >= 500;
+      return view.status === "starting" && tries !== undefined && passing ? retryOr(view, tries + 1, refused) : refused;
+    }
     case "connect":
-      return view.status === "connecting" ? { status: "connected", attempt } : view;
-    case "stalled":
-      return view.status === "connecting"
-        ? { status: "disconnected", attempt, reason: "The desktop didn't answer. Try reconnecting." }
-        : view;
+      return view.status === "connecting" ? { status: "connected", attempt, ...withTries(tries) } : view;
+    case "stalled": {
+      if (view.status !== "connecting") return view;
+      const stalled: DesktopView = { status: "disconnected", attempt, reason: "The desktop didn't answer. Try reconnecting." };
+      return tries !== undefined ? retryOr(view, tries + 1, stalled) : stalled;
+    }
     case "viewerfailed":
       return { status: "error", attempt, message: VIEWER_FAILED, httpStatus: 0, reload: true };
     case "securityfailure":
@@ -92,12 +123,31 @@ export function desktopView(view: DesktopView, event: DesktopEvent): DesktopView
         attempt,
         reason: event.reason ? `The desktop refused the connection: ${event.reason}.` : "The desktop refused the connection.",
       };
-    case "disconnect":
+    case "disconnect": {
       // A security failure is followed by its disconnect: the failure's
-      // reason is the one worth keeping.
-      if (view.status === "disconnected" || view.status === "error") return view;
-      return { status: "disconnected", attempt, reason: disconnectReason(view.status, event.clean) };
+      // reason is the one worth keeping. One already being retried is late.
+      if (view.status === "disconnected" || view.status === "error" || view.status === "reconnecting") return view;
+      const lost: DesktopView = { status: "disconnected", attempt, reason: disconnectReason(view.status, event.clean) };
+      if (view.status === "connected") {
+        // A good connection's drop starts the tries afresh; a short one's
+        // carries on from where they were.
+        const steady = event.lasted === undefined || event.lasted >= STEADY_MS;
+        return retryOr(view, steady ? 1 : (tries ?? 0) + 1, lost);
+      }
+      // Never opened: a first connection says so; a reconnect tries again.
+      return tries !== undefined ? retryOr(view, tries + 1, lost) : lost;
+    }
   }
+}
+
+/** Reconnecting, as try `tries` of RECONNECT_DELAYS_MS; `giveUp` past them. */
+function retryOr(view: DesktopView, tries: number, giveUp: DesktopView): DesktopView {
+  const wait = RECONNECT_DELAYS_MS[tries - 1];
+  return wait === undefined ? giveUp : { status: "reconnecting", attempt: view.attempt, tries, retryInMs: wait };
+}
+
+function withTries(tries: number | undefined): { tries?: number } {
+  return tries === undefined ? {} : { tries };
 }
 
 /** Why the socket closed, in the words the panel shows. */

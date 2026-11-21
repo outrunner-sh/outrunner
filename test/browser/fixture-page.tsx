@@ -16,6 +16,7 @@ import { CLAUDE_DEFAULT_MODEL } from "@/lib/runtime/session-models";
 import type { Workspace } from "@/lib/runtime/types";
 import { JiraFixture, LinearCardFixture, LinearFixture, TrackerItemFixture } from "./linear-fixture";
 import { StartupFixture } from "./startup-fixture";
+import { DesktopFixture } from "./desktop-fixture";
 import { PullRequestFixture } from "./pull-request-fixture";
 import { Automations } from "@/components/automations";
 import { AutomationsLoading } from "@/components/automations-loading";
@@ -126,6 +127,7 @@ export function FixturePage() {
   );
   let content: React.ReactNode;
   if (view === "sandbox") content = <PageLayout><SandboxSettingsForm initial={{ sandbox: state === "connected" ? "gcp" : "outrunner", daytona: { connected: false, hint: null, updatedAt: null }, modal: { connected: false, hint: null, updatedAt: null }, gcp: { connected: state === "connected", hint: state === "connected" ? "sandbox-project" : null, updatedAt: null }, boxSize: "small", boxSizeChosen: true }} sizes plan={PLANS.free} /></PageLayout>;
+  else if (view === "desktop") content = <DesktopFixture />;
   else if (view === "desktop-signin") content = <DesktopSignIn next="/"><p>Browser sign-in</p></DesktopSignIn>;
   else if (view === "web-onboarding") content = <OnboardingLive user={{ id: "desktop-browser-user", name: "Ada", login: "ada", avatarUrl: null }} org={SETUP_ORG} outrunnerModels desktopReturn />;
   else if (view === "desktop-ready" || pathname === "/auth/desktop/ready") content = <DesktopWelcome email="ada@example.com" next={params.get("next") ?? "/new?project=p1&start=codex"} expired={state === "expired"} />;
