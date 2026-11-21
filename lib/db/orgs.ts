@@ -13,15 +13,15 @@ import { ownOrgName, pickOwnOrg } from "@/lib/orgs/own-org";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 
-/** The signed-in user's orgs, personal first, with their role in each; none
- *  before the migration that adds orgs. */
+/** The signed-in user's orgs, by name, with their role in each and when they
+ *  joined; none before the migration that adds orgs. */
 export async function listMyOrgs(): Promise<Org[]> {
   const supabase = await createSupabaseServerClient();
   // RLS: their own memberships, and the orgs they're a member of. One read:
   // every page's sidebar waits on it before its own.
   const { data: memberships, error } = await supabase
     .from("organization_members")
-    .select("org_id, role, organizations(id, name, personal_owner_id)");
+    .select("org_id, role, created_at, organizations(id, name)");
   if (error && probeStatus(error) === "missing") return [];
   if (error) throw error;
   if (!memberships?.length) return [];
@@ -29,7 +29,7 @@ export async function listMyOrgs(): Promise<Org[]> {
     memberships.flatMap((m) => {
       const o = m.organizations;
       return o
-        ? [{ id: o.id, name: o.name, personal: o.personal_owner_id !== null, role: (m.role as OrgRole) ?? "member" }]
+        ? [{ id: o.id, name: o.name, joinedAt: m.created_at, role: (m.role as OrgRole) ?? "member" }]
         : [];
     }),
   );
@@ -57,47 +57,32 @@ export async function orgHasOtherMembers(projectId: string, userId: string): Pro
 }
 
 /**
- * A user's own org, read as the server: their personal org while they have
- * one, else the first org they made and still administer (the one made for
- * them at sign-in: lib/orgs/own-org.ts). Null when there's none.
+ * A user's own org, read as the server: the first org they made and still
+ * administer (the one made for them at sign-in: lib/orgs/own-org.ts, or the
+ * personal org their account came with). Null when there's none.
  */
 export async function ownOrgId(userId: string): Promise<string | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("organizations")
-    .select("id, personal_owner_id, created_at, organization_members!inner(user_id, role)")
+    .select("id, created_at, organization_members!inner(user_id, role)")
     .eq("created_by", userId)
     .eq("organization_members.user_id", userId)
     .eq("organization_members.role", "admin");
   if (error) throw error;
   return pickOwnOrg(
-    (data ?? []).map((o) => ({ id: o.id, personal: o.personal_owner_id === userId, createdAt: o.created_at })),
+    (data ?? []).map((o) => ({ id: o.id, createdAt: o.created_at })),
   );
 }
 
-/** The personal orgs among `orgIds`, by org, with their owners. */
-export async function personalOwners(orgIds: readonly string[]): Promise<Map<string, string>> {
-  const owners = new Map<string, string>();
-  for (let i = 0; i < orgIds.length; i += 200) {
-    const { data, error } = await createSupabaseAdminClient()
-      .from("organizations")
-      .select("id, personal_owner_id")
-      .in("id", orgIds.slice(i, i + 200))
-      .not("personal_owner_id", "is", null);
-    if (error) throw error;
-    for (const row of data) if (row.personal_owner_id) owners.set(row.id, row.personal_owner_id);
-  }
-  return owners;
-}
-
-/** An org's name and kind, read as the server; null for no such org. */
-export async function getOrg(orgId: string): Promise<{ id: string; name: string; personal: boolean } | null> {
+/** An org's name, read as the server; null for no such org. */
+export async function getOrg(orgId: string): Promise<{ id: string; name: string } | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("organizations")
-    .select("id, name, personal_owner_id")
+    .select("id, name")
     .eq("id", orgId)
     .maybeSingle();
   if (error) throw error;
-  return data ? { id: data.id, name: data.name, personal: data.personal_owner_id !== null } : null;
+  return data ? { id: data.id, name: data.name } : null;
 }
 
 /** A user's role in an org, or null when they aren't a member. */
@@ -193,14 +178,13 @@ export async function createOwnOrg(user: User): Promise<string | null> {
   return typeof data === "string" ? data : null;
 }
 
-/** Rename an org; its admins may, and a personal org keeps its name. */
+/** Rename an org; its admins may. */
 export async function renameOrg(orgId: string, userId: string, name: string): Promise<boolean> {
   if ((await memberRole(orgId, userId)) !== "admin") return false;
   const { data, error } = await createSupabaseAdminClient()
     .from("organizations")
     .update({ name })
     .eq("id", orgId)
-    .is("personal_owner_id", null)
     .select("id");
   if (error) throw error;
   return (data?.length ?? 0) > 0;

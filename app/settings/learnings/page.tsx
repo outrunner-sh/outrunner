@@ -51,7 +51,7 @@ async function LearningsSection() {
         </p>
       </div>
       <LearningsSettings
-        org={{ id: org.id, name: org.name, personal: org.personal, admin: org.role === "admin" }}
+        org={{ id: org.id, name: org.name, admin: org.role === "admin" }}
         initial={learnings}
       />
     </section>

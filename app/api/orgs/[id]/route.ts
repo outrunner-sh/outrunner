@@ -8,7 +8,7 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
 import { orgName } from "@/lib/orgs/active";
 
-/** Rename a team org, `{ name }`: its admins may. A personal org keeps its name. */
+/** Rename an org, `{ name }`: its admins may. */
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!isSameOriginRequest(request)) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
@@ -26,7 +26,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     // Only for the log: never what fails the rename.
     const before = await getOrg(id).catch(() => null);
     if (!(await renameOrg(id, owner.id, name))) {
-      return NextResponse.json({ error: "Only a team org's admins can rename it." }, { status: 403 });
+      return NextResponse.json({ error: "Only the org's admins can rename it." }, { status: 403 });
     }
     await recordAudit({
       orgId: id,

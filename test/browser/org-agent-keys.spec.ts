@@ -34,7 +34,7 @@ test("admins connect and disconnect Claude at org scope without changing persona
         json: {
           user: "alice",
           orgs: [
-            { id: "org-1", name: "neev ai", personal: false, role: "admin" },
+            { id: "org-1", name: "neev ai", joinedAt: "2026-10-01T00:00:00Z", role: "admin" },
           ],
           activeOrg: "org-1",
         },
@@ -89,7 +89,7 @@ test("members see organization status but cannot connect or disconnect Claude", 
         json: {
           user: "alice",
           orgs: [
-            { id: "org-1", name: "outrunner", personal: false, role: "member" },
+            { id: "org-1", name: "outrunner", joinedAt: "2026-10-01T00:00:00Z", role: "member" },
           ],
           activeOrg: "org-1",
         },

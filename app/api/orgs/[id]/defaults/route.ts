@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import { recordAudit } from "@/lib/audit/record";
-import { getOrg } from "@/lib/db/orgs";
 import { getOrgDefaults, setOrgDefaults } from "@/lib/db/org-defaults";
 import { savingSettings } from "@/lib/http/settings-save";
 import { orgCaller } from "@/lib/orgs/routes";
@@ -29,12 +28,6 @@ export async function PUT(request: Request, context: RouteContext) {
   const { id } = await context.params;
   const caller = await orgCaller(request, id, { admin: true });
   if (caller instanceof Response) return caller;
-  if ((await getOrg(id))?.personal) {
-    return NextResponse.json(
-      { error: "Your personal org's defaults are your own: Settings → Default models and Sandbox." },
-      { status: 409 },
-    );
-  }
   const body = (await request.json().catch(() => null)) as
     | { defaultModel?: unknown; boxSize?: unknown; archiveOnClose?: unknown }
     | null;

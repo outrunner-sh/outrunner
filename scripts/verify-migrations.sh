@@ -54,7 +54,9 @@ run_psql -c "drop database if exists $DB;" -c "create database $DB;"
 echo "==> stubbing Supabase auth and storage schemas"
 run_psql -d "$DB" -c "
   create schema if not exists auth;
-  create table auth.users (id uuid primary key default gen_random_uuid(), email text);
+  -- The columns migrations read: sign-up alerts (last_sign_in_at), own
+  -- orgs' names (raw_user_meta_data).
+  create table auth.users (id uuid primary key default gen_random_uuid(), email text, last_sign_in_at timestamptz, raw_user_meta_data jsonb);
   create or replace function auth.uid() returns uuid language sql stable as \$\$
     select current_setting('request.jwt.claim.sub', true)::uuid
   \$\$;

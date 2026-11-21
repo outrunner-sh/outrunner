@@ -52,21 +52,21 @@ async function OrgSection() {
   }
   const { active } = context;
   const [domain, automations, join] = await Promise.all([
-    active.personal ? null : orgDomain(active.id).catch(() => null),
+    orgDomain(active.id).catch(() => null),
     automationSettingsOrDefault(active.id),
-    active.personal ? null : joinSettings(active.id),
+    joinSettings(active.id),
   ]);
   return (
     <div className="space-y-10">
       <OrgGeneralSettings org={active} domain={domain} />
       {join && <OrgJoinSettings org={active} initial={join.enabled} githubOrgs={join.githubOrgs} />}
       <AutomationRunSettings org={active} initial={automations} />
-      {!active.personal && <OrgDefaults />}
+      <OrgDefaults />
     </div>
   );
 }
 
-/** A team org's joining through GitHub, as the page shows it: none, rather
+/** An org's joining through GitHub, as the page shows it: none, rather
  *  than no page, when it can't be read. */
 async function joinSettings(orgId: string): Promise<{ enabled: boolean; githubOrgs: string[] } | null> {
   try {

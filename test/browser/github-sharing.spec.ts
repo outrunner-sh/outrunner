@@ -28,7 +28,7 @@ test("the source org sees the orgs its installation is shared with, and can stop
   await page.route("**/api/**", (route) => route.fulfill({ json: { missions: [], notifications: [], standings: {}, ids: [], allowance: null } }));
   await page.goto("/settings/org/github?view=github&state=connected&shared=1");
   await expect(page.getByText("Also shared with")).toBeVisible();
-  await expect(page.getByText("Personal (personal org)")).toBeVisible();
+  await expect(page.getByText("Alan's organization")).toBeVisible();
   await expect(page.getByText("by alan@acme.dev", { exact: false })).toBeVisible();
   // Removing it here wouldn't cut the share off: it says so before anyone does.
   await expect(page.getByText("Removing outrunner-sh from acme leaves this org connected", { exact: false })).toBeVisible();

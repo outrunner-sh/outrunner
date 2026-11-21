@@ -54,14 +54,12 @@ export type MemberRefusal =
   | "invite_invalid"
   | "request_not_pending"
   | "last_admin"
-  | "personal_org"
   | "not_a_member";
 
 const REFUSALS: Record<MemberRefusal, string> = {
   invite_invalid: "This invite has been used, withdrawn, or has expired. Ask an admin for a new one.",
   request_not_pending: "That request has been answered already.",
   last_admin: "An org needs an admin. Make someone else an admin first.",
-  personal_org: "A personal org is just yours: no one joins or leaves it.",
   not_a_member: "They aren't a member of this org.",
 };
 

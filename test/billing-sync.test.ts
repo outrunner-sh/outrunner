@@ -46,7 +46,7 @@ function world(subscription: Stripe.Subscription, customers: Record<string, stri
       return subscription;
     },
     orgForCustomer: async (id) => customers[id] ?? null,
-    personalOrgOf: async (userId) => `personal-${userId}`,
+    ownOrgOf: async (userId) => `own-${userId}`,
     subscriptionById: async (id) => saved.findLast((r) => r.stripeSubscriptionId === id) ?? null,
     saveSubscription: async (r) => {
       saved.push(r);
@@ -122,15 +122,15 @@ test("the stored customer decides whose org a subscription is; checkout's metada
   await handleEvent(event("customer.subscription.created", { id: "sub_1" }), early.deps);
   assert.equal(early.saved.at(-1)?.orgId, "o-2");
   // One from before billing was the org's names only its buyer: theirs is
-  // their personal org's.
+  // their own org's.
   const before = world(stripeSubscription("active", { customer: "cus_old", metadata: { user_id: "u-3" } }), {});
   await handleEvent(event("customer.subscription.created", { id: "sub_1" }), before.deps);
-  assert.equal(before.saved.at(-1)?.orgId, "personal-u-3");
+  assert.equal(before.saved.at(-1)?.orgId, "own-u-3");
 });
 
 test("a subscription that's no Outrunner org's is logged and acknowledged, not stored", async () => {
   const w = world(stripeSubscription("active", { customer: "cus_stranger" }), {});
-  w.deps.personalOrgOf = async () => null;
+  w.deps.ownOrgOf = async () => null;
   assert.equal(await handleEvent(event("customer.subscription.created", { id: "sub_1" }), w.deps), "synced");
   assert.equal(w.saved.length, 0);
   assert.match(w.logs[0], /no Outrunner org/);

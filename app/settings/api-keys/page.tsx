@@ -47,7 +47,7 @@ async function ApiKeysSection({
           Keys for Outrunner&apos;s API and MCP server that act as you, with
           your Roles &amp; access, in any org you&apos;re in: a call names one
           with <code className="font-mono text-xs">?org=</code>, else it&apos;s
-          your personal org. An org&apos;s admins can make keys for the org
+          the org you joined first. An org&apos;s admins can make keys for the org
           itself under{" "}
           <Link
             href="/settings/org/developer"

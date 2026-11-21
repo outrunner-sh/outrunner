@@ -28,9 +28,7 @@ export async function sessionAgentContext(ownerId: string, workspaceId: string):
         return [];
       }),
     ]);
-    // A personal org has no learnings of its own (lib/learnings/actions.ts).
-    const loaded = org?.personal ? { ...learnings, org: [] } : learnings;
-    return renderAgentContext({ orgName: org && !org.personal ? org.name : null, learnings: loaded, memory });
+    return renderAgentContext({ orgName: org?.name ?? null, learnings, memory });
   } catch (error) {
     console.error(`Session ${workspaceId}: couldn't read its learnings; its box keeps what it had`, error);
     return undefined;

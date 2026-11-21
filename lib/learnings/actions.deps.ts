@@ -22,7 +22,6 @@ export function learningDeps(actor: AuditActor): LearningDeps {
         action,
         resource: { type: "learning", id: learning.id, label: learning.title },
       }),
-    personalOrg: async (orgId) => (await getOrg(orgId))?.personal ?? false,
   };
 }
 

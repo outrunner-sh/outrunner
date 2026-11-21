@@ -38,7 +38,7 @@ There are two kinds, and the CLI's own token works too:
 | Credential | Made under | Acts as | In |
 | --- | --- | --- | --- |
 | Org key | Settings → Org → API keys (admins) | the admin who made it | its org only, while they're still an admin |
-| Personal key | Settings → API keys | you | any org you're in: `?org=<name or id>` (or an `Outrunner-Org` header), else your personal org |
+| Personal key | Settings → API keys | you | any org you're in: `?org=<name or id>` (or an `Outrunner-Org` header), else the org you joined first |
 | CLI token | `outrunner login` | you | as a personal key |
 
 A key acts with its maker's Roles & access in the org, never more: it sees

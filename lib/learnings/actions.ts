@@ -48,9 +48,6 @@ export type LearningDeps = {
   store: LearningStore;
   /** Record a change to an org's learning; a person's own aren't audited. */
   audit?(action: LearningAuditAction, learning: Learning): Promise<void>;
-  /** Whether an org is a person's own: it has no learnings of its own, as
-   *  its person's are already in every session of theirs. */
-  personalOrg?(orgId: string): Promise<boolean>;
 };
 
 /** Why a learning couldn't be read or changed, said as the routes answer. */
@@ -96,9 +93,6 @@ export async function createLearning(
   deps: LearningDeps,
   input: { scope: LearningScope; title: string; body: string; suggested?: boolean; suggestedIn?: string | null },
 ): Promise<Learning> {
-  if (input.scope === "org" && (await deps.personalOrg?.(actor.orgId))) {
-    throw new LearningError(400, "A personal org has only your own learnings: add it with scope personal.");
-  }
   const status = newLearningStatus(actor, input.scope, input.suggested ?? false);
   const count = await deps.store.count(scopeOf(actor, input.scope), {
     status,

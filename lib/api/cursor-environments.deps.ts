@@ -46,13 +46,9 @@ import { allows } from "@/lib/orgs/access";
 import { repoFullName } from "@/lib/api/repo-ref";
 import { coversRepos } from "@/lib/session/session-overrides";
 
-async function personalOrg(context: ApiContext): Promise<boolean> {
-  return (await getOrg(context.caller.orgId))?.personal ?? false;
-}
-
 /** A project, said both ways: Outrunner's fields and Cursor's. */
 export async function bothWays(context: ApiContext, environment: Environment, full = true): Promise<Record<string, unknown>> {
-  return { ...environmentDetailJson(environment), ...cursorEnvironmentJson(environment, await personalOrg(context), full) };
+  return { ...environmentDetailJson(environment), ...cursorEnvironmentJson(environment, full) };
 }
 
 /** The repositories Cursor's `repos` name, as the org's projects' ids, or

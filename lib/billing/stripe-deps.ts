@@ -17,7 +17,7 @@ import { OVERAGE_KIND } from "@/lib/billing/overage";
 import type { CheckoutDeps } from "@/lib/billing/checkout";
 import { refreshModelAllowance } from "@/lib/db/credentials";
 import { refreshOrgModelAllowance } from "@/lib/db/org-model-allowance";
-import { getOrg, ownOrgId, personalOwners } from "@/lib/db/orgs";
+import { ownOrgId } from "@/lib/db/orgs";
 import { PLANS } from "@/lib/billing/plans";
 import { stripe } from "@/lib/billing/stripe";
 import type { SyncDeps } from "@/lib/billing/sync";
@@ -25,7 +25,7 @@ import type { SyncDeps } from "@/lib/billing/sync";
 export const syncDeps: SyncDeps = {
   retrieveSubscription: (id) => stripe().subscriptions.retrieve(id),
   orgForCustomer,
-  personalOrgOf: ownOrgId,
+  ownOrgOf: ownOrgId,
   subscriptionById,
   // Stored, and said in the org's audit log when its plan or status moved.
   async saveSubscription(record, fetchedAt) {
@@ -48,12 +48,10 @@ export const syncDeps: SyncDeps = {
   recordEvent,
   now: () => new Date(),
   log: (message) => console.warn(message),
-  // An upgrade's allowance applies at once, not at the next session: a
-  // personal org's plan sets its owner's model key; a team org's, its own.
+  // An upgrade's allowance applies at once, not at the next session: an
+  // org's plan sets its own model key.
   changed: async (orgId) => {
-    const owner = (await personalOwners([orgId])).get(orgId);
-    if (owner) await refreshModelAllowance(owner);
-    else await refreshOrgModelAllowance(orgId);
+    await refreshOrgModelAllowance(orgId);
   },
   async openOverageInvoices(customerId) {
     const open: { created: Date; attempted: boolean }[] = [];
@@ -71,12 +69,11 @@ export const checkoutDeps: CheckoutDeps = {
   customerIdFor,
   claimCustomer,
   createCustomer: async (buyer, idempotencyKey) => {
-    const personal = (await getOrg(buyer.orgId))?.personal ?? true;
     const customer = await stripe().customers.create(
       {
-        // The GitHub login is how support finds a solo user in Stripe's
-        // dashboard; a team org by its name.
-        name: (personal ? buyer.githubLogin : buyer.orgName) || undefined,
+        // The org's name, as support finds it in Stripe's dashboard; its
+        // buyer's GitHub login is in the metadata.
+        name: buyer.orgName || buyer.githubLogin || undefined,
         email: buyer.email ?? undefined,
         metadata: { org_id: buyer.orgId, user_id: buyer.userId, github_login: buyer.githubLogin },
       },

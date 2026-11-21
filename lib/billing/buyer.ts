@@ -1,7 +1,6 @@
 /**
  * Who buys a plan, and for which org: the org the user is looking at
- * (billing is the org's), which only its admins may change. A personal org's
- * one admin is its owner.
+ * (billing is the org's), which only its admins may change.
  */
 
 import type { Owner } from "@/lib/auth/owner";

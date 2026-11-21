@@ -81,10 +81,7 @@ export function runUsageSweep(provider: ComputerRuntimeProvider): Promise<UsageS
         else orgs.add(row.org_id);
       }
       for (const orgId of orgs) {
-        const org = await getOrg(orgId);
-        // An org that can't be read is still looked at, as a personal one
-        // (no admins' controls): its plan's hours still apply.
-        accounts.push({ kind: org?.personal === false ? "team" : "personal", orgId });
+        accounts.push({ kind: "org", orgId });
       }
       for (const ownerId of connectorOwners) accounts.push({ kind: "connector", ownerId });
       return accounts;

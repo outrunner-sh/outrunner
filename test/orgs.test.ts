@@ -4,58 +4,29 @@ import { test } from "node:test";
 import { firstJoined, madeByOthers, orgName, orgSummary, pickActiveOrg, sortOrgs, type Org } from "@/lib/orgs/active";
 import { emailDomain, isPublicDomain, primaryDomain } from "@/lib/orgs/domains";
 
-const personal: Org = { id: "p", name: "Personal", personal: true, role: "admin" };
-const team: Org = { id: "t", name: "Initech", personal: false, role: "member" };
-const other: Org = { id: "a", name: "Acme", personal: false, role: "admin" };
+const own: Org = { id: "p", name: "Ada's organization", joinedAt: "2026-10-27T09:00:00Z", role: "admin" };
+const team: Org = { id: "t", name: "Initech", joinedAt: "2026-11-01T10:00:00Z", role: "member" };
+const other: Org = { id: "a", name: "Acme", joinedAt: "2026-11-02T10:00:00Z", role: "admin" };
 
 test("the active org is the cookie's while the user is a member of it", () => {
-  assert.equal(pickActiveOrg([personal, team], "t"), team);
+  assert.equal(pickActiveOrg([own, team], "t"), team);
 });
 
-test("an org the user isn't in (left, removed, or made up) falls back to their personal org", () => {
-  assert.equal(pickActiveOrg([personal, team], "gone"), personal);
-  assert.equal(pickActiveOrg([team, personal], undefined), personal);
+test("an org the user isn't in (left, removed, or made up) falls back to the one they joined first", () => {
+  assert.equal(pickActiveOrg([own, team], "gone"), own);
+  assert.equal(pickActiveOrg([team, own], undefined), own);
+  assert.equal(pickActiveOrg([team, other], undefined), team);
 });
 
-test("no personal org: the first; no org at all: none", () => {
-  assert.equal(pickActiveOrg([team], undefined), team);
+test("no org at all: none", () => {
   assert.equal(pickActiveOrg([], "t"), null);
 });
 
-test("orgs list the personal one first, then teams by name", () => {
+test("orgs list by name", () => {
   assert.deepEqual(
-    sortOrgs([team, personal, other]).map((o) => o.id),
-    ["p", "a", "t"],
+    sortOrgs([team, own, other]).map((o) => o.id),
+    ["a", "p", "t"],
   );
-});
-
-test("only an org someone else made lets a user in: never one they made themselves", () => {
-  const memberships = [
-    { orgId: "own", createdBy: "me" },
-    { orgId: "invited", createdBy: "them" },
-    // Its maker has deleted their account since: still not the user's doing.
-    { orgId: "orphaned", createdBy: null },
-  ];
-  assert.deepEqual(madeByOthers(memberships, "me"), ["invited", "orphaned"]);
-  assert.deepEqual(madeByOthers([{ orgId: "own", createdBy: "me" }], "me"), []);
-});
-
-test("a call naming no org acts in the one the user joined first; ties by id", () => {
-  assert.equal(
-    firstJoined([
-      { orgId: "team", joinedAt: "2026-11-01T10:00:00Z" },
-      { orgId: "own", joinedAt: "2026-10-27T09:00:00.123456+00:00" },
-    ]),
-    "own",
-  );
-  assert.equal(
-    firstJoined([
-      { orgId: "b", joinedAt: "2026-11-01T10:00:00Z" },
-      { orgId: "a", joinedAt: "2026-11-01T10:00:00Z" },
-    ]),
-    "a",
-  );
-  assert.equal(firstJoined([]), null);
 });
 
 test("an org's name is trimmed and 1 to 80 characters", () => {
@@ -115,8 +86,7 @@ test("the domain an org claims is the primary verified email's, never a secondar
   assert.equal(primaryDomain([]), null);
 });
 
-test("the switcher says whose an org is, and the user's part in a team's", () => {
-  assert.equal(orgSummary({ personal: true, role: "admin" }), "Personal");
-  assert.equal(orgSummary({ personal: false, role: "admin" }), "Team · Admin");
-  assert.equal(orgSummary({ personal: false, role: "member" }), "Team · Member");
+test("the switcher says the user's part in an org", () => {
+  assert.equal(orgSummary({ role: "admin" }), "Admin");
+  assert.equal(orgSummary({ role: "member" }), "Member");
 });

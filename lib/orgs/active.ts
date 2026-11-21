@@ -1,7 +1,7 @@
 /**
  * The org the app is showing: the one the user last picked in the sidebar's
- * switcher (a cookie), while they're still a member of it, else their
- * personal org. Projects and sessions are listed for it, and a repository
+ * switcher (a cookie), while they're still a member of it, else the one
+ * they joined first. Projects and sessions are listed for it, and a repository
  * connected goes into it.
  */
 
@@ -22,31 +22,30 @@ export function viewerScope(userId: string, orgId: string): string {
 export type Org = {
   id: string;
   name: string;
-  /** The user's own org, made with their account: there's one each. */
-  personal: boolean;
+  /** When the signed-in user joined it (made it, for their own). */
+  joinedAt: string;
   /** The signed-in user's role in it. */
   role: OrgRole;
 };
 
-/** The line under an org's name in the switcher: whose it is, and the
- *  user's part in a team's. */
-export function orgSummary(org: Pick<Org, "personal" | "role">): string {
-  if (org.personal) return "Personal";
-  return org.role === "admin" ? "Team · Admin" : "Team · Member";
+/** The line under an org's name in the switcher: the user's part in it. */
+export function orgSummary(org: Pick<Org, "role">): string {
+  return org.role === "admin" ? "Admin" : "Member";
 }
 
-/** The personal org first, then team orgs by name. */
+/** Orgs by name; two alike, by id, so the order never shifts. */
 export function sortOrgs(orgs: readonly Org[]): Org[] {
-  return [...orgs].sort((a, b) => Number(b.personal) - Number(a.personal) || a.name.localeCompare(b.name));
+  return [...orgs].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 
 /**
- * The org to show: the cookie's, when the user is a member of it, else their
- * personal org, else (never expected: every user has one) the first. Null
+ * The org to show: the cookie's, when the user is a member of it, else the
+ * one they joined first (firstJoined), as a call naming no org acts in. Null
  * only for a user in no org at all.
  */
 export function pickActiveOrg(orgs: readonly Org[], wanted: string | undefined): Org | null {
-  return orgs.find((o) => o.id === wanted) ?? orgs.find((o) => o.personal) ?? orgs[0] ?? null;
+  const first = firstJoined(orgs.map((o) => ({ orgId: o.id, joinedAt: o.joinedAt })));
+  return orgs.find((o) => o.id === wanted) ?? orgs.find((o) => o.id === first) ?? null;
 }
 
 /**
@@ -60,8 +59,8 @@ export function madeByOthers(memberships: readonly { orgId: string; createdBy: s
 /**
  * The org a call that names none acts in (the CLI, a personal API key): the
  * one the user joined first, so the same command always lands in the same
- * place. For everyone with a personal org that's it, made with their account.
- * Ties, by id. Null for no membership.
+ * place: for most, their own org, made when they first signed in. Ties, by
+ * id. Null for no membership.
  */
 export function firstJoined(memberships: readonly { orgId: string; joinedAt: string }[]): string | null {
   const [first] = [...memberships].sort(

@@ -74,7 +74,6 @@ export function AutomationEditor({
   repos,
   coverage,
   editable,
-  byConnector,
   onHarness,
   webhook,
 }: {
@@ -84,8 +83,6 @@ export function AutomationEditor({
   /** The app's coverage by `owner/name`; empty when the app isn't set up. */
   coverage: Record<string, AppCoverage>;
   editable: boolean;
-  /** A team org's: it runs as the org's connector, not whoever saves it. */
-  byConnector: boolean;
   /** The org's automations run on their runner's default model and coding
    *  agent, not Outrunner's models (Settings → Org). */
   onHarness: boolean;
@@ -246,25 +243,9 @@ export function AutomationEditor({
         <header className="space-y-1">
           <h1 className="text-lg font-semibold text-foreground">{creating ? "New automation" : draft.name}</h1>
           <p className="text-[13px] text-muted-foreground">
-            {byConnector
-              ? onHarness
-                ? `Runs as ${CONNECTOR_NAME}, the org's own runner, on the org's default model and coding agent, and posts as the Outrunner GitHub App.`
-                : `Runs as ${CONNECTOR_NAME}, the org's own runner on Outrunner's models (no member's account or allowance), and posts as the Outrunner GitHub App.`
-              : creating
-              ? onHarness
-                ? "Runs as you, on your default model and coding agent, and posts as the Outrunner GitHub App."
-                : "Runs as you, on Outrunner's models and your allowance of them, and posts as the Outrunner GitHub App."
-              : `${
-                  draft.runsAs === null
-                    ? `Runs as no one: whoever last changed it is no longer in the org${editable ? ". Save it to run it as you" : ""}`
-                    : draft.runsAs === ""
-                      ? "Runs as whoever last changed what it does"
-                      : `Runs as @${draft.runsAs}`
-                }, and posts as the Outrunner GitHub App.${
-                  editable
-                    ? ` Changing its prompt, triggers or repositories makes it run as you, on ${onHarness ? "your default model and coding agent" : "your allowance of Outrunner's models"}.`
-                    : ""
-                }`}
+            {onHarness
+              ? `Runs as ${CONNECTOR_NAME}, the org's own runner, on the org's default model and coding agent, and posts as the Outrunner GitHub App.`
+              : `Runs as ${CONNECTOR_NAME}, the org's own runner on Outrunner's models (no member's account or allowance), and posts as the Outrunner GitHub App.`}
           </p>
         </header>
 

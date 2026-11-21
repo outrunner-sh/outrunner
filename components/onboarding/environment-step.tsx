@@ -48,7 +48,7 @@ export function EnvironmentStep({
         <h1 className="text-xl font-semibold">Name your environment</h1>
         <p className="text-muted-foreground text-sm">
           What sessions start from: these repositories, and later their setup, variables, files, skills and MCP servers. It&apos;s{" "}
-          {env.org.personal ? "your" : `${env.org.name}'s`} default.
+          {env.org.name}&apos;s default.
         </p>
       </div>
       <label className="block space-y-1.5">

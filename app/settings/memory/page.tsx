@@ -47,7 +47,7 @@ async function MemorySection() {
           otherwise. Delete any note you don&apos;t want kept.
         </p>
       </div>
-      <MemorySettings org={{ id: org.id, name: org.name, personal: org.personal }} initial={memories} />
+      <MemorySettings org={{ id: org.id, name: org.name }} initial={memories} />
     </section>
   );
 }

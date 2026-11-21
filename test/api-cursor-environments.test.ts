@@ -51,7 +51,7 @@ test("environmentJson's install is the warm hook, start the start hook with its 
 });
 
 test("a project reads as Cursor's environment; in full with its environmentJson", () => {
-  assert.deepEqual(cursorEnvironmentJson(project, false, false), {
+  assert.deepEqual(cursorEnvironmentJson(project, false), {
     id: project.id,
     name: "Web + API",
     owner: "team",
@@ -59,8 +59,8 @@ test("a project reads as Cursor's environment; in full with its environmentJson"
     createdAt: "t0",
     updatedAt: "t3",
   });
-  const full = cursorEnvironmentJson(project, true, true);
-  assert.equal(full.owner, "personal");
+  const full = cursorEnvironmentJson(project, true);
+  assert.equal(full.owner, "team");
   assert.equal(full.environmentJson, '{"install":"pnpm install"}');
   assert.equal(full.versionId, "gen-4");
 });

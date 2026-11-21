@@ -4,25 +4,19 @@
 \set QUIET on
 set client_min_messages to notice;
 
--- A personal org for a user, as sign-up made one before
--- 20261120130000_own_org_on_sign_in.sql: the users here stand for those from
--- before it.
-create function pg_temp.personal_org_as_before(member uuid) returns uuid language plpgsql as $$
-declare org uuid;
-begin
-  insert into organizations (name, personal_owner_id, created_by) values ('Personal', member, member) returning id into org;
-  insert into organization_members (org_id, user_id, role) values (org, member, 'admin');
-  return org;
-end $$;
+-- A user's own org: the first they made (lib/db/orgs.ts ownOrgId), which the
+-- app makes them when they first sign in (create_own_org).
+create function pg_temp.own_org(member uuid) returns uuid language sql stable as $$
+  select id from public.organizations where created_by = member order by created_at, id limit 1
+$$;
 
 insert into auth.users (id, email)
 values ('11111111-1111-1111-1111-111111111111', 'owner@example.com'),
        ('22222222-2222-2222-2222-222222222222', 'other@example.com');
 
--- Signing up makes no org any more (20261120130000_own_org_on_sign_in.sql):
--- these two are users from before that, each with the personal org sign-up
--- made them then.
-select pg_temp.personal_org_as_before(id) from auth.users;
+-- Signing up makes no org (20261120130000_own_org_on_sign_in.sql): their
+-- first sign-in makes each their own, as the app does.
+select create_own_org('Own', id) from auth.users;
 
 insert into projects (owner_id, github_repo_id, full_name, owner, name)
 values ('11111111-1111-1111-1111-111111111111', 42,
@@ -447,8 +441,8 @@ reset role;
 do $$
 declare one uuid; two uuid;
 begin
-  select id into one from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111';
-  select id into two from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222';
+  one := pg_temp.own_org('11111111-1111-1111-1111-111111111111');
+  two := pg_temp.own_org('22222222-2222-2222-2222-222222222222');
   insert into billing_customers (org_id, user_id, stripe_customer_id) values (one, '11111111-1111-1111-1111-111111111111', 'cus_1');
   begin
     insert into billing_customers (org_id, user_id, stripe_customer_id) values (two, '22222222-2222-2222-2222-222222222222', 'cus_1');
@@ -884,8 +878,8 @@ end $$;
 reset role;
 
 -- 23. Orgs: signing up makes no org (the app makes a new user's own); every
--- user from before has a personal org they're admin of, and their projects,
--- sessions and boxes are in it.
+-- user has their own org they're admin of, and their projects, sessions and
+-- boxes are in it. No org is anyone's personal one.
 insert into auth.users (id, email)
 values ('33333333-3333-3333-3333-333333333333', 'third@example.com');
 
@@ -897,7 +891,7 @@ begin
   raise notice 'ok: signing up makes no org';
 end $$;
 
-select pg_temp.personal_org_as_before('33333333-3333-3333-3333-333333333333');
+select create_own_org('Own', '33333333-3333-3333-3333-333333333333');
 
 do $$
 declare n integer;
@@ -906,16 +900,18 @@ begin
   where not exists (
     select 1 from organizations o
     join organization_members m on m.org_id = o.id and m.user_id = u.id and m.role = 'admin'
-    where o.personal_owner_id = u.id
+    where o.id = pg_temp.own_org(u.id)
   );
   if n <> 0 then
-    raise exception 'FAIL: % users have no personal org they are admin of', n;
+    raise exception 'FAIL: % users have no own org they are admin of', n;
+  end if;
+  if exists (select 1 from organizations where personal_owner_id is not null) then
+    raise exception 'FAIL: an org is someone''s personal org';
   end if;
   select count(*) into n from projects p
-  join organizations o on o.id = p.org_id
-  where o.personal_owner_id is distinct from p.owner_id;
+  where p.org_id is distinct from pg_temp.own_org(p.owner_id);
   if n <> 0 then
-    raise exception 'FAIL: % projects are not in their owner''s personal org', n;
+    raise exception 'FAIL: % projects made with no org are not in their owner''s own org', n;
   end if;
   select count(*) into n from workspaces w join projects p on p.id = w.project_id
   where w.org_id <> p.org_id;
@@ -932,7 +928,7 @@ begin
   select '11111111-1111-1111-1111-111111111111', p.id, 'org-forged', o.id
   from projects p, organizations o
   where p.owner_id = '11111111-1111-1111-1111-111111111111'
-    and o.personal_owner_id = '22222222-2222-2222-2222-222222222222'
+    and o.id = pg_temp.own_org('22222222-2222-2222-2222-222222222222')
   limit 1;
   if exists (
     select 1 from workspaces w join projects p on p.id = w.project_id
@@ -946,12 +942,12 @@ begin
      or has_table_privilege('anon', 'organizations', 'select') then
     raise exception 'FAIL: users may write orgs or memberships, or anon may read them';
   end if;
-  raise notice 'ok: every user has a personal org holding their projects, sessions and boxes';
+  raise notice 'ok: every user has their own org holding their projects, sessions and boxes';
 end $$;
 
 -- 24. One project per repository per org: the same repository in two orgs is
 -- two projects, and an upsert keyed on (org, repo) given no org finds its
--- owner's personal org.
+-- owner's own org.
 do $$
 declare n integer;
 begin
@@ -1105,9 +1101,7 @@ begin
     null;
   end;
   begin
-    update projects set org_id = (
-      select id from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111'
-    ) where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+    update projects set org_id = pg_temp.own_org('11111111-1111-1111-1111-111111111111') where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
     raise exception 'FAIL: a project moved to another org';
   exception when check_violation then
     null;
@@ -1124,8 +1118,8 @@ begin
   raise notice 'ok: sessions and boxes stay with org members, and projects stay in their org';
 end $$;
 
--- 27. Team orgs: a user may have the same repository in their personal org
--- and a team org, makes one Free org at most, and no one but the server
+-- 27. Orgs: a user may have the same repository in their own org and
+-- another, makes one Free org at most, and no one but the server
 -- reads or writes the domains orgs claimed.
 do $$
 begin
@@ -1144,7 +1138,7 @@ begin
   values ('example.com', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111');
   begin
     insert into organization_domains (domain, org_id)
-    values ('example.com', (select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'));
+    values ('example.com', pg_temp.own_org('22222222-2222-2222-2222-222222222222'));
     raise exception 'FAIL: two orgs claimed one domain';
   exception when unique_violation then
     null;
@@ -1159,7 +1153,7 @@ begin
      or has_table_privilege('anon', 'organization_domains', 'select') then
     raise exception 'FAIL: users may read the domains orgs claimed';
   end if;
-  raise notice 'ok: a repository in a personal and a team org, one Free org per creator, one org per domain';
+  raise notice 'ok: a repository in two orgs, one Free org per creator, one org per domain';
 end $$;
 
 -- 28. A warm pool per member: two members of an org each keep a pooled box
@@ -1200,18 +1194,19 @@ reset role;
 do $$
 declare org uuid;
 begin
-  if has_function_privilege('authenticated', 'create_team_org(text, uuid, text)', 'execute')
-     or has_function_privilege('anon', 'create_team_org(text, uuid, text)', 'execute') then
+  if has_function_privilege('authenticated', 'create_team_org(text, uuid, text, boolean)', 'execute')
+     or has_function_privilege('anon', 'create_team_org(text, uuid, text, boolean)', 'execute') then
     raise exception 'FAIL: a user may make team orgs directly';
   end if;
-  org := create_team_org('Third team', '33333333-3333-3333-3333-333333333333', 'third.example');
+  -- User 3 has their own org: another takes the server's word they may.
+  org := create_team_org('Third team', '33333333-3333-3333-3333-333333333333', 'third.example', true);
   if not exists (select 1 from organization_members
                  where org_id = org and user_id = '33333333-3333-3333-3333-333333333333' and role = 'admin')
      or not exists (select 1 from organization_domains where domain = 'third.example' and org_id = org) then
     raise exception 'FAIL: a team org was made without its admin or its domain';
   end if;
   begin
-    perform create_team_org('Fourth team', '22222222-2222-2222-2222-222222222222', 'third.example');
+    perform create_team_org('Fourth team', '22222222-2222-2222-2222-222222222222', 'third.example', true);
     raise exception 'FAIL: a second org claimed a domain';
   exception when unique_violation then
     null;
@@ -1302,7 +1297,7 @@ begin
   raise notice 'ok: invites and requests let a member in once, and only the server reaches them';
 end $$;
 
--- 31. Removal: never the last admin, never out of a personal org; a removed
+-- 31. Removal: never the last admin, whosever own org it is; a removed
 -- member is recorded with the time, and coming back clears it.
 do $$
 declare team uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -1321,11 +1316,11 @@ begin
   end;
   begin
     perform remove_org_member(
-      (select id from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111'),
+      pg_temp.own_org('11111111-1111-1111-1111-111111111111'),
       '11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111');
-    raise exception 'FAIL: someone was taken out of a personal org';
+    raise exception 'FAIL: the last admin left their own org';
   exception when raise_exception then
-    if sqlerrm <> 'personal_org' then raise; end if;
+    if sqlerrm <> 'last_admin' then raise; end if;
   end;
 
   -- With a second admin, the first may go.
@@ -1349,7 +1344,7 @@ begin
   if exists (select 1 from organization_removals where org_id = team and user_id = '22222222-2222-2222-2222-222222222222') then
     raise exception 'FAIL: coming back left the removal, and its clock, running';
   end if;
-  raise notice 'ok: an org keeps an admin, a personal org its owner, and a removal is recorded until they return';
+  raise notice 'ok: an org keeps an admin, and a removal is recorded until they return';
 end $$;
 
 -- 32. A project (environments) is its org's: one default per repository,
@@ -1582,7 +1577,7 @@ begin
 
   perform set_member_roles(team, '22222222-2222-2222-2222-222222222222', array[builders]);
   insert into organization_roles (org_id, name)
-  values ((select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'), 'Elsewhere')
+  values (pg_temp.own_org('22222222-2222-2222-2222-222222222222'), 'Elsewhere')
   returning id into other_role;
   begin
     perform set_member_roles(team, '22222222-2222-2222-2222-222222222222', array[other_role]);
@@ -1614,7 +1609,7 @@ end $$;
 -- 36. GitHub installation metadata and per-org links are server-only.
 -- One installation may be linked to multiple orgs, once per org.
 do $$
-declare personal uuid := (select id from organizations where personal_owner_id = '33333333-3333-3333-3333-333333333333');
+declare own uuid := pg_temp.own_org('33333333-3333-3333-3333-333333333333');
 begin
   if has_table_privilege('authenticated', 'github_installations', 'select')
      or has_table_privilege('anon', 'github_installations', 'select')
@@ -1625,9 +1620,9 @@ begin
   insert into github_installations (installation_id, account_login, account_type, repository_selection)
   values (12345, 'third', 'User', 'all');
   insert into org_github_installations (org_id, installation_id)
-  values (personal, 12345), ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 12345);
+  values (own, 12345), ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 12345);
   begin
-    insert into org_github_installations (org_id, installation_id) values (personal, 12345);
+    insert into org_github_installations (org_id, installation_id) values (own, 12345);
     raise exception 'FAIL: duplicate installation link for one org';
   exception when unique_violation then null;
   end;
@@ -1653,9 +1648,9 @@ end $$;
 
 -- 38. Disconnecting one org leaves the installation and other orgs connected.
 do $$
-declare personal uuid := (select id from organizations where personal_owner_id = '33333333-3333-3333-3333-333333333333');
+declare own uuid := pg_temp.own_org('33333333-3333-3333-3333-333333333333');
 begin
-  delete from org_github_installations where installation_id = 12345 and org_id = personal;
+  delete from org_github_installations where installation_id = 12345 and org_id = own;
   if not exists (select 1 from org_github_installation_details
                  where installation_id = 12345 and org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') then
     raise exception 'FAIL: disconnect removed another org''s access';
@@ -1733,31 +1728,26 @@ begin
   raise notice 'ok: a claim of a stopped box answers once';
 end $$;
 
--- 42. A team org keeps provider keys for its members; a personal org has none
--- of its own, and the keys go with the org.
+-- 42. An org keeps provider keys for its members, a user's own org as any,
+-- and the keys go with the org.
 do $$
-declare personal uuid;
+declare own uuid := pg_temp.own_org('11111111-1111-1111-1111-111111111111');
 begin
   insert into org_provider_keys (org_id, provider, key_ciphertext, key_hint)
   values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'openrouter', 'v1.sealed', 'abcd');
-  select id into personal from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111';
-  begin
-    insert into org_provider_keys (org_id, provider, key_ciphertext) values (personal, 'openrouter', 'v1.sealed');
-    raise exception 'FAIL: a personal org kept a key of its own';
-  exception when check_violation then
-    null;
-  end;
+  insert into org_provider_keys (org_id, provider, key_ciphertext) values (own, 'openrouter', 'v1.sealed');
+  delete from org_provider_keys where org_id = own;
   if has_table_privilege('authenticated', 'org_provider_keys', 'select') then
     raise exception 'FAIL: members can read the org''s keys directly';
   end if;
   delete from org_provider_keys where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-  raise notice 'ok: a team org keeps provider keys, a personal org none';
+  raise notice 'ok: an org keeps provider keys, a user''s own org too';
 end $$;
 
--- 43. A team org keeps defaults for its members; a personal org none of its
--- own. A user's box size is theirs only once they chose it.
+-- 43. An org keeps defaults for its members, a user's own org as any. A
+-- user's box size is theirs only once they chose it.
 do $$
-declare personal uuid;
+declare own uuid := pg_temp.own_org('11111111-1111-1111-1111-111111111111');
 begin
   insert into organization_settings (org_id, default_model, box_size)
   values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '{"provider":"outrunner","id":"glm"}', 'medium');
@@ -1767,19 +1757,15 @@ begin
   exception when check_violation then
     null;
   end;
-  select id into personal from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111';
-  begin
-    insert into organization_settings (org_id, box_size) values (personal, 'small');
-    raise exception 'FAIL: a personal org kept defaults of its own';
-  exception when check_violation then
-    null;
-  end;
+  insert into organization_settings (org_id, box_size) values (own, 'small')
+  on conflict (org_id) do update set box_size = excluded.box_size;
+  delete from organization_settings where org_id = own;
   insert into user_credentials (user_id) values ('11111111-1111-1111-1111-111111111111') on conflict (user_id) do nothing;
   if (select box_size_chosen from user_credentials where user_id = '11111111-1111-1111-1111-111111111111') then
     raise exception 'FAIL: a box size no one chose counts as chosen';
   end if;
   delete from organization_settings where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-  raise notice 'ok: a team org keeps defaults, a personal org none';
+  raise notice 'ok: an org keeps defaults, a user''s own org too';
 end $$;
 
 -- 44. Billing is the org's: its cap counts every member's boxes, and only
@@ -1801,14 +1787,14 @@ begin
   end;
   perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', auth.uid(), 2);
   begin
-    perform check_org_box_cap((select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'), auth.uid(), 5);
+    perform check_org_box_cap(pg_temp.own_org('22222222-2222-2222-2222-222222222222'), auth.uid(), 5);
     raise exception 'FAIL: a user checked another org''s cap';
   exception when others then
     if SQLERRM <> 'org not found' then raise; end if;
   end;
   -- No cap is no reason to skip membership (20261112120000).
   begin
-    perform check_org_box_cap((select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'), auth.uid(), null);
+    perform check_org_box_cap(pg_temp.own_org('22222222-2222-2222-2222-222222222222'), auth.uid(), null);
     raise exception 'FAIL: an uncapped check skipped org membership';
   exception when others then
     if SQLERRM <> 'org not found' then raise; end if;

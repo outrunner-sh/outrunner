@@ -196,8 +196,4 @@ test("an agent reads and adds to its user's memory through its session's command
   const secret = await callSessionTool(scope, "remember", { body: "token ghp_abcdefghijklmnopqrstuvwxyz0123456789" }, deps);
   assert.equal(secret.status, 400);
   assert.equal((await callSessionTool(scope, "remember", { scope: "everyone", body: "x" }, deps)).status, 400);
-  // In a personal org, --org is the user's own.
-  const personal = { ...deps, learnings: { ...deps.learnings, personalOrg: async () => true } };
-  await callSessionTool(scope, "remember", { scope: "org", body: "Mine after all." }, personal);
-  assert.deepEqual([s.rows.at(-1)?.scope, s.rows.at(-1)?.userId, s.rows.at(-1)?.orgId], ["personal", "u-ada", null]);
 });

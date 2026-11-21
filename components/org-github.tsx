@@ -264,7 +264,7 @@ export function OrgGitHubSettings({
                             <li key={s.orgId} className="flex items-center gap-3 px-2.5 py-1.5">
                               <div className="min-w-0 flex-1">
                                 <p className="truncate text-xs text-foreground">
-                                  {s.personal ? `${s.orgName} (personal org)` : s.orgName}
+                                  {s.orgName}
                                 </p>
                                 <p className="truncate text-[11px] text-muted-foreground">
                                   {`Connected ${new Date(s.linkedAt).toLocaleDateString()}${s.linkedByEmail ? ` by ${s.linkedByEmail}` : ""}${

@@ -89,7 +89,7 @@ export function Automations({
     <PageLayout className="flex min-h-full flex-col gap-8">
       <PageHeader
         title="Automations"
-        description={`Recurring and event-driven workflows for ${org.personal ? "your environments" : org.name}.`}
+        description={`Recurring and event-driven workflows for ${org.name}.`}
         actions={admin ? (
           <Link href="/automations/new" className={cn(buttonVariants({ size: "sm" }), "shrink-0")}>
             <Plus /> Create automation
@@ -105,7 +105,6 @@ export function Automations({
         runs={runs}
         now={now}
         admin={admin}
-        byConnector={!org.personal}
       />
 
       {active ? (
@@ -144,7 +143,6 @@ export function Automations({
                 )}
                 now={now}
                 admin={admin}
-                byConnector={!org.personal}
               />
             )}
           </div>
@@ -311,15 +309,12 @@ function AutomationList({
   runs,
   now,
   admin,
-  byConnector,
 }: {
   orgId: string;
   automations: Automation[] | null;
   runs: AutomationRun[] | null;
   now: number;
   admin: boolean;
-  /** A team org's: they run as its connector, not a member. */
-  byConnector: boolean;
 }) {
   const router = useRouter();
   const [switching, setSwitching] = useState<string | null>(null);
@@ -370,7 +365,6 @@ function AutomationList({
         <ul className="max-h-[40vh] divide-y divide-border/60 overflow-auto rounded-xl border border-border/60 bg-card/20">
           {automations.map((automation) => {
             const last = lastRun.get(automation.id);
-            const runsAs = byConnector ? CONNECTOR_NAME : automation.runsAs?.login ? `@${automation.runsAs.login}` : null;
             return (
               <li key={automation.id} className="flex flex-wrap items-center gap-4 px-4 py-4">
                 <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
@@ -382,7 +376,7 @@ function AutomationList({
                   </Link>
                   <p className="truncate text-xs text-muted-foreground">
                     {automation.repos.length ? `${automation.repos[0].fullName}${automation.repos.length > 1 ? ` +${automation.repos.length - 1}` : ""}` : "No repositories"}
-                    {runsAs && ` · ${runsAs}`}
+                    {` · `}
                   </p>
                   <TriggerChips triggers={automation.triggers} schedules={automation.schedules} />
                 </div>
@@ -438,7 +432,6 @@ function RecentRuns({
   kinds,
   now,
   admin,
-  byConnector,
 }: {
   orgId: string;
   runs: AutomationRun[] | null;
@@ -448,7 +441,6 @@ function RecentRuns({
   kinds: TriggerKind[];
   now: number;
   admin: boolean;
-  byConnector: boolean;
 }) {
   const router = useRouter();
   const [filter, setFilter] = useState<RunFilter>("all");
@@ -597,14 +589,7 @@ function RecentRuns({
                         <div className="flex justify-end gap-3">
                           {/* A connector's session is its own, not a member's to open:
                               its admins read it, read-only. */}
-                          {run.workspaceId && !byConnector ? (
-                            <Link
-                              href={`/workspaces/${run.workspaceId}`}
-                              className="text-muted-foreground hover:text-foreground hover:underline"
-                            >
-                              Open session
-                            </Link>
-                          ) : run.workspaceId && admin ? (
+                          {run.workspaceId && admin ? (
                             <Link
                               href={`/automations/runs/${run.id}`}
                               className="text-muted-foreground hover:text-foreground hover:underline"

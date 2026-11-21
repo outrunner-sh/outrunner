@@ -62,7 +62,6 @@ async function setupApis(page: Page, options: { accounts?: string[]; available?:
           personalGithub: false,
           appInstallable: true,
           installNeedsGithub: false,
-          personalConnectable: true,
         },
       },
       "/api/github/repositories": {

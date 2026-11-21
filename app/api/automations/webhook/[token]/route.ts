@@ -108,12 +108,10 @@ export async function POST(request: Request, { params }: Params) {
     const event: WebhookEvent = { trigger: "webhook", receivedAt: new Date().toISOString(), payload };
     const recorded = await recordRuns(candidates.map((c) => recordOf(c, event, dedupeKey)));
     const base = optionalEnv("RUNTIME_BASE_URL") ?? url.origin;
-    // A team org's run sessions are its connector's: its admins read them on
-    // the run's page. A personal org's are its owner's own.
+    // An org's run sessions are its connector's: its admins read them on the
+    // run's page.
     const sessionUrl = (runId: string, workspaceId: string | null) =>
-      workspaceId
-        ? new URL(automation.personal ? `/workspaces/${workspaceId}` : `/automations/runs/${runId}`, base).toString()
-        : null;
+      workspaceId ? new URL(`/automations/runs/${runId}`, base).toString() : null;
     const repoOf = new Map(candidates.map((c) => [c.projectId, c.repoFullName]));
 
     if (recorded.size === 0) {

@@ -40,7 +40,7 @@ async function BillingSection({ searchParams }: { searchParams: SearchParams }) 
       </section>
     );
   }
-  const org = { name: active.name, personal: active.personal, admin: active.role === "admin" };
+  const org = { name: active.name, admin: active.role === "admin" };
 
   if (billingMode() !== "stripe") {
     return (

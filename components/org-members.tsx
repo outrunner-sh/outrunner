@@ -54,7 +54,7 @@ export function OrgMembersSettings({
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const admin = org.role === "admin" && !org.personal;
+  const admin = org.role === "admin";
 
   /** Run a change, then show the page as it now is. Whether it saved. */
   const change = async (key: string, url: string, method: string, body?: unknown, after?: () => void) => {
@@ -72,17 +72,6 @@ export function OrgMembersSettings({
       setBusy(null);
     }
   };
-
-  if (org.personal) {
-    return (
-      <section className="space-y-6">
-        <PageHeader title={"Members"} />
-        <p className="max-w-prose text-sm text-muted-foreground">
-          Your personal org is just you. Make a team org from the org menu at the top of the sidebar to invite others.
-        </p>
-      </section>
-    );
-  }
 
   return (
     <section className="space-y-8">

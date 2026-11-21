@@ -18,9 +18,8 @@ export function AutomationRunSettings({ org, initial }: { org: Org; initial: Aut
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const admin = org.role === "admin";
-  // A team org's run as its connector, on the org's defaults; a personal
-  // org's as its owner, on theirs.
-  const own = org.personal ? "Your default model and coding agent" : "The org's default model and coding agent";
+  // An org's run as its connector, on the org's defaults.
+  const own = "The org's default model and coding agent";
 
   async function save(onHarness: boolean) {
     setSaving(true);
@@ -62,10 +61,10 @@ export function AutomationRunSettings({ org, initial }: { org: Org; initial: Aut
       <p className="max-w-prose text-xs text-muted-foreground">
         {own} is Claude Code or Codex on its own sign-in or key, as a new session starts on (
         <Link
-          href={org.personal ? "/settings/preferences" : "/settings/org/defaults"}
+          href="/settings/org/defaults"
           className="text-foreground underline underline-offset-2"
         >
-          {org.personal ? "Preferences" : "Defaults"}
+          Defaults
         </Link>
         ). A run that can&apos;t start on it, say when its sign-in has expired, runs on Outrunner&apos;s models instead
         and says so on the run.

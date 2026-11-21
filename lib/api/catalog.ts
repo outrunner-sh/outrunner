@@ -41,7 +41,7 @@ export async function meApi(context: ApiContext): Promise<Response> {
   const [first, ...rest] = owner.name.trim().split(/\s+/);
   return Response.json({
     user: { id: owner.id, login: owner.githubLogin || null, name: owner.name, email: owner.email },
-    org: org ? { id: org.id, name: org.name, personal: org.personal, role: caller.role } : null,
+    org: org ? { id: org.id, name: org.name, role: caller.role } : null,
     credential: { kind: caller.kind, id: caller.keyId ?? caller.cliTokenId },
     // As Cursor's GET /v1/me says it, for scripts moved from it.
     ...(key && { apiKeyName: key.name, createdAt: key.createdAt }),
@@ -99,12 +99,12 @@ export async function listEnvironmentsApi(context: ApiContext): Promise<Response
   const environments: (Environment | null)[] = await Promise.all((data ?? []).map((row) => getEnvironment(context.caller.userId, row.id)));
   // Cursor's filters: a name's part, its repositories (each to match), and
   // whether it's one someone made (`named`) rather than a repository's own.
-  const personal = (await getOrg(context.caller.orgId))?.personal ?? false;
   const query = params.get("query")?.toLowerCase();
   const repos = params.getAll("repo").map((r) => (repoFullName(r) ?? r).toLowerCase());
   const kept = environments.flatMap((e): Environment[] => {
     if (!e) return [];
-    if (owner && (owner === "personal") !== personal) return [];
+    // Every org is a team's (Cursor's `owner: team`): none is personal.
+    if (owner === "personal") return [];
     if (query && !e.name.toLowerCase().includes(query)) return [];
     if (named !== null && (named === "true") === Boolean(e.defaultForProjectId)) return [];
     if (repos.some((r) => !e.repos.some((repo) => repo.fullName.toLowerCase() === r))) return [];
@@ -115,7 +115,7 @@ export async function listEnvironmentsApi(context: ApiContext): Promise<Response
     ...page,
     data: page.data.map(environmentJson),
     // As Cursor's list answers: each in its words, and the next page's cursor.
-    ...cursorPage(page.data.map((e) => cursorEnvironmentJson(e, personal, false)), page),
+    ...cursorPage(page.data.map((e) => cursorEnvironmentJson(e, false)), page),
   });
 }
 

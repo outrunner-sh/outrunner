@@ -4,31 +4,21 @@ import { Check } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { GitHubConnectLink } from "@/components/github-connect-link";
 import { GitLabConnectionCard, type GitLabConnectionView } from "@/components/gitlab-connection-card";
 import { DashedPanel } from "@/components/onboarding/dashed";
 import { Button } from "@/components/ui/button";
 import { LoadingButton } from "@/components/ui/loading-button";
 import type { GitHubAccess, OnboardingEnv } from "@/lib/onboarding/types";
 
-/** Connecting the user's own GitHub for their repositories (Settings →
- *  Connections → GitHub), coming back here. */
-const OWN_CONNECT_HREF = "/api/github/user/connect?next=/onboarding";
 /** Installing the App: GitHub, then back here. A plain link, not a fetch. */
 const INSTALL_HREF = "/api/github/app/install?next=/onboarding";
-
-/** Where the org's repositories can come from, as things are now. */
-function reachable(access: GitHubAccess, org: OnboardingEnv["org"]): "app" | "own" | null {
-  if (access.accounts.length > 0) return "app";
-  return org.personal && access.personalGithub ? "own" : null;
-}
 
 /**
  * Step 2: where the org's repositories come from. The Outrunner GitHub App,
  * installed on its GitHub accounts (or one installed there already, added
- * to this org with a click, as Settings → Org → GitHub offers), or, for a
- * personal org, the user's own GitHub; GitLab instead, by its token. Done
- * once one of those answers; the next step picks the repositories.
+ * to this org with a click, as Settings → Org → GitHub offers); GitLab
+ * instead, by its token. Done once one of those answers; the next step picks
+ * the repositories.
  */
 export function GitHubStep({ env, onDone }: { env: OnboardingEnv; onDone: () => void }) {
   // undefined while read; null when it couldn't be.
@@ -76,15 +66,15 @@ export function GitHubStep({ env, onDone }: { env: OnboardingEnv; onDone: () => 
     }
   }
 
-  const source = access ? reachable(access, env.org) : null;
-  const ready = source !== null || Boolean(gitlab);
+  const connected = Boolean(access && access.accounts.length > 0);
+  const ready = connected || Boolean(gitlab);
 
   return (
     <section className="space-y-6">
       <div className="space-y-1">
         <h1 className="text-xl font-semibold">Connect GitHub</h1>
         <p className="text-muted-foreground text-sm">
-          Where {env.org.personal ? "your" : `${env.org.name}'s`} repositories come from. Sessions clone, push and open pull requests
+          Where {env.org.name}&apos;s repositories come from. Sessions clone, push and open pull requests
           through it.
         </p>
       </div>
@@ -98,15 +88,15 @@ export function GitHubStep({ env, onDone }: { env: OnboardingEnv; onDone: () => 
             Try again
           </button>
         </p>
-      ) : source ? (
+      ) : connected ? (
         <DashedPanel className="flex items-start gap-3 px-5 py-4 text-sm">
           <Check className="mt-0.5 size-4 shrink-0 text-emerald-500" aria-hidden />
           <div className="min-w-0 space-y-0.5">
             <p className="text-foreground font-medium">GitHub is connected</p>
             <p className="text-muted-foreground">
-              {source === "app" ? `Outrunner's GitHub App on ${access.accounts.join(", ")}.` : "Your own GitHub account."}
+              Outrunner&apos;s GitHub App on {access.accounts.join(", ")}.
             </p>
-            {source === "app" && access.admin && access.appInstallable && (
+            {access.admin && access.appInstallable && (
               <a href={INSTALL_HREF} className="text-muted-foreground hover:text-foreground text-xs underline underline-offset-4">
                 Install it on another account
               </a>
@@ -130,7 +120,7 @@ export function GitHubStep({ env, onDone }: { env: OnboardingEnv; onDone: () => 
           <GitLabConnectionCard initial={gitlab} saveConnection={env.saveGitlabConnection} onChange={setGitlab} />
         )
       ) : (
-        !source && (
+        !connected && (
           <button type="button" onClick={() => setGitlabOpen(true)} className="text-muted-foreground hover:text-foreground text-sm underline underline-offset-4">
             Use GitLab instead
           </button>
@@ -144,10 +134,10 @@ export function GitHubStep({ env, onDone }: { env: OnboardingEnv; onDone: () => 
   );
 }
 
-/** The org has no way to GitHub yet: install the App (its admins), add an
- *  installation already on GitHub, or, in a personal org, connect the
- *  user's own GitHub. Where GitHub can't be asked who installed it
- *  (`installNeedsGithub`), installing takes the account linked first. */
+/** The org has no way to GitHub yet: install the App (its admins), or add
+ *  an installation already on GitHub. Where GitHub can't be asked who
+ *  installed it (`installNeedsGithub`), installing takes the account linked
+ *  first. */
 function ConnectGitHub({
   env,
   access,
@@ -159,9 +149,7 @@ function ConnectGitHub({
   adding: number | null;
   onAdd: (installationId: number) => void;
 }) {
-  const own = env.org.personal;
   const linkFirst = access.appInstallable && !access.personalGithub && access.installNeedsGithub;
-  const ownHref = access.personalConnectable ? OWN_CONNECT_HREF : "/settings/account";
   return (
     <DashedPanel className="space-y-4 px-5 py-5 text-sm">
       {access.available.length > 0 && (
@@ -200,16 +188,6 @@ function ConnectGitHub({
         ) : (
           !access.admin && <span className="text-muted-foreground">Ask an admin of {env.org.name} to install the GitHub App.</span>
         )}
-        {own &&
-          (ownHref === OWN_CONNECT_HREF ? (
-            <GitHubConnectLink next="/onboarding" className="text-muted-foreground hover:text-foreground underline-offset-4 hover:underline">
-              Or connect your own GitHub account
-            </GitHubConnectLink>
-          ) : (
-            <Link href={ownHref} className="text-muted-foreground hover:text-foreground underline-offset-4 hover:underline">
-              Or connect your own GitHub account
-            </Link>
-          ))}
       </div>
     </DashedPanel>
   );

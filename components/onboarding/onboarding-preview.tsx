@@ -80,7 +80,7 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
       : status;
   return {
     user: { id: "preview", name: "Mona", login: "octocat", avatarUrl: null },
-    org: { id: "preview-org", name: "Acme", personal: false },
+    org: { id: "preview-org", name: "Acme" },
     desktop: scenario.surface === "desktop",
     outrunnerModels: scenario.outrunnerModels === "yes",
     agentStatus: async () => (await wait(300), current()),
@@ -107,7 +107,6 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
         personalGithub: false,
         appInstallable: true,
         installNeedsGithub: false,
-        personalConnectable: true,
       };
     },
     addInstallation: async () => {

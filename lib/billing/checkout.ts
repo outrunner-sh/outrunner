@@ -48,8 +48,8 @@ export const BILLING_PATH = "/settings/billing";
 /**
  * The org's Stripe customer, made the first time. Two first checkouts at
  * once make one: they ask Stripe with the same idempotency key, and the
- * database keeps the first stored. A user's from before orgs is their
- * personal org's.
+ * database keeps the first stored. A user's from before orgs is their own
+ * org's.
  */
 export async function ensureCustomer(buyer: CheckoutBuyer, deps: CheckoutDeps): Promise<string> {
   const stored = await deps.customerIdFor(buyer.orgId);

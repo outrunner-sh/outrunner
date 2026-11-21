@@ -142,7 +142,7 @@ export function CreateOrgDialog({ open, onOpenChange }: { open: boolean; onOpenC
     >
       <DialogContent className="max-w-sm gap-5">
         <div className="space-y-2">
-          <DialogTitle className="text-[15px] font-medium leading-snug">New team org</DialogTitle>
+          <DialogTitle className="text-[15px] font-medium leading-snug">New organization</DialogTitle>
           <DialogDescription className="text-[13px] text-muted-foreground">
             You&apos;ll be its admin. It takes the domain of your primary GitHub email (unless it&apos;s a free one
             like gmail.com), so teammates from it find this org rather than making another.

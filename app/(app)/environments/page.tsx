@@ -81,7 +81,7 @@ async function ServerProjects() {
       access={{
         canConnect: allows(connectAccess, "write"),
         admin: org?.active.role === "admin",
-        orgName: org ? (org.active.personal ? "Personal" : org.active.name) : "",
+        orgName: org?.active.name ?? "",
       }}
       scope={org ? viewerScope(owner.id, org.active.id) : null}
     />

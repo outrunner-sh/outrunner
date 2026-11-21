@@ -18,7 +18,7 @@ function when(iso: string): string {
  * org) the org's, newest first, each with a button to delete it, and a
  * filter for a long list. There's no adding here: a note is an agent's.
  */
-export function MemorySettings({ org, initial }: { org: { id: string; name: string; personal: boolean }; initial: MemoryView[] }) {
+export function MemorySettings({ org, initial }: { org: { id: string; name: string }; initial: MemoryView[] }) {
   const [memories, setMemories] = useState(initial);
   const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState(false);
@@ -51,15 +51,13 @@ export function MemorySettings({ org, initial }: { org: { id: string; name: stri
       {error && <InlineMessage>{error}</InlineMessage>}
       {memories.length > 10 && <Input aria-label="Filter notes" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter notes" />}
       <NoteList title="Your memory" intro="Only your sessions see these, and every new one loads the newest." notes={own} busy={busy} onDelete={remove} />
-      {(!org.personal || memories.some((m) => m.scope === "org")) && (
-        <NoteList
-          title={`${org.name}'s memory`}
-          intro="Shared with everyone in the org: agents read these when they look, and no session loads them on its own. Its writer or an admin can delete a note."
-          notes={shared}
-          busy={busy}
-          onDelete={remove}
-        />
-      )}
+      <NoteList
+        title={`${org.name}'s memory`}
+        intro="Shared with everyone in the org: agents read these when they look, and no session loads them on its own. Its writer or an admin can delete a note."
+        notes={shared}
+        busy={busy}
+        onDelete={remove}
+      />
     </div>
   );
 }

@@ -15,9 +15,8 @@ async function connection(request: Request) {
     return Response.json(
       {
         user: owner.id,
-        orgs: context?.orgs.filter((o) => !o.personal) ?? [],
-        activeOrg:
-          context && !context.active.personal ? context.active.id : null,
+        orgs: context?.orgs ?? [],
+        activeOrg: context?.active.id ?? null,
       },
       { headers: { "Cache-Control": "no-store" } },
     );

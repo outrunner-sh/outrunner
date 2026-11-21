@@ -72,7 +72,7 @@ export function OrgJoinSettings({
             ), that organization&apos;s members on GitHub
           </>
         )}{" "}
-        find it under New team org and join as members, as GitHub confirms them. Someone who later leaves the GitHub
+        find it under New organization and join as members, as GitHub confirms them. Someone who later leaves the GitHub
         organization stays until an admin removes them on Members.
       </p>
       {error && <InlineMessage tone="error">{error}</InlineMessage>}

@@ -26,16 +26,14 @@ async function AuditSection() {
   const owner = await getOwnerSafe();
   if (!owner) redirect("/signin?next=/settings/org/audit");
   const org = (await getOrgContext().catch(() => undefined))?.active;
-  if (!org || org.personal || org.role !== "admin") {
+  if (!org || org.role !== "admin") {
     return (
       <section className="space-y-6">
         <PageHeader title={"Audit log"} />
         <p className="max-w-prose text-sm text-muted-foreground">
           {!org
             ? "Couldn't load your orgs. Reload the page to try again."
-            : org.personal
-              ? "Your personal org is just you. A team org's admins see every change made to it here."
-              : "Only the org's admins see its audit log."}
+            : "Only the org's admins see its audit log."}
         </p>
       </section>
     );

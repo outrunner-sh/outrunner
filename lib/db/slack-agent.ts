@@ -18,7 +18,6 @@ import {
 } from "@/lib/openrouter/keys";
 import { probeStatus } from "@/lib/supabase/probe";
 import { orgOutrunnerModelKey } from "@/lib/db/org-model-allowance";
-import { personalOwners } from "@/lib/db/orgs";
 import type { AgentSpec } from "@/lib/slack/agent";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { Json } from "@/lib/supabase/database.types";
@@ -331,9 +330,9 @@ export async function sessionSummary(
 /**
  * The OpenRouter key the Slack agent's calls for an org run on, so the org
  * pays for them: the one its members' cloud sessions run Outrunner's models
- * on, within the same allowance from its plan (one budget per org). A team
- * org's own key (lib/db/org-model-allowance.ts); a personal org's, its
- * owner's. The shared API key where the server has only that. A spent
+ * on, within the same allowance from its plan (one budget per org): the
+ * org's own key (lib/db/org-model-allowance.ts). The shared API key where
+ * the server has only that. A spent
  * allowance is refused (ModelKeyRefusedError), as for a session.
  */
 export async function orgModelKey(orgId: string): Promise<string> {
@@ -341,8 +340,7 @@ export async function orgModelKey(orgId: string): Promise<string> {
   const source = keySource();
   if (source === null) throw new OutrunnerModelsUnavailableError();
   if (source === "shared") return sharedApiKey() as string;
-  const owner = (await personalOwners([orgId])).get(orgId);
-  return owner ? outrunnerModelKey(owner) : orgOutrunnerModelKey(orgId);
+  return orgOutrunnerModelKey(orgId);
 }
 
 /** How long a watched channel's answer stands (a key, or a refusal that

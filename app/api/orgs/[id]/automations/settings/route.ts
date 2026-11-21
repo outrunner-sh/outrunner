@@ -11,7 +11,7 @@ type RouteContext = { params: Promise<{ id: string }> };
  * An org's settings for all its automations (Settings → Org; lib/db/
  * automation-settings.ts): whether they run on their runner's default model
  * and coding agent instead of Outrunner's models. GET for any member; PUT,
- * an admin's, for a personal org as for a team's.
+ * an admin's.
  */
 export async function GET(request: Request, context: RouteContext) {
   const { id } = await context.params;

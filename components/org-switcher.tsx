@@ -28,7 +28,7 @@ import { clearKeptTriage } from "@/lib/triage/kept-triage";
 /**
  * The org the sidebar lists, as its header: Outrunner's mark and the org's
  * name, opening onto where it's set up (settings, members) and the user's
- * other orgs to switch to, or a new team org. Not billing: a plan is the
+ * other orgs to switch to, or a new one. Not billing: a plan is the
  * account's, not an org's (Settings → Billing). Switching goes home, since
  * the session open may be in the org left behind.
  */
@@ -102,29 +102,23 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
               <Settings className="size-4" /> Organization settings
             </Link>
           </DropdownMenuItem>
-          {/* A personal org is the user alone. */}
-          {!active.personal && (
-            <DropdownMenuItem asChild className="gap-2">
-              <Link href="/settings/org/members">
-                <Users className="size-4" /> Members
-              </Link>
-            </DropdownMenuItem>
-          )}
+          <DropdownMenuItem asChild className="gap-2">
+            <Link href="/settings/org/members">
+              <Users className="size-4" /> Members
+            </Link>
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Switch organization</DropdownMenuLabel>
           {orgs.map((org) => (
             <DropdownMenuItem key={org.id} onSelect={() => void show(org)} className="gap-2">
               <span className="min-w-0 flex-1 truncate">{org.name}</span>
-              {/* Names are free text: which is the user's own, and where
-                  they're an admin, tells two alike apart. */}
-              {org.personal || org.role === "admin" ? (
-                <span className="text-xs text-muted-foreground">{org.personal ? "Personal" : "Admin"}</span>
-              ) : null}
+              {/* Names are free text: where they're an admin tells two alike apart. */}
+              {org.role === "admin" ? <span className="text-xs text-muted-foreground">Admin</span> : null}
               {org.id === active.id ? <Check className="size-3.5" /> : null}
             </DropdownMenuItem>
           ))}
           <DropdownMenuItem onSelect={() => setCreating(true)} className="gap-2 text-muted-foreground">
-            <Plus className="size-4" /> New team org
+            <Plus className="size-4" /> New organization
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

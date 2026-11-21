@@ -16,7 +16,7 @@ export function ReposStep({ env, onDone }: { env: OnboardingEnv; onDone: (projec
       <div className="space-y-1">
         <h1 className="text-xl font-semibold">Pick your repositories</h1>
         <p className="text-muted-foreground text-sm">
-          The ones {env.org.personal ? "you" : env.org.name} will work on, up to {MAX_REPOS}. Sessions clone them on their own cloud
+          The ones {env.org.name} will work on, up to {MAX_REPOS}. Sessions clone them on their own cloud
           computer.
         </p>
       </div>

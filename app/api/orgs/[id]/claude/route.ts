@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { recordAudit } from "@/lib/audit/record";
-import { getOrg } from "@/lib/db/orgs";
 import { orgCaller } from "@/lib/orgs/routes";
 import { savingSettings } from "@/lib/http/settings-save";
 import { checkClaudeToken } from "@/lib/runtime/credentials/claude-token";
@@ -24,14 +23,6 @@ export async function PUT(request: Request, context: Context) {
   const { id } = await context.params;
   const caller = await orgCaller(request, id, { admin: true });
   if (caller instanceof Response) return caller;
-  if ((await getOrg(id))?.personal)
-    return NextResponse.json(
-      {
-        error:
-          "Connect your personal subscription under Personal → Coding agents.",
-      },
-      { status: 409 },
-    );
   const body = await request.json().catch(() => null);
   const checked = checkClaudeToken(body?.token);
   if ("error" in checked)

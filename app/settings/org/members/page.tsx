@@ -71,7 +71,7 @@ async function MembersSection() {
     );
   }
   const { active } = context;
-  const admin = active.role === "admin" && !active.personal;
+  const admin = active.role === "admin";
   const [listed, invites, requests, roles] = await Promise.all([
     listMembers(active.id),
     admin ? listOpenInvites(active.id) : Promise.resolve([]),

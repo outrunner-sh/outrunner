@@ -1,6 +1,6 @@
 /**
  * The reconciler's look at the cloud usage of everyone with a box running:
- * every org (personal or team), and each org's connector, which is on its own
+ * every org, and each org's connector, which is on its own
  * plan. Where usage stops the account (lib/billing/usage.ts: the trial's
  * credit or a fixed plan's included usage spent, or the admins' limit
  * reached), its running boxes pause, as the start gate
@@ -23,7 +23,7 @@ import { alertsDue } from "@/lib/billing/usage-controls";
 
 /** Whose usage: an org's (every member's boxes but its connector's), or an
  *  org's connector's, on its own plan. Only an org has admins' controls. */
-export type Account = { kind: "team" | "personal"; orgId: string } | { kind: "connector"; ownerId: string };
+export type Account = { kind: "org"; orgId: string } | { kind: "connector"; ownerId: string };
 
 export type RunningBox = { id: string; sandboxId: string; ownerId: string; workspaceId: string | null };
 

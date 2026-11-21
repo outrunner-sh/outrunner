@@ -40,7 +40,7 @@ export default async function OnboardingPage() {
   return (
     <OnboardingLive
       user={user}
-      org={{ id: org.id, name: org.personal ? "Personal" : org.name, personal: org.personal }}
+      org={{ id: org.id, name: org.name }}
       outrunnerModels={outrunnerModels}
       desktopReturn={desktopReturn}
     />

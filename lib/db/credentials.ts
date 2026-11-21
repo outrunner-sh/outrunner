@@ -22,7 +22,7 @@ import { AGENT_IDS, AGENTS, type AgentId, type AuthCredential, type AuthMethodId
 import type { AgentAuthStore } from "@/lib/agents/resolve";
 import { dueForRenewal } from "@/lib/billing/allowance-renewal";
 import { entitlingSubscriptions } from "@/lib/billing/billing-store";
-import { connectorPeriod, personalEntitlements } from "@/lib/billing/entitlements";
+import { connectorPeriod, ownKeyEntitlements } from "@/lib/billing/entitlements";
 import {
   type AllowanceState,
   type AllowanceStore,
@@ -40,7 +40,7 @@ import {
   orgOutrunnerModelKey,
   refreshOrgModelAllowance,
 } from "@/lib/db/org-model-allowance";
-import { getOrg, memberRole, personalOwners } from "@/lib/db/orgs";
+import { memberRole, ownOrgId } from "@/lib/db/orgs";
 import { isConnector } from "@/lib/automations/connector";
 import type { Allowance } from "@/lib/openrouter/allowance";
 import {
@@ -844,9 +844,10 @@ export function offersModels(menu: ModelMenu): boolean {
  */
 export async function modelKey(userId: string, holder: KeyHolder, orgId?: string): Promise<string> {
   if (holder === "outrunner") {
-    // A team org's cloud session runs them on the org's key, within its
-    // plan's allowance; anyone else's on their own.
-    return (await orgPaysModels(userId, orgId)) ? orgOutrunnerModelKey(orgId!) : outrunnerModelKey(userId);
+    // On the paying org's key, within its plan's allowance; a connector's
+    // on its own.
+    const paying = await orgPayingForModels(userId, orgId);
+    return paying ? orgOutrunnerModelKey(paying) : outrunnerModelKey(userId);
   }
   const key = (await getProviderKey(userId, holder)) ?? (await orgProviderKey(userId, orgId, holder));
   if (!key) throw new NoProviderKeyError(holder);
@@ -862,9 +863,10 @@ export async function modelKey(userId: string, holder: KeyHolder, orgId?: string
  */
 export async function outrunnerModelAllowance(userId: string, orgId?: string): Promise<Allowance | null> {
   if (keySource() !== "per-user") return null;
-  // In a team org, the org's (lib/db/org-model-allowance.ts).
-  if (await orgPaysModels(userId, orgId)) return orgModelAllowance(orgId!);
-  return (await refreshModelAllowance(userId)) ?? { usedUsd: 0, limitUsd: (await personalEntitlements(userId)).plan.models.usd };
+  // The paying org's (lib/db/org-model-allowance.ts).
+  const paying = await orgPayingForModels(userId, orgId);
+  if (paying) return orgModelAllowance(paying);
+  return (await refreshModelAllowance(userId)) ?? { usedUsd: 0, limitUsd: (await ownKeyEntitlements(userId)).plan.models.usd };
 }
 
 /**
@@ -918,34 +920,23 @@ export async function refreshModelAllowance(userId: string): Promise<RefreshedAl
   return refreshAllowance(store, {
     usage: keyUsage,
     setLimit: setKeyLimit,
-    // Their personal org's plan sets it, until the allowance is the org's.
-    entitlements: () => personalEntitlements(userId),
+    // A connector's own plan; Free for anyone else (their org pays).
+    entitlements: () => ownKeyEntitlements(userId),
   });
 }
 
 /**
- * Renew the model allowance of every paying user whose period has turned
- * over (lib/billing/allowance-renewal.ts), for sessions already running.
- * How many were renewed; a user's failure is logged and the rest go on.
+ * Renew the model allowance of every org's connector and every paying org
+ * whose period has turned over (lib/billing/allowance-renewal.ts), for
+ * sessions already running. How many were renewed; a failure is logged and
+ * the rest go on.
  */
 export async function renewDueModelAllowances(now = new Date()): Promise<number> {
   if (keySource() !== "per-user") return 0;
+  // Every org's plan sets its own key (orgPayingForModels); a user's own key
+  // is only an org's connector's.
   const subscriptions = await entitlingSubscriptions();
-  // A personal org's plan sets its owner's key; a team org's, its own.
-  const owners = await personalOwners([...new Set(subscriptions.map((s) => s.orgId))]);
-  const holderOf = (subscription: { orgId: string }) => owners.get(subscription.orgId) ?? null;
-  const userIds = [...new Set(owners.values())];
-  const stored = new Map<string, string | null>();
-  for (let i = 0; i < userIds.length; i += 200) {
-    const { data, error } = await createSupabaseAdminClient()
-      .from("user_credentials")
-      .select("user_id, neev_allowance_period")
-      .in("user_id", userIds.slice(i, i + 200))
-      .not("neev_key_hash", "is", null);
-    if (error) throw error;
-    for (const row of data) stored.set(row.user_id, row.neev_allowance_period);
-  }
-  // And each org's connector (lib/automations/connector.ts), whose allowance
+  // Each org's connector (lib/automations/connector.ts), whose allowance
   // turns over with the calendar month rather than a subscription.
   const { data: connectors, error: connectorsError } = await createSupabaseAdminClient()
     .from("org_connectors")
@@ -964,7 +955,7 @@ export async function renewDueModelAllowances(now = new Date()): Promise<number>
     for (const row of data) if (row.neev_allowance_period !== month) connectorDue.push(row.user_id);
   }
   let renewed = 0;
-  for (const userId of [...dueForRenewal(subscriptions, holderOf, stored, now), ...connectorDue]) {
+  for (const userId of connectorDue) {
     try {
       await refreshModelAllowance(userId);
       renewed += 1;
@@ -972,10 +963,9 @@ export async function renewDueModelAllowances(now = new Date()): Promise<number>
       console.error(`Could not renew the model allowance of user ${userId}`, error);
     }
   }
-  // Team orgs with a key of their own (lib/db/org-model-allowance.ts).
-  const teams = [...new Set(subscriptions.map((s) => s.orgId))].filter((orgId) => !owners.has(orgId));
-  const orgStored = await orgAllowancePeriods(teams);
-  for (const orgId of dueForRenewal(subscriptions, (s) => (owners.has(s.orgId) ? null : s.orgId), orgStored, now)) {
+  // Every paying org's key (lib/db/org-model-allowance.ts).
+  const orgStored = await orgAllowancePeriods([...new Set(subscriptions.map((s) => s.orgId))]);
+  for (const orgId of dueForRenewal(subscriptions, (s) => s.orgId, orgStored, now)) {
     try {
       await refreshOrgModelAllowance(orgId);
       renewed += 1;
@@ -1045,7 +1035,7 @@ export async function outrunnerModelKey(userId: string): Promise<string> {
       create: async () =>
         createUserKey(
           `outrunner user ${userId}`,
-          (nextAllowance(await personalEntitlements(userId), null, 0) as AllowanceState).limitUsd,
+          (nextAllowance(await ownKeyEntitlements(userId), null, 0) as AllowanceState).limitUsd,
         ),
       disable: disableUserKey,
       log: (message, error) => console.error(`${message} (user ${userId})`, error),
@@ -1065,16 +1055,14 @@ export async function outrunnerModelKey(userId: string): Promise<string> {
 }
 
 /**
- * Whether `orgId` pays for `userId`'s use of Outrunner's models: a team org
- * they're a member of (billing is the org's). Not a personal org, whose
- * plan is its owner's key's already, nor its connector, on its own; nor a
- * session on a Mac, which names no org.
+ * The org that pays for `userId`'s use of Outrunner's models (billing is the
+ * org's): the session's org, they being a member; for a session on their Mac,
+ * which names none, their own org (ownOrgId). Null for an org's connector,
+ * on its own plan, and for a user with no such org: their own key, Free.
  */
-async function orgPaysModels(userId: string, orgId: string | undefined): Promise<boolean> {
-  if (!orgId) return false;
-  // The org first: most are personal, where the rest needn't be asked.
-  const org = await getOrg(orgId);
-  if (!org || org.personal) return false;
-  const [role, connector] = await Promise.all([memberRole(orgId, userId), isConnector(userId)]);
-  return Boolean(role && !connector);
+async function orgPayingForModels(userId: string, orgId: string | undefined): Promise<string | null> {
+  if (await isConnector(userId)) return null;
+  const paying = orgId ?? (await ownOrgId(userId));
+  if (!paying) return null;
+  return (await memberRole(paying, userId)) ? paying : null;
 }

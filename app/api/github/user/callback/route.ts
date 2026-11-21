@@ -31,7 +31,7 @@ import { appUrl } from "@/lib/orgs/notify";
  *
  * Then the old sign-in token, if they have one, is removed (and revoked on
  * GitHub where that can be done), and the App's installation on their own
- * account is linked to their personal org, or, with none yet, they're sent to
+ * account is linked to their own org (ownOrgId), or, with none yet, they're sent to
  * install it, which is where GitHub has them pick All or Selected
  * repositories.
  */

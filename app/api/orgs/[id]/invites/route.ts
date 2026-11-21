@@ -7,7 +7,7 @@ import { emailInvite, inviteLink } from "@/lib/orgs/notify";
 import { changingMembers, inviteEmail, orgCaller, postedRole } from "@/lib/orgs/routes";
 
 /**
- * Invite someone to a team org, `{ email, role }`: its admins may. Inviting
+ * Invite someone to an org, `{ email, role }`: its admins may. Inviting
  * the same email again replaces the open invite. Answers the link, shown to
  * the admin once (only its hash is kept), and whether it was emailed: without
  * an email sender (lib/email/send.ts) the admin shares it.
@@ -25,9 +25,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   return changingMembers("the org's invites", async () => {
     const org = await getOrg(id);
-    if (!org || org.personal) {
-      return NextResponse.json({ error: "Only a team org has members to invite." }, { status: 409 });
-    }
+    if (!org) return NextResponse.json({ error: "No such org." }, { status: 404 });
     const { token, invite } = await createInvite({ orgId: id, email, role, invitedBy: caller.owner.id });
     await recordAudit({
       orgId: id,

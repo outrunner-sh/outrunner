@@ -36,3 +36,26 @@ test("with email: no note, and Resend says it was emailed", async ({ page }) => 
   await expect(page.getByText("Emailed grace@acme.dev a new link. The old one no longer works.")).toBeVisible();
   await expect(page.getByLabel("Invite link")).toHaveCount(0);
 });
+
+test("a new user's own org takes invites from the start: no second org to make first", async ({ page }, info) => {
+  let invited: unknown = null;
+  await page.route("**/api/**", (route) => route.fulfill({ json: { missions: [], notifications: [], standings: {}, ids: [], allowance: null } }));
+  await page.route("**/api/orgs/org-1/invites", (route) => {
+    invited = route.request().postDataJSON();
+    return route.fulfill({
+      status: 201,
+      json: {
+        invite: { id: "inv-new", email: "grace@acme.dev", role: "member", invitedBy: "u-ada", createdAt: "2026-11-20T00:00:00Z", expiresAt: "2026-11-27T00:00:00Z", expired: false },
+        link: "http://127.0.0.1:3100/invite/or_inv_new",
+        emailed: true,
+      },
+    });
+  });
+  await page.goto("/settings/org/members?view=members&state=fresh&email=1");
+  await expect(page.getByText("Ada Lovelace")).toBeVisible();
+  await expect(page.getByText(/personal org/i)).toHaveCount(0);
+  await page.getByLabel("Email to invite").fill("grace@acme.dev");
+  await page.getByRole("button", { name: "Invite", exact: true }).click();
+  await expect.poll(() => invited).toEqual(expect.objectContaining({ email: "grace@acme.dev" }));
+  if (info.project.name === "desktop") await page.screenshot({ path: ".context/own-org-members.png", fullPage: true });
+});

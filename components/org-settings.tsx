@@ -13,8 +13,8 @@ import { type Org, orgName } from "@/lib/orgs/active";
 import { requestJson } from "@/lib/http/request-json";
 
 /**
- * Settings → Org for the org the app is showing: what it is, your role, the
- * domain a team org claimed, and its name, which its admins may change. The
+ * Settings → Org for the org the app is showing: your role, the domain it
+ * claimed, and its name, which its admins may change. The
  * sidebar's switcher picks another org.
  */
 export function OrgGeneralSettings({ org, domain }: { org: Org; domain: string | null }) {
@@ -22,7 +22,7 @@ export function OrgGeneralSettings({ org, domain }: { org: Org; domain: string |
   const [name, setName] = useState(org.name);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const canRename = !org.personal && org.role === "admin";
+  const canRename = org.role === "admin";
   const next = orgName(name);
   const changed = next !== null && next !== org.name;
 
@@ -49,22 +49,11 @@ export function OrgGeneralSettings({ org, domain }: { org: Org; domain: string |
       <PageHeader title="General" />
 
       <Details>
-        <DetailRow term="Org">{org.personal ? "Personal: just you" : "Team"}</DetailRow>
         <DetailRow term="Your role">{org.role === "admin" ? "Admin" : "Member"}</DetailRow>
-        {org.personal ? null : (
-          <DetailRow term="Domain">
-            {domain ?? "None: made from a personal email, so it holds no domain"}
-          </DetailRow>
-        )}
+        <DetailRow term="Domain">{domain ?? "None"}</DetailRow>
       </Details>
 
-      {org.personal ? (
-        <p className="max-w-prose text-sm text-muted-foreground">
-          Your personal org holds your own environments and sessions. Make a team org from the org menu at the top of the
-          sidebar to work with others: everyone in it sees its environments, and each person&apos;s sessions stay their own.
-        </p>
-      ) : (
-        <div className="max-w-sm space-y-2">
+      <div className="max-w-sm space-y-2">
           <label htmlFor="org-name" className="text-[13px] text-muted-foreground">
             Name
           </label>
@@ -92,7 +81,6 @@ export function OrgGeneralSettings({ org, domain }: { org: Org; domain: string |
           </div>
           {canRename ? null : <p className="text-xs text-muted-foreground">Only its admins can rename it.</p>}
         </div>
-      )}
 
       {error ? <InlineMessage actions={[{ label: "Dismiss", onClick: () => setError(null) }]}>{error}</InlineMessage> : null}
     </section>

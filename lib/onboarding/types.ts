@@ -17,7 +17,7 @@ import type { GitLabConnectionStatus } from "@/lib/gitlab/client";
 export type OnboardingUser = { id: string; name: string; login: string; avatarUrl: string | null };
 
 /** The org being set up: the active one. Its environment is named after it. */
-export type OnboardingOrg = { id: string; name: string; personal: boolean };
+export type OnboardingOrg = { id: string; name: string };
 
 /** Whether each agent can run a cloud session on the user's own account. */
 export type AgentStatus = {
@@ -52,9 +52,8 @@ export type OnboardingStep = "agent" | "github" | "repos" | "environment";
 export type OnboardingProgress = { step: OnboardingStep; done: OnboardingStep[]; runOn: AgentPick };
 
 /** Where the org's repositories come from: the GitHub accounts its Outrunner
- *  GitHub App reaches, installations on GitHub the user could add to it (as
- *  Settings → Org → GitHub offers), or, in a personal org without the App,
- *  the user's own GitHub. */
+ *  GitHub App reaches, or installations on GitHub the user could add to it
+ *  (as Settings → Org → GitHub offers). */
 export type GitHubAccess = {
   /** The user administers the org: installing or adding the App is theirs. */
   admin: boolean;
@@ -62,17 +61,14 @@ export type GitHubAccess = {
   accounts: string[];
   /** Installations on GitHub the user may add to the org. */
   available: { id: number; accountLogin: string }[];
-  /** Connected their own GitHub (Settings → Connections): their own
-   *  repositories, in their personal org. */
+  /** Connected their own GitHub (Settings → Connections): the account
+   *  installing the App is linked to. */
   personalGithub: boolean;
   /** The App is set up on this server, so an admin can install it. */
   appInstallable: boolean;
   /** Installing it needs a GitHub account linked first: GitHub can't be
    *  asked who installed it here (lib/github/installer.ts). */
   installNeedsGithub: boolean;
-  /** Their own GitHub can be connected here, through the App's user
-   *  authorization (app/api/github/user/connect). */
-  personalConnectable: boolean;
 };
 
 export type OnboardingEnv = {
