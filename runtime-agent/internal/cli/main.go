@@ -22,8 +22,9 @@ Commands:
   (none)   Sign in if needed, then continue setting up in your browser
   login    Sign this terminal in to Outrunner
   codex-auth [--org <UUID>]  Connect a ChatGPT account through official Codex device login
-  claude   Connect your Claude subscription (runs claude setup-token),
-           signing in first if needed
+  claude [--label <name>]  Connect your Claude subscription (runs claude
+           setup-token), signing in first if needed. With --label, as another
+           of your Claude accounts, or replacing the one with that name
   logout   Sign this terminal out
   whoami   Show who this terminal is signed in as
   sandbox  Connect your Google Cloud project: outrunner sandbox connect gcp
@@ -61,6 +62,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	// Claude to an account the page isn't watching.
 	account := flags.String("account", "", "the Outrunner account id to sign in as")
 	version := flags.Bool("version", false, "print the version")
+	// `outrunner claude --label work`: which of the user's Claude accounts.
+	label := flags.String("label", "", "with claude: the name of the Claude account to connect or replace")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -142,7 +145,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		if code != 0 {
 			return code
 		}
-		if code := connectClaude(ctx, url, config, in, stdout, stderr); code != 0 {
+		if code := connectClaude(ctx, url, config, *label, in, stdout, stderr); code != 0 {
 			return code
 		}
 		fmt.Fprintln(stdout, "\nGo back to your browser to carry on.")
@@ -257,11 +260,12 @@ func offerClaude(ctx context.Context, url string, config Config, in terminal, st
 		fmt.Fprintln(stdout, "Skipped. Run `outrunner claude` to connect it later.")
 		return 0
 	}
-	return connectClaude(ctx, url, config, in, stdout, stderr)
+	return connectClaude(ctx, url, config, "", in, stdout, stderr)
 }
 
-// connectClaude mints a token with this computer's `claude` and saves it.
-func connectClaude(ctx context.Context, url string, config Config, in terminal, stdout, stderr io.Writer) int {
+// connectClaude mints a token with this computer's `claude` and saves it:
+// as the account sessions start on, or with `label` as that named account.
+func connectClaude(ctx context.Context, url string, config Config, label string, in terminal, stdout, stderr io.Writer) int {
 	binary, err := FindClaude()
 	if err != nil {
 		fmt.Fprintf(stderr, "outrunner: %v. Install it with `npm install -g @anthropic-ai/claude-code`, then run `outrunner claude`.\n", err)
@@ -271,6 +275,9 @@ func connectClaude(ctx context.Context, url string, config Config, in terminal, 
 	if config.Login != "" {
 		fmt.Fprintf(stdout, "\n  User   %s\n", config.Login)
 	}
+	if label != "" {
+		fmt.Fprintf(stdout, "  Account  %s\n", label)
+	}
 	fmt.Fprintln(stdout)
 	token, err := SetupToken(ctx, ClaudeOptions{Binary: binary, Lines: in.lines, Out: stdout})
 	if err != nil {
@@ -278,7 +285,7 @@ func connectClaude(ctx context.Context, url string, config Config, in terminal, 
 		return 1
 	}
 	fmt.Fprintln(stdout, "\n 3/3 Saving credentials")
-	status, err := SaveClaude(ctx, nil, url, config.Token, token)
+	status, err := SaveClaude(ctx, nil, url, config.Token, token, label)
 	if err != nil {
 		fmt.Fprintln(stderr, "outrunner: couldn't save your Claude token:", err)
 		return 1
