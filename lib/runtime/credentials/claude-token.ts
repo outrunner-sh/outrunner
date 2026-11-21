@@ -10,9 +10,20 @@
 const MIN_TOKEN_LENGTH = 20;
 const MAX_TOKEN_LENGTH = 500;
 
+/**
+ * `claude setup-token` prints its token wrapped across lines in the terminal,
+ * so a copied token often carries a line break and indentation. A token never
+ * has whitespace in it: one starting `sk-ant-` is taken with it removed.
+ */
+function joined(raw: string): string {
+  const trimmed = raw.trim();
+  const unwrapped = trimmed.replace(/\s+/g, "");
+  return /\s/.test(trimmed) && /^sk-ant-[A-Za-z0-9_-]+$/.test(unwrapped) ? unwrapped : trimmed;
+}
+
 /** The token, trimmed, or what's wrong with it, for the user to read. */
 export function checkClaudeToken(raw: unknown): { token: string } | { error: string } {
-  const token = typeof raw === "string" ? raw.trim() : "";
+  const token = typeof raw === "string" ? joined(raw) : "";
   if (token.length < MIN_TOKEN_LENGTH || token.length > MAX_TOKEN_LENGTH || /\s/.test(token)) {
     return { error: "That doesn't look like a Claude token. Paste the value from `claude setup-token`." };
   }
