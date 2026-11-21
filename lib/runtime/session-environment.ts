@@ -76,12 +76,10 @@ export { anthropicEnvVar, hasClaudeCredential };
 
 /**
  * A box's agent upgrade (ComputerRuntimeProvider.upgradeAgent) for a session
- * of `userId`'s, its agent booted again with their environment as it is now;
- * undefined where the provider can't upgrade one in place (jcode).
+ * of `userId`'s, its agent booted again with their environment as it is now.
  */
 export function boxUpgrade(
   provider: {
-    upgradesAgents: boolean;
     upgradeAgent(sandboxId: string, secret: string, sessionEnv: Record<string, string>): Promise<void>;
   },
   sandboxId: string,
@@ -90,8 +88,7 @@ export function boxUpgrade(
   /** The session the box is for: a review session's is booted without its
    *  user's GitHub token (runtimeSessionEnvironment). */
   workspaceId: string | null,
-): (() => Promise<void>) | undefined {
-  if (!provider.upgradesAgents) return undefined;
+): () => Promise<void> {
   return async () => provider.upgradeAgent(sandboxId, secret, await runtimeSessionEnvironment(userId, workspaceId));
 }
 

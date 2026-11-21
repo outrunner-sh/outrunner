@@ -28,7 +28,7 @@ import (
 // SessionLog gives the conversation stream, the Summary and Archive.
 
 // conversationPath is where a workspace's conversation log lives when Runtime
-// writes it (a Codex translation, the jcode engine's): outside any worktree,
+// writes it (a Codex translation): outside any worktree,
 // keyed by workspace id.
 func conversationPath(root, workspaceID string) string {
 	return filepath.Join(root, "conversations", workspaceID+".jsonl")

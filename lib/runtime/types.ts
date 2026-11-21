@@ -70,8 +70,10 @@ export type ProvisionPhase =
   | "claude_ready";
 
 /**
- * Backend that owns a workspace's compute. `local`/`modal` are the workspace-per-
- * sandbox model; `daytona` and `neev` are Runtime's real model (Project → Runtime
+ * Backend that owns a workspace's compute. `local` is the workspace-per-sandbox
+ * model; `modal` names only rows from the retired legacy Modal deployment
+ * provider, which no deployment runs any more (providerNamed resolves them to
+ * none); `daytona` and `neev` are Runtime's real model (Project → Runtime
  * Computer → Workspace) where many workspaces share one always-on box.
  * `user-daytona` and `user-modal` are that model in the session owner's own
  * Daytona or Modal account, on their key (Settings → Sandbox); the others are

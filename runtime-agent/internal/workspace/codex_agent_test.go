@@ -430,43 +430,19 @@ func TestARepeatedCreateNeverChangesTheAgent(t *testing.T) {
 	}
 }
 
-func TestTheJcodeEngineNeitherOffersNorTakesCodex(t *testing.T) {
+func TestCodexIsOfferedWhereItsInstalled(t *testing.T) {
 	s := NewService(t.TempDir())
 	s.lookPath = func(string) (string, error) { return "/usr/local/bin/codex", nil }
-	if err := s.CheckAgent(AgentCodex); err != nil {
-		t.Fatalf("CheckAgent(codex) on the tmux engine = %v", err)
-	}
 	if !slices.Contains(s.Agents(), AgentCodex) {
 		t.Fatalf("Agents = %q, want codex offered where it's installed", s.Agents())
 	}
-	// The jcode engine runs its own sessions: a Codex one would run jcode.
-	s.jcode = &jcodeEngine{}
-	if slices.Contains(s.Agents(), AgentCodex) {
-		t.Errorf("Agents on jcode = %q, want no codex", s.Agents())
-	}
-	if err := s.CheckAgent(AgentCodex); !errors.Is(err, ErrAgentUnsupported) {
-		t.Errorf("CheckAgent(codex) on jcode = %v, want ErrAgentUnsupported", err)
-	}
-	for _, name := range []string{"", AgentClaude} {
+	for _, name := range []string{"", AgentClaude, AgentCodex} {
 		if err := s.CheckAgent(name); err != nil {
-			t.Errorf("CheckAgent(%q) on jcode = %v", name, err)
+			t.Errorf("CheckAgent(%q) = %v", name, err)
 		}
 	}
 	if err := s.CheckAgent("gemini"); err == nil {
 		t.Error("an unknown agent was taken")
-	}
-}
-
-func TestTheJcodeEngineTakesNoSessionCredential(t *testing.T) {
-	s := NewService(t.TempDir())
-	s.setFacts("ws-j", workspaceFacts{Agent: AgentClaude})
-	s.jcode = &jcodeEngine{}
-	err := s.SetAuth(context.Background(), "ws-j", AuthAnthropicAPIKey, "sk-ant-api03-"+strings.Repeat("a", 30))
-	if !errors.Is(err, ErrAuthUnsupported) {
-		t.Fatalf("SetAuth on jcode = %v, want ErrAuthUnsupported", err)
-	}
-	if err := s.SetAuth(context.Background(), "ws-j", AuthNone, ""); err != nil {
-		t.Errorf("taking a credential away on jcode = %v", err)
 	}
 }
 

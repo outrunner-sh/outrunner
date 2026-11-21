@@ -70,7 +70,7 @@ export class OutdatedComputerError extends Error {
 }
 
 /** What to say of a box that can't do what the session needs, its agent
- *  not upgraded here (the provider can't: a jcode engine). */
+ *  not upgraded here. */
 function outdated(what: string): OutdatedComputerError {
   return new OutdatedComputerError(`This project's cloud computer ${what}.`);
 }
@@ -133,7 +133,7 @@ async function readyCredential(client: SessionAuthClient, auth: ResolvedAuth): P
  * with the credential or without. A credential goes to every agent that can
  * take one, so a key replaced while the box ran is the one the session
  * relaunches on. One that can't (an agent from before per-session
- * credentials, or a jcode engine) is fine only for a Claude credential the
+ * credentials, or one on its own login) is fine only for a Claude credential the
  * user never picked (the box's own setup holds it): the restore goes ahead
  * without it. For any other, an {@link OutdatedComputerError}.
  */
@@ -169,7 +169,7 @@ function cantTake(agent: AgentId): OutdatedComputerError {
 
 /** An agent that can't take a session's credential: one from before sessions
  *  had them (a 404 with no error envelope: the route itself is missing), or
- *  one on an engine that runs every session on its own login (jcode: 409
+ *  one on an engine that runs every session on its own login (409
  *  UNSUPPORTED). */
 function takesNoSessionAuth(error: unknown): boolean {
   if (!(error instanceof AgentRequestError)) return false;

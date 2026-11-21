@@ -97,7 +97,7 @@ export function runUsageSweep(provider: ComputerRuntimeProvider): Promise<UsageS
     claimAlert: (orgId, period, threshold) => claimAlert(orgId, period.start, threshold),
     releaseAlert: (orgId, period, threshold) => releaseAlert(orgId, period.start, threshold),
     canEmail: canSendEmail(),
-    // A box that can't come back from a pause (a jcode engine's, or none)
+    // A box that can't come back from a pause (a provider without pause and restore)
     // runs on; the start gate refuses new ones.
     canPause: provider.pausesBoxes,
     async emailAdmins(orgId, threshold, { plan, standing }) {

@@ -13,8 +13,7 @@ import (
 // rollout-<time>-<id>.jsonl, one JSON line per item, appended as the session
 // goes (legacy 0.146.0 and paginated 0.162.1). The conversation stream,
 // Summary and Archive all read Claude's transcript shape, so the rollout is
-// translated into it, a line at a time, and those readers stay as they are
-// (the jcode engine does the same: internal/jcode/translate.go).
+// translated into it, a line at a time, and those readers stay as they are.
 //
 // What is translated:
 //   - event_msg user_message or paginated UserMessage completion: the user's

@@ -51,9 +51,6 @@ var (
 	// ErrAuthMismatch is a credential for another agent than the session
 	// runs: an OpenAI key means nothing to Claude, nor a Claude token to Codex.
 	ErrAuthMismatch = errors.New("this credential is for another agent than the one this session runs")
-	// ErrAuthUnsupported is a credential given on the jcode engine, whose
-	// bridge runs every session on its own login: taken, it would never apply.
-	ErrAuthUnsupported = errors.New("this computer's engine runs sessions on its own login and can't take a session's credential")
 	// ErrAuthMissing is a session recorded with a credential whose file is
 	// gone: launched anyway, it would run on whatever login the computer has.
 	ErrAuthMissing = errors.New("this session's credential is missing; set it again to start the session")
@@ -116,9 +113,6 @@ func authEnvFile(kind, token string) string {
 // started with. The credential it replaces stays masked (keyFiles.retire).
 // Callers validate kind (ValidAuthKind) and token (ValidAuthToken).
 func (s *Service) SetAuth(ctx context.Context, workspaceID, kind, token string) error {
-	if err := s.CheckAuth(kind); err != nil {
-		return err
-	}
 	defer s.lockLifecycle(workspaceID)()
 	f, ok := s.getFacts(workspaceID)
 	if !ok {
@@ -155,15 +149,6 @@ func (s *Service) SetAuth(ctx context.Context, workspaceID, kind, token string) 
 	}
 	s.updateFacts(workspaceID, func(f *workspaceFacts) { f.Auth = kind })
 	s.refreshLiveSecrets()
-	return nil
-}
-
-// CheckAuth refuses a credential this computer can't apply: any, on the jcode
-// engine. Taking one away is always fine.
-func (s *Service) CheckAuth(kind string) error {
-	if kind != AuthNone && s.jcode != nil {
-		return ErrAuthUnsupported
-	}
 	return nil
 }
 

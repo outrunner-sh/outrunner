@@ -14,7 +14,7 @@ export function sendIsDeadEnd(code: string | null | undefined): boolean {
 }
 
 /** What the composer says for a send the agent refused. Its other errors name
- *  internals ("jcode: no session for workspace …", "prompt not confirmed
+ *  internals ("no session for workspace …", "prompt not confirmed
  *  delivered after 3 attempts"); those go to the server's log, not the page. */
 export function sendFailureMessage(agentSaid: string | null | undefined): string {
   const said = agentSaid?.trim() ?? "";

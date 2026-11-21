@@ -1,6 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 
 import { RESOURCE_PROBE, resourceReading, type ComputerReading } from "@/lib/session/session-info";
@@ -20,7 +18,6 @@ import {
 import {
   AGENT_PORT,
   deployClaude,
-  deployJcode,
   ProvisionTimer,
   shellQuote,
 } from "@/lib/runtime/daytona/deploy";
@@ -45,78 +42,6 @@ import type {
   ProvisionTimings,
   RuntimeProvider,
 } from "@/lib/runtime/types";
-
-/**
- * Read the jcode subscription credential the control plane injects into each
- * box.
- *
- * Two sources, in priority order:
- *  1. Inline base64 env vars `JCODE_AUTH_JSON` (+ optional
- *     `JCODE_AUTH_REFRESH_JSON`) — for a hosted control plane (e.g. Railway)
- *     that has no `~/.jcode` on disk. Each is the base64 of the corresponding
- *     jcode file.
- *  2. The operator's `~/.jcode` directory (where `jcode login` stored it),
- *     overridable with `JCODE_AUTH_DIR` — the local-dev path.
- *
- * Throws a clear error if neither is present.
- */
-/**
- * Decode a base64 jcode credential from an env var, failing loudly on bad input.
- *
- * `Buffer.from(_, "base64")` is lenient: it silently drops invalid characters
- * and stops at the first padding, so a truncated or corrupted paste decodes to
- * garbage that we'd upload as `auth.json` — surfacing only much later as an
- * opaque authentication error on the box. We reject anything that doesn't
- * round-trip as clean base64, and — since both jcode credential files are JSON —
- * anything that doesn't decode to parseable JSON. Whitespace/newlines in the env
- * value are tolerated (a wrapped base64 paste is still valid).
- */
-export function decodeBase64Credential(name: string, value: string): Buffer {
-  const normalized = value.replace(/\s+/g, "");
-  const decoded = Buffer.from(normalized, "base64");
-  if (decoded.toString("base64") !== normalized) {
-    throw new Error(
-      `${name} is not valid base64. Re-encode the file with \`base64 < <file>\`.`,
-    );
-  }
-  try {
-    JSON.parse(decoded.toString("utf8"));
-  } catch {
-    throw new Error(
-      `${name} did not decode to valid JSON — the base64 is likely truncated or ` +
-        `not the credential file.`,
-    );
-  }
-  return decoded;
-}
-
-function readJcodeCreds(): { authJson: Buffer; refreshJson?: Buffer } {
-  const inlineAuth = optionalEnv("JCODE_AUTH_JSON");
-  if (inlineAuth) {
-    const inlineRefresh = optionalEnv("JCODE_AUTH_REFRESH_JSON");
-    return {
-      authJson: decodeBase64Credential("JCODE_AUTH_JSON", inlineAuth),
-      refreshJson: inlineRefresh
-        ? decodeBase64Credential("JCODE_AUTH_REFRESH_JSON", inlineRefresh)
-        : undefined,
-    };
-  }
-
-  const dir = optionalEnv("JCODE_AUTH_DIR") ?? path.join(os.homedir(), ".jcode");
-  const authPath = path.join(dir, "auth.json");
-  if (!existsSync(authPath)) {
-    throw new Error(
-      `jcode credential not found. Set JCODE_AUTH_JSON (base64 of auth.json) for a ` +
-        `hosted deploy, or run \`jcode login --provider claude\` / set JCODE_AUTH_DIR ` +
-        `to the directory holding auth.json (looked in ${authPath}).`,
-    );
-  }
-  const refreshPath = path.join(dir, "auth-refresh-state.json");
-  return {
-    authJson: readFileSync(authPath),
-    refreshJson: existsSync(refreshPath) ? readFileSync(refreshPath) : undefined,
-  };
-}
 
 const DEFAULT_BINARY_PATH = ".context/build/runtime-agent-linux-amd64";
 
@@ -225,28 +150,16 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
   // --- Runtime Computer lifecycle (the honest surface) ----------------------
 
   /**
-   * Provision the always-on box and deploy the agent, then optionally seed the
-   * bare mirror. Delegates by engine: RUNTIME_ENGINE=jcode takes the jcode path;
-   * otherwise the default Claude engine (provisionClaudeComputer). Each path
-   * times its stages and deletes the half-built sandbox on failure so a retry
+   * Provision the always-on box and deploy the agent: on the backend's base
+   * image, which ships node, deployClaude installs tmux and the Claude Code,
+   * Codex and gh CLIs, then boots the agent rooted at $HOME, seeding
+   * CLAUDE_CODE_OAUTH_TOKEN so each Claude session authenticates. A new box
+   * clones the bare mirror alongside the boot when given a repository; a
+   * restored box boots first, then fetches its existing mirror (best-effort).
+   * Times its stages and deletes the half-built sandbox on failure so a retry
    * starts clean.
    */
   async provisionComputer(
-    input: ProvisionComputerInput,
-  ): Promise<ProvisionedComputer> {
-    if (optionalEnv("RUNTIME_ENGINE") === "jcode") {
-      return this.provisionJcodeComputer(input);
-    }
-    return this.provisionClaudeComputer(input);
-  }
-
-  /**
-   * Claude Code engine provisioning on the backend's base image, which ships
-   * the `claude` CLI + node; deployClaude only adds tmux and boots the agent in
-   * Claude mode rooted at $HOME, seeding CLAUDE_CODE_OAUTH_TOKEN so each Claude
-   * session authenticates. No jcode, no snapshot, no subscription-refresh trap.
-   */
-  private async provisionClaudeComputer(
     input: ProvisionComputerInput,
   ): Promise<ProvisionedComputer> {
     const binary = await this.binary();
@@ -341,67 +254,8 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     return timer.stage("sandbox_restore", () => restore(previous, labels, input.size));
   }
 
-  /**
-   * jcode-engine provisioning on the backend's base image, with jcode installed
-   * on-provision, the subscription credential injected, the api-bridge started,
-   * and the agent launched in jcode mode. The recipe (incl. the USER/XDG/pinned
-   * -socket fix) lives in deployJcode; validated on real Daytona.
-   */
-  private async provisionJcodeComputer(
-    input: ProvisionComputerInput,
-  ): Promise<ProvisionedComputer> {
-    const binary = await this.binary();
-    const creds = readJcodeCreds();
-    const timer = new ProvisionTimer({
-      onStage: (t) => input.onStage?.(t.stage, t.ms),
-    });
-
-    let sandbox: SandboxBox | null = null;
-    try {
-      // Always-on retention (every backend's create): the box + its disk
-      // (worktrees, jcode sessions, conversation logs) stay live, so
-      // reconnect/resume just works with no wake path.
-      sandbox = await timer.stage("sandbox_create", () =>
-        this.backend.create(boxLabels("jcode", deploymentName(optionalEnv("RUNTIME_BASE_URL"))), input.size),
-      );
-      const box = sandbox;
-      const home = await box.home();
-
-      await timer.stage("agent_boot", () =>
-        deployJcode(box.io, binary, input.secret, {
-          root: home,
-          authJson: creds.authJson,
-          refreshJson: creds.refreshJson,
-        }),
-      );
-
-      if (input.repoFullName) {
-        await timer.stage("mirror_clone", () =>
-          cloneMirror(box.gitExec, {
-            repoFullName: input.repoFullName!,
-            // Agent RUNTIME_AGENT_ROOT=home, so its mirror is $HOME/repo.git.
-            dir: `${home}/repo.git`,
-            token: input.githubToken,
-          }),
-        );
-      }
-
-      const endpoint = await box.agentEndpoint(AGENT_PORT);
-      return { sandboxId: box.id, agentBaseUrl: endpoint.controlBaseUrl, timings: timer.timings() };
-    } catch (error) {
-      if (sandbox) {
-        await this.backend
-          .delete(sandbox.id)
-          .catch((cleanupError: unknown) =>
-            console.error("Could not delete failed jcode computer", cleanupError),
-          );
-      }
-      throw error;
-    }
-  }
-
-  /** Refresh the shared mirror before creating a new worktree. Both engines
-   *  clone it to $HOME/repo.git, so it is found from the box's home. */
+  /** Refresh the shared mirror before creating a new worktree. The agent
+   *  clones it to $HOME/repo.git, so it is found from the box's home. */
   async fetchMirror(sandboxId: string, githubToken?: string): Promise<void> {
     const box = await this.backend.get(sandboxId);
     await fetchMirror(box.gitExec, {
@@ -572,15 +426,9 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     await this.backend.keepAlive?.(sandboxId);
   }
 
-  /** Whether this provider can pause a box and bring it back. Not for the
-   *  jcode engine, whose provision always makes a new box: a paused one would
-   *  be left behind with its sessions. */
+  /** Whether this provider can pause a box and bring it back. */
   get pausesBoxes(): boolean {
-    return (
-      this.backend.pause !== undefined &&
-      this.backend.restore !== undefined &&
-      optionalEnv("RUNTIME_ENGINE") !== "jcode"
-    );
+    return this.backend.pause !== undefined && this.backend.restore !== undefined;
   }
 
   /** Inspect an already-running computer. Neither alive/get nor the fixed probe
@@ -633,24 +481,15 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     }
   }
 
-  /** Whether a box's agent can be upgraded in place (upgradeAgent): not on
-   *  the jcode engine, whose boxes are replaced, not redeployed. */
-  get upgradesAgents(): boolean {
-    return optionalEnv("RUNTIME_ENGINE") !== "jcode";
-  }
-
   /**
    * Bring a running box's agent up to this release's, in place: the tools it
    * runs (Codex among them) installed, the agent replaced and restarted on
    * the same secret and port. A box's sessions run in tmux, not in the agent,
    * so they carry on through it; their streams reconnect. For a box that
    * predates what a session needs, instead of waiting for it to pause and
-   * restart. Not for the jcode engine, whose boxes are replaced, not redeployed.
+   * restart.
    */
   async upgradeAgent(sandboxId: string, secret: string, sessionEnv: Record<string, string>): Promise<void> {
-    if (!this.upgradesAgents) {
-      throw new Error("A jcode computer's agent is replaced with its box, not upgraded in place.");
-    }
     // Shared by every provider instance (one is made per request for a
     // user's own sandbox), so two requests never redeploy one box at once.
     const key = `${this.name}:${sandboxId}`;

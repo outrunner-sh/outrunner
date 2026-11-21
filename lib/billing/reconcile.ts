@@ -98,7 +98,7 @@ export type BoxRun = Pick<OpenInterval, "startedAt" | "agentSeenAt">;
 
 export type ReconcileDeps = {
   /** Whether idle boxes are paused, or only metered: not where the provider
-   *  can't bring a paused box back (the jcode engine). */
+   *  can't bring a paused box back. */
   pausesIdleBoxes: boolean;
   now(): Date;
   claimLease(): Promise<boolean>;

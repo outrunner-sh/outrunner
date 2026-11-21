@@ -353,10 +353,6 @@ func (s *Server) restoreWorkspace(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 			return
 		}
-		if err := s.ws.CheckAuth(req.Auth.Kind); err != nil {
-			writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
-			return
-		}
 	}
 	var model *workspace.ModelChoice
 	if req.Model != nil {
@@ -371,8 +367,6 @@ func (s *Server) restoreWorkspace(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, workspace.ErrAuthMismatch), errors.Is(err, workspace.ErrGatewayUnsupported), errors.Is(err, workspace.ErrInvalidCheckouts):
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
-	case errors.Is(err, workspace.ErrModelUnsupported):
-		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
 	case err != nil:
 		respond(w, name, err)
 	default:
@@ -680,9 +674,6 @@ func (s *Server) createChat(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, workspace.ErrUnknownChat):
 		writeError(w, http.StatusNotFound, "CHAT_NOT_FOUND", err.Error())
 		return
-	case errors.Is(err, workspace.ErrChatsUnsupported), errors.Is(err, workspace.ErrAgentUnsupported):
-		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
-		return
 	case err != nil:
 		respond(w, "", err)
 		return
@@ -723,8 +714,8 @@ func validWorkspaceID(id string) bool {
 	return true
 }
 
-// sendMessage delivers a user prompt to the workspace's agent session (jcode
-// engine). Replaces typing into the PTY: the browser composer POSTs the prompt
+// sendMessage delivers a user prompt to the workspace's agent session.
+// Replaces typing into the PTY: the browser composer POSTs the prompt
 // and observes the reply on the conversation SSE stream.
 func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
@@ -752,8 +743,6 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, workspace.ErrModeBusy), errors.Is(err, workspace.ErrSessionUnchecked):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
-	case errors.Is(err, workspace.ErrModeUnsupported):
-		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
 	default:
 		respond(w, "sent", err)
 	}
@@ -787,8 +776,6 @@ func (s *Server) planAction(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, workspace.ErrModeBusy),
 		errors.Is(err, workspace.ErrSessionUnchecked), errors.Is(err, workspace.ErrNotInterrupted):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
-	case errors.Is(err, workspace.ErrModeUnsupported):
-		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
 	case err != nil:
 		respond(w, "", err)
 	default:
@@ -817,8 +804,6 @@ func (s *Server) compact(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, workspace.ErrCompactBusy), errors.Is(err, workspace.ErrSessionUnchecked),
 		errors.Is(err, workspace.ErrPromptStaged):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
-	case errors.Is(err, workspace.ErrCompactUnsupported):
-		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
 	default:
 		respond(w, "compacting", err)
 	}
@@ -1213,8 +1198,7 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
 	case errors.Is(err, workspace.ErrGatewayUnsupported):
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
-	case errors.Is(err, workspace.ErrSessionBusy), errors.Is(err, workspace.ErrSessionUnchecked),
-		errors.Is(err, workspace.ErrModelUnsupported):
+	case errors.Is(err, workspace.ErrSessionBusy), errors.Is(err, workspace.ErrSessionUnchecked):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
 	case err != nil:
 		respond(w, req.Model, err)
@@ -1269,10 +1253,6 @@ func (s *Server) setAuth(w http.ResponseWriter, r *http.Request) {
 	err := s.ws.SetAuth(r.Context(), key, req.Kind, req.Token)
 	if errors.Is(err, workspace.ErrAuthMismatch) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
-		return
-	}
-	if errors.Is(err, workspace.ErrAuthUnsupported) {
-		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
 		return
 	}
 	respond(w, req.Kind, err)

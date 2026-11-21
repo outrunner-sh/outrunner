@@ -451,7 +451,7 @@ export function box(sandbox: Sandbox): SandboxBox {
     // Through a background session with runAsync: a synchronous
     // executeCommand never returns while the daemon it started keeps running
     // (the provisioning spike's `agent_boot` hang). A UNIQUE session per
-    // launch: the jcode path launches two daemons, and reusing one session id
+    // launch: a box can launch more than one daemon, and reusing one session id
     // makes the second collide with the still-running first and silently not
     // execute.
     launch: async (command) => {

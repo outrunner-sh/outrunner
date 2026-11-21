@@ -31,9 +31,9 @@ var (
 	// ErrRewindBusy is an edit asked for while the agent works or waits on
 	// an answer: cutting its log under it would lose what it is writing.
 	ErrRewindBusy = errors.New("the agent is working: stop it before editing a message")
-	// ErrRewindUnsupported is an edit on the jcode engine, whose bridge keeps
-	// its own conversation.
-	ErrRewindUnsupported = errors.New("this computer's engine can't edit a sent message")
+	// ErrRewindUnsupported is an edit of a message from before a chat
+	// switched harnesses: that history is kept, not edited.
+	ErrRewindUnsupported = errors.New("this message can't be edited")
 	// ErrNotAPrompt is an edit of a message that isn't one of the chat's
 	// prompts (a reply, a tool's result, or one not in its log).
 	ErrNotAPrompt = errors.New("that message isn't one of this chat's prompts")
@@ -51,9 +51,6 @@ type Rewound struct {
 // for the edited prompt to be sent in its place. A running agent is
 // relaunched on what is left; one that isn't is left for the next Start.
 func (s *Service) Rewind(ctx context.Context, key, uuid string) (Rewound, error) {
-	if s.jcode != nil {
-		return Rewound{}, ErrRewindUnsupported
-	}
 	defer s.lockLifecycle(key)()
 	f, ok := s.getFacts(key)
 	if !ok {
