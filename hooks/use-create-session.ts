@@ -168,6 +168,9 @@ export function useCreateSession(projects: Project[], environments: ListedEnviro
     /** The agent to run `model` in, where it isn't the model's default (one
      *  that runs it: agentOf). */
     agent?: AgentId,
+    /** The branch it starts from, picked on the screen; none, the
+     *  repository's default branch. */
+    baseBranch?: string,
   ): Promise<boolean> {
     if (!selected) return Promise.resolve(false);
     const effort = startingEffort(model, pickedEffort);
@@ -178,9 +181,10 @@ export function useCreateSession(projects: Project[], environments: ListedEnviro
     // same — so a first send that landed after all is answered for rather
     // than made twice. Anything changed (the model, its effort, the item) is
     // a new session.
-    // The environment too: the same prompt from another is another session.
+    // The environment and base branch too: the same prompt from another is
+    // another session.
     const environmentId = environment?.id ?? null;
-    const request = JSON.stringify([model?.provider ?? null, model?.id ?? null, model ? (agent ?? null) : null, effort, workItemId ?? null, environmentId]);
+    const request = JSON.stringify([model?.provider ?? null, model?.id ?? null, model ? (agent ?? null) : null, effort, workItemId ?? null, environmentId, baseBranch ?? null]);
     const again = sendingAgain(FAILED_CREATE.get()?.unsent, selected.id, request);
     FAILED_CREATE.set(null);
     forgetRefusedSessions();
@@ -198,6 +202,7 @@ export function useCreateSession(projects: Project[], environments: ListedEnviro
       project: selected,
       prompt,
       branch,
+      ...(baseBranch && { baseBranch }),
       agent: agentOf(model?.provider ?? "claude", model ? agent : undefined),
       model: model ? { model, effort } : null,
       environmentId,
@@ -250,6 +255,7 @@ export function useCreateSession(projects: Project[], environments: ListedEnviro
           ...(workItemId && { workItemId }),
           ...(model && agent && { agent }),
           ...(environmentId && { environmentId }),
+          ...(baseBranch && { baseBranch }),
         }),
       );
       // The session may exist though no answer said so: the next Send of the

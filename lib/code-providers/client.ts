@@ -3,7 +3,7 @@
 import { isGitLabRef } from "@/lib/code-providers/repository";
 import * as github from "@/lib/github/client";
 import { getGitLabRepository } from "@/lib/gitlab/client";
-import { branchKnownOnGitLab, findMergeRequest, mergeMergeRequest, mergeRequestStatus } from "@/lib/gitlab/merge-requests";
+import { branchKnownOnGitLab, branchOnGitLab, findMergeRequest, listGitLabBranches, mergeMergeRequest, mergeRequestStatus } from "@/lib/gitlab/merge-requests";
 
 export async function getRepository(token: string, ref: string) {
   return isGitLabRef(ref) ? getGitLabRepository(token, ref) : github.getGitHubRepository(token, ref);
@@ -11,6 +11,14 @@ export async function getRepository(token: string, ref: string) {
 
 export function branchKnown(input: Parameters<typeof github.branchKnownOnGitHub>[0]) {
   return isGitLabRef(input.repoFullName) ? branchKnownOnGitLab(input) : github.branchKnownOnGitHub(input);
+}
+
+export function branchExists(input: Parameters<typeof github.branchOnGitHub>[0]) {
+  return isGitLabRef(input.repoFullName) ? branchOnGitLab(input) : github.branchOnGitHub(input);
+}
+
+export function listBranches(input: Parameters<typeof github.listGitHubBranches>[0]) {
+  return isGitLabRef(input.repoFullName) ? listGitLabBranches(input) : github.listGitHubBranches(input);
 }
 
 export function findPullRequest(input: Parameters<typeof github.findPullRequest>[0]) {

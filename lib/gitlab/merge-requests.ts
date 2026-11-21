@@ -1,5 +1,5 @@
 import { gitLabPath } from "@/lib/code-providers/repository";
-import type { MergeMethod, PullRequestDetails, PullRequestStatus, WorkspacePullRequestRef } from "@/lib/github/client";
+import type { BranchList, MergeMethod, PullRequestDetails, PullRequestStatus, WorkspacePullRequestRef } from "@/lib/github/client";
 import { GitLabError, gitLabJson, gitLabRequest } from "@/lib/gitlab/client";
 
 function projectPath(ref: string): string {
@@ -28,9 +28,27 @@ export async function findMergeRequest(input: { token: string; repoFullName: str
 }
 
 export async function branchKnownOnGitLab(input: { token: string; repoFullName: string; branch: string }): Promise<boolean> {
-  const response = await gitLabRequest(input.token, `${projectPath(input.repoFullName)}/repository/branches/${encodeURIComponent(input.branch)}`);
-  if (response.ok) return true;
+  if (await branchOnGitLab(input)) return true;
   return (await findMergeRequest({ ...input, headBranch: input.branch })) !== null;
+}
+
+/** Whether `branch` is a branch in the repository now. */
+export async function branchOnGitLab(input: { token: string; repoFullName: string; branch: string }): Promise<boolean> {
+  const response = await gitLabRequest(input.token, `${projectPath(input.repoFullName)}/repository/branches/${encodeURIComponent(input.branch)}`);
+  return response.ok;
+}
+
+/** The repository's branches whose name holds `query` (every one for none),
+ *  the first `first` of them by name. */
+export async function listGitLabBranches(input: { token: string; repoFullName: string; query: string; first: number }): Promise<BranchList> {
+  const params = new URLSearchParams({ per_page: String(input.first), ...(input.query && { search: input.query }) });
+  const response = await gitLabRequest(input.token, `${projectPath(input.repoFullName)}/repository/branches?${params}`);
+  if (response.status === 404) throw new GitLabError("Your GitLab account cannot access this repository.", 403);
+  const list = await gitLabJson<{ name?: unknown }[]>(response);
+  if (!Array.isArray(list)) throw new GitLabError("GitLab returned an invalid branch list.");
+  const branches = list.map((b) => b.name).filter((name): name is string => typeof name === "string");
+  // GitLab leaves out its count past 10,000.
+  return { branches, total: Number(response.headers.get("x-total")) || branches.length };
 }
 
 export async function mergeRequestStatus(input: { token: string; repoFullName: string; number: number }): Promise<{ status: PullRequestStatus; details: PullRequestDetails }> {
