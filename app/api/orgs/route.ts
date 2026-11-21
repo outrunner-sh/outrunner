@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 
 import { getAuthUser, getOwner } from "@/lib/auth/owner";
-import { createTeamOrg, orgsForDomains, TeamOrgError } from "@/lib/db/orgs";
+import { planFor } from "@/lib/billing/entitlements";
+import { billingMode } from "@/lib/billing/mode";
+import { createTeamOrg, listMyOrgs, orgsForDomains, TeamOrgError } from "@/lib/db/orgs";
 import { githubErrorResponse } from "@/lib/github/http";
 import { databaseNotUpdated } from "@/lib/http/database-not-updated";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { signInFirst } from "@/lib/http/settings-save";
 import { orgName } from "@/lib/orgs/active";
-import { createTeamOrgFor } from "@/lib/orgs/create";
+import { createTeamOrgFor, mayMakeAnotherOrg } from "@/lib/orgs/create";
 import { setActiveOrg } from "@/lib/orgs/server";
 import { verifiedEmailsOf } from "@/lib/orgs/user-emails";
 
@@ -17,8 +19,8 @@ import { verifiedEmailsOf } from "@/lib/orgs/user-emails";
  * (GitHub's, else Google's) (lib/orgs/create.ts).
  *
  * 409 `domain_org_exists` with `org` when an org already has one of their
- * domains: they ask to join that one instead. 409 `one_team_org` when they've
- * made one already: one each for now.
+ * domains: they ask to join that one instead. 409 `one_free_org` when they've
+ * made one already and admin no org on a paid plan (lib/orgs/create.ts).
  */
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {
@@ -36,6 +38,11 @@ export async function POST(request: Request) {
     const outcome = await createTeamOrgFor(owner.id, name, {
       verifiedEmails: async () => verifiedEmailsOf(user),
       orgsForDomains,
+      mayMakeAnother: () =>
+        mayMakeAnotherOrg(billingMode() === "off", async () => {
+          const admin = (await listMyOrgs()).filter((org) => org.role === "admin");
+          return Promise.all(admin.map(async (org) => (await planFor(org.id)).id));
+        }),
       create: createTeamOrg,
     });
     if (!outcome.made) {

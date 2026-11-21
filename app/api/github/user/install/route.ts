@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { personalOrgId } from "@/lib/db/orgs";
+import { ownOrgId } from "@/lib/db/orgs";
 import { appSlug, githubAppConfig, installUrl, isInstallReturn, signInstallState } from "@/lib/github/app";
 import { appUrl } from "@/lib/orgs/notify";
 
 /**
  * Install the Outrunner GitHub App on another of the user's GitHub accounts
- * (their own, or a GitHub organization they own) for their personal org,
+ * (their own, or a GitHub organization they own) for their own org (ownOrgId),
  * from Settings → Connections → GitHub: off to GitHub to pick the account and
  * its repositories, back through the setup route (app/api/github/app/setup),
- * which links it to their personal org. Team orgs install it from
+ * which links it to their own org. Other orgs install it from
  * Settings → Org → GitHub instead.
  */
 export async function GET(request: Request) {
@@ -22,7 +22,7 @@ export async function GET(request: Request) {
   if (!owner) return NextResponse.redirect(appUrl(`/signin?next=${encodeURIComponent(next)}`, url.origin));
   const config = githubAppConfig();
   if (!config) return back("not_configured");
-  const orgId = await personalOrgId(owner.id).catch(() => null);
+  const orgId = await ownOrgId(owner.id).catch(() => null);
   if (!orgId) return back("failed");
   return NextResponse.redirect(installUrl(await appSlug(config), signInstallState(config.webhookSecret, { orgId, userId: owner.id, next })));
 }

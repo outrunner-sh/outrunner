@@ -4,7 +4,7 @@ import { recordAudit } from "@/lib/audit/record";
 import { getOwner } from "@/lib/auth/owner";
 import { getGithubConnection } from "@/lib/db/github-connections";
 import { ClaimError, claimInstallation, installationHolder, refreshInstallation } from "@/lib/db/github-installations";
-import { memberRole, personalOrgId } from "@/lib/db/orgs";
+import { memberRole, ownOrgId } from "@/lib/db/orgs";
 import { getInstallation, githubAppConfig, readInstallState, signInstallState } from "@/lib/github/app";
 import { returnWithoutState } from "@/lib/github/connect-installation";
 import { appClientSecret, authorizeUrl } from "@/lib/github/installer";
@@ -28,7 +28,7 @@ const WAIT_FOR_WEBHOOK_MS = 8_000;
  *   (app/api/github/app/verify). Administering another org that uses it, or
  *   an installation id alone, grants no access.
  * - Without a state (an update, or an install begun on GitHub): an
- *   installation the org has already (the active one, or their personal
+ *   installation the org has already (the active one, or their own
  *   org) is refreshed. One the active org hasn't, which they administer, is
  *   offered on its GitHub settings for them to add with a click, which checks
  *   GitHub's say as above; nothing is linked on this GET alone
@@ -56,13 +56,13 @@ export async function GET(request: Request) {
     // No state: one the org has, from GitHub's "Redirect on update", or one
     // to offer the org they're looking at.
     let orgId = state?.orgId ?? null;
-    let personal: string | null = null;
+    let own: string | null = null;
     if (!state) {
-      personal = await personalOrgId(owner.id).catch(() => null);
+      own = await ownOrgId(owner.id).catch(() => null);
       const next = returnWithoutState({
         linkedOrgIds: holder?.orgIds ?? null,
         activeOrg: (await getOrgContext())?.active ?? null,
-        personalOrgId: personal,
+        ownOrgId: own,
       });
       if (next.kind === "expired") return back("error=link_expired");
       if (next.kind === "not_admin") return back("error=not_admin");
@@ -70,11 +70,11 @@ export async function GET(request: Request) {
       orgId = next.orgId;
     }
     if (!orgId) return back("error=link_expired");
-    // Their own connection's page, for their personal org's installations.
+    // Their own connection's page, for their own org's installations.
     const done = (login: string) =>
       state?.next
         ? NextResponse.redirect(appUrl(state.next, origin))
-        : orgId === personal
+        : orgId === own
           ? NextResponse.redirect(appUrl("/settings/connections?github=updated", origin))
           : back(`installed=${encodeURIComponent(login)}`);
     if ((await memberRole(orgId, owner.id)) !== "admin") return back("error=not_admin");

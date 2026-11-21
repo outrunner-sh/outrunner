@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { DomainOrg } from "@/lib/db/orgs";
-import { createTeamOrgFor, type CreateTeamOrgDeps } from "@/lib/orgs/create";
+import { createTeamOrgFor, type CreateTeamOrgDeps, mayMakeAnotherOrg } from "@/lib/orgs/create";
 import type { VerifiedEmail } from "@/lib/orgs/domains";
 
-function deps(emails: VerifiedEmail[], claimed: DomainOrg[] = []) {
-  const made: Array<{ name: string; creatorId: string; domain: string | null }> = [];
+function deps(emails: VerifiedEmail[], claimed: DomainOrg[] = [], mayMakeAnother = false) {
+  const made: Array<{ name: string; creatorId: string; domain: string | null; mayMakeAnother: boolean }> = [];
   const asked: string[][] = [];
   const d: CreateTeamOrgDeps = {
     verifiedEmails: async () => emails,
@@ -14,6 +14,7 @@ function deps(emails: VerifiedEmail[], claimed: DomainOrg[] = []) {
       asked.push(domains);
       return claimed.filter((o) => domains.includes(o.domain));
     },
+    mayMakeAnother: async () => mayMakeAnother,
     create: async (input) => {
       made.push(input);
       return "new-org";
@@ -30,7 +31,7 @@ test("a team org claims the creator's primary email's domain", async () => {
     { email: "me@side.dev", primary: false },
   ]);
   assert.deepEqual(await createTeamOrgFor("u1", "Initech", d), { made: true, orgId: "new-org", domain: "initech.dev" });
-  assert.deepEqual(made, [{ name: "Initech", creatorId: "u1", domain: "initech.dev" }]);
+  assert.deepEqual(made, [{ name: "Initech", creatorId: "u1", domain: "initech.dev", mayMakeAnother: false }]);
 });
 
 test("an org has the creator's domain already: none is made, and they're pointed at it", async () => {
@@ -58,4 +59,25 @@ test("only free mail: the org is made claiming no domain, and blocks no one", as
   assert.deepEqual(await createTeamOrgFor("u1", "Side project", d), { made: true, orgId: "new-org", domain: null });
   assert.deepEqual(asked, []);
   assert.equal(made[0]?.domain, null);
+});
+
+test("the database is told whether the creator may make an org beyond their Free one", async () => {
+  const { d, made } = deps([{ email: "me@gmail.com", primary: true }], [], true);
+  await createTeamOrgFor("u1", "Second", d);
+  assert.equal(made[0]?.mayMakeAnother, true);
+});
+
+test("another org takes an org the creator admins on a paid plan; with billing off, anyone may", async () => {
+  let asked = 0;
+  const plans = (ids: Array<"free" | "pro" | "max" | "enterprise">) => async () => {
+    asked++;
+    return ids;
+  };
+  assert.equal(await mayMakeAnotherOrg(false, plans([])), false);
+  assert.equal(await mayMakeAnotherOrg(false, plans(["free", "free"])), false);
+  assert.equal(await mayMakeAnotherOrg(false, plans(["free", "pro"])), true);
+  assert.equal(await mayMakeAnotherOrg(false, plans(["enterprise"])), true);
+  asked = 0;
+  assert.equal(await mayMakeAnotherOrg(true, plans([])), true);
+  assert.equal(asked, 0, "billing off: no plan is read");
 });
