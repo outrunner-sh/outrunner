@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
+import { BrowserSignInSettings } from "@/components/browser-sign-in-settings";
 import { SandboxSettingsForm } from "@/components/sandbox-settings";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
@@ -16,5 +17,10 @@ async function SandboxSection() {
   const owner = await getOwnerSafe();
   if (!owner) redirect("/signin?next=/settings/sandbox");
   const [initial, plan] = await Promise.all([getSandboxSettings(owner.id), planFor(await activeOrgId().catch(() => undefined))]);
-  return <SandboxSettingsForm initial={initial} plan={plan} sizes={providerName() === "neev"} ownerId={owner.id} />;
+  return (
+    <div className="space-y-8">
+      <SandboxSettingsForm initial={initial} plan={plan} sizes={providerName() === "neev"} ownerId={owner.id} />
+      <BrowserSignInSettings />
+    </div>
+  );
 }

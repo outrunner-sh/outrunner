@@ -184,6 +184,12 @@ type Service struct {
 	// Browser is the desktop's browser, which BrowserState reads sign-ins
 	// from (browser_state.go); nil reads none.
 	Browser *desktop.Browser
+	// signIns keeps the browser's sign-ins for the person's next session,
+	// made once (signInsOnce), and signInsAsked is set once the last
+	// session's have been asked for (sign_ins.go).
+	signIns      *desktop.SignInKeeper
+	signInsOnce  sync.Once
+	signInsAsked atomic.Bool
 	// desktopFound is set once the box is found to have a desktop, and
 	// desktopNotFoundAt when it was last found not to (desktop.go).
 	desktopFound      atomic.Bool
@@ -556,6 +562,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		in.BaseBranch = in.Checkouts[0].BaseBranch
 	}
 	defer s.lockLifecycle(in.WorkspaceID)()
+	// A Runtime Computer's browser starts with the person's sign-ins from
+	// their last session in the project.
+	if in.RepoPath == "" {
+		s.prepareSignIns()
+	}
 	facts := workspaceFacts{
 		Branch:          in.Branch,
 		BranchRenamable: in.BranchRenamable && in.RepoPath == "",

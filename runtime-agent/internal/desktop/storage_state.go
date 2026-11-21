@@ -269,16 +269,27 @@ var blankPage = base64.StdEncoding.EncodeToString([]byte(`<!doctype html><link r
 // readLocalStorage is every item, in the page's localStorage.
 const readLocalStorage = `Object.keys(localStorage).map((name) => ({ name, value: localStorage.getItem(name) }))`
 
-// localStorage reads origin's localStorage in a background tab of its own,
+// localStorage reads origin's localStorage in a background tab of its own
+// (inBlankTab).
+func (b *Browser) localStorage(ctx context.Context, browser *cdp, origin string) ([]NameValue, error) {
+	var items []NameValue
+	if err := b.inBlankTab(ctx, browser, origin, readLocalStorage, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// inBlankTab evaluates expression at origin, in a background tab of its own,
 // closed after, whose requests DevTools answers itself: the page at origin
 // is blank, and anything else is refused. A service worker the app has there
-// is bypassed, or it would serve the app's own page.
-func (b *Browser) localStorage(ctx context.Context, browser *cdp, origin string) ([]NameValue, error) {
+// is bypassed, or it would serve the app's own page. The expression's value,
+// when out isn't nil, is read into out.
+func (b *Browser) inBlankTab(ctx context.Context, browser *cdp, origin, expression string, out any) error {
 	var created struct {
 		TargetID string `json:"targetId"`
 	}
 	if err := browser.call(ctx, "Target.createTarget", map[string]any{"url": "about:blank", "background": true}, &created); err != nil {
-		return nil, fmt.Errorf("open a background tab: %w", err)
+		return fmt.Errorf("open a background tab: %w", err)
 	}
 	defer func() {
 		// Closed even when ctx is done: a tab left over is one the user sees.
@@ -286,9 +297,9 @@ func (b *Browser) localStorage(ctx context.Context, browser *cdp, origin string)
 		defer cancel()
 		_ = browser.call(closeCtx, "Target.closeTarget", map[string]any{"targetId": created.TargetID}, nil)
 	}()
-	page, err := dialPage(ctx, devToolsTarget{WebSocketDebuggerURL: "ws://127.0.0.1:" + strconv.Itoa(b.Port) + "/devtools/page/" + created.TargetID})
+	page, err := dialPage(ctx, devToolsTarget{WebSocketDebuggerURL: b.pageSocket(created.TargetID)})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer page.Close()
 	for _, step := range []struct {
@@ -300,7 +311,7 @@ func (b *Browser) localStorage(ctx context.Context, browser *cdp, origin string)
 		{"Fetch.enable", map[string]any{"patterns": []map[string]any{{"urlPattern": "*"}}}},
 	} {
 		if err := page.call(ctx, step.method, step.params, nil); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	document := origin + "/"
@@ -331,24 +342,38 @@ func (b *Browser) localStorage(ctx context.Context, browser *cdp, origin string)
 		ErrorText string `json:"errorText"`
 	}
 	if err := page.callHandling(ctx, "Page.navigate", map[string]any{"url": document}, &navigated, answer); err != nil {
-		return nil, err
+		return err
 	}
 	if navigated.ErrorText != "" {
-		return nil, errors.New(navigated.ErrorText)
+		return errors.New(navigated.ErrorText)
 	}
-	var items struct {
+	return evaluate(ctx, page, map[string]any{"expression": expression, "returnByValue": true}, out, answer)
+}
+
+// evaluate runs Runtime.evaluate with params, reading the expression's value
+// into out when out isn't nil; a script that throws is an error.
+func evaluate(ctx context.Context, page *cdp, params map[string]any, out any, onEvent func(string, json.RawMessage) error) error {
+	var result struct {
 		Result struct {
-			Value []NameValue `json:"value"`
+			Value json.RawMessage `json:"value"`
 		} `json:"result"`
 		ExceptionDetails *struct {
 			Text string `json:"text"`
 		} `json:"exceptionDetails"`
 	}
-	if err := page.callHandling(ctx, "Runtime.evaluate", map[string]any{"expression": readLocalStorage, "returnByValue": true}, &items, answer); err != nil {
-		return nil, err
+	if err := page.callHandling(ctx, "Runtime.evaluate", params, &result, onEvent); err != nil {
+		return err
 	}
-	if items.ExceptionDetails != nil {
-		return nil, errors.New(items.ExceptionDetails.Text)
+	if result.ExceptionDetails != nil {
+		return errors.New(result.ExceptionDetails.Text)
 	}
-	return items.Result.Value, nil
+	if out == nil || len(result.Result.Value) == 0 {
+		return nil
+	}
+	return json.Unmarshal(result.Result.Value, out)
+}
+
+// pageSocket is where a tab's own DevTools connection is, by its id.
+func (b *Browser) pageSocket(targetID string) string {
+	return "ws://127.0.0.1:" + strconv.Itoa(b.Port) + "/devtools/page/" + targetID
 }
