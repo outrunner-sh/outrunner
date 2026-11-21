@@ -11,7 +11,7 @@ import { InlineMessage } from "@/components/ui/notice";
 import { SELECT_OPTIONS } from "@/components/ui/select-options";
 import { requestJson } from "@/lib/http/request-json";
 import type { SettingsRule, SettingsScope, SettingsTracker } from "@/lib/trackers/org-settings";
-import { isClosedStateType, LINEAR_PRIORITIES, RULE_SESSIONS_MAX, type RuleFilters, type TrackerProvider, UNASSIGNED } from "@/lib/trackers/rules";
+import { isClosedStateType, LINEAR_PRIORITIES, RULE_SESSIONS_MAX, type RuleFilters, type StateMap, type TrackerProvider, UNASSIGNED } from "@/lib/trackers/rules";
 import { cn } from "@/lib/utils";
 
 type Project = { id: string; fullName: string };
@@ -55,6 +55,17 @@ function useChange() {
   };
   return { run, error, busy };
 }
+
+const EMPTY_STATE_MAP: StateMap = { started: null, inReview: null, done: null, blocked: null };
+
+/** The state map's four, in the order work goes through them. Only Done is a closed state:
+ *  the rest are where work goes while it's open. */
+const STATE_PICKS: { key: keyof StateMap; label: string; none: string; lead: string; closed: boolean }[] = [
+  { key: "started", label: "State when a session starts", none: "Session started: no change", lead: "Started", closed: false },
+  { key: "blocked", label: "State while it's blocked", none: "Blocked: no change", lead: "Blocked", closed: false },
+  { key: "inReview", label: "State when its PR opens", none: "PR opened: no change", lead: "PR opened", closed: false },
+  { key: "done", label: "State when its PR merges", none: "PR merged: no change", lead: "PR merged", closed: true },
+];
 
 /**
  * The org's Linear workspaces or Jira sites, their connected teams or projects, and each
@@ -232,6 +243,8 @@ function Team({
   const patch = (body: Record<string, unknown>) => void change.run(url, "PATCH", body);
   // Where work moves to: a closed state isn't somewhere work is under way.
   const states = (catalog?.states ?? []).filter((state) => !isClosedStateType(state.type));
+  // Done is where merged work goes: one of the team's done states, never canceled or a duplicate.
+  const doneStates = (catalog?.states ?? []).filter((state) => state.type === "completed");
 
   return (
     <div className="@container space-y-5 rounded-md border border-border/60 p-4">
@@ -304,38 +317,26 @@ function Team({
             ))}
           </select>
         </Field>
-        <Field label="Issue state for delegated work" hint="Moved when its session starts, and when its PR opens.">
+        <Field label="Issue state for delegated work" hint="Moved when its session starts or picks up again, while it's blocked, when its PR opens, and when it merges.">
           <div className="flex flex-wrap gap-2">
-            <select
-              aria-label="State when a session starts"
-              disabled={!admin || change.busy || unavailable}
-              value={scope.stateMap?.started ?? ""}
-              onChange={(e) => patch({ stateMap: { started: e.target.value || null, inReview: scope.stateMap?.inReview ?? null } })}
-              className={SELECT}
-            >
-              <option value="">Session started: no change</option>
-              <StateNotOffered id={scope.stateMap?.started} lead="Started" states={states} catalog={catalog} />
-              {states.map((state) => (
-                <option key={state.id} value={state.id}>
-                  Started: {state.name}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="State when its PR opens"
-              disabled={!admin || change.busy || unavailable}
-              value={scope.stateMap?.inReview ?? ""}
-              onChange={(e) => patch({ stateMap: { started: scope.stateMap?.started ?? null, inReview: e.target.value || null } })}
-              className={SELECT}
-            >
-              <option value="">PR opened: no change</option>
-              <StateNotOffered id={scope.stateMap?.inReview} lead="PR opened" states={states} catalog={catalog} />
-              {states.map((state) => (
-                <option key={state.id} value={state.id}>
-                  PR opened: {state.name}
-                </option>
-              ))}
-            </select>
+            {STATE_PICKS.map((pick) => (
+              <select
+                key={pick.key}
+                aria-label={pick.label}
+                disabled={!admin || change.busy || unavailable}
+                value={scope.stateMap?.[pick.key] ?? ""}
+                onChange={(e) => patch({ stateMap: { ...EMPTY_STATE_MAP, ...scope.stateMap, [pick.key]: e.target.value || null } })}
+                className={SELECT}
+              >
+                <option value="">{pick.none}</option>
+                <StateNotOffered id={scope.stateMap?.[pick.key]} lead={pick.lead} states={pick.closed ? doneStates : states} catalog={catalog} />
+                {(pick.closed ? doneStates : states).map((state) => (
+                  <option key={state.id} value={state.id}>
+                    {pick.lead}: {state.name}
+                  </option>
+                ))}
+              </select>
+            ))}
           </div>
         </Field>
       </div>
@@ -352,8 +353,7 @@ function Team({
           <span>
             Accept sessions started by {words.name} rules
             <span className="block text-xs text-muted-foreground">
-              {words.ruleLead} starts a session as the issue&apos;s creator, on their Outrunner
-              allowance. Off, it gets a reply and nothing starts.
+              {`${words.ruleLead} starts a session as the issue's creator, on their Outrunner allowance. Off, it gets a reply and nothing starts.`}
             </span>
           </span>
         </label>

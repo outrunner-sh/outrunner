@@ -12,7 +12,10 @@
  * and open/closed; Outrunner owns the triage decision, the project and the session. An
  * event is marked seen only once it's done, and every step can run again.
  *
- * The payloads here are as Atlassian's page shows them, and haven't met a real site.
+ * The payloads here were checked against a real Jira Cloud site on its Free plan (Nov 2026):
+ * signed deliveries, issue and comment events, wiki-markup bodies, changelogs, an Automation
+ * rule's account and moves between projects. A second account and a service project weren't
+ * there to check.
  */
 
 import type { TrackerInstallation, TrackerScope } from "@/lib/db/trackers";

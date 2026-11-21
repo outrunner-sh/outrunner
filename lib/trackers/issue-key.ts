@@ -8,6 +8,7 @@
  * only when the name is really taken (lib/session/issue-branch.ts).
  */
 
+import { firstFreeBranch } from "@/lib/session/branch-name";
 import type { WorkItemSource } from "@/lib/triage/work-items";
 
 export type TrackerIssue = { source: Extract<WorkItemSource, "linear" | "jira">; key: string };
@@ -38,6 +39,47 @@ export function issueBranch(source: TrackerIssue["source"], key: string, title: 
     .slice(0, 40)
     .replace(/^-+|-+$/g, "");
   return [source === "jira" ? key.toUpperCase() : key.toLowerCase(), slug].filter(Boolean).join("-");
+}
+
+/**
+ * The issue's name if it's free of the project's sessions and of GitHub; otherwise `-2`, `-3`…
+ * (lib/session/branch-name.ts firstFreeBranch, as a generated branch is checked). A name an old
+ * session or a person already has is never reused, so its push and its pull request stay its
+ * own. If GitHub can't be asked, the project's sessions alone decide.
+ */
+export async function freeIssueBranchOf(
+  base: string,
+  sessionBranches: readonly string[],
+  knownOnGitHub: ((branch: string) => Promise<boolean>) | null,
+): Promise<string> {
+  if (!knownOnGitHub) return nextFreeBranch(base, sessionBranches);
+  const held = new Set(sessionBranches.map((name) => name.toLowerCase()));
+  try {
+    const free = await firstFreeBranch(base, async (branch) => held.has(branch.toLowerCase()) || (await knownOnGitHub(branch)));
+    if (free) return free;
+  } catch (error) {
+    console.error(`Couldn't ask GitHub which ${base} branches are taken`, error);
+  }
+  return nextFreeBranch(base, sessionBranches);
+}
+
+/**
+ * The issue branch a new session tries first, or null for none: none when a branch was asked
+ * for; else the tracker's issue it was started on; else the Triage item's it was started from.
+ * Never worth failing a session over, so anything that throws is none.
+ */
+export async function issueBranchFor(
+  input: { requestedBranch: string; issue: TrackerIssue | null; workItemId: string | null; title: string },
+  deps: { forIssue(issue: TrackerIssue, title: string): Promise<string>; forItem(workItemId: string): Promise<string | null> },
+): Promise<string | null> {
+  if (input.requestedBranch) return null;
+  try {
+    if (input.issue) return await deps.forIssue(input.issue, input.title);
+    if (input.workItemId) return await deps.forItem(input.workItemId);
+  } catch (error) {
+    console.warn("Couldn't name a session's branch for its issue", error);
+  }
+  return null;
 }
 
 /** The name itself if it's free; otherwise `-2`, `-3`… Git's names are case-sensitive, but a

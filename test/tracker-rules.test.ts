@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { defaultStateMap, firstMatch, matchesRule, parseRuleInput, parseScopeSettings, type RuleFilters, UNASSIGNED } from "@/lib/trackers/rules";
+import { blockedTarget, defaultStateMap, doneTarget, firstMatch, matchesRule, parseRuleInput, parseScopeSettings, type RuleFilters, startedTarget, stateMapOf, UNASSIGNED } from "@/lib/trackers/rules";
 
 const none: RuleFilters = { labels: [], states: [], priorities: [], issueTypes: [], assignees: [] };
 const issue = { labels: ["bug", "ui"], state: "todo", priority: "2", issueType: null, assignee: null };
@@ -88,7 +88,56 @@ test("a team's state map starts on In Progress and In Review", () => {
     { id: "3", name: "In Review", type: "started" },
     { id: "4", name: "Done", type: "completed" },
   ];
-  assert.deepEqual(defaultStateMap(states), { started: "2", inReview: "3" });
-  assert.deepEqual(defaultStateMap([{ id: "9", name: "Doing", type: "started" }]), { started: "9", inReview: null });
+  assert.deepEqual(defaultStateMap(states), { started: "2", inReview: "3", done: "4", blocked: null });
+  assert.deepEqual(defaultStateMap([{ id: "9", name: "Doing", type: "started" }]), { started: "9", inReview: null, done: null, blocked: null });
   assert.equal(defaultStateMap([{ id: "1", name: "Backlog", type: "backlog" }]), null);
+});
+
+test("Done and Blocked: matched by name, Done by type too, and each can be off", () => {
+  const states = [
+    { id: "1", name: "Todo", type: "unstarted" },
+    { id: "2", name: "In Progress", type: "started" },
+    { id: "3", name: "In Review", type: "started" },
+    { id: "4", name: "Blocked", type: "started" },
+    { id: "5", name: "Shipped", type: "completed" },
+    { id: "6", name: "Done", type: "completed" },
+  ];
+  assert.deepEqual(defaultStateMap(states), { started: "2", inReview: "3", done: "6", blocked: "4" });
+  assert.deepEqual(defaultStateMap(states.filter((s) => s.id !== "6" && s.id !== "4")), { started: "2", inReview: "3", done: "5", blocked: null });
+  assert.equal(defaultStateMap([{ id: "1", name: "Todo", type: "unstarted" }]), null);
+  // A map saved before these, and the page's settings.
+  assert.deepEqual(stateMapOf({ started: "2", inReview: "3" }), { started: "2", inReview: "3", done: null, blocked: null });
+  assert.equal(stateMapOf(null), null);
+  const parsed = parseScopeSettings({ stateMap: { started: "2", inReview: null, done: "6", blocked: "4" } });
+  assert.deepEqual(parsed.ok && parsed.value.stateMap, { started: "2", inReview: null, done: "6", blocked: "4" });
+  assert.equal(parseScopeSettings({ stateMap: { done: 7 } }).ok, false);
+  assert.equal(parseScopeSettings({ stateMap: { blocked: "x".repeat(201) } }).ok, false);
+});
+
+test("where an issue moves: started, blocked and done, never over a person's own move", () => {
+  const map = { started: "prog", inReview: "rev", done: "done", blocked: "blk" };
+  // Started: from not started, or from Blocked; not from where a person put it, nor once closed.
+  assert.equal(startedTarget(map, { stateId: "todo", stateType: "unstarted" }), "prog");
+  assert.equal(startedTarget(map, { stateId: "back", stateType: "backlog" }), "prog");
+  assert.equal(startedTarget(map, { stateId: "blk", stateType: "started" }), "prog");
+  assert.equal(startedTarget(map, { stateId: "prog", stateType: "started" }), null);
+  assert.equal(startedTarget(map, { stateId: "rev", stateType: "started" }), null);
+  assert.equal(startedTarget(map, { stateId: "x", stateType: "completed" }), null);
+  assert.equal(startedTarget({ ...map, started: null }, { stateId: "blk", stateType: "started" }), null);
+  // Blocked: from anywhere open, but not twice.
+  assert.equal(blockedTarget(map, { stateId: "todo", stateType: "unstarted" }), "blk");
+  assert.equal(blockedTarget(map, { stateId: "prog", stateType: "started" }), "blk");
+  assert.equal(blockedTarget(map, { stateId: "blk", stateType: "started" }), null);
+  for (const stateType of ["completed", "canceled", "duplicate"]) assert.equal(blockedTarget(map, { stateId: "x", stateType }), null);
+  assert.equal(blockedTarget({ ...map, blocked: null }, { stateId: "prog", stateType: "started" }), null);
+  // Done: only from where a session put it.
+  assert.equal(doneTarget(map, { stateId: "prog", stateType: "started" }), "done");
+  assert.equal(doneTarget(map, { stateId: "rev", stateType: "started" }), "done");
+  // A lost turn after the PR opened left it Blocked: merging still finishes it.
+  assert.equal(doneTarget(map, { stateId: "blk", stateType: "started" }), "done");
+  assert.equal(doneTarget({ ...map, blocked: null }, { stateId: "blk", stateType: "started" }), null);
+  assert.equal(doneTarget(map, { stateId: "todo", stateType: "unstarted" }), null);
+  assert.equal(doneTarget(map, { stateId: null, stateType: "started" }), null);
+  assert.equal(doneTarget({ ...map, done: null }, { stateId: "rev", stateType: "started" }), null);
+  assert.equal(doneTarget(null, { stateId: "rev", stateType: "started" }), null);
 });

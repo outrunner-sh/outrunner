@@ -19,6 +19,7 @@
  * interrupted once it's up.
  */
 
+import { blockedTarget, type IssueState, startedTarget } from "@/lib/trackers/rules";
 import type { AccessLevel } from "@/lib/orgs/access";
 import { allows } from "@/lib/orgs/access";
 import type { AgentRow } from "@/lib/db/linear-agent";
@@ -77,7 +78,7 @@ export type AgentDeps = {
   say(installationId: string, agentSessionId: string, content: LinearActivity, signal?: LinearSignal): Promise<void>;
   addUrl(installationId: string, agentSessionId: string, url: { label: string; url: string }): Promise<void>;
   setIssueState(installationId: string, issueId: string, stateId: string): Promise<void>;
-  standing(installationId: string, issueId: string): Promise<{ teamId: string; open: boolean; stateType: string | null; delegateId: string | null } | null>;
+  standing(installationId: string, issueId: string): Promise<{ teamId: string; open: boolean; stateId?: string | null; stateType: string | null; delegateId: string | null } | null>;
   creator(installationId: string, issueId: string): Promise<{ id: string; name: string | null } | null>;
   suggestions(installationId: string, issueId: string, agentSessionId: string, repositories: readonly string[]): Promise<RepositorySuggestion[]>;
   scopeForTeam(installationId: string, teamId: string): Promise<TrackerScope | null>;
@@ -106,8 +107,6 @@ export type AgentDeps = {
   start(start: ServerSessionStart): Promise<ServerSessionResult>;
   send(ownerId: string, workspaceId: string, text: string): Promise<boolean>;
   stop(ownerId: string, workspaceId: string): Promise<boolean>;
-  /** A branch named for the issue, free in that project. */
-  branchFor(projectId: string, key: string, title: string): Promise<string>;
   /** How long a stop waits on the session before saying it may still be running: the webhook
    *  it answers has 5s. */
   interruptWaitMs: number;
@@ -575,6 +574,7 @@ async function resolveRunner(context: Context, scope: TrackerScope, seen: AgentR
     if (!inUse) {
       const written = await deps.saveRow(rowOf(context, { orgId: scope.orgId, teamId: scope.externalTeamId, openWhenAsked: await openNow(context), stage: "awaiting_link", prompt: firstPrompt(payload), ruleStarted: !human, ask: askOf(payload), askedUser: externalId }), seen, { restart: context.restart });
       if (!written || (await stopIfTakenBack(context))) return null;
+      await moveIssue(context, scope, issueId, blockedTarget, "blocked");
     }
     await say({ type: "elicitation", body: inUse ? REPLIES.linkFirst : REPLIES.link }, { signal: "auth", signalMetadata: { url: deps.linkUrl(), userId: externalId, providerName: "Outrunner" } });
     return null;
@@ -699,6 +699,7 @@ async function delegate(context: Context): Promise<boolean> {
   if (!picked) {
     const written = await deps.saveRow(rowOf(context, { orgId: scope.orgId, teamId: scope.externalTeamId, openWhenAsked: await openNow(context), slotTaken: runner.slotTaken, itemId: item?.id ?? null, ownerId: runner.actor.userId, stage: "awaiting_repo", prompt, ruleStarted: runner.ruleStarted, ask: askOf(payload) }), existing, { restart: context.restart });
     if (!written || (await stopIfTakenBack(context))) return false;
+    await moveIssue(context, scope, issueId, blockedTarget, "blocked");
     await askRepo(context, readable, REPLIES.whichRepo);
     return false;
   }
@@ -776,6 +777,8 @@ async function steerExisting(
   if (item && session.projectId) await deps.linkItem(scope.orgId, item.id, { workspaceId: session.id, projectId: session.projectId });
   await deps.addUrl(context.installation.id, context.agentSessionId, { label: "Outrunner session", url: deps.sessionUrl(session.id) }).catch(() => undefined);
   await deps.openWatch(context.agentSessionId, { sentAt, baselineActivity });
+  const steeredIssue = issueIdOf(context.payload);
+  if (steeredIssue) await moveToStarted(context, scope, steeredIssue);
   return "sent";
 }
 
@@ -875,7 +878,7 @@ async function startSession(context: Context, scope: TrackerScope, runner: Runne
     prompt,
     model,
     source: SOURCE,
-    ...(key && { branch: await deps.branchFor(project.id, key, title) }),
+    ...(key && { issue: { source: "linear" as const, key } }),
     onCreated: async (workspaceId) => {
       // Not the stage: a stop since stays a stop.
       await deps.setRowWorkspace(agentSessionId, workspaceId);
@@ -898,6 +901,7 @@ async function startSession(context: Context, scope: TrackerScope, runner: Runne
   if (stoppedSince) return false;
   const reason = result.errorMessage ?? "Its setup failed.";
   await deps.stopRow(agentSessionId);
+  await moveIssue(context, scope, issueId, blockedTarget, "blocked");
   await deps.say(installation.id, agentSessionId, {
     type: "error",
     body: result.workspaceId ? `The session couldn't start: ${reason}\n\n${deps.sessionUrl(result.workspaceId)}` : `The session couldn't start: ${reason}`,
@@ -916,15 +920,27 @@ async function startSession(context: Context, scope: TrackerScope, runner: Runne
 }
 
 /** The team's state for work started, unless the issue is already past it. */
-async function moveToStarted({ installation, deps }: Context, scope: TrackerScope, issueId: string): Promise<void> {
-  const state = scope.stateMap?.started;
-  if (!state) return;
+function moveToStarted(context: Context, scope: TrackerScope, issueId: string): Promise<void> {
+  return moveIssue(context, scope, issueId, startedTarget, "started");
+}
+
+/** Move the issue to `what` as `target` says, from where it is now (lib/trackers/rules.ts).
+ *  Best effort: the work goes on whether or not Linear moves. A team with no state for it
+ *  asks Linear nothing, as this runs within the webhook's time. */
+async function moveIssue(
+  { installation, deps }: Context,
+  scope: TrackerScope,
+  issueId: string,
+  target: (map: TrackerScope["stateMap"], issue: IssueState) => string | null,
+  what: "started" | "blocked",
+): Promise<void> {
+  if (!scope.stateMap?.[what]) return;
   try {
     const standing = await deps.standing(installation.id, issueId);
-    if (!standing || ["started", "completed", "canceled", "duplicate"].includes(standing.stateType ?? "")) return;
-    await deps.setIssueState(installation.id, issueId, state);
+    const state = standing ? target(scope.stateMap, standing) : null;
+    if (state) await deps.setIssueState(installation.id, issueId, state);
   } catch (error) {
-    console.warn("Linear: couldn't move an issue to started", error);
+    console.warn(`Linear: couldn't move an issue to ${what}`, error);
   }
 }
 
@@ -966,7 +982,8 @@ async function prompted(context: Context): Promise<void> {
     return;
   }
   // Disconnected, or moved to another org: the relay would only stop, saying nothing.
-  if ((await teamScope(asked))?.orgId !== row.orgId) {
+  const scope = await teamScope(asked);
+  if (!scope || scope.orgId !== row.orgId) {
     await say({ type: "response", body: REPLIES.notConnected });
     return;
   }
@@ -1003,6 +1020,7 @@ async function prompted(context: Context): Promise<void> {
     return;
   }
   await deps.openWatch(agentSessionId, { sentAt, baselineActivity });
+  await moveToStarted(asked, scope, row.issueId);
   await deps.watchReply(agentSessionId);
 }
 

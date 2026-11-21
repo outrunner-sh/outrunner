@@ -52,7 +52,8 @@ session links to it, and the session's reply comes back there.
 | The session or its box fails, or it can't start | An error in the agent session, with why. The state doesn't change. |
 | Still running after 24 hours | A reply saying so, with the session's link, and no more from that turn |
 | A PR opens | Its link on the agent session, and the issue moves to the team's In Review state, if it has one. Only while it's delegated. |
-| A PR merges | The item goes to Done if it's still open. Linear's own GitHub integration moves the issue, if it's installed. |
+| A PR merges | The item goes to Done if it's still open. Delegated, the issue moves to the team's Done state too, if it has one, but only from the started, In Review or Blocked state a session put it in: a person's own move since stands. |
+| The session waits on someone (which repository, or linking an account), its setup fails, or its turn is lost | The issue moves to the team's Blocked state, if it has one, unless it's closed. Work picking up again (a reply, a steer, a start) moves it back to started. |
 | A PR closes without merging | A note on the item |
 
 **Team access:** the app only reaches the teams it was given, at install or later under Settings → Applications. A team left

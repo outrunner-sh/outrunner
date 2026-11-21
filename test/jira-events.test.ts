@@ -118,7 +118,7 @@ function harness(over: Partial<JiraEventDeps> = {}, setup: { rules?: TrackerRule
     deleteNote: async (ref) => void log.deleted.push(ref),
     forgetComment: async (_i, id) => void log.forgotten.push(id),
     issueStanding: async () =>
-      setup.standing === null ? null : { assigneeId: null, teamId: PROJECT, key: "ENG-1", title: "T", description: "", open: true, stateType: "unstarted", creatorId: "ana", creatorName: "Ana", duplicateOf: null, ...setup.standing },
+      setup.standing === null ? null : { assigneeId: null, stateId: "1", teamId: PROJECT, key: "ENG-1", title: "T", description: "", open: true, stateType: "unstarted", creatorId: "ana", creatorName: "Ana", duplicateOf: null, ...setup.standing },
     statusType: async (_i, id) => setup.statusTypes?.[id] ?? "unstarted",
     session: async (id) => ({ id, ownerId: "o", status: "ready" }),
     archiveOnClose: async () => true,

@@ -1,5 +1,6 @@
 "use client";
 
+import { deploymentCard } from "@/lib/integrations/card";
 import { LinearIcon } from "@/components/brand-icons";
 import { IntegrationCard } from "@/components/integration-card";
 import { SettingsFrame } from "@/components/settings-frame";
@@ -52,7 +53,7 @@ function tracker(state: string): SettingsTracker {
         externalTeamId: "team-eng",
         name: "Engineering",
         setBy: "admin",
-        stateMap: { started: "s-progress", inReview: "s-review" },
+        stateMap: { started: "s-progress", inReview: "s-review", done: null, blocked: null },
         defaultProjectId: PROJECTS[0].id,
         acceptRuleSessions: false,
         ruleSessionsPerDay: 20,
@@ -94,7 +95,7 @@ function jiraTracker(state: string): SettingsTracker {
       {
         ...scope,
         externalTeamId: "10000",
-        stateMap: { started: "3", inReview: "4" },
+        stateMap: { started: "3", inReview: "4", done: null, blocked: null },
         rules: [rule({ id: "rule-1", labels: ["bug"], priorities: ["1"], issueTypes: ["10001"], assignees: ["unassigned"], stopped: false })],
       },
     ],
@@ -113,8 +114,20 @@ export function JiraFixture({ state, member }: { state: string; member: boolean 
   );
 }
 
-/** Org → Integrations' Linear card, connected and with its connection lost. */
+/** Each card state, as the Integrations page would ask `deploymentCard` for it. */
+const CARD_STATES: Record<string, { connected: boolean; admin: boolean; installHref: string | null }> = {
+  connected: { connected: true, admin: true, installHref: "/settings/org/linear" },
+  disconnected: { connected: true, admin: true, installHref: "/settings/org/linear" },
+  none: { connected: false, admin: true, installHref: "/settings/org/linear" },
+  member: { connected: false, admin: false, installHref: "/settings/org/linear" },
+  unset: { connected: false, admin: true, installHref: null },
+  "unset-member": { connected: false, admin: false, installHref: null },
+};
+
+/** Org → Integrations' Linear card. state: connected | disconnected | none | member | unset | unset-member. */
 export function LinearCardFixture({ state }: { state: string }) {
+  const card = CARD_STATES[state] ?? CARD_STATES.connected;
+  const shown = deploymentCard({ ...card, configureHref: "/settings/org/linear" });
   return (
     <SettingsFrame>
       <section className="@container space-y-6">
@@ -124,9 +137,10 @@ export function LinearCardFixture({ state }: { state: string }) {
             icon={<LinearIcon />}
             name="Linear"
             description="File issues to Triage by rules, and keep them in step."
-            connected={state === "none" ? null : "Acme"}
+            connected={card.connected ? "Acme" : null}
             problem={state === "disconnected" ? "Disconnected: rules have stopped. Reconnect it." : null}
-            action={state === "none" ? { kind: "install", href: "/settings/org/linear" } : { kind: "configure", href: "/settings/org/linear" }}
+            note={shown.note}
+            action={shown.action}
           />
         </div>
       </section>

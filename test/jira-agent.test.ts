@@ -8,7 +8,6 @@ import type { TrackerFiling, TrackerNote } from "@/lib/db/work-items";
 import type { ServerSessionResult, ServerSessionStart } from "@/lib/session/server-session";
 import type { JiraIssueStanding } from "@/lib/trackers/jira";
 import { handleJiraTrigger, resumeJiraAfterLink, JIRA_REPLIES, type JiraAgentDeps, jiraCapReply, jiraFirstPrompt, type JiraTrigger } from "@/lib/trackers/jira-agent";
-import { issueBranch } from "@/lib/trackers/issue-key";
 import type { TriageActor } from "@/lib/triage/access";
 import type { WorkItem } from "@/lib/triage/work-items";
 
@@ -18,10 +17,10 @@ const ISSUE = "1";
 const WEB = { id: "11111111-1111-4111-8111-111111111111", fullName: "acme/web" };
 const API = { id: "22222222-2222-4222-8222-222222222222", fullName: "acme/api" };
 const INSTALL: TrackerInstallation = { id: "install", provider: "jira", externalId: "cloud-1", siteUrl: "https://acme.atlassian.net", name: "Acme", appUserId: "app", disconnected: false };
-const STANDING: JiraIssueStanding = { teamId: PROJECT, key: "ENG-1", title: "Fix it", description: "Steps", open: true, stateType: "unstarted", creatorId: "ana", creatorName: "Ana", duplicateOf: null, assigneeId: "app" };
+const STANDING: JiraIssueStanding = { teamId: PROJECT, key: "ENG-1", title: "Fix it", description: "Steps", open: true, stateType: "unstarted", stateId: "1", creatorId: "ana", creatorName: "Ana", duplicateOf: null, assigneeId: "app" };
 
 function scope(over: Partial<TrackerScope> = {}): TrackerScope {
-  return { id: "scope-1", installationId: "install", orgId: ORG, externalTeamId: PROJECT, name: "Eng", setBy: "admin", stateMap: { started: "3", inReview: "4" }, defaultProjectId: WEB.id, acceptRuleSessions: false, ruleSessionsPerDay: 20, ...over };
+  return { id: "scope-1", installationId: "install", orgId: ORG, externalTeamId: PROJECT, name: "Eng", setBy: "admin", stateMap: { started: "3", inReview: "4", done: null, blocked: null }, defaultProjectId: WEB.id, acceptRuleSessions: false, ruleSessionsPerDay: 20, ...over };
 }
 
 function actor(userId: string, projects = [WEB.id, API.id]): TriageActor {
@@ -122,7 +121,6 @@ function harness(over: Partial<JiraAgentDeps> = {}, setup: Setup = {}) {
       log.interrupted.push(workspaceId);
       return true;
     },
-    branchFor: async (_p, key, title) => issueBranch("jira", key, title),
     sendBaseline: async () => 1000,
     openWatch: async () => {
       log.watches += 1;
@@ -426,11 +424,11 @@ test("J6: the owner's answer that @mentions us is the answer, with the saved pro
 test("the branch and first prompt carry the issue's key", async () => {
   const h = harness();
   await h.run(assigned);
-  assert.equal(h.log.started[0]?.branch, "ENG-1-fix-it", "Jira wants its key uppercase");
+  assert.deepEqual(h.log.started[0]?.issue, { source: "jira", key: "ENG-1" }, "named for it where the session starts, against GitHub too");
   assert.match(h.log.started[0]?.prompt ?? "", /Keep ENG-1 in any branch you name/);
   const keyless = harness({}, { standing: { ...STANDING, key: null } });
   await keyless.run(assigned);
-  assert.equal(keyless.log.started[0]?.branch, undefined);
+  assert.equal(keyless.log.started[0]?.issue, undefined);
 });
 
 test("the hold goes before the watch, and a failed watch doesn't matter", async () => {
@@ -759,4 +757,71 @@ test("what was said before the question still counts once it's answered", async 
   const ruled = harness({}, { scope: scope({ acceptRuleSessions: true, defaultProjectId: null }) });
   await ruled.run({ kind: "mentioned", issueId: ISSUE, actor: { id: "automation", name: "A", kind: "rule" }, text: `[model=${known}]` });
   assert.equal(ruled.current()?.askText, null);
+});
+
+// --- Blocked, and started again
+
+const BLOCKING = { started: "3", inReview: "4", done: null, blocked: "9" };
+
+test("waiting on someone, or a start that failed: the issue goes to Blocked", async () => {
+  const repo = harness({}, { scope: scope({ stateMap: BLOCKING, defaultProjectId: null }) });
+  await repo.run(assigned);
+  assert.equal(repo.current()?.stage, "awaiting_repo");
+  assert.deepEqual(repo.log.transitions, ["9"]);
+
+  const link = harness({ linkedOwner: async () => null }, { scope: scope({ stateMap: BLOCKING }) });
+  await link.run(assigned);
+  assert.equal(link.current()?.stage, "awaiting_link");
+  assert.deepEqual(link.log.transitions, ["9"]);
+
+  const failed = harness(
+    { start: async (start) => (await start.onCreated?.("w-new"), { workspaceId: "w-new", status: "failed", errorMessage: "no box" } as ServerSessionResult) },
+    { scope: scope({ stateMap: BLOCKING }), standing: { ...STANDING, stateId: "3", stateType: "started" } },
+  );
+  await failed.run(assigned);
+  assert.equal(failed.log.transitions.at(-1), "9");
+
+  const closed = harness({}, { scope: scope({ stateMap: BLOCKING, defaultProjectId: null }), standing: { ...STANDING, stateId: "5", stateType: "completed" } });
+  await closed.run(assigned);
+  assert.deepEqual(closed.log.transitions, []);
+});
+
+test("work picking up moves a Blocked issue back to started: a steer, or a start", async () => {
+  const steer = harness({}, { scope: scope({ stateMap: BLOCKING }), standing: { ...STANDING, stateId: "9", stateType: "started" }, item: item({ workspaceId: "w" }), session: { id: "w", ownerId: "ana-user", projectId: WEB.id, status: "ready" } });
+  await steer.run(mention("and this"));
+  assert.equal(steer.log.sent.length, 1);
+  assert.deepEqual(steer.log.transitions, ["3"]);
+
+  const start = harness({}, { scope: scope({ stateMap: BLOCKING }), standing: { ...STANDING, stateId: "9", stateType: "started" } });
+  await start.run(assigned);
+  assert.equal(start.log.started.length, 1);
+  assert.deepEqual(start.log.transitions, ["3"]);
+
+  const inReview = harness({}, { scope: scope({ stateMap: BLOCKING }), standing: { ...STANDING, stateId: "4", stateType: "started" }, item: item({ workspaceId: "w" }), session: { id: "w", ownerId: "ana-user", projectId: WEB.id, status: "ready" } });
+  await inReview.run(mention("and this"));
+  assert.deepEqual(inReview.log.transitions, []);
+});
+
+test("a trigger that couldn't take its issue says so, as no retry will come", async () => {
+  for (const kind of ["assigned", "mentioned"] as const) {
+    const h = harness({
+      claim: async () => {
+        throw new Error("database down");
+      },
+    });
+    await h.run(kind === "assigned" ? assigned : mention("please"));
+    assert.deepEqual(h.log.comments, ["Something went wrong in Outrunner, so this didn't start. Try again."], kind);
+    assert.deepEqual(h.log.started, []);
+  }
+  // Saying so failing too isn't a throw out of the trigger.
+  const quiet = harness({
+    claim: async () => {
+      throw new Error("database down");
+    },
+    comment: async () => {
+      throw new Error("Jira down");
+    },
+  });
+  await quiet.run(assigned);
+  assert.deepEqual(quiet.log.started, []);
 });

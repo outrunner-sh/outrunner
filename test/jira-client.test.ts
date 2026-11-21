@@ -159,7 +159,7 @@ test("an issue's standing: only a person counts as its creator", async () => {
     ],
   };
   const standing = await jiraIssueStanding("t", "c", "1", answering({ key: "ENG-1", fields }));
-  assert.deepEqual(standing, { teamId: "10000", key: "ENG-1", title: "S", description: "Body", open: false, stateType: "completed", creatorId: "ana", creatorName: "Ana", duplicateOf: "8", assigneeId: null });
+  assert.deepEqual(standing, { teamId: "10000", key: "ENG-1", title: "S", description: "Body", open: false, stateType: "completed", creatorId: "ana", creatorName: "Ana", duplicateOf: "8", assigneeId: null, stateId: "5" });
   const bot = await jiraIssueStanding("t", "c", "1", answering({ fields: { ...fields, creator: { accountId: "auto", displayName: "Automation for Jira", accountType: "app" } } }));
   assert.equal(bot?.creatorId, null);
   assert.equal(bot?.creatorName, null);

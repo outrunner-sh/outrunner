@@ -20,7 +20,8 @@ import { boxSummaryLook } from "@/lib/missions/watch.deps";
 import { sessionById } from "@/lib/missions/store";
 import { watchUntil } from "@/lib/session/turn-watch";
 import { askJira } from "@/lib/trackers/ask-jira";
-import { jiraComment } from "@/lib/trackers/jira";
+import { jiraComment, jiraIssueStanding, jiraTransition } from "@/lib/trackers/jira";
+import { blockedTarget } from "@/lib/trackers/rules";
 import { AWAIT_MS, sessionUrl } from "@/lib/trackers/linear-relay";
 import { checkTurnRelay, type RelayDeps } from "@/lib/trackers/turn-watch-relay";
 
@@ -38,6 +39,13 @@ function relayDeps(installationId: string, issueId: string): RelayDeps {
     messageMax: MESSAGE_MAX,
     reviveHint: "Assign or mention Outrunner again to bring it back.",
     load: () => jiraRelayRow(installationId, issueId),
+    blocked: async (row) => {
+      const scope = row.teamId ? await scopeForTeam(row.installationId, row.teamId) : null;
+      if (!scope?.stateMap?.blocked || scope.orgId !== row.orgId) return;
+      const standing = await askJira(installationId, null, (token, cloudId) => jiraIssueStanding(token, cloudId, issueId));
+      const status = standing ? blockedTarget(scope.stateMap, standing) : null;
+      if (status) await askJira(installationId, false, (token, cloudId) => jiraTransition(token, cloudId, issueId, status));
+    },
     connected: async (row) => {
       if (!row.orgId) return true;
       if (row.teamId) return (await scopeForTeam(row.installationId, row.teamId))?.orgId === row.orgId;

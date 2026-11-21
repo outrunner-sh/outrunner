@@ -23,7 +23,6 @@ import {
   handleRedelegated,
   withoutEscapes,
 } from "@/lib/trackers/linear-agent";
-import { issueBranch } from "@/lib/trackers/issue-key";
 import type { TriageActor } from "@/lib/triage/access";
 import type { WorkItem } from "@/lib/triage/work-items";
 
@@ -43,7 +42,7 @@ function scope(over: Partial<TrackerScope> = {}): TrackerScope {
     externalTeamId: TEAM,
     name: "Eng",
     setBy: "admin",
-    stateMap: { started: "st-progress", inReview: "st-review" },
+    stateMap: { started: "st-progress", inReview: "st-review", done: null, blocked: null },
     defaultProjectId: null,
     acceptRuleSessions: false,
     ruleSessionsPerDay: 20,
@@ -168,7 +167,6 @@ function harness(over: Partial<AgentDeps> = {}, setup: { scope?: TrackerScope | 
       log.stopped.push(workspaceId);
       return true;
     },
-    branchFor: async (_p, key, title) => issueBranch("linear", key, title),
     interruptWaitMs: 5,
     sendBaseline: async () => 1000,
     openWatch: async (_id, sent) => void log.watches.push(sent),
@@ -494,7 +492,7 @@ test("an issue already past started isn't moved back", async () => {
 });
 
 test("a team with the state map off, or no started state, isn't moved", async () => {
-  for (const stateMap of [null, { started: null, inReview: "x" }]) {
+  for (const stateMap of [null, { started: null, inReview: "x", done: null, blocked: null }]) {
     const h = harness({}, { scope: scope({ defaultProjectId: WEB.id, stateMap }) });
     await send(created(), h);
     assert.deepEqual(h.log.states, []);
@@ -738,11 +736,11 @@ test("what's kept of a delegation is capped: guidance too, and only its text", (
 test("the session's branch and first prompt carry the issue's key", async () => {
   const h = harness({}, { scope: scope({ defaultProjectId: WEB.id }) });
   await send(created(), h);
-  assert.equal(h.log.started[0]?.branch, "eng-1-checkout-breaks");
+  assert.deepEqual(h.log.started[0]?.issue, { source: "linear", key: "ENG-1" }, "named for it where the session starts, against GitHub too");
   assert.match(h.log.started[0]?.prompt ?? "", /Keep ENG-1 in any branch you name, e\.g\. `fix\/eng-1-what-it-does`/);
   const keyless = harness({}, { scope: scope({ defaultProjectId: WEB.id }) });
   await send(created({ issue: { identifier: undefined } }), keyless);
-  assert.equal(keyless.log.started[0]?.branch, undefined, "a generated one then");
+  assert.equal(keyless.log.started[0]?.issue, undefined, "a generated one then");
   assert.doesNotMatch(keyless.log.started[0]?.prompt ?? "", /Keep/);
 });
 
@@ -1054,7 +1052,7 @@ test("delegated again by a rule is a rule's, and starts on the issue as the even
   await handleRedelegated(INSTALL, again, on.deps);
   assert.equal(on.log.started[0]?.userId, "ana-user");
   assert.equal(on.log.started[0]?.title, "Checkout breaks");
-  assert.equal(on.log.started[0]?.branch, "eng-1-checkout-breaks");
+  assert.deepEqual(on.log.started[0]?.issue, { source: "linear", key: "ENG-1" });
 });
 
 test("a delegation by an app has no creatorId at all, and takes the rule's path", async () => {
@@ -1779,4 +1777,82 @@ test("un-delegated again while a re-delegation is under way: it's found once the
   const reply = harness(gone, { scope: scope({ defaultProjectId: WEB.id }), row });
   await send(prompted("again"), reply);
   assert.equal(reply.log.started.length, 1);
+});
+
+// --- Blocked, and started again
+
+const BLOCKING = { started: "st-progress", inReview: "st-review", done: null, blocked: "st-blocked" };
+const at = (stateId: string, stateType: string) => async () => ({ teamId: TEAM, delegateId: "app-user", open: true, stateId, stateType });
+
+test("waiting on someone, or a start that failed: the issue goes to Blocked", async () => {
+  const repo = harness({ standing: at("st-todo", "unstarted") }, { scope: scope({ stateMap: BLOCKING }) });
+  await send(created(), repo);
+  assert.equal(repo.current()?.stage, "awaiting_repo");
+  assert.deepEqual(repo.log.states, ["st-blocked"]);
+
+  const link = harness({ standing: at("st-todo", "unstarted"), linkedOwner: async () => null }, { scope: scope({ stateMap: BLOCKING }) });
+  await send(created(), link);
+  assert.equal(link.current()?.stage, "awaiting_link");
+  assert.deepEqual(link.log.states, ["st-blocked"]);
+
+  const failed = harness(
+    { standing: at("st-progress", "started"), start: async (start) => (await start.onCreated?.("workspace-1"), { workspaceId: "workspace-1", status: "failed", errorMessage: "no box" } as ServerSessionResult) },
+    { scope: scope({ stateMap: BLOCKING, defaultProjectId: WEB.id }) },
+  );
+  await send(created(), failed);
+  assert.equal(failed.log.states.at(-1), "st-blocked");
+
+  // No Blocked state, or the issue closed: nothing moves.
+  const off = harness({ standing: at("st-todo", "unstarted") }, { scope: scope({ stateMap: { ...BLOCKING, blocked: null } }) });
+  await send(created(), off);
+  assert.deepEqual(off.log.states, []);
+  const closed = harness({ standing: at("st-done", "completed") }, { scope: scope({ stateMap: BLOCKING }) });
+  await send(created(), closed);
+  assert.deepEqual(closed.log.states, []);
+});
+
+test("work picking up moves a Blocked issue back to started: a reply, a steer, or a start", async () => {
+  const reply = harness({ standing: at("st-blocked", "started") }, { row: working(), scope: scope({ stateMap: BLOCKING }) });
+  await send(prompted("and this"), reply);
+  assert.equal(reply.log.sent.length, 1);
+  assert.deepEqual(reply.log.states, ["st-progress"]);
+
+  const steer = harness({ standing: at("st-blocked", "started") }, { scope: scope({ stateMap: BLOCKING }), item: item({ workspaceId: "w" }) });
+  await send(created(), steer);
+  assert.equal(steer.log.sent.length, 1);
+  assert.deepEqual(steer.log.states, ["st-progress"]);
+
+  const start = harness({ standing: at("st-blocked", "started") }, { scope: scope({ stateMap: BLOCKING, defaultProjectId: WEB.id }) });
+  await send(created(), start);
+  assert.equal(start.log.started.length, 1);
+  assert.deepEqual(start.log.states, ["st-progress"]);
+
+  // Already where a person or a session put it: it stays.
+  const inReview = harness({ standing: at("st-review", "started") }, { row: working(), scope: scope({ stateMap: BLOCKING }) });
+  await send(prompted("and this"), inReview);
+  assert.deepEqual(inReview.log.states, []);
+});
+
+test("a team with no state to move to asks Linear nothing about the issue", async () => {
+  let asked = 0;
+  const standing = (stateId: string, stateType: string) => async () => (asked++, at(stateId, stateType)());
+
+  // Blocked: waiting on which repository. One ask fewer than with a Blocked state.
+  await send(created(), harness({ standing: standing("st-todo", "unstarted") }, { scope: scope({ stateMap: BLOCKING }) }));
+  const withBlocked = asked;
+  asked = 0;
+  const noBlocked = harness({ standing: standing("st-todo", "unstarted") }, { scope: scope({ stateMap: { ...BLOCKING, blocked: null } }) });
+  await send(created(), noBlocked);
+  assert.equal(noBlocked.current()?.stage, "awaiting_repo");
+  assert.equal(asked, withBlocked - 1);
+
+  // Started: a reply to a working session. One ask fewer than with a started state.
+  asked = 0;
+  await send(prompted("and this"), harness({ standing: standing("st-blocked", "started") }, { row: working(), scope: scope({ stateMap: BLOCKING }) }));
+  const withStarted = asked;
+  asked = 0;
+  const noStarted = harness({ standing: standing("st-blocked", "started") }, { row: working(), scope: scope({ stateMap: { ...BLOCKING, started: null } }) });
+  await send(prompted("and this"), noStarted);
+  assert.equal(noStarted.log.sent.length, 1);
+  assert.equal(asked, withStarted - 1);
 });

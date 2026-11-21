@@ -13,6 +13,7 @@
  * (`choice`: an automation's), which runs on whoever serves it.
  */
 
+import type { TrackerIssue } from "@/lib/trackers/issue-key";
 import { getOwner } from "@/lib/auth/owner";
 import { getWorkspace } from "@/lib/db/repositories";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
@@ -32,6 +33,9 @@ export type ServerSessionStart = {
   baseBranch?: string;
   /** Its own branch's name; a generated one when not given. */
   branch?: string;
+  /** The tracker's issue it works on, when it's started from one: its branch is named for
+   *  that, free of the project's sessions and of GitHub. */
+  issue?: TrackerIssue;
   title: string;
   /** The prompt it runs, sent once it's ready. */
   prompt: string;
@@ -98,6 +102,7 @@ async function startAs(start: ServerSessionStart, request: SessionRequest): Prom
           reviewAsApp: start.reviewAsApp,
           onCreated: start.onCreated,
           source: start.source,
+          ...(start.issue && { issue: start.issue }),
           onSettled: async (settled) => {
             outcome = settled;
           },

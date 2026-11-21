@@ -7,7 +7,6 @@ import { listOrgProjects, projectLevel } from "@/lib/db/org-access";
 import { installationById, linkedOwner, scopeForTeam } from "@/lib/db/trackers";
 import { addTrackerNote, fileTrackerItem, linkTrackerItem, trackerItem, triageActor } from "@/lib/db/work-items";
 import { optionalEnv } from "@/lib/env";
-import { freeIssueBranch } from "@/lib/session/issue-branch";
 import { startServerSession } from "@/lib/session/server-session";
 import { asBrowser, wakeAndSend } from "@/lib/slack/research";
 import { actAsUser } from "@/lib/supabase/acting-user";
@@ -54,7 +53,6 @@ export const jiraAgentDeps: JiraAgentDeps = {
       const response = await interruptPOST(asBrowser(`/api/workspaces/${workspaceId}/interrupt`, {}), { params: Promise.resolve({ id: workspaceId }) });
       return response.ok;
     }),
-  branchFor: (projectId, key, title) => freeIssueBranch(projectId, { source: "jira", key }, title),
   sendBaseline: linearSendBaseline,
   openWatch: openJiraReplyWatch,
   watchReply: watchJiraReply,

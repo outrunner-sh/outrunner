@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { isValidBranchName } from "@/lib/runtime/git";
 import { prInstructions } from "@/lib/session/pr-instructions";
 import { insertOnBranch } from "@/lib/session/generated-branch";
-import { branchHint, issueBranch, issueFirstBranch, issueKeyOfUrl, nextFreeBranch, trackerIssueOf } from "@/lib/trackers/issue-key";
+import { branchHint, freeIssueBranchOf, issueBranch, issueBranchFor, issueFirstBranch, issueKeyOfUrl, nextFreeBranch, trackerIssueOf } from "@/lib/trackers/issue-key";
 
 test("the key is read from either tracker's link", () => {
   assert.equal(issueKeyOfUrl("https://linear.app/acme/issue/ENG-123/checkout-breaks"), "ENG-123");
@@ -124,4 +124,41 @@ test("the route's answer is only for someone who can see the session, and Create
   assert.match(route, /getWorkspace\(id\)/);
   const panel = readFileSync("components/workspace-environment.tsx", "utf8");
   assert.match(panel, /\.catch\(\(\) => null\)/);
+});
+
+test("an issue's branch is free of the project's sessions and of GitHub: a person's own is never reused", async () => {
+  const onGitHub = (names: string[]) => async (branch: string) => names.includes(branch);
+  assert.equal(await freeIssueBranchOf("eng-1-x", [], onGitHub([])), "eng-1-x");
+  assert.equal(await freeIssueBranchOf("eng-1-x", [], onGitHub(["eng-1-x"])), "eng-1-x-2", "a person made it on GitHub");
+  assert.equal(await freeIssueBranchOf("eng-1-x", ["eng-1-x"], onGitHub(["eng-1-x-2"])), "eng-1-x-3");
+  assert.equal(await freeIssueBranchOf("eng-1-x", ["ENG-1-X"], onGitHub([])), "eng-1-x-2", "any case");
+  // GitHub not asked, or failing: the project's sessions alone decide.
+  assert.equal(await freeIssueBranchOf("eng-1-x", ["eng-1-x"], null), "eng-1-x-2");
+  assert.equal(await freeIssueBranchOf("eng-1-x", [], async () => { throw new Error("GitHub down"); }), "eng-1-x");
+});
+
+test("which issue branch a session tries first: a tracker's issue, else a Triage item's, none when one was asked for", async () => {
+  const asked: string[] = [];
+  const deps = {
+    forIssue: async (issue: { source: string; key: string }, title: string) => (asked.push(`issue ${issue.key} ${title}`), `${issue.key.toLowerCase()}-x`),
+    forItem: async (itemId: string) => (asked.push(`item ${itemId}`), "eng-9-from-item"),
+  };
+  const linear = { source: "linear" as const, key: "ENG-1" };
+  assert.equal(await issueBranchFor({ requestedBranch: "", issue: linear, workItemId: null, title: "Fix it" }, deps), "eng-1-x");
+  assert.equal(await issueBranchFor({ requestedBranch: "", issue: null, workItemId: "item-1", title: "" }, deps), "eng-9-from-item");
+  assert.equal(await issueBranchFor({ requestedBranch: "", issue: linear, workItemId: "item-1", title: "Fix it" }, deps), "eng-1-x", "the tracker's issue first");
+  assert.equal(await issueBranchFor({ requestedBranch: "my-branch", issue: linear, workItemId: "item-1", title: "Fix it" }, deps), null, "a branch asked for is used as asked");
+  assert.equal(await issueBranchFor({ requestedBranch: "", issue: null, workItemId: null, title: "" }, deps), null);
+  assert.deepEqual(asked, ["issue ENG-1 Fix it", "item item-1", "issue ENG-1 Fix it"]);
+  // Failing is none, never a session that fails over its name.
+  const failing = { forIssue: async () => { throw new Error("database down"); }, forItem: async () => { throw new Error("database down"); } };
+  assert.equal(await issueBranchFor({ requestedBranch: "", issue: linear, workItemId: null, title: "x" }, failing), null);
+  assert.equal(await issueBranchFor({ requestedBranch: "", issue: null, workItemId: "item-1", title: "" }, failing), null);
+  // GitHub throwing, through the real picker: the project's sessions alone decide.
+  const throughGitHub = {
+    forIssue: (issue: { source: "linear" | "jira"; key: string }, title: string) =>
+      freeIssueBranchOf(issueBranch(issue.source, issue.key, title), ["eng-1-fix-it"], async () => { throw new Error("GitHub down"); }),
+    forItem: async () => null,
+  };
+  assert.equal(await issueBranchFor({ requestedBranch: "", issue: linear, workItemId: null, title: "Fix it" }, throughGitHub), "eng-1-fix-it-2");
 });
