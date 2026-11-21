@@ -15,6 +15,8 @@ import {
   replaceFirstAccount,
   saveAccount,
   sessionAccount,
+  settleSlot,
+  slotAccount,
   switchFromLimited,
   limitUntil,
   view,
@@ -262,4 +264,41 @@ test("an unknown token hash marks nothing", async () => {
   const answer = await answerLimit(store, { tokenSha256: "0".repeat(64), resetsAt: null, now }, open);
   assert.deepEqual(answer, { token: token("work"), label: "work", from: null });
   assert.equal(rows()[0].limitedUntil, null);
+});
+
+test("a session never starts on a token that won't open while one that will is there", () => {
+  const now = Date.parse("2026-11-21T12:00:00Z");
+  const stale = account("default", 0);
+  const personal = account("personal", 1);
+  const readable = (a: ClaudeAccount) => a.label !== "default";
+  assert.equal(sessionAccount([stale, personal], now, readable)?.label, "personal");
+  // Readable but at its limit still beats unreadable; with nothing readable, the first.
+  const limited = account("personal", 1, { limitedUntil: "2026-11-21T15:00:00Z" });
+  assert.equal(sessionAccount([stale, limited], now, readable)?.label, "personal");
+  assert.equal(sessionAccount([stale], now, readable)?.label, "default");
+});
+
+test("the Claude slot holds the first account that works, and what Settings sees says which won't open", async () => {
+  const stale = account("default", 0);
+  const personal = account("personal", 1);
+  const memory = memoryStore([stale, personal]);
+  const store: ClaudeAccountStore = { ...memory.store, readable: (a) => a.label !== "default" };
+  const after = await settleSlot(store);
+  assert.deepEqual(after.map((a) => a.label), ["default", "personal"]);
+  assert.deepEqual(memory.mirrored, ["personal"]);
+  assert.equal(slotAccount([stale, personal], () => true)?.label, "default");
+  assert.equal(slotAccount([account("x", 0, { needsReconnect: true }), personal])?.label, "personal");
+  assert.equal(view(stale, false).unreadable, true);
+  assert.equal(view(personal).unreadable, false);
+});
+
+test("switching at a limit skips an account whose token won't open", async () => {
+  const now = Date.parse("2026-11-21T12:00:00Z");
+  const work = account("work", 0);
+  const stale = account("stale", 1);
+  const spare = account("spare", 2);
+  const memory = memoryStore([work, stale, spare]);
+  const store: ClaudeAccountStore = { ...memory.store, readable: (a) => a.label !== "stale" };
+  const result = await switchFromLimited(store, work, null, now);
+  assert.equal(result.next?.label, "spare");
 });

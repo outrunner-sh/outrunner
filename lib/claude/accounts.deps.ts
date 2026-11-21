@@ -16,6 +16,7 @@ import {
   type ClaudeAccount,
   type ClaudeAccountStore,
 } from "@/lib/claude/accounts";
+import { open } from "@/lib/crypto/secret-box";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
@@ -48,10 +49,31 @@ function toAccount(row: Row): ClaudeAccount {
   };
 }
 
+/** Whether a sealed token opens with this deployment's key (and any previous
+ *  one, lib/crypto/secret-box.ts), each tried once per store. */
+function readableWith(): (account: ClaudeAccount) => boolean {
+  const known = new Map<string, boolean>();
+  return (account) => {
+    const key = `${account.id}:${account.ciphertext}`;
+    if (!known.has(key)) {
+      let opens = false;
+      try {
+        opens = open(account.ciphertext).length > 0;
+      } catch {
+        opens = false;
+      }
+      known.set(key, opens);
+    }
+    return known.get(key)!;
+  };
+}
+
 /** One person's accounts. Every call throws ClaudeAccountsUnavailable before the migration. */
 export function claudeAccountStore(userId: string): ClaudeAccountStore {
   const db = createSupabaseAdminClient();
+  const readable = readableWith();
   return {
+    readable,
     async list() {
       const { data, error } = await db.from("claude_accounts").select("*").eq("user_id", userId);
       if (error) fail(error);
@@ -144,5 +166,5 @@ export async function loadClaudeAccounts(userId: string): Promise<ClaudeAccount[
 export async function sessionClaudeCiphertext(userId: string, slotCiphertext: string | null): Promise<string | null> {
   const accounts = await loadClaudeAccounts(userId);
   if (!accounts || accounts.length === 0) return slotCiphertext;
-  return sessionAccount(accounts, Date.now())?.ciphertext ?? slotCiphertext;
+  return sessionAccount(accounts, Date.now(), readableWith())?.ciphertext ?? slotCiphertext;
 }

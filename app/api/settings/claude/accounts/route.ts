@@ -7,8 +7,10 @@ import {
   MAX_CLAUDE_ACCOUNTS,
   reorderAccounts,
   saveAccount,
+  settleSlot,
   view,
   type ClaudeAccount,
+  type ClaudeAccountStore,
 } from "@/lib/claude/accounts";
 import { claudeAccountStore, ClaudeAccountsUnavailable, loadClaudeAccounts } from "@/lib/claude/accounts.deps";
 import { settleClaudeSlot } from "@/lib/db/credentials";
@@ -24,8 +26,12 @@ import { checkClaudeToken } from "@/lib/runtime/credentials/claude-token";
 
 export type ClaudeAccountsResponse = { accounts: ReturnType<typeof view>[]; max: number };
 
-function answer(accounts: ClaudeAccount[]): NextResponse<ClaudeAccountsResponse> {
-  return NextResponse.json({ accounts: accounts.map(view), max: MAX_CLAUDE_ACCOUNTS });
+/** The accounts as Settings shows them, each with whether its token opens here. */
+function answer(accounts: ClaudeAccount[], store: ClaudeAccountStore): NextResponse<ClaudeAccountsResponse> {
+  return NextResponse.json({
+    accounts: accounts.map((account) => view(account, store.readable?.(account) ?? true)),
+    max: MAX_CLAUDE_ACCOUNTS,
+  });
 }
 
 function unauthorized() {
@@ -61,7 +67,10 @@ export async function GET() {
   const owner = await getOwner();
   if (!owner) return unauthorized();
   try {
-    return answer(await load(owner.id));
+    await load(owner.id);
+    // A first account whose token won't open here doesn't keep the slot.
+    const store = claudeAccountStore(owner.id);
+    return answer(await settleSlot(store), store);
   } catch (error) {
     return failed(error, "load your Claude accounts");
   }
@@ -81,7 +90,8 @@ export async function POST(request: Request) {
 
   try {
     await load(owner.id);
-    return answer(await saveAccount(claudeAccountStore(owner.id), label.label, token.token));
+    const store = claudeAccountStore(owner.id);
+    return answer(await saveAccount(store, label.label, token.token), store);
   } catch (error) {
     return failed(error, "save your Claude account");
   }
@@ -99,7 +109,8 @@ export async function PATCH(request: Request) {
 
   try {
     await load(owner.id);
-    return answer(await reorderAccounts(claudeAccountStore(owner.id), order));
+    const store = claudeAccountStore(owner.id);
+    return answer(await reorderAccounts(store, order), store);
   } catch (error) {
     return failed(error, "reorder your Claude accounts");
   }

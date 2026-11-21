@@ -51,6 +51,9 @@ export type ClaudeAccountView = {
   addedAt: string;
   limitedUntil: string | null;
   needsReconnect: boolean;
+  /** Its token won't open with this deployment's key (sealed under another):
+   *  skipped until it's saved again. */
+  unreadable: boolean;
 };
 
 export type ClaudeAccountPatch = Partial<Pick<ClaudeAccount, "label" | "ciphertext" | "hint" | "position" | "limitedUntil" | "needsReconnect">>;
@@ -63,7 +66,14 @@ export type ClaudeAccountStore = {
   remove(id: string): Promise<void>;
   /** Make the Claude slot hold `first`'s token, or nothing. */
   mirror(first: ClaudeAccount | null): Promise<void>;
+  /** Whether its token opens with this deployment's key. Worked out on each
+   *  read, never saved: a key misconfigured for a moment mustn't mark every
+   *  account broken for good. Absent, every account is. */
+  readable?(account: ClaudeAccount): boolean;
 };
+
+/** Every account is readable, where a caller has no key to try. */
+const everyAccount = () => true;
 
 /** A request the person can fix; `status` is the HTTP status to answer with. */
 export class ClaudeAccountError extends Error {
@@ -93,17 +103,27 @@ export function usable(account: ClaudeAccount, now: number): boolean {
 }
 
 /**
- * The account a new session runs on: the first in order that can run. When
- * none can, the first in order all the same, so the session starts and
- * Claude Code itself says when the limit resets, rather than Outrunner
- * refusing as if nothing were connected. Null with no accounts.
+ * The account a new session runs on: the first in order that can run and
+ * whose token opens. When none can run, the first readable one all the same,
+ * so the session starts and Claude Code itself says when the limit resets,
+ * rather than Outrunner refusing as if nothing were connected. A token that
+ * won't open is never chosen over one that will. Null with no accounts.
  */
-export function sessionAccount(accounts: readonly ClaudeAccount[], now: number): ClaudeAccount | null {
+export function sessionAccount(
+  accounts: readonly ClaudeAccount[],
+  now: number,
+  readable: (account: ClaudeAccount) => boolean = everyAccount,
+): ClaudeAccount | null {
   const sorted = ordered(accounts);
-  return sorted.find((account) => usable(account, now)) ?? sorted[0] ?? null;
+  return (
+    sorted.find((account) => usable(account, now) && readable(account)) ??
+    sorted.find((account) => !account.needsReconnect && readable(account)) ??
+    sorted[0] ??
+    null
+  );
 }
 
-export function view(account: ClaudeAccount): ClaudeAccountView {
+export function view(account: ClaudeAccount, readable = true): ClaudeAccountView {
   return {
     id: account.id,
     label: account.label,
@@ -112,12 +132,27 @@ export function view(account: ClaudeAccount): ClaudeAccountView {
     addedAt: account.createdAt,
     limitedUntil: account.limitedUntil,
     needsReconnect: account.needsReconnect,
+    unreadable: !readable,
   };
+}
+
+/** The account the Claude slot holds: the first in order that works (not
+ *  rejected, its token opens), else the first. What reads the slot (the
+ *  workspace gate, the desktop app) then sees a token it can use. */
+export function slotAccount(accounts: readonly ClaudeAccount[], readable: (account: ClaudeAccount) => boolean = everyAccount): ClaudeAccount | null {
+  const sorted = ordered(accounts);
+  return sorted.find((account) => !account.needsReconnect && readable(account)) ?? sorted[0] ?? null;
+}
+
+/** Point the Claude slot at the first account that works, after the
+ *  accounts change, or when Settings reads them. Answers them in order. */
+export async function settleSlot(store: ClaudeAccountStore): Promise<ClaudeAccount[]> {
+  return settled(store);
 }
 
 async function settled(store: ClaudeAccountStore): Promise<ClaudeAccount[]> {
   const after = ordered(await store.list());
-  await store.mirror(after[0] ?? null);
+  await store.mirror(slotAccount(after, (account) => store.readable?.(account) ?? true));
   return after;
 }
 
@@ -266,7 +301,8 @@ export async function switchFromLimited(
   const limitedUntil = limited ? limitUntil(resetsAt, now) : null;
   if (limited && limitedUntil) await store.update(limited.id, { limitedUntil });
   const accounts = ordered(await store.list());
-  const next = accounts.find((account) => account.id !== limited?.id && usable(account, now)) ?? null;
+  const readable = (account: ClaudeAccount) => store.readable?.(account) ?? true;
+  const next = accounts.find((account) => account.id !== limited?.id && usable(account, now) && readable(account)) ?? null;
   const resets = accounts
     .filter((account) => !account.needsReconnect && account.limitedUntil)
     .map((account) => Date.parse(account.limitedUntil!))
