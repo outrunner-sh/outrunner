@@ -67,9 +67,12 @@ export const CLI_DEFAULT_URL = "https://app.outrunner.sh";
  *  user's shell would otherwise win, the token would be saved to that app, and
  *  this page would never see it. So is the account, with --account, when it's
  *  known: a terminal still signed in to another account signs in again,
- *  rather than save the token where this page isn't looking. */
-export function connectClaudeCommand(runner: string, origin: string, account?: string): string {
-  return `${runner} outrunner@latest --url ${origin}${account ? ` --account ${account}` : ""} claude`;
+ *  rather than save the token where this page isn't looking. With `label`,
+ *  the token is saved as that one of the user's Claude accounts
+ *  (lib/claude/accounts.ts), quoted when it has a space. */
+export function connectClaudeCommand(runner: string, origin: string, account?: string, label?: string): string {
+  const named = label ? ` --label ${/^[A-Za-z0-9._-]+$/.test(label) ? label : `"${label.replace(/["\\$`]/g, "")}"`}` : "";
+  return `${runner} outrunner@latest --url ${origin}${account ? ` --account ${account}` : ""} claude${named}`;
 }
 
 const STEPS: readonly OnboardingStep[] = ["agent", "github", "repos", "environment"];

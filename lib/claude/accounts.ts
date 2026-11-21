@@ -15,14 +15,16 @@
 
 import { createHash } from "node:crypto";
 
+import { checkLabel } from "@/lib/claude/account-label";
 import { seal } from "@/lib/crypto/secret-box";
+
+export { checkLabel };
 
 /** How many one person can connect. */
 export const MAX_CLAUDE_ACCOUNTS = 10;
 /** The label an account gets when it comes through a door that asks for none
  *  (the desktop app, an older `outrunner claude`). */
 export const DEFAULT_LABEL = "default";
-const MAX_LABEL = 32;
 
 export type ClaudeAccount = {
   id: string;
@@ -71,17 +73,6 @@ export class ClaudeAccountError extends Error {
     this.name = "ClaudeAccountError";
     this.status = status;
   }
-}
-
-/** The label, trimmed, or what's wrong with it, for the person to read. */
-export function checkLabel(raw: unknown): { label: string } | { error: string } {
-  const label = typeof raw === "string" ? raw.trim().replace(/\s+/g, " ") : "";
-  if (!label) return { error: "Give the account a name, like work or personal." };
-  if (label.length > MAX_LABEL) return { error: `Keep the name to ${MAX_LABEL} characters.` };
-  if (!/^[\p{L}\p{N}][\p{L}\p{N} ._-]*$/u.test(label)) {
-    return { error: "Use letters, numbers, spaces, dots, dashes or underscores in the name." };
-  }
-  return { label };
 }
 
 function sameLabel(a: string, b: string): boolean {
