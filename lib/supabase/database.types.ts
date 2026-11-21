@@ -926,6 +926,23 @@ type OrgProviderKeyRow = {
   updated_at: string;
 };
 
+// Settings → Claude subscription: a person's Claude subscriptions, each a
+// sealed `claude setup-token` under a label, in the person's order.
+// Service-role-only (RLS on, no policies); see
+// supabase/migrations/20261121100000_claude_accounts.sql.
+type ClaudeAccountRow = {
+  id: string;
+  user_id: string;
+  label: string;
+  token_ciphertext: string;
+  token_hint: string | null;
+  position: number;
+  limited_until: string | null;
+  needs_reconnect: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 // Settings → Connections → GitHub: the Outrunner GitHub App's user
 // authorization. Service-role-only (RLS on, no policies); see
 // supabase/migrations/20261105100000_github_user_connections.sql.
@@ -2361,6 +2378,12 @@ export type Database = {
         Row: OrgProviderKeyRow;
         Insert: Insert<OrgProviderKeyRow, "org_id" | "provider" | "key_ciphertext">;
         Update: Partial<OrgProviderKeyRow>;
+        Relationships: [];
+      };
+      claude_accounts: {
+        Row: ClaudeAccountRow;
+        Insert: Insert<ClaudeAccountRow, "user_id" | "label" | "token_ciphertext">;
+        Update: Partial<ClaudeAccountRow>;
         Relationships: [];
       };
       user_github_connections: {
