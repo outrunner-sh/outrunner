@@ -192,6 +192,77 @@ export async function reorderAccounts(store: ClaudeAccountStore, ids: readonly s
   return settled(store);
 }
 
+/** How long an account is skipped when Claude Code doesn't say when its limit resets. */
+export const DEFAULT_LIMIT_MS = 60 * 60 * 1000;
+/** The furthest reset believed: a weekly limit, and a day to spare. */
+const MAX_LIMIT_MS = 8 * 24 * 60 * 60 * 1000;
+
+/** Until when an account at its limit is skipped: the reset Claude Code
+ *  reported, when it's a believable one, else an hour from `now` (ms). */
+export function limitUntil(resetsAt: string | null | undefined, now: number): string {
+  const at = resetsAt ? Date.parse(resetsAt) : NaN;
+  return new Date(at > now && at - now <= MAX_LIMIT_MS ? at : now + DEFAULT_LIMIT_MS).toISOString();
+}
+
+/** The account holding `token`, opening each with `openToken`; null when none
+ *  does (removed meanwhile, or a token from before there were accounts). */
+export function accountWithToken(
+  accounts: readonly ClaudeAccount[],
+  token: string,
+  openToken: (ciphertext: string) => string,
+): ClaudeAccount | null {
+  for (const account of accounts) {
+    try {
+      if (sameToken(openToken(account.ciphertext), token)) return account;
+    } catch {
+      // Unreadable (a key change): not this one.
+    }
+  }
+  return null;
+}
+
+function sameToken(a: string, b: string): boolean {
+  // Lengths leak nothing useful here: every setup-token is the same shape.
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+export type Switch = {
+  /** The account that hit its limit, now marked; null when it isn't one of theirs. */
+  limited: ClaudeAccount | null;
+  limitedUntil: string | null;
+  /** The account to carry on with: the first other one that can run. */
+  next: ClaudeAccount | null;
+  /** With no next, when the first of them can run again (ISO). */
+  firstReset: string | null;
+};
+
+/**
+ * `limited` hit its usage limit (resetting at `resetsAt`, when Claude Code
+ * said): mark it, so no session starts on it until then, and name the account
+ * to carry on with. Never the limited one again, even when every other is
+ * out too.
+ */
+export async function switchFromLimited(
+  store: ClaudeAccountStore,
+  limited: ClaudeAccount | null,
+  resetsAt: string | null,
+  now: number,
+): Promise<Switch> {
+  const limitedUntil = limited ? limitUntil(resetsAt, now) : null;
+  if (limited && limitedUntil) await store.update(limited.id, { limitedUntil });
+  const accounts = ordered(await store.list());
+  const next = accounts.find((account) => account.id !== limited?.id && usable(account, now)) ?? null;
+  const resets = accounts
+    .filter((account) => !account.needsReconnect && account.limitedUntil)
+    .map((account) => Date.parse(account.limitedUntil!))
+    .filter((at) => at > now)
+    .sort((a, b) => a - b);
+  return { limited, limitedUntil, next, firstReset: next || resets.length === 0 ? null : new Date(resets[0]).toISOString() };
+}
+
 /**
  * Accounts from before there were several: a token in the Claude slot with
  * no accounts yet becomes the first, "default". Run before reading them.

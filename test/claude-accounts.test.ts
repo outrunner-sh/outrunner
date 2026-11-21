@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { afterEach, beforeEach, test } from "node:test";
 
 import {
+  accountWithToken,
   adoptSlot,
   checkLabel,
   ClaudeAccountError,
@@ -13,6 +14,8 @@ import {
   replaceFirstAccount,
   saveAccount,
   sessionAccount,
+  switchFromLimited,
+  limitUntil,
   view,
   type ClaudeAccount,
   type ClaudeAccountStore,
@@ -175,4 +178,61 @@ test("what Settings sees has no token", () => {
   const seen = view(account("work", 0, { hint: "1234", ciphertext: "v1.secret.sealed.value" }));
   assert.equal(seen.last4, "1234");
   assert.ok(!JSON.stringify(seen).includes("secret"));
+});
+
+test("a limit lasts until the reset Claude Code reported, else an hour; a far-off reset isn't believed", () => {
+  const now = Date.parse("2026-11-21T12:00:00Z");
+  assert.equal(limitUntil("2026-11-21T15:00:00Z", now), "2026-11-21T15:00:00.000Z");
+  assert.equal(limitUntil(null, now), "2026-11-21T13:00:00.000Z");
+  assert.equal(limitUntil("not a time", now), "2026-11-21T13:00:00.000Z");
+  assert.equal(limitUntil("2026-11-21T11:00:00Z", now), "2026-11-21T13:00:00.000Z");
+  assert.equal(limitUntil("2026-12-30T00:00:00Z", now), "2026-11-21T13:00:00.000Z");
+  // A weekly limit's reset is believed.
+  assert.equal(limitUntil("2026-11-27T09:00:00Z", now), "2026-11-27T09:00:00.000Z");
+});
+
+test("the account holding a token is found by opening each, and a token no account holds is none", () => {
+  const work = account("work", 0, { ciphertext: "sealed:work" });
+  const personal = account("personal", 1, { ciphertext: "sealed:personal" });
+  const broken = account("broken", 2, { ciphertext: "sealed:broken" });
+  const openToken = (ciphertext: string) => {
+    if (ciphertext === "sealed:broken") throw new Error("unreadable");
+    return ciphertext.replace("sealed:", "token-");
+  };
+  assert.equal(accountWithToken([broken, work, personal], "token-personal", openToken)?.label, "personal");
+  assert.equal(accountWithToken([work, personal], "token-other", openToken), null);
+});
+
+test("switching marks the limited account and carries on with the next that can run", async () => {
+  const now = Date.parse("2026-11-21T12:00:00Z");
+  const work = account("work", 0);
+  const personal = account("personal", 1, { needsReconnect: true });
+  const spare = account("spare", 2);
+  const { store, rows } = memoryStore([work, personal, spare]);
+  const result = await switchFromLimited(store, work, "2026-11-21T15:00:00Z", now);
+  assert.equal(result.next?.label, "spare");
+  assert.equal(result.limitedUntil, "2026-11-21T15:00:00.000Z");
+  assert.equal(result.firstReset, null);
+  assert.equal(rows().find((a) => a.label === "work")!.limitedUntil, "2026-11-21T15:00:00.000Z");
+  // A new session now starts on spare.
+  assert.equal(sessionAccount(rows(), now)?.label, "spare");
+});
+
+test("with every account out, there's no next, and it says when the first resets", async () => {
+  const now = Date.parse("2026-11-21T12:00:00Z");
+  const work = account("work", 0);
+  const personal = account("personal", 1, { limitedUntil: "2026-11-21T14:00:00Z" });
+  const { store } = memoryStore([work, personal]);
+  const result = await switchFromLimited(store, work, "2026-11-21T15:00:00Z", now);
+  assert.equal(result.next, null);
+  assert.equal(result.firstReset, "2026-11-21T14:00:00.000Z");
+});
+
+test("a limit on a token that isn't one of the accounts marks nothing, and still names one to carry on with", async () => {
+  const now = Date.parse("2026-11-21T12:00:00Z");
+  const { store, rows } = memoryStore([account("work", 0)]);
+  const result = await switchFromLimited(store, null, null, now);
+  assert.equal(result.limited, null);
+  assert.equal(result.next?.label, "work");
+  assert.equal(rows()[0].limitedUntil, null);
 });
