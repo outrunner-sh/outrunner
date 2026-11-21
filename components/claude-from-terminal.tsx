@@ -15,7 +15,7 @@ const POLL_MS = 3_000;
 
 /** How each package manager runs the CLI that connects Claude from the
  *  user's terminal (it signs the terminal in, then runs `claude setup-token`). */
-const RUNNERS = [
+export const RUNNERS = [
   ["npm", "npx"],
   ["pnpm", "pnpm dlx"],
   ["yarn", "yarn dlx"],
@@ -25,8 +25,79 @@ const RUNNERS = [
 /** This app's origin, which never changes while the page is open; the
  *  CLI's default on the server, which can't know it. */
 const noSubscription = () => () => {};
-function useOrigin(): string {
+export function useOrigin(): string {
   return useSyncExternalStore(noSubscription, () => window.location.origin, () => CLI_DEFAULT_URL);
+}
+
+/**
+ * The account this page is signed in to, for the CLI's --account, so a
+ * terminal signed in to another one signs in again rather than save the
+ * token there. Undefined while it's read (the command isn't shown or copied
+ * until it's known), or null when it can't be, and then goes without it.
+ */
+export function useCliAccount(skip = false): string | null | undefined {
+  const [account, setAccount] = useState<string | null>();
+  useEffect(() => {
+    if (skip) return;
+    void createSupabaseBrowserClient()
+      .auth.getSession()
+      .then(
+        ({ data }) => {
+          if (!data.session) console.warn("Connect Claude: no session, so the command doesn't name the account");
+          setAccount(data.session?.user.id ?? null);
+        },
+        (error: unknown) => {
+          console.warn("Connect Claude: couldn't read the session, so the command doesn't name the account", error);
+          setAccount(null);
+        },
+      );
+  }, [skip]);
+  return account;
+}
+
+/** A command to run in a terminal, with a Copy button; "…" while it's null. */
+export function TerminalCommand({ command }: { command: string | null }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="bg-muted/40 border-border/60 flex items-center gap-2 rounded-md border px-3 py-2.5">
+      <Terminal className="text-amber-500 size-3.5 shrink-0" />
+      <code className={cn("min-w-0 flex-1 break-all font-mono text-xs", !command && "text-muted-foreground")}>{command ?? "…"}</code>
+      <button
+        type="button"
+        aria-label="Copy command"
+        disabled={!command}
+        onClick={() => {
+          if (!command) return;
+          void navigator.clipboard?.writeText(command);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }}
+        className="text-muted-foreground hover:text-foreground disabled:opacity-40"
+      >
+        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      </button>
+    </div>
+  );
+}
+
+/** The package-manager tabs above a CLI command. */
+export function RunnerTabs({ manager, onChange }: { manager: number; onChange: (index: number) => void }) {
+  return (
+    <div role="tablist" aria-label="Package manager" className="flex gap-4 text-xs">
+      {RUNNERS.map(([name], index) => (
+        <button
+          key={name}
+          type="button"
+          role="tab"
+          aria-selected={index === manager}
+          onClick={() => onChange(index)}
+          className={cn("pb-1", index === manager ? "border-foreground text-foreground border-b" : "text-muted-foreground hover:text-foreground")}
+        >
+          {name}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -66,27 +137,7 @@ export function ClaudeFromTerminal({
 }) {
   const [manager, setManager] = useState(0);
   const [pasting, setPasting] = useState(false);
-  const [copied, setCopied] = useState(false);
-  // The account this page is signed in to, so a terminal signed in to
-  // another one signs in again rather than save the token there. Undefined
-  // while it's read: the command isn't shown or copied until it's known, or
-  // null when it can't be, and then goes without --account.
-  const [account, setAccount] = useState<string | null>();
-  useEffect(() => {
-    if (orgId) return;
-    void createSupabaseBrowserClient()
-      .auth.getSession()
-      .then(
-        ({ data }) => {
-          if (!data.session) console.warn("Connect Claude: no session, so the command doesn't name the account");
-          setAccount(data.session?.user.id ?? null);
-        },
-        (error: unknown) => {
-          console.warn("Connect Claude: couldn't read the session, so the command doesn't name the account", error);
-          setAccount(null);
-        },
-      );
-  }, [orgId]);
+  const account = useCliAccount(Boolean(orgId));
   const origin = useOrigin();
   const command = orgId ? "claude setup-token" : account === undefined ? null : connectClaudeCommand(RUNNERS[manager][1], origin, account ?? undefined);
 
@@ -131,38 +182,8 @@ export function ClaudeFromTerminal({
   return (
     <div className="space-y-3">
       <p className="text-muted-foreground text-sm">{orgId ? "Run this command, then paste the token below to connect the organization’s Claude account" : "Run the CLI and connect your Claude Code account"}</p>
-      {!orgId && <div role="tablist" aria-label="Package manager" className="flex gap-4 text-xs">
-        {RUNNERS.map(([name], index) => (
-          <button
-            key={name}
-            type="button"
-            role="tab"
-            aria-selected={index === manager}
-            onClick={() => setManager(index)}
-            className={cn("pb-1", index === manager ? "border-foreground text-foreground border-b" : "text-muted-foreground hover:text-foreground")}
-          >
-            {name}
-          </button>
-        ))}
-      </div>}
-      <div className="bg-muted/40 border-border/60 flex items-center gap-2 rounded-md border px-3 py-2.5">
-        <Terminal className="text-amber-500 size-3.5 shrink-0" />
-        <code className={cn("flex-1 font-mono text-xs", !command && "text-muted-foreground")}>{command ?? "…"}</code>
-        <button
-          type="button"
-          aria-label="Copy"
-          disabled={!command}
-          onClick={() => {
-            if (!command) return;
-            void navigator.clipboard?.writeText(command);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }}
-          className="text-muted-foreground hover:text-foreground disabled:opacity-40"
-        >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </button>
-      </div>
+      {!orgId && <RunnerTabs manager={manager} onChange={setManager} />}
+      <TerminalCommand command={command} />
       <p className="text-muted-foreground text-xs">{orgId ? "Approve in your browser, then paste the token printed in your terminal here." : "Claude will give you a code to paste into your terminal."} {next}</p>
       {pasting || orgId ? (
         <SecretForm

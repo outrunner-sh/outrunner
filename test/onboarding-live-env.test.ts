@@ -169,6 +169,17 @@ test("the terminal command connects Claude to this app, without opening onboardi
   );
 });
 
+test("the terminal command for another Claude account names it, quoted when it has a space", () => {
+  assert.equal(
+    connectClaudeCommand("npx", CLI_DEFAULT_URL, "u-1", "personal"),
+    "npx outrunner@latest --url https://app.outrunner.sh --account u-1 claude --label personal",
+  );
+  assert.equal(
+    connectClaudeCommand("bunx", CLI_DEFAULT_URL, undefined, "work laptop"),
+    'bunx outrunner@latest --url https://app.outrunner.sh claude --label "work laptop"',
+  );
+});
+
 test("repositories show most recently pushed first, and filter by name or description", () => {
   const repo = (fullName: string, pushedAt: string | null, description: string | null = null) =>
     ({ fullName, pushedAt, description }) as RepositoryListing;
