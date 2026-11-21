@@ -342,6 +342,7 @@ test("working sessions use the boxed thinking animation in the sidebar", async (
             standing: "working",
             reason: null,
             moved: false,
+            idle: false,
             pinned: false,
             unread: false,
             replyPreview: null,

@@ -39,7 +39,7 @@ class FakeStorage {
   }
 }
 
-const standing = { standing: "needs_you", reason: "question", moved: false, pinned: false, unread: true, replyPreview: null, at: "t" } as const;
+const standing = { standing: "needs_you", reason: "question", moved: false, idle: true, pinned: false, unread: true, replyPreview: null, at: "t" } as const;
 
 function runner(id: string, overrides: Partial<RunnerView> = {}): RunnerView {
   return {

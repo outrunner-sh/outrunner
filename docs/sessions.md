@@ -55,7 +55,8 @@ pull request stay in **Needs you**. The server works it out
 conversation stream (`lib/session/watch.ts`: closely after a send, and every
 two minutes from `POST /api/sessions/tick`, which the Cloudflare cron calls
 with `BILLING_CRON_SECRET`) and from the GitHub App's pull request events, so
-every tab and the Mac app agree. A session can be pinned or moved by hand, a
+every tab and the Mac app agree. A session can be pinned or moved by hand (one
+moved to Working while its agent is idle shows a still mark, not the animated one), a
 reply you haven't seen is marked, and ⌘J opens the next session that needs
 you. `/workspaces` lists every session in the org you may see, to search,
 filter and archive or delete several at once.

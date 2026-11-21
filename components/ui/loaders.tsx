@@ -51,7 +51,16 @@ export function DotMatrix({
 /** The compact animated mark for a model that is thinking. Shared by the
  * conversation and session lists so a working session has one visual language
  * everywhere. */
-export function ThinkingIcon({ className, label }: { className?: string; label?: string }) {
+export function ThinkingIcon({
+  className,
+  label,
+  still = false,
+}: {
+  className?: string;
+  label?: string;
+  /** Held still: in its place, but nothing is going on. */
+  still?: boolean;
+}) {
   return (
     <span
       role={label ? "img" : undefined}
@@ -59,7 +68,7 @@ export function ThinkingIcon({ className, label }: { className?: string; label?:
       aria-hidden={label ? undefined : true}
       className={cn("inline-flex shrink-0 items-center justify-center", className)}
     >
-      <DotMatrix rows={3} cols={3} cell={3} gap={1.5} />
+      <DotMatrix rows={3} cols={3} cell={3} gap={1.5} className={still ? "is-still" : undefined} />
     </span>
   );
 }

@@ -723,7 +723,8 @@
 .route-state-details summary { cursor: pointer; }
 .route-state-details summary:hover { color: var(--foreground); }
 .route-state-details p { margin: 8px 0 0; font-family: var(--font-geist-mono); text-align: left; overflow-wrap: anywhere; }
-.dot-matrix.is-still .dot-matrix-cell { animation: none; }
+/* Still means no lit cell either, so reduced motion can tell it from a working one. */
+.dot-matrix.is-still .dot-matrix-cell { animation: none; background: color-mix(in oklab, var(--foreground) 11%, transparent); }
 @media (prefers-reduced-motion: reduce) { .route-state { animation: none; } }
 /* Hold to Confirm (interior.dev): a fill crosses the button while it is held;
    released early, it drains back quickly. */
