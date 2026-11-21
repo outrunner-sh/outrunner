@@ -58,7 +58,10 @@ export function SettingsFrame({ children, orgName }: { children: React.ReactNode
           <ArrowLeft className="size-3.5" /> Back to app
         </Link>
       </header>
-      <main className="min-h-0 min-w-0 overflow-y-auto">
+      {/* relative: the containing block of what's absolutely placed in it
+          (a button's screen-reader text), so its own scroll clips it rather
+          than it stretching the page into a second scroll. */}
+      <main className="relative min-h-0 min-w-0 overflow-y-auto">
         <div className="hidden h-12 items-center gap-3 border-b border-border/60 px-6 text-xs sm:flex">
           <span className="text-muted-foreground">Settings</span>
           <span aria-hidden className="text-muted-foreground/40">/</span>
