@@ -574,6 +574,64 @@ func TestClaudeIsBusyOnlyMidTurn(t *testing.T) {
 	}
 }
 
+func TestClaudeIsBusyReadsTheFooterUnderItsBox(t *testing.T) {
+	rule := strings.Repeat("─", 40)
+	// Reproduced with Claude Code 2.1.310 (2026-11-21): idle, its last reply
+	// quoting the words. Read from the whole screen, this was busy for good.
+	idle := "⏺ While a turn runs, the footer reads esc to interrupt.\n✻ Sautéed for 2s\n" +
+		rule + "\n❯ \n" + rule + "\n  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+	if claudeIsBusy(idle) {
+		t.Error("an idle Claude whose reply quotes the footer read as busy")
+	}
+	working := "⏺ Reading files\n✢ Generating… (14s)\n" +
+		rule + "\n❯ \n" + rule + "\n  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt"
+	if !claudeIsBusy(working) {
+		t.Error("a Claude mid-turn read as idle")
+	}
+	// No box on screen (a compaction's, an older layout): the screen decides.
+	if !claudeIsBusy("✻ Compacting conversation… (esc to interrupt)") {
+		t.Error("a compaction read as idle")
+	}
+}
+
+func TestAgentAliveIsItsTmuxSession(t *testing.T) {
+	s := NewService(t.TempDir())
+	fake := newFakeSessions()
+	s.tmux = fake
+	if alive, known := s.AgentAlive(context.Background(), "ws-a"); alive || !known {
+		t.Errorf("no session: alive=%v known=%v, want false true", alive, known)
+	}
+	fake.running[sessionName("ws-a")] = true
+	if alive, known := s.AgentAlive(context.Background(), "ws-a"); !alive || !known {
+		t.Errorf("running: alive=%v known=%v, want true true", alive, known)
+	}
+	fake.existsErr = errors.New("tmux: lost server")
+	if _, known := s.AgentAlive(context.Background(), "ws-a"); known {
+		t.Error("tmux not answering read as known")
+	}
+	fake.existsErr = nil
+	s.jcode = &jcodeEngine{}
+	if _, known := s.AgentAlive(context.Background(), "ws-a"); known {
+		t.Error("the jcode engine, which has no tmux session, read as known")
+	}
+}
+
+func TestOOMKillsReadsTheCgroupsCount(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "memory.events")
+	saved := MemoryEventsPath
+	MemoryEventsPath = path
+	t.Cleanup(func() { MemoryEventsPath = saved })
+	if _, ok := OOMKills(); ok {
+		t.Error("no memory.events read as a count")
+	}
+	if err := os.WriteFile(path, []byte("low 0\nhigh 0\nmax 12\noom 3\noom_kill 2\noom_group_kill 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if n, ok := OOMKills(); !ok || n != 2 {
+		t.Errorf("OOMKills = %d %v, want 2 true", n, ok)
+	}
+}
+
 func TestTheJcodeEngineRefusesAModelSwitch(t *testing.T) {
 	s := NewService(t.TempDir())
 	s.jcode = &jcodeEngine{}

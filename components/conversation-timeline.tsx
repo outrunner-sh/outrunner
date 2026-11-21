@@ -452,6 +452,8 @@ function NodeRow({
       return <Meta label={node.label} text={node.text} />;
     case "interrupted":
       return <div className="timeline-thought">Interrupted</div>;
+    case "restarted":
+      return <div className="timeline-thought">Session restarted · the previous turn was cut off</div>;
     case "prose":
       return <Prose text={node.text} at={node.at} />;
     case "thought":

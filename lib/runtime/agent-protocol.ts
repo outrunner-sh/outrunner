@@ -965,7 +965,12 @@ export const WorkspaceStateChanged = z.object({
   t: z.literal("state"),
   workspaceId: z.string(),
   state: z.enum(["starting", "running", "exited", "archived", "degraded"]),
+  /** Why an agent "exited", where its box can tell: EXIT_OUT_OF_MEMORY when
+   *  the kernel killed processes for memory as it went. */
+  reason: z.string().optional(),
 });
+/** An agent that stopped as its box ran out of memory (WorkspaceStateChanged.reason). */
+export const EXIT_OUT_OF_MEMORY = "out_of_memory";
 export type WorkspaceStateChanged = z.infer<typeof WorkspaceStateChanged>;
 
 /** The agent edits a sent message (AGENT_FEATURE_REWIND): POST

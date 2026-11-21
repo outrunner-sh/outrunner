@@ -272,9 +272,41 @@ func trustKey(pane string) string {
 }
 
 // claudeIsBusy reports whether Claude's screen shows a turn in progress: its
-// footer offers "esc to interrupt" only then.
+// footer offers "esc to interrupt" only then. With its prompt box on screen,
+// only what is under the box is the footer: the conversation above can quote
+// the words (a reply about them), and a session reading busy for that refuses
+// every edit and switch until the reply scrolls away.
 func claudeIsBusy(pane string) bool {
+	if footer, ok := claudeFooter(pane); ok {
+		return strings.Contains(footer, "esc to interrupt")
+	}
 	return strings.Contains(pane, "esc to interrupt")
+}
+
+// claudeFooter is what Claude draws under its prompt box: the lines after the
+// rule that closes the last box on screen (the conversation above can hold a
+// quoted prompt too, as claudeTypedLines says). ok is false with no box.
+func claudeFooter(pane string) (string, bool) {
+	lines := strings.Split(pane, "\n")
+	prompt, previous := -1, ""
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if (strings.HasPrefix(line, "❯") || strings.HasPrefix(line, ">")) && isRule(previous) {
+			prompt = i
+		}
+		previous = line
+	}
+	if prompt < 0 {
+		return "", false
+	}
+	for i := prompt + 1; i < len(lines); i++ {
+		if isRule(lines[i]) {
+			return strings.Join(lines[i+1:], "\n"), true
+		}
+	}
+	return "", false
 }
 
 // command is Claude's argv for (re)launching a workspace's session,

@@ -101,20 +101,27 @@ export async function readSession(workspaceId: string): Promise<ActivityChange |
   // A session restored onto another box has a log of its own there.
   const sameBox = activity?.stream_box === box.sandboxId;
   const cursor = sameBox ? Number(activity?.stream_cursor ?? 0) : 0;
-  const url = new URL(
-    new AgentClient(box.target).eventsSseUrl({
-      workspaceId: workspace.id,
-      projectId: workspace.projectId,
-      computerId: box.computerId,
-      userId: workspace.ownerId,
-    }),
-  );
+  const identity = {
+    workspaceId: workspace.id,
+    projectId: workspace.projectId,
+    computerId: box.computerId,
+    userId: workspace.ownerId,
+  };
+  const url = new URL(new AgentClient(box.target).eventsSseUrl(identity));
   if (cursor > 0) url.searchParams.set("lastEventId", String(cursor));
   const read = await readStream(url.toString(), cursor);
   // From the start of a log, the state starts over, but a reply already
   // known stays known (its unread mark mustn't come back on a new box).
   const from = sameBox && before ? before : { ...IDLE, repliedAt: before?.repliedAt ?? null, replyPreview: before?.replyPreview ?? null };
-  const after = foldEvents(from, read.events);
+  let after = foldEvents(from, read.events);
+  // Mid-turn by its log, with its agent gone on a box that's up (it crashed,
+  // or was killed as the box ran out of memory): nothing will end the turn,
+  // so its box's word that the agent exited does. A read starts after the
+  // fact, so its stream never sees the agent go; the summary checks tmux.
+  if (after.turn === "working" || after.waiting) {
+    const summary = await new AgentClient(box.target).workspaceSummary(identity).catch(() => null);
+    if (summary?.state === "exited") after = foldEvents(after, [{ t: "state", workspaceId: workspace.id, state: "exited" }]);
+  }
   const now = new Date().toISOString();
   const patch = { ...turnToRow(after), stream_cursor: read.cursor, stream_box: box.sandboxId, read_at: now, updated_at: now };
 
