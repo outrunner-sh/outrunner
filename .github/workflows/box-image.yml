@@ -58,7 +58,7 @@ jobs:
           box build-args > "$RUNNER_TEMP/build-args"
           box check > "$RUNNER_TEMP/check.sh"
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         if: >-
           github.repository == 'outrunner-sh/outrunner' &&
           (github.event_name != 'pull_request' ||
