@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 
+import { ClaudeAccounts } from "@/components/claude-accounts";
 import { ClaudeFromTerminal } from "@/components/claude-from-terminal";
 import { ConnectionStatus, DetailRow, Details, SectionHeader } from "@/components/settings-details";
 import { Button } from "@/components/ui/button";
@@ -248,6 +249,15 @@ export function ClaudeConnection({
           <DetailRow term="Applies to">Workspaces created or restored after connecting</DetailRow>
         </Details>
       </div>
+
+      {/* A person's own accounts only: an org shares API keys, not subscriptions.
+          Remounted when the first account changes, so the list reloads. */}
+      {!orgId && connected ? (
+        <ClaudeAccounts
+          key={`${meta.last4 ?? ""}:${meta.updatedAt ?? ""}`}
+          onChange={() => void readSubscription().then(onChange, () => undefined)}
+        />
+      ) : null}
 
       {desktop && pending && deadline ? (
         <div className="space-y-3">
