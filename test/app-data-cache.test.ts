@@ -137,7 +137,7 @@ test("the environments are kept with it, so the new-session form starts on the o
 
 test("where the kept sessions stood is kept with them, and nothing else a page reads", () => {
   const storage = new FakeStorage();
-  const stood = { standing: "needs_you", reason: "question", moved: false, pinned: false, unread: true, replyPreview: null, at: "t" } as const;
+  const stood = { standing: "needs_you", reason: "question", moved: false, idle: true, pinned: false, unread: true, replyPreview: null, at: "t" } as const;
   cache(storage).save("org-1", {
     ...list(),
     standings: { w1: stood, gone: { ...stood, standing: "done", reason: null } },

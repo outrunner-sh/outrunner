@@ -57,6 +57,7 @@ export function fallbackStanding(at: string, now: number, settingUp = false): Se
     standing: settingUp ? "working" : "needs_you",
     reason: null,
     moved: false,
+    idle: !settingUp,
     pinned: false,
     unread: false,
     replyPreview: null,

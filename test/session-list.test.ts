@@ -11,6 +11,7 @@ const placed = (standing: SessionStanding["standing"]): SessionStanding => ({
   standing,
   reason: null,
   moved: false,
+  idle: standing !== "working",
   pinned: false,
   unread: false,
   replyPreview: null,

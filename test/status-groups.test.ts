@@ -29,6 +29,7 @@ const placed = (standing: SessionStanding["standing"], patch: Partial<SessionSta
   standing,
   reason: null,
   moved: false,
+  idle: standing !== "working",
   pinned: false,
   unread: false,
   replyPreview: null,

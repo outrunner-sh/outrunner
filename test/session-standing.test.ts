@@ -92,6 +92,17 @@ test("a move by hand holds until the session needs you again after it", () => {
   assert.deepEqual([asked.standing, asked.reason, asked.moved], ["needs_you", "question", false]);
 });
 
+test("a session moved to Working by hand is idle unless its agent is at work", () => {
+  const moved = { pinnedAt: null, movedTo: "working" as const, movedAt: ago(10 * MIN), seenAt: null };
+  const resting = standing({ mark: moved, workspace: { lastActiveAt: ago(60 * MIN) } });
+  assert.deepEqual([resting.standing, resting.moved, resting.idle], ["working", true, true]);
+  const busy = standing({ mark: moved, activity: { ...idle, turn: "working", turnStartedAt: ago(MIN), eventAt: ago(MIN) } });
+  assert.deepEqual([busy.standing, busy.idle], ["working", false]);
+  // Coming back counts as at work, as it does for the automatic group.
+  assert.equal(standing({ mark: moved, workspace: { status: "restoring" } }).idle, false);
+  assert.equal(standing({ activity: { ...idle, turn: "working", turnStartedAt: ago(MIN), eventAt: ago(MIN) } }).idle, false);
+});
+
 test("a reply is unread until seen, and replies from before the watch never are", () => {
   const replied = { ...idle, repliedAt: ago(2 * MIN), createdAt: ago(60 * MIN) };
   assert.equal(standing({ activity: replied }).unread, true);

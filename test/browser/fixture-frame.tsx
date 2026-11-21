@@ -83,6 +83,7 @@ function sidebarDone(at: string) {
     standing: "done" as const,
     reason: null,
     moved: false,
+    idle: true,
     pinned: false,
     unread: false,
     replyPreview: null,

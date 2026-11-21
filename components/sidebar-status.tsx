@@ -211,7 +211,12 @@ export function StandingMark({
     case "needs_you":
       return <CircleAlert aria-label={label} className={cn(box, "text-amber-400")} />;
     case "working":
-      return <ThinkingIcon label={label} className={box} />;
+      // Moved here by hand while its agent is idle: in Working, but not at work.
+      return standing.idle ? (
+        <ThinkingIcon label={`Moved to ${label}`} className={box} still />
+      ) : (
+        <ThinkingIcon label={label} className={box} />
+      );
     case "in_review":
       return <GitPullRequest aria-label={label} className={cn(box, "text-emerald-400")} />;
     case "done":

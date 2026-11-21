@@ -83,6 +83,9 @@ export type SessionStanding = {
   reason: NeedsYouReason | null;
   /** Put in its group by hand. */
   moved: boolean;
+  /** Its agent isn't at work (mid-turn, setting up or coming back), whatever
+   *  group it's in: one moved to Working by hand shows still. */
+  idle: boolean;
   pinned: boolean;
   /** A reply the user hasn't seen. */
   unread: boolean;
@@ -133,6 +136,7 @@ export function sessionStanding({ workspace, activity, pullRequest, mark, owner,
     standing,
     reason: standing === "needs_you" && !moved ? auto.reason : null,
     moved,
+    idle: auto.standing !== "working",
     pinned: Boolean(mark?.pinnedAt),
     unread,
     replyPreview: shownPreview(activity?.replyPreview),
