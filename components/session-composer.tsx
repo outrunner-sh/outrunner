@@ -898,7 +898,8 @@ function ModeToggle({ choice, disabled }: { choice: ModeChoice; disabled: boolea
       title={`${planning ? "Plan: reads and proposes a plan, changes nothing" : "Build: makes the changes"} (Shift+Tab to switch)`}
     >
       {planning ? <ListChecks /> : <Hammer />}
-      {planning ? "Plan" : "Build"}
+      {/* Narrow, the icon alone (globals.css); the label stays in aria-label. */}
+      <span className="studio-composer-mode-label">{planning ? "Plan" : "Build"}</span>
     </button>
   );
 }
@@ -930,7 +931,8 @@ function ContextRing({ usage }: { usage: ContextUsage }) {
           strokeDasharray={`${share * length} ${length}`}
         />
       </svg>
-      {compactTokens(usage.used)} / {compactTokens(usage.window)}
+      {/* Narrow, the ring alone (globals.css); the numbers stay in its title. */}
+      <span className="studio-composer-context-label">{compactTokens(usage.used)} / {compactTokens(usage.window)}</span>
     </span>
   );
 }
