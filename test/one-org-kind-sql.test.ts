@@ -2,7 +2,7 @@
  *  and the read-only query that dry-runs it on production before deploy, on a
  *  disposable Postgres database. */
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 
@@ -11,61 +11,54 @@ const skip = server ? false : "No local test Postgres configured";
 const name = `one_org_kind_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
 let url = "";
 
-function psql(target: string, text: string, quiet = true): string {
-  return execFileSync("psql", [target, "-v", "ON_ERROR_STOP=1", ...(quiet ? ["-qtA"] : ["-tA"]), "-c", text], {
-    encoding: "utf8",
-    stdio: "pipe",
-  }).trim();
+function psql(target: string, text: string): string {
+  return execFileSync("psql", [target, "-v", "ON_ERROR_STOP=1", "-qtA", "-c", text], { encoding: "utf8", stdio: "pipe" }).trim();
 }
 const sql = (text: string) => psql(url, text);
 
 /**
- * What the migration would do, said and changed nothing: run on production,
- * read-only, before deploying. `delete` is a personal org that holds nothing
- * and whose owner is in another org; `rename` one kept and still named
- * "Personal"; `keep` one kept under the name its owner gave it; and
- * `no_app`, of those kept, the ones with repositories but no GitHub App
- * installation: their repositories listed from their owner's own GitHub,
- * and won't any more (lib/github/repository-source.ts). The PR's
- * description carries the same block.
+ * What the migration would do, said and changed nothing: one plain, read-only
+ * SELECT, to paste into Supabase's SQL editor on production before
+ * deploying. `delete`: a personal org that holds nothing and whose owner is
+ * in another org (each table that references organizations asked, as the
+ * migration does, through query_to_xml); `rename`: one kept and still named
+ * "Personal"; `keep`: one kept under the name its owner gave it; `no_app`: of
+ * those kept, the ones with repositories but no GitHub App installation,
+ * which listed from their owner's own GitHub and won't any more
+ * (lib/github/repository-source.ts). The PR's description carries the same
+ * query.
  */
 export const DRY_RUN = `
-begin transaction read only;
-do $$
-declare
-  ref record;
-  holds text := '';
-  counts record;
-begin
-  for ref in
-    select c.conrelid::regclass as tbl, a.attname as col
-    from pg_constraint c
-    join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any (c.conkey)
-    where c.contype = 'f'
-      and c.confrelid = 'public.organizations'::regclass
-      and c.conrelid not in ('public.organization_members'::regclass, 'public.access_grants'::regclass)
-  loop
-    holds := holds || format(' or exists (select 1 from %s t where t.%I = o.id)', ref.tbl, ref.col);
-  end loop;
-  execute format($q$
-    select
-      count(*) as personal,
-      count(*) filter (where gone) as delete,
-      count(*) filter (where not gone and o.name = 'Personal') as rename,
-      count(*) filter (where not gone and o.name <> 'Personal') as keep,
-      count(*) filter (where not gone
-        and exists (select 1 from projects p where p.org_id = o.id)
-        and not exists (select 1 from org_github_installations l where l.org_id = o.id)) as no_app
-    from organizations o,
-    lateral (select
-      exists (select 1 from organization_members m where m.user_id = o.personal_owner_id and m.org_id <> o.id)
+with refs as (
+  select c.conrelid::regclass::text as tbl, a.attname::text as col
+  from pg_constraint c
+  join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any (c.conkey)
+  where c.contype = 'f'
+    and c.confrelid = 'public.organizations'::regclass
+    and c.conrelid not in ('public.organization_members'::regclass, 'public.access_grants'::regclass)
+),
+personal as (
+  select o.id, o.name,
+    exists (select 1 from organization_members m where m.user_id = o.personal_owner_id and m.org_id <> o.id)
       and not exists (select 1 from organization_members m where m.org_id = o.id and m.user_id <> o.personal_owner_id)
-      and not (false %s) as gone) g
-    where o.personal_owner_id is not null
-  $q$, holds) into counts;
-  raise notice 'personal=% delete=% rename=% keep=% no_app=%', counts.personal, counts.delete, counts.rename, counts.keep, counts.no_app;
-end $$;
-rollback;`;
+      and not exists (
+        select 1 from refs r
+        where (xpath('/row/held/text()', query_to_xml(
+          format('select exists (select 1 from %s t where t.%I = %L) as held', r.tbl, r.col, o.id), false, true, ''
+        )))[1]::text = 'true'
+      ) as gone
+  from organizations o
+  where o.personal_owner_id is not null
+)
+select
+  count(*) as personal,
+  count(*) filter (where gone) as delete,
+  count(*) filter (where not gone and name = 'Personal') as rename,
+  count(*) filter (where not gone and name <> 'Personal') as keep,
+  count(*) filter (where not gone
+    and exists (select 1 from projects p where p.org_id = personal.id)
+    and not exists (select 1 from org_github_installations l where l.org_id = personal.id)) as no_app
+from personal`;
 
 /** A user, with what sign-up would have given them; their id. */
 function user(meta: Record<string, string>, email: string): string {
@@ -188,11 +181,11 @@ test("personal orgs become ordinary orgs: empty spares go, the rest keep all the
   const zed = user({ full_name: "Zed" }, "zed@example.com");
   const shared = team(zed, bea, cy, di, ed);
 
-  // Its answer is a notice, which psql writes to stderr.
-  const dryRun = spawnSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-tA", "-c", DRY_RUN], { encoding: "utf8" });
-  assert.equal(dryRun.status, 0, dryRun.stderr);
   // Cy's and Fy's hold repositories, and only Fy's has the App.
-  assert.match(dryRun.stderr, /personal=6 delete=1 rename=4 keep=1 no_app=1/);
+  assert.equal(
+    psql(url, `begin transaction read only; ${DRY_RUN}; rollback;`).split("\n").find((l) => l.includes("|")),
+    "6|1|4|1|1",
+  );
   // It changed nothing.
   assert.equal(sql("select count(*) from organizations where personal_owner_id is not null"), "6");
 
