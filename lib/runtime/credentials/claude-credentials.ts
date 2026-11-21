@@ -16,7 +16,7 @@
  * page satisfies it.
  */
 
-import { removeAllAccounts, replaceFirstAccount } from "@/lib/claude/accounts";
+import { removeAllAccounts, replaceFirstAccount, saveAccount } from "@/lib/claude/accounts";
 import { claudeAccountStore, ClaudeAccountsUnavailable, loadClaudeAccounts } from "@/lib/claude/accounts.deps";
 import {
   clearAnthropicKey,
@@ -70,6 +70,23 @@ export async function getClaudeTokenMeta(
     last4: last4FromHint(status.anthropic.hint),
     updatedAt: status.anthropic.updatedAt,
   };
+}
+
+/**
+ * Connect `token` as the owner's Claude account named `label`, or replace the
+ * token already under that name (`outrunner claude --label work`). Throws
+ * ClaudeAccountError at the account limit. Before claude_accounts exists, the
+ * token goes in the Claude slot and the name isn't kept.
+ */
+export async function saveClaudeAccount(ownerId: string, label: string, token: string): Promise<void> {
+  await settleClaudeSlot(ownerId);
+  try {
+    if ((await loadClaudeAccounts(ownerId)) === null) throw new ClaudeAccountsUnavailable();
+    await saveAccount(claudeAccountStore(ownerId), label, token);
+  } catch (error) {
+    if (!(error instanceof ClaudeAccountsUnavailable)) throw error;
+    await setAnthropicKey(ownerId, token);
+  }
 }
 
 /** Disconnect: every one of the owner's Claude accounts, and the slot. */
