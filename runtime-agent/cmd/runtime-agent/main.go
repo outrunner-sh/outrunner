@@ -129,6 +129,9 @@ func main() {
 		// The same means let its sessions upload screenshots and recordings
 		// for their pull requests (package media).
 		svc.UseMedia(&media.Client{Config: cfg})
+		// And keep the desktop browser's sign-ins for the person's next
+		// session in the project, as they change.
+		go svc.KeepSignIns(context.Background())
 		// The daemon reads its cgroup even when no browser is connected.
 		// Only the control plane can authorize and perform a memory increase.
 		if os.Getenv("RUNTIME_MEMORY_AUTOSCALING") == "1" {
