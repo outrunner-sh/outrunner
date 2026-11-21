@@ -351,9 +351,12 @@ curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces
 log), `running`, `needs_input` (it asked a question or for secrets:
 `pending_input` says what), `finished`, `cancelled` (stopped, by `cancel` or
 `interrupt`), or `error` (an API error or usage limit ended it: `error` is
-what it said). `result` is the last thing it said, once it's over. A run's
-id is its prompt's event id: stable while the box is up, and counted from 1
-in an archived session's, as its events are. A run is also named by its
+what it said). `started_at` is when it began: a first run's, before its
+prompt is in its log, is when its session was started, as its prompt was
+given then. `ended_at` is null while it goes on; a first run whose setup
+failed ended when the session did. `result` is the last thing it said, once
+it's over. A run's id is its prompt's event id: stable while the box is
+up, and counted from 1 in an archived session's, as its events are. A run is also named by its
 place, `run-<number>` (`run-1` the first), in every run call, from the
 moment the session is started. `GET /runs` lists them newest
 first, a page at a time; each takes `chat_id`. `POST
