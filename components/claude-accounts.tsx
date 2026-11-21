@@ -70,6 +70,8 @@ export function ClaudeAccounts({ onChange }: { onChange: () => void }) {
 
   const accounts = answer?.accounts ?? [];
   const max = answer?.max ?? 10;
+  // Where sessions start: the first that isn't limited, rejected or unreadable.
+  const starts = accounts.findIndex((account) => canStart(account, now));
 
   const move = (index: number, by: -1 | 1) => {
     const ids = accounts.map((account) => account.id);
@@ -113,7 +115,7 @@ export function ClaudeAccounts({ onChange }: { onChange: () => void }) {
             <li key={account.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
               <span className="font-medium text-foreground">{account.label}</span>
               <span className="font-mono text-xs text-muted-foreground">····{account.last4 ?? "····"}</span>
-              <AccountState account={account} first={index === 0} now={now} />
+              <AccountState account={account} starts={index === starts} now={now} />
               <span className="ml-auto flex items-center gap-1">
                 <Button
                   variant="ghost"
@@ -326,14 +328,23 @@ function AddAccount({
   );
 }
 
+function canStart(account: ClaudeAccountView, now: number): boolean {
+  if (account.needsReconnect || account.unreadable) return false;
+  return !account.limitedUntil || !(Date.parse(account.limitedUntil) > now);
+}
+
 /** Whether a session can start on it, in words. */
-function AccountState({ account, first, now }: { account: ClaudeAccountView; first: boolean; now: number }) {
-  if (account.needsReconnect) {
-    return <span className="text-xs text-warning">Anthropic rejected this token. Save a new one under the same name.</span>;
+function AccountState({ account, starts, now }: { account: ClaudeAccountView; starts: boolean; now: number }) {
+  if (account.unreadable || account.needsReconnect) {
+    return (
+      <span className="text-xs text-warning">
+        This token can&apos;t be used, so sessions skip it. Add it again under the same name to replace it.
+      </span>
+    );
   }
   const until = account.limitedUntil ? Date.parse(account.limitedUntil) : NaN;
   if (until > now) return <span className="text-xs text-warning">At its usage limit until {when(until, now)}</span>;
-  return <span className="text-xs text-muted-foreground">{first ? "Sessions start here" : "Ready"}</span>;
+  return <span className="text-xs text-muted-foreground">{starts ? "Sessions start here" : "Ready"}</span>;
 }
 
 function when(at: number, now: number): string {
