@@ -905,8 +905,9 @@ begin
   if n <> 0 then
     raise exception 'FAIL: % users have no own org they are admin of', n;
   end if;
-  if exists (select 1 from organizations where personal_owner_id is not null) then
-    raise exception 'FAIL: an org is someone''s personal org';
+  if exists (select 1 from information_schema.columns
+             where table_name = 'organizations' and column_name = 'personal_owner_id') then
+    raise exception 'FAIL: an org can still be someone''s personal org';
   end if;
   select count(*) into n from projects p
   where p.org_id is distinct from pg_temp.own_org(p.owner_id);
