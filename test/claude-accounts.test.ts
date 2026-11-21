@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { afterEach, beforeEach, test } from "node:test";
 
 import {
   accountWithToken,
   adoptSlot,
+  answerLimit,
   checkLabel,
   ClaudeAccountError,
   MAX_CLAUDE_ACCOUNTS,
@@ -234,5 +235,31 @@ test("a limit on a token that isn't one of the accounts marks nothing, and still
   const result = await switchFromLimited(store, null, null, now);
   assert.equal(result.limited, null);
   assert.equal(result.next?.label, "work");
+  assert.equal(rows()[0].limitedUntil, null);
+});
+
+test("a box names its account by the token's SHA-256, and hears back the next account's token", async () => {
+  const now = Date.parse("2026-11-21T12:00:00Z");
+  const { store, rows } = memoryStore();
+  await saveAccount(store, "work", token("work"));
+  await saveAccount(store, "personal", token("personal"));
+  const sha = createHash("sha256").update(token("work")).digest("hex");
+
+  const answer = await answerLimit(store, { tokenSha256: sha, resetsAt: "2026-11-21T15:00:00Z", now }, open);
+  assert.deepEqual(answer, { token: token("personal"), label: "personal", from: "work" });
+  assert.equal(rows().find((a) => a.label === "work")!.limitedUntil, "2026-11-21T15:00:00.000Z");
+
+  // Then personal hits its limit too: nothing left, and when work resets.
+  const personalSha = createHash("sha256").update(token("personal")).digest("hex");
+  const out = await answerLimit(store, { tokenSha256: personalSha, resetsAt: null, now }, open);
+  assert.deepEqual(out, { token: null, from: "personal", firstReset: "2026-11-21T13:00:00.000Z" });
+});
+
+test("an unknown token hash marks nothing", async () => {
+  const now = Date.parse("2026-11-21T12:00:00Z");
+  const { store, rows } = memoryStore();
+  await saveAccount(store, "work", token("work"));
+  const answer = await answerLimit(store, { tokenSha256: "0".repeat(64), resetsAt: null, now }, open);
+  assert.deepEqual(answer, { token: token("work"), label: "work", from: null });
   assert.equal(rows()[0].limitedUntil, null);
 });

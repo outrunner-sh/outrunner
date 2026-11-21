@@ -13,6 +13,8 @@
  * it — the workspace gate, the desktop app, `outrunner claude` — is unchanged.
  */
 
+import { createHash } from "node:crypto";
+
 import { seal } from "@/lib/crypto/secret-box";
 
 /** How many one person can connect. */
@@ -211,9 +213,28 @@ export function accountWithToken(
   token: string,
   openToken: (ciphertext: string) => string,
 ): ClaudeAccount | null {
+  return accountMatching(accounts, (opened) => sameToken(opened, token), openToken);
+}
+
+/** The account whose token's SHA-256 (hex) is `hash`: how a box names the
+ *  account it's on without sending the token. */
+export function accountWithTokenHash(
+  accounts: readonly ClaudeAccount[],
+  hash: string,
+  openToken: (ciphertext: string) => string,
+): ClaudeAccount | null {
+  const wanted = hash.toLowerCase();
+  return accountMatching(accounts, (opened) => sameToken(createHash("sha256").update(opened).digest("hex"), wanted), openToken);
+}
+
+function accountMatching(
+  accounts: readonly ClaudeAccount[],
+  matches: (token: string) => boolean,
+  openToken: (ciphertext: string) => string,
+): ClaudeAccount | null {
   for (const account of accounts) {
     try {
-      if (sameToken(openToken(account.ciphertext), token)) return account;
+      if (matches(openToken(account.ciphertext))) return account;
     } catch {
       // Unreadable (a key change): not this one.
     }
@@ -261,6 +282,33 @@ export async function switchFromLimited(
     .filter((at) => at > now)
     .sort((a, b) => a - b);
   return { limited, limitedUntil, next, firstReset: next || resets.length === 0 ? null : new Date(resets[0]).toISOString() };
+}
+
+/** What a box hears back when its session hits a usage limit
+ *  (app/api/runtime/claude-account): the token to carry on with, or none. */
+export type LimitAnswer =
+  | { token: string; label: string; from: string | null }
+  | { token: null; from: string | null; firstReset: string | null };
+
+/**
+ * A box's session hit its usage limit on the token whose SHA-256 is
+ * `tokenSha256`: mark that account and answer with the next one's token. An
+ * account whose token won't open is skipped, as if it weren't there.
+ */
+export async function answerLimit(
+  store: ClaudeAccountStore,
+  input: { tokenSha256: string; resetsAt: string | null; now: number },
+  openToken: (ciphertext: string) => string,
+): Promise<LimitAnswer> {
+  const limited = accountWithTokenHash(await store.list(), input.tokenSha256, openToken);
+  const result = await switchFromLimited(store, limited, input.resetsAt, input.now);
+  const from = limited?.label ?? null;
+  if (!result.next) return { token: null, from, firstReset: result.firstReset };
+  try {
+    return { token: openToken(result.next.ciphertext), label: result.next.label, from };
+  } catch {
+    return { token: null, from, firstReset: result.firstReset };
+  }
 }
 
 /**
