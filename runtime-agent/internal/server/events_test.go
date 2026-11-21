@@ -478,8 +478,14 @@ func TestEventsReportAnAgentThatExitedAndCameBack(t *testing.T) {
 	t.Cleanup(func() {
 		agentCheckInterval, agentGoneChecks, workspace.MemoryEventsPath = savedInterval, savedChecks, savedEvents
 	})
+	// Written whole (a rename), as the kernel's file is read: a stream's look
+	// must never land on it half written.
 	writeKills := func(n int) {
-		if err := os.WriteFile(events, []byte(fmt.Sprintf("oom 1\noom_kill %d\n", n)), 0o600); err != nil {
+		next := events + ".next"
+		if err := os.WriteFile(next, []byte(fmt.Sprintf("oom 1\noom_kill %d\n", n)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(next, events); err != nil {
 			t.Fatal(err)
 		}
 	}
