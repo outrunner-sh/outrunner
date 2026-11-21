@@ -90,6 +90,11 @@ test("Outrunner's sandbox account being full is said as Outrunner's, never as th
   // On the user's own Daytona account, it's theirs to fix: Daytona's words stand.
   assert.match(provisionFailureMessage(daytona, "allocate", [], false), /^Setup failed while provisioning the sandbox: Total disk limit exceeded/);
   assert.equal(provisionFailureMessage(daytona, null, [], true), PLATFORM_CAPACITY_MESSAGE);
+  // Neev's account out of prepaid credits is Outrunner's too, never "your credits".
+  const neev = new Error(
+    "HTTP 400 bad_request: Your available credits are too low to run this deployment for 1 hour. Please add credits to continue. [request-id: f3579c4a]",
+  );
+  assert.equal(provisionFailureMessage(neev, "allocate", [], true), PLATFORM_CAPACITY_MESSAGE);
   // Out of room inside the box, in a later step, is that step's own failure.
   assert.equal(
     provisionFailureMessage(new Error("fatal: write error: Disk quota exceeded"), "clone", [], true),

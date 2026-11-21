@@ -4,8 +4,9 @@ import { afterEach, beforeEach, test } from "node:test";
 import { PLANS } from "@/lib/billing/plans";
 import type { SandboxChoice, SandboxSettings } from "@/lib/db/credentials";
 import type { BoxSizeId } from "@/lib/runtime/box-sizes";
-import { NoDaytonaKeyError, UserDaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
-import { resetRuntimeProvider } from "@/lib/runtime/provider";
+import { DaytonaRuntimeProvider, NoDaytonaKeyError, UserDaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { NeevRuntimeProvider } from "@/lib/runtime/neev-provider";
+import { getRuntimeProvider, platformComputerProviders, platformProvider, resetRuntimeProvider } from "@/lib/runtime/provider";
 import {
   boxSizeOn,
   computerMadeBy,
@@ -53,8 +54,66 @@ test("a session in the owner's own Modal is managed on their token", () => {
   assert.equal(provider.restoresBoxes, true);
 });
 
-test("a session on a provider this deployment no longer runs has none, rather than another's", () => {
-  assert.equal(providerNamed("daytona", noKey), null);
+/** `fn` with these variables set (undefined: unset), restored after. */
+function withEnv(vars: Record<string, string | undefined>, fn: () => void): void {
+  const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  const set = (values: Record<string, string | undefined>) => {
+    for (const [k, v] of Object.entries(values)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  };
+  set(vars);
+  resetRuntimeProvider();
+  try {
+    fn();
+  } finally {
+    set(saved);
+    resetRuntimeProvider();
+  }
+}
+
+const NO_NEEV = { NEEV_API_KEY: undefined, NEEV_ORG_ID: undefined, NEEV_PROJECT_ID: undefined };
+const NEEV = { NEEV_API_KEY: "sk-nc-x", NEEV_ORG_ID: "org", NEEV_PROJECT_ID: "proj" };
+
+test("a session on a provider this deployment can't reach has none, rather than another's", () => {
+  withEnv({ DAYTONA_API_KEY: undefined }, () => {
+    assert.equal(providerNamed("daytona", noKey), null);
+    assert.equal(platformProvider("daytona"), null);
+  });
+});
+
+test("a deployment moved to Neev keeps managing its Daytona boxes while Daytona's key is set", () => {
+  withEnv({ RUNTIME_PROVIDER: "neev", DAYTONA_API_KEY: "dtn_x", ...NEEV }, () => {
+    const daytona = providerNamed("daytona", noKey);
+    assert.ok(daytona instanceof DaytonaRuntimeProvider);
+    assert.equal(daytona.name, "daytona");
+    assert.equal(providerNamed("daytona", noKey), daytona, "one instance, so endpoints and upgrades are shared");
+    // New sessions still go to the deployment's own.
+    assert.equal(providerForNewSessions(settings("outrunner", false), noKey).name, "neev");
+    assert.ok(getRuntimeProvider() instanceof NeevRuntimeProvider);
+    // The reconciler and sweeps go over both, the deployment's first.
+    assert.deepEqual(platformComputerProviders().map((p) => p.name), ["neev", "daytona"]);
+  });
+});
+
+test("rolled back to Daytona, Neev's boxes stay managed while Neev's credentials are set", () => {
+  withEnv({ RUNTIME_PROVIDER: "daytona", DAYTONA_API_KEY: "dtn_x", ...NEEV }, () => {
+    assert.ok(providerNamed("neev", noKey) instanceof NeevRuntimeProvider);
+    assert.deepEqual(platformComputerProviders().map((p) => p.name), ["daytona", "neev"]);
+  });
+  withEnv({ RUNTIME_PROVIDER: "daytona", DAYTONA_API_KEY: "dtn_x", ...NO_NEEV, NEEV_API_KEY: "sk-nc-x" }, () => {
+    assert.equal(providerNamed("neev", noKey), null, "all three Neev variables are needed");
+    assert.deepEqual(platformComputerProviders().map((p) => p.name), ["daytona"]);
+  });
+});
+
+test("a user's own sandbox is never taken for one of Outrunner's", () => {
+  withEnv({ RUNTIME_PROVIDER: "neev", DAYTONA_API_KEY: "dtn_x", ...NEEV }, () => {
+    assert.equal(platformProvider("user-daytona"), null);
+    assert.equal(platformProvider("user-modal"), null);
+    assert.equal(platformProvider("local"), null);
+  });
 });
 
 test("new sessions go where the user chose: Outrunner's by default, their Daytona with a key", () => {
@@ -128,4 +187,15 @@ test("only a stopped computer the same provider made is a box to restore from", 
   // Another provider's box: the owner moved, and that one is retired, not restored.
   assert.equal(endedBoxOf({ ...stopped, provider: "neev" }, "user-modal"), undefined);
   assert.equal(endedBoxOf(null, "user-modal"), undefined);
+});
+
+test("a box with no provider recorded goes to the one provider that has it, or to GONE_PROVIDER only on two real not-founds", async () => {
+  const { providerOfBox, GONE_PROVIDER } = await import("@/lib/runtime/unrecorded-computers");
+  assert.equal(providerOfBox({ daytona: "yes", neev: "no" }, true), "daytona");
+  assert.equal(providerOfBox({ daytona: "refused", neev: "yes" }, true), "neev", "the other only refusing its id");
+  assert.equal(providerOfBox({ daytona: "yes", neev: "yes" }, true), null, "both claim it: an operator decides");
+  // Gone only on two real not-founds, both asked.
+  assert.equal(providerOfBox({ daytona: "no", neev: "no" }, true), GONE_PROVIDER);
+  assert.equal(providerOfBox({ daytona: "no", neev: "refused" }, true), null, "a refusal may hide a live box");
+  assert.equal(providerOfBox({ daytona: "no" }, false), null, "one backend's keys only: never gone");
 });

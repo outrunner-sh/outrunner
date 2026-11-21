@@ -8,6 +8,9 @@ import { checkDaytona, checkOpenRouter } from "@/lib/health/dependencies";
 import { buildInfo } from "@/lib/observability/build";
 import { isDraining } from "@/lib/observability/drain";
 import { optionalEnv, providerName } from "@/lib/env";
+import { platformComputerProviders } from "@/lib/runtime/provider";
+import { isNeevPersonalToken } from "@/lib/runtime/sandbox/neev";
+import { countUnrecordedComputers } from "@/lib/runtime/unrecorded-computers";
 import { keySource } from "@/lib/openrouter/keys";
 import { codexCliVersion, probeCodexSchema } from "@/lib/codex/rollout";
 import {
@@ -49,8 +52,13 @@ export async function GET(request: Request) {
     // otherwise looks healthy cannot actually run a workspace.
     credentialEncryption: Boolean(optionalEnv("CREDENTIALS_ENCRYPTION_KEY")),
     daytona: Boolean(optionalEnv("DAYTONA_API_KEY")),
+    // Whether new Neev sessions can start. A personal access token passes
+    // Neev's API but not a sandbox's runtime: false with one, though boxes
+    // already running stay managed (paused, heartbeated, deleted, swept), so
+    // managedProviders still lists "neev".
     neev:
       Boolean(optionalEnv("NEEV_API_KEY")) &&
+      !isNeevPersonalToken(optionalEnv("NEEV_API_KEY")) &&
       Boolean(optionalEnv("NEEV_ORG_ID")) &&
       Boolean(optionalEnv("NEEV_PROJECT_ID")),
     modal:
@@ -143,6 +151,12 @@ export async function GET(request: Request) {
     {
       ok,
       provider: providerName(),
+      // Every backend of Outrunner's this deployment still manages boxes on:
+      // its own, and the one it moved from while that one's key is set.
+      managedProviders: managedProviders(),
+      // Rows naming a box with no provider recorded: read as the deployment's,
+      // so 0 before RUNTIME_PROVIDER changes (scripts/assign-computer-providers.ts).
+      unrecordedProviderComputers: configured.supabaseServiceRole ? await countUnrecordedComputers() : "not configured",
       configured,
       database,
       codex,
@@ -162,6 +176,16 @@ export async function GET(request: Request) {
 function billingModeOrInvalid(): ReturnType<typeof billingMode> | "invalid" {
   try {
     return billingMode();
+  } catch {
+    return "invalid";
+  }
+}
+
+/** The platform backends this deployment manages, or what kept them from
+ *  being read (an invalid RUNTIME_PROVIDER). */
+function managedProviders(): string[] | "invalid" {
+  try {
+    return platformComputerProviders().map((provider) => provider.name);
   } catch {
     return "invalid";
   }

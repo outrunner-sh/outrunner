@@ -68,9 +68,12 @@ interface Env {
   STRIPE_WEBHOOK_SECRET?: string;
   OPENROUTER_API_KEY?: string;
   /**
-   * Where cloud sessions run: "daytona" (the default) or "neev". "neev" needs
-   * the three NEEV_* below; NEEV_API_KEY is a project API key with Resource
-   * Type "Sandboxes" (sk-nc-…). See docs/deploy-cloudflare.md.
+   * Where new cloud sessions run: "daytona" (the default) or "neev". "neev"
+   * needs the three NEEV_* below; NEEV_API_KEY is a project API key with
+   * Resource Type "Sandboxes" (sk-nc-…). The other backend's boxes stay
+   * managed (resumed, paused, metered, deleted, swept) for as long as its
+   * credentials are set: keep DAYTONA_API_KEY after moving to Neev. See
+   * docs/deploy-cloudflare.md.
    */
   RUNTIME_PROVIDER?: string;
   /**
@@ -110,6 +113,13 @@ interface Env {
   NEEV_PROJECT_ID?: string;
   /** Optional; the app defaults to sb-ubuntu-26-04-dev. */
   NEEV_SANDBOX_TEMPLATE?: string;
+  /** Optional; the SDK's own API URL unless set (another Neev region or
+   *  environment). */
+  NEEV_BASE_URL?: string;
+  /** "create" makes every Neev box from the template; unset, a box is
+   *  restored from this version's golden snapshot where there is one
+   *  (scripts/neev-golden.ts). */
+  NEEV_BOX_SOURCE?: string;
   /**
    * Previews' domain (lib/previews/host.ts): `<slug>.<domain>` reaches a
    * server on a session's box. A plain variable, not a secret; it needs the
@@ -352,6 +362,8 @@ export class OutrunnerControlPlane extends Container<Env> {
       ...(env.NEEV_ORG_ID ? { NEEV_ORG_ID: env.NEEV_ORG_ID } : {}),
       ...(env.NEEV_PROJECT_ID ? { NEEV_PROJECT_ID: env.NEEV_PROJECT_ID } : {}),
       ...(env.NEEV_SANDBOX_TEMPLATE ? { NEEV_SANDBOX_TEMPLATE: env.NEEV_SANDBOX_TEMPLATE } : {}),
+      ...(env.NEEV_BASE_URL ? { NEEV_BASE_URL: env.NEEV_BASE_URL } : {}),
+      ...(env.NEEV_BOX_SOURCE ? { NEEV_BOX_SOURCE: env.NEEV_BOX_SOURCE } : {}),
       ...(env.RUNTIME_PREVIEW_DOMAIN ? { RUNTIME_PREVIEW_DOMAIN: env.RUNTIME_PREVIEW_DOMAIN } : {}),
       ...(env.BILLING_CRON_SECRET ? { BILLING_CRON_SECRET: env.BILLING_CRON_SECRET } : {}),
       ...(env.STRIPE_SECRET_KEY ? { STRIPE_SECRET_KEY: env.STRIPE_SECRET_KEY } : {}),

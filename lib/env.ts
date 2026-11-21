@@ -44,6 +44,7 @@ type EnvKey =
   | "NEEV_PROJECT_ID"
   | "NEEV_BASE_URL"
   | "NEEV_SANDBOX_TEMPLATE"
+  | "NEEV_BOX_SOURCE"
   // Cross-compiled runtime-agent binary uploaded on provision (decision 1A).
   | "RUNTIME_AGENT_BINARY_PATH"
   // Provider selection

@@ -21,7 +21,7 @@ const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
 const MIN = 60_000;
 
 function computer(id: string): MeteredComputer {
-  return { id, ownerId: "u-1", projectId: `p-${id}`, workspaceId: `w-${id}`, sandboxId: `sb-${id}`, agentSecret: "s" };
+  return { id, ownerId: "u-1", projectId: `p-${id}`, workspaceId: `w-${id}`, sandboxId: `sb-${id}`, agentSecret: "s", provider: "daytona" };
 }
 function interval(
   id: string,

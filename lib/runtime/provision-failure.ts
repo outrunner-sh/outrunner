@@ -44,8 +44,10 @@ export const GITHUB_RECONNECT_MESSAGE =
   "GitHub didn't accept your connection, so the repository couldn't be cloned. Reconnect GitHub in Settings → Connections, then start a new session.";
 
 /** What Daytona says when the account is out of room for another box: its
- *  total disk, CPU or memory, or its sandbox count. */
-const SANDBOX_CAPACITY = /\b(?:total )?(?:disk|cpu|memory|sandbox(?:es)?) (?:limit|quota) exceeded\b|\bTotal (?:disk|CPU|memory) limit\b/i;
+ *  total disk, CPU or memory, or its sandbox count. And Neev, when the
+ *  account's prepaid credits won't cover another box for an hour. */
+const SANDBOX_CAPACITY =
+  /\b(?:total )?(?:disk|cpu|memory|sandbox(?:es)?) (?:limit|quota) exceeded\b|\bTotal (?:disk|CPU|memory) limit\b|\bcredits are too low\b/i;
 
 /** Outrunner's sandbox account being full: nothing the user can do about it
  *  there, so never Daytona's own words, which name an org and a dashboard

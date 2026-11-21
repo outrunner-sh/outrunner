@@ -18,7 +18,8 @@ import { orgConnectorIds } from "@/lib/db/repositories";
 import { canSendEmail, sendEmail } from "@/lib/email/send";
 import { optionalEnv } from "@/lib/env";
 import { appUrl } from "@/lib/orgs/notify";
-import type { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
+import { type ComputerRuntimeProvider, isComputerProvider } from "@/lib/runtime/computer-provider";
+import { platformProvider } from "@/lib/runtime/provider";
 import { computerMadeBy } from "@/lib/runtime/sandbox-choice";
 import type { ProviderName } from "@/lib/runtime/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -32,13 +33,12 @@ type Row = {
   provider: string | null;
 };
 
-/** The metered boxes `provider` made, running now: every one, an org's, or
- *  one owner's. Paged: there may be more than one response holds. Not the
- *  warm pool's, which are made by a refill's gate (lib/runtime/warm-pool.deps.ts). */
-async function runningMetered(
-  provider: ComputerRuntimeProvider,
-  filter: { orgId?: string; ownerId?: string } = {},
-): Promise<Row[]> {
+/** The metered boxes running now on Outrunner's accounts this deployment
+ *  reaches (its own provider's, and the one it moved from while that one's
+ *  credentials are set): every one, an org's, or one owner's. Paged: there
+ *  may be more than one response holds. Not the warm pool's, which are made
+ *  by a refill's gate (lib/runtime/warm-pool.deps.ts). */
+async function runningMetered(filter: { orgId?: string; ownerId?: string } = {}): Promise<Row[]> {
   const rows = await allRows<Row>((from, to) => {
     let query = createSupabaseAdminClient()
       .from("runtime_computers")
@@ -50,11 +50,13 @@ async function runningMetered(
     if (filter.ownerId) query = query.eq("owner_id", filter.ownerId);
     return query.order("id").range(from, to);
   });
-  return rows.filter(
-    (row) =>
-      isMetered(row.provider as ProviderName | null) &&
-      computerMadeBy({ provider: row.provider as ProviderName | null }) === provider.name,
-  );
+  return rows.filter((row) => isMetered(row.provider as ProviderName | null) && makerOf(row) !== null);
+}
+
+/** The provider that made a row's box, where this deployment reaches it. */
+function makerOf(row: Pick<Row, "provider">): ComputerRuntimeProvider | null {
+  const maker = platformProvider(computerMadeBy({ provider: row.provider as ProviderName | null }));
+  return maker && isComputerProvider(maker) ? maker : null;
 }
 
 /** Each org's connector ids, read once a run. */
@@ -66,8 +68,11 @@ function connectorsOf(): (orgId: string) => Promise<Set<string>> {
   };
 }
 
+/** `provider` is the deployment's: whether boxes pause at the limit is its
+ *  say. Each box is paused with the provider that made it. */
 export function runUsageSweep(provider: ComputerRuntimeProvider): Promise<UsageSweepReport> {
   const now = new Date();
+  const makers = new Map<string, ComputerRuntimeProvider>();
   const connectors = connectorsOf();
   const exemptList = optionalEnv("RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN");
   const exemptByOwner = new Map<string, Promise<boolean>>();
@@ -76,7 +81,7 @@ export function runUsageSweep(provider: ComputerRuntimeProvider): Promise<UsageS
       const accounts: Account[] = [];
       const orgs = new Set<string>();
       const connectorOwners = new Set<string>();
-      for (const row of await runningMetered(provider)) {
+      for (const row of await runningMetered()) {
         if ((await connectors(row.org_id)).has(row.owner_id)) connectorOwners.add(row.owner_id);
         else orgs.add(row.org_id);
       }
@@ -126,13 +131,14 @@ export function runUsageSweep(provider: ComputerRuntimeProvider): Promise<UsageS
     async runningBoxes(account) {
       const rows =
         account.kind === "connector"
-          ? await runningMetered(provider, { ownerId: account.ownerId })
-          : await runningMetered(provider, { orgId: account.orgId });
+          ? await runningMetered({ ownerId: account.ownerId })
+          : await runningMetered({ orgId: account.orgId });
       const mine = [];
       for (const row of rows) {
         const isConnector = (await connectors(row.org_id)).has(row.owner_id);
         if (isConnector === (account.kind === "connector")) mine.push(row);
       }
+      for (const row of mine) makers.set(row.daytona_sandbox_id!, makerOf(row)!);
       return mine.map((row) => ({
         id: row.id,
         sandboxId: row.daytona_sandbox_id!,
@@ -158,7 +164,9 @@ export function runUsageSweep(provider: ComputerRuntimeProvider): Promise<UsageS
       return exemptByOwner.get(ownerId)!;
     },
     async pause(box, reason) {
-      await provider.pauseComputer(box.sandboxId);
+      const maker = makers.get(box.sandboxId);
+      if (!maker) throw new Error(`No provider for box ${box.sandboxId}`);
+      await maker.pauseComputer(box.sandboxId);
       await closeIntervalOf(box.sandboxId, new Date());
       await markStoppedIfReady(box.id, box.sandboxId, reason);
       await noticeWorkspace(box.workspaceId, reason).catch((error: unknown) =>
